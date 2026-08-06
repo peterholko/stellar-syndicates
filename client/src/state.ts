@@ -3,36 +3,63 @@
 // verification); in M3 it becomes a delayed, fogged picture.
 
 import type {
-  EmplacementView, AnchorView, CharterView, FleetDoctrine, FreightView, GalaxyInfo, GhostView, MarketView, PathPointView, PendingOrderView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
+  EmplacementView, AnchorView, CaptainRosterView, CharterView, FleetDoctrine, FoundingView, FreightView, GalaxyInfo, GhostView, JumpDepartureView, MarketView, PathPointView, PendingOrderView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
 import { defaultDoctrine } from "./protocol";
 
 export type LinkStatus = "connecting" | "online" | "offline";
 
-// One threshold for every own-fleet "the picture has gone dark" treatment:
-// panel styling, map marker, and reacquisition semantics must agree.
-export const GHOST_STALE_AGE_S = 8;
+/// Historical jump scars are client-retained for this long after their
+/// light-delayed arrival, even if the player was inside another map view.
+export const JUMP_DEPARTURE_TTL_S = 120;
 
-export type GhostFidelity = "full" | "wake" | "dark";
+const CLOCK_MAX_SLEW = 0.05; // Tunable: at most ±5% catch-up / fall-back.
+const CLOCK_GAIN = 3.3; // Tunable: unconstrained errors converge in roughly 0.3 s.
+const CLOCK_SNAP_S = 1.0; // Tunable: reconnect/restart/tab-wake discontinuity.
 
-/// The one position-channel ruling shared by map and panel. Full telemetry wins
-/// while fresh; otherwise a fresh wake supplies kinematics only; in darkness the
-/// freshest arrived position remains as the stale marker—never client truth.
-export function ghostPositionChannel(
-  ghost: GhostView,
+let renderClockReady = false;
+let renderClockSim = 0;
+let renderClockWallMs = 0;
+let renderClockRate = 1;
+let renderClockNominalRate = 1;
+
+/// The one continuous render clock. Snapping it to every 10 Hz View leaked
+/// transport jitter straight into pixels: displacement = clock error × object
+/// speed × zoom, most visibly on the deliberately un-eased order comet. Normal
+/// View error is absorbed by a bounded positive slew around the server's pacing
+/// rate, so this clock is monotonic by construction at either 1× production or
+/// accelerated playtest pacing. A >1 s discontinuity instead hard-snaps on
+/// purpose, covering reconnects, server restarts, and a tab waking after a long
+/// suspension.
+export function syncRenderClock(
   simTime: number,
-): { fidelity: GhostFidelity; pos: Vec2; vel: Vec2; t: number; age: number } {
-  const fullT = simTime - ghost.age;
-  const wakeAge = ghost.wake ? Math.max(0, simTime - ghost.wake.t) : Infinity;
-  if (ghost.age < GHOST_STALE_AGE_S) {
-    return { fidelity: "full", pos: ghost.pos, vel: ghost.vel, t: fullT, age: ghost.age };
+  nominalRate = renderClockNominalRate,
+  wallMs = performance.now(),
+): void {
+  const nextNominal = Number.isFinite(nominalRate) && nominalRate > 0 ? nominalRate : 1;
+  if (!renderClockReady) {
+    renderClockReady = true;
+    renderClockSim = simTime;
+    renderClockWallMs = wallMs;
+    renderClockNominalRate = nextNominal;
+    renderClockRate = nextNominal;
+    return;
   }
-  if (ghost.wake && wakeAge < GHOST_STALE_AGE_S) {
-    return { fidelity: "wake", pos: ghost.wake.pos, vel: ghost.wake.vel, t: ghost.wake.t, age: wakeAge };
-  }
-  if (ghost.wake && ghost.wake.t > fullT) {
-    return { fidelity: "dark", pos: ghost.wake.pos, vel: ghost.wake.vel, t: ghost.wake.t, age: wakeAge };
-  }
-  return { fidelity: "dark", pos: ghost.pos, vel: ghost.vel, t: fullT, age: ghost.age };
+
+  const current = liveSimTime(wallMs);
+  const error = simTime - current;
+  renderClockNominalRate = nextNominal;
+  renderClockSim = Math.abs(error) > CLOCK_SNAP_S ? simTime : current;
+  renderClockWallMs = wallMs;
+  const maxSlew = nextNominal * CLOCK_MAX_SLEW;
+  renderClockRate = Math.abs(error) > CLOCK_SNAP_S
+    ? nextNominal
+    : nextNominal + Math.max(-maxSlew, Math.min(maxSlew, error * CLOCK_GAIN));
+}
+
+export function liveSimTime(wallMs = performance.now()): number {
+  if (!renderClockReady) return 0;
+  const elapsed = Math.max(0, (wallMs - renderClockWallMs) / 1000);
+  return renderClockSim + elapsed * renderClockRate;
 }
 
 // The OUTBOUND command signal: the violet comet of an order crossing space from
@@ -46,14 +73,11 @@ export interface CommandSignal {
   depart: number; // sim-time the order left the command center
   arrive: number; // sim-time it reaches the ship (observed)
   pOut: number; // 0..1 outbound progress, recomputed each frame
-  /// §buoys: the relay path (hop positions + arrival fractions). The comet
-  /// traces these — sprinting along lanes, crawling the gaps — instead of a
-  /// straight line. Empty = no relays helped; fly direct.
+  /// Optional path hops. Empty means the ordinary straight flight.
   hops: { pos: Vec2; frac: number }[];
-  beyondComms: boolean;
 }
 
-export type OrderVerb = "move" | "raid" | "attack" | "blockade" | "demolish" | "survey";
+export type OrderVerb = "move" | "jump" | "raid" | "attack" | "blockade" | "demolish" | "survey";
 
 /// A map order the player is comparing but has not committed. This lives in
 /// module state (not the 10 Hz rebuilt DOM), so replacing/cancelling an intent
@@ -76,6 +100,8 @@ export interface ViewState {
   playerId: PlayerId | null;
   name: string;
   tickHz: number;
+  /// Sim seconds advanced per wall second. Four during the fast balance profile.
+  pacingScale: number;
   tick: number;
   simTime: number;
   /// Distinct corporations the player can currently SEE (self + rivals whose
@@ -92,6 +118,11 @@ export interface ViewState {
   /// keyed by system id, paired with the static `galaxy.systems` geology.
   systems: SystemStateView[];
   ghosts: GhostView[];
+  captains: CaptainRosterView[];
+  captainCapacity: number;
+  /// Departure wavefronts visible in the latest View. The renderer retains each
+  /// unique event briefly as a fading historical scar; these carry no target.
+  jumpDepartures: JumpDepartureView[];
   /// §emplacements: your own structures standing in open space.
   emplacements: EmplacementView[];
   market: MarketView | null;
@@ -104,11 +135,13 @@ export interface ViewState {
   /// Sim-time of the last price-history sample, to throttle accumulation.
   lastPriceSampleAt: number;
   wallet: WalletView | null;
-  /// §TCA: the Charterhouse freight desk — timetable, per-destination terms, and
+  /// §TCA: the Market Hub freight desk — timetable, per-destination terms, and
   /// the player's OWN shipment queue. Owner-only, fresh from the View.
   freight: FreightView | null;
   /// §TCA Phase 2: the player's OWN charter standing and band.
   charter: CharterView | null;
+  /// Server-authoritative new-corporation programme and founder safety.
+  founding: FoundingView | null;
   /// §perf Part B: the static charter band ladder — arrives once in Welcome.
   charterLadder: [string, number][];
   /// §perf Part B: the static research programme catalog — arrives once in
@@ -137,6 +170,10 @@ export interface ViewState {
   syndicate: import("./protocol").SyndicateView | null;
   /// §syndicates Part 1: pending invitations the viewer may accept.
   syndicateInvites: import("./protocol").SyndicateInviteView[];
+  /// Operations are already filtered to the latest report that has arrived.
+  operations: import("./protocol").OperationView[];
+  midgameStage: import("./protocol").MidgameStage;
+  diplomacy: import("./protocol").DiplomacyView | null;
   /// §rankings: the PUBLISHED leaderboard (public snapshot on the ledger close).
   rankings: import("./protocol").RankingRow[];
   /// §research R6: the viewer's OWN research picture (null if unaffiliated).
@@ -154,16 +191,11 @@ export interface ViewState {
   /// Whether `awaySince` has been latched this session (so live re-sends don't
   /// move the boundary).
   awaySet: boolean;
-  /// Wall-clock ms when the last View arrived, for smooth extrapolation
-  /// between the ~10 Hz server updates and the 60 fps render.
-  lastViewWallMs: number;
-
   // Interaction.
   selectedShipId: string | null;
   /// Currently selected star system (for the claim / ship-production panel).
   selectedSystemId: string | null;
-  /// §emplacements: the selected structure standing in open space (buoy or
-  /// sensor). Shares the right-dock panel with ships — never both at once.
+  /// The selected deep-space sensor. Shares the right-dock panel with ships.
   selectedEmplacementId: string | null;
   /// Committed raids the player issued (raiderId → targetId), so the renderer can
   /// draw a CRUDE, drifting intercept estimate for each. Cleared on recall, on the
@@ -189,6 +221,7 @@ export function initialState(): ViewState {
     playerId: null,
     name: "",
     tickHz: 30,
+    pacingScale: 1,
     tick: 0,
     simTime: 0,
     corpsInView: 0,
@@ -198,6 +231,9 @@ export function initialState(): ViewState {
     anchors: [],
     systems: [],
     ghosts: [],
+    captains: [],
+    captainCapacity: 1,
+    jumpDepartures: [],
     emplacements: [],
     market: null,
     priceHistory: {},
@@ -205,6 +241,7 @@ export function initialState(): ViewState {
     wallet: null,
     freight: null,
     charter: null,
+    founding: null,
     charterLadder: [],
     researchCatalog: [],
     standingOrders: [],
@@ -217,6 +254,9 @@ export function initialState(): ViewState {
     captureReports: [],
     syndicate: null,
     syndicateInvites: [],
+    operations: [],
+    midgameStage: "home_development",
+    diplomacy: null,
     rankings: [],
     research: null,
     battleViewed: new Set(),
@@ -224,7 +264,6 @@ export function initialState(): ViewState {
     timeline: [],
     awaySince: 0,
     awaySet: false,
-    lastViewWallMs: 0,
     selectedShipId: null,
     selectedSystemId: null,
     selectedEmplacementId: null,

@@ -10,6 +10,8 @@
 //! * `PORT`         — HTTP/WS listen port (default 8080)
 //! * `GALAXY_SEED`  — u64 seed for deterministic generation (default 0xC0FFEE)
 //! * `MAX_PLAYERS`  — sizes the galaxy (default 4)
+//! * `HOME_RING_SU`  — optional absolute home-ring radius override
+//! * `SIM_PACING`    — sim seconds per wall second (default 4; set 1 for standard)
 //! * `DATABASE_URL` — Postgres DSN; if unset/unreachable, persistence is a
 //!   no-op stub and the server still runs.
 
@@ -33,7 +35,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::info;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use sim::{SimConfig, World};
 
@@ -70,6 +72,21 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+fn env_positive_f64(key: &str) -> Option<f64> {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|v: &f64| v.is_finite() && *v > 0.0)
+}
+
+fn pacing_scale() -> f64 {
+    // Keep a malformed test setting from creating either a stalled server or a
+    // scheduler storm. The bounds are operational, not game-balance tunables.
+    env_positive_f64("SIM_PACING")
+        .filter(|scale| (0.1..=16.0).contains(scale))
+        .unwrap_or(game_loop::FAST_PLAYTEST_PACING)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Logging: respect RUST_LOG, default to info.
@@ -81,15 +98,27 @@ async fn main() -> anyhow::Result<()> {
     let port = env_u64("PORT", 8080) as u16;
     let seed = env_u64("GALAXY_SEED", 0xC0FFEE);
     let max_players = env_u64("MAX_PLAYERS", 4) as u32;
+    let pacing_scale = pacing_scale();
 
-    let config = SimConfig::for_players(seed, max_players);
+    let mut config = SimConfig::for_players(seed, max_players);
+    // Keep playtest maps reproducible across home-spacing revisions. The normal
+    // default preserves the established chart; HOME_RING_SU can restore an
+    // archived layout or stage a different spacing without changing any other
+    // seeded geography.
+    if let Some(home_ring_su) = env_positive_f64("HOME_RING_SU") {
+        config.home_ring_frac = (home_ring_su / config.galaxy_radius).clamp(0.01, 0.96);
+    }
 
     // Persistence (off the hot path). Falls back to an in-memory stub if no DB.
     // If a snapshot exists, the galaxy is restored from it (surviving a restart).
     let (persistence, restored) = persistence::init_persistence().await;
     let world = match restored {
         Some(mut w) => {
-            info!(tick = w.tick, players = w.players.len(), "resuming galaxy from snapshot");
+            info!(
+                tick = w.tick,
+                players = w.players.len(),
+                "resuming galaxy from snapshot"
+            );
             // §explore: heal a pre-feature snapshot — recompute band terciles if
             // defaulted, and seed each corp's survey knowledge (owned systems +
             // home radius) so live corps don't wake up amnesiac. Pure fixup;
@@ -101,8 +130,10 @@ async fn main() -> anyhow::Result<()> {
             info!(
                 seed = config.seed,
                 galaxy_radius = config.galaxy_radius,
+                home_ring_su = config.galaxy_radius * config.home_ring_frac,
                 c = config.c,
                 max_players,
+                pacing_scale,
                 "initialising fresh galaxy"
             );
             World::new(config)
@@ -110,7 +141,12 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Spawn the single authoritative game loop, owning the world.
-    let snapshot_every = env_u64("SNAPSHOT_EVERY_TICKS", game_loop::DEFAULT_SNAPSHOT_EVERY);
+    // Persistence is wall-time bookkeeping, not strategic pacing. At 4×, take
+    // four times as many sim ticks between snapshots to retain the established
+    // ~10 wall-second cadence and avoid multiplying database traffic.
+    let default_snapshot_every =
+        (game_loop::DEFAULT_SNAPSHOT_EVERY as f64 * pacing_scale).round() as u64;
+    let snapshot_every = env_u64("SNAPSHOT_EVERY_TICKS", default_snapshot_every);
     let (input_tx, input_rx) = mpsc::unbounded_channel();
     let (status_tx, status_rx) = watch::channel(ServerStatus::default());
     let handle = GameHandle::new(input_tx);
@@ -118,6 +154,7 @@ async fn main() -> anyhow::Result<()> {
         world,
         persistence,
         snapshot_every,
+        pacing_scale,
         status_tx,
         input_rx,
     ));

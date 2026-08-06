@@ -1,6 +1,6 @@
 //! THE TERRAN CHARTER AUTHORITY (§9, §TCA) — the home-galaxy body on the far side
 //! of the wormhole that issued every corporation's charter. It operates the
-//! CHARTERHOUSE (the hub station and its Exchange) and a scheduled common-carrier
+//! MARKET HUB (the hub station and its Exchange) and a scheduled common-carrier
 //! FREIGHT service to the colonies.
 //!
 //! The Authority is a NEUTRAL sentinel faction (owner [`crate::ids::PlayerId::TCA`],
@@ -45,11 +45,14 @@ pub const TCA_SHIPMENT_CAP: u32 = 400;
 /// to anyone, never refunded (Phase 1 has no TCA treasury).
 pub const TCA_FREIGHT_FEE_FRAC: f64 = 0.06;
 
-/// The DISTANCE part of the freight fee: credits per cargo unit per sim-unit of
-/// hub→destination distance. Long hauls cost more (the far colonies pay for reach).
-pub const TCA_FREIGHT_FEE_PER_UNIT_DIST: f64 = 1.0e-4;
+/// The DISTANCE part of the freight fee: credits per cargo unit per CURRENT
+/// world-space su. The economy was tuned before the map's 50× galaxy scale;
+/// normalizing by that scale preserves the intended landed-cost curve instead
+/// of making an ordinary home shipment cost more than its cargo. The client is
+/// served this already-normalized coefficient.
+pub const TCA_FREIGHT_FEE_PER_UNIT_DIST: f64 = 1.0e-4 / crate::config::GALAXY_SCALE;
 
-/// THE CHARTERHOUSE SOVEREIGNTY BUBBLE (§TCA Part 4): within this radius of the
+/// THE MARKET HUB SOVEREIGNTY BUBBLE (§TCA Part 4): within this radius of the
 /// hub no engagement may OPEN — contact resolution skips pairs inside it, and
 /// `Intercept`/`Attack` orders whose target sits inside soft-reject. Fleeing into
 /// the bubble is SANCTUARY, by design.
@@ -153,7 +156,10 @@ impl CharterStatus {
     }
     /// Is the Authority refusing NEW freight bookings from this band?
     pub fn freight_suspended(self) -> bool {
-        matches!(self, CharterStatus::Suspended | CharterStatus::Revoked | CharterStatus::Proscribed)
+        matches!(
+            self,
+            CharterStatus::Suspended | CharterStatus::Revoked | CharterStatus::Proscribed
+        )
     }
 }
 
@@ -265,7 +271,7 @@ impl CitationOffense {
 }
 
 /// AN INCIDENT IN FLIGHT (§TCA Phase 2). Nothing happens at the scene: the
-/// Authority learns of an offense only when its LIGHT reaches the Charterhouse,
+/// Authority learns of an offense only when its LIGHT reaches the Market Hub,
 /// and only then does standing move and the public citation issue. A spree deep
 /// on the frontier therefore drags a visible light-cone of consequences toward
 /// the map's centre behind the culprit.
@@ -324,7 +330,7 @@ impl std::fmt::Display for ShipmentId {
     }
 }
 
-/// The DIRECTION a booked shipment moves goods, relative to the Charterhouse.
+/// The DIRECTION a booked shipment moves goods, relative to the Market Hub.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ShipmentDir {
@@ -365,7 +371,7 @@ pub struct Shipment {
     /// Sim-time the booking was made (FIFO tie-break + timeline detail).
     pub booked_at: f64,
     /// INBOUND only: sell the goods at the Exchange on arrival at the hub (at the
-    /// arrival-tick standing price). Ignored for Outbound.
+    /// arrival-tick quantity-aware market price). Ignored for Outbound.
     #[serde(default)]
     pub sell_on_arrival: bool,
 }
@@ -373,8 +379,8 @@ pub struct Shipment {
 /// A physical freighter run: one [`crate::ship::ShipKind::Freighter`] fleet (owned
 /// by [`PlayerId::TCA`]) carrying many owners' many shipments to one destination and
 /// back. The MANIFEST rides HERE, not in `Fleet.cargo` — a freighter carries a mix
-/// of owners/commodities, whereas `Fleet.cargo` stays the single-commodity
-/// player-convoy field. Keyed in [`crate::world::World::freight_runs`] by the
+/// of owners as well as commodities, whereas a player fleet's cargo manifest has
+/// no per-stack owner. Keyed in [`crate::world::World::freight_runs`] by the
 /// freighter fleet id.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FreightRun {
@@ -407,9 +413,12 @@ mod tests {
     #[test]
     fn fee_has_a_value_part_and_a_distance_part() {
         // 100 units, price 10, dist 5000.
-        // value = 100*10*0.06 = 60; dist = 100*5000*1e-4 = 50; total = 110.
+        // The value and normalized-distance terms are both positive and add.
         let raw = freight_fee(100, 10.0, 5000.0);
-        assert!((raw - 110.0).abs() < 1e-9, "got {raw}");
+        let value = 100.0 * 10.0 * TCA_FREIGHT_FEE_FRAC;
+        let distance = 100.0 * 5000.0 * TCA_FREIGHT_FEE_PER_UNIT_DIST;
+        assert!((raw - value - distance).abs() < 1e-9, "got {raw}");
+        assert!(distance > 0.0);
         // Zero units is a zero fee (no free lunch, no negative either).
         assert_eq!(freight_fee(0, 10.0, 5000.0), 0.0);
     }
@@ -436,6 +445,26 @@ mod tests {
                 "client priced {client}, server charged {server} (units {units}, price {price}, dist {dist})"
             );
         }
+    }
+
+    #[test]
+    fn ordinary_home_freight_remains_a_surcharge_not_the_cargo_value() {
+        let cfg = crate::config::SimConfig::for_players(17, 4);
+        let home_distance = cfg.galaxy_radius * cfg.home_ring_frac;
+        let alloys = crate::market::base_price(Commodity::Alloys);
+        let machinery = crate::market::base_price(Commodity::Machinery);
+        let alloy_frac = freight_fee(1, alloys, home_distance) / alloys;
+        let machinery_frac = freight_fee(1, machinery, home_distance) / machinery;
+        assert!(
+            (0.05..0.15).contains(&alloy_frac),
+            "Alloy freight should be material but viable: {:.1}%",
+            alloy_frac * 100.0
+        );
+        assert!(
+            (0.04..0.12).contains(&machinery_frac),
+            "Machinery freight should be viable: {:.1}%",
+            machinery_frac * 100.0
+        );
     }
 
     /// The band ladder, checked EXACTLY at every boundary — the one place a
@@ -473,7 +502,11 @@ mod tests {
     fn default_thresholds_are_the_documented_incident_counts() {
         let after = |n: u32| TCA_STANDING_START - n as f64 * TCA_STANDING_LOSS_PER_INCIDENT;
         assert_eq!(charter_status(after(0)), CharterStatus::GoodStanding);
-        assert_eq!(charter_status(after(1)), CharterStatus::Sanctioned, "one kill = tuition, not a battlefleet");
+        assert_eq!(
+            charter_status(after(1)),
+            CharterStatus::Sanctioned,
+            "one kill = tuition, not a battlefleet"
+        );
         assert_eq!(charter_status(after(3)), CharterStatus::Sanctioned);
         assert_eq!(charter_status(after(4)), CharterStatus::Suspended);
         assert_eq!(charter_status(after(7)), CharterStatus::Suspended);
@@ -538,20 +571,34 @@ mod tests {
         }
         // Good Standing begins AT the ceiling; Sanctioned strictly below it.
         assert_eq!(charter_status(ladder[0].1), CharterStatus::GoodStanding);
-        assert_eq!(charter_status(ladder[1].1 - 1e-9), CharterStatus::Sanctioned);
+        assert_eq!(
+            charter_status(ladder[1].1 - 1e-9),
+            CharterStatus::Sanctioned
+        );
         // The three `_AT` bands include their own threshold exactly.
         for i in 2..5 {
-            assert_eq!(charter_status(ladder[i].1).title(), ladder[i].0, "band at threshold {}", ladder[i].1);
+            assert_eq!(
+                charter_status(ladder[i].1).title(),
+                ladder[i].0,
+                "band at threshold {}",
+                ladder[i].1
+            );
         }
         // Thresholds never ascend, so the ladder reads top-to-bottom. The first
         // two rows deliberately SHARE the ceiling value — "Good Standing at 100,
         // Sanctioned below 100" is one number read two ways — so only the bands
         // below that are strictly separated.
         for i in 1..5 {
-            assert!(ladder[i].1 <= ladder[i - 1].1, "ladder thresholds must not ascend");
+            assert!(
+                ladder[i].1 <= ladder[i - 1].1,
+                "ladder thresholds must not ascend"
+            );
         }
         for i in 2..5 {
-            assert!(ladder[i].1 < ladder[i - 1].1, "the lower bands are strictly separated");
+            assert!(
+                ladder[i].1 < ladder[i - 1].1,
+                "the lower bands are strictly separated"
+            );
         }
     }
 
@@ -579,7 +626,10 @@ mod tests {
     #[test]
     fn freight_terms_never_depend_on_what_the_destination_built() {
         let (units, price, dist) = (100u32, 20.0, 1000.0);
-        assert_eq!(freight_fee(units, price, dist), freight_fee(units, price, dist));
+        assert_eq!(
+            freight_fee(units, price, dist),
+            freight_fee(units, price, dist)
+        );
         assert_eq!(TCA_SHIPMENT_CAP, 400);
     }
 

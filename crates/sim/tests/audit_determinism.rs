@@ -1,13 +1,14 @@
 //! Integration tests for the two invariants the whole design leans on, driven
 //! across the §TCA freight machinery: (1) two runs of one seed agree byte for
 //! byte; (2) a mid-flight snapshot round-trips and keeps stepping identically;
-//! (3) a PRE-FEATURE snapshot — every field the Charterhouse/TCA work added
+//! (3) a PRE-FEATURE snapshot — every field the Market Hub/TCA work added
 //! stripped — still loads. Born as a completeness-audit probe and kept because
 //! nothing else exercises determinism through booked freight end to end.
 
 use sim::command::Command;
 use sim::config::SimConfig;
 use sim::ids::PlayerId;
+use sim::math::Vec2;
 use sim::world::World;
 
 fn build(seed: u64) -> World {
@@ -17,9 +18,35 @@ fn build(seed: u64) -> World {
     let a = PlayerId(1);
     let b = PlayerId(2);
     w.step(&[
-        Command::AddPlayer { id: a, name: "Acme".into() },
-        Command::AddPlayer { id: b, name: "Beta".into() },
+        Command::AddPlayer {
+            id: a,
+            name: "Acme".into(),
+        },
+        Command::AddPlayer {
+            id: b,
+            name: "Beta".into(),
+        },
     ]);
+    // Put one dark hull in clean nearby space so the periodic JumpShip below
+    // exercises pending, spool, teleport and last_jump state in both nets.
+    let jump_id = w
+        .fleets
+        .iter()
+        .find(|(_, fleet)| fleet.owner == a && fleet.can_jump())
+        .map(|(id, _)| *id)
+        .expect("the opening roster has a jump hull");
+    let cc = w.players[&a].command_center;
+    let safe = cc + Vec2::new(5_000.0, 5_000.0);
+    assert!(safe.distance(w.hub) >= sim::transit::HYPERLIMIT);
+    assert!(
+        w.systems
+            .iter()
+            .all(|system| safe.distance(system.pos) >= sim::transit::HYPERLIMIT)
+    );
+    let fleet = w.fleets.get_mut(&jump_id).unwrap();
+    fleet.pos = safe;
+    fleet.vel = Vec2::ZERO;
+    fleet.fuel = 10_000.0;
     w
 }
 
@@ -30,16 +57,68 @@ fn drive(w: &mut World, ticks: u64) {
     for t in 0..ticks {
         let mut cmds = Vec::new();
         if t % 37 == 0 {
-            cmds.push(Command::MarketBuy { player_id: a, commodity: Fuel, units: 20, ship_to: None });
-            cmds.push(Command::MarketBuy { player_id: b, commodity: Alloys, units: 15, ship_to: None });
+            cmds.push(Command::MarketBuy {
+                player_id: a,
+                commodity: Fuel,
+                units: 20,
+                max_unit_price: None,
+                ship_to: None,
+            });
+            cmds.push(Command::MarketBuy {
+                player_id: b,
+                commodity: Alloys,
+                units: 15,
+                max_unit_price: None,
+                ship_to: None,
+            });
         }
         if t % 101 == 5 {
             let sys = w.players[&a].home_system.unwrap();
-            cmds.push(Command::BookFreightOut { player_id: a, system: sys, commodity: Fuel, units: 10 });
+            cmds.push(Command::BookFreightOut {
+                player_id: a,
+                system: sys,
+                commodity: Fuel,
+                units: 10,
+            });
         }
         if t % 149 == 7 {
             let sys = w.players[&b].home_system.unwrap();
-            cmds.push(Command::BookFreightIn { player_id: b, system: sys, commodity: MetallicOre, units: 12, sell_on_arrival: true });
+            cmds.push(Command::BookFreightIn {
+                player_id: b,
+                system: sys,
+                commodity: MetallicOre,
+                units: 12,
+                sell_on_arrival: true,
+            });
+        }
+        if t % 997 == 11
+            && let Some((ship_id, fleet)) = w
+                .fleets
+                .iter()
+                .find(|(_, fleet)| fleet.owner == a && fleet.can_jump())
+        {
+            let candidates = [
+                Vec2::new(20_000.0, 0.0),
+                Vec2::new(0.0, 20_000.0),
+                Vec2::new(-20_000.0, 0.0),
+                Vec2::new(0.0, -20_000.0),
+            ];
+            if let Some(dest) = candidates
+                .into_iter()
+                .map(|offset| fleet.pos + offset)
+                .find(|dest| {
+                    dest.distance(w.hub) >= sim::transit::HYPERLIMIT
+                        && w.systems
+                            .iter()
+                            .all(|system| dest.distance(system.pos) >= sim::transit::HYPERLIMIT)
+                })
+            {
+                cmds.push(Command::JumpShip {
+                    player_id: a,
+                    ship_id: *ship_id,
+                    dest,
+                });
+            }
         }
         w.step(&cmds);
     }
@@ -56,7 +135,12 @@ fn two_runs_of_the_same_seed_agree_byte_for_byte() {
     assert_eq!(j1.len(), j2.len(), "world size diverged");
     assert!(j1 == j2, "two runs of the same seed diverged");
     // sanity: the freight machinery actually ran
-    eprintln!("runs={} queue={} shipid-present={}", w1.freight_runs.len(), w1.freight_queue.len(), j1.contains("next_shipment_id"));
+    eprintln!(
+        "runs={} queue={} shipid-present={}",
+        w1.freight_runs.len(),
+        w1.freight_queue.len(),
+        j1.contains("next_shipment_id")
+    );
 }
 
 #[test]
@@ -65,7 +149,11 @@ fn a_midflight_snapshot_round_trips_and_keeps_stepping_identically() {
     drive(&mut w, 2500);
     let json = serde_json::to_string(&w).unwrap();
     let mut restored: World = serde_json::from_str(&json).unwrap();
-    assert_eq!(serde_json::to_string(&restored).unwrap(), json, "snapshot round-trip is not stable");
+    assert_eq!(
+        serde_json::to_string(&restored).unwrap(),
+        json,
+        "snapshot round-trip is not stable"
+    );
     let mut cont = w.clone();
     drive(&mut cont, 1500);
     drive(&mut restored, 1500);
@@ -84,7 +172,14 @@ fn a_pre_feature_snapshot_loads() {
     drive(&mut w, 1200);
     let mut v: serde_json::Value = serde_json::to_value(&w).unwrap();
     let obj = v.as_object_mut().unwrap();
-    for k in ["freight_queue", "freight_runs", "next_shipment_id", "pending_citations", "expeditions", "next_expedition_at"] {
+    for k in [
+        "freight_queue",
+        "freight_runs",
+        "next_shipment_id",
+        "pending_citations",
+        "expeditions",
+        "next_expedition_at",
+    ] {
         obj.remove(k);
     }
     for (_p, c) in obj.get_mut("players").unwrap().as_object_mut().unwrap() {
@@ -92,7 +187,9 @@ fn a_pre_feature_snapshot_loads() {
         c.remove("warehouse");
         c.remove("tca_standing");
         if let Some(so) = c.get_mut("standing_orders").and_then(|x| x.as_array_mut()) {
-            for o in so { o.as_object_mut().unwrap().remove("sell_on_arrival"); }
+            for o in so {
+                o.as_object_mut().unwrap().remove("sell_on_arrival");
+            }
         }
     }
     for (_f, f) in obj.get_mut("fleets").unwrap().as_object_mut().unwrap() {

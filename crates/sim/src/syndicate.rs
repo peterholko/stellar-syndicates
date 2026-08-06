@@ -14,7 +14,7 @@
 //! learn of a join/leave only after the light from that corp's command center
 //! arrives — membership propagates exactly like ownership.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +39,18 @@ pub const SYNDICATE_MAX_FITS: usize = 24;
 /// sanitize, same discipline as syndicate names).
 pub const FIT_NAME_MAX: usize = 24;
 
+/// Syndicate permissions without turning the syndicate into an owner. Roles
+/// authorize administration and shared operations; fleets, systems, goods and
+/// rewards remain corporation property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyndicateRole {
+    Member,
+    Quartermaster,
+    Officer,
+    Founder,
+}
+
 /// §fitting: one saved DOCTRINE FIT — a named (hull, loadout) the whole
 /// syndicate can build from or refit to. Validated against the hull's slots +
 /// fitting budget at SAVE time, so every stored fit is legal by construction.
@@ -49,8 +61,9 @@ pub struct DoctrineFit {
     pub loadout: crate::module::Loadout,
 }
 
-/// One alliance. Founder-managed in v1 (roles deferred): the founder invites,
-/// dissolves, and — should they leave — hands the seat to the next member.
+/// One alliance with explicit administrative roles. The founder retains final
+/// dissolution authority and — should they leave — hands the seat to the next
+/// member; officers and quartermasters receive only their published permissions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Syndicate {
     pub id: SyndicateId,
@@ -59,16 +72,19 @@ pub struct Syndicate {
     pub founder: PlayerId,
     /// The roster, INCLUDING the founder. `BTreeSet` = deterministic iteration.
     pub members: BTreeSet<PlayerId>,
+    /// Per-member permissions. Missing legacy entries read as Member except for
+    /// `founder`, which is always Founder by invariant.
+    #[serde(default)]
+    pub roles: BTreeMap<PlayerId, SyndicateRole>,
     /// Outstanding founder-issued invitations, consumed on accept (or dropped
     /// when the invitee joins elsewhere / the syndicate dissolves).
     #[serde(default)]
     pub invites: BTreeSet<PlayerId>,
     /// Sim-time the syndicate was founded (informational / roster display).
     pub created_at: f64,
-    /// §research: the syndicate-wide Programme Boards state — active/queue,
-    /// progress, completed set, verb counters, designations. serde-default so
-    /// every old snapshot loads with empty research and ticks clean (no
-    /// migration). Owner-only in the view.
+    /// LEGACY §research snapshot carrier. Programme Boards are corporation-owned
+    /// now; `World::fixup_after_load` copies this state to every current member
+    /// once so existing campaigns lose no progress. New games leave it empty.
     #[serde(default)]
     pub research: crate::research::ResearchState,
     /// §fitting: the syndicate's saved DOCTRINE FITS (any member saves /
@@ -83,6 +99,42 @@ pub struct Syndicate {
     /// Cleared when the Titan dies (the headline). serde-default.
     #[serde(default)]
     pub flagship_name: Option<String>,
+}
+
+impl Syndicate {
+    pub fn role_of(&self, player: PlayerId) -> Option<SyndicateRole> {
+        if !self.members.contains(&player) {
+            None
+        } else if player == self.founder {
+            Some(SyndicateRole::Founder)
+        } else {
+            Some(
+                self.roles
+                    .get(&player)
+                    .copied()
+                    .unwrap_or(SyndicateRole::Member),
+            )
+        }
+    }
+
+    pub fn may_manage_members(&self, player: PlayerId) -> bool {
+        matches!(
+            self.role_of(player),
+            Some(SyndicateRole::Founder | SyndicateRole::Officer)
+        )
+    }
+
+    pub fn may_manage_operations(&self, player: PlayerId) -> bool {
+        matches!(
+            self.role_of(player),
+            Some(
+                SyndicateRole::Founder
+                    | SyndicateRole::Officer
+                    | SyndicateRole::Quartermaster
+            )
+        )
+    }
+
 }
 
 /// §ladder B4: flagship names cap at this many chars (same discipline as fits).

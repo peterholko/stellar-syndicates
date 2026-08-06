@@ -129,7 +129,11 @@ fn default_true() -> bool {
 impl Node {
     /// A freshly-seeded, still-dormant node of the given bonus.
     pub fn dormant(bonus: NodeBonus) -> Self {
-        Node { bonus, awakened: false, fed: true }
+        Node {
+            bonus,
+            awakened: false,
+            fed: true,
+        }
     }
 
     /// A node grants its bonus only when it has AWAKENED and is currently FED.

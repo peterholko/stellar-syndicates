@@ -14,9 +14,15 @@ pub const TICK_HZ: u32 = 30;
 pub const DT: f64 = 1.0 / TICK_HZ as f64;
 
 /// THE LIGHT-GAME INVARIANT (playtest-driven): light must comfortably outrun the
-/// fastest ship, or intel and orders arrive uselessly stale and raiders feel
-/// "faster than light." Every preset must satisfy
+/// fastest cruising ship, or intel and orders arrive uselessly stale. Every
+/// preset must satisfy
 /// `c ≥ C_SPEED_RATIO × fastest_ship_speed()`.
+///
+/// This is deliberately a cruise-speed guardrail. Chained jump-drive skips can
+/// average about 5,000 su/s and outrun 2,000 su/s warp light; the information
+/// model remains honest because each event still arrives on its own wavefront,
+/// and the view's arrival heap may therefore serve those wavefronts out of
+/// emission order.
 ///
 /// Default **2.0** — "at least twice, maybe more." Raising it is trivial: bump
 /// this one number and every preset is re-checked at construction
@@ -24,6 +30,10 @@ pub const DT: f64 = 1.0 / TICK_HZ as f64;
 /// playtest `c` sits well ABOVE this floor (≈3.5× the fastest hull) — the floor
 /// is the guardrail, not the target.
 pub const C_SPEED_RATIO: f64 = 2.0;
+
+/// Galaxy-size multiplier. Kept independent of drive constants so tuning warp
+/// speed does not silently resize a generated chart.
+pub const GALAXY_SCALE: f64 = 50.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimConfig {
@@ -44,8 +54,8 @@ pub struct SimConfig {
     /// space between homes stays proportional across 4–12 players (§4).
     pub galaxy_radius: f64,
 
-    /// Fraction of `galaxy_radius` at which home anchors sit (a ring of bright
-    /// spots between the hub and the rim).
+    /// Fraction of `galaxy_radius` at which home anchors sit. The default keeps
+    /// the physical home ring stable even when player count changes the radius.
     pub home_ring_frac: f64,
 
     /// Number of procedurally-placed star systems (M2).
@@ -101,42 +111,30 @@ impl SimConfig {
         let player_count = player_count.max(1);
         // Radius grows ~sqrt(players): area scales with player count so density
         // of homes stays roughly constant.
-        // §hyperspace: the galaxy scales with the HYPERSPACE FACTOR so that
-        // information delay stays where it has always been.
-        //
-        // Calibrated on the FASTEST route: hub → rim along a trunk is ~20 s, the
-        // quickest news can possibly cross the map. Off-lane is then `LANE_MULT`
-        // times slower (~200 s) and normal space slower again — which is the
-        // intended shape, since the lane network is the information network and
-        // being off it should be genuinely remote.
-        //
-        // It also lands lane TRAVEL on today's pacing: a Convoy riding a trunk
-        // crosses the galaxy in ~200 s, exactly as it does sublight today.
-        let galaxy_radius =
-            4000.0 * (player_count as f64).sqrt() * crate::lane::GALAXY_SCALE;
+        // Preserve the established chart scale independently of the movement
+        // and information-speed tunables.
+        let galaxy_radius = 4000.0 * (player_count as f64).sqrt() * crate::config::GALAXY_SCALE;
         let cfg = SimConfig {
             seed,
             max_players: player_count,
-            // c chosen so crossing a 4-player galaxy (radius 8000) gives a
-            // home→hub light-delay of ~12 s — dramatic but playable. Raised from
-            // 300 → 400 (playtest: raiders felt "faster than light," intel/orders
-            // uselessly stale) so light comfortably outruns every hull: at the
-            // fastest ship (scout, 115) the ratio is 3.48×, well above the 2.0
-            // floor ([`C_SPEED_RATIO`]). Ship trip-times are unchanged (they don't
-            // depend on c); only information delays shrink ~25%, freshening intel.
+            // Base c becomes 2,000 su/s straight warp light after WARP_FACTOR.
+            // On the preserved chart this prices home→hub at roughly 37–40 s
+            // and the longest hub→rim reports near 200 s. At the fastest warp
+            // hull the ratio remains 3.48×, above [`C_SPEED_RATIO`].
             c: 400.0,
             galaxy_radius,
-            home_ring_frac: 0.62,
+            // Preserve the lane-era chart geometry exactly. The 80,000-su
+            // nominal ring is now a generation constant, not a relay throw.
+            home_ring_frac: 80_000.0
+                / (1.0 + crate::galaxy::HOME_SLOT_RADIAL_JITTER_FRAC)
+                / galaxy_radius,
             system_count: 12 + player_count * 4,
-            // Local sensor bubbles (~28% of galaxy radius): coverage is islands
-            // around your assets, so most of the dark between homes is blind to
-            // raiders — the tension the model wants.
-            // Scaled with the galaxy so COVERAGE stays ~28% of the radius. Left
-            // absolute it would fall to 5.5% and the map would go dark — a much
-            // bigger balance change than the rescale is meant to be. (System-scale
-            // constants — blockade, docking, the hyperlimit, colony claim — do NOT
-            // scale: a system stays the size it is, and only the gaps grow.)
-            sensor_range: 2200.0 * crate::lane::GALAXY_SCALE,
+            // Local sensor bubbles are 80,000 su (20% of a four-player galaxy
+            // radius): coverage remains islands around the command center and
+            // Raider pickets, leaving meaningful blind space between homes.
+            // Expressed through GALAXY_SCALE to preserve the chart-unit convention;
+            // system-scale constants (docking, hyperlimit, claim) do not scale.
+            sensor_range: 1600.0 * crate::config::GALAXY_SCALE,
             // PLAYTEST preset: equal squadrons grind for ~45 s (production ships
             // ~2700 s / 45 min — battles at the scale of light-delays + relief).
             battle_target_secs: default_battle_target_secs(),
@@ -223,5 +221,20 @@ mod light_invariant_tests {
             "expected comfortable (>3×) margin, got {:.3}",
             playtest.light_ratio()
         );
+    }
+
+    #[test]
+    fn every_jittered_home_ring_preserves_the_80k_chart_extent() {
+        let chart_extent = 80_000.0;
+        for players in [1, 4, 12] {
+            let cfg = SimConfig::for_players(1, players);
+            let outermost_home = cfg.galaxy_radius
+                * cfg.home_ring_frac
+                * (1.0 + crate::galaxy::HOME_SLOT_RADIAL_JITTER_FRAC);
+            assert!(
+                (outermost_home - chart_extent).abs() < 1e-9,
+                "{players} players: outer home {outermost_home} != {chart_extent}",
+            );
+        }
     }
 }

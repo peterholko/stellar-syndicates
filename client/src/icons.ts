@@ -42,6 +42,8 @@ interface IconDef {
   /** Downscaled RASTER (PNG) variant name under /art/ui_icons/resource/ —
    *  highest precedence (the resource icons). Small, retina-crisp. */
   png?: string;
+  /** General 128px UI PNG under /art/ui_icons/png/128/. */
+  png128?: string;
   /** Bundled SVG slug (art-backed) — takes precedence over `glyph`. */
   art?: string;
   /** Unicode/emoji placeholder when there is no art yet. */
@@ -54,6 +56,7 @@ interface IconDef {
 
 // R(name) = downscaled PNG; A(slug) = art-backed SVG; P(glyph) = emoji placeholder.
 const R = (png: string, tip: string): IconDef => ({ png, tip, placeholder: false });
+const R128 = (png128: string, tip: string): IconDef => ({ png128, tip, placeholder: false });
 const A = (art: string, tip: string): IconDef => ({ art, tip, placeholder: false });
 const P = (glyph: string, tip: string): IconDef => ({ glyph, tip, placeholder: true });
 
@@ -81,7 +84,7 @@ export const ICONS: Record<IconKey, IconDef> = {
   // fleets / ship kinds
   fleet: A("concept-fleet", "Fleet"),
   scout: P("🛰", "Scout"),
-  raider: P("🗡", "Raider"),
+  raider: P("🗡", "Interceptor"),
   corvette: P("🛡", "Corvette"),
   convoy: A("concept-convoy", "Convoy"),
   colony: P("🏗", "Colony ship"),
@@ -104,7 +107,7 @@ export const ICONS: Record<IconKey, IconDef> = {
   flank: P("💨", "Full speed (loud — high signature)"),
   sensorRange: A("concept-sensor-range", "Sensor range"),
   // order lifecycle
-  delay: A("concept-lightspeed-signal", "Command / light delay"),
+  delay: R128("concept-communication-delay", "Command / light delay"),
   echo: P("◔", "Response in transit (received, presumed complying)"),
   delivered: P("◈", "Signal outbound (order en route)"),
   confirmed: P("✓", "Confirmed"),
@@ -136,6 +139,7 @@ export const ICONS: Record<IconKey, IconDef> = {
 
 const ART_BASE = "/art/ui_icons/svg/";
 const PNG_BASE = "/art/ui_icons/resource/"; // downscaled 64px resource PNGs
+const PNG_128_BASE = "/art/ui_icons/png/128/"; // high-DPI general UI PNGs
 const escAttr = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
 /** ICON SIZE TOKENS — the ONE source of truth for icon dimensions (mapped to the
@@ -164,6 +168,9 @@ export function icon(key: IconKey, size: IconSize = "sm", tip?: string, cls = ""
   const c = `icon ${sizeCls}${cls ? ` ${cls}` : ""}`;
   if (def.png) {
     return `<img class="${c}" src="${PNG_BASE}${def.png}.png" alt="" title="${t}" />`;
+  }
+  if (def.png128) {
+    return `<img class="${c}" src="${PNG_128_BASE}${def.png128}.png" alt="" title="${t}" />`;
   }
   if (def.art) {
     return `<img class="${c}" src="${ART_BASE}${def.art}.svg" alt="" title="${t}" />`;

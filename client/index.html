@@ -100,6 +100,34 @@
       #hud .v.warn { color: var(--warn); }
       #hud .spacer { flex: 1; }
 
+      /* Server-authored opening objective. Compact and persistent: one action,
+         one reason, never a wall of tutorial prose. */
+      #founding-guide {
+        position: fixed; top: 66px; left: 14px; width: 330px;
+        display: none; padding: 11px 12px;
+        background: rgba(8, 12, 22, 0.94);
+        border: 1px solid #294131; border-left: 3px solid var(--positive);
+        border-radius: 7px; z-index: 5; box-shadow: var(--panel-shadow);
+        backdrop-filter: blur(5px);
+      }
+      #founding-guide.is-open { display: block; }
+      #founding-guide .fg-top { display: flex; align-items: center; gap: 8px; }
+      #founding-guide .fg-step { color: var(--positive); font-size: 10px; text-transform: uppercase; letter-spacing: .8px; }
+      #founding-guide .fg-shield { margin-left: auto; color: var(--info); font-size: 10px; }
+      #founding-guide .fg-title { margin-top: 4px; color: var(--ink); font-size: 13px; font-weight: 700; }
+      #founding-guide .fg-copy { margin-top: 4px; color: var(--dim); font-size: 11px; line-height: 1.45; }
+      #founding-guide .fg-compare { display: grid; gap: 5px; margin-top: 8px; }
+      #founding-guide .fg-prospect { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; padding: 6px 7px; cursor: pointer; text-align: left; border: 1px solid #26344b; border-radius: 5px; background: #0b1220; color: var(--ink); font: inherit; }
+      #founding-guide .fg-prospect:hover { border-color: #47755a; }
+      #founding-guide .fg-prospect.is-known { border-color: #31543d; background: #0e1b17; }
+      #founding-guide .fg-prospect span { display: grid; min-width: 0; }
+      #founding-guide .fg-prospect small { color: var(--dim); font-size: 8px; text-transform: uppercase; letter-spacing: .55px; }
+      #founding-guide .fg-prospect b { overflow: hidden; text-overflow: ellipsis; font-size: 10px; white-space: nowrap; }
+      #founding-guide .fg-prospect em { color: var(--dim); font-size: 9px; font-style: normal; text-align: right; }
+      #founding-guide .fg-prospect.is-known em { color: #b8f3c3; }
+      #founding-guide .fg-action { margin-top: 8px; width: 100%; padding: 6px 8px; cursor: pointer; border-radius: 5px; border: 1px solid #31543d; background: #10241a; color: #b8f3c3; font: inherit; font-size: 11px; }
+      #founding-guide .fg-action:hover { background: #173522; }
+
       /* Command readout (bottom-left) */
       #readout {
         position: fixed; left: 14px; bottom: 14px;
@@ -345,6 +373,38 @@
       #ship-panel .sp-zone { padding: 12px 0; border-bottom: 1px solid rgba(79,195,255,0.10); }
       #ship-panel .sp-zone:last-child { border-bottom: 0; }
       #ship-panel .sp-zone__title { color: var(--ink); text-transform: uppercase; font-size: 10px; font-weight: 700; letter-spacing: 0.9px; margin-bottom: 8px; }
+      #ship-panel .sp-captain { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 11px; align-items: start; }
+      #ship-panel .captain-portrait { width: 82px; height: 82px; border-radius: 7px; object-fit: cover; border: 1px solid rgba(255,174,92,0.4); box-shadow: 0 0 18px rgba(255,174,92,0.08); }
+      #ship-panel .captain-card { min-width: 0; }
+      #ship-panel .captain-name { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+      #ship-panel .captain-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #ship-panel .captain-name span, #ship-panel .captain-xp__copy { color: var(--dim); font-size: 9px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      #ship-panel .captain-xp { height: 3px; margin: 6px 0 3px; overflow: hidden; border-radius: 2px; background: rgba(255,255,255,0.08); }
+      #ship-panel .captain-xp > span { display: block; height: 100%; background: #ffae5c; }
+      #ship-panel .captain-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin-top: 8px; }
+      #ship-panel .captain-stat { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px; padding: 5px 6px; border-radius: 4px; background: rgba(255,174,92,0.055); font-size: 9px; }
+      #ship-panel .captain-stat > span { color: var(--dim); }
+      #ship-panel .captain-stat > small { grid-column: 1 / -1; color: var(--dim); font-size: 8px; }
+      #ship-panel .captain-stat__add { width: 17px; height: 17px; padding: 0; border: 1px solid rgba(255,174,92,0.45); border-radius: 3px; color: #ffae5c; background: transparent; font: inherit; cursor: pointer; }
+      #ship-panel .captain-stat__add:disabled { opacity: 0.3; cursor: not-allowed; }
+      #ship-panel .captain-points { margin-top: 7px; color: #ffae5c; font-size: 9px; }
+      /* ---- Officer roster — corporation-wide command staff. ---- */
+      .officer-summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 4px 0 10px; color: var(--dim); font-size: 10px; }
+      .officer-card { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; padding: 10px 0; border-bottom: 1px solid rgba(255,174,92,0.14); }
+      .officer-card:last-of-type { border-bottom: 0; }
+      .officer-card__portrait { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid rgba(255,174,92,0.38); }
+      .officer-card__name { display: flex; justify-content: space-between; gap: 6px; align-items: baseline; }
+      .officer-card__name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .officer-card__meta, .officer-card__xp, .officer-card__sources { color: var(--dim); font-size: 9px; line-height: 1.4; }
+      .officer-card__bar { height: 3px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; margin: 6px 0 3px; }
+      .officer-card__bar span { display: block; height: 100%; background: #ffae5c; }
+      .officer-card__actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; margin-top: 7px; }
+      .officer-card__actions select { min-width: 0; background: var(--field-bg); color: var(--ink); border: 1px solid var(--field-bd); border-radius: 5px; padding: 5px 6px; font: inherit; font-size: 10px; }
+      .officer-card__actions .act { margin: 0; width: auto; padding: 5px 7px; justify-content: center; }
+      .officer-card__train { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+      .officer-card__train button { background: rgba(255,174,92,0.06); color: #ffcf9d; border: 1px solid rgba(255,174,92,0.28); border-radius: 4px; padding: 3px 5px; font: inherit; font-size: 9px; cursor: pointer; }
+      .officer-card__train button:disabled { opacity: 0.35; cursor: not-allowed; }
+      .officer-doctrine { margin-top: 10px; padding: 8px; border-left: 2px solid #ffae5c; background: rgba(255,174,92,0.05); color: var(--dim); font-size: 9px; line-height: 1.45; }
       #ship-panel .sp-zone--now { margin: 11px 0 0; padding: 10px 11px; border: 1px solid rgba(79,195,255,0.18); border-left: 3px solid var(--accent); border-radius: 7px; background: rgba(20,31,47,0.62); }
       #ship-panel .sp-zone--now .sp-zone__title { color: var(--accent); }
       #ship-panel .sp-now-row { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; align-items: start; margin-top: 6px; line-height: 1.4; }
@@ -361,10 +421,19 @@
       #ship-panel .sp-order:last-child { margin-bottom: 0; }
       #ship-panel .sp-order:hover, #ship-panel .sp-order:focus-visible { border-color: rgba(197,107,255,0.7); outline: none; }
       #ship-panel .sp-order.is-selected { border-color: #c56bff; background: rgba(197,107,255,0.12); box-shadow: inset 2px 0 #c56bff; }
+      #ship-panel .sp-order.is-presumed { opacity: 0.72; }
+      #ship-panel .sp-order--lost { grid-template-columns: 22px minmax(0, 1fr) auto; border-color: rgba(255,122,107,0.38); cursor: default; }
+      #ship-panel .sp-order--lost:hover { border-color: rgba(255,122,107,0.38); }
+      #ship-panel .sp-order--lost .sp-order__phase, #ship-panel .sp-order--lost .sp-order__copy small { color: var(--negative); }
+      #ship-panel .sp-order__dismiss { padding: 3px 6px; color: var(--dim); background: transparent; border: 1px solid var(--border); border-radius: 4px; font: inherit; font-size: 9px; cursor: pointer; }
+      #ship-panel .sp-order__dismiss:hover, #ship-panel .sp-order__dismiss:focus-visible { color: var(--ink); border-color: var(--negative); outline: none; }
+      #ship-panel .sp-order--current { cursor: default; }
+      #ship-panel .sp-order--current:hover { border-color: rgba(79,195,255,0.12); }
       #ship-panel .sp-order__phase { color: #c56bff; font-size: 17px; line-height: 1; text-align: center; }
       #ship-panel .sp-order__copy { min-width: 0; line-height: 1.25; }
       #ship-panel .sp-order__copy b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
       #ship-panel .sp-order__copy small { display: block; margin-top: 3px; color: var(--dim); font-size: 9px; font-variant-numeric: tabular-nums; }
+      #ship-panel .sp-order__copy small.is-estimate { color: #ffae5c; }
       #ship-panel .sp-job { margin-top: 9px; }
       #ship-panel .sp-job__meta { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 5px; font-variant-numeric: tabular-nums; }
       #ship-panel .sp-fuel { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 9px; border: 1px solid var(--border); border-radius: 6px; background: rgba(20,26,40,0.5); }
@@ -652,7 +721,7 @@
       .mkt-orders .ord .o-rm { margin-left: auto; color: var(--dim); cursor: pointer; }
 
       /* ---- top navbar destinations (hub-wide, in the HUD) ---- */
-      .hud-nav { display: flex; gap: 6px; align-items: center; }
+      .hud-nav { display: flex; gap: 6px; align-items: stretch; }
       .hud-btn { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; background: rgba(79,195,255,0.08); color: var(--ink); border: 1px solid var(--field-bd); border-radius: 5px; font: inherit; font-size: 11px; letter-spacing: 0.3px; padding: 3px 9px; white-space: nowrap; }
       .hud-btn:hover { border-color: var(--accent); color: var(--accent); }
       .hud-btn.is-active { background: var(--accent); color: #04121d; font-weight: 700; border-color: var(--accent); }
@@ -915,6 +984,40 @@
       #syndicate-panel .act--primary { background: #74e08c; color: #04140a; font-weight: 700; border-color: #74e08c; }
       #syndicate-panel .act--danger:hover { border-color: #ff6b6b; color: #ff9b9b; }
       #syndicate-panel .sy-note { color: var(--dim); line-height: 1.45; font-size: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+
+      /* ---- Operations: arrived contracts + strategic objectives ------------ */
+      #operations-panel {
+        display: none; position: fixed; z-index: 20; top: 48px; right: 12px;
+        width: min(470px, calc(100vw - 24px)); max-height: calc(100vh - 64px);
+        flex-direction: column; overflow: hidden; color: var(--ink);
+        background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px;
+        box-shadow: var(--panel-shadow); backdrop-filter: blur(8px);
+      }
+      #operations-panel.is-open { display: flex; }
+      #operations-panel .op-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 8px; border-bottom: 1px solid var(--border); }
+      #operations-panel .op-head b { letter-spacing: 1px; color: #ffd27d; }
+      #operations-panel .op-close { cursor: pointer; color: var(--dim); background: none; border: 0; font: inherit; }
+      #operations-panel .op-body { padding: 11px 12px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+      #operations-panel .op-chapter { padding: 9px 10px; border: 1px solid rgba(255,210,125,.3); border-left: 3px solid #ffd27d; border-radius: 6px; background: rgba(70,50,20,.25); }
+      #operations-panel .op-chapter b { display: block; color: #ffe2aa; }
+      #operations-panel .op-chapter small { display: block; margin-top: 3px; color: var(--dim); line-height: 1.4; }
+      #operations-panel .op-sec { color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: .7px; margin-top: 3px; }
+      #operations-panel .op-card { padding: 9px 10px; border: 1px solid var(--border); border-left: 3px solid #75859c; border-radius: 6px; background: rgba(18,25,38,.72); }
+      #operations-panel .op-card.is-active { border-left-color: #ffd27d; }
+      #operations-panel .op-card.is-completed { border-left-color: #74e08c; opacity: .82; }
+      #operations-panel .op-card.is-failed, #operations-panel .op-card.is-expired, #operations-panel .op-card.is-abandoned { border-left-color: #ff7a6b; opacity: .65; }
+      #operations-panel .op-top { display: flex; align-items: baseline; justify-content: space-between; gap: 9px; }
+      #operations-panel .op-title { font-weight: 700; color: var(--ink); }
+      #operations-panel .op-state { color: var(--dim); font-size: 9px; text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; }
+      #operations-panel .op-copy { color: var(--dim); font-size: 10px; line-height: 1.4; margin-top: 3px; }
+      #operations-panel .op-progress { height: 4px; margin: 7px 0 5px; border-radius: 3px; overflow: hidden; background: rgba(255,255,255,.08); }
+      #operations-panel .op-progress i { display: block; height: 100%; background: #ffd27d; }
+      #operations-panel .op-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--dim); font-size: 9px; font-variant-numeric: tabular-nums; }
+      #operations-panel .op-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+      #operations-panel .act { cursor: pointer; padding: 5px 8px; border: 1px solid var(--field-bd); border-radius: 5px; background: var(--btn-bg); color: var(--ink); font: inherit; font-size: 10px; }
+      #operations-panel .act:hover { border-color: #ffd27d; color: #ffe2aa; }
+      #operations-panel .op-empty { color: var(--dim); padding: 8px; border: 1px dashed var(--border); border-radius: 6px; }
+      #operations-panel input { width: 66px; background: var(--field-bg); color: var(--ink); border: 1px solid var(--field-bd); border-radius: 4px; padding: 4px 6px; font: inherit; }
 
       /* ---- §TCA: the FACTION panel (syndicate-panel idiom, Authority-amber top).
              Your standing with the Terran Charter Authority as a LEGAL STATUS —
@@ -1196,12 +1299,16 @@
       <nav class="hud-nav" aria-label="Hub destinations">
         <button id="nav-market" class="hud-btn" type="button" title="Hub Exchange (M)"><img class="cicon" src="/art/ui_icons/svg/concept-market-exchange.svg" width="14" height="14" alt="" />Market</button>
         <button id="nav-research" class="hud-btn" type="button" title="Research — programme boards (R)">🔬 Research</button>
+        <button id="nav-officers" class="hud-btn" type="button" title="Officers — Captain roster (P)">★ Officers</button>
+        <button id="nav-operations" class="hud-btn" type="button" title="Operations — contracts and strategic objectives (U)">◎ Operations</button>
         <button id="nav-syndicate" class="hud-btn" type="button" title="Syndicate — alliances (Y)">🤝 Syndicate</button>
         <button id="nav-faction" class="hud-btn" type="button" title="Faction — your charter with the Terran Charter Authority (C)">⚖ Faction</button>
         <button id="nav-log" class="hud-btn" type="button" title="Check-in log (L)">⌖ Log</button>
       </nav>
       <div class="item"><span class="k">Link</span><span class="v" id="hud-link">connecting…</span></div>
     </div>
+
+    <aside id="founding-guide" aria-live="polite"></aside>
 
     <div id="reports-log"></div>
 
@@ -1243,6 +1350,7 @@
          / leave / dissolve. Opened from the navbar (🤝) or `Y`. Owner-only content
          (your own roster + pending invites; never a rival's private roster). -->
     <div id="syndicate-panel"></div>
+    <div id="operations-panel"></div>
 
     <!-- §TCA: the FACTION panel — your charter standing with the Terran Charter
          Authority: the band ladder, what the band is costing you, and the
@@ -1259,6 +1367,7 @@
           <button data-tab="system">System</button>
           <button data-tab="logistics">Logistics</button>
           <button data-tab="doctrine">Doctrine</button>
+          <button data-tab="officers">Officers</button>
           <button data-tab="rankings">Rankings</button>
         </div>
         <button class="rail__close" id="rail-close" type="button" title="Close (Esc)" aria-label="Close workspace">✕</button>
@@ -1284,10 +1393,10 @@
             </div>
             <div class="so-row" id="so-floor-row"><label>%→keep</label><input id="so-floor" type="number" step="1" min="0" value="50" title="percent (1-100) and floor to leave behind" /></div>
             <div class="so-row"><label>To</label><select id="so-dest"></select></div>
-            <div class="so-row" id="so-sell-row"><label>On arrival</label><label class="so-check" title="Hub deliveries only: SELL the lot at the standing price on arrival, or leave it in your warehouse to trade later."><input id="so-sell" type="checkbox" checked /> sell at the hub</label></div>
+            <div class="so-row" id="so-sell-row"><label>On arrival</label><label class="so-check" title="Market Hub deliveries only: SELL the lot on the quantity-aware market curve at arrival, or leave it in your Market Warehouse to trade later."><input id="so-sell" type="checkbox" checked /> sell at the hub</label></div>
             <button id="so-add">Add standing order</button>
           </div>
-          <div class="mhint dim">Rules run on the server — online or off. Each spawns a raidable convoy when it fires; at most one in flight per rule. You set policy; geography + raids do the rest.</div>
+          <div class="mhint dim">Rules run on the server — online or off. Each needs a real idle cargo fleet at its source and commands that hull when it fires; at most one run per rule. You set policy; geography + raids do the rest.</div>
         </div>
 
         <!-- DOCTRINE tab — fleet doctrine (§16), constrained policy, runs offline. -->
@@ -1299,6 +1408,9 @@
           <div class="fd-row"><label>Lost&nbsp;supply</label><select id="fd-dest"></select></div>
           <div class="mhint dim">Standing policy your pickets follow autonomously — online or off. Defaults match today's behaviour. Pickets sense only what's in range; the ships they command stay raidable &amp; light-revealed.</div>
         </div>
+
+        <!-- OFFICERS — Academy recruitment, reserve duty and fleet assignment. -->
+        <div id="tab-officers" class="tab"></div>
 
         <!-- RANKINGS tab — the published leaderboard (§rankings), snapshot on the
              ledger close. Public by design: the exchange's quarterly ledger. -->
@@ -1346,8 +1458,7 @@
         <button data-mtab="modules" role="tab">Modules</button>
       </div>
       <div id="market-pane-exchange">
-        <div class="mhint" style="margin-bottom:6px">Trades your <b>hub warehouse</b> — goods held here at the Wormhole Hub. Buys land in the warehouse; sells draw from it. Nothing about a trade moves goods across space: your goods sit in exactly two kinds of place, this warehouse and each owned system's stockpile, and moving them between the two is the separate act on the <b>Warehouse</b> tab.</div>
-        <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span title="Units of this good in your hub warehouse — the only pool Buy/Sell settle against. The other place your goods can sit is a system's stockpile.">STORED</span></div>
+        <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span title="Units of this good in your Market Warehouse — the only pool Buy/Sell settle against. The other place your goods can sit is a system's stockpile.">STORED</span></div>
         <div id="market-board"></div>
         <div class="composer">
           <div class="composer__row"><label>Order</label>
@@ -1381,8 +1492,8 @@
           <div class="composer__row"><label>Carrier</label>
             <div class="seg" id="fr-carrier">
               <button data-carrier="tca" class="is-active" title="The Terran Charter Authority's scheduled common carrier. Costs a fee (charged now and destroyed), rides a fixed timetable, and can carry goods BOTH ways. The freighter is a real, raidable hull — but it isn't yours to lose.">Authority freight</button>
-              <button data-carrier="own" title="One of your own convoys, sailing from the Charterhouse the moment you send it. Free and immediate, but outbound only, and it is your hull crossing raidable space.">Your own convoy</button>
             </div>
+            <span class="dim" title="To haul personally, select a real cargo fleet at this hub, load it, and issue its route from the fleet panel.">Owned hulls are managed from their fleet panel.</span>
           </div>
           <div class="composer__row"><label>Direction</label>
             <div class="seg" id="fr-dir"><button data-dir="outbound" class="is-active">Warehouse → system</button><button data-dir="inbound">System → warehouse</button></div>
@@ -1390,7 +1501,7 @@
           <div class="composer__row"><label>System</label><select id="fr-system"></select></div>
           <div class="composer__row"><label>Goods</label><select id="fr-commodity"></select>
             <label>Qty</label><input type="number" id="fr-qty" min="1" value="100" /></div>
-          <div class="composer__row" id="fr-sell-row"><label>On arrival</label><label class="lim" title="Sell the lot at the Exchange the moment it lands at the hub, at that tick's standing price."><input type="checkbox" id="fr-sell" /> sell on arrival</label></div>
+          <div class="composer__row" id="fr-sell-row"><label>On arrival</label><label class="lim" title="Sell the lot at the Global Market the moment it lands at the Market Hub, on that tick's quantity-aware curve."><input type="checkbox" id="fr-sell" /> sell on arrival</label></div>
           <div class="composer__preview" id="fr-preview"></div>
           <button class="act act--primary" id="fr-submit">Book freight</button>
           <div class="mhint" id="fr-feedback"></div>

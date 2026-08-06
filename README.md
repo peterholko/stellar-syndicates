@@ -27,6 +27,10 @@ scripts/start.sh
 Then open <http://localhost:8080> and enter a corporation name. Pass `--keep-galaxy` to
 resume the existing snapshot instead of starting fresh.
 
+**§jump-v1 requires a fresh galaxy.** Snapshots created by the retired hyperspace-lane/relay
+build are not compatible with the jump-drive world model. Let `scripts/start.sh` reset the
+galaxy once; snapshots produced by this build can then be resumed normally.
+
 **Manually**, if you prefer:
 
 ```bash
@@ -62,8 +66,10 @@ MAX_PLAYERS=12 cargo run --release -p server
 | `PORT` | 8080 | HTTP + WebSocket listen port |
 | `GALAXY_SEED` | `0xC0FFEE` | deterministic generation seed |
 | `MAX_PLAYERS` | 4 | sizes the galaxy (radius scales as `4000 × √players`) |
+| `HOME_RING_SU` | 80,000 su nominal outer ring | optional absolute home-ring radius override; useful for replaying archived layouts |
+| `SIM_PACING` | 4 | sim seconds per wall second for compressed balance playtests; set to `1` for standard/production pacing |
 | `DATABASE_URL` | unset | Postgres DSN; unset means an in-memory no-op stub |
-| `SNAPSHOT_EVERY_TICKS` | 300 | full-world snapshot cadence (10 s at 30 Hz) |
+| `SNAPSHOT_EVERY_TICKS` | pacing-adjusted | full-world snapshot cadence; approximately 10 wall seconds (1,200 ticks at 4×, 300 at 1×) |
 | `RUST_LOG` | — | e.g. `info` |
 
 Endpoints: `/ws` (the game), `/healthz`, and `/status` (connection and session meta, kept
@@ -88,12 +94,12 @@ stop` or `nuke` when you're done.
 You command a chartered corporation from a home star system you own outright. Every sighting
 shows you where something *was*; every order crosses space at *c*.
 
-**Read your delayed map.** Fleets are ghosts — cyan for yours, red for rivals — each showing
-how stale it is and how far it could have moved since the light left. Uncertainty is
-`age × speed` and applies to *your own* fleets too: there is no FTL tether to your ships, so
-a distant fleet of yours is as uncertain as a rival's. Teal bubbles are your sensor coverage;
-outside them you are blind to raiders and scouts, which run dark. Convoys, corvettes, colony
-ships, and capitals broadcast galaxy-wide, but their cargo shows only inside your sensors.
+**Read your delayed map.** Fleets are ghosts — cyan for yours, red for rivals — and each
+declares how old its last-arrived light is. Potential uncertainty is `age × speed` and applies
+to *your own* fleets too: there is no FTL tether. Sensor coverage is deliberately not drawn as
+a certainty ring because speed and fleet signature change its effective reach; outside served
+coverage you are blind to Raiders and Scouts, which run dark. Civilian and capital fleets
+broadcast galaxy-wide, but their composition and cargo sharpen only inside your sensors.
 
 **Command across the delay.** Select a fleet, click empty space to move it. A violet comet
 shows your order crossing to the fleet; the panel and the map then track it through
@@ -113,7 +119,7 @@ physical, telegraphed, and raidable. Site structures on individual planets and m
 their production lines with workforce and specialists, feed the population, and chain raw
 extraction into processed and advanced goods.
 
-**Trade.** The Charterhouse Exchange settles instantly against your warehouse at the hub, but
+**Trade.** The Global Market settles instantly against your warehouse at the hub, but
 its price ticker is light-delayed, so you commit to the true price rather than the one you
 read. Hauling is a separate, explicit act on the **Warehouse** tab, where you pick the
 carrier for each lot: book Authority freight (a fee, a fixed timetable, someone else's hull,
@@ -152,12 +158,13 @@ built, and §21 the open questions.
 
 | Area | State |
 |---|---|
-| **The lightspeed model** | Per-player delayed and fogged views computed from each player's own command center, with an enforced fairness guarantee (no player receives information their light hasn't reached). Command latency, the three clocks, and the full order lifecycle with echo confirmation. |
+| **The lightspeed model** | Every novel report and directed order travels on one straight 2,000 su/s warp-light chord to or from each player's command center. Per-player arrival-ordered views enforce the fairness guarantee; order confirmation can fire only from compliance light already served on the map. No lane, relay, or wire channel remains. |
 | **Detection** | Speed-signature visibility: `distance ≤ sensor_capability × signature`, from a shared function used by both the view filter and the sim's own sensing. Size aggregates as √signal; flank speed lights you up; a Full/Stealth transit throttle is the player's lever. |
 | **Intel** | Count-class buckets always, exact composition and cargo only inside sensor coverage, scout snapshots of rival fortifications delivered at *c* and then aging. |
-| **Movement** | Constant per-kind speeds (`t = d/v`), analytic interception, formation speed set by the slowest member, fuel drawn per `distance × mass` with a soft shortfall that holds the order rather than losing the ship. |
+| **Movement** | Straight thruster/warp travel with constant per-kind speeds, analytic interception, and formation speed set by the slowest member. Raider/Scout-only fleets also have a 50,000 su jump: 10 s stationary spool, gravity-well lockout, warp-equivalent fuel cost, instantaneous relocation, and a light-delayed served snap. |
 | **Standing upkeep** | Every fleet eats Provisions every second, wherever it is, online or off — the ceiling on force. Charged on crew rather than tonnage, paid from the owner's nearest stocked system. A shortfall **immobilizes** a fleet and never destroys it: it keeps its guns and its course, and moves again the moment it is fed. |
 | **Fleets** | A fleet is a **roster of individual hulls** — each with its own id, fit, and remaining hull. Build/join, merge, split at owned systems; twelve hull kinds including a research-gated Destroyer→Titan capital ladder. |
+| **Officers** | A home-Academy Captain roster with physical assignment/reserve duty, light-delayed remote progression, XP and eight service ranks, weighted command capacity, four bounded specialties, and delayed rescue/injury/capture/death outcomes after fleet loss. |
 | **Persistent damage** | Battle damage lives on the individual ship, survives the battle, the snapshot, and any merge or split, and never heals on its own. Nothing is pooled or apportioned; a hull held in reserve takes none. Repaired at an Ordnance Foundry on the standard factor chain — an unsupplied yard mends less, never destroys. |
 | **Combat** | An individual-ship tactical engine — positioned combatants, range bands, live torpedoes, five published role scripts, per-battle isolated seeded RNG. Modules with a one-to-one counter matrix and fitting-point budgets. Battle records, a Pixi replay theater, and a Monte Carlo pre-commit estimator that samples the real engine. |
 | **Standing defense** | Corvette screens, defense platforms, autonomous pickets, and per-fleet postures — all running with the owner offline. |
@@ -168,8 +175,10 @@ built, and §21 the open questions.
 | **Ground war** | Settling and conquering are different acts with different hulls: a colony ship takes *unclaimed* ground, held ground takes **marines**. A landing is *fought* — seeded rounds on their own clock, with suppression re-read every tick, so relief that breaks a blockade can turn an invasion already on the ground. A pre-commit estimate sampled from the real engine prices the gamble first, including what happens if the guns leave. |
 | **Ground theater** | Every landing leaves a replayable record: both sides' strength round by round, the fraction of the garrison pinned at each moment, and derived beats (guns lifted, lead changed hands). Participants read exact troop counts; an observer with sensor coverage sees the fight's shape without its arithmetic. Rounds arrive on their own light. |
 | **Plunder** | A held blockade strips the stockpile it strangles, into the blockader's own hold — so the loot still has to survive the trip home. Bounded by rate, hold room, and a per-commodity reserve the besieger can never strip below: a colony always survives and recovers. |
-| **Research** | Six programme boards with twelve schools, 111 programmes, verb gates, and a goods-funded clock distributed across your Academies. |
-| **Syndicates** | Capped alliances with shared research, doctrine fits, and one flagship; membership propagates at light speed. |
+| **Research** | Six corporation-owned programme boards with twelve schools, 111 programmes, verb gates, and a goods-funded clock distributed across your Academies. Joining or leaving a Syndicate never grants, pauses, or removes research. |
+| **Syndicates** | Capped alliances with Founder/Officer/Quartermaster/Member permissions, shared operations, doctrine fits and one flagship; membership propagates at light speed. |
+| **Operations** | One light-honest contract engine for bounties, surveys, deliveries, salvage, escorts, enforcement, strategic control, regional competitions and staged syndicate projects. |
+| **Diplomacy** | Non-aggression pacts, ceasefires and declared wars with light-travel notices, activation grace, post-syndicate separation and defender-only reprisal. |
 | **Neutrals** | Pirate enclaves that escalate if ignored (with an onboarding grace window per corporation) and the Authority's freighters and enforcement squadrons. |
 | **Async loop** | Standing logistics orders, corp doctrine, offline accrual, and a reconnect digest of what became observable while you were away. |
 | **Ops** | 12 players in one galaxy with the loop keeping up; snapshot persistence with restart recovery; reconnect resumes a corporation. |
@@ -206,8 +215,9 @@ forced to a target by retuning that calibration constant.
 
 - **`crates/sim` is pure.** No I/O, no async, no networking, no database. `World::step` takes
   commands and returns the next state plus events; determinism comes from a seeded RNG and a
-  fixed 30 Hz timestep. This is both the determinism guarantee and the oracle for a future
-  headless balance harness.
+  fixed 30 Hz timestep. The Academy-to-first-colony balance harness runs that same engine and
+  emits milestone CSV across seeds and opening strategies:
+  `cargo run --release -p sim --example opening_balance -- --seeds 100`.
 - **One Tokio task owns the world** and the session registry, so there are no locks and no
   data races on game state — by construction, not by discipline.
 - **axum + WebSockets are pure I/O.** Connections take intents and push filtered state; they
@@ -217,7 +227,7 @@ forced to a target by retuning that calibration constant.
   until its light-travel time to that player's command center has elapsed and filters by what
   that player's assets can observe. It is the code embodiment of the whole information model.
 
-The wire protocol is versioned (currently **7**) and announced at join. Static tables ship
+The wire protocol is versioned (currently **16**) and announced at join. Static tables ship
 once in the welcome message, slow-moving per-player sections are signature-gated and re-sent
 only on change, and battle records stream incrementally — the map stays smooth at 10 Hz
 updates.
@@ -242,8 +252,8 @@ docs/                design handoffs for individual subsystems
 cargo test
 ```
 
-**543 tests, all passing:** 471 sim unit tests, 3 determinism integration tests (same seed
-byte-for-byte, mid-flight snapshot round-trip, pre-feature snapshot load), and 69 server
+**560 tests, all passing:** 478 sim unit tests, 3 determinism integration tests (same seed
+byte-for-byte, mid-flight snapshot round-trip, pre-feature snapshot load), and 79 server
 tests. The client is type- and build-checked with `npm --prefix client run build`
 (`tsc --noEmit && vite build`).
 
@@ -278,7 +288,7 @@ drive a second player for manual and visual testing.
   physical now (send a colony ship). The production and geology-gradient assertions in it are
   still valid ideas worth re-testing through the new path.
 - `economy_smoke.mjs` expects a market buy to spawn a delivery convoy. Buys deposit into the
-  Charterhouse warehouse now and move nothing; its ticker-staleness and instant-settlement
+  Market Warehouse now and move nothing; its ticker-staleness and instant-settlement
   assertions still hold.
 - `m2_smoke.mjs` describes flip-and-burn movement, which was removed for constant per-kind
   speeds. It still verifies that the galaxy generates and fleets move.

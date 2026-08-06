@@ -142,9 +142,18 @@ mod tests {
     /// 2 advanced), and RAW matches the Raw tier.
     #[test]
     fn tiers_partition_the_twelve() {
-        let raw = Commodity::ALL.iter().filter(|c| c.tier() == CommodityTier::Raw).count();
-        let processed = Commodity::ALL.iter().filter(|c| c.tier() == CommodityTier::Processed).count();
-        let advanced = Commodity::ALL.iter().filter(|c| c.tier() == CommodityTier::Advanced).count();
+        let raw = Commodity::ALL
+            .iter()
+            .filter(|c| c.tier() == CommodityTier::Raw)
+            .count();
+        let processed = Commodity::ALL
+            .iter()
+            .filter(|c| c.tier() == CommodityTier::Processed)
+            .count();
+        let advanced = Commodity::ALL
+            .iter()
+            .filter(|c| c.tier() == CommodityTier::Advanced)
+            .count();
         assert_eq!((raw, processed, advanced), (5, 5, 2));
         for c in Commodity::RAW {
             assert_eq!(c.tier(), CommodityTier::Raw);

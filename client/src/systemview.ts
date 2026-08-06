@@ -182,6 +182,19 @@ function radiusForKind(kind: PlanetKind, rng: () => number): number {
   return 0.02 + rng() * 0.016;
 }
 
+// Public body size has a visible silhouette. The ranges still overlap, so art
+// reads naturally rather than as five rigid icon sizes, but a Huge world is an
+// unmistakably different discovery from a Tiny moon.
+function bodySizeVisual(size: BodyView["size"]): number {
+  switch (size) {
+    case "tiny": return 0.70;
+    case "small": return 0.85;
+    case "large": return 1.18;
+    case "huge": return 1.35;
+    default: return 1;
+  }
+}
+
 // ---- The generator -----------------------------------------------------------
 //
 // Deterministic from the public system id + the VIEWER'S KNOWN geology
@@ -208,7 +221,7 @@ export function buildVisualSystem(sys: SystemInfo, bodies: BodyView[]): VisualSy
       name: b.name,
       kind,
       orbitRadius: Math.min(0.96, base + (rng() - 0.5) * 0.03),
-      radius: radiusForKind(kind, rng),
+      radius: radiusForKind(kind, rng) * bodySizeVisual(b.size),
       angle: rng() * Math.PI * 2,
       moons: [],
       deposits: b.deposits ?? [],
@@ -227,7 +240,7 @@ export function buildVisualSystem(sys: SystemInfo, bodies: BodyView[]): VisualSy
       id: String(b.id),
       name: b.name,
       orbitRadius: 0.028 + rng() * 0.02 + parent.moons.length * 0.014,
-      radius: 0.006 + rng() * 0.004,
+      radius: (0.006 + rng() * 0.004) * bodySizeVisual(b.size),
       angle: rng() * Math.PI * 2,
       deposits: b.deposits ?? [],
       structures: b.structures,

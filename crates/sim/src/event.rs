@@ -21,8 +21,9 @@ use crate::ship::ShipKind;
 #[serde(rename_all = "snake_case")]
 pub enum OrderKind {
     Move,
+    Jump,
     /// §emplacements: a CONSTRUCT order — send a builder to a site and put a
-    /// buoy or sensor there.
+    /// sensor there.
     Construct,
     /// §emplacements: a DEMOLISH order — send a combatant to a rival's structure
     /// and tear it down.
@@ -44,6 +45,7 @@ impl OrderKind {
     pub fn label(self) -> &'static str {
         match self {
             OrderKind::Move => "move",
+            OrderKind::Jump => "jump",
             OrderKind::Construct => "construct",
             OrderKind::Demolish => "demolish",
             OrderKind::Raid => "raid",
@@ -68,7 +70,10 @@ pub struct Event {
 #[serde(tag = "event")]
 pub enum EventPayload {
     /// A new corporation entered the galaxy for the first time.
-    PlayerJoined { id: PlayerId, name: String },
+    PlayerJoined {
+        id: PlayerId,
+        name: String,
+    },
     /// A ship was created (e.g. the demo convoy/raider spawned at a home anchor).
     ShipSpawned {
         id: EntityId,
@@ -77,7 +82,26 @@ pub enum EventPayload {
     },
     /// A player's move order finally reached a ship (its outbound light arrived)
     /// and took effect.
-    OrderApplied { ship_id: EntityId },
+    OrderApplied {
+        ship_id: EntityId,
+    },
+
+    /// Persistence/audit hook only. The jump itself reaches players through the
+    /// ordinary served position history, never through this true-time event.
+    FleetJumped {
+        owner: PlayerId,
+        fleet: EntityId,
+        from: crate::math::Vec2,
+        to: crate::math::Vec2,
+    },
+    /// A delivered jump failed at the hull. Timeline serving light-delays this
+    /// positioned result to its owner.
+    JumpFailed {
+        owner: PlayerId,
+        fleet: EntityId,
+        pos: crate::math::Vec2,
+        reason: JumpFailReason,
+    },
 
     /// OWNER-ONLY reporting seam: a validated player order entered the
     /// light-delayed command queue. The id is allocated by the sim at the one
@@ -91,9 +115,9 @@ pub enum EventPayload {
 
     /// OWNER-ONLY (§order-lifecycle): the player's order has been DELIVERED to the
     /// fleet (its outbound light arrived and the fleet is now executing) — but the
-    /// light showing the new behavior hasn't returned. `echo_at` is exactly when
-    /// that confirming light reaches the command center. Owner-only, fog-safe
-    /// (it's the player's own command data); never delivered to rivals.
+    /// expected response has not arrived. `echo_at` is the legacy wire name for
+    /// that response: a returning dark fleet's comm-circle crossing, or otherwise
+    /// its confirming-light arrival. Owner-only; never delivered to rivals.
     OrderDelivered {
         owner: PlayerId,
         fleet: EntityId,
@@ -103,6 +127,7 @@ pub enum EventPayload {
     /// OWNER-ONLY (§order-lifecycle): the confirming light has arrived — the
     /// player can now SEE the fleet complying with the order. Owner-only.
     OrderConfirmed {
+        id: u64,
         owner: PlayerId,
         fleet: EntityId,
         kind: OrderKind,
@@ -160,11 +185,6 @@ pub enum EventPayload {
     /// rival combatant. Like [`EventPayload::ShipDestroyed`], this is a
     /// per-player DELAYED disappearance: it is gone from true space now, but
     /// the owner keeps seeing it until the news reaches their command center.
-    ///
-    /// Deliciously self-punishing for a buoy: killing a relay makes the report
-    /// of its own death travel slower, because the network that would have
-    /// carried it is what just died. Nothing special-cases that — it falls out
-    /// of pricing the delay against the network as it stands AFTER the loss.
     EmplacementDestroyed {
         emplacement: EntityId,
         owner: PlayerId,
@@ -215,7 +235,11 @@ pub enum EventPayload {
     /// part 3 — you lost the race, or it flipped en route). SOFT: the ship
     /// holds position, fully intact and redirectable; nothing is destroyed.
     /// Owner-only news, light-delayed from the hold position.
-    ColonyHeld { owner: PlayerId, system: EntityId, pos: crate::math::Vec2 },
+    ColonyHeld {
+        owner: PlayerId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+    },
     /// A SCOUT captured an intel snapshot of a rival system's fortifications
     /// (§scout part 2). OWNER-ONLY: the knowledge exists on the scout at `pos`
     /// at the capture moment — the owner learns it when that light reaches
@@ -233,16 +257,34 @@ pub enum EventPayload {
     /// §economy Part 4: a Sol specialist CONTRACT was signed — credits debited,
     /// a personnel convoy dispatched hub → `dest`. OWNER-ONLY, own clock
     /// (price-certain; the delivery is the risky part).
-    SpecialistHired { owner: PlayerId, kind: crate::specialist::SpecialistKind, dest: EntityId },
+    SpecialistHired {
+        owner: PlayerId,
+        kind: crate::specialist::SpecialistKind,
+        dest: EntityId,
+    },
     /// §economy Part 4: an Academy finished a training course — one specialist
     /// joined the system's resident pool. OWNER-ONLY, own clock.
-    SpecialistTrained { owner: PlayerId, system: EntityId, kind: crate::specialist::SpecialistKind },
+    SpecialistTrained {
+        owner: PlayerId,
+        system: EntityId,
+        kind: crate::specialist::SpecialistKind,
+    },
     /// §modules Part B3: a module finished manufacture — one crate joined the
     /// system's module ledger. OWNER-ONLY, own clock.
-    ModuleBuilt { owner: PlayerId, system: EntityId, kind: crate::module::ModuleKind },
+    ModuleBuilt {
+        owner: PlayerId,
+        system: EntityId,
+        kind: crate::module::ModuleKind,
+    },
     /// §modules Part B4: a REFIT completed — `n` hulls of `ship` rejoined fitted
     /// to `loadout` at `system`. OWNER-ONLY, own clock (a yard job, like a build).
-    ShipsRefitted { owner: PlayerId, system: EntityId, ship: crate::ship::ShipKind, loadout: crate::module::Loadout, n: u32 },
+    ShipsRefitted {
+        owner: PlayerId,
+        system: EntityId,
+        ship: crate::ship::ShipKind,
+        loadout: crate::module::Loadout,
+        n: u32,
+    },
     /// §ground M7: a landing was REPULSED — the marines that arrived could not
     /// beat what was still standing. Nothing is lost (the fleet holds, intact and
     /// redirectable); this exists so the player learns WHY rather than watching
@@ -252,7 +294,13 @@ pub enum EventPayload {
     /// break-even strength, so nothing was committed and nothing was lost. The
     /// fleet holds in orbit until it is reinforced or the guns pin more of the
     /// garrison. Distinct from `AssaultRepulsed`, which costs you the landing.
-    AssaultHeld { owner: PlayerId, system: EntityId, marines: u32, needed: u32, pos: crate::math::Vec2 },
+    AssaultHeld {
+        owner: PlayerId,
+        system: EntityId,
+        marines: u32,
+        needed: u32,
+        pos: crate::math::Vec2,
+    },
     /// §ground G1: the drop went in. `marines` landed against `defenders`
     /// standing troops, under `suppression` at the moment of the landing.
     AssaultBegan {
@@ -268,12 +316,22 @@ pub enum EventPayload {
     /// §ground G1: the landing was DESTROYED on the ground. The marines are
     /// gone with the transports that carried them; the colony holds. `held` is
     /// what the garrison had left when it was over.
-    AssaultRepulsed { owner: PlayerId, system: EntityId, landed: u32, held: u32, pos: crate::math::Vec2 },
+    AssaultRepulsed {
+        owner: PlayerId,
+        system: EntityId,
+        landed: u32,
+        held: u32,
+        pos: crate::math::Vec2,
+    },
     /// §ground: a system's dug-in GARRISON went unfed (suspending its defense) or
     /// was fed again. OWNER-ONLY, own clock — your own quartermastery, and it
     /// must never leak: a rival learning your garrison is starving would be told
     /// exactly when to land.
-    GarrisonSupplyStateChanged { owner: PlayerId, system: EntityId, fed: bool },
+    GarrisonSupplyStateChanged {
+        owner: PlayerId,
+        system: EntityId,
+        fed: bool,
+    },
     /// §plunder: a held BLOCKADE stripped goods from the system it strangles.
     /// Both sides learn it light-delayed from the system (the victim sees their
     /// stores walking away; the besieger sees the prize come aboard) — the same
@@ -289,60 +347,125 @@ pub enum EventPayload {
     /// §upkeep: a fleet's standing Provisions supply changed state — it went
     /// hungry (and is now immobilized) or was fed again (and is free to move).
     /// Transition-only, OWNER-ONLY, own clock: it is your own quartermastery.
-    FleetSupplyChanged { owner: PlayerId, fleet: EntityId, supplied: bool },
+    FleetSupplyChanged {
+        owner: PlayerId,
+        fleet: EntityId,
+        supplied: bool,
+    },
     /// §roster: a fleet finished REPAIRS at an Ordnance Foundry — every hull back
     /// to full. Fires ONCE, on completion (a per-tick event would flood the
     /// timeline for the whole service). OWNER-ONLY, own clock: it is your own
     /// yard's work, like a build.
-    FleetRepaired { owner: PlayerId, fleet: EntityId, system: EntityId },
+    FleetRepaired {
+        owner: PlayerId,
+        fleet: EntityId,
+        system: EntityId,
+    },
     /// §modules Part B3: a module convoy LANDED its crates into a system's ledger.
     /// OWNER-ONLY, own clock (own-economy precedent, like SpecialistsDelivered).
-    ModulesDelivered { owner: PlayerId, system: EntityId, manifest: std::collections::BTreeMap<crate::module::ModuleKind, u32> },
+    ModulesDelivered {
+        owner: PlayerId,
+        system: EntityId,
+        manifest: std::collections::BTreeMap<crate::module::ModuleKind, u32>,
+    },
     /// §modules Part B3 (Sol hub): a module PURCHASE from Sol was settled — credits
     /// debited now, a delivery convoy dispatched hub → `dest`. OWNER-ONLY, own clock
     /// (price-certain; the delivery is the risky part, like SpecialistHired).
-    ModulesPurchased { owner: PlayerId, kind: crate::module::ModuleKind, n: u32, dest: EntityId, unit_price: f64 },
+    ModulesPurchased {
+        owner: PlayerId,
+        kind: crate::module::ModuleKind,
+        n: u32,
+        dest: EntityId,
+        unit_price: f64,
+    },
     /// §modules Part B3 (Sol hub): a module SALE cleared at Sol on the convoy's
     /// arrival — credits paid at the buy-back price. OWNER-ONLY, own clock.
-    ModulesSold { owner: PlayerId, kind: crate::module::ModuleKind, n: u32, unit_price: f64 },
+    ModulesSold {
+        owner: PlayerId,
+        kind: crate::module::ModuleKind,
+        n: u32,
+        unit_price: f64,
+    },
     /// §modules Part B3: a convoy DIED with modules aboard — the crates are lost
     /// with the ship (the one true loss rule, like SpecialistsLost). OWNER-ONLY,
     /// light-delayed from the wreck like any battle news.
-    ModulesLost { owner: PlayerId, manifest: std::collections::BTreeMap<crate::module::ModuleKind, u32>, pos: crate::math::Vec2 },
-    /// §research: a syndicate COMPLETED a programme — its effect applies instantly
-    /// galaxy-wide (design decision #5). OWNER-ONLY to the syndicate's members.
-    ResearchCompleted { syndicate: crate::ids::SyndicateId, programme: String },
-    /// §research: a tier's verb GATE was first crossed for a syndicate (a new
+    ModulesLost {
+        owner: PlayerId,
+        manifest: std::collections::BTreeMap<crate::module::ModuleKind, u32>,
+        pos: crate::math::Vec2,
+    },
+    /// §research: a corporation COMPLETED a programme — its effect applies
+    /// instantly across that corporation. OWNER-ONLY.
+    ResearchCompleted {
+        owner: PlayerId,
+        programme: String,
+    },
+    /// §research: a tier's verb GATE was first crossed for a corporation (a new
     /// row of programmes opened). OWNER-ONLY.
-    TierUnlocked { syndicate: crate::ids::SyndicateId, field: crate::research::Field, school: Option<crate::research::School>, tier: u8 },
-    /// §research: the syndicate's research CLOCK stalled (no staffed/funded
+    TierUnlocked {
+        owner: PlayerId,
+        field: crate::research::Field,
+        school: Option<crate::research::School>,
+        tier: u8,
+    },
+    /// §research: the corporation's research CLOCK stalled (no staffed/funded
     /// Academy) or resumed. OWNER-ONLY. Fires once per transition.
-    ResearchStalled { syndicate: crate::ids::SyndicateId },
-    ResearchResumed { syndicate: crate::ids::SyndicateId },
+    ResearchStalled {
+        owner: PlayerId,
+    },
+    ResearchResumed {
+        owner: PlayerId,
+    },
     /// §economy Part 4: a personnel convoy LANDED its passengers into a
     /// system's resident pool. OWNER-ONLY, own clock (own-economy precedent).
-    SpecialistsDelivered { owner: PlayerId, system: EntityId, manifest: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32> },
+    SpecialistsDelivered {
+        owner: PlayerId,
+        system: EntityId,
+        manifest: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32>,
+    },
     /// §economy Part 4: a fleet DIED with specialists aboard — the people are
     /// lost with the ship (the one true loss rule for specialists; residents
     /// on the ground are never destroyed). OWNER-ONLY, light-delayed from the
     /// wreck like any battle news.
-    SpecialistsLost { owner: PlayerId, manifest: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32>, pos: crate::math::Vec2 },
+    SpecialistsLost {
+        owner: PlayerId,
+        manifest: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32>,
+        pos: crate::math::Vec2,
+    },
     /// §economy Part 3: an assignment was (re)posted — `workers` crews to
     /// `structure` at `system`. OWNER-ONLY, own clock (instant local admin,
     /// like standing orders). The UI's confirmation signal.
-    AssignmentSet { owner: PlayerId, system: EntityId, structure: crate::build::StructureKind, workers: u32 },
+    AssignmentSet {
+        owner: PlayerId,
+        system: EntityId,
+        structure: crate::build::StructureKind,
+        workers: u32,
+    },
     /// §economy Part 3: a production line STOPPED producing — latched, so it
     /// fires once per outage, with the binding cause (food > inputs > storage).
     /// OWNER-ONLY, own clock. Nothing is destroyed; fixing the cause resumes it.
-    ProductionSuspended { owner: PlayerId, system: EntityId, structure: crate::build::StructureKind, reason: crate::production::SuspendReason },
+    ProductionSuspended {
+        owner: PlayerId,
+        system: EntityId,
+        structure: crate::build::StructureKind,
+        reason: crate::production::SuspendReason,
+    },
     /// §economy Part 3: a suspended line PRODUCED again (the recovery notice).
-    ProductionResumed { owner: PlayerId, system: EntityId, structure: crate::build::StructureKind },
+    ProductionResumed {
+        owner: PlayerId,
+        system: EntityId,
+        structure: crate::build::StructureKind,
+    },
     /// §economy Part 2: a colony's FOOD STATE moved on the 4-rung ladder
     /// (replaces the old binary HabitatSupplyChanged). OWNER-ONLY news, on the
     /// owner's own clock (own-economy precedent). Down-rungs are warnings
     /// (workforce efficiency drops — nothing destroyed, nobody dies);
     /// up-rungs are recoveries. Emitted only on TRANSITIONS, never per-tick.
-    FoodStateChanged { owner: PlayerId, system: EntityId, state: crate::colony::FoodState },
+    FoodStateChanged {
+        owner: PlayerId,
+        system: EntityId,
+        state: crate::colony::FoodState,
+    },
     /// §pirates: a player DESTROYED a pirate enclave's base (ground its defense to
     /// 0). `owner` = the victor (they seize the plunder into their inventory);
     /// light-delayed from the base to their command center. The base goes dormant
@@ -353,11 +476,40 @@ pub enum EventPayload {
         pos: crate::math::Vec2,
         plunder: std::collections::BTreeMap<crate::cargo::Commodity, u32>,
     },
+    /// An operation report was emitted at `pos`. The operation's own known-copy
+    /// queue controls its panel state; this event supplies timeline/history copy
+    /// on the same positioned wavefront.
+    OperationUpdated {
+        operation: crate::ids::OperationId,
+        recipient: PlayerId,
+        state: crate::operation::OperationState,
+        progress: u32,
+        goal: u32,
+        pos: crate::math::Vec2,
+        /// Exact time this frozen report reaches `recipient`.
+        arrive_at: f64,
+    },
+    /// A diplomatic message or state transition. `recipient` is explicit so the
+    /// server never broadcasts private negotiations; `origin` prices the normal
+    /// CC-to-CC information leg.
+    DiplomacyUpdated {
+        recipient: PlayerId,
+        other: PlayerId,
+        state: crate::diplomacy::RelationState,
+        kind: crate::diplomacy::DiplomacyNoticeKind,
+        origin: crate::math::Vec2,
+        /// Exact time this notice becomes actionable in the recipient's view.
+        arrive_at: f64,
+    },
     /// §node: an EXOTIC system AWAKENED into a capturable node at the configured
     /// awakening time. Announced GALAXY-WIDE, light-delayed from the node's position
     /// to each observer's command center (same gate as a rival claim). `bonus` names
     /// the tactical edge it grants; `pos` is for the light-delay + the map badge.
-    NodeAwakened { system: EntityId, pos: crate::math::Vec2, bonus: crate::node::NodeBonus },
+    NodeAwakened {
+        system: EntityId,
+        pos: crate::math::Vec2,
+        bonus: crate::node::NodeBonus,
+    },
     /// §node: a node's HOLDER changed (colony-claimed if it was unowned, or
     /// sieged→captured if held). EXPOSURE — announced GALAXY-WIDE, light-delayed:
     /// every corp learns who now commands the node (there is no hiding a node's
@@ -372,17 +524,25 @@ pub enum EventPayload {
     /// upkeep mix couldn't be covered from the node's local stockpile, so its bonus
     /// SUSPENDS (nothing destroyed — recovers when fed); `fed = true` is recovery.
     /// OWNER-ONLY (your own logistics), emitted on TRANSITIONS only.
-    NodeSupplyChanged { owner: PlayerId, system: EntityId, fed: bool },
+    NodeSupplyChanged {
+        owner: PlayerId,
+        system: EntityId,
+        fed: bool,
+    },
     /// §explore Part 2: a SURVEY dwell completed. Fired AT THE FLEET'S POSITION —
     /// the knowledge travels home at c (the sim inserts into the corp's `surveyed`
     /// set when the report light reaches their command center, then relays to
     /// allies on the intel chain), and the timeline light-delays the owner's
     /// notice from this same `pos`. Owner-only news.
-    SurveyCompleted { owner: PlayerId, system: EntityId, pos: crate::math::Vec2 },
-    /// §explore Part 3: a system's HIDDEN TRAIT revealed to its (new) owner —
-    /// fired at claim AND at capture (the knowledge transfers as spoils). The
-    /// blind claimer's gamble resolving IS the reveal. OWNER-ONLY, light-delayed
-    /// from the system (knowledge travels home at c, like the survey report).
+    SurveyCompleted {
+        owner: PlayerId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+    },
+    /// §explore Part 3: a system's economic trait reported to its (new) owner —
+    /// fired at claim AND at capture (the knowledge also transfers as spoils).
+    /// A prior survey may already have revealed it through the View. OWNER-ONLY,
+    /// light-delayed from the system (knowledge travels home at c, like survey).
     TraitRevealed {
         owner: PlayerId,
         system: EntityId,
@@ -395,7 +555,11 @@ pub enum EventPayload {
     /// the host couldn't cover this tick's Provisions upkeep so the garrison's
     /// defense contribution is SUSPENDED (never destroyed — it recovers when fed).
     /// Emitted only on TRANSITIONS, per (sender, host) pair.
-    GarrisonSupplyChanged { owner: PlayerId, host: EntityId, fed: bool },
+    GarrisonSupplyChanged {
+        owner: PlayerId,
+        host: EntityId,
+        fed: bool,
+    },
     /// A Defense Platform engaged a hostile raider attacking one of the owner's
     /// convoys inside its protection radius (§buildings step 2c). OWNER-ONLY
     /// detail (tiers lost, result) — the ATTACKER learns only the standard
@@ -416,7 +580,11 @@ pub enum EventPayload {
     /// A dispatch was LIMITED because no owned system could cover its fuel cost
     /// (§step1 part 2). The ship/order/goods are never lost — the op simply held.
     /// Owner-only; `kind` labels what was held ("move"/"raid"/"shipment").
-    FuelShortfall { owner: PlayerId, needed: f64, kind: crate::fuel::ShortfallKind },
+    FuelShortfall {
+        owner: PlayerId,
+        needed: f64,
+        kind: crate::fuel::ShortfallKind,
+    },
 
     /// A rival BLOCKADE was ESTABLISHED at one of `owner`'s systems (§contestable-
     /// territory Part 1): a hostile fleet took station and interdiction began.
@@ -424,14 +592,23 @@ pub enum EventPayload {
     /// only when that light reaches their command center); the besieger `by`
     /// knows via their own on-station fleet. Nothing is destroyed — outbound
     /// convoys hold at origin, inbound hold at standoff, production still accrues.
-    BlockadeEstablished { by: PlayerId, owner: PlayerId, system: EntityId, pos: crate::math::Vec2 },
+    BlockadeEstablished {
+        by: PlayerId,
+        owner: PlayerId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+    },
     /// A blockade at one of `owner`'s systems LIFTED (§contestable-territory) —
     /// the last on-station blockader was destroyed, driven off, or withdrew.
     /// Logistics resume. Light-delayed to the owner from the system.
-    BlockadeLifted { owner: PlayerId, system: EntityId, pos: crate::math::Vec2 },
+    BlockadeLifted {
+        owner: PlayerId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+    },
 
     /// §TCA Phase 2: a CITATION issued by the Terran Charter Authority. This is a
-    /// PUBLIC bulletin from the Charterhouse naming the culprit and the offense —
+    /// PUBLIC bulletin from the Market Hub naming the culprit and the offense —
     /// the reputational hit rides the same wavefront as the legal one, so every
     /// player learns of it light-delayed from the hub. `occurred_at` is when the
     /// offense actually happened (always earlier than the bulletin: the news had
@@ -439,19 +616,19 @@ pub enum EventPayload {
     Citation {
         culprit: PlayerId,
         offense: crate::tca::CitationOffense,
-        /// The Charterhouse — the light source for this bulletin.
+        /// The Market Hub — the light source for this bulletin.
         pos: crate::math::Vec2,
         occurred_at: f64,
     },
 
     /// §TCA Phase 2: an ENFORCEMENT EXPEDITION was dispatched against a PROSCRIBED
-    /// corporation. A PUBLIC bulletin from the Charterhouse, exactly like a
+    /// corporation. A PUBLIC bulletin from the Market Hub, exactly like a
     /// citation — the announcement IS the lead time, since the squadron has to fly
     /// out from the hub at sub-light while the news travels at c.
     EnforcementDispatched {
         target: PlayerId,
         system: EntityId,
-        /// The Charterhouse — the light source for this bulletin.
+        /// The Market Hub — the light source for this bulletin.
         pos: crate::math::Vec2,
     },
     /// §TCA Phase 2: an expedition stood down — time served, or the target paid
@@ -499,51 +676,118 @@ pub enum EventPayload {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(tag = "event")]
 pub enum TradeEvent {
-    /// A market buy settled instantly at the Charterhouse into the warehouse.
+    /// A market buy settled instantly at the Market Hub into the warehouse.
     /// `penalty` is the §TCA charter penalty fee burned on top (0 in good standing).
-    Bought { player: PlayerId, commodity: Commodity, units: u32, unit_price: f64, #[serde(default)] penalty: f64 },
+    Bought {
+        player: PlayerId,
+        commodity: Commodity,
+        units: u32,
+        unit_price: f64,
+        #[serde(default)]
+        penalty: f64,
+    },
     /// A delivery convoy arrived and deposited its cargo. `system == None` means it
     /// landed in the corp's hub WAREHOUSE; `Some(id)` means it was
     /// stocked into THAT system's stockpile (a Supply-from-HQ run or standing order).
     /// A convoy arrived and deposited its cargo. Goods live in exactly two
     /// places, and `system` says which took this lot: `Some(id)` = that system's
     /// stockpile; `None` = the corp's warehouse at the hub.
-    Delivered { player: PlayerId, commodity: Commodity, units: u32, system: Option<EntityId> },
+    Delivered {
+        player: PlayerId,
+        commodity: Commodity,
+        units: u32,
+        system: Option<EntityId>,
+    },
     /// A sell convoy was dispatched toward the hub (goods committed to the dark).
-    SellDispatched { player: PlayerId, commodity: Commodity, units: u32 },
-    /// A sale cleared at the Charterhouse. `penalty` is the §TCA charter penalty
+    SellDispatched {
+        player: PlayerId,
+        commodity: Commodity,
+        units: u32,
+    },
+    /// A sale cleared at the Market Hub. `penalty` is the §TCA charter penalty
     /// fee deducted from the proceeds (0 in good standing).
-    Sold { player: PlayerId, commodity: Commodity, units: u32, unit_price: f64, #[serde(default)] penalty: f64 },
+    Sold {
+        player: PlayerId,
+        commodity: Commodity,
+        units: u32,
+        unit_price: f64,
+        #[serde(default)]
+        penalty: f64,
+    },
     /// A limit order was placed and rests on the book.
-    LimitPlaced { player: PlayerId, side: Side, commodity: Commodity, units: u32, limit_price: f64 },
+    LimitPlaced {
+        player: PlayerId,
+        side: Side,
+        commodity: Commodity,
+        units: u32,
+        limit_price: f64,
+    },
     /// A limit order (partially) cleared in the batch at the uniform price.
     /// `penalty` is the §TCA charter penalty fee on the fill (0 in good standing).
-    LimitFilled { player: PlayerId, side: Side, commodity: Commodity, units: u32, unit_price: f64, #[serde(default)] penalty: f64 },
+    LimitFilled {
+        player: PlayerId,
+        side: Side,
+        commodity: Commodity,
+        units: u32,
+        unit_price: f64,
+        #[serde(default)]
+        penalty: f64,
+    },
+    /// A resting order was cancelled and its remaining escrow returned.
+    LimitCancelled {
+        player: PlayerId,
+        side: Side,
+        commodity: Commodity,
+        units: u32,
+        limit_price: f64,
+    },
     /// A STANDING ORDER fired (§15): the rule auto-dispatched a convoy carrying
     /// `units` of `commodity` from `source`. The "policy ran while you were away"
     /// notification — feeds the check-in timeline.
-    AutoDispatched { player: PlayerId, commodity: Commodity, units: u32, source: EntityId, rule_id: u32 },
+    AutoDispatched {
+        player: PlayerId,
+        commodity: Commodity,
+        units: u32,
+        source: EntityId,
+        rule_id: u32,
+    },
     /// An automated supply convoy reached `system` but the corp no longer owns it
     /// (lost / taken mid-transit). What happened to the cargo is governed by the
     /// corp's [`crate::doctrine::DestinationInvalidPolicy`] and reported as
     /// `action`. The "your frontier supply went sideways" notification — an
     /// attention item for the check-in timeline (§16, Layer 2).
-    SupplyDiverted { player: PlayerId, commodity: Commodity, units: u32, system: EntityId, action: DivertAction },
+    SupplyDiverted {
+        player: PlayerId,
+        commodity: Commodity,
+        units: u32,
+        system: EntityId,
+        action: DivertAction,
+    },
     /// A delivery arrived at `system` but its STORAGE was (partly) FULL (§buildings
     /// step 2): `units` of the cargo could not be stored, so the SAME convoy
     /// carries the excess onward to the hub to sell (sub-light, raidable — goods
     /// are never silently destroyed). Any storable part was delivered first (its
     /// own `Delivered` event).
-    StorageOverflow { player: PlayerId, commodity: Commodity, units: u32, system: EntityId },
+    StorageOverflow {
+        player: PlayerId,
+        commodity: Commodity,
+        units: u32,
+        system: EntityId,
+    },
     /// A SUPPLY-FROM-HQ convoy left home carrying `units` of `commodity` out of the
     /// corp's trading inventory toward `system`'s stockpile (sub-light, raidable).
     /// Arrival is reported by the usual `Delivered` (deposited) / `StorageOverflow`.
-    StockDispatched { player: PlayerId, commodity: Commodity, units: u32, system: EntityId },
+    StockDispatched {
+        player: PlayerId,
+        commodity: Commodity,
+        units: u32,
+        system: EntityId,
+    },
     /// An Exchange order or freight booking was SOFT-REJECTED (§9, §TCA) — owner-
     /// only and instant (your own administration): nothing was spent, the request
     /// simply couldn't be honored. Names WHY, so the fix is obvious. `system` is
     /// the destination/origin a freight booking concerned; `None` for a plain
-    /// Exchange order, which concerns only the Charterhouse.
+    /// Exchange order, which concerns only the Market Hub.
     Rejected {
         player: PlayerId,
         commodity: Commodity,
@@ -565,17 +809,33 @@ pub enum TradeEvent {
         /// Sim-time of the scheduled departure this lot is forecast to ride.
         depart_at: f64,
         /// Sim-time the goods are forecast to reach their destination (the system
-        /// for an outbound lot; back at the Charterhouse for an inbound one).
+        /// for an outbound lot; back at the Market Hub for an inbound one).
         eta: f64,
     },
     /// §TCA Phase 2: charter standing was BOUGHT BACK from the Authority.
     /// Owner-only. `before`/`after` let the client name the band it crossed.
-    CharterReinstated { player: PlayerId, points: f64, cost: f64, before: f64, after: f64 },
-    /// §TCA Part 5: a player convoy took goods aboard at the Charterhouse
+    CharterReinstated {
+        player: PlayerId,
+        points: f64,
+        cost: f64,
+        before: f64,
+        after: f64,
+    },
+    /// §TCA Part 5: a player convoy took goods aboard at the Market Hub
     /// (`system` = None) or at one of the corp's own systems. Owner-only.
-    Loaded { player: PlayerId, commodity: Commodity, units: u32, system: Option<EntityId> },
+    Loaded {
+        player: PlayerId,
+        commodity: Commodity,
+        units: u32,
+        system: Option<EntityId>,
+    },
     /// §TCA Part 5: a player convoy put its hold ashore. Owner-only.
-    Unloaded { player: PlayerId, commodity: Commodity, units: u32, system: Option<EntityId> },
+    Unloaded {
+        player: PlayerId,
+        commodity: Commodity,
+        units: u32,
+        system: Option<EntityId>,
+    },
     /// §TCA: a freight shipment reached a milestone of its journey. Owner-only.
     FreightMoved {
         player: PlayerId,
@@ -590,13 +850,13 @@ pub enum TradeEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FreightStage {
-    /// Loaded aboard an Authority freighter that has left the Charterhouse.
+    /// Loaded aboard an Authority freighter that has left the Market Hub.
     Departed,
     /// Unloaded into the destination system's stockpile.
     DeliveredToSystem,
     /// Collected from the origin system and aboard for the run home.
     CollectedForPickup,
-    /// Landed in the owner's Charterhouse warehouse.
+    /// Landed in the owner's Market Warehouse.
     ArrivedAtWarehouse,
     /// Could not be delivered (the system is no longer the owner's, or its storage
     /// had no room), so the Authority carried it back to the owner's warehouse.
@@ -632,6 +892,7 @@ impl TradeEvent {
             | TradeEvent::Sold { player, .. }
             | TradeEvent::LimitPlaced { player, .. }
             | TradeEvent::LimitFilled { player, .. }
+            | TradeEvent::LimitCancelled { player, .. }
             | TradeEvent::AutoDispatched { player, .. }
             | TradeEvent::SupplyDiverted { player, .. }
             | TradeEvent::StorageOverflow { player, .. }
@@ -680,6 +941,9 @@ impl RaidOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum BuildRejectReason {
+    /// Colony construction is withheld until the corporation completes its
+    /// founding programme. Other ships and structures remain available.
+    FoundingProgramme,
     /// Every development slot at the system is used (built + in-progress).
     NoSlot,
     /// §yards: the system's gating YARD is below the tier this hull needs — or,
@@ -687,7 +951,10 @@ pub enum BuildRejectReason {
     /// Shipyard ≥ 2 here, a Capital Slipway a Drydock ≥ 3). Carries which yard
     /// and what tier, so the notice names the fix. Supersedes the old
     /// `NeedsShipyard`, which could only ever mean the Shipyard.
-    NeedsYard { yard: crate::build::StructureKind, required: u32 },
+    NeedsYard {
+        yard: crate::build::StructureKind,
+        required: u32,
+    },
     /// §yards M1: the gating yard's SLIPWAYS are all occupied — a tier-N yard
     /// builds N hulls at once. Not a refusal of the hull, just of the timing:
     /// nothing is spent, and the same request succeeds when a slip frees up.
@@ -714,7 +981,7 @@ pub enum BuildRejectReason {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum TradeRejectReason {
-    /// The corp's CHARTERHOUSE WAREHOUSE holds fewer units than the order needs.
+    /// The corp's MARKET WAREHOUSE holds fewer units than the order needs.
     /// Selling — and sell-side limit escrow — draws ONLY from the warehouse now;
     /// goods held at a system must first be moved to the hub (by TCA freight
     /// or a player convoy) before they can be sold.
@@ -729,7 +996,7 @@ pub enum TradeRejectReason {
     /// §TCA freight: the treasury can't cover the freight fee. The fee is charged
     /// in full at booking or not at all — no partial lots.
     CannotAffordFee { fee: f64 },
-    /// §TCA freight: the Charterhouse won't book to or from a BLOCKADED system.
+    /// §TCA freight: the Market Hub won't book to or from a BLOCKADED system.
     /// This is the Authority acting on its OWN light-delayed knowledge: it starts
     /// refusing only once the blockade's light reaches the hub, and keeps refusing
     /// until the lift's light does. Freight already in flight carries on — it
@@ -739,16 +1006,16 @@ pub enum TradeRejectReason {
     /// not Idle, or currently engaged in a battle. Load and unload are dockside
     /// work; a fleet under way or under fire isn't doing it.
     FleetUnavailable,
-    /// §TCA Part 5: the fleet is too far from the Charterhouse (or the system's
+    /// §TCA Part 5: the fleet is too far from the Market Hub (or the system's
     /// star) to move goods across the boundary.
     OutOfLogisticsRange,
     /// §TCA Part 5: no room. Either the fleet has no cargo hull at all (`capacity`
     /// 0 — raiders, corvettes, scouts and colony ships carry none) or the lot
     /// would overflow what its convoys can lift.
     NoCargoRoom { capacity: u32 },
-    /// §TCA Part 5: the fleet is already carrying a DIFFERENT commodity. A
-    /// player convoy's hold is single-commodity (unchanged in this phase) —
-    /// unload first.
+    /// Legacy wire/save value from the retired single-commodity hold. Mixed
+    /// manifests no longer emit this refusal, but deserializing old timelines
+    /// remains supported.
     CargoMismatch,
     /// §TCA Phase 2: your charter is SUSPENDED — the Authority will take no NEW
     /// freight booking from you. Shipments already queued or aboard still
@@ -756,6 +1023,13 @@ pub enum TradeRejectReason {
     CharterSuspended,
     /// §TCA Phase 2: the treasury can't cover the reinstatement being bought.
     CantAfford { cost: f64 },
+    /// The true quantity-aware execution price moved beyond the bound attached
+    /// to a stale-price market order. Nothing fills and no escrow is retained.
+    PriceProtection { bound: f64, actual: f64 },
+    /// Sol's finite immediate supply (for a buy) or demand (for a sell) cannot
+    /// clear the whole protected order. Market orders are all-or-nothing; the
+    /// player may reduce the lot or rest a player-to-player limit order.
+    MarketLiquidity { available: u32 },
     /// §TCA Phase 2: your charter is REVOKED — the Exchange is closed to you.
     /// Resting orders are grandfathered, and your warehouse is still yours to
     /// fetch from; you simply cannot trade here.
@@ -767,7 +1041,7 @@ pub enum TradeRejectReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum OrderRejectReason {
-    /// §TCA: the target shelters inside the CHARTERHOUSE SOVEREIGNTY BUBBLE, where
+    /// §TCA: the target shelters inside the MARKET HUB SOVEREIGNTY BUBBLE, where
     /// no engagement may open. Fleeing into the bubble is sanctuary, by design.
     InsideSovereignZone,
     /// §upkeep: the fleet is UNSUPPLIED — its standing Provisions upkeep isn't
@@ -775,6 +1049,24 @@ pub enum OrderRejectReason {
     /// lost: the fleet keeps its guns and its current course, and the order can
     /// simply be re-issued once food reaches it.
     Unsupplied,
+    NotAJumpFleet,
+    TargetInGravityWell,
+    /// PvP is withheld during founder protection. PvE remains legal.
+    FounderProtection,
+    /// A syndicate pact, non-aggression agreement, ceasefire, or separation
+    /// window currently protects the target.
+    DiplomaticProtection,
+    /// Territorial coercion requires declared war or a defender's live reprisal.
+    FormalWarRequired,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JumpFailReason {
+    NotAJumpFleet,
+    OriginInGravityWell,
+    TargetInGravityWell,
+    OutOfRange,
 }
 
 impl Event {

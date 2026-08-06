@@ -17,16 +17,16 @@
 
 use std::time::Duration;
 
-use axum::extract::ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
+use axum::extract::ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::{mpsc, watch};
-use tokio::time::{interval, timeout, MissedTickBehavior};
+use tokio::time::{MissedTickBehavior, interval, timeout};
 use tracing::{debug, warn};
 
-use crate::protocol::{player_id_from_name, ClientMsg, ServerMsg};
+use crate::protocol::{ClientMsg, ServerMsg, player_id_from_name};
 use crate::session::{GameHandle, GameInput, OUTBOUND_CAPACITY};
 
 /// How often the server pings an otherwise-idle connection.
@@ -49,10 +49,7 @@ pub async fn ws_handler(
 /// Serialize one `ServerMsg` and write it to the socket. `Ok(())` means the
 /// connection is still healthy (a serialization failure is logged and skipped,
 /// not fatal); `Err(())` means the socket send failed and the writer must stop.
-async fn write_msg(
-    ws_tx: &mut SplitSink<WebSocket, Message>,
-    msg: &ServerMsg,
-) -> Result<(), ()> {
+async fn write_msg(ws_tx: &mut SplitSink<WebSocket, Message>, msg: &ServerMsg) -> Result<(), ()> {
     let json = match serde_json::to_string(msg) {
         Ok(j) => j,
         Err(e) => {
@@ -132,52 +129,53 @@ async fn handle_socket(socket: WebSocket, handle: GameHandle) {
         };
 
         match frame {
-            Message::Text(text) => {
-                match serde_json::from_str::<ClientMsg>(text.as_str()) {
-                    Ok(ClientMsg::Join { name }) => {
-                        if joined {
-                            debug!(conn_id, "duplicate join ignored");
-                            continue;
-                        }
-                        let trimmed = name.trim();
-                        if trimmed.is_empty() {
-                            let _ = out_tx.try_send(ServerMsg::Error {
-                                message: "name must not be empty".into(),
-                            });
-                            continue;
-                        }
-                        if trimmed.chars().count() > MAX_NAME_LEN {
-                            let _ = out_tx.try_send(ServerMsg::Error {
-                                message: format!("name too long (max {MAX_NAME_LEN} characters)"),
-                            });
-                            continue;
-                        }
-                        let player_id = player_id_from_name(trimmed);
-                        joined = true;
-                        handle.send(GameInput::Connect {
-                            conn_id,
-                            player_id,
-                            name: trimmed.to_string(),
-                            outbound: out_tx.clone(),
-                            view_tx: view_tx.clone(),
-                        });
+            Message::Text(text) => match serde_json::from_str::<ClientMsg>(text.as_str()) {
+                Ok(ClientMsg::Join { name }) => {
+                    if joined {
+                        debug!(conn_id, "duplicate join ignored");
+                        continue;
                     }
-                    Ok(other) => {
-                        if joined {
-                            handle.send(GameInput::Intent { conn_id, msg: other });
-                        } else {
-                            let _ = out_tx.try_send(ServerMsg::Error {
-                                message: "send a Join message first".into(),
-                            });
-                        }
-                    }
-                    Err(e) => {
+                    let trimmed = name.trim();
+                    if trimmed.is_empty() {
                         let _ = out_tx.try_send(ServerMsg::Error {
-                            message: format!("malformed message: {e}"),
+                            message: "name must not be empty".into(),
+                        });
+                        continue;
+                    }
+                    if trimmed.chars().count() > MAX_NAME_LEN {
+                        let _ = out_tx.try_send(ServerMsg::Error {
+                            message: format!("name too long (max {MAX_NAME_LEN} characters)"),
+                        });
+                        continue;
+                    }
+                    let player_id = player_id_from_name(trimmed);
+                    joined = true;
+                    handle.send(GameInput::Connect {
+                        conn_id,
+                        player_id,
+                        name: trimmed.to_string(),
+                        outbound: out_tx.clone(),
+                        view_tx: view_tx.clone(),
+                    });
+                }
+                Ok(other) => {
+                    if joined {
+                        handle.send(GameInput::Intent {
+                            conn_id,
+                            msg: other,
+                        });
+                    } else {
+                        let _ = out_tx.try_send(ServerMsg::Error {
+                            message: "send a Join message first".into(),
                         });
                     }
                 }
-            }
+                Err(e) => {
+                    let _ = out_tx.try_send(ServerMsg::Error {
+                        message: format!("malformed message: {e}"),
+                    });
+                }
+            },
             Message::Close(_) => break,
             // A pong (reply to our keepalive ping) simply resets the read
             // deadline by virtue of arriving; nothing else to do. axum answers

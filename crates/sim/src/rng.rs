@@ -120,8 +120,14 @@ mod keyed_tests {
     /// tag-distinct, and id-distinct — and never collide with the bare stream.
     #[test]
     fn keyed_streams_are_deterministic_and_distinct() {
-        assert_eq!(Rng::keyed(7, "pirates").next_u64(), Rng::keyed(7, "pirates").next_u64());
-        assert_ne!(Rng::keyed(7, "pirates").next_u64(), Rng::keyed(7, "traits").next_u64());
+        assert_eq!(
+            Rng::keyed(7, "pirates").next_u64(),
+            Rng::keyed(7, "pirates").next_u64()
+        );
+        assert_ne!(
+            Rng::keyed(7, "pirates").next_u64(),
+            Rng::keyed(7, "traits").next_u64()
+        );
         assert_ne!(Rng::keyed(7, "a").next_u64(), Rng::new(7).next_u64());
         assert_ne!(
             Rng::keyed_id(7, "join", 1).next_u64(),

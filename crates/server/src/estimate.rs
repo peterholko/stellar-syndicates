@@ -26,9 +26,14 @@ use sim::{PlayerId, Vec2, World};
 use crate::protocol::{CompCount, EngagementEstimate};
 use crate::view::{NodeEffects, PositionHistory};
 
-
 fn comp_to_view(comp: &std::collections::BTreeMap<sim::ShipKind, u32>) -> Vec<CompCount> {
-    comp.iter().filter(|(_, n)| **n > 0).map(|(k, n)| CompCount { kind: *k, count: *n }).collect()
+    comp.iter()
+        .filter(|(_, n)| **n > 0)
+        .map(|(k, n)| CompCount {
+            kind: *k,
+            count: *n,
+        })
+        .collect()
 }
 
 /// The owned, `Send + 'static` inputs to the Monte Carlo rollouts — everything
@@ -98,19 +103,18 @@ pub fn prepare_estimate(
     // estimate honours the same tactical certainty the map shows).
     let veil = world.active_veil_regions();
     let deep = world.deep_scan_regions(viewer);
-    // §hyperspace: the estimator reads the SAME delayed view the player does, so
-    // it must resolve staleness through the same medium the map does.
-    let buoys = world.relay_network(viewer);
-    let delays = sim::lane::DelayField { lanes: &world.lanes, sites: &buoys, c };
-    let ears: Vec<sim::lane::Relay> = world
-        .emplacements
-        .iter()
-        .filter(|e| e.owner == viewer && e.kind == sim::EmplacementKind::HyperspaceSensor)
-        .map(|e| world.lanes.relay_at(e.pos))
-        .collect();
+    // The estimator reads the same straight warp-light-delayed view as the map.
     let ghosts = history.view_for_with_arrays(
-        viewer, cc, &delays, now, arrays, &ears, &std::collections::BTreeSet::new(),
-        NodeEffects { veil: &veil, deep_scan: &deep },
+        viewer,
+        cc,
+        c,
+        now,
+        arrays,
+        &std::collections::BTreeSet::new(),
+        NodeEffects {
+            veil: &veil,
+            deep_scan: &deep,
+        },
     );
     let ghost = ghosts.into_iter().find(|g| g.id == target)?;
     let composition_age = ghost.age;
@@ -124,7 +128,10 @@ pub fn prepare_estimate(
             for cc in comp {
                 c.insert(cc.kind, cc.count);
             }
-            (sim::Forces::from_fleet(&c, &std::collections::BTreeMap::new()), true)
+            (
+                sim::Forces::from_fleet(&c, &std::collections::BTreeMap::new()),
+                true,
+            )
         }
         None => (sim::typical_forces(ghost.count_class), false),
     };
@@ -137,8 +144,15 @@ pub fn prepare_estimate(
         let covering = corp
             .intel
             .values()
-            .filter(|snap| snap.defense_tier > 0 && snap.pos.distance(ghost.pos) <= sim::build::DEFENSE_PLATFORM_RADIUS)
-            .min_by(|a, b| a.pos.distance(ghost.pos).total_cmp(&b.pos.distance(ghost.pos)));
+            .filter(|snap| {
+                snap.defense_tier > 0
+                    && snap.pos.distance(ghost.pos) <= sim::build::DEFENSE_PLATFORM_RADIUS
+            })
+            .min_by(|a, b| {
+                a.pos
+                    .distance(ghost.pos)
+                    .total_cmp(&b.pos.distance(ghost.pos))
+            });
         if let Some(snap) = covering {
             target_forces = target_forces.with_platform(snap.defense_tier, 0.0);
             defenses_age = Some((now - snap.observed_at).max(0.0));
@@ -150,13 +164,19 @@ pub fn prepare_estimate(
     // engine (headless, pure, derived seeds) over this observer's stale view
     // data. Still reality's exact function, sampled, on fogged inputs.
     let raid = ghost.kind == sim::ShipKind::Convoy;
-    let own_retreat = world.players.get(&viewer).and_then(|c| c.doctrine.retreat.min_ratio());
+    let own_retreat = world
+        .players
+        .get(&viewer)
+        .and_then(|c| c.doctrine.retreat.min_ratio());
 
     // §roster: OWN SIDE IS EXACT — the actual hulls, each at its real remaining
     // health. A fleet that came out of its last fight hurt is projected hurt,
     // which is precisely what the player needs to know before committing again.
-    let a: Vec<(sim::EntityId, sim::ship::Ship)> =
-        own_fleet.ships.iter().map(|s| (own_fleet.id, s.clone())).collect();
+    let a: Vec<(sim::EntityId, sim::ship::Ship)> = own_fleet
+        .ships
+        .iter()
+        .map(|s| (own_fleet.id, s.clone()))
+        .collect();
     // Target side exactly as the view shows it: exact comp (+ revealed fitted
     // stacks) inside coverage, else the bucket-midpoint typical warfleet. Their
     // hulls are modelled at FULL health — we cannot see their damage from here,
@@ -165,7 +185,8 @@ pub fn prepare_estimate(
     let d: Vec<(sim::EntityId, sim::ship::Ship)> = {
         let comp = target_forces.comp();
         // Which fitted stacks the view revealed, consumed in order per kind.
-        let mut fits: std::collections::BTreeMap<sim::ShipKind, Vec<(sim::Loadout, u32)>> = Default::default();
+        let mut fits: std::collections::BTreeMap<sim::ShipKind, Vec<(sim::Loadout, u32)>> =
+            Default::default();
         if let Some(stacks) = &ghost.loadouts {
             for st in stacks {
                 let lo = sim::Loadout::new(st.modules.clone());
@@ -189,7 +210,10 @@ pub fn prepare_estimate(
                 }
             }
             for _ in 0..left {
-                out.push((ghost.id, sim::ship::Ship::new(next_id, kind, sim::Loadout::default())));
+                out.push((
+                    ghost.id,
+                    sim::ship::Ship::new(next_id, kind, sim::Loadout::default()),
+                ));
                 next_id += 1;
             }
         }
@@ -225,7 +249,13 @@ pub fn prepare_estimate(
 pub fn run_estimate(inp: EstimateInputs) -> EngagementEstimate {
     let dist = sim::tactical::project_distribution(&inp.setup, inp.base_seed, 32);
     let band = |b: &[sim::tactical::LossBand]| -> Vec<crate::protocol::LossRange> {
-        b.iter().map(|x| crate::protocol::LossRange { kind: x.kind, lo: x.lo, hi: x.hi }).collect()
+        b.iter()
+            .map(|x| crate::protocol::LossRange {
+                kind: x.kind,
+                lo: x.lo,
+                hi: x.hi,
+            })
+            .collect()
     };
 
     EngagementEstimate {
@@ -253,24 +283,50 @@ mod tests {
     use sim::{Command, Fleet, FleetOrder, ShipKind, SimConfig};
 
     /// Build a world with a viewer whose attacker fleet faces a rival target.
-    fn setup(target_out_of_coverage: bool) -> (World, PositionHistory, PlayerId, Vec2, sim::EntityId, sim::EntityId) {
+    fn setup(
+        target_out_of_coverage: bool,
+    ) -> (
+        World,
+        PositionHistory,
+        PlayerId,
+        Vec2,
+        sim::EntityId,
+        sim::EntityId,
+    ) {
         let mut w = World::new(SimConfig::for_players(4242, 4));
         let (me, rival) = (PlayerId(1), PlayerId(2));
         w.step(&[
-            Command::AddPlayer { id: me, name: "Me".into() },
-            Command::AddPlayer { id: rival, name: "Rival".into() },
+            Command::AddPlayer {
+                id: me,
+                name: "Me".into(),
+            },
+            Command::AddPlayer {
+                id: rival,
+                name: "Rival".into(),
+            },
         ]);
         let cc = w.players[&me].command_center;
         // My attacker: a 6-raider fleet near my command center (in coverage).
         let aid = sim::EntityId(900_001);
-        let mut atk = Fleet::single(aid, me, ShipKind::Raider, cc + Vec2::new(100.0, 0.0), FleetOrder::Idle, None);
+        let mut atk = Fleet::single(
+            aid,
+            me,
+            ShipKind::Raider,
+            cc + Vec2::new(100.0, 0.0),
+            FleetOrder::Idle,
+            None,
+        );
         atk.composition.insert(ShipKind::Raider, 6);
         w.fleets.insert(aid, atk);
         // The rival target: a big BROADCASTING corvette fleet (so it's visible
         // galaxy-wide even out of sensor range — a dark fleet far away would just
         // be omitted). Placed just outside the sensor bubble, or well inside it.
         let far = 3_000.0; // beyond the 2200 su sensor bubble, still broadcasting
-        let tpos = if target_out_of_coverage { cc + Vec2::new(far, 0.0) } else { cc + Vec2::new(150.0, 0.0) };
+        let tpos = if target_out_of_coverage {
+            cc + Vec2::new(far, 0.0)
+        } else {
+            cc + Vec2::new(150.0, 0.0)
+        };
         let tid = sim::EntityId(900_002);
         let mut tgt = Fleet::single(tid, rival, ShipKind::Corvette, tpos, FleetOrder::Idle, None);
         tgt.composition.insert(ShipKind::Corvette, 25); // TRUE count = 25 (bucket 16–30)
@@ -289,25 +345,39 @@ mod tests {
     #[test]
     fn in_coverage_uses_exact_composition() {
         let (w, hist, me, cc, aid, tid) = setup(false);
-        let est = estimate_engagement(&w, &hist, me, cc, 300.0, w.time, &[], aid, tid).expect("estimate");
-        assert!(est.target_known, "a target in sensor coverage is estimated from its EXACT composition");
+        let est =
+            estimate_engagement(&w, &hist, me, cc, 300.0, w.time, &[], aid, tid).expect("estimate");
+        assert!(
+            est.target_known,
+            "a target in sensor coverage is estimated from its EXACT composition"
+        );
     }
 
     #[test]
-    #[ignore = "§hyperspace: awaiting re-baseline. The 50× galaxy rescale and per-tick fuel changed travel times and stockpile readings under it; the behaviour it asserts is still wanted. Re-enable with `cargo test -- --ignored`."]
+    #[ignore = "§galaxy-scale: awaiting re-baseline. The 50× galaxy rescale and per-tick fuel changed travel times and stockpile readings under it; the behaviour it asserts is still wanted. Re-enable with `cargo test -- --ignored`."]
     fn out_of_coverage_uses_the_bucket_midpoint_never_the_true_count() {
         // LEAK CHECK: the true target is 25 raiders (bucket 16–30, midpoint 23).
         // Out of coverage, the estimate must be built from the MIDPOINT typical
         // warfleet — its projected target losses can never imply the true 25.
         let (w, hist, me, cc, aid, tid) = setup(true);
-        let est = estimate_engagement(&w, &hist, me, cc, 300.0, w.time, &[], aid, tid).expect("estimate");
-        assert!(!est.target_known, "an out-of-coverage target is a typical-hull estimate");
+        let est =
+            estimate_engagement(&w, &hist, me, cc, 300.0, w.time, &[], aid, tid).expect("estimate");
+        assert!(
+            !est.target_known,
+            "an out-of-coverage target is a typical-hull estimate"
+        );
         assert_eq!(est.target_count_class, sim::CountClass::SixteenToThirty);
         // The typical fleet has midpoint(23) ships; total modelled ≤ 23, never 25.
         let modelled = est.target_losses.iter().map(|c| c.count).sum::<u32>()
             + est.target_survivors.iter().map(|c| c.count).sum::<u32>();
-        assert!(modelled <= sim::CountClass::SixteenToThirty.midpoint(), "modelled {modelled} must not exceed the bucket midpoint (never the true 25)");
-        assert!(modelled < 25, "the estimate provably does NOT use the true count of 25");
+        assert!(
+            modelled <= sim::CountClass::SixteenToThirty.midpoint(),
+            "modelled {modelled} must not exceed the bucket midpoint (never the true 25)"
+        );
+        assert!(
+            modelled < 25,
+            "the estimate provably does NOT use the true count of 25"
+        );
     }
 
     #[test]
@@ -317,7 +387,10 @@ mod tests {
         let _ = estimate_engagement(&w, &hist, me, cc, 300.0, w.time, &[], aid, tid);
         // Re-borrow mutably only to serialize again; the estimate took &World.
         let after = serde_json::to_string(&w).unwrap();
-        assert_eq!(before, after, "the calculator must not touch authoritative state");
+        assert_eq!(
+            before, after,
+            "the calculator must not touch authoritative state"
+        );
         let _ = &mut w;
     }
 }
