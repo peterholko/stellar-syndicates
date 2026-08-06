@@ -31,6 +31,10 @@ pub enum BuildKind {
     Train {
         specialist: crate::specialist::SpecialistKind,
     },
+    /// A home Academy commissions one corporation officer into reserve duty.
+    /// `serial` freezes the deterministic identity at enqueue, so a lost Academy
+    /// or snapshot round-trip cannot reshuffle later graduates.
+    RecruitCaptain { serial: u32 },
     /// §modules Part B3: manufacture one MODULE — completes into the system's
     /// module ledger (if still held). Needs an Armaments Complex ≥ 1; holds no
     /// slot; rides the same build queue.
@@ -602,6 +606,18 @@ pub const ACADEMY_TRAIN_RECIPE: Recipe = Recipe {
     build_ticks: crate::specialist::ACADEMY_TRAIN_TICKS,
 };
 
+/// Officer commissioning is a materially larger Academy commitment than one
+/// specialist course. Tunable; the roster cap prevents queue spam from turning
+/// commodities into an unlimited officer pool.
+pub const CAPTAIN_RECRUIT_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Provisions, 40.0),
+        (Commodity::Electronics, 20.0),
+        (Commodity::Machinery, 10.0),
+    ],
+    build_ticks: 60 * HZ,
+};
+
 // --- §modules Part B3: MODULE RECIPES (manufactured items) --------------------
 // Built from Armaments + Electronics, with a real Silicates sink for the glass
 // mirrors (Reflective) and a Machinery draw for the heavy spaced armor (Whipple).
@@ -727,6 +743,7 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
             unreachable!("Freighter is TCA-only and never buildable — apply_build guards it")
         }
         BuildKind::Train { .. } => &ACADEMY_TRAIN_RECIPE,
+        BuildKind::RecruitCaptain { .. } => &CAPTAIN_RECRUIT_RECIPE,
         BuildKind::Module { module } => module_recipe(module),
         BuildKind::Upgrade { upgrade } => match upgrade {
             StructureKind::MiningComplex => &MINING_COMPLEX_RECIPE,
@@ -813,10 +830,10 @@ pub fn sensor_array_radius(tier: u32) -> f64 {
 
 /// Population (millions) at which a colony counts as DEVELOPED — unlocking the
 /// second Industrial slot and the third Infrastructure slot. Tunable.
-pub const POP_DEVELOPED: f64 = 3.0;
+pub const POP_DEVELOPED: f64 = 0.010;
 /// Population (millions) at which a colony counts as MAJOR — the third
 /// Industrial slot. Tunable.
-pub const POP_MAJOR: f64 = 8.0;
+pub const POP_MAJOR: f64 = 0.050;
 
 /// The population tier: 0 below `POP_DEVELOPED`, 1 from there, 2 at `POP_MAJOR`.
 /// Population only ever grows (§economy Part 2), so pools never shrink under a
@@ -924,7 +941,7 @@ pub const HOME_SHIPYARD_TIER: u32 = 1;
 /// permitting) with no research. This is where an unresearched colony tops out —
 /// exactly where every colony tops out today. Tunable.
 pub const BASE_MAX_STRUCTURE_TIER: u32 = 4;
-/// The ceiling once the owning syndicate has researched this structure's
+/// The ceiling once the owning corporation has researched this structure's
 /// Tier-IV/V unlock (any `UnlockStructureTier` effect for the kind): the two
 /// superlinear prize tiers (5, 6 in `production::TIER_THROUGHPUT`) open up.
 /// Tunable.
@@ -932,7 +949,7 @@ pub const RESEARCHED_MAX_STRUCTURE_TIER: u32 = 6;
 
 /// The highest tier a structure of `kind` may be raised to. One shared gate for
 /// every StructureKind (extraction / processing / habitat / shipyard / …):
-/// `research_unlocked_tier` is the best tier this owner's syndicate has unlocked
+/// `research_unlocked_tier` is the best tier this owner's corporation has unlocked
 /// for the kind (0 = none, from `research::unlocked_structure_tier`). Without
 /// that Tier-IV/V unlock the ceiling is [`BASE_MAX_STRUCTURE_TIER`]; with it,
 /// the prize tiers open to [`RESEARCHED_MAX_STRUCTURE_TIER`]. The `kind` arg is

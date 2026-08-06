@@ -129,15 +129,12 @@ impl SimConfig {
                 / (1.0 + crate::galaxy::HOME_SLOT_RADIAL_JITTER_FRAC)
                 / galaxy_radius,
             system_count: 12 + player_count * 4,
-            // Local sensor bubbles (~28% of galaxy radius): coverage is islands
-            // around your assets, so most of the dark between homes is blind to
-            // raiders — the tension the model wants.
-            // Scaled with the galaxy so COVERAGE stays ~28% of the radius. Left
-            // absolute it would fall to 5.5% and the map would go dark — a much
-            // bigger balance change than the rescale is meant to be. (System-scale
-            // constants — blockade, docking, the hyperlimit, colony claim — do NOT
-            // scale: a system stays the size it is, and only the gaps grow.)
-            sensor_range: 2200.0 * crate::config::GALAXY_SCALE,
+            // Local sensor bubbles are 80,000 su (20% of a four-player galaxy
+            // radius): coverage remains islands around the command center and
+            // Raider pickets, leaving meaningful blind space between homes.
+            // Expressed through GALAXY_SCALE to preserve the chart-unit convention;
+            // system-scale constants (docking, hyperlimit, claim) do not scale.
+            sensor_range: 1600.0 * crate::config::GALAXY_SCALE,
             // PLAYTEST preset: equal squadrons grind for ~45 s (production ships
             // ~2700 s / 45 min — battles at the scale of light-delays + relief).
             battle_target_secs: default_battle_target_secs(),

@@ -150,8 +150,8 @@ pub struct StarSystem {
     /// `Corporation::syndicate_prev` pattern. `default` None (never blockaded).
     #[serde(default)]
     pub blockade_prev: Option<(f64, f64)>,
-    /// §explore Part 3: the system's HIDDEN TRAIT (R3) — revealed only by
-    /// ownership; effects are always-on ground truth. Seeded at generation
+    /// §explore Part 3: the system's surveyable economic trait. Effects are
+    /// always-on ground truth. Seeded at generation
     /// (`TRAIT_FRACTION` of systems, an isolated stream). `default` None — a
     /// pre-feature galaxy simply has none (acceptable; new generations do).
     #[serde(default)]
@@ -533,6 +533,13 @@ impl StarSystem {
                 self.add_test_deposit(d);
             }
         }
+        // §planetary-identity: pre-feature body rosters carried no independent
+        // size/environment/geology. Fill those profiles deterministically from
+        // stable ids; this never moves or rerolls any owned economic state.
+        let sid = self.id.0.to_string();
+        for body in &mut self.bodies {
+            body.ensure_profile(&sid);
+        }
         // Site every legacy structure per the shared rules.
         let structures = std::mem::take(&mut self.legacy_structures);
         for (kind, tier) in structures {
@@ -557,6 +564,90 @@ impl StarSystem {
                 b.assignments.insert(kind, asg);
             }
         }
+    }
+
+    /// Seed one legible, population-led expansion candidate. New galaxies vary
+    /// the proposition deterministically: a huge Gaia garden, a fertile Terran
+    /// exporter, or a fertile Gaia hybrid. Deposits and geology remain whatever
+    /// they rolled, so the same onboarding guarantee does not prescribe the same
+    /// production chain in every opening.
+    pub fn guarantee_garden_world(&mut self) {
+        let Some(body) = self
+            .bodies
+            .iter_mut()
+            .filter(|b| b.parent.is_none() && b.kind != crate::body::BodyKind::GasGiant)
+            .max_by_key(|b| b.profile.size)
+        else {
+            return;
+        };
+        let has_biomass = body
+            .deposits
+            .iter()
+            .any(|d| d.resource == Commodity::Biomass);
+        match self.id.0 % 3 {
+            0 => {
+                body.profile.size = crate::body::BodySize::Huge;
+                body.profile.environment = crate::body::Environment::Gaia;
+            }
+            1 => {
+                body.profile.size = crate::body::BodySize::Huge;
+                if has_biomass {
+                    body.profile.environment = crate::body::Environment::Terran;
+                    body.profile.special = Some(crate::body::BodySpecial::FertileBiosphere);
+                } else {
+                    // Preserve the population guarantee without inventing the
+                    // Biomass deposit a fertile exporter would require.
+                    body.profile.environment = crate::body::Environment::Gaia;
+                }
+            }
+            _ => {
+                if has_biomass {
+                    body.profile.size = body.profile.size.max(crate::body::BodySize::Large);
+                    body.profile.environment = crate::body::Environment::Gaia;
+                    body.profile.special = Some(crate::body::BodySpecial::FertileBiosphere);
+                } else {
+                    body.profile.size = crate::body::BodySize::Huge;
+                    body.profile.environment = crate::body::Environment::Gaia;
+                }
+            }
+        }
+        body.habitable = true;
+    }
+
+    /// Seed the contrasting nearby opportunity: a hostile, Ultra Rich mineral
+    /// body. It still needs the system's actual mineral deposit, construction,
+    /// population and supply chain — this guarantees a reason to expand, not a
+    /// free functioning colony.
+    pub fn guarantee_industrial_world(&mut self) {
+        let mineral = |d: &&Deposit| {
+            matches!(
+                d.resource,
+                Commodity::MetallicOre | Commodity::Silicates | Commodity::RareElements
+            )
+        };
+        let target = self
+            .bodies
+            .iter()
+            .position(|b| b.deposits.iter().filter(mineral).next().is_some())
+            .or_else(|| {
+                self.bodies
+                    .iter()
+                    .position(|b| b.kind != crate::body::BodyKind::GasGiant)
+            });
+        let Some(body) = target.and_then(|i| self.bodies.get_mut(i)) else {
+            return;
+        };
+        // Two equal-value headaches: a compact hostile mine, or a larger airless
+        // industrial shelf. Deposit type and any rolled special remain seeded.
+        if self.id.0.is_multiple_of(2) {
+            body.profile.size = body.profile.size.max(crate::body::BodySize::Medium);
+            body.profile.environment = crate::body::Environment::Hostile;
+        } else {
+            body.profile.size = body.profile.size.max(crate::body::BodySize::Large);
+            body.profile.environment = crate::body::Environment::Uninhabitable;
+        }
+        body.profile.geology = crate::body::Geology::UltraRich;
+        body.habitable = false;
     }
 
     /// §bodies: the SUMMED slot pools across bodies (the system panel's
@@ -741,6 +832,10 @@ pub struct HomeSlot {
     /// snapshots. The command center sits at this system's position.
     #[serde(default)]
     pub system: Option<EntityId>,
+    /// Two deterministic nearby founding prospects: population-led first,
+    /// mineral-led second. Exact properties remain survey-gated to each player.
+    #[serde(default)]
+    pub founding_opportunities: Vec<EntityId>,
 }
 
 /// §economy: the RAW commodity ladder, cheapest → frontier-most (by base
@@ -757,7 +852,10 @@ const RAW_VALUE_TIER: [Commodity; 5] = [
 
 /// Base extraction rate (units/sec) a deposit produces; scaled up toward the
 /// frontier. Tunable — balance is not the goal, a working loop is.
-const DEPOSIT_BASE_RICHNESS: f64 = 0.45;
+/// The ordinary home-site extraction reference. Survey opportunity ratings use
+/// this same anchor, so a displayed `×2` means twice a baseline home worker's
+/// natural deposit output before staffing, tiers, specialists, food or research.
+pub const DEPOSIT_BASE_RICHNESS: f64 = 0.45;
 /// Claim cost = `CLAIM_BASE` + `CLAIM_VALUE_K` × the system's value-rate
 /// (Σ richness·base_price), so richer frontier systems cost more to claim.
 const CLAIM_BASE: f64 = 600.0;
@@ -845,8 +943,12 @@ fn generate_deposits(rng: &mut Rng, frontier: f64) -> Vec<Deposit> {
             .round()
             .clamp(0.0, (RAW_VALUE_TIER.len() - 1) as f64) as usize;
         let resource = RAW_VALUE_TIER[idx];
-        // Richness rises toward the frontier, jittered.
-        let richness = DEPOSIT_BASE_RICHNESS * (0.5 + 1.7 * frontier) * rng.range(0.6, 1.4);
+        // Richness rises toward the frontier, but remains a SITE advantage
+        // rather than a universal frontier jackpot. Extra deposits and rarer
+        // commodities already make the rim valuable; this narrower band leaves
+        // Rich/Ultra Rich geology and matching specials room to create the
+        // memorable ×1.8–3 specialty discoveries.
+        let richness = DEPOSIT_BASE_RICHNESS * (0.70 + 0.55 * frontier) * rng.range(0.80, 1.20);
         deposits.push(Deposit {
             resource,
             richness,
@@ -893,6 +995,7 @@ pub fn generate_home_slots(
             owner: None,
             claimed_at: None,
             system: None, // set when the co-located home system is generated
+            founding_opportunities: Vec::new(),
         });
     }
     slots
@@ -947,7 +1050,27 @@ pub fn generate_home_system(
     // `index` (its own re-seeded stream), untouched by the naming change.
     // §bodies: the home is born with its roster; the bootstrap then SITES its
     // structures on the right bodies via the shared rules.
-    let bodies = crate::body::generate_bodies(&id.0.to_string(), &name, &deposits);
+    let mut bodies = crate::body::generate_bodies(&id.0.to_string(), &name, &deposits);
+    // Homes are deliberately reliable rather than jackpot rolls. Their garden
+    // body is a roomy Terran baseline; their starter ore is Average. The nearby
+    // expansion pair supplies the exciting contrast.
+    if let Some(b) = bodies
+        .iter_mut()
+        .find(|b| b.deposits.iter().any(|d| d.resource == Commodity::Biomass))
+    {
+        b.profile.size = crate::body::BodySize::Large;
+        b.profile.environment = crate::body::Environment::Terran;
+        b.profile.geology = crate::body::Geology::Average;
+        b.profile.special = None;
+        b.habitable = true;
+    }
+    if let Some(b) = bodies.iter_mut().find(|b| {
+        b.deposits
+            .iter()
+            .any(|d| d.resource == Commodity::MetallicOre)
+    }) {
+        b.profile.geology = crate::body::Geology::Average;
+    }
     let mut sys = StarSystem {
         id,
         pos,
@@ -957,24 +1080,15 @@ pub fn generate_home_system(
         claim_cost,
         owner: None,
         claimed_at: None,
-        // §economy Part 3+5 bootstrap stock: a standing Provisions buffer (the
-        // food ladder starts Well Supplied while the farm chain spins up) plus
-        // the STARTER KIT — enough Machinery/Alloys/Polymers that the first
-        // Orbital Warehouse/Habitat/industry doesn't require a market round-trip. (The
-        // Fuel movement seed lands on join.) All Tunable.
-        //
-        // §emplacements: the kit also funds the Deep Space Sensor opening the
-        // starting Construction Ship exists for. A sensor costs 60/120/40;
-        // Electronics 150 and Alloys 100 cover the opening while later kits
-        // ride the market. Without this
-        // seed the home has ZERO Electronics and every emplacement order is
-        // refused at spawn.
+        // The reduced founding kit pays for exactly the two opening projects:
+        // Shipyard I (20 Machinery, 40 Alloys, 15 Electronics) and Mining
+        // Complex I (12 Machinery, 25 Alloys). Convoy/Scout materials are earned
+        // from the assigned privateer encounter rather than granted at spawn.
         stockpile: [
             (Commodity::Provisions, crate::colony::HOME_PROVISIONS_SEED),
-            (Commodity::Machinery, 40.0),
-            (Commodity::Alloys, 100.0),
-            (Commodity::Polymers, 30.0),
-            (Commodity::Electronics, 150.0),
+            (Commodity::Machinery, 32.0),
+            (Commodity::Alloys, 65.0),
+            (Commodity::Electronics, 15.0),
         ]
         .into_iter()
         .collect(),
@@ -1000,18 +1114,10 @@ pub fn generate_home_system(
         specialists: BTreeMap::new(),
     };
     // HOME BOOTSTRAP (§buildings step 3 → §economy Part 3 → §bodies): a home
-    // is born a WORKING developed colony — Shipyard (convoys turn one), the
-    // extraction its geology calls for, the Agroplex, the Habitat with 2.0M
-    // colonists — each structure SITED on its natural body (the mine on the
-    // ore body, the farm chain + Habitat on the habitable world, the yard
-    // over the primary), pre-staffed on those bodies.
+    // begins as a small food-secure settlement. The Shipyard and ore mine are
+    // the player's first construction lessons, not pre-granted infrastructure.
     let bootstrap = [
-        (
-            crate::build::StructureKind::Shipyard,
-            crate::build::HOME_SHIPYARD_TIER,
-        ),
         (crate::build::StructureKind::Bioharvester, 1),
-        (crate::build::StructureKind::MiningComplex, 1),
         (crate::build::StructureKind::Agroplex, 1),
         (crate::build::StructureKind::Habitat, 1),
     ];
@@ -1022,11 +1128,10 @@ pub fn generate_home_system(
         }
     }
     sys.seed_population(crate::colony::HOME_FOUNDING_POP);
-    // Pre-staffed: the food chain + the mine (the Shipyard boost crew is the
-    // player's first staffing decision once population grows).
+    // Two cohorts staff the food chain; the third begins unassigned so the
+    // workforce control is meaningful immediately.
     for kind in [
         crate::build::StructureKind::Bioharvester,
-        crate::build::StructureKind::MiningComplex,
         crate::build::StructureKind::Agroplex,
     ] {
         if let Some(b) = sys.bodies.iter_mut().find(|b| b.tier(kind) > 0) {

@@ -35,6 +35,241 @@ pub enum BodyKind {
     GasGiant,
 }
 
+/// A world's physical scale. Size is independent of environment and geology:
+/// a huge barren planet can be mineral-poor, while a tiny airless moon can be
+/// the richest rock in the sector. It governs settlement capacity and the
+/// amount of industrial ground available, not deposit composition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BodySize {
+    Tiny,
+    Small,
+    Medium,
+    Large,
+    Huge,
+}
+
+impl Default for BodySize {
+    fn default() -> Self {
+        Self::Medium
+    }
+}
+
+impl BodySize {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Tiny => "tiny",
+            Self::Small => "small",
+            Self::Medium => "medium",
+            Self::Large => "large",
+            Self::Huge => "huge",
+        }
+    }
+
+    pub fn habitat_capacity_mult(self) -> f64 {
+        match self {
+            Self::Tiny => 0.60,
+            Self::Small => 0.80,
+            Self::Medium => 1.00,
+            Self::Large => 1.25,
+            Self::Huge => 1.50,
+        }
+    }
+
+    fn industrial_base(self) -> u32 {
+        match self {
+            Self::Tiny => 1,
+            Self::Small | Self::Medium => 2,
+            Self::Large => 3,
+            Self::Huge => 4,
+        }
+    }
+}
+
+/// The cost of making a world into a place where people can thrive. This is
+/// deliberately independent from mineral wealth: atmosphere is a settlement
+/// question, never an ore-quality proxy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Environment {
+    Gaia,
+    Terran,
+    Marginal,
+    Hostile,
+    Uninhabitable,
+}
+
+impl Default for Environment {
+    fn default() -> Self {
+        Self::Marginal
+    }
+}
+
+impl Environment {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Gaia => "gaia",
+            Self::Terran => "terran",
+            Self::Marginal => "marginal",
+            Self::Hostile => "hostile",
+            Self::Uninhabitable => "uninhabitable",
+        }
+    }
+
+    pub fn naturally_habitable(self) -> bool {
+        matches!(self, Self::Gaia | Self::Terran)
+    }
+
+    pub fn habitat_capacity_mult(self) -> f64 {
+        match self {
+            Self::Gaia => 1.50,
+            Self::Terran => 1.25,
+            Self::Marginal => 1.00,
+            Self::Hostile => 0.75,
+            Self::Uninhabitable => 0.50,
+        }
+    }
+
+    pub fn growth_mult(self) -> f64 {
+        match self {
+            Self::Gaia => 1.50,
+            Self::Terran => 1.15,
+            Self::Marginal => 0.85,
+            Self::Hostile => 0.55,
+            Self::Uninhabitable => 0.25,
+        }
+    }
+
+    pub fn provisions_mult(self) -> f64 {
+        match self {
+            Self::Gaia => 0.80,
+            Self::Terran => 1.00,
+            Self::Marginal => 1.10,
+            Self::Hostile => 1.25,
+            Self::Uninhabitable => 1.40,
+        }
+    }
+
+    pub fn construction_time_mult(self) -> f64 {
+        match self {
+            Self::Gaia => 0.90,
+            Self::Terran => 1.00,
+            Self::Marginal => 1.10,
+            Self::Hostile => 1.25,
+            Self::Uninhabitable => 1.40,
+        }
+    }
+}
+
+/// Mineral abundance, independent of atmosphere and body kind. This is the
+/// Master-of-Orion-style expansion axis: an airless moon may legitimately be
+/// Ultra Rich and worth supplying from a distant garden world.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Geology {
+    UltraPoor,
+    Poor,
+    Average,
+    Rich,
+    UltraRich,
+}
+
+impl Default for Geology {
+    fn default() -> Self {
+        Self::Average
+    }
+}
+
+impl Geology {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::UltraPoor => "ultra_poor",
+            Self::Poor => "poor",
+            Self::Average => "average",
+            Self::Rich => "rich",
+            Self::UltraRich => "ultra_rich",
+        }
+    }
+
+    pub fn mineral_extraction_mult(self) -> f64 {
+        match self {
+            Self::UltraPoor => 0.50,
+            Self::Poor => 0.75,
+            Self::Average => 1.00,
+            Self::Rich => 1.50,
+            Self::UltraRich => 2.25,
+        }
+    }
+}
+
+/// A surveyed, body-level industrial opportunity. Specials alter an existing
+/// leg of the twelve-good web rather than minting a parallel commodity system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BodySpecial {
+    LowGravity,
+    VolcanicMantle,
+    HydrocarbonSeas,
+    CrystallineCrust,
+    FertileBiosphere,
+    PrecursorRuins,
+}
+
+impl BodySpecial {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::LowGravity => "low_gravity",
+            Self::VolcanicMantle => "volcanic_mantle",
+            Self::HydrocarbonSeas => "hydrocarbon_seas",
+            Self::CrystallineCrust => "crystalline_crust",
+            Self::FertileBiosphere => "fertile_biosphere",
+            Self::PrecursorRuins => "precursor_ruins",
+        }
+    }
+
+    pub fn effect(self) -> &'static str {
+        match self {
+            Self::LowGravity => "Ship construction time −20%",
+            Self::VolcanicMantle => {
+                "Metallic Ore and Rare Elements extraction ×1.20; Smelter yield ×1.20"
+            }
+            Self::HydrocarbonSeas => "Volatiles extraction ×1.35; Fuel and Polymer yield ×1.20",
+            Self::CrystallineCrust => "Silicates and Rare Elements extraction ×1.35",
+            Self::FertileBiosphere => "Biomass extraction ×1.35; Provisions yield ×1.20",
+            Self::PrecursorRuins => "Electronics yield ×1.25",
+        }
+    }
+}
+
+/// The independent identity of one body. `version == 0` is a pre-feature save;
+/// [`Body::ensure_profile`] deterministically fills it from stable ids without
+/// moving deposits, structures, assignments, or population.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PlanetaryProfile {
+    #[serde(default)]
+    pub version: u8,
+    #[serde(default)]
+    pub size: BodySize,
+    #[serde(default)]
+    pub environment: Environment,
+    #[serde(default)]
+    pub geology: Geology,
+    #[serde(default)]
+    pub special: Option<BodySpecial>,
+}
+
+impl Default for PlanetaryProfile {
+    fn default() -> Self {
+        Self {
+            version: 0,
+            size: BodySize::Medium,
+            environment: Environment::Marginal,
+            geology: Geology::Average,
+            special: None,
+        }
+    }
+}
+
 impl BodyKind {
     pub fn slug(self) -> &'static str {
         match self {
@@ -60,6 +295,10 @@ pub struct Body {
     #[serde(default)]
     pub parent: Option<u32>,
     pub habitable: bool,
+    /// Size / environment are public astronomy; geology + the special ride the
+    /// survey ladder. Kept together so old snapshots need one neutral default.
+    #[serde(default)]
+    pub profile: PlanetaryProfile,
     /// The deposits ON this body — extraction structures here require a
     /// matching one (real now, not a visual association).
     #[serde(default)]
@@ -97,6 +336,214 @@ impl Body {
             .iter()
             .any(|d| crate::production::extraction_structure(d.resource) == Some(kind))
     }
+
+    /// Fill a pre-profile body from an isolated, stable stream. Deposit type is
+    /// never an input to size/environment/geology, so a planet's habitability
+    /// cannot silently predetermine its mineral value. Specials alone inspect
+    /// deposits because their promise must apply to something the body can use.
+    pub fn ensure_profile(&mut self, system_id: &str) {
+        if self.profile.version != 0 {
+            return;
+        }
+        let mut rng = Mulberry32(hash_id(&format!("{system_id}:{}", self.id)) ^ 0x504c_414e);
+        let size_roll = rng.next();
+        let size = if self.parent.is_some() {
+            if size_roll < 0.72 {
+                BodySize::Tiny
+            } else {
+                BodySize::Small
+            }
+        } else if self.kind == BodyKind::GasGiant {
+            if size_roll < 0.35 {
+                BodySize::Large
+            } else {
+                BodySize::Huge
+            }
+        } else if size_roll < 0.12 {
+            BodySize::Tiny
+        } else if size_roll < 0.37 {
+            BodySize::Small
+        } else if size_roll < 0.72 {
+            BodySize::Medium
+        } else if size_roll < 0.92 {
+            BodySize::Large
+        } else {
+            BodySize::Huge
+        };
+
+        let e = rng.next();
+        let environment = match self.kind {
+            BodyKind::Terrestrial => {
+                if e < 0.07 {
+                    Environment::Gaia
+                } else if e < 0.62 {
+                    Environment::Terran
+                } else if e < 0.86 {
+                    Environment::Marginal
+                } else if e < 0.96 {
+                    Environment::Hostile
+                } else {
+                    Environment::Uninhabitable
+                }
+            }
+            BodyKind::Ocean => {
+                if e < 0.12 {
+                    Environment::Gaia
+                } else if e < 0.75 {
+                    Environment::Terran
+                } else if e < 0.92 {
+                    Environment::Marginal
+                } else {
+                    Environment::Hostile
+                }
+            }
+            BodyKind::Rocky => {
+                if e < 0.08 {
+                    Environment::Marginal
+                } else if e < 0.48 {
+                    Environment::Hostile
+                } else {
+                    Environment::Uninhabitable
+                }
+            }
+            BodyKind::Ice => {
+                if e < 0.04 {
+                    Environment::Marginal
+                } else if e < 0.34 {
+                    Environment::Hostile
+                } else {
+                    Environment::Uninhabitable
+                }
+            }
+            BodyKind::GasGiant => Environment::Uninhabitable,
+        };
+
+        // An intentionally independent roll: atmosphere never constrains ore.
+        let g = rng.next();
+        // Good ground is supposed to be a DISCOVERY, not the default texture:
+        // 8% Ultra Poor · 20% Poor · 65.5% Average · 5% Rich · 1.5% Ultra Rich.
+        // The nearby onboarding mine is promoted separately, so organic surveys
+        // can hold the 10–15% build-order-changing target across whole systems.
+        let geology = if g < 0.08 {
+            Geology::UltraPoor
+        } else if g < 0.28 {
+            Geology::Poor
+        } else if g < 0.935 {
+            Geology::Average
+        } else if g < 0.985 {
+            Geology::Rich
+        } else {
+            Geology::UltraRich
+        };
+
+        let special = if rng.next() < 0.20 {
+            let mut eligible = Vec::new();
+            // Low-density Large/Huge worlds are rare but valuable because they
+            // combine the ship-time bonus with enough industrial room to form a
+            // genuine shipbuilding colony instead of a one-slot curiosity.
+            if self.kind != BodyKind::GasGiant {
+                eligible.push(BodySpecial::LowGravity);
+            }
+            if self.kind == BodyKind::Rocky {
+                eligible.push(BodySpecial::VolcanicMantle);
+            }
+            if matches!(
+                self.kind,
+                BodyKind::Ocean | BodyKind::Ice | BodyKind::GasGiant
+            ) || self
+                .deposits
+                .iter()
+                .any(|d| d.resource == Commodity::Volatiles)
+            {
+                eligible.push(BodySpecial::HydrocarbonSeas);
+            }
+            if self.kind != BodyKind::GasGiant {
+                eligible.push(BodySpecial::CrystallineCrust);
+                eligible.push(BodySpecial::PrecursorRuins);
+            }
+            if environment.naturally_habitable()
+                && self
+                    .deposits
+                    .iter()
+                    .any(|d| d.resource == Commodity::Biomass)
+            {
+                eligible.push(BodySpecial::FertileBiosphere);
+            }
+            (!eligible.is_empty()).then(|| *rng.pick(&eligible))
+        } else {
+            None
+        };
+
+        self.profile = PlanetaryProfile {
+            version: 1,
+            size,
+            environment,
+            geology,
+            special,
+        };
+        self.habitable = environment.naturally_habitable();
+    }
+
+    pub fn habitat_capacity_mult(&self) -> f64 {
+        self.profile.size.habitat_capacity_mult() * self.profile.environment.habitat_capacity_mult()
+    }
+
+    pub fn population_growth_mult(&self) -> f64 {
+        self.profile.environment.growth_mult()
+    }
+
+    pub fn provisions_mult(&self) -> f64 {
+        self.profile.environment.provisions_mult()
+    }
+
+    pub fn construction_time_mult(&self) -> f64 {
+        self.profile.environment.construction_time_mult()
+    }
+
+    pub fn extraction_mult(&self, resource: Commodity) -> f64 {
+        let mineral = matches!(
+            resource,
+            Commodity::MetallicOre | Commodity::Silicates | Commodity::RareElements
+        );
+        let geology = if mineral {
+            self.profile.geology.mineral_extraction_mult()
+        } else {
+            1.0
+        };
+        let special = match (self.profile.special, resource) {
+            (
+                Some(BodySpecial::VolcanicMantle),
+                Commodity::MetallicOre | Commodity::RareElements,
+            ) => 1.20,
+            (Some(BodySpecial::HydrocarbonSeas), Commodity::Volatiles) => 1.35,
+            (
+                Some(BodySpecial::CrystallineCrust),
+                Commodity::Silicates | Commodity::RareElements,
+            ) => 1.35,
+            (Some(BodySpecial::FertileBiosphere), Commodity::Biomass) => 1.35,
+            _ => 1.0,
+        };
+        geology * special
+    }
+
+    pub fn converter_yield_mult(&self, kind: crate::build::StructureKind) -> f64 {
+        use crate::build::StructureKind as K;
+        match (self.profile.special, kind) {
+            (Some(BodySpecial::VolcanicMantle), K::Smelter) => 1.20,
+            (Some(BodySpecial::HydrocarbonSeas), K::FuelRefinery | K::ChemicalWorks) => 1.20,
+            (Some(BodySpecial::FertileBiosphere), K::Agroplex) => 1.20,
+            (Some(BodySpecial::PrecursorRuins), K::ElectronicsFabricator) => 1.25,
+            _ => 1.0,
+        }
+    }
+
+    pub fn ship_build_time_mult(&self) -> f64 {
+        if self.profile.special == Some(BodySpecial::LowGravity) {
+            0.80
+        } else {
+            1.0
+        }
+    }
 }
 
 // --- PER-BODY SLOT POOLS (derived, never stored — the same law as ever) --------
@@ -104,8 +551,8 @@ impl Body {
 /// Per-BODY population tiers — scaled down from the system thresholds (a body
 /// develops on its own curve; the system's industrial weight is the sum).
 /// Tunable.
-pub const BODY_POP_DEVELOPED: f64 = 1.5;
-pub const BODY_POP_MAJOR: f64 = 4.0;
+pub const BODY_POP_DEVELOPED: f64 = 0.010;
+pub const BODY_POP_MAJOR: f64 = 0.050;
 
 pub fn body_pop_tier(population: f64) -> u32 {
     if population >= BODY_POP_MAJOR {
@@ -129,12 +576,15 @@ impl Body {
     /// body starts with 2 and grows with ITS population tier — so even a fresh
     /// colony has industrial breathing room (2) and a major world runs 4.
     pub fn industrial_slots(&self) -> u32 {
-        let base = if self.kind == BodyKind::GasGiant {
+        self.base_industrial_slots() + body_pop_tier(self.population)
+    }
+
+    pub fn base_industrial_slots(&self) -> u32 {
+        if self.kind == BodyKind::GasGiant {
             0
         } else {
-            2
-        };
-        base + body_pop_tier(self.population)
+            self.profile.size.industrial_base()
+        }
     }
 
     /// INFRASTRUCTURE slots: 1, +1 if habitable, +1 once developed.
@@ -381,6 +831,7 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
             kind: p.kind.collapse(),
             parent: None,
             habitable: p.habitable,
+            profile: PlanetaryProfile::default(),
             deposits: std::mem::take(&mut p.deposits),
             structures: BTreeMap::new(),
             population: 0.0,
@@ -400,12 +851,16 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
             kind: BodyKind::Ice, // the walk forced moons to ice — kept
             parent: Some(parent),
             habitable: false,
+            profile: PlanetaryProfile::default(),
             deposits: deps,
             structures: BTreeMap::new(),
             population: 0.0,
             assignments: BTreeMap::new(),
         });
         next_id += 1;
+    }
+    for body in &mut bodies {
+        body.ensure_profile(system_id);
     }
     bodies
 }
@@ -462,7 +917,10 @@ mod tests {
                         matches!(b.kind, BodyKind::Ice | BodyKind::GasGiant) || b.parent.is_some(),
                         "volatiles on ice/gas/moon"
                     ),
-                    Commodity::Biomass => assert!(b.habitable, "biomass bodies are habitable"),
+                    Commodity::Biomass => assert!(
+                        matches!(b.kind, BodyKind::Terrestrial | BodyKind::Ocean),
+                        "biomass has a terrestrial/ocean home even when its atmosphere is hostile to us"
+                    ),
                     Commodity::MetallicOre | Commodity::RareElements | Commodity::Silicates => {
                         assert!(
                             matches!(b.kind, BodyKind::Rocky | BodyKind::Terrestrial),
@@ -499,6 +957,7 @@ mod tests {
             kind: BodyKind::Rocky,
             parent: None,
             habitable: false,
+            profile: PlanetaryProfile::default(),
             deposits: vec![dep(Commodity::MetallicOre, 0.4)],
             structures: BTreeMap::new(),
             population: 0.0,
@@ -535,6 +994,7 @@ mod tests {
             kind: BodyKind::Terrestrial,
             parent: None,
             habitable: true,
+            profile: PlanetaryProfile::default(),
             deposits: vec![],
             structures: BTreeMap::new(),
             population: 0.0,
@@ -562,6 +1022,102 @@ mod tests {
             b.industrial_slots(),
             0,
             "a fresh gas giant hosts no industry"
+        );
+    }
+
+    #[test]
+    fn atmosphere_never_determines_mineral_grade() {
+        let mut barren = Body {
+            id: 0,
+            name: "Test I".into(),
+            kind: BodyKind::Rocky,
+            parent: None,
+            habitable: false,
+            profile: PlanetaryProfile::default(),
+            deposits: vec![dep(Commodity::MetallicOre, 0.4)],
+            structures: BTreeMap::new(),
+            population: 0.0,
+            assignments: BTreeMap::new(),
+        };
+        let mut found = None;
+        for id in 0..2_000 {
+            let mut candidate = barren.clone();
+            candidate.profile = PlanetaryProfile::default();
+            candidate.ensure_profile(&id.to_string());
+            if matches!(
+                candidate.profile.environment,
+                Environment::Hostile | Environment::Uninhabitable
+            ) && candidate.profile.geology == Geology::UltraRich
+            {
+                found = Some(candidate);
+                break;
+            }
+        }
+        let rich = found.expect("the independent rolls produce airless Ultra Rich worlds");
+        assert_eq!(rich.profile.geology.mineral_extraction_mult(), 2.25);
+
+        // Deposit composition is not an input to the three identity rolls.
+        let mut other_deposit = barren.clone();
+        barren.ensure_profile("same-id");
+        other_deposit.deposits = vec![dep(Commodity::Biomass, 0.4)];
+        other_deposit.ensure_profile("same-id");
+        assert_eq!(barren.profile.size, other_deposit.profile.size);
+        assert_eq!(
+            barren.profile.environment,
+            other_deposit.profile.environment
+        );
+        assert_eq!(barren.profile.geology, other_deposit.profile.geology);
+    }
+
+    #[test]
+    fn planetary_profile_drives_legible_economic_factors() {
+        let b = Body {
+            id: 0,
+            name: "Forge I".into(),
+            kind: BodyKind::Rocky,
+            parent: None,
+            habitable: true,
+            profile: PlanetaryProfile {
+                version: 1,
+                size: BodySize::Huge,
+                environment: Environment::Gaia,
+                geology: Geology::UltraRich,
+                special: Some(BodySpecial::VolcanicMantle),
+            },
+            deposits: vec![dep(Commodity::MetallicOre, 0.4)],
+            structures: BTreeMap::new(),
+            population: 0.0,
+            assignments: BTreeMap::new(),
+        };
+        assert!((b.habitat_capacity_mult() - 2.25).abs() < 1e-9);
+        assert!((b.population_growth_mult() - 1.50).abs() < 1e-9);
+        assert!((b.extraction_mult(Commodity::MetallicOre) - 2.70).abs() < 1e-9);
+        assert_eq!(b.extraction_mult(Commodity::Biomass), 1.0);
+        assert_eq!(
+            b.converter_yield_mult(crate::build::StructureKind::Smelter),
+            1.20
+        );
+    }
+
+    #[test]
+    fn pre_profile_body_migrates_without_moving_economic_state() {
+        let raw = r#"{
+            "id":4,"name":"Old IV","kind":"rocky","parent":null,
+            "habitable":false,"deposits":[],"structures":{},
+            "population":1.25,"assignments":{}
+        }"#;
+        let mut body: Body = serde_json::from_str(raw).unwrap();
+        assert_eq!(body.profile.version, 0);
+        body.ensure_profile("77");
+        assert_eq!(body.profile.version, 1);
+        assert_eq!(body.population, 1.25, "migration preserves population");
+        assert!(body.deposits.is_empty(), "migration never rerolls deposits");
+        let once = serde_json::to_string(&body.profile).unwrap();
+        body.ensure_profile("different");
+        assert_eq!(
+            serde_json::to_string(&body.profile).unwrap(),
+            once,
+            "idempotent"
         );
     }
 }

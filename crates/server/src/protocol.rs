@@ -19,12 +19,11 @@ use sim::{
     TradeEvent, TransitMode, Vec2,
 };
 
-/// The client↔server wire protocol version. BUMPED to 16 by §jump-presumption:
-/// own ghosts distinguish a player-known jump destination from its later
-/// destination-origin confirmation light.
+/// The client↔server wire protocol version. BUMPED to 23 by §colony-roles:
+/// surveyed systems now carry authoritative, bounded colony-opportunity cards.
 /// A client seeing an unexpected version can warn the user to refresh; the
 /// server sends it in [`ServerMsg::Welcome`].
-pub const PROTOCOL_VERSION: u32 = 16;
+pub const PROTOCOL_VERSION: u32 = 25;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -381,6 +380,20 @@ pub enum ClientMsg {
         fleet_id: EntityId,
         posture: EngagementPosture,
     },
+    RecruitCaptain {
+        system_id: EntityId,
+    },
+    AssignCaptain {
+        captain_id: u32,
+        fleet_id: EntityId,
+    },
+    ReserveCaptain {
+        captain_id: u32,
+    },
+    TrainCaptain {
+        captain_id: u32,
+        attribute: sim::CaptainAttribute,
+    },
 
     // ---- SYNDICATES (§syndicates Part 1) -------------------------------------
     /// FOUND a syndicate with the caller as founder. The server attaches the
@@ -401,9 +414,53 @@ pub enum ClientMsg {
     LeaveSyndicate,
     /// DISSOLVE the caller's syndicate (founder-only).
     DissolveSyndicate,
+    SetSyndicateRole {
+        member: PlayerId,
+        role: sim::SyndicateRole,
+    },
+
+    // ---- OPERATIONS ---------------------------------------------------------
+    AcceptOperation {
+        operation_id: sim::OperationId,
+    },
+    AbandonOperation {
+        operation_id: sim::OperationId,
+    },
+    AssignOperationFleet {
+        operation_id: sim::OperationId,
+        fleet_id: EntityId,
+    },
+    RecoverOperation {
+        operation_id: sim::OperationId,
+        fleet_id: EntityId,
+    },
+    ContributeOperationCargo {
+        operation_id: sim::OperationId,
+        commodity: Commodity,
+        units: u32,
+    },
+    CreateSyndicateOperation {
+        system_id: EntityId,
+    },
+
+    // ---- DIPLOMACY ----------------------------------------------------------
+    ProposeTreaty {
+        target_name: String,
+        treaty: sim::diplomacy::TreatyKind,
+    },
+    RespondTreaty {
+        proposal_id: u64,
+        accept: bool,
+    },
+    DeclareWar {
+        target_name: String,
+    },
+    CancelTreaty {
+        target: PlayerId,
+    },
 
     // ---- RESEARCH (§research R6) --------------------------------------------
-    /// SET the caller's syndicate research QUEUE (ordered programme ids). The
+    /// SET the caller's corporation research QUEUE (ordered programme ids). The
     /// front promotes to the active programme; the sim validates + soft-rejects
     /// unknown/hidden/completed ids. CC-local, no positional delay.
     SetResearchQueue {
@@ -508,6 +565,24 @@ pub struct CharterView {
     pub market_penalty_frac: f64,
     /// Credits per standing point to buy back through reinstatement.
     pub reinstate_cost_per_point: f64,
+}
+
+/// Owner-only opening programme. This is a projection of sim state, never a
+/// client-side checklist; reconnects resume at the exact milestone.
+#[derive(Debug, Clone, Serialize)]
+pub struct FoundingView {
+    pub stage: sim::FoundingStage,
+    pub protected: bool,
+    pub protection_min_until: f64,
+    pub protection_max_until: f64,
+    pub expansion_unlocked: bool,
+    pub interceptor: Option<EntityId>,
+    pub privateer: Option<EntityId>,
+    pub bounty_received: bool,
+    /// The two nearby prospects assigned to the opening survey chapter. Their
+    /// ids are objectives, not survey results: composition/geology still arrive
+    /// only through the ordinary served system picture.
+    pub survey_candidates: Vec<EntityId>,
 }
 
 /// §TCA: one entry of an Authority freighter's MANIFEST, as a viewer may read it.
@@ -775,14 +850,12 @@ pub struct GalaxyInfo {
     pub jump_range: f64,
     pub jump_spool_s: f64,
     pub hyperlimit: f64,
-    /// Sensor detection radius each of the player's assets projects — lets the
-    /// client draw its sensor coverage around its own ships + command center.
+    /// Base detection radius of the command center and Raider pickets.
     pub sensor_range: f64,
     /// Raider cruise speed (sim units / s) — lets the client compute a CRUDE,
     /// drifting intercept estimate for a committed raid (rendered as a soft zone).
     pub raider_speed: f64,
-    /// The sensor-bubble multiplier a SCOUT projects over the standard ship
-    /// bubble (§scout) — for the client's coverage rendering.
+    /// Multiplier when a Scout accompanies a Raider-bearing sensor fleet.
     pub scout_sensor_mult: f64,
     /// Sensor-array bubble tunables (§buildings step 2b): a tier-N array projects
     /// `base + per_tier · (N−1)` — lets the client draw its own arrays' coverage.
@@ -990,6 +1063,9 @@ pub struct SystemStateView {
     /// §economy Part 2: colony POPULATION in millions — owner-only; rivals
     /// always see 0 (workforce/economy strength is private intel).
     pub population: f64,
+    /// §planetary-identity: environment-adjusted BASE population upkeep —
+    /// owner-only; rivals always see 0. Research may reduce the actual draw.
+    pub population_upkeep: f64,
     /// §economy Part 4: the RESIDENT SPECIALIST pool — owner-only; rivals
     /// always see an empty map (your talent is private intel).
     pub specialists: BTreeMap<sim::SpecialistKind, u32>,
@@ -1071,11 +1147,28 @@ pub struct SystemStateView {
     /// Never leaks a rival's survey state (each corp is gated on its OWN set).
     #[serde(default)]
     pub deposits: Option<Vec<DepositView>>,
-    /// §explore R3: the system's HIDDEN TRAIT slug — CURRENT-OWNER-ONLY (rivals
-    /// and past owners get `None`, always; traits are never telegraphed). A
+    /// §explore R3: the survey-gated economic trait slug — present for this
+    /// viewer's surveyed systems or holdings, never from rival knowledge. A
     /// Bonus Vein carries its commodity as `bonus_vein:<commodity>`.
     #[serde(default, rename = "trait")]
     pub trait_: Option<String>,
+    /// Survey-gated interpretations of the exact planetary combination. Empty
+    /// before this viewer's survey wavefront; derived from the same multipliers
+    /// production uses, so these are explanations rather than recommendations
+    /// guessed independently by the client.
+    #[serde(default)]
+    pub opportunities: Vec<ColonyOpportunityView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ColonyOpportunityView {
+    pub role: String,
+    pub title: String,
+    pub tier: String,
+    pub score: f64,
+    pub body_id: Option<u32>,
+    pub body_name: Option<String>,
+    pub reason: String,
 }
 
 /// §node: the per-system view of an EXOTIC NODE. The bonus + awakened state are
@@ -1122,6 +1215,7 @@ pub struct SyndicateView {
     /// participant battle records.
     #[serde(default)]
     pub flagship_name: Option<String>,
+    pub my_role: sim::SyndicateRole,
 }
 
 /// §fitting: one saved doctrine fit on the wire (modules sorted, never empty —
@@ -1138,6 +1232,54 @@ pub struct FitView {
 pub struct SyndicateMember {
     pub id: PlayerId,
     pub name: String,
+    pub role: sim::SyndicateRole,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OperationView {
+    pub id: sim::OperationId,
+    pub issuer: sim::OperationIssuer,
+    pub scope: sim::OperationScope,
+    pub kind: sim::OperationKind,
+    /// ARRIVED state/progress, never operation truth ahead of its report.
+    pub state: sim::OperationState,
+    pub progress: u32,
+    pub goal: u32,
+    pub stage: u8,
+    pub reported_at: f64,
+    pub offered_at: f64,
+    pub starts_at: f64,
+    pub expires_at: f64,
+    pub target_pos: Vec2,
+    pub reward: sim::OperationReward,
+    pub joined: bool,
+    pub assigned_fleet: Option<EntityId>,
+    pub winner: Option<PlayerId>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiplomacyRelationView {
+    pub other: PlayerId,
+    pub name: String,
+    pub state: sim::diplomacy::RelationState,
+    pub war_activates_at: Option<f64>,
+    pub separation_until: f64,
+    pub reprisal_until: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TreatyProposalView {
+    pub id: u64,
+    pub from: PlayerId,
+    pub name: String,
+    pub treaty: sim::diplomacy::TreatyKind,
+    pub expires_at: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiplomacyView {
+    pub relations: Vec<DiplomacyRelationView>,
+    pub incoming: Vec<TreatyProposalView>,
 }
 
 /// A pending invitation the VIEWER may accept (§syndicates Part 1).
@@ -1147,7 +1289,7 @@ pub struct SyndicateInviteView {
     pub name: String,
 }
 
-/// §research R6: the viewer's SYNDICATE research picture — owner-only (design
+/// §research R6: the viewer's CORPORATION research picture — owner-only (design
 /// law 3: nothing leaks to rivals). The whole 108-programme tree with per-node
 /// state + gate progress, the active programme with its live rate and ETA, the
 /// queue, and the per-Academy contribution table (shown math, law 2).
@@ -1233,9 +1375,8 @@ pub struct GateProgressView {
     pub threshold: f64,
 }
 
-/// §bodies: one PLANET OR MOON on the wire. The roster (id/name/kind/parent/
-/// habitable) is public geography — a star's worlds are visible from afar;
-/// DEPOSITS ride the survey knowledge ladder (None when unsurveyed);
+/// §bodies: one PLANET OR MOON on the wire. Kind, size, environment and parent
+/// are public astronomy. GEOLOGY, SPECIAL and DEPOSITS ride the survey ladder;
 /// structures/population are OWNER-ONLY (empty/zero for rivals — the fog law
 /// one level down, nothing new leaks).
 #[derive(Debug, Clone, Serialize)]
@@ -1246,6 +1387,26 @@ pub struct BodyView {
     pub kind: String,
     pub parent: Option<u32>,
     pub habitable: bool,
+    pub size: String,
+    pub environment: String,
+    /// Survey-gated mineral grade slug.
+    pub geology: Option<String>,
+    /// Survey-gated rare body feature and its exact effect copy.
+    pub special: Option<String>,
+    pub special_effect: Option<String>,
+    /// Public natural multipliers: useful before committing a colony ship.
+    pub habitat_capacity_mult: f64,
+    pub population_growth_mult: f64,
+    pub provisions_mult: f64,
+    pub construction_time_mult: f64,
+    /// Survey-gated mineral multiplier (the grade before resource-specific specials).
+    pub mineral_extraction_mult: Option<f64>,
+    /// Owner-only live per-body pools; None cannot leak rival population tiers.
+    pub resource_slots: Option<u32>,
+    pub industrial_slots: Option<u32>,
+    pub infrastructure_slots: Option<u32>,
+    /// Survey-gated because Low Gravity is itself surveyed.
+    pub ship_build_time_mult: Option<f64>,
     /// This body's deposits — survey-gated like the system list.
     pub deposits: Option<Vec<DepositView>>,
     /// OWNER-ONLY: structures on this body (slug → tier); empty for rivals.
@@ -1284,6 +1445,8 @@ pub struct AssignmentView {
     pub staffing: f64,
     pub skill: f64,
     pub food: f64,
+    /// Planetary geology/special factor. Age/crew thresholds never enter it.
+    pub site: f64,
     /// Net output lines at those factors (commodity, units/s) — extraction
     /// lists each deposit's commodity; a converter lists its output.
     pub outputs: Vec<(Commodity, f64)>,
@@ -1636,13 +1799,30 @@ pub struct JobView {
     pub progress: f64,
 }
 
-/// Owner-only jump-drive state at the retarded sighting. `remaining` is the
-/// spool time that remained WHEN THIS REPORT LEFT the fleet; the client must
-/// replay it as served, not subtract the report age and reveal current truth.
+/// Observable jump-drive state at the retarded sighting. `remaining` is the
+/// spool time that remained WHEN THIS REPORT LEFT the fleet; it is sent only
+/// with a fleet already visible to this viewer, so it reveals neither a hidden
+/// hull nor the jump destination.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct JumpSpoolView {
     pub remaining: f64,
     pub waiting_for_fuel: bool,
+}
+
+/// A rival jump departure whose light has reached this viewer. This is a
+/// destination-free historical fact: the player saw the fleet leave `pos`, but
+/// learns nothing here about where it went.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JumpDepartureView {
+    pub fleet: EntityId,
+    /// Identity already visible on the detected pre-jump ghost. Retaining it on
+    /// the historical event reveals no destination or post-jump information.
+    pub owner: PlayerId,
+    pub owner_name: String,
+    pub kind: ShipKind,
+    pub pos: Vec2,
+    pub departed_at: f64,
+    pub learned_at: f64,
 }
 
 /// Owner-only presentation of a jump whose departure report has arrived before
@@ -1697,6 +1877,38 @@ pub struct EmplacementView {
 /// cargo. You know a fleet is inbound and roughly its size long before you learn
 /// what is IN it.
 #[derive(Debug, Clone, Serialize)]
+pub struct CaptainView {
+    pub id: u32,
+    pub name: String,
+    pub portrait: sim::CaptainPortrait,
+    pub level: u8,
+    pub title: sim::CaptainTitle,
+    pub portrait_age: sim::CaptainPortraitAge,
+    pub command_capacity: u32,
+    pub xp: u32,
+    pub next_level_xp: u32,
+    pub unspent: u8,
+    pub attributes: sim::CaptainAttributes,
+}
+
+/// One entry in the owner's corporation-wide officer ledger. Assigned
+/// progression is copied from the same served fleet sample as the map ghost;
+/// `report = None` means command has not yet received an officer report.
+#[derive(Debug, Clone, Serialize)]
+pub struct CaptainRosterView {
+    pub id: u32,
+    pub name: String,
+    pub portrait: sim::CaptainPortrait,
+    pub assigned_fleet: Option<EntityId>,
+    pub stationed_system: Option<EntityId>,
+    pub recovering_until: Option<f64>,
+    /// Withheld until the casualty report reaches command. `killed` is
+    /// permanent; the other outcomes retain this officer through recovery.
+    pub loss_fate: Option<sim::CaptainLossFate>,
+    pub report: Option<CaptainView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct GhostView {
     pub id: EntityId,
     pub owner: PlayerId,
@@ -1713,11 +1925,15 @@ pub struct GhostView {
     pub age: f64,
     /// True if this is one of the viewing player's own ships.
     pub own: bool,
-    /// Server-only evidence that this served frame crossed a discontinuous jump.
-    /// It drives order confirmation but is never serialized to the client; the
-    /// visible snap already conveys the same event.
-    #[serde(skip)]
+    /// This served frame crossed a discontinuous jump. It drives owner order
+    /// confirmation and the rival's arrival warning. The ghost has already
+    /// passed visibility/detection gating, so this reveals no hidden contact and
+    /// arrives on exactly the same delayed wavefront as the destination picture.
     pub jumped: bool,
+    /// Owner-only, sampled with the fleet: personnel progression obeys the same
+    /// information delay as the hull instead of leaking through a fresh roster.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captain: Option<CaptainView>,
     /// §dock: the BERTH this sighting was taken at — `"hub"` for the
     /// Market Hub, otherwise the system's id — or null if the fleet was under
     /// way (or loitering somewhere it does not control).
@@ -1738,9 +1954,10 @@ pub struct GhostView {
     /// Light-delayed with the rest of the sighting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drive: Option<sim::ship::DriveState>,
-    /// Owner-only jump spool telemetry from this same retarded frame. Kept
+    /// Observable jump spool telemetry from this same retarded frame. Kept
     /// separate from `drive`: `DriveState` governs realspace motion, while a
-    /// jump spool is a stationary, world-managed fleet order.
+    /// jump spool is a stationary, world-managed fleet order. A rival may see
+    /// the charge but never the owner-only reason for a stalled spool.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jump_spool: Option<JumpSpoolView>,
     /// Owner-only provisional jump bookmark. Present only when departure light
@@ -1753,8 +1970,8 @@ pub struct GhostView {
     /// already knows.
     #[serde(default)]
     pub speed: f64,
-    /// The convoy's broadcast route (waypoints), light-delayed like its
-    /// position. `None` for raiders (they don't broadcast).
+    /// An observable convoy route (waypoints), light-delayed like its position.
+    /// A silent rival convoy has no ghost at all outside detection coverage.
     pub route: Option<Vec<Vec2>>,
     /// §course-plan: OWN fleets only — the remaining legs of the flight the sim
     /// is actually flying through realspace. Rivals get `None`: your flight plan is
@@ -1773,9 +1990,14 @@ pub struct GhostView {
     /// §economy Part 4: specialist PASSENGERS aboard — part of the manifest,
     /// included under exactly the cargo rule below (empty = none visible).
     pub passengers: BTreeMap<sim::SpecialistKind, u32>,
-    /// The convoy's cargo — present ONLY when this convoy is within the viewing
-    /// player's sensor coverage (Tier 2). `None` out of range, or for raiders.
+    /// Compatibility alias for the first cargo stack. New clients consume
+    /// `cargo_manifest`; retained so a rolling client does not lose all cargo.
     pub cargo: Option<CargoView>,
+    /// The convoy's complete mixed manifest — present ONLY when this convoy is
+    /// within the viewing player's sensor coverage (Tier 2). Empty out of range,
+    /// empty-hold, or for a hull without cargo.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cargo_manifest: Vec<CargoView>,
     /// The estimated-size BUCKET (`1 · 2–3 · 4–7 · 8–15 · 16–30 · 31+`). Always
     /// present on any visible fleet — the honest, un-invertible size estimate a
     /// fog observer gets even for a fleet far outside sensor coverage.
@@ -1872,6 +2094,9 @@ pub enum ServerMsg {
         protocol_version: u32,
         /// Sim tick rate (Hz) — lets the client display time correctly.
         tick_hz: u32,
+        /// Sim seconds advanced per wall second. `1` is production pacing;
+        /// playtests default to `4` so two strategic hours fit in ~30 minutes.
+        pacing_scale: f64,
         tick: u64,
         sim_time: f64,
         galaxy: GalaxyInfo,
@@ -1911,6 +2136,14 @@ pub enum ServerMsg {
         systems: Vec<SystemStateView>,
         /// Ships as delayed ghosts from this player's vantage.
         ghosts: Vec<GhostView>,
+        /// The viewer's own officer ledger. Remote progression is sourced from
+        /// `ghosts`, never current truth; reserve officers are at the home CC.
+        captains: Vec<CaptainRosterView>,
+        captain_capacity: u32,
+        /// Newly/continuingly observable rival departure tombstones. The client
+        /// retains each unique event briefly as a fading historical marker.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        jump_departures: Vec<JumpDepartureView>,
         /// §emplacements: deep-space sensors standing in open space. Sent
         /// UNDELAYED, and only the viewer's own:
         /// they are your own infrastructure, so you know where you put them.
@@ -1925,6 +2158,8 @@ pub enum ServerMsg {
         /// rivals learn of offenses only through public citations, never by
         /// reading a corporation's record.
         charter: CharterView,
+        /// The viewer's server-authoritative opening arc and founder safety.
+        founding: FoundingView,
         /// §TCA: the Market Hub freight desk — timetable, terms per owned
         /// destination, and the player's OWN shipment queue. Owner-only, fresh
         /// (it is the player's own administration, like the wallet).
@@ -1949,9 +2184,18 @@ pub enum ServerMsg {
         /// §syndicates Part 1: pending invitations the viewer may accept.
         #[serde(default)]
         syndicate_invites: Vec<SyndicateInviteView>,
-        /// §research R6: the viewer's OWN syndicate research picture (owner-only,
-        /// like the roster), or `None` if unaffiliated. Boxed to keep this variant
-        /// lean; serde is transparent through the `Box`.
+        /// Repeatable work and strategic objectives, each at the latest report
+        /// that has actually reached this corporation.
+        #[serde(default)]
+        operations: Vec<OperationView>,
+        /// Capability-derived chapter: guidance, not a hard level gate.
+        midgame_stage: sim::MidgameStage,
+        /// Bilateral relations and arrived treaty offers. Boxed for View size.
+        #[serde(default)]
+        diplomacy: Option<Box<DiplomacyView>>,
+        /// §research R6: the viewer's OWN corporation research picture (owner-only,
+        /// like the wallet). Present for every real corporation regardless of
+        /// syndicate membership. Boxed to keep this variant lean.
         #[serde(default)]
         research: Option<Box<ResearchView>>,
     },

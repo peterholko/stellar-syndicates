@@ -181,7 +181,7 @@ in any direction.
 | Home ring | 80,000 su nominal outer ring | one pre-generated home slot per player; the lane-era chart distance is preserved literally |
 | System placement | area-uniform in `[0.12R, 0.96R]` | no zones, no structured regions |
 | Base `c` / warp-light signal | 400 / 2,000 su/s | information travels at `c × WARP_FACTOR` |
-| Sensor bubble | 110,000 su | ≈28% of a 4-player galaxy radius |
+| Sensor bubble | 80,000 su | 20% of a 4-player galaxy radius |
 | Tick rate | 30 Hz | fixed timestep, `dt = 1/30` |
 
 **The light-game invariant.** Light must comfortably outrun the fastest hull, or intel and
@@ -199,20 +199,32 @@ fog-filtered reconstruction, not objective truth (§6).
 ### 4.2 Star systems, bodies, and deposits
 
 A star system is a real place with **planets and moons as first-class entities**. Each
-body carries its own kind (rocky, terrestrial, ocean, ice, gas giant), habitability,
-deposits, structures, population, and production assignments. The roster is generated
-deterministically from the system id, with deposit placement obeying affinity: volatiles
-on ice worlds and the icy moons of gas giants, biomass on habitable and ocean worlds,
-minerals on rocky ones.
+body carries four independent identity axes — **size** (Tiny → Huge), **environment**
+(Gaia → Uninhabitable), **mineral grade** (Ultra Poor → Ultra Rich), and an optional
+rare **feature** — alongside its kind, deposits, structures, population, and production
+assignments. Atmosphere never chooses mineral wealth: an airless moon may be Ultra Rich
+and worth supplying from a distant Gaia population centre. Deposit placement still obeys
+physical affinity (volatiles on ice/gas, biomass on terrestrial/ocean bodies, minerals on
+solid worlds), but deposits no longer define what the planet *is*.
 
 What stays pooled at the *system* level is deliberate: the stockpile (convoys dock at
 systems, not at planets), the workforce and specialist pools (labour commutes freely
 inside a gravity well), the food state, and the module ledger.
 
-**Deposits carry the frontier gradient.** A system's deposit count runs 1 near the hub to
-3 at the rim, and the commodity mix skews toward valuable goods the farther out it sits.
-Only the five raw commodities occur as deposits. Deposits are renewable and never
-deplete.
+**Deposits carry the frontier gradient without making every frontier rock a jackpot.** A
+system's deposit count runs 1 near the hub to 3 at the rim, the commodity mix skews toward
+valuable goods, and individual richness rises through a deliberately narrow band. Only the
+five raw commodities occur as deposits. Deposits are renewable and never deplete. The rim
+is usually better because it has more and rarer material; exceptional *per-worker* sites
+still require the right planet.
+
+**The opening expansion choice is guaranteed, not inferred.** Where the generated system
+count permits it, each home slot receives two distinct nearby propositions: a Large-or-
+bigger Gaia/Terran garden world and a different hostile or airless system with an Ultra
+Rich mineral body. Their exact size, climate, deposits and rare feature remain seeded, so
+the lesson repeats without prescribing an identical opening. The former grows people; the
+latter multiplies minerals but needs habitation and supply. Home itself is a reliable
+Large Terran / Average-mineral baseline, never a jackpot roll.
 
 ### 4.3 What you know about geology
 
@@ -220,9 +232,9 @@ Geology is fogged behind a knowledge ladder rather than published at join.
 
 | Rung | What you learn | How |
 |---|---|---|
-| Public | position, name, star type, and a richness **band** (Poor / Fair / Rich) | free, identical for everyone — the spectral read from home |
-| Surveyed | the exact deposit table | pre-surveyed within 1200 su of your home; otherwise a Survey order, or holding the system |
-| Trait | the system's hidden trait | revealed only by owning it |
+| Public | position, name, star type, richness **band**, body size and environment | free, identical for everyone — astronomy and the spectral read from home |
+| Surveyed | exact deposits, every body's mineral grade and rare feature, and the system economic trait | pre-surveyed within 1200 su of your home; otherwise a Survey order, or holding the system |
+| Owned | private structures, population, staffing, stockpile and live output | holding the system |
 
 The band is a pure function of static deposits (`Σ richness × base price`, bucketed at the
 galaxy's terciles), so it never changes and is safe to publish. It should predict roughly
@@ -233,9 +245,9 @@ dwell 20 seconds uninterrupted — all or nothing, and the fleet runs 1.5× loud
 sensors actively. The knowledge then travels home at *c*. Survey data never stales
 (deposits are static) and is never lost, even if the system is.
 
-**Hidden traits** sit on a quarter of systems, one each, revealed only by ownership — the
-blind claimer's gamble resolving *is* the reveal. Effects are always-on ground truth
-regardless of when the owner learned:
+**System traits** sit on a quarter of systems, one each. They are always-on ground truth
+and arrive with the survey report so a player can choose a colony rather than discovering
+the whole reason only after committing a Colony Ship:
 
 | Trait | Effect |
 |---|---|
@@ -244,6 +256,27 @@ regardless of when the owner learned:
 | Unstable Geology | structure recipes cost ×1.25 here (the lemon a survey cannot see) |
 | Volatile Pockets | Fuel Refinery output ×1.3 |
 | Precursor Cache | a one-time 40 Alloys grant at claim, latched so a capture cannot re-mint it |
+
+Bodies may also carry one rarer, survey-revealed feature. These modify a specific existing
+industrial leg rather than adding opaque currencies: Low Gravity cuts ship construction
+time 20%; Volcanic Mantles aid Metallic Ore/Rare Elements and Smelters; Hydrocarbon Seas
+aid Volatiles, Fuel and Polymers; Crystalline Crusts aid Silicates/Rare Elements; Fertile
+Biospheres aid Biomass and Provisions; Precursor Ruins aid Electronics.
+
+**A survey names colony roles rather than handing the player a bag of multipliers.** The
+same authoritative natural-yield functions used by production score the strongest
+Population World, Mining World, Fuel Complex, Electronics Center, Agricultural Exporter,
+Shipbuilding Center and Strategic Outpost in the system. A score is relative to the
+dependable home site before staffing, tiers, specialists, food and research: ×1.30 is
+useful, ×1.80 exceptional, and ×2.50 a jackpot. Planet geology, a matching feature and a
+system trait share one ×3 natural-site cap. Investment can still deepen that specialty;
+the geography alone cannot make the whole colony three times better at everything.
+
+Organic geology is intentionally mostly Average (65.5%), with Rich at 5% and Ultra Rich at
+1.5% per body. Across an 80-seed four-player generation sweep, 12.1% of non-home,
+non-onboarding systems expose at least one exceptional role. The guaranteed nearby garden
+and mine are excluded from that organic rate because they are teaching fixtures, not lucky
+survey rolls.
 
 ### 4.4 Exotic nodes
 
@@ -357,8 +390,8 @@ phantom response.
 
 ### 6.3 Who sees what
 
-Your assets stream sensor data to your command center continuously, each sample delayed by
-its straight warp-light distance. **Your own forces** appear as an always-addressable but
+Your command center, Raider pickets, and standing Sensor Arrays stream sensor data continuously,
+each sample delayed by its straight warp-light distance. **Your own forces** appear as an always-addressable but
 retarded picture. **Rival forces** are present only when their emitted light was detectable
 by one of your assets; dark contacts disappear outside that served coverage.
 
@@ -367,11 +400,11 @@ well as rivals'**. The UI reports the sighting age rather than drawing a precisi
 drive changes could invalidate. There is no FTL tether to your own ships: certainty tracks
 the light path to your command center, never ownership.
 
-**Broadcast versus dark.** Under the Galactic Convention, civilian and capital hulls
-broadcast identity and position galaxy-wide (light-delayed): convoys, corvettes, colony
-ships, Authority freighters, and every capital. Raiders and Scouts run **dark** — visible
-only inside a rival's sensor coverage. A fleet broadcasts if *any* member kind does, so
-you cannot hide a freighter by parking a raider beside it.
+**Broadcast versus dark.** Corporate Convoys may run **silent**: outside a rival's sensor
+picture their hull, route, and manifest are absent. Raiders and Scouts are dark too.
+Declared military/civilian presence still broadcasts galaxy-wide (light-delayed):
+Corvettes, Colony Ships, Builders, Transports, every capital, and especially the Terran
+Charter Authority's public Freighters. A fleet broadcasts if *any* member kind does.
 
 **The detection rule** for dark fleets is one shared function used by both the server's
 view filter and the sim's own picket sensing, evaluated from the *retarded* sample's
@@ -399,9 +432,10 @@ A fleet carries a **transit throttle** — Full (default) or Stealth, which trav
 formation speed for roughly double the trip time and the corresponding drop in signature.
 Pursuit is always Full.
 
-**Sensor coverage** is the union of bubbles from your command center, every one of your
-fleets (a Scout projects 1.5×, i.e. 165,000 su), and every Sensor Array on a system you own
-(110,000 su at tier 1, +44,000 per tier after). One coverage function feeds all three consumers:
+**Sensor coverage** is the union of bubbles from your command center, every Raider-bearing
+fleet, and every Sensor Array on a system you own (110,000 su at tier 1, +44,000 per tier
+after). A Scout attached to a Raider fleet preserves its 1.5× range multiplier; a pure
+Scout is reconnaissance, not a free mobile detection buoy. One coverage function feeds all three consumers:
 the view filter, picket sensing, and the client's rendering.
 
 ### 6.4 The intel ladder
@@ -464,15 +498,17 @@ terrain, buoys, repeaters, coupled signals, or hyperspace transit regime.
 `JUMP_RANGE = 50,000 su`. It must remain stationary through an uninterrupted
 `JUMP_SPOOL_S = 10 s`; a new order or an engagement cancels the spool. Origin and target must
 both be at least `HYPERLIMIT = 900 su` from every star system and the Market Hub. The jump
-charges the same fuel as traversing that distance at warp (`raw distance × mass` divided by
-`JUMP_FUEL_FACTOR = WARP_FACTOR`); a dry fleet holds the spool until refuelled. The relocation
+currently consumes no fuel for playtesting (`JUMP_FUEL_FACTOR = infinity`), so an empty tank
+does not hold a completed spool. Restore the factor to `WARP_FACTOR` when jump fuel returns to
+the balance. The relocation
 is instantaneous physics but ordinary information: observers keep the departure picture
 and replay its delayed spool telemetry until the successful departure event's light arrives,
 then place a provisional arrow at the player-known destination if its information delay is
-longer. Destination-origin light replaces the arrow with the ship and confirms the jump. Any
-rival observer instead loses the old marker when departure light arrives and learns no new
-position until ordinary destination light and detection permit it. Any order copy already
-flying toward the old position is lost; orders issued after the jump remain valid.
+longer. Destination-origin light replaces the arrow with the ship and confirms the jump. A
+rival who can already see the fleet sees the same light-delayed spool charge. When departure
+light arrives, its hull becomes a destination-free jump scar that slowly fades from the observed
+origin; no new position is learned until ordinary destination light and detection permit it. Any
+order copy already flying toward the old position is lost; orders issued after the jump remain valid.
 
 | Kind | Speed (su/s) | Hull mass |
 |---|---|---|
@@ -588,6 +624,72 @@ acceptable cost. A **Corvette** cannot raid; it defends by being *there* (§8.5)
 *only* an unclaimed one (§11.2). A **Troop Transport** contributes nothing to a ship
 battle: it is a fat hull full of soldiers, it needs escorting, and its whole purpose lands
 on the ground.
+
+#### Flag Officers
+
+Every corporation begins with one named **Flag Officer** physically assigned to its
+founding Interceptor, then grows an officer corps through its home Academy. An Academy tier
+adds one roster berth beyond the founding commission; commissioning a Lieutenant is a 60 s
+Academy job costing 40 Provisions, 20 Electronics, and 10 Machinery. Graduates enter reserve
+at the home command center. Officers are not global collectible cards: an assigned officer's
+portrait, experience and attributes are sampled with that fleet, so a level-up at a distant
+battle appears only when the same aftermath light reaches the command center. The
+corporation roster reuses that served sample rather than opening a fresh personnel channel.
+
+Experience levels carry service titles: **Lieutenant**, **Lieutenant-Commander**,
+**Commander**, **Captain**, **Rear Admiral**, **Vice Admiral**, **Admiral**, and finally
+**Fleet Admiral** at level 10. Levels 6–7 share Vice Admiral and levels 8–9 share Admiral,
+reserving Fleet Admiral for the capstone. The served level also selects a young portrait
+at levels 1–3, middle-age portrait at 4–7, and senior portrait at 8–10. Both changes ride
+the delayed personnel report; neither can reveal a remote promotion early.
+
+Rank is also formation authority. Hulls consume **command points**, so both the number and
+the type of ship matter: Scout/Convoy/Builder 1, Interceptor 2,
+Corvette/Colony/Transport 4, Destroyer 8, Cruiser 16, Battleship 32, Dreadnought 64,
+Titan 128. Title capacities are Lieutenant 4, Lieutenant-Commander 8, Commander 16,
+Captain 32, Rear Admiral 64, Vice Admiral 96, Admiral 160, Fleet Admiral 256. Thus the
+opening Lieutenant can lead two Interceptors or one with support craft; an Admiral can
+fly a Titan with a screen. Dockside merges that would exceed the assigned officer's rank
+are refused. A completed hull that can no longer join forms its own fleet instead of
+being lost. An overstrength legacy formation is preserved but its officer bonuses suspend
+until it is split or the officer earns sufficient rank. Fleets without the named officer
+remain legal formations but receive no travel, survey, or logistics bonus. If several
+fleets fight together, each officer commands only their own legal formation; the side's
+Command bonus is weighted by formation load, with unofficered hulls contributing at neutral
+1.0. Several junior officers can therefore cover several light formations, while one senior
+admiral is required to concentrate capital hulls in a single formation.
+
+Captains have four bounded attributes. Rank 1 is the trained-officer baseline; each rank
+above it in **Command** adds 2% battle damage
+(maximum 10%); each further **Navigation** rank removes 2% jump-spool time (maximum 10%);
+**Fieldcraft** removes 3% survey dwell (maximum 15%); and **Logistics** removes 2% fuel
+burn (maximum 10%). Published XP awards are 60–85 for battle resolution, 35 for a completed
+survey, 20 for a completed player-freight delivery, and 12 for a successful jump. Levelling
+banks one explicit training point; it can be spent only while the Captain is in reserve or
+their fleet is berthed at the home command center, so training cannot become an FTL remote
+order. Assignment, transfer, and return to reserve require the officer and formation to
+share the same owned-system dock. This lets a colony officer remain useful at the new colony
+instead of teleporting home. Two officer-led fleets must return one officer to reserve before
+merging.
+
+If an officer's entire formation is destroyed, the officer is marked missing at the wreck.
+That status does not appear in the roster until the wreck's light reaches the command center.
+The keyed incident outcome is rescue (45%, at least 5 minutes), injury (30%, at least 10
+minutes), capture and repatriation (15%, at least 20 minutes), or death (10%, permanent).
+Every finite recovery is also clamped to at least one minute after the casualty report; the
+officer then returns to home reserve. A known death becomes a memorial entry and opens its
+Academy berth for a replacement, but never before the report arrives. A single hull loss from
+a surviving formation does not remove its officer.
+
+The initial roster is deliberately small and authored — Mara Venn, Elias Rook, Sera
+Okafor, Jun Arclight, Astrid Nyström, Henrik Søndergaard, Luca Ferraro, Karim Ben Youssef,
+Mateo Quispe, Talia Faumuina, Ana Luísa Nascimento, Elena Valdés, Daphne Markou, Han
+Min-jae, Nadine Ilunga, Daichi Mori, Chen Jianyu, Nattaya Chantarat, Lin Xiaoyu, Reina
+Kuroda and Yoon Seo-yeon. A profile is selected deterministically per corporation so
+snapshots and replays preserve identity. The roster deliberately spans several regions and
+backgrounds without turning origin into a game statistic: only the officer's trained
+specialty affects play. The opening game teaches attachment to one officer first; later
+Academy investment makes the breadth-versus-concentration command choice explicit.
 
 ### 8.2 Strength weights
 
@@ -920,6 +1022,14 @@ escort what matters. Standing logistics also needs a real idle cargo fleet berth
 source; automation commands that hull and never manufactures or consumes one. “Ship
 production” uses booked Authority freight, paying the same fee and queue as a manual booking.
 
+A player Convoy's hold is a **mixed manifest under one aggregate capacity**. Dockside loads
+may add or top up any commodity until the fleet's combined hold is full; unloading moves
+every stack, and a haul deposits or sells each stack independently. Storage headroom is
+shared across the manifest, so any overflow stays aboard and continues to the Market Hub.
+Fuel cost and valuation count total units, while sensor visibility reveals the complete
+manifest under the existing cargo-intel rule. A successful raid likewise seizes the whole
+mixed manifest rather than silently discarding all but one commodity.
+
 ### 9.4 The Authority
 
 The **Terran Charter Authority** is the home-galaxy body on the far side of the wormhole
@@ -1015,7 +1125,9 @@ expedition — the most direct expression of the whole design: the law is a bill
 settle it.
 
 Deliberately *not* built: privateering and letters of marque, syndicate-shared standing,
-Authority bounties or escorts, and any standing effect from player-versus-player combat.
+and any standing effect from player-versus-player combat. Authority bounties,
+enforcement assignments, and physical-freighter escort contracts are part of the shared
+Operations system (§17.5); they reward service without changing the underlying citation law.
 
 ---
 
@@ -1025,11 +1137,15 @@ Nothing produces by itself. A deposit needs its extraction structure *staffed*; 
 converter needs crews and inputs. Every output is one legible factor chain:
 
 ```
-output = base × tier_throughput × staffing × skill × food
+output = natural_site_rate × tier_throughput × staffing × skill × food
 ```
 
-where `base` is a deposit's richness (extraction) or the converter's rate, and every
-factor is a number the player can read in the colony panel and act on.
+For extraction, `natural_site_rate` is deposit richness × the surveyed
+mineral-grade/feature/system-trait factors, capped at ×3 of the dependable home reference.
+For conversion it is the converter's rate × its matching body/trait factor, under the same
+natural cap. Every resolved factor is a number the player can read in the colony panel and
+act on; player investment (tiers, people, specialists and research) sits outside the
+geographic cap.
 
 ### 10.1 The industrial web
 
@@ -1073,12 +1189,17 @@ the whole system is migration-free by construction.
 | Pool | Structures | Slots per body |
 |---|---|---|
 | Resource | Mining Complex, Volatile Harvester, Bioharvester | `min(deposits, 4)` — a bare rock hosts no extraction |
-| Industrial | Smelter, Electronics Fabricator, Chemical Works, Fuel Refinery, Machine Works, Armaments Complex, **Shipyard, Naval Drydock, Capital Slipway, Ordnance Foundry** | 2 (0 on a gas giant — nowhere to stand) + population tier |
+| Industrial | Smelter, Electronics Fabricator, Chemical Works, Fuel Refinery, Machine Works, Armaments Complex, **Shipyard, Naval Drydock, Capital Slipway, Ordnance Foundry** | size base: Tiny 1, Small/Medium 2, Large 3, Huge 4 (0 on a gas giant) + population tier |
 | Infrastructure | Agroplex, Habitat, Orbital Warehouse, Sensor Array, Defense Platform, Academy, **Garrison** | 1, +1 if habitable, +1 once developed |
 
 Each *distinct* built structure consumes one slot; tiers deepen in place, so the budget
 prices breadth rather than depth. A slot-full system soft-rejects: no debit, no job, and an
 owner-only notice. Ships are units, never slot-gated.
+
+Environment also prices the act of establishing industry: structure construction time is
+×0.90 on Gaia, ×1.00 Terran, ×1.10 Marginal, ×1.25 Hostile, and ×1.40 Uninhabitable.
+This makes an airless Ultra Rich mine powerful but slower to establish; it does not make
+the prize disappear behind a punitive second resource recipe.
 
 The Agroplex sits in Infrastructure on purpose: food security is civic, so a Habitat plus
 an Agroplex makes a self-feeding outpost on the base slots with no industrial investment.
@@ -1097,7 +1218,7 @@ world, so it may spread across bodies), and each is gated separately in §8.1:
 
 | Yard | Builds | Needs |
 |---|---|---|
-| **Shipyard** | Convoy/Scout/Colony (I), Raider/Corvette (II) | — |
+| **Shipyard** | Convoy/Scout/Colony (I), Interceptor/Corvette (II) | — |
 | **Naval Drydock** | Destroyer (I), Cruiser (II), Battleship (III) | Shipyard ≥ 2 here |
 | **Capital Slipway** | Dreadnought (I), Titan (II) | Naval Drydock ≥ 3 here |
 | **Ordnance Foundry** | installs refits · **repairs damaged hulls** (§8.7) | Shipyard ≥ 1 here |
@@ -1106,9 +1227,9 @@ world, so it may spread across bodies), and each is gated separately in §8.1:
 once, and each yard kind counts its own slips, so a Shipyard busy with convoys never blocks
 the Drydock's line warships. Before this, ship jobs were unbounded and tier was a pure gate.
 A full yard soft-rejects on *timing*: nothing is spent, and the same order lands the moment a
-slip frees. Every home generates with Shipyard 1 pre-built, so convoys and scouts build on
-day one (one at a time) and raiders are earned. A staffed yard builds up to 25% faster,
-locked in when the job starts, from the crews on the yard that gates that hull.
+slip frees. A new corporation builds Shipyard I as the first step of its founding
+programme; its opening stockpile funds that yard exactly. A staffed yard builds up to 25%
+faster, locked in when the job starts, from the crews on the yard that gates that hull.
 
 The **Ordnance Foundry** is the outfitting-and-maintenance yard: it changes what a hull
 carries and mends what a battle took out of it (§8.7), rather than laying new hulls — so a
@@ -1144,13 +1265,18 @@ Population lives on bodies, in their Habitats, and is measured in millions. **Po
 never decreases** — the hard rule. Famine walks the food ladder down and freezes growth; it
 never kills.
 
-- Habitats are the only source of capacity: 4M per tier. No Habitat, no growth, so a
-  ship-founded outpost holds at its founding size until housing goes up.
-- Growth is linear and flat at 0.002M/s, only while Well Supplied and under capacity.
-- A colony ship plants 0.5M — a hungry mouth first, not an instant workforce. A home starts
-  at 2.0M with 60 Provisions banked.
-- Population eats 0.06 Provisions per second per million.
-- Workforce units are `floor(population / 0.8)`. A tier-N structure wants N crews for full
+- Habitats are the only source of capacity: 25,000 people per tier × body-size factor × environment
+  factor. No Habitat, no growth, so a ship-founded outpost holds at its founding size
+  until housing goes up. A Huge Gaia world houses 2.25× the people per Habitat tier; an
+  airless Tiny rock houses 0.30×.
+- Growth is linear at one person/s × environment (Gaia 1.50 → Uninhabitable 0.25), only
+  while Well Supplied and under capacity.
+- A colony ship plants 1,000 people. A new home starts at 3,000 people with 15 Provisions
+  banked.
+- Population eats 40 Provisions per second per million × environment (Gaia 0.80 →
+  Uninhabitable 1.40).
+- One workforce unit represents 1,000 people (`floor(population / 0.001M)`). A tier-N
+  structure wants N crews for full
   throughput; under-crewing runs it pro rata. Over-posting the colony's workforce is legal
   and simply dilutes every line by the same share — fair, legible, and deadlock-free.
 
@@ -1169,6 +1295,48 @@ a colony hovering at a boundary never flickers or spams notices. Primary-sector 
 extraction and the Agroplex — never drops below half rate: miners feed themselves off the
 land, and the Agroplex floor is what makes famine *recoverable*. Without it, an empty
 larder would be a death spiral.
+
+#### The founding programme
+
+A fresh corporation begins lean: Habitat I, Bioharvester I and Agroplex I; two of its three
+workforce cohorts staff food and one is unassigned. Its Market Warehouse is empty, it has
+2,000 credits, and its only hull is an **Interceptor** (the internal save/wire kind remains
+`raider`). The home stockpile is deliberately a two-step construction kit: 32 Machinery,
+65 Alloys and 15 Electronics build Shipyard I and then Mining Complex I exactly; 60 Fuel is
+the movement runway.
+
+The server-authoritative programme advances in this order:
+
+1. Build Shipyard I.
+2. Take the Interceptor beyond the home gravity well; the step advances only when that
+   crossing report reaches the command center.
+3. Defeat the assigned damaged Rogue Privateer through ordinary combat; its outcome and
+   bounty wait for battle light.
+4. Build Mining Complex I from the remainder of the opening kit.
+5. Freight the bounty kit home and build a Convoy.
+6. Physically haul goods to the Market Hub and sell them; an instant sale of untouched
+   warehouse inventory does not count, and the step waits for the sale receipt's light.
+7. Establish and staff Academy I.
+8. Choose and complete any Tier-I corporate research programme. A one-time founding grant
+   covers its material basket and leaves 12 Academy-minutes of real throughput; Drive
+   Tuning, Deep Bores and Med Bays are guide recommendations, not hard gates.
+9. Freight the remaining bounty kit home and build a Scout.
+10. Survey both assigned nearby prospects and receive both reports: one population-led,
+    one industry-led. Their exact bodies, geology and scored roles remain survey-gated.
+11. Compare the reports, freight the authorized exact Colony Ship kit home, and build it.
+    Expansion construction unlocks when the second report arrives.
+12. Physically establish the second holding. Only then is the founding programme complete.
+
+The bounty deposits 65 Alloys, 10 Machinery, 10 Polymers, 31 Electronics, 8 Fuel and 20
+Provisions in the Market Warehouse, plus 750 credits: exactly one Convoy, Academy and Scout
+kit with the first-research reserve. The two survey reports separately authorize one exact
+Colony Ship kit (45 Alloys, 15 Machinery, 20 Polymers, 30 Provisions and 15 Fuel) at the
+Market Warehouse. Founder
+Protection blocks corporation-versus-corporation aggression but not PvE. It cannot be
+voluntarily broken until 30 minutes have elapsed and the privateer report has arrived; it
+then remains until that corporation initiates PvP, with a hard 24-hour ceiling. Existing
+snapshots default to programme-complete so established corporations are never pushed back
+through onboarding.
 
 ### 10.4 Specialists
 
@@ -1257,7 +1425,8 @@ inherits is deliberately a *damaged* base:
 - **population stays** — people do not vanish with the flag, so never-decrease holds even
   here. A halved Habitat may leave the colony over capacity, which just freezes growth;
 - the geology survey knowledge transfers as spoils, and holding the system reveals its
-  hidden trait (a Precursor Cache that already paid cannot be re-minted by a flip);
+  economic trait if it was not already surveyed (a Precursor Cache that already paid
+  cannot be re-minted by a flip);
 - the old owner's in-progress builds are dropped — they paid, but they no longer own the
   ground.
 
@@ -1378,7 +1547,8 @@ fought right now is watched as a chase of one's own light cone, never faster.
 
 ## 12. Research
 
-A syndicate-wide tech layer on **programme boards with schools**. Six fields, each running
+A corporation-wide tech layer on **programme boards with schools**. Every corporation has
+Programme Boards from its first moment; no syndicate membership is required. Six fields run
 Tier I (open) → Tier II (field verb gate) → two schools with their own gates and Tiers
 III–V. The Hulls field's Line school extends to Tiers VI–VIII for the capital ladder.
 
@@ -1391,7 +1561,7 @@ III–V. The Hulls field's Line school extends to Tiers VI–VIII for the capita
 | Hulls | Line · Corsair |
 | Life & Habitation | Growth · Talent |
 
-**Nothing is exclusive.** Every programme is researchable by every syndicate. Identity comes
+**Nothing is exclusive.** Every programme is researchable by every corporation. Identity comes
 from the *order you chose* on a one-at-a-time continuous clock, not from locked branches.
 111 authored programmes, so a focused season yields roughly a third of the tree.
 
@@ -1428,8 +1598,8 @@ Board discipline, enforced as rules:
 
 **Research is goods-funded and geographically distributed.** A programme's cost is measured in
 throughput-seconds — 2 h at Tier I, then 8, 24, 72, 168, and 240 / 336 / 480 for the capital
-tiers, so a Titan is the deepest research in the game. The rate comes from every Academy in the
-syndicate, each running the same factor chain as any other production line (tier × staffing ×
+tiers, so a Titan is the deepest research in the game. The rate comes from every Academy owned
+by the corporation, each running the same factor chain as any other production line (tier × staffing ×
 skill × food), with a field-matched specialist driving the skill term. Each contributing Academy
 **drips a funding basket from its own system's stockpile** — Electronics on every programme,
 Machinery from Tier II, Rare Elements from Tier III, plus field flavour (Weapons wants
@@ -1612,17 +1782,65 @@ only friend-versus-foe and what a viewer's picture reveals.
 
 - **Size cap:** at most a third of active corporations, floored at 2 so a small galaxy can
   still form a pact. One coalition cannot absorb the galaxy.
-- **Founder-managed:** the founder invites and dissolves; if they leave, the seat passes to
-  the next member and an emptied syndicate dissolves.
+- **Permissioned roster:** Founder, Officer, Quartermaster and Member are explicit roles.
+  Officers may invite members and manage operations; Quartermasters may manage shared
+  operations; every corporation retains its own bilateral diplomacy, while the founder
+  retains dissolution and role assignment. If they leave, the seat
+  passes to the next member and an emptied syndicate dissolves.
 - **Membership propagates like ownership.** A two-state history means a distant player learns
   of a join or leave only after the light from that corporation's command center arrives.
   (The pact itself takes effect immediately — an alliance is a mutual agreement both parties
   consented to.)
-- **Research is syndicate-wide** (§12), as are the 24 saved doctrine fits and the single
-  Titan.
+- **Research remains corporation-owned** (§12) through joining and leaving. The 24 saved
+  doctrine fits and the single Titan are syndicate-wide.
 - **Ally garrisons** stationed at a host system eat 0.05 Provisions per ship per second from
   the *host's* stockpile. Hosting a coalition shield means feeding it: a cut supply line
   unfeeds the garrison and suspends its defense contribution until fed. Nothing is destroyed.
+
+### 17.1 Formal diplomacy
+
+Relations between corporations are neutral, non-aggression, war, or ceasefire. Treaty offers
+and replies travel between command centers at warp-light speed. A war declaration cannot
+activate until its notice reaches the target and a 60-second warning period has elapsed;
+cancelling a pact uses the same notice-and-grace discipline. This prevents a UI click from
+creating consequence-free surprise hostility across the map.
+
+Non-aggression and ceasefire states reject manual hostile orders, autonomous target
+acquisition, and new contact battles. Territorial blockade is stricter: it requires a formal
+war, except that a corporation attacked while neutral receives a ten-minute right of
+reprisal. That window begins when the attack report reaches the defender, and belongs only
+to the defender. Members leaving a syndicate receive a five-minute separation ceasefire.
+
+### 17.5 Operations and the midgame arc
+
+**Operations** are one typed objective engine fed by the game's existing authoritative
+events. Pirate clears, surveys, deliveries, sales, battles, fleet losses, escorts and node
+control advance contracts rather than maintaining parallel versions of those mechanics.
+Each progress change freezes a report at its event site. The Operations board, map marker,
+completion state and reward update only when that report reaches the player's command center;
+credits, research insight, standing and Captain XP therefore cannot reveal an unseen result.
+
+The repeatable families are:
+
+- discovered-enclave pirate bounties and survey expeditions;
+- Market delivery contracts;
+- rescue/salvage recoveries created by physical fleet losses;
+- public escorts tied to real Authority freighters and public enforcement assignments;
+- competitive strategic-node control and regional mandates;
+- three-stage, goods-funded syndicate projects with per-corporation contribution accounting.
+
+Private offers are opt-in, public objectives are open competitions, and syndicate operations
+are visible and assignable only to their roster. Fleets can be explicitly assigned so Captain
+XP has a physical recipient. Shared rewards divide by recorded contribution; competitive
+rewards go to the winning corporation.
+
+The Operations header names the player's current strategic problem using a capability-derived
+arc: **home development → exploration → specialization → first colony → trade network →
+contested expansion → regional power**. The founding programme drives the first four phases;
+afterward holdings, combat participation and exotic-node control move the corporation into
+the contested and regional phases. Contracts begin at the trade-network phase, converting
+the sandbox's mechanics into directed opportunities without making expansion itself a quest
+checkbox.
 
 ---
 
@@ -1636,7 +1854,7 @@ hashing is guarded so no real corporation can ever collide with either sentinel.
 objectives that do not require farming another human. Three hidden bases are seeded at
 unclaimed systems in the mid ring (30–72% of the radius), never within 2600 su of a home
 slot. A base stays dark until a scout snapshots it. It launches a dark raider pack every 90 s
-that hunts broadcasting convoys within its radius (2600 su, +900 per escalation tier), grows
+that hunts corporate convoys within its local radius (2600 su, +900 per escalation tier), grows
 a tier every 300 s while unsuppressed to a maximum of 3, and is suppressed by assaulting the
 base itself — a platform-equivalent defense pool of 2 tiers per enclave tier. A destroyed
 base lies dormant 600 s and respawns weaker.

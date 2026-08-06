@@ -38,9 +38,9 @@ use sim::{
 use crate::protocol::{
     AnchorView, BattleFidelity, BattleRecordHeader, BattleRecordView, BlockadeStateView,
     BuildStateView, CargoView, CompCount, DepositView, GhostView, GroundFidelity,
-    GroundRecordHeader, GroundRoundView, GroundStateView, IntelView, LoadoutStack,
-    ManifestEntryView, RecordCount, RoundNoteView, RoundRecordView, SideRecordView, StockSlot,
-    SystemStateView,
+    GroundRecordHeader, GroundRoundView, GroundStateView, IntelView, JumpDepartureView,
+    LoadoutStack, ManifestEntryView, RecordCount, RoundNoteView, RoundRecordView, SideRecordView,
+    StockSlot, SystemStateView,
 };
 
 /// One recorded true state of a ship at a sim time.
@@ -66,8 +66,13 @@ struct Sample {
     /// must not be disclosed. A later destination report can reacquire it.
     jump_departed: bool,
     /// Start of an active jump spool at this emission, plus its served fuel-hold
-    /// state. Owner-only when projected onto the wire.
-    jump_spool: Option<(f64, bool)>,
+    /// state. Projected only with an already-visible ghost, so a rival may see
+    /// the drive charge without learning a hidden fleet or its destination.
+    jump_spool: Option<(f64, bool, f64)>,
+    /// Owner officer state at this same emission. Copy-only progression data;
+    /// immutable name/portrait live on the track. Never read from current truth
+    /// while serving a retarded position.
+    captain: Option<sim::CaptainSighting>,
     /// §explore Part 2: was the fleet ACTIVELY SURVEYING (loud) at this sample?
     /// Rides the per-sample history so the loudness is judged in the RETARDED
     /// frame — exactly like velocity — and can never leak or lag FTL.
@@ -97,6 +102,7 @@ impl Sample {
             jump_presumed: false,
             jump_departed: false,
             jump_spool: older.jump_spool,
+            captain: older.captain,
             loud: older.loud,
             drive: older.drive,
         }
@@ -104,10 +110,17 @@ impl Sample {
 }
 
 /// Position history + current metadata for one FLEET. Fleet-derived scalars
-/// (flagship, broadcast, sensor bubble, cap speed, size bucket) are snapshotted
+/// (flagship, broadcast, sensor source, cap speed, size bucket) are snapshotted
 /// at record time so the view filter never needs the live sim `Fleet`.
 struct Track {
     owner: PlayerId,
+    /// Public corporation label captured with the visible fleet identity. A
+    /// departure scar may outlive the ghost it came from, so the label belongs
+    /// on the track rather than requiring live-world lookup at serve time.
+    owner_name: String,
+    captain_id: Option<u32>,
+    captain_name: Option<String>,
+    captain_portrait: Option<sim::CaptainPortrait>,
     /// Exact composition (kinds → counts) at the last record — revealed only in
     /// coverage / to the owner.
     composition: BTreeMap<ShipKind, u32>,
@@ -115,6 +128,8 @@ struct Track {
     flagship: ShipKind,
     /// Whether the fleet broadcasts (any member broadcasts).
     broadcasts: bool,
+    /// Whether this fleet carries the Raider that projects a mobile sensor ring.
+    projects_sensor: bool,
     /// The best sensor bubble the fleet projects (max member `sensor_mult`).
     sensor_mult: f64,
     /// Formation cruise cap (min member `max_speed`) — scales the detection
@@ -149,11 +164,11 @@ struct Track {
     samples: VecDeque<Sample>,
     /// Last sim time this track was updated (for pruning dead ships).
     last_seen: f64,
-    /// Current cargo (convoys). Static for the demo patrol convoys, so sending
+    /// Current cargo manifest (convoys). Static for the demo patrol convoys, so sending
     /// it alongside the (delayed) position is leak-free here; when convoys carry
     /// dynamic cargo (§9), cargo would move into the per-sample history so it is
     /// delayed exactly like position.
-    cargo: Option<Cargo>,
+    cargo: Vec<Cargo>,
     /// §economy Part 4: specialist PASSENGERS aboard — part of the manifest,
     /// fogged exactly like cargo (same caveat about per-sample delay).
     passengers: std::collections::BTreeMap<sim::SpecialistKind, u32>,
@@ -165,7 +180,7 @@ struct Track {
     /// §modules Part B3: MODULE CRATES aboard (a transport convoy's manifest) —
     /// fogged exactly like `passengers`/`cargo`.
     modules: std::collections::BTreeMap<sim::ModuleKind, u32>,
-    /// Current broadcast route (convoys' waypoints). Static for demo patrols
+    /// Current observable route (convoys' waypoints). Static for demo patrols
     /// (same caveat as cargo).
     route: Option<Vec<Vec2>>,
     /// If the fleet has LEFT TRUE SPACE: (true time, true position) where it did.
@@ -195,6 +210,14 @@ struct Track {
 pub struct NodeEffects<'a> {
     pub veil: &'a [(PlayerId, Vec2)],
     pub deep_scan: &'a [Vec2],
+}
+
+/// Everything the fleet filter learned for one viewer on this wavefront. Jump
+/// departures are kept separate from live ghosts because they are history, not
+/// a claim that a hull still occupies the observed origin.
+pub struct FleetPicture {
+    pub ghosts: Vec<GhostView>,
+    pub jump_departures: Vec<JumpDepartureView>,
 }
 
 /// The view filter's state: every moving object's recent true-position history.
@@ -330,20 +353,38 @@ impl PositionHistory {
     pub fn record(&mut self, world: &World) {
         let now = world.time;
         let frontiers = self.frontiers.get_mut();
+        let owner_name = |owner: PlayerId| {
+            if owner == PlayerId::PIRATE {
+                "Pirates".to_string()
+            } else if owner == PlayerId::TCA {
+                "Terran Charter Authority".to_string()
+            } else {
+                world
+                    .players
+                    .get(&owner)
+                    .map(|corp| corp.name.clone())
+                    .unwrap_or_else(|| owner.to_string())
+            }
+        };
         for (id, ship) in &world.fleets {
             let track = match self.tracks.entry(*id) {
                 std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
                 std::collections::hash_map::Entry::Vacant(entry) => entry.insert(Track {
                     owner: ship.owner,
+                    owner_name: owner_name(ship.owner),
+                    captain_id: None,
+                    captain_name: None,
+                    captain_portrait: None,
                     composition: BTreeMap::new(),
                     flagship: ship.flagship_kind(),
                     broadcasts: ship.broadcasts(),
+                    projects_sensor: ship.projects_sensor(),
                     sensor_mult: ship.sensor_mult(),
                     max_speed: ship.max_speed(),
                     count_class: ship.count_class(),
                     samples: VecDeque::new(),
                     last_seen: now,
-                    cargo: None,
+                    cargo: Vec::new(),
                     passengers: Default::default(),
                     loadouts: Default::default(),
                     modules: Default::default(),
@@ -355,10 +396,28 @@ impl PositionHistory {
                     plans: VecDeque::new(),
                 }),
             };
+            if track.owner != ship.owner {
+                track.owner_name = owner_name(ship.owner);
+            }
             track.owner = ship.owner;
+            let captain = world
+                .players
+                .get(&ship.owner)
+                .and_then(|corp| {
+                    corp.captains
+                        .values()
+                        .find(|captain| captain.assigned_fleet == Some(*id) && !captain.missing())
+                });
+            track.captain_id = captain.map(|captain| captain.id);
+            track.captain_name = captain.map(|captain| captain.name.clone());
+            track.captain_portrait = captain.map(|captain| captain.portrait);
+            if let Some(captain) = captain {
+                debug_assert_eq!(track.captain_id, Some(captain.id));
+            }
             track.composition = ship.composition.clone();
             track.flagship = ship.flagship_kind();
             track.broadcasts = ship.broadcasts();
+            track.projects_sensor = ship.projects_sensor();
             track.sensor_mult = ship.sensor_mult();
             track.max_speed = ship.max_speed();
             track.count_class = ship.count_class();
@@ -418,7 +477,7 @@ impl PositionHistory {
                 track.plans.pop_front();
             }
             track.last_seen = now;
-            track.cargo = ship.cargo;
+            track.cargo = ship.cargo_stacks();
             track.passengers = ship.passengers.clone();
             track.loadouts = ship.loadouts.clone();
             track.modules = ship.modules.clone();
@@ -441,7 +500,7 @@ impl PositionHistory {
                 sim::ship::FleetOrder::Jump {
                     spool_started: Some(started),
                     ..
-                } => Some((started, ship.stalled)),
+                } => Some((started, ship.stalled, world.captain_navigation_spool_secs(*id))),
                 _ => None,
             };
             let current = Sample {
@@ -453,6 +512,7 @@ impl PositionHistory {
                 jump_presumed: false,
                 jump_departed: false,
                 jump_spool,
+                captain: captain.map(sim::Captain::sighting),
                 loud: ship.surveying(),
                 drive: ship.drive_state,
             };
@@ -514,16 +574,15 @@ impl PositionHistory {
     /// Build the delayed/fogged view of all ships for a player, applying the
     /// two-tier information model (§6) on top of the lightspeed delay:
     ///
-    /// * **Tier 1 — broadcast:** convoys broadcast identity + position, so every
-    ///   convoy is included galaxy-wide as a light-delayed ghost (with its
-    ///   route). Raiders are dark — not broadcast.
-    /// * **Tier 2 — sensor range:** a convoy's *cargo* is included only when the
-    ///   convoy is within the player's sensor coverage; a *raider* is included
-    ///   ONLY when within coverage (otherwise omitted entirely — no leak).
+    /// * **Tier 1 — broadcast:** declared hulls and Authority Freighters are
+    ///   included galaxy-wide as light-delayed ghosts. Corporate Convoys,
+    ///   Raiders, and Scouts may run dark.
+    /// * **Tier 2 — sensor range:** a silent fleet is included only when detected;
+    ///   a broadcaster's manifest becomes exact only inside coverage.
     ///
     /// Sensor coverage is the union of `sensor_range` circles around the
-    /// player's assets — their command center and their own ships — taken at
-    /// their **observed (delayed) positions**, the same ghosts the client draws.
+    /// player's command center and Raider-bearing fleets, taken at their
+    /// **observed (delayed) positions**, plus standing arrays.
     /// Detection therefore happens in the command center's delayed composite
     /// frame, using only light that has arrived: a raider is detected exactly
     /// when its delayed ghost falls inside a drawn coverage circle. This never
@@ -545,7 +604,7 @@ impl PositionHistory {
     }
 
     /// §emplacements: the viewer's SENSOR COVERAGE as `(center, radius)` sources
-    /// — their command center, their own fleets' bubbles at the RETARDED
+    /// — their command center, their Raider fleets' bubbles at the RETARDED
     /// positions their light shows, and any standing arrays.
     ///
     /// This is the same union `view_for_with_arrays` builds for dark-fleet
@@ -566,7 +625,7 @@ impl PositionHistory {
         let mut frontiers = self.frontiers.borrow_mut();
         let cursors = &mut frontiers.cursors;
         for (id, track) in &self.tracks {
-            if track.owner != viewer {
+            if track.owner != viewer || !track.projects_sensor {
                 continue;
             }
             let cursor = cursors
@@ -616,11 +675,32 @@ impl PositionHistory {
         // §node: this viewer's regional dark-fleet effects (Veil + Deep Scan).
         nodes: NodeEffects<'_>,
     ) -> Vec<GhostView> {
+        self.picture_for_with_arrays(viewer, cc, c, now, arrays, battle_reveal, nodes)
+            .ghosts
+    }
+
+    /// Production form of [`Self::view_for_with_arrays`], also returning the
+    /// destination-free departure tombstones that reached this viewer.
+    #[allow(clippy::too_many_arguments)]
+    pub fn picture_for_with_arrays(
+        &self,
+        viewer: PlayerId,
+        cc: Vec2,
+        c: f64,
+        now: f64,
+        arrays: &[(Vec2, f64)],
+        battle_reveal: &BTreeSet<EntityId>,
+        nodes: NodeEffects<'_>,
+    ) -> FleetPicture {
         // Pass 1: retarded ghost for every observable ship, and gather the
         // viewer's sensor coverage (command center + their own ships' ghosts).
         struct Pre<'a> {
             id: EntityId,
             owner: PlayerId,
+            owner_name: &'a str,
+            captain_name: &'a Option<String>,
+            captain_id: Option<u32>,
+            captain_portrait: Option<sim::CaptainPortrait>,
             flagship: ShipKind,
             broadcasts: bool,
             max_speed: f64,
@@ -636,7 +716,7 @@ impl PositionHistory {
             loadouts:
                 &'a std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>,
             sample: Sample,
-            cargo: Option<Cargo>,
+            cargo: &'a [Cargo],
             passengers: &'a std::collections::BTreeMap<sim::SpecialistKind, u32>,
             modules: &'a std::collections::BTreeMap<sim::ModuleKind, u32>,
             route: &'a Option<Vec<Vec2>>,
@@ -649,7 +729,7 @@ impl PositionHistory {
             destroyed_detected: bool,
         }
         let mut pre = Vec::new();
-        // Coverage as (center, radius) sources: the command center + own ship
+        // Coverage as (center, radius) sources: the command center + own Raider
         // ghosts at the global range, plus any standing array bubbles (each with
         // its OWN radius — a developed array outsees a ship).
         let mut coverage: Vec<(Vec2, f64)> = vec![(cc, self.sensor_range)];
@@ -676,16 +756,9 @@ impl PositionHistory {
             else {
                 continue; // dark — no light from this object has arrived yet
             };
-            if sample.jump_departed {
-                // The rival has received the departure event, not the authored
-                // destination. Remove the old contact now; destination-origin
-                // light may reacquire it later through the ordinary filter.
-                debug_assert_ne!(track.owner, viewer);
-                continue;
-            }
-            if track.owner == viewer {
-                // Each own fleet projects its best bubble — a scout aboard gives
-                // an oversized one (`sensor_mult`: mobile vision). A presumed
+            if track.owner == viewer && track.projects_sensor {
+                // A Raider-bearing fleet projects its mobile bubble. A scout
+                // aboard preserves the existing range multiplier. A presumed
                 // destination is only a map bookmark, so coverage stays on the
                 // last destination-origin report until new light arrives.
                 let coverage_pos = if sample.jump_presumed {
@@ -707,6 +780,10 @@ impl PositionHistory {
             pre.push(Pre {
                 id: *id,
                 owner: track.owner,
+                owner_name: &track.owner_name,
+                captain_name: &track.captain_name,
+                captain_id: track.captain_id,
+                captain_portrait: track.captain_portrait,
                 flagship: track.flagship,
                 broadcasts: track.broadcasts,
                 max_speed: track.max_speed,
@@ -724,7 +801,7 @@ impl PositionHistory {
                 composition: &track.composition,
                 loadouts: &track.loadouts,
                 sample,
-                cargo: track.cargo,
+                cargo: &track.cargo,
                 passengers: &track.passengers,
                 modules: &track.modules,
                 route: &track.route,
@@ -734,6 +811,7 @@ impl PositionHistory {
 
         // Pass 2: apply the two-tier visibility rules using the coverage.
         let mut ghosts = Vec::new();
+        let mut jump_departures = Vec::new();
         for p in pre {
             let own = p.owner == viewer;
             // SPEED-SIGNATURE DETECTION (§Part 4): a dark fleet's presence is
@@ -784,6 +862,24 @@ impl PositionHistory {
             if !p.broadcasts && !dark_detected {
                 continue;
             }
+            if p.sample.jump_departed {
+                // This is not a hull at the origin: it is the rival's observed
+                // departure wavefront. Keep it out of `ghosts` while preserving
+                // the destination-free fact for the fading map scar. Running it
+                // through the ordinary detection gate above is essential: a
+                // hidden dark fleet cannot leave a visible historical marker.
+                debug_assert!(!own);
+                jump_departures.push(JumpDepartureView {
+                    fleet: p.id,
+                    owner: p.owner,
+                    owner_name: p.owner_name.to_string(),
+                    kind: p.flagship,
+                    pos: p.sample.pos,
+                    departed_at: p.sample.time,
+                    learned_at: p.sample.time + sim::transit::delay(p.sample.pos, cc, c),
+                });
+                continue;
+            }
             // What the viewer may READ off it: a seen dark fleet reveals all; a
             // broadcaster reveals cargo/composition only inside plain coverage.
             let reveal = if p.broadcasts {
@@ -820,14 +916,21 @@ impl PositionHistory {
             } else {
                 Default::default()
             };
-            let cargo = if detected {
-                p.cargo.map(|cg| CargoView {
-                    commodity: cg.commodity,
-                    units: cg.units,
-                })
+            let cargo_manifest = if detected {
+                p.cargo
+                    .iter()
+                    .map(|cg| CargoView {
+                        commodity: cg.commodity,
+                        units: cg.units,
+                    })
+                    .collect::<Vec<_>>()
             } else {
-                None
+                Vec::new()
             };
+            // Keep the original one-stack field on the wire for rolling clients;
+            // new clients consume `cargo_manifest`. It is a compatibility alias,
+            // never a second source of truth.
+            let cargo = cargo_manifest.first().copied();
             // §node Deep Scan: the VIEWER's active pulsar/binary node resolves the
             // exact composition of any fleet ALREADY visible in its region — a
             // bucket→exact upgrade on a fleet that PASSED detection (never a new
@@ -902,17 +1005,14 @@ impl PositionHistory {
                         .collect()
                 }),
                 drive: Some(p.sample.drive),
-                jump_spool: if own {
-                    p.sample.jump_spool.map(|(started, waiting_for_fuel)| {
-                        crate::protocol::JumpSpoolView {
-                            remaining: (sim::transit::JUMP_SPOOL_S - (p.sample.time - started))
-                                .max(0.0),
-                            waiting_for_fuel,
-                        }
-                    })
-                } else {
-                    None
-                },
+                jump_spool: p.sample.jump_spool.map(|(started, waiting_for_fuel, spool_secs)| {
+                    crate::protocol::JumpSpoolView {
+                        remaining: (spool_secs - (p.sample.time - started)).max(0.0),
+                        // Charge-up is externally observable; the reason an
+                        // armed drive is holding remains owner telemetry.
+                        waiting_for_fuel: own && waiting_for_fuel,
+                    }
+                }),
                 jump_presumed: if own && p.sample.jump_presumed {
                     let origin = p.sample.jump_origin.unwrap_or(p.sample.pos);
                     let destination_delay = sim::transit::delay(p.sample.pos, cc, c);
@@ -933,8 +1033,28 @@ impl PositionHistory {
                 age,
                 own,
                 jumped: p.sample.jump && !p.sample.jump_presumed,
+                captain: if own {
+                    p.sample.captain.and_then(|captain| {
+                        Some(crate::protocol::CaptainView {
+                            id: p.captain_id?,
+                            name: p.captain_name.as_ref()?.clone(),
+                            portrait: p.captain_portrait?,
+                            level: captain.level,
+                            title: captain.title,
+                            portrait_age: captain.portrait_age,
+                            command_capacity: captain.command_capacity,
+                            xp: captain.xp,
+                            next_level_xp: captain.next_level_xp,
+                            unspent: captain.unspent,
+                            attributes: captain.attributes,
+                        })
+                    })
+                } else {
+                    None
+                },
                 route,
                 cargo,
+                cargo_manifest,
                 passengers,
                 count_class: p.count_class,
                 composition,
@@ -972,7 +1092,11 @@ impl PositionHistory {
         }
         // Deterministic ordering by id.
         ghosts.sort_by_key(|g| g.id.0);
-        ghosts
+        jump_departures.sort_by_key(|d| (d.fleet.0, d.departed_at.to_bits()));
+        FleetPicture {
+            ghosts,
+            jump_departures,
+        }
     }
 
     /// The viewer's CURRENT SIGHTING of their own ship: position, velocity,
@@ -1030,8 +1154,8 @@ impl PositionHistory {
             return true;
         }
         for track in self.tracks.values() {
-            if track.owner != viewer {
-                continue; // coverage comes only from the viewer's own assets
+            if track.owner != viewer || !track.projects_sensor {
+                continue; // mobile coverage comes only from the viewer's Raiders
             }
             // An asset can't have provided coverage after its own observed death.
             if let Some((dt, _)) = track.gone
@@ -1126,6 +1250,7 @@ pub fn filter_systems(
         .iter()
         .map(|sys| {
             let own = sys.owner == Some(viewer);
+            let surveyed_here = own || surveyed.contains(&sys.id);
             let owner = match (sys.owner, sys.claimed_at) {
                 (Some(owner), _) if owner == viewer => Some(owner),
                 (Some(owner), Some(claimed_at)) => {
@@ -1287,6 +1412,15 @@ pub fn filter_systems(
                 .slug()
                 .to_string(),
                 population: if own { sys.population() } else { 0.0 },
+                population_upkeep: if own {
+                    sys.bodies
+                        .iter()
+                        .map(|b| b.population * b.provisions_mult())
+                        .sum::<f64>()
+                        * sim::colony::PROVISIONS_PER_MILLION_PER_S
+                } else {
+                    0.0
+                },
                 // §economy Part 4: your talent is private intel.
                 specialists: if own {
                     sys.specialists.clone()
@@ -1299,37 +1433,58 @@ pub fn filter_systems(
                 } else {
                     Default::default()
                 },
-                // §bodies: the roster is PUBLIC geography (a star's worlds are
-                // visible from afar); deposits ride the survey ladder; the
-                // per-body owner block is owner-only — fog one level down.
+                // §planetary-identity: kind/size/environment are public
+                // astronomy. Geology, specials and deposits arrive together on
+                // the viewer's survey wavefront; owner economies stay private.
                 bodies: sys
                     .bodies
                     .iter()
-                    .map(|b| crate::protocol::BodyView {
-                        id: b.id,
-                        name: b.name.clone(),
-                        kind: b.kind.slug().to_string(),
-                        parent: b.parent,
-                        habitable: b.habitable,
-                        deposits: (own || surveyed.contains(&sys.id)).then(|| {
-                            b.deposits
-                                .iter()
-                                .map(|d| DepositView {
-                                    resource: d.resource,
-                                    richness: d.richness,
-                                    reserves: d.reserves,
-                                })
-                                .collect()
-                        }),
-                        structures: if own {
-                            b.structures
-                                .iter()
-                                .map(|(k, t)| (k.slug().to_string(), *t))
-                                .collect()
-                        } else {
-                            Default::default()
-                        },
-                        population: if own { b.population } else { 0.0 },
+                    .map(|b| {
+                        crate::protocol::BodyView {
+                            id: b.id,
+                            name: b.name.clone(),
+                            kind: b.kind.slug().to_string(),
+                            parent: b.parent,
+                            habitable: b.habitable,
+                            size: b.profile.size.slug().to_string(),
+                            environment: b.profile.environment.slug().to_string(),
+                            geology: surveyed_here.then(|| b.profile.geology.slug().to_string()),
+                            special: surveyed_here
+                                .then(|| b.profile.special.map(|s| s.slug().to_string()))
+                                .flatten(),
+                            special_effect: surveyed_here
+                                .then(|| b.profile.special.map(|s| s.effect().to_string()))
+                                .flatten(),
+                            habitat_capacity_mult: b.habitat_capacity_mult(),
+                            population_growth_mult: b.population_growth_mult(),
+                            provisions_mult: b.provisions_mult(),
+                            construction_time_mult: b.construction_time_mult(),
+                            mineral_extraction_mult: surveyed_here
+                                .then(|| b.profile.geology.mineral_extraction_mult()),
+                            resource_slots: own.then(|| b.resource_slots()),
+                            industrial_slots: own.then(|| b.industrial_slots()),
+                            infrastructure_slots: own.then(|| b.infrastructure_slots()),
+                            ship_build_time_mult: surveyed_here.then(|| b.ship_build_time_mult()),
+                            deposits: surveyed_here.then(|| {
+                                b.deposits
+                                    .iter()
+                                    .map(|d| DepositView {
+                                        resource: d.resource,
+                                        richness: d.richness,
+                                        reserves: d.reserves,
+                                    })
+                                    .collect()
+                            }),
+                            structures: if own {
+                                b.structures
+                                    .iter()
+                                    .map(|(k, t)| (k.slug().to_string(), *t))
+                                    .collect()
+                            } else {
+                                Default::default()
+                            },
+                            population: if own { b.population } else { 0.0 },
+                        }
                     })
                     .collect(),
                 structures: if own {
@@ -1439,7 +1594,7 @@ pub fn filter_systems(
                 // owner only. A rival that never surveyed gets None (band only);
                 // their own survey set gates their own wire, so nothing about
                 // ANOTHER corp's knowledge ever leaks.
-                deposits: (own || surveyed.contains(&sys.id)).then(|| {
+                deposits: surveyed_here.then(|| {
                     sys.all_deposits()
                         .map(|d| DepositView {
                             resource: d.resource,
@@ -1448,14 +1603,44 @@ pub fn filter_systems(
                         })
                         .collect()
                 }),
-                // §explore R3: the hidden TRAIT — CURRENT-OWNER-ONLY (never
-                // telegraphed; a survey doesn't see it; only ownership does).
-                trait_: own.then_some(sys.trait_).flatten().map(|t| match t {
-                    sim::explore::SystemTrait::BonusVein { commodity } => {
-                        format!("{}:{}", t.slug(), commodity.slug())
-                    }
-                    _ => t.slug().to_string(),
-                }),
+                // Most economically decisive facts are surveyable before a
+                // colony ship commits. Ownership remains sufficient knowledge.
+                trait_: surveyed_here
+                    .then_some(sys.trait_)
+                    .flatten()
+                    .map(|t| match t {
+                        sim::explore::SystemTrait::BonusVein { commodity } => {
+                            format!("{}:{}", t.slug(), commodity.slug())
+                        }
+                        _ => t.slug().to_string(),
+                    }),
+                // §planetary-opportunities: these are an explanation of facts
+                // the viewer has actually surveyed, not a new omniscient hint.
+                // Position is public chart geography, so strategic value may
+                // join the same report once the local survey unlocks it.
+                opportunities: if surveyed_here {
+                    let jump_neighbors = systems
+                        .iter()
+                        .filter(|other| {
+                            other.id != sys.id
+                                && other.pos.distance(sys.pos) <= sim::transit::JUMP_RANGE + 1e-9
+                        })
+                        .count();
+                    sim::explore::colony_opportunities(sys, jump_neighbors)
+                        .into_iter()
+                        .map(|o| crate::protocol::ColonyOpportunityView {
+                            role: o.role.slug().to_string(),
+                            title: o.role.title().to_string(),
+                            tier: o.tier.slug().to_string(),
+                            score: o.score,
+                            body_id: o.body_id,
+                            body_name: o.body_name,
+                            reason: o.reason,
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                },
             }
         })
         .collect()
@@ -1471,26 +1656,50 @@ fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentVie
         .map(|(body, kind, asg)| {
             let kind = &kind;
             let tier = body.tier(*kind);
-            let throughput = sim::production::tier_throughput(tier);
+            let deep_extraction = sys.trait_ == Some(sim::explore::SystemTrait::DeepDeposits)
+                && body.deposits.iter().any(|d| {
+                    sim::production::extraction_structure(d.resource) == Some(*kind)
+                });
+            let throughput = if deep_extraction {
+                sim::production::tier_throughput(tier.saturating_sub(1).max(1))
+            } else {
+                sim::production::tier_throughput(tier)
+            };
             let staffing = sys.staffing_factor(body.id, *kind);
             let skill = sys.skill_factor(body.id, *kind);
             let food = sim::production::food_factor(*kind, sys.food_state);
             let mut outputs: Vec<(Commodity, f64)> = Vec::new();
-            if let Some(conv) = sim::production::converter_for(*kind) {
+            let site = if let Some(conv) = sim::production::converter_for(*kind) {
+                let site = sim::explore::converter_site_mult(body, *kind, sys.trait_);
                 outputs.push((
                     conv.output,
-                    conv.rate * throughput * staffing * skill * food,
+                    conv.rate * throughput * staffing * skill * food * site,
                 ));
+                site
             } else {
+                let mut first_site = 1.0;
                 for d in &body.deposits {
                     if sim::production::extraction_structure(d.resource) == Some(*kind) {
+                        let dep_site = sim::explore::extraction_site_mult(
+                            body,
+                            d.resource,
+                            sys.trait_,
+                        );
+                        if outputs.is_empty() {
+                            first_site = dep_site;
+                        }
                         outputs.push((
                             d.resource,
-                            d.richness * throughput * staffing * skill * food,
+                            sim::explore::natural_extraction_rate(body, d, sys.trait_)
+                                * throughput
+                                * staffing
+                                * skill
+                                * food,
                         ));
                     }
                 }
-            }
+                first_site
+            };
             crate::protocol::AssignmentView {
                 body_id: body.id,
                 structure: kind.slug().to_string(),
@@ -1503,6 +1712,7 @@ fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentVie
                 staffing,
                 skill,
                 food,
+                site,
                 outputs,
             }
         })
@@ -2049,6 +2259,7 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Upgrade { upgrade } => upgrade.slug(),
         // §economy Part 4: Academy courses key by profession slug.
         sim::BuildKind::Train { specialist } => specialist.slug(),
+        sim::BuildKind::RecruitCaptain { .. } => "officer_commission",
         // §modules Part B3: module manufacture keys by module slug.
         sim::BuildKind::Module { module } => module.slug(),
     }
@@ -2379,6 +2590,7 @@ mod tests {
             jump_presumed: false,
             jump_departed: false,
             jump_spool: None,
+            captain: None,
             loud: false,
             drive: sim::ship::DriveState::default(),
         };
@@ -2394,17 +2606,26 @@ mod tests {
 
     fn track_from(samples: Vec<Sample>, owner: PlayerId, kind: ShipKind) -> Track {
         let last = samples.last().map(|s| s.time).unwrap_or(0.0);
-        let cargo = (kind == ShipKind::Convoy).then_some(sim::Cargo {
-            commodity: sim::Commodity::Fuel,
-            units: 100,
-        });
+        let cargo = if kind == ShipKind::Convoy {
+            vec![sim::Cargo {
+                commodity: sim::Commodity::Fuel,
+                units: 100,
+            }]
+        } else {
+            Vec::new()
+        };
         let mut composition = BTreeMap::new();
         composition.insert(kind, 1u32);
         Track {
             owner,
+            owner_name: owner.to_string(),
+            captain_id: None,
+            captain_name: None,
+            captain_portrait: None,
             composition,
             flagship: kind,
             broadcasts: kind.broadcasts(),
+            projects_sensor: kind.projects_sensor(),
             sensor_mult: kind.sensor_mult(),
             max_speed: kind.max_speed(),
             count_class: CountClass::from_count(1),
@@ -2441,6 +2662,7 @@ mod tests {
                 jump_presumed: false,
                 jump_departed: false,
                 jump_spool: None,
+                captain: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -2460,6 +2682,52 @@ mod tests {
             sensor_range: 1e12,
             frontiers: RefCell::new(FrontierCache::default()),
         }
+    }
+
+    #[test]
+    fn captain_progression_rides_the_same_delayed_sample_as_the_fleet() {
+        let sighting = |time: f64, level: u8, xp: u32| Sample {
+            time,
+            pos: Vec2::new(2_000.0, 0.0),
+            vel: Vec2::ZERO,
+            jump: false,
+            jump_origin: None,
+            jump_presumed: false,
+            jump_departed: false,
+            jump_spool: None,
+            captain: Some(sim::CaptainSighting {
+                level,
+                title: sim::CaptainTitle::for_level(level),
+                portrait_age: sim::CaptainPortraitAge::for_level(level),
+                command_capacity: sim::CaptainTitle::for_level(level).command_capacity(),
+                xp,
+                next_level_xp: 300,
+                unspent: level.saturating_sub(1),
+                attributes: sim::CaptainAttributes {
+                    command: level,
+                    navigation: 1,
+                    fieldcraft: 1,
+                    logistics: 1,
+                },
+            }),
+            loud: false,
+            drive: sim::ship::DriveState::Thrusters,
+        };
+        let owner = PlayerId(7);
+        let mut track = track_from(
+            vec![sighting(0.0, 1, 0), sighting(1.0, 2, 100)],
+            owner,
+            ShipKind::Raider,
+        );
+        track.captain_id = Some(0);
+        track.captain_name = Some("Mara Venn".to_string());
+        track.captain_portrait = Some(sim::CaptainPortrait::MaraVenn);
+        let history = history_with(track);
+
+        let before = history.view_for(owner, Vec2::ZERO, df(400.0), 5.5);
+        assert_eq!(before[0].captain.as_ref().unwrap().level, 1);
+        let after = history.view_for(owner, Vec2::ZERO, df(400.0), 6.0);
+        assert_eq!(after[0].captain.as_ref().unwrap().level, 2);
     }
 
     fn history_of(tracks: Vec<(EntityId, Track)>, sensor_range: f64) -> PositionHistory {
@@ -2497,6 +2765,7 @@ mod tests {
                 jump_presumed: false,
                 jump_departed: false,
                 jump_spool: None,
+                captain: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -2751,8 +3020,9 @@ mod tests {
             jump_origin: Some(origin),
             jump_presumed: false,
             jump_departed: false,
-            jump_spool: None,
-            loud: false,
+                jump_spool: None,
+                captain: None,
+                loud: false,
             drive: sim::ship::DriveState::Thrusters,
         };
 
@@ -2794,19 +3064,73 @@ mod tests {
             PlayerId(7),
             ShipKind::Raider,
         ));
+        let rival_departure = history.picture_for_with_arrays(
+            PlayerId(99),
+            cc,
+            c,
+            now,
+            &[],
+            &BTreeSet::new(),
+            NodeEffects::default(),
+        );
         assert!(
-            history.view_for(PlayerId(99), cc, c, now).is_empty(),
-            "departure light removes the rival marker instead of aging it in place"
+            rival_departure.ghosts.is_empty(),
+            "departure light removes the rival hull instead of aging it in place"
+        );
+        assert_eq!(rival_departure.jump_departures.len(), 1);
+        let scar = &rival_departure.jump_departures[0];
+        assert_eq!(scar.pos, departure.pos);
+        assert_eq!(scar.departed_at, farther.time);
+        assert_eq!(scar.owner, PlayerId(7));
+        assert_eq!(scar.owner_name, PlayerId(7).to_string());
+        assert_eq!(scar.kind, ShipKind::Raider);
+        assert_eq!(
+            scar.learned_at,
+            farther.time + sim::transit::delay(departure.pos, cc, c),
+            "the historical scar arrives on departure light, not jump truth"
         );
         let destination_arrival = farther.time + sim::transit::delay(farther.pos, cc, c);
         let reacquired =
             history.view_for(PlayerId(99), cc, c, destination_arrival + sim::config::DT);
         assert_eq!(reacquired[0].pos, farther.pos);
+        assert!(reacquired[0].jumped, "destination light carries the rival arrival event");
+        assert_eq!(
+            serde_json::to_value(&reacquired[0]).unwrap()["jumped"],
+            true,
+            "the already-visible arrival fact must reach the map renderer"
+        );
 
         let closer = sample(Vec2::new(40_000.0, 0.0), Vec2::new(6_000.0, 0.0));
         assert!(
             schedule_early_jump_copy(&closer, cc, c, true).is_none(),
             "destination light already wins, so a presumed arrow would be false"
+        );
+    }
+
+    #[test]
+    fn a_visible_rival_exposes_its_retarded_jump_spool() {
+        let sample = Sample {
+            time: 5.0,
+            pos: Vec2::ZERO,
+            vel: Vec2::ZERO,
+            jump: false,
+            jump_origin: None,
+            jump_presumed: false,
+            jump_departed: false,
+            jump_spool: Some((3.0, false, sim::transit::JUMP_SPOOL_S)),
+            captain: None,
+            loud: false,
+            drive: sim::ship::DriveState::Thrusters,
+        };
+        let history = history_with(track_from(vec![sample], PlayerId(7), ShipKind::Raider));
+        let rival = &history.view_for(PlayerId(99), Vec2::ZERO, 400.0, 5.0)[0];
+        assert!(!rival.own);
+        assert_eq!(
+            rival.jump_spool,
+            Some(crate::protocol::JumpSpoolView {
+                remaining: sim::transit::JUMP_SPOOL_S - 2.0,
+                waiting_for_fuel: false,
+            })
         );
     }
 
@@ -2829,6 +3153,7 @@ mod tests {
                 jump_presumed: false,
                 jump_departed: false,
                 jump_spool: None,
+                captain: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -2872,6 +3197,7 @@ mod tests {
                 jump_presumed: false,
                 jump_departed: false,
                 jump_spool: None,
+                captain: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -2906,6 +3232,7 @@ mod tests {
                 owner: Some(me),
                 claimed_at: Some(0.0),
                 system: None,
+                founding_opportunities: Vec::new(),
             },
             // Rival's anchor, 6000 units away → 20 s of light.
             HomeSlot {
@@ -2913,12 +3240,14 @@ mod tests {
                 owner: Some(rival),
                 claimed_at: Some(0.0),
                 system: None,
+                founding_opportunities: Vec::new(),
             },
             HomeSlot {
                 pos: Vec2::new(0.0, 3000.0),
                 owner: None,
                 claimed_at: None,
                 system: None,
+                founding_opportunities: Vec::new(),
             },
         ];
 
@@ -3338,8 +3667,8 @@ mod tests {
             garrison_fed: true,
             garrison_suppression: 0.0,
             blockade_prev: None,
-            // §explore Part 3: every test system carries a trait — the leak
-            // assertions below prove it reaches ONLY its current owner.
+            // Every test system carries a trait — the leak assertions below
+            // prove it rides only ownership or THIS viewer's survey knowledge.
             trait_: Some(sim::explore::SystemTrait::BonusVein {
                 commodity: Commodity::MetallicOre,
             }),
@@ -3394,6 +3723,20 @@ mod tests {
             v[2].deposits.is_some(),
             "surveyed knowledge shows the exact table"
         );
+        assert!(v[2].bodies.iter().all(|b| b.geology.is_some()));
+        assert!(v[1].bodies.iter().all(|b| b.geology.is_none()));
+        assert!(
+            !v[0].opportunities.is_empty(),
+            "the owner receives roles derived from known geology"
+        );
+        assert!(
+            v[1].opportunities.is_empty(),
+            "an opportunity label must never become a geology side channel"
+        );
+        assert!(
+            !v[2].opportunities.is_empty(),
+            "the same survey wavefront reveals the derived colony roles"
+        );
         // And the RIVAL's own view is gated on THEIR set: with an empty set they
         // see their own system but not my surveyed frontier one.
         let rv = filter_systems(
@@ -3414,18 +3757,22 @@ mod tests {
             rv[2].deposits.is_none(),
             "MY survey knowledge never reaches the rival's wire"
         );
-        // §explore R3 LEAK: the hidden TRAIT reaches ONLY its current owner —
-        // never a rival (even with ownership visible), never on an unowned
-        // system (even one I surveyed: a survey grants geology, NOT the trait).
+        assert!(
+            rv[2].opportunities.is_empty(),
+            "MY derived opportunity labels never reach the rival either"
+        );
+        // Economic traits now ride the SAME survey wavefront as exact geology:
+        // own or surveyed, never merely because rival ownership is visible.
         assert_eq!(
             v[0].trait_.as_deref(),
             Some("bonus_vein:metallic_ore"),
             "the owner sees their trait (with the vein commodity)"
         );
         assert!(v[1].trait_.is_none(), "a rival's trait must never leak");
-        assert!(
-            v[2].trait_.is_none(),
-            "surveying does NOT reveal the trait (ownership does)"
+        assert_eq!(
+            v[2].trait_.as_deref(),
+            Some("bonus_vein:metallic_ore"),
+            "surveying reveals the economic trait before colonization"
         );
         assert!(
             rv[1].trait_.is_some(),
@@ -3638,6 +3985,7 @@ mod tests {
             kind: sim::BodyKind::Terrestrial,
             parent: None,
             habitable: true,
+            profile: sim::PlanetaryProfile::default(),
             deposits: vec![],
             structures: [(sim::StructureKind::Garrison, 2)].into_iter().collect(),
             population: 0.0,
@@ -3843,6 +4191,7 @@ mod tests {
                 kind: sim::BodyKind::Terrestrial,
                 parent: None,
                 habitable: true,
+                profile: sim::PlanetaryProfile::default(),
                 deposits: vec![],
                 structures: [(sim::StructureKind::Garrison, 4)].into_iter().collect(),
                 population: 0.0,
@@ -4315,6 +4664,7 @@ mod tests {
                 jump_presumed: false,
                 jump_departed: false,
                 jump_spool: None,
+                captain: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4422,23 +4772,23 @@ mod tests {
     const VIEWER: PlayerId = PlayerId(99);
     const RIVAL: PlayerId = PlayerId(7);
 
-    /// A rival convoy far from all the viewer's assets is STILL visible
-    /// (broadcast, galaxy-wide), but its cargo is hidden (out of sensor range).
+    /// A corporate convoy far from every sensor source runs silent and is absent.
     #[test]
-    fn convoy_broadcasts_but_cargo_is_hidden_out_of_range() {
+    fn corporate_convoy_is_silent_out_of_range() {
         let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Convoy)], 1000.0);
         let view = hist.view_for(VIEWER, Vec2::new(0.0, 0.0), df(300.0), 60.0);
-        assert_eq!(view.len(), 1, "convoy should broadcast galaxy-wide");
-        assert!(
-            view[0].cargo.is_none(),
-            "cargo must be hidden outside sensor range"
-        );
+        assert!(view.is_empty(), "a silent corporate convoy must not be shipped outside sensors");
     }
 
     /// A rival convoy within the viewer's sensor coverage reveals its cargo.
     #[test]
     fn convoy_cargo_revealed_within_sensor_range() {
-        let hist = history_of(vec![at(1, 5000.0, 0.0, RIVAL, ShipKind::Convoy)], 1000.0);
+        let (id, mut convoy) = at(1, 5000.0, 0.0, RIVAL, ShipKind::Convoy);
+        convoy.cargo.push(sim::Cargo {
+            commodity: sim::Commodity::Alloys,
+            units: 40,
+        });
+        let hist = history_of(vec![(id, convoy)], 1000.0);
         // Command center 200 su from the convoy → inside the 1000 su sensor range.
         let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), df(300.0), 60.0);
         assert_eq!(view.len(), 1);
@@ -4446,13 +4796,20 @@ mod tests {
             view[0].cargo.is_some(),
             "cargo must be revealed within sensor range"
         );
+        assert_eq!(view[0].cargo_manifest.len(), 2);
+        assert_eq!(
+            view[0]
+                .cargo_manifest
+                .iter()
+                .map(|cargo| cargo.units)
+                .sum::<u32>(),
+            140,
+            "the complete mixed manifest crosses the same fog gate"
+        );
     }
 
-    /// §economy Part 4 FOG: passengers are MANIFEST data — a broadcasting
-    /// personnel convoy outside sensor coverage shows NO passengers (identity/
-    /// route only); inside coverage the same convoy shows them, exactly like
-    /// cargo. A convoy full of Naval Architects looks like any convoy until
-    /// someone's sensors touch it.
+    /// §economy Part 4 FOG: a silent personnel convoy is absent outside sensor
+    /// coverage; inside coverage its manifest appears exactly like cargo.
     #[test]
     fn passengers_ride_the_two_tier_manifest_rule() {
         let mk = |x: f64| {
@@ -4464,16 +4821,7 @@ mod tests {
         };
         // 5000 su out, viewer at 300 su sensor range → OUT of coverage.
         let far = mk(5000.0).view_for(VIEWER, Vec2::new(0.0, 0.0), df(300.0), 60.0);
-        assert_eq!(
-            far.len(),
-            1,
-            "the convoy itself broadcasts — identity is public"
-        );
-        assert!(
-            far[0].passengers.is_empty(),
-            "…but the PEOPLE aboard must never leak outside coverage"
-        );
-        assert!(far[0].cargo.is_none(), "(same rule as cargo)");
+        assert!(far.is_empty(), "the silent hull and its manifest stay outside the picture");
         // 200 su away → inside coverage: the manifest opens.
         let near = mk(5000.0).view_for(VIEWER, Vec2::new(4800.0, 0.0), df(300.0), 60.0);
         assert_eq!(
@@ -4507,6 +4855,7 @@ mod tests {
                 jump_presumed: false,
                 jump_departed: false,
                 jump_spool: None,
+                captain: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4580,6 +4929,7 @@ mod tests {
                 jump_presumed: false,
                 jump_departed: false,
                 jump_spool: None,
+                captain: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4674,9 +5024,9 @@ mod tests {
     #[test]
     fn deep_scan_upgrades_bucket_to_exact_but_reveals_no_new_fleet() {
         let pos = Vec2::new(5000.0, 0.0); // far outside the 1000 su bubble
-        // A rival BROADCASTER (has convoys) is visible galaxy-wide but shows only
+        // A rival BROADCASTER (has declared corvettes) is visible galaxy-wide but shows only
         // the size bucket outside coverage.
-        let comp = [(ShipKind::Convoy, 3), (ShipKind::Raider, 1)];
+        let comp = [(ShipKind::Corvette, 3), (ShipKind::Raider, 1)];
         let hist = history_of(vec![(EntityId(1), fleet_track(RIVAL, pos, &comp))], 1000.0);
         let base = hist.view_for(VIEWER, Vec2::ZERO, df(300.0), 90.0);
         assert_eq!(base.len(), 1);
@@ -4840,6 +5190,7 @@ mod tests {
                 jump_presumed: false,
                 jump_departed: false,
                 jump_spool: None,
+                captain: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -4854,9 +5205,14 @@ mod tests {
         }
         Track {
             owner,
+            owner_name: owner.to_string(),
+            captain_id: None,
+            captain_name: None,
+            captain_portrait: None,
             composition,
             flagship: f.flagship_kind(),
             broadcasts: f.broadcasts(),
+            projects_sensor: f.projects_sensor(),
             sensor_mult: f.sensor_mult(),
             max_speed: f.max_speed(),
             count_class: f.count_class(),
@@ -4866,7 +5222,7 @@ mod tests {
             plans: VecDeque::new(),
             samples: samples.into(),
             last_seen: 100.0,
-            cargo: None,
+            cargo: Vec::new(),
             passengers: Default::default(),
             loadouts: Default::default(),
             modules: Default::default(),
@@ -4934,7 +5290,7 @@ mod tests {
     /// broadcasting hammer knows roughly how big it is, not what's in it.
     #[test]
     fn broadcasting_fleet_shows_bucket_but_hides_composition_outside_coverage() {
-        // 3 convoys + 2 corvettes + 1 raider = 6 ships (broadcasts: has convoys).
+        // 3 silent convoys + 2 declared corvettes + 1 raider = 6 ships.
         let comp = [
             (ShipKind::Convoy, 3),
             (ShipKind::Corvette, 2),
@@ -5055,7 +5411,7 @@ mod tests {
     /// contain the true count — never a tell that pins the exact number.
     #[test]
     fn count_bucket_contains_true_size_without_revealing_it() {
-        let comp = [(ShipKind::Convoy, 20)]; // 20 broadcasting convoys, far away
+        let comp = [(ShipKind::Corvette, 20)]; // 20 declared escorts, far away
         let hist = history_of(
             vec![(
                 EntityId(1),
@@ -5113,10 +5469,9 @@ mod tests {
             ],
             1000.0,
         );
-        // No array: the raider is omitted, the convoy's cargo hidden.
+        // No array: both silent fleets are omitted.
         let blind = hist.view_for(VIEWER, cc, df(300.0), 60.0);
-        assert_eq!(blind.len(), 1, "only the broadcast convoy, no raider");
-        assert!(blind[0].cargo.is_none(), "cargo hidden without the array");
+        assert!(blind.is_empty(), "neither silent fleet is visible without a sensor source");
         // An owned array system near them (bubble 1200 su) covers both.
         let arrays = [(Vec2::new(4600.0, 0.0), 1200.0)];
         let seen = hist.view_for_with_arrays(
@@ -5137,49 +5492,36 @@ mod tests {
         );
     }
 
-    /// A SCOUT (§scout) projects an OVERSIZED bubble (sensor_mult × range): a
-    /// dark rival raider that an ordinary ship at the same spot would miss is
-    /// detected by a scout there — mobile vision, the scout's whole point.
-    /// (Also proves rival convoy cargo reveals at scout range.)
+    /// Mobile coverage belongs to Raider-bearing fleets, not free logistics or
+    /// pure Scout hulls.
     #[test]
-    fn scout_bubble_out_sees_an_ordinary_ship() {
+    fn only_a_raider_bearing_fleet_projects_mobile_coverage() {
         let cc = Vec2::new(0.0, 0.0);
-        // Contacts 5000 su out; own ship at 3600 → 1400 su from them: beyond the
-        // 1000 su ship bubble, inside the scout's 1.5× = 1500 su bubble.
+        // Contact 5000 su out; own fleet at 4200 → inside the 1000 su base ring.
+        let with_convoy = history_of(
+            vec![
+                at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider),
+                at(2, 4200.0, 0.0, VIEWER, ShipKind::Convoy),
+            ],
+            1000.0,
+        );
+        let v = with_convoy.view_for(VIEWER, cc, df(300.0), 60.0);
+        assert!(
+            !v.iter().any(|g| g.kind == ShipKind::Raider && !g.own),
+            "a nearby corporate convoy is not a sensor buoy"
+        );
+
         let with_raider = history_of(
             vec![
                 at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider),
-                at(2, 5000.0, 0.0, RIVAL, ShipKind::Convoy),
-                at(3, 3600.0, 0.0, VIEWER, ShipKind::Raider),
+                at(2, 4200.0, 0.0, VIEWER, ShipKind::Raider),
             ],
             1000.0,
         );
         let v = with_raider.view_for(VIEWER, cc, df(300.0), 60.0);
         assert!(
-            !v.iter().any(|g| g.kind == ShipKind::Raider && !g.own),
-            "an ordinary ship at 1400 su misses the dark raider"
-        );
-
-        let with_scout = history_of(
-            vec![
-                at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider),
-                at(2, 5000.0, 0.0, RIVAL, ShipKind::Convoy),
-                at(3, 3600.0, 0.0, VIEWER, ShipKind::Scout),
-            ],
-            1000.0,
-        );
-        let v = with_scout.view_for(VIEWER, cc, df(300.0), 60.0);
-        assert!(
             v.iter().any(|g| g.kind == ShipKind::Raider && !g.own),
-            "the scout's oversized bubble detects it"
-        );
-        let convoy = v
-            .iter()
-            .find(|g| g.kind == ShipKind::Convoy && !g.own)
-            .unwrap();
-        assert!(
-            convoy.cargo.is_some(),
-            "…and reveals convoy cargo at scout range"
+            "the Raider picket detects the contact inside its mobile ring"
         );
     }
 
@@ -5223,7 +5565,8 @@ mod tests {
         let dpos = Vec2::new(0.0, 0.0); // destroyed at the origin at t=10
         let near = Vec2::new(300.0, 0.0); // 1 s of light from the destruction
         let far = Vec2::new(6000.0, 0.0); // 20 s of light from the destruction
-        // The (convoy, so broadcast-visible) ship sat at the origin for t∈[0,10].
+        // The ship sat at the origin for t∈[0,10]; this test uses an effectively
+        // infinite sensor bubble, so its silent corporate hull remains visible.
         let mut samples = Vec::new();
         let mut t = 0.0;
         while t <= 10.0 {
@@ -5236,6 +5579,7 @@ mod tests {
                 jump_presumed: false,
                 jump_departed: false,
                 jump_spool: None,
+                captain: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -5300,6 +5644,7 @@ mod tests {
                 jump_presumed: false,
                 jump_departed: false,
                 jump_spool: None,
+                captain: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -5431,14 +5776,13 @@ mod tests {
         );
     }
 
-    /// A far rival raider is dark, but if the viewer has an OWN ship near it, the
-    /// union coverage detects it (coverage is the union of all assets' radii).
+    /// A far rival raider is dark, but an OWN Raider picket near it detects it.
     #[test]
-    fn own_ship_extends_coverage_to_detect_raider() {
+    fn own_raider_extends_coverage_to_detect_raider() {
         let hist = history_of(
             vec![
                 at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider),
-                at(2, 5300.0, 0.0, VIEWER, ShipKind::Convoy), // own scout 300 su away
+                at(2, 5300.0, 0.0, VIEWER, ShipKind::Raider), // own picket 300 su away
             ],
             1000.0,
         );
@@ -5447,7 +5791,7 @@ mod tests {
         let raider = view.iter().find(|g| g.id == EntityId(1));
         assert!(
             raider.is_some(),
-            "own ship's sensor radius should detect the nearby raider"
+            "own Raider's sensor radius should detect the nearby raider"
         );
     }
 
@@ -5476,6 +5820,7 @@ mod tests {
                 jump_presumed: false,
                 jump_departed: false,
                 jump_spool: None,
+                captain: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });
@@ -5505,6 +5850,7 @@ mod tests {
                 jump_presumed: false,
                 jump_departed: false,
                 jump_spool: None,
+                captain: None,
                 loud: false,
                 drive: sim::ship::DriveState::Thrusters,
             });

@@ -84,7 +84,7 @@ export const ICONS: Record<IconKey, IconDef> = {
   // fleets / ship kinds
   fleet: A("concept-fleet", "Fleet"),
   scout: P("🛰", "Scout"),
-  raider: P("🗡", "Raider"),
+  raider: P("🗡", "Interceptor"),
   corvette: P("🛡", "Corvette"),
   convoy: A("concept-convoy", "Convoy"),
   colony: P("🏗", "Colony ship"),

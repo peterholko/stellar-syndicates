@@ -390,12 +390,13 @@ mod tests {
         );
         // Every restored fleet has a non-empty composition (no lost ships).
         assert!(restored.fleets.values().all(|f| f.total_count() >= 1));
-        // §emplacements: the starting roster is Builder + Raider now.
+        // §founding: the reduced starting roster is one Interceptor (the
+        // save-compatible internal kind remains Raider).
         assert!(
             restored
                 .fleets
                 .values()
-                .any(|f| f.contains(ShipKind::Builder))
+                .any(|f| f.contains(ShipKind::Raider))
         );
     }
 }

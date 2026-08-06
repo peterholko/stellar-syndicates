@@ -45,9 +45,9 @@ pub enum ShipKind {
     /// The ACTIVE-INTEL ship (§scout): the lightest hull in the game — fastest
     /// to accelerate, cheapest to fuel — with NO cargo capacity and negligible
     /// combat strength (in any engagement it is simply destroyed; its defense is
-    /// speed and darkness, not armor). Runs DARK like a raider, projects an
-    /// oversized sensor bubble (`sensor_mult`), and near rival systems captures
-    /// timestamped intel snapshots of their fortifications.
+    /// speed and darkness, not armor). Runs DARK like a raider, amplifies a
+    /// Raider-bearing fleet's sensor bubble (`sensor_mult`), and near rival
+    /// systems captures timestamped intel snapshots of their fortifications.
     Scout,
     // --- §ladder: the WARSHIP LADDER (research-gated; appended after Scout so
     // every BTreeMap iteration order + snapshot stays stable). Capitals buy
@@ -183,19 +183,18 @@ impl ShipKind {
     }
 
     /// Whether this kind BROADCASTS under the Convention (visible galaxy-wide,
-    /// light-delayed). Convoys do; raiders and scouts run DARK — visible only
-    /// inside a rival's sensor coverage. One source of truth for the View's
-    /// gating (a broadcasting spy would be useless).
+    /// light-delayed). Corporate Convoys may run silent; the Authority's
+    /// Freighter always transmits. One source of truth for the View's gating.
     pub fn broadcasts(self) -> bool {
-        // Convoys (trade), corvettes (a DECLARED escort deters), and colony
-        // ships (a declared civilian settlement vessel — expansion is
-        // telegraphed) broadcast; raiders and scouts run dark. §ladder: every
+        // Corvettes (a DECLARED escort deters) and colony ships (a declared
+        // civilian settlement vessel — expansion is telegraphed) broadcast;
+        // corporate Convoys, Raiders and Scouts run dark. §ladder: every
         // CAPITAL broadcasts — a ship of the line is a declared presence
-        // (deterrence is its job; sneaking is the Raider's).
+        // (deterrence is its job; sneaking is the Raider's). The Authority's
+        // common-carrier Freighter is deliberately public everywhere.
         matches!(
             self,
-            ShipKind::Convoy
-                | ShipKind::Corvette
+            ShipKind::Corvette
                 | ShipKind::Colony
                 | ShipKind::Destroyer
                 | ShipKind::Cruiser
@@ -210,15 +209,21 @@ impl ShipKind {
         )
     }
 
+    /// Whether this hull projects the corporation's standard mobile sensor
+    /// bubble. The command center is the fixed source; in the field the Raider
+    /// is the picket. Corporate logistics hulls do not become free sensor buoys.
+    pub fn projects_sensor(self) -> bool {
+        matches!(self, ShipKind::Raider)
+    }
+
     /// Jump drives are carried only by the two dark reconnaissance/strike hulls.
     pub fn has_jump_drive(self) -> bool {
         matches!(self, ShipKind::Raider | ShipKind::Scout)
     }
 
-    /// Multiplier on `config.sensor_range` for the sensor bubble THIS ship
-    /// projects into its owner's coverage union. The scout's whole point:
-    /// `SCOUT_SENSOR_MULT` × the standard bubble — mobile vision that out-sees
-    /// any other ship. Tunable.
+    /// Multiplier on `config.sensor_range` when this hull accompanies a mobile
+    /// sensor source. A Scout makes a Raider picket out-see an ordinary Raider;
+    /// `projects_sensor` still decides whether the fleet emits a bubble at all.
     pub fn sensor_mult(self) -> f64 {
         match self {
             ShipKind::Scout => SCOUT_SENSOR_MULT,
@@ -951,6 +956,13 @@ pub struct Fleet {
     /// scales with the number of convoys aboard; existing single-convoy rules
     /// are the N=1 case, unchanged.
     pub cargo: Option<Cargo>,
+    /// Additional commodity stacks in this fleet's hold. `cargo` remains the
+    /// primary stack so pre-manifest snapshots deserialize unchanged; all live
+    /// cargo logic goes through the manifest helpers below and treats the two
+    /// fields as one hold. New stacks use this map once the primary commodity
+    /// differs, allowing a Convoy to carry a mixed founding/supply package.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub cargo_extra: BTreeMap<crate::cargo::Commodity, u32>,
     /// If set, this is a trade convoy fleet that resolves on arrival (§9).
     pub mission: Option<TradeMission>,
     /// If set, this fleet is on an AUTONOMOUS defensive intercept (it broke off
@@ -1139,6 +1151,7 @@ impl Fleet {
             order,
             last_jump: None,
             cargo,
+            cargo_extra: BTreeMap::new(),
             mission: None,
             defense: None,
             notified_held: false,
@@ -1475,10 +1488,15 @@ impl Fleet {
     }
 
     /// A fleet BROADCASTS (Convention, visible galaxy-wide) if ANY member kind
-    /// broadcasts — you cannot hide a freighter by parking a raider beside it.
-    /// A fleet of only raiders and/or scouts runs DARK.
+    /// broadcasts. A corporate Convoy remains dark; the Authority's Freighter
+    /// remains public even in a mixed formation.
     pub fn broadcasts(&self) -> bool {
         self.composition.keys().any(|k| k.broadcasts())
+    }
+
+    /// A mobile sensor source exists when the formation carries a Raider.
+    pub fn projects_sensor(&self) -> bool {
+        self.composition.keys().any(|k| k.projects_sensor())
     }
 
     /// A mixed formation jumps only when every hull carries a drive.
@@ -1499,8 +1517,8 @@ impl Fleet {
         )
     }
 
-    /// The best sensor bubble this fleet projects into its owner's coverage —
-    /// the MAX `sensor_mult` among its members (a scout aboard extends vision).
+    /// The range multiplier of a mobile sensor fleet. Callers first require
+    /// `projects_sensor`; a Scout aboard that Raider fleet extends its vision.
     pub fn sensor_mult(&self) -> f64 {
         self.composition
             .keys()
@@ -1523,11 +1541,112 @@ impl Fleet {
         self.count(ShipKind::Convoy) * CARGO_UNITS_PER_CONVOY
     }
 
+    /// Every non-empty commodity stack aboard, in deterministic commodity
+    /// order. The legacy primary stack is folded into the map so old saves and
+    /// new mixed manifests have one read surface.
+    pub fn cargo_stacks(&self) -> Vec<Cargo> {
+        let mut manifest = self.cargo_extra.clone();
+        if let Some(cargo) = self.cargo
+            && cargo.units > 0
+        {
+            *manifest.entry(cargo.commodity).or_insert(0) += cargo.units;
+        }
+        manifest
+            .into_iter()
+            .filter(|(_, units)| *units > 0)
+            .map(|(commodity, units)| Cargo { commodity, units })
+            .collect()
+    }
+
+    /// Total occupied hold space across every commodity.
+    pub fn cargo_units(&self) -> u32 {
+        self.cargo.map_or(0, |cargo| cargo.units) + self.cargo_extra.values().copied().sum::<u32>()
+    }
+
+    pub fn cargo_amount(&self, commodity: crate::cargo::Commodity) -> u32 {
+        self.cargo
+            .filter(|cargo| cargo.commodity == commodity)
+            .map_or(0, |cargo| cargo.units)
+            + self.cargo_extra.get(&commodity).copied().unwrap_or(0)
+    }
+
+    pub fn cargo_is_empty(&self) -> bool {
+        self.cargo_units() == 0
+    }
+
+    /// Add a whole stack to the shared hold. The caller owns capacity checks;
+    /// this function owns representation and merges like commodities.
+    pub fn add_cargo(&mut self, commodity: crate::cargo::Commodity, units: u32) {
+        if units == 0 {
+            return;
+        }
+        match self.cargo.as_mut() {
+            Some(primary) if primary.commodity == commodity => primary.units += units,
+            Some(_) => *self.cargo_extra.entry(commodity).or_insert(0) += units,
+            None => {
+                let extra = self.cargo_extra.remove(&commodity).unwrap_or(0);
+                self.cargo = Some(Cargo {
+                    commodity,
+                    units: units + extra,
+                });
+            }
+        }
+    }
+
+    /// Remove up to `units` of one commodity and return the amount removed.
+    pub fn remove_cargo(&mut self, commodity: crate::cargo::Commodity, units: u32) -> u32 {
+        if units == 0 {
+            return 0;
+        }
+        let mut removed = 0;
+        if self.cargo.is_some_and(|cargo| cargo.commodity == commodity) {
+            let primary = self.cargo.as_mut().unwrap();
+            removed = units.min(primary.units);
+            primary.units -= removed;
+            if primary.units == 0 {
+                self.cargo = None;
+            }
+        } else if let Some(extra) = self.cargo_extra.get_mut(&commodity) {
+            removed = units.min(*extra);
+            *extra -= removed;
+            if *extra == 0 {
+                self.cargo_extra.remove(&commodity);
+            }
+        }
+        self.promote_cargo_primary();
+        removed
+    }
+
+    /// Empty the whole hold and return its prior manifest.
+    pub fn take_cargo(&mut self) -> Vec<Cargo> {
+        let manifest = self.cargo_stacks();
+        self.cargo = None;
+        self.cargo_extra.clear();
+        manifest
+    }
+
+    /// Replace the whole hold with these stacks (zero entries ignored).
+    pub fn set_cargo_stacks(&mut self, stacks: impl IntoIterator<Item = Cargo>) {
+        self.cargo = None;
+        self.cargo_extra.clear();
+        for stack in stacks {
+            self.add_cargo(stack.commodity, stack.units);
+        }
+    }
+
+    fn promote_cargo_primary(&mut self) {
+        self.cargo_extra.retain(|_, units| *units > 0);
+        if self.cargo.is_none()
+            && let Some((&commodity, &units)) = self.cargo_extra.first_key_value()
+        {
+            self.cargo_extra.remove(&commodity);
+            self.cargo = Some(Cargo { commodity, units });
+        }
+    }
+
     /// Cargo mass carried by the fleet (§7).
     pub fn cargo_mass(&self) -> f64 {
-        self.cargo
-            .map(|c| c.units as f64 * CARGO_MASS_PER_UNIT)
-            .unwrap_or(0.0)
+        self.cargo_units() as f64 * CARGO_MASS_PER_UNIT
     }
 
     /// Total mass = Σ hull + cargo (§7). Drives fuel-∝-distance×mass exactly as
@@ -1909,8 +2028,9 @@ mod tests {
 
     #[test]
     fn broadcasts_if_any_member_broadcasts() {
-        // You cannot hide a freighter by parking a raider beside it.
-        assert!(fleet(&[(ShipKind::Raider, 2), (ShipKind::Convoy, 1)], None).broadcasts());
+        // Corporate logistics may run silent; the Authority carrier may not.
+        assert!(!fleet(&[(ShipKind::Raider, 2), (ShipKind::Convoy, 1)], None).broadcasts());
+        assert!(fleet(&[(ShipKind::Raider, 2), (ShipKind::Freighter, 1)], None).broadcasts());
         assert!(fleet(&[(ShipKind::Corvette, 1)], None).broadcasts());
         // Raiders and/or scouts only → dark.
         assert!(!fleet(&[(ShipKind::Raider, 3)], None).broadcasts());
@@ -1918,10 +2038,21 @@ mod tests {
     }
 
     #[test]
-    fn jump_drive_kinds_are_exactly_the_dark_kinds() {
-        for kind in ALL_SHIP_KINDS {
-            assert_eq!(kind.has_jump_drive(), !kind.broadcasts(), "{kind:?}");
-        }
+    fn corporate_convoys_are_dark_without_becoming_jump_ships() {
+        assert!(!ShipKind::Convoy.broadcasts());
+        assert!(!ShipKind::Convoy.has_jump_drive());
+        assert!(ShipKind::Freighter.broadcasts());
+        assert!(!ShipKind::Freighter.has_jump_drive());
+        assert!(ShipKind::Raider.has_jump_drive() && !ShipKind::Raider.broadcasts());
+        assert!(ShipKind::Scout.has_jump_drive() && !ShipKind::Scout.broadcasts());
+    }
+
+    #[test]
+    fn only_raider_bearing_fleets_project_mobile_sensors() {
+        assert!(fleet(&[(ShipKind::Raider, 1)], None).projects_sensor());
+        assert!(fleet(&[(ShipKind::Raider, 1), (ShipKind::Convoy, 2)], None).projects_sensor());
+        assert!(!fleet(&[(ShipKind::Convoy, 2)], None).projects_sensor());
+        assert!(!fleet(&[(ShipKind::Scout, 1)], None).projects_sensor());
     }
 
     #[test]

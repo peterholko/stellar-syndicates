@@ -72,50 +72,38 @@ impl FoodState {
 
 // --- CONSUMPTION -----------------------------------------------------------
 
-/// Provisions drawn per second per MILLION population. Sized so the Part-3
-/// bootstrap colony (2.0M) eats 0.12/s — comfortably under what its seeded
-/// Agroplex turns out, with slack left to grow on. A fresh ship-founded
-/// outpost (0.5M) eats 0.03/s: one 40-unit Provisions delivery feeds it for
-/// ~22 minutes. Tunable.
-pub const PROVISIONS_PER_MILLION_PER_S: f64 = 0.06;
+/// Provisions drawn per second per MILLION population. Population now starts
+/// in thousands rather than millions, so this rate is intentionally high in
+/// the internal "millions" unit: a 3,000-person home still eats 0.12/s and the
+/// food chain remains an opening concern instead of disappearing in rounding.
+/// Tunable.
+pub const PROVISIONS_PER_MILLION_PER_S: f64 = 40.0;
 
 // --- CAPACITY + GROWTH ------------------------------------------------------
 
-/// Population capacity (millions) per Habitat tier. Habitats are the ONLY
-/// source of capacity: no Habitat, no growth (a ship-founded outpost holds at
-/// its founding size until housing goes up). Two tiers reach `POP_MAJOR`
-/// exactly. Tunable.
-pub const POP_CAP_PER_HABITAT_TIER: f64 = 4.0;
+/// Population capacity (millions) per Habitat tier. One tier houses 25,000
+/// people; the value remains expressed in millions on the simulation wire.
+pub const POP_CAP_PER_HABITAT_TIER: f64 = 0.025;
 
-/// Population growth (millions/second) while Well Supplied and under
-/// capacity. Linear and flat — legible ("+1M per ~8min while fed"), no
-/// compounding surprises. Growth is the ONLY writer of population besides
-/// founding/bootstrap; there is NO negative branch anywhere. Tunable.
-pub const POP_GROWTH_PER_S: f64 = 0.002;
+/// Population growth (millions/second) while Well Supplied and under capacity:
+/// one person per second. Linear and flat, with no compounding surprises.
+pub const POP_GROWTH_PER_S: f64 = 0.000_001;
 
-/// The founding population (millions) a colony ship plants when it settles a
-/// claim — the crew and berths of the ship itself. Small on purpose: a new
-/// outpost is a HUNGRY MOUTH first (ship Provisions to grow it), not an
-/// instant workforce. Tunable.
-pub const COLONY_FOUNDING_POP: f64 = 0.5;
+/// A colony ship plants one 1,000-person workforce cohort.
+pub const COLONY_FOUNDING_POP: f64 = 0.001;
 
-/// The population (millions) every HOME system starts with (§economy Part 3
-/// bootstrap). Fields 2 workforce crews against the home's 3 seeded
-/// assignments — the home is born SHORT-STAFFED at 2/3 share, and the very
-/// first growth milestone (2.4M, ~3 min fed) fully staffs it: the opening
-/// arc teaches staffing before slots. Tunable.
-pub const HOME_FOUNDING_POP: f64 = 2.0;
+/// A new corporation begins with 3,000 people: three legible workforce cohorts,
+/// not an already-developed multi-million-person colony.
+pub const HOME_FOUNDING_POP: f64 = 0.003;
 
-/// Provisions seeded in the HOME stockpile at generation — a standing buffer
-/// (~8 min of demand) that keeps the food ladder at Well Supplied while the
-/// seeded Bioharvester→Agroplex chain spins up. Tunable.
-pub const HOME_PROVISIONS_SEED: f64 = 60.0;
+/// Opening food buffer. At 3,000 people this is roughly two minutes of demand,
+/// enough for the staffed Bioharvester→Agroplex chain to establish itself.
+pub const HOME_PROVISIONS_SEED: f64 = 15.0;
 
 // --- WORKFORCE ---------------------------------------------------------------
 
-/// Millions of population per WORKFORCE UNIT (the staffing currency Part 3's
-/// assignments spend). The bootstrap 2.0M colony fields 2 units. Tunable.
-pub const POP_PER_WORKFORCE: f64 = 0.8;
+/// Millions of population per WORKFORCE UNIT: one unit represents 1,000 people.
+pub const POP_PER_WORKFORCE: f64 = 0.001;
 
 /// Workforce units a population fields: `floor(population / POP_PER_WORKFORCE)`.
 pub fn workforce_units(population: f64) -> u32 {
@@ -226,9 +214,10 @@ mod tests {
     #[test]
     fn workforce_floors_by_population() {
         assert_eq!(workforce_units(0.0), 0);
-        assert_eq!(workforce_units(0.5), 0); // a fresh outpost fields nobody yet
-        assert_eq!(workforce_units(2.0), 2); // the bootstrap colony fields 2
-        assert_eq!(workforce_units(8.0), 10);
+        assert_eq!(workforce_units(0.000_999), 0);
+        assert_eq!(workforce_units(0.001), 1); // one 1,000-person cohort
+        assert_eq!(workforce_units(0.003), 3); // the founding home
+        assert_eq!(workforce_units(0.010), 10);
     }
 
     #[test]

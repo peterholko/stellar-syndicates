@@ -27,7 +27,7 @@
 //     count drop budgets how many arcs resolve (hit or intercepted).
 
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
-import type { BattleRecordView, KeyframeView, ShipKind } from "./protocol";
+import type { BattleRecordView, KeyframeView, PlayerId, ShipKind } from "./protocol";
 import { hashId, mulberry32 } from "./prng";
 import { starTypeFor, starConceptUrl } from "./stars";
 import { STAR_TINT } from "./systemview";
@@ -59,7 +59,7 @@ const MASS: Record<ShipKind, number> = {
 };
 const KIND_LABEL: Record<ShipKind, string> = {
   builder: "Construction Ship",
-  convoy: "Convoy", raider: "Raider", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
+  convoy: "Convoy", raider: "Interceptor", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
   transport: "Troop Transport",
   freighter: "Authority Freighter",
@@ -101,6 +101,9 @@ const SHIP_ART: Record<ShipKind, string> = {
   titan: "titan_flagship.png",
 };
 const STATION_ART = "/art/celestial_sprites/mining_station.png";
+const PRIVATEER_ART = "/art/ship_sprites/privateer_raider_ship.png";
+// Mirrors the map renderer's visible-hull calibration for this fuller cutout.
+const PRIVATEER_ART_CALIB = 0.73;
 
 const texCache = new Map<string, Texture | null>();
 const texPending = new Set<string>();
@@ -175,6 +178,7 @@ interface FxWindow {
 
 interface TheaterState {
   rec: BattleRecordView;
+  pirateId: PlayerId | null;
   round: number; // active window = frames[round] → frames[round+1]
   frac: number;
   live: boolean;
@@ -242,6 +246,16 @@ function jitter(a: number): number {
   x = Math.imul(x ^ (x >>> 12), 0x297a2d39);
   x ^= x >>> 15;
   return (x >>> 0) / 4294967296;
+}
+
+const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
+
+/// Saturated laser identity: the viewer's side fires cold cyan-blue, the foe
+/// hot red. A neutral observer uses attacker blue / defender red so crossings
+/// remain readable without inventing ownership.
+function sideLaserColor(side: number): number {
+  if (!st || st.rec.own_side === null) return side === 0 ? TINT_OWN : TINT_FOE;
+  return side === st.rec.own_side ? TINT_OWN : TINT_FOE;
 }
 
 let appInit: Promise<void> | null = null;
@@ -375,14 +389,14 @@ async function initApp(): Promise<void> {
 /// record. Safe to call every render.
 let attachGen = 0; // bumped by theaterClose — cancels in-flight attaches
 
-export function theaterAttach(mount: HTMLElement, rec: BattleRecordView): void {
+export function theaterAttach(mount: HTMLElement, rec: BattleRecordView, pirateId: PlayerId | null = null): void {
   const gen = attachGen;
   ensureApp().then(
     () => {
       // A close that landed while init was in flight wins: stay closed.
       if (gen !== attachGen || !holder || !app) return;
       if (holder.parentElement !== mount) mount.appendChild(holder);
-      bindRecord(rec);
+      bindRecord(rec, pirateId);
       app.ticker.start();
     },
     () => {
@@ -491,7 +505,7 @@ function scanWithdraw(rec: BattleRecordView): [number, number] {
   return w;
 }
 
-function bindRecord(rec: BattleRecordView): void {
+function bindRecord(rec: BattleRecordView, pirateId: PlayerId | null): void {
   if (st && st.rec.id === rec.id) {
     // Same battle — but the View handler hands us a FRESH record object every
     // ~100 ms (JSON.parse identity), so compare CONTENT, not identity. Only real
@@ -508,10 +522,12 @@ function bindRecord(rec: BattleRecordView): void {
       st.withdrawFrom = scanWithdraw(rec);
     }
     st.rec = rec;
+    st.pirateId = pirateId;
     return;
   }
   st = {
     rec,
+    pirateId,
     round: 0,
     frac: 0,
     live: false,
@@ -991,8 +1007,9 @@ function dressShip(v: ShipVis): void {
   const own = st.rec.own_side;
   const mine = own !== null && v.side === own;
   const tint = mine ? TINT_OWN : TINT_FOE;
-  const px = v.plat ? 26 : spritePx(v.kind);
-  const tex = v.plat ? resolveTexture(STATION_ART) : shipTexture(v.kind);
+  const pirateRaider = v.kind === "raider" && st.pirateId !== null && st.rec.sides[v.side]?.corp === st.pirateId;
+  const px = v.plat ? 26 : spritePx(v.kind) * (pirateRaider ? PRIVATEER_ART_CALIB : 1);
+  const tex = v.plat ? resolveTexture(STATION_ART) : pirateRaider ? resolveTexture(PRIVATEER_ART) : shipTexture(v.kind);
   if (tex) {
     v.sprite.texture = tex;
     v.sprite.visible = true;
@@ -1162,28 +1179,68 @@ function drawFx(dt: number): void {
   const wjit = hashId(`${st.rec.id}:${st.round}`) | 0;
   const zs = Math.pow(camZoom, 0.85); // world-ish FX radii track the camera
 
-  // BEAMS — instant flash-lines alive for a short window around t; heavy
-  // (capital) beams show a charge-up glow then hold the line longer.
-  for (const b of fx.beams) {
-    const dur = b.heavy ? 0.14 : 0.06;
+  // LASERS — saturated travelling bolts with a broad colored bloom, a razor
+  // white core, muzzle flare and impact sparks. Capital lances keep the same
+  // grammar but bridge the full distance after charging. All jitter is seeded,
+  // so scrubbing produces the identical volley rather than fresh fireworks.
+  for (let bi = 0; bi < fx.beams.length; bi++) {
+    const b = fx.beams[bi];
+    const dur = b.heavy ? 0.20 : 0.14;
     const dtb = f - b.t;
-    if (b.heavy && dtb > -0.05 && dtb < 0) {
+    const color = sideLaserColor(st.ships[b.from]?.side ?? 0);
+    if (b.heavy && dtb > -0.08 && dtb < 0) {
       const [x, y] = shipXY(b.from, f);
-      fxG.circle(sx(x), sy(y), (5 + 60 * (dtb + 0.05)) * zs).fill({ color: 0x9fd9ff, alpha: 0.35 });
+      const charge = clamp01((dtb + 0.08) / 0.08);
+      fxG.circle(sx(x), sy(y), (4 + 11 * charge) * zs).fill({ color, alpha: 0.08 + 0.18 * charge });
+      fxG.circle(sx(x), sy(y), (1.5 + 3.5 * charge) * zs).fill({ color: 0xffffff, alpha: 0.35 + 0.45 * charge });
       continue;
     }
     if (dtb < 0 || dtb > dur) continue;
-    const k = 1 - dtb / dur;
+    const p = clamp01(dtb / dur);
+    const fade = 1 - Math.max(0, (p - 0.78) / 0.22);
     const [x0, y0] = shipXY(b.from, f);
     const [x1, y1] = shipXY(b.to, f);
-    fxG.moveTo(sx(x0), sy(y0)).lineTo(sx(x1), sy(y1))
-      .stroke({ color: 0x9fd9ff, width: (b.heavy ? 2.4 : 1) * b.w * k + 0.4, alpha: 0.55 + 0.4 * k });
-    if (b.glint) {
+    const ax = sx(x0), ay = sy(y0), tx = sx(x1), ty = sy(y1);
+    const dx = tx - ax, dy = ty - ay;
+    const dist = Math.max(1, Math.hypot(dx, dy));
+    const ux = dx / dist, uy = dy / dist;
+    const headP = b.heavy ? 1 : Math.min(1, p * 1.16);
+    const hx = ax + dx * headP, hy = ay + dy * headP;
+    const boltLen = b.heavy ? dist : Math.min(dist * headP, (24 + b.w * 12) * zs);
+    const bx = hx - ux * boltLen, by = hy - uy * boltLen;
+    const beamW = (b.heavy ? 2.0 : 1.15) * b.w + 0.55;
+    // Three strokes fake additive bloom without allocating filters: broad haze,
+    // saturated body, then the hot core that makes the shot read as light.
+    fxG.moveTo(bx, by).lineTo(hx, hy).stroke({ color, width: beamW * 4.8, alpha: 0.08 * fade });
+    fxG.moveTo(bx, by).lineTo(hx, hy).stroke({ color, width: beamW * 2.35, alpha: 0.5 * fade });
+    fxG.moveTo(bx, by).lineTo(hx, hy).stroke({ color: 0xffffff, width: Math.max(0.75, beamW * 0.62), alpha: 0.96 * fade });
+
+    // Compact cross-shaped muzzle flash rather than a soft featureless dot.
+    if (p < 0.22) {
+      const mk = 1 - p / 0.22;
+      const mr = (2.5 + b.w * 2.2) * mk * zs;
+      fxG.circle(ax, ay, mr * 1.7).fill({ color, alpha: 0.14 * mk });
+      fxG.star(ax, ay, 4, mr, Math.max(0.6, mr * 0.18)).fill({ color: 0xffffff, alpha: 0.9 * mk });
+    }
+
+    const impactP = clamp01((headP - 0.82) / 0.18);
+    if (impactP > 0 && b.glint) {
       // Reflective mitigation: a mirror-flash deflection sparkle, not a bloom.
-      fxG.moveTo(sx(x1) - 5 * zs, sy(y1)).lineTo(sx(x1) + 5 * zs, sy(y1)).stroke({ color: 0xffffff, width: 1, alpha: 0.9 * k });
-      fxG.moveTo(sx(x1), sy(y1) - 5 * zs).lineTo(sx(x1), sy(y1) + 5 * zs).stroke({ color: 0xffffff, width: 1, alpha: 0.9 * k });
-    } else {
-      fxG.circle(sx(x1), sy(y1), (2.5 + 3.5 * b.w * k) * zs).fill({ color: 0xcfeaff, alpha: 0.5 * k });
+      const gr = (4 + 7 * impactP) * zs;
+      fxG.moveTo(tx - gr, ty).lineTo(tx + gr, ty).stroke({ color: 0xffffff, width: 1.2, alpha: 0.9 * fade });
+      fxG.moveTo(tx, ty - gr).lineTo(tx, ty + gr).stroke({ color: 0xffffff, width: 1.2, alpha: 0.9 * fade });
+    } else if (impactP > 0) {
+      const hitFade = fade * (1 - impactP * 0.35);
+      fxG.circle(tx, ty, (3 + 7 * impactP + b.w * 1.5) * zs).fill({ color, alpha: 0.16 * hitFade });
+      fxG.circle(tx, ty, (1.5 + 3 * impactP) * zs).fill({ color: 0xffffff, alpha: 0.82 * hitFade });
+      const seed = wjit ^ Math.imul(bi + 1, 0x45d9f3b);
+      for (let si = 0; si < 6; si++) {
+        const ang = jitter(seed ^ Math.imul(si + 1, 0x9e37)) * Math.PI * 2;
+        const sr = (4 + jitter(seed ^ Math.imul(si + 1, 0x7f4a)) * 10) * impactP * zs;
+        fxG.moveTo(tx + Math.cos(ang) * sr * 0.28, ty + Math.sin(ang) * sr * 0.28)
+          .lineTo(tx + Math.cos(ang) * sr, ty + Math.sin(ang) * sr)
+          .stroke({ color: si & 1 ? color : 0xffffff, width: 0.8, alpha: 0.75 * hitFade });
+      }
     }
   }
 
@@ -1237,10 +1294,23 @@ function drawFx(dt: number): void {
     if (since >= 0 && since < 0.12 && a.outcome === "flak") {
       fxG.circle(sx(hx), sy(hy), (3 + 26 * since) * zs).stroke({ color: 0xffd98a, width: 1.2, alpha: 0.8 * (1 - since / 0.12) });
     }
-    if (since >= 0 && since < 0.12 && a.outcome === "hit") {
+    if (since >= 0 && since < 0.18 && a.outcome === "hit") {
       const [tx2, ty2] = shipXY(a.to, f);
-      fxG.circle(sx(tx2), sy(ty2), (4 + 46 * since) * zs).fill({ color: 0xffb46b, alpha: 0.55 * (1 - since / 0.12) });
-      fxG.circle(sx(tx2), sy(ty2), (2 + 20 * since) * zs).fill({ color: 0xfff2cc, alpha: 0.8 * (1 - since / 0.12) });
+      const k = since / 0.18;
+      const burst = 1 - Math.pow(1 - k, 3);
+      const ex = sx(tx2), ey = sy(ty2);
+      fxG.circle(ex, ey, (4 + 24 * burst) * zs).fill({ color: 0xff6a32, alpha: 0.24 * (1 - k) });
+      fxG.circle(ex, ey, (2 + 12 * burst) * zs).fill({ color: 0xffc05c, alpha: 0.62 * (1 - k) });
+      fxG.circle(ex, ey, (1.2 + 5 * burst) * zs).fill({ color: 0xffffff, alpha: 0.9 * (1 - k) });
+      fxG.circle(ex, ey, (5 + 36 * burst) * zs).stroke({ color: 0xffd98a, width: 1.2, alpha: 0.72 * (1 - k) });
+      for (let si = 0; si < 7; si++) {
+        const seed = wjit ^ Math.imul(a.to + 1, 0x1f123bb5) ^ Math.imul(si + 1, 0x9e37);
+        const ang = jitter(seed) * Math.PI * 2;
+        const rr = (8 + jitter(seed ^ 0x55aa) * 20) * burst * zs;
+        fxG.moveTo(ex + Math.cos(ang) * rr * 0.35, ey + Math.sin(ang) * rr * 0.35)
+          .lineTo(ex + Math.cos(ang) * rr, ey + Math.sin(ang) * rr)
+          .stroke({ color: si & 1 ? 0xff9a45 : 0xfff2cc, width: 0.9, alpha: 0.7 * (1 - k) });
+      }
     }
   }
 
@@ -1266,26 +1336,99 @@ function drawFx(dt: number): void {
     }
   }
 
-  // DEATHS — exact record events: explosion scaled by mass class. Corvettes
-  // pop; cruisers flash-and-break; capitals go in multi-stage breakups.
-  for (const d of fx.deaths) {
+  // DEATHS — a staged detonation rather than a growing translucent circle:
+  // white ignition, boiling orange lobes, expanding shock ring, radial sparks,
+  // then dark smoke and hot fragments. Size and secondary-pop count follow hull
+  // mass; seeded geometry keeps the whole blast deterministic under scrubbing.
+  for (let di = 0; di < fx.deaths.length; di++) {
+    const d = fx.deaths[di];
     const since = f - d.t;
     if (since < 0) continue;
-    const life = d.cls === 3 ? 0.5 : d.cls === 2 ? 0.3 : 0.16;
+    const life = [0.34, 0.44, 0.56, 0.68][d.cls];
     if (since > life) continue;
-    const k = since / life;
-    const base = [10, 16, 26, 40][d.cls];
-    fxG.circle(sx(d.x), sy(d.y), (2 + base * k) * zs).fill({ color: 0xffb46b, alpha: 0.5 * (1 - k) });
-    fxG.circle(sx(d.x), sy(d.y), (1 + base * 0.45 * k) * zs).fill({ color: 0xfff2cc, alpha: 0.85 * (1 - k) });
-    if (d.cls >= 2) {
-      // Multi-stage: burning sections shed outward on a seeded fan.
-      const rngD = mulberry32(hashId(`${st.rec.id}:death:${d.x.toFixed(0)}:${d.y.toFixed(0)}`));
-      for (let s2 = 0; s2 < (d.cls === 3 ? 7 : 4); s2++) {
-        const ang = rngD() * Math.PI * 2;
-        const rr = (14 + rngD() * 30) * k * zs;
-        fxG.circle(sx(d.x) + Math.cos(ang) * rr, sy(d.y) + Math.sin(ang) * rr, (2.4 * (1 - k) + 0.6) * zs)
-          .fill({ color: 0xff9d5c, alpha: 0.7 * (1 - k) });
-      }
+    const k = clamp01(since / life);
+    const fade = 1 - k;
+    const burst = 1 - Math.pow(1 - k, 3);
+    const base = [12, 19, 30, 46][d.cls];
+    const ex = sx(d.x), ey = sy(d.y);
+    const rngD = mulberry32(hashId(`${st.rec.id}:${st.round}:death:${di}:${d.kind}:${d.x.toFixed(0)}:${d.y.toFixed(0)}`));
+
+    // Smoke blooms behind the fire after ignition, widening and cooling as the
+    // bright core collapses. Multiple lobes avoid the old perfect-circle look.
+    const smokeT = clamp01((k - 0.14) / 0.86);
+    const smokeN = 4 + d.cls * 2;
+    for (let si = 0; si < smokeN; si++) {
+      const ang = rngD() * Math.PI * 2;
+      const reach = 0.25 + rngD() * 0.65;
+      const size = 0.28 + rngD() * 0.38;
+      const ox = Math.cos(ang) * base * reach * burst * zs;
+      const oy = Math.sin(ang) * base * reach * burst * zs;
+      const sr = base * size * (0.5 + smokeT) * zs;
+      fxG.circle(ex + ox, ey + oy, sr).fill({ color: si & 1 ? 0x2b2528 : 0x3b2b2a, alpha: 0.16 * smokeT * fade });
+    }
+
+    // Broad emissive bloom, followed by overlapping fire pockets. Their seeded
+    // offsets and sizes sell a rupturing hull instead of a UI pulse.
+    fxG.circle(ex, ey, base * (0.55 + 1.25 * burst) * zs).fill({ color: 0xff4d24, alpha: 0.13 * fade });
+    const fireN = 6 + d.cls * 3;
+    for (let li = 0; li < fireN; li++) {
+      const ang = rngD() * Math.PI * 2;
+      const phase = rngD() * (d.cls >= 2 ? 0.28 : 0.16);
+      const local = clamp01((k - phase) / Math.max(0.01, 1 - phase));
+      if (local <= 0) continue;
+      const reach = (0.12 + rngD() * 0.9) * burst;
+      const size = 0.18 + rngD() * 0.34;
+      const lx = ex + Math.cos(ang) * base * reach * zs;
+      const ly = ey + Math.sin(ang) * base * reach * zs;
+      const lr = base * size * (0.45 + 0.8 * local) * zs;
+      const lf = (1 - local) * fade;
+      fxG.circle(lx, ly, lr * 1.45).fill({ color: 0xff5428, alpha: 0.28 * lf });
+      fxG.circle(lx, ly, lr).fill({ color: 0xffa33d, alpha: 0.65 * lf });
+      fxG.circle(lx, ly, lr * 0.42).fill({ color: 0xfff0a6, alpha: 0.82 * lf });
+    }
+
+    // Capital hulls cook off in several offset secondary pops while the main
+    // fireball is still expanding.
+    const secondaryN = d.cls === 3 ? 4 : d.cls === 2 ? 2 : 0;
+    for (let si = 0; si < secondaryN; si++) {
+      const phase = 0.16 + rngD() * 0.34;
+      const ang = rngD() * Math.PI * 2;
+      const off = base * (0.25 + rngD() * 0.55) * zs;
+      const local = clamp01((k - phase) / 0.24);
+      if (local <= 0 || local >= 1) continue;
+      const sf = Math.sin(local * Math.PI);
+      const px = ex + Math.cos(ang) * off;
+      const py = ey + Math.sin(ang) * off;
+      fxG.circle(px, py, base * (0.12 + 0.38 * local) * zs).fill({ color: 0xff6a2a, alpha: 0.42 * sf });
+      fxG.circle(px, py, base * (0.06 + 0.16 * local) * zs).fill({ color: 0xffffff, alpha: 0.86 * sf });
+    }
+
+    // The pressure front persists after the white core, making even light-hull
+    // deaths legible at overview zoom.
+    fxG.circle(ex, ey, base * (0.45 + 2.5 * burst) * zs)
+      .stroke({ color: 0xffc56b, width: Math.max(0.8, (1.7 - k) * zs), alpha: 0.52 * fade });
+
+    // Long hot shards punch through the ring, each ending in a glowing chunk.
+    const sparkN = 7 + d.cls * 4;
+    for (let si = 0; si < sparkN; si++) {
+      const ang = rngD() * Math.PI * 2;
+      const reach = base * (0.75 + rngD() * 2.2) * burst * zs;
+      const inner = reach * (0.34 + rngD() * 0.18);
+      const x0 = ex + Math.cos(ang) * inner;
+      const y0 = ey + Math.sin(ang) * inner;
+      const x1 = ex + Math.cos(ang) * reach;
+      const y1 = ey + Math.sin(ang) * reach;
+      fxG.moveTo(x0, y0).lineTo(x1, y1)
+        .stroke({ color: si % 3 === 0 ? 0xffffff : si & 1 ? 0xffd37a : 0xff6a32, width: si % 3 === 0 ? 1.1 : 0.75, alpha: 0.78 * fade });
+      if (si % 3 === 0) fxG.circle(x1, y1, Math.max(0.7, 1.4 * fade) * zs).fill({ color: 0xfff0b0, alpha: 0.8 * fade });
+    }
+
+    // A very brief white-hot ignition sits on top of every other layer.
+    const flash = clamp01(1 - k / 0.16);
+    if (flash > 0) {
+      fxG.circle(ex, ey, base * (0.42 + 0.5 * burst) * zs).fill({ color: 0xffffff, alpha: 0.92 * flash });
+      fxG.star(ex, ey, 8, base * (1.05 + burst) * zs, base * 0.14 * zs)
+        .fill({ color: 0xfff3c4, alpha: 0.72 * flash });
     }
   }
 }

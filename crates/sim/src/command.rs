@@ -203,6 +203,37 @@ pub enum Command {
         doctrine: FleetDoctrine,
     },
 
+    /// Commission a new Lieutenant through the HOME system's Academy. The
+    /// course rides the ordinary build queue and graduates into reserve duty.
+    RecruitCaptain {
+        player_id: PlayerId,
+        system_id: EntityId,
+    },
+
+    /// Assign a reserve officer to an idle formation at the same owned-system
+    /// dock, or transfer an already-docked officer between such formations.
+    AssignCaptain {
+        player_id: PlayerId,
+        captain_id: u32,
+        fleet_id: EntityId,
+    },
+
+    /// Take an officer off an idle formation into reserve at its current owned
+    /// system. Officers never teleport to the command center through this verb.
+    ReserveCaptain {
+        player_id: PlayerId,
+        captain_id: u32,
+    },
+
+    /// Spend one earned Captain point while that officer is physically berthed
+    /// at the corporation's home command center. Remote training is deliberately
+    /// not a hidden FTL command.
+    TrainCaptain {
+        player_id: PlayerId,
+        captain_id: u32,
+        attribute: crate::captain::CaptainAttribute,
+    },
+
     /// Build a ship at one of the player's OWNED systems (§step1 growth sink).
     /// Deducts a fixed RECIPE of commodities from that system's stockpile NOW and
     /// enqueues a build job that completes after the recipe's duration, spawning the
@@ -454,8 +485,8 @@ pub enum Command {
     // be the player's, IDLE, unengaged, and within `ship::DOCK_RADIUS` of the
     // dock — loading is dockside work. All soft-reject, free, owner-only.
     /// Move goods from the corp's MARKET WAREHOUSE into a fleet's hold.
-    /// Tops up an existing load of the same commodity; a hold already carrying a
-    /// DIFFERENT good soft-rejects (a player hull stays single-commodity).
+    /// Tops up that commodity's stack in a mixed manifest; every stack shares
+    /// the fleet's aggregate cargo capacity.
     HubLoad {
         player_id: PlayerId,
         fleet_id: EntityId,
@@ -590,11 +621,70 @@ pub enum Command {
     /// unaffiliated. Ignored unless the caller is the founder.
     DissolveSyndicate { player_id: PlayerId },
 
-    /// §research: set the syndicate's research QUEUE-AHEAD list (the primary
+    /// Founder/Officer assigns a non-founder member's permissions.
+    SetSyndicateRole {
+        player_id: PlayerId,
+        member: PlayerId,
+        role: crate::syndicate::SyndicateRole,
+    },
+
+    // ---- OPERATIONS ---------------------------------------------------------
+    AcceptOperation {
+        player_id: PlayerId,
+        operation_id: crate::ids::OperationId,
+    },
+    AbandonOperation {
+        player_id: PlayerId,
+        operation_id: crate::ids::OperationId,
+    },
+    AssignOperationFleet {
+        player_id: PlayerId,
+        operation_id: crate::ids::OperationId,
+        fleet_id: EntityId,
+    },
+    /// Recover a rescue/salvage site with a cargo-capable fleet physically on site.
+    RecoverOperation {
+        player_id: PlayerId,
+        operation_id: crate::ids::OperationId,
+        fleet_id: EntityId,
+    },
+    /// Contribute local stockpile goods to a syndicate megaproject at its site.
+    ContributeOperationCargo {
+        player_id: PlayerId,
+        operation_id: crate::ids::OperationId,
+        commodity: crate::cargo::Commodity,
+        units: u32,
+    },
+    /// Quartermaster/Officer/Founder starts the one shared construction operation.
+    CreateSyndicateOperation {
+        player_id: PlayerId,
+        system_id: EntityId,
+    },
+
+    // ---- DIPLOMACY ----------------------------------------------------------
+    ProposeTreaty {
+        player_id: PlayerId,
+        target: PlayerId,
+        treaty: crate::diplomacy::TreatyKind,
+    },
+    RespondTreaty {
+        player_id: PlayerId,
+        proposal_id: u64,
+        accept: bool,
+    },
+    DeclareWar {
+        player_id: PlayerId,
+        target: PlayerId,
+    },
+    CancelTreaty {
+        player_id: PlayerId,
+        target: PlayerId,
+    },
+
+    /// §research: set the corporation's research QUEUE-AHEAD list (the primary
     /// strategic verb). CC-local instant administration — no positional delay.
     /// Ids are validated against the catalog (unknown/hidden dropped); the front
-    /// becomes `active` if the clock is idle. Ignored unless the caller is in a
-    /// syndicate. Only a syndicate's members may set its queue.
+    /// becomes `active` if the clock is idle. Syndicate membership is irrelevant.
     SetResearchQueue {
         player_id: PlayerId,
         queue: Vec<String>,
@@ -602,8 +692,8 @@ pub enum Command {
 
     /// §research: designate a live TARGET for a capability that needs one (Crown
     /// Project body, Mass Stream pair, Signature Mimicry fleet). CC-local instant
-    /// admin. Soft-reject if the syndicate hasn't unlocked the capability or the
-    /// target isn't the syndicate's to designate.
+    /// admin. Soft-reject if the corporation hasn't unlocked the capability or
+    /// the target isn't the corporation's to designate.
     SetDesignation {
         player_id: PlayerId,
         cap: crate::research::Cap,

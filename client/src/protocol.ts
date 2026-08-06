@@ -4,6 +4,7 @@
 // 64-bit id; sent as a decimal string to preserve precision beyond 2^53.
 export type PlayerId = string;
 export type EntityId = string;
+export type OperationId = string;
 
 export interface Vec2 {
   x: number;
@@ -147,9 +148,35 @@ export interface BodyView {
   kind: string;
   parent: number | null;
   habitable: boolean;
+  size: "tiny" | "small" | "medium" | "large" | "huge";
+  environment: "gaia" | "terran" | "marginal" | "hostile" | "uninhabitable";
+  /// Survey-gated mineral grade and rare economic feature.
+  geology: "ultra_poor" | "poor" | "average" | "rich" | "ultra_rich" | null;
+  special: "low_gravity" | "volcanic_mantle" | "hydrocarbon_seas" | "crystalline_crust" | "fertile_biosphere" | "precursor_ruins" | null;
+  special_effect: string | null;
+  habitat_capacity_mult: number;
+  population_growth_mult: number;
+  provisions_mult: number;
+  construction_time_mult: number;
+  mineral_extraction_mult: number | null;
+  /// Owner-only exact live capacities (null for rivals to avoid population leaks).
+  resource_slots: number | null;
+  industrial_slots: number | null;
+  infrastructure_slots: number | null;
+  ship_build_time_mult: number | null;
   deposits: Deposit[] | null;
   structures: Record<string, number>;
   population: number;
+}
+
+export interface ColonyOpportunityView {
+  role: "population_world" | "mining_world" | "fuel_complex" | "electronics_center" | "agricultural_exporter" | "shipbuilding_center" | "strategic_outpost";
+  title: string;
+  tier: "useful" | "exceptional" | "jackpot";
+  score: number;
+  body_id: number | null;
+  body_name: string | null;
+  reason: string;
 }
 
 /// §economy Part 6: one production line with its resolved factor chain
@@ -167,6 +194,7 @@ export interface AssignmentView {
   staffing: number;
   skill: number;
   food: number;
+  site: number;
   /// (commodity, units/s) at the factors above.
   outputs: [Commodity, number][];
 }
@@ -241,6 +269,8 @@ export interface SystemStateView {
   food_state: string;
   /// §economy Part 2: colony population in MILLIONS — owner-only; rivals see 0.
   population: number;
+  /// Owner-only environment-adjusted base upkeep; research may reduce actual draw.
+  population_upkeep: number;
   /// Resident specialist pool (slug -> headcount) — owner-only; rivals see {}.
   specialists: Record<string, number>;
   /// §modules Part B3: the module LEDGER (slug -> crates on hand) — owner-only;
@@ -248,6 +278,8 @@ export interface SystemStateView {
   modules?: Record<string, number>;
   /// §bodies: the roster — public geography; per-body owner data owner-only.
   bodies: BodyView[];
+  /** Survey-gated colony roles, scored by the same natural multipliers as production. */
+  opportunities?: ColonyOpportunityView[];
   /// Built structures SUMMED across bodies (slug -> tier) — owner-only.
   structures: Record<string, number>;
   /// Workforce numbers — owner-only; null for rivals.
@@ -284,8 +316,7 @@ export interface SystemStateView {
   /// system or own it (survey knowledge is permanent). Absent = unsurveyed:
   /// only the public band is known.
   deposits?: Deposit[] | null;
-  /// §explore R3: the hidden TRAIT slug — CURRENT-OWNER-ONLY (never on a rival's
-  /// wire; a survey doesn't reveal it). "bonus_vein:<commodity>" carries the
+  /// §explore R3: the survey-gated economic trait slug. "bonus_vein:<commodity>" carries the
   /// vein's commodity; else "deep_deposits" | "unstable_geology" |
   /// "volatile_pockets" | "precursor_cache".
   trait?: string | null;
@@ -340,10 +371,9 @@ export interface GalaxyInfo {
   jump_range: number; // maximum point-to-point jump distance (su)
   jump_spool_s: number; // uninterrupted spool before instantaneous relocation
   hyperlimit: number; // gravity-well exclusion radius at both jump endpoints
-  sensor_range: number; // detection radius each of your assets projects
+  sensor_range: number; // base detection radius of the command center / Raider pickets
   raider_speed: number; // raider cruise speed — for the crude intercept estimate
-  /// The sensor-bubble multiplier a SCOUT projects over the standard ship
-  /// bubble (§scout) — for the coverage rendering.
+  /// Multiplier when a Scout accompanies a Raider-bearing sensor fleet.
   scout_sensor_mult: number;
   /// Sensor-array bubble tunables (§buildings step 2b): a tier-N array projects
   /// base + per_tier·(N−1) — for drawing our own arrays' coverage.
@@ -700,6 +730,18 @@ export interface JumpSpoolView {
   waiting_for_fuel: boolean;
 }
 
+/** A light-delayed rival departure fact; deliberately carries no destination. */
+export interface JumpDepartureView {
+  fleet: EntityId;
+  /** Identity retained from the visible pre-jump contact; no destination data. */
+  owner: PlayerId;
+  owner_name: string;
+  kind: ShipKind;
+  pos: Vec2;
+  departed_at: number;
+  learned_at: number;
+}
+
 export interface JumpPresumptionView {
   /** Steady-state information delay at the player-authored destination. */
   information_delay: number;
@@ -707,6 +749,67 @@ export interface JumpPresumptionView {
   report_in: number;
   /** Direction of the instantaneous relocation, used by the arrow marker. */
   heading: Vec2;
+}
+
+export type CaptainPortrait =
+  | "mara_venn"
+  | "elias_rook"
+  | "sera_okafor"
+  | "jun_arclight"
+  | "astrid_nystrom"
+  | "henrik_sondergaard"
+  | "luca_ferraro"
+  | "karim_ben_youssef"
+  | "mateo_quispe"
+  | "talia_faumuina"
+  | "ana_luisa_nascimento"
+  | "elena_valdes"
+  | "daphne_markou"
+  | "han_min_jae"
+  | "nadine_ilunga"
+  | "daichi_mori"
+  | "chen_jianyu"
+  | "nattaya_chantarat"
+  | "lin_xiaoyu"
+  | "reina_kuroda"
+  | "yoon_seo_yeon";
+export type CaptainAttribute = "command" | "navigation" | "fieldcraft" | "logistics";
+export type CaptainTitle =
+  | "lieutenant"
+  | "lieutenant_commander"
+  | "commander"
+  | "captain"
+  | "rear_admiral"
+  | "vice_admiral"
+  | "admiral"
+  | "fleet_admiral";
+export type CaptainPortraitAge = "young" | "middle" | "senior";
+export type CaptainLossFate = "rescued" | "injured" | "captured" | "killed";
+export interface CaptainView {
+  id: number;
+  name: string;
+  portrait: CaptainPortrait;
+  level: number;
+  title: CaptainTitle;
+  portrait_age: CaptainPortraitAge;
+  command_capacity: number;
+  xp: number;
+  next_level_xp: number;
+  unspent: number;
+  attributes: Record<CaptainAttribute, number>;
+}
+
+export interface CaptainRosterView {
+  id: number;
+  name: string;
+  portrait: CaptainPortrait;
+  assigned_fleet: EntityId | null;
+  stationed_system: EntityId | null;
+  recovering_until: number | null;
+  /** Null until the casualty report's light reaches command. */
+  loss_fate: CaptainLossFate | null;
+  /** Null until the assigned fleet's personnel light reaches command. */
+  report: CaptainView | null;
 }
 
 export interface GhostView {
@@ -718,6 +821,10 @@ export interface GhostView {
   vel: Vec2;
   age: number;
   own: boolean;
+  /** This visible, light-delayed frame crossed a jump discontinuity. */
+  jumped: boolean;
+  /** Owner-only and sampled with this exact sighting — never fresh corp truth. */
+  captain?: CaptainView | null;
   /// §dock: the BERTH this sighting was taken at — `"hub"` for the Market Hub,
   /// otherwise the system's id — or absent if the fleet was under way (or
   /// loitering somewhere it does not control, which is what keeps a blockading
@@ -732,7 +839,7 @@ export interface GhostView {
   /// is DERIVED from this rather than sent beside it — a cruising drive names
   /// its layer; anything mid-transition is on thrusters until it catches.
   drive?: DriveStateView;
-  /** Owner-only jump spool telemetry from this same retarded sighting. */
+  /** Observable jump spool telemetry from this same retarded sighting. */
   jump_spool?: JumpSpoolView | null;
   /** Player-known destination awaiting destination-origin confirmation light. */
   jump_presumed?: JumpPresumptionView | null;
@@ -747,11 +854,13 @@ export interface GhostView {
   /// along it is. Absent when neither. Drives the progress bar and the order
   /// lockout.
   job?: { kind: "building" | "demolishing"; progress: number } | null;
-  // Cargo present only when this convoy is within your sensor coverage.
+  // Legacy first-stack alias; kept for rolling server/client compatibility.
   /// Specialist passengers aboard — manifest data, included under exactly the
   /// cargo rule (empty object = none visible / none aboard).
   passengers: Record<string, number>;
   cargo: CargoView | null;
+  /** Complete mixed cargo manifest, under the same fog rule as `cargo`. */
+  cargo_manifest?: CargoView[];
   // Estimated-size bucket — always present on a visible fleet.
   count_class: CountClass;
   // Exact composition — present only in coverage or for your own fleet.
@@ -812,6 +921,16 @@ export type TransitMode = "full" | "stealth";
 export function fleetExactCount(g: GhostView): number | null {
   if (!g.composition) return null;
   return g.composition.reduce((a, c) => a + c.count, 0);
+}
+
+/** Canonical mixed hold, with a fallback for snapshots/servers that predate it. */
+export function fleetCargoManifest(g: GhostView): CargoView[] {
+  if (g.cargo_manifest?.length) return g.cargo_manifest;
+  return g.cargo ? [g.cargo] : [];
+}
+
+export function fleetCargoUnits(g: GhostView): number {
+  return fleetCargoManifest(g).reduce((units, cargo) => units + cargo.units, 0);
 }
 
 // Render a decimal-string PlayerId as the canonical "P<hex>" form used by the
@@ -892,13 +1011,29 @@ export type ClientMsg =
   // §offensive-orders — attack a rival fleet (destroy); set a fleet's posture.
   | { type: "AttackFleet"; fleet_id: EntityId; target_id: EntityId }
   | { type: "SetFleetPosture"; fleet_id: EntityId; posture: EngagementPosture }
+  | { type: "RecruitCaptain"; system_id: EntityId }
+  | { type: "AssignCaptain"; captain_id: number; fleet_id: EntityId }
+  | { type: "ReserveCaptain"; captain_id: number }
+  | { type: "TrainCaptain"; captain_id: number; attribute: CaptainAttribute }
   // §syndicates Part 1 — alliance admin (instant owner-only).
   | { type: "CreateSyndicate"; name: string }
   | { type: "InviteToSyndicate"; name: string }
   | { type: "AcceptSyndicateInvite"; syndicate_id: SyndicateId }
   | { type: "LeaveSyndicate" }
   | { type: "DissolveSyndicate" }
-  // §research R6 — set the syndicate research queue (front promotes to active).
+  | { type: "SetSyndicateRole"; member: PlayerId; role: SyndicateRole }
+  // Operations + formal diplomacy.
+  | { type: "AcceptOperation"; operation_id: OperationId }
+  | { type: "AbandonOperation"; operation_id: OperationId }
+  | { type: "AssignOperationFleet"; operation_id: OperationId; fleet_id: EntityId }
+  | { type: "RecoverOperation"; operation_id: OperationId; fleet_id: EntityId }
+  | { type: "ContributeOperationCargo"; operation_id: OperationId; commodity: Commodity; units: number }
+  | { type: "CreateSyndicateOperation"; system_id: EntityId }
+  | { type: "ProposeTreaty"; target_name: string; treaty: TreatyKind }
+  | { type: "RespondTreaty"; proposal_id: number; accept: boolean }
+  | { type: "DeclareWar"; target_name: string }
+  | { type: "CancelTreaty"; target: PlayerId }
+  // §research R6 — set the corporation research queue (front promotes to active).
   | { type: "SetResearchQueue"; queue: string[] }
   | { type: "SaveFit"; name: string; ship: ShipKind; loadout: ModuleKind[] }
   | { type: "DeleteFit"; name: string }
@@ -907,6 +1042,7 @@ export type ClientMsg =
 
 // §syndicates Part 1: an alliance id (opaque decimal string on the wire).
 export type SyndicateId = string;
+export type SyndicateRole = "member" | "quartermaster" | "officer" | "founder";
 
 // The viewer's OWN syndicate roster (never a rival's private roster).
 export interface SyndicateView {
@@ -914,12 +1050,83 @@ export interface SyndicateView {
   name: string;
   founder: PlayerId;
   is_founder: boolean;
-  members: { id: PlayerId; name: string }[];
+  members: { id: PlayerId; name: string; role: SyndicateRole }[];
   invited: string[];
   // §fitting: the syndicate's saved doctrine fits (any member curates).
   fits?: FitView[];
   // §ladder B4: the christened name of the syndicate's Titan (owner-only).
   flagship_name?: string | null;
+  my_role: SyndicateRole;
+}
+
+export type OperationState = "offered" | "active" | "completed" | "failed" | "expired" | "abandoned";
+export type OperationIssuer = "authority" | "market" | "survey_office" | "salvage_office" | "regional_council" | "syndicate";
+export type OperationScope =
+  | { scope: "private"; player: PlayerId }
+  | { scope: "public" }
+  | { scope: "syndicate"; syndicate: SyndicateId };
+export type OperationKind =
+  | { kind: "pirate_bounty"; system: EntityId; tier: number }
+  | { kind: "survey_expedition"; system: EntityId }
+  | { kind: "market_delivery"; commodity: Commodity; units: number }
+  | { kind: "rescue_salvage"; pos: Vec2; commodity: Commodity; units: number; source_fleet: EntityId }
+  | { kind: "convoy_escort"; protected_fleet: EntityId; destination: Vec2 }
+  | { kind: "authority_enforcement"; target: PlayerId }
+  | { kind: "strategic_control"; system: EntityId }
+  | { kind: "regional_mandate"; region: Vec2; radius: number }
+  | { kind: "syndicate_megaproject"; system: EntityId; stage: number };
+
+export interface OperationRewardView {
+  credits: number;
+  authority_standing: number;
+  captain_xp: number;
+  research_insight: number;
+}
+
+export interface OperationView {
+  id: OperationId;
+  issuer: OperationIssuer;
+  scope: OperationScope;
+  kind: OperationKind;
+  state: OperationState;
+  progress: number;
+  goal: number;
+  stage: number;
+  reported_at: number;
+  offered_at: number;
+  starts_at: number;
+  expires_at: number;
+  target_pos: Vec2;
+  reward: OperationRewardView;
+  joined: boolean;
+  assigned_fleet?: EntityId | null;
+  winner?: PlayerId | null;
+}
+
+export type MidgameStage = "home_development" | "exploration" | "specialization" | "first_colony" | "trade_network" | "contested_expansion" | "regional_power";
+export type RelationState = "neutral" | "non_aggression" | "war" | "ceasefire";
+export type TreatyKind = "non_aggression" | "ceasefire";
+
+export interface DiplomacyRelationView {
+  other: PlayerId;
+  name: string;
+  state: RelationState;
+  war_activates_at?: number | null;
+  separation_until: number;
+  reprisal_until?: number | null;
+}
+
+export interface TreatyProposalView {
+  id: number;
+  from: PlayerId;
+  name: string;
+  treaty: TreatyKind;
+  expires_at: number;
+}
+
+export interface DiplomacyView {
+  relations: DiplomacyRelationView[];
+  incoming: TreatyProposalView[];
 }
 
 // §fitting: one saved doctrine fit — a named hull + loadout the whole
@@ -936,7 +1143,7 @@ export interface SyndicateInviteView {
   name: string;
 }
 
-// §research R6: the viewer's OWN syndicate research picture (owner-only).
+// §research R6: the viewer's OWN corporation research picture (owner-only).
 // This is the client-side MERGED shape the panel reads — the wire now carries
 // only the dynamic slice (ResearchDynView); the static catalog rides Welcome.
 export interface ResearchView {
@@ -1245,6 +1452,34 @@ export interface PendingOrderView {
   loss_break?: Vec2;
 }
 
+export type FoundingStage =
+  | "build_shipyard"
+  | "leave_home_well"
+  | "defeat_privateer"
+  | "build_mine"
+  | "build_convoy"
+  | "first_sale"
+  | "build_academy"
+  | "first_research"
+  | "build_scout"
+  | "survey_candidates"
+  | "build_colony"
+  | "establish_colony"
+  | "complete";
+
+export interface FoundingView {
+  stage: FoundingStage;
+  protected: boolean;
+  protection_min_until: number;
+  protection_max_until: number;
+  expansion_unlocked: boolean;
+  interceptor?: EntityId | null;
+  privateer?: EntityId | null;
+  bounty_received: boolean;
+  /** Assigned prospects only; their economic details remain survey-gated. */
+  survey_candidates: EntityId[];
+}
+
 // Server → client.
 export type ServerMsg =
   | {
@@ -1260,6 +1495,8 @@ export type ServerMsg =
       // Wire protocol version (§FLEETS bumped it to 2) — a stale client can warn.
       protocol_version: number;
       tick_hz: number;
+      /** Sim seconds advanced per wall second; 1 is standard pacing. */
+      pacing_scale: number;
       tick: number;
       sim_time: number;
       galaxy: GalaxyInfo;
@@ -1275,6 +1512,10 @@ export type ServerMsg =
       anchors: AnchorView[];
       systems: SystemStateView[];
       ghosts: GhostView[];
+      captains: CaptainRosterView[];
+      captain_capacity: number;
+      /** Light-delayed rival jump departures; no destination information. */
+      jump_departures?: JumpDepartureView[];
       /// §emplacements: your own structures standing in open space. Undelayed —
       /// you know where you put them.
       emplacements?: EmplacementView[];
@@ -1285,6 +1526,7 @@ export type ServerMsg =
       freight: FreightView;
       /// §TCA Phase 2: YOUR charter standing and band. Owner-only.
       charter: CharterView;
+      founding: FoundingView;
       doctrine: FleetDoctrine;
       // §order-lifecycle — the player's own in-flight order timestamps (owner-only).
       pending_orders: PendingOrderView[];
@@ -1294,9 +1536,12 @@ export type ServerMsg =
       syndicate?: SyndicateView | null;
       /// §syndicates Part 1: pending invitations the viewer may accept.
       syndicate_invites?: SyndicateInviteView[];
-      /// §research R6: the viewer's OWN research picture (owner-only; null if
-      /// unaffiliated — research is a syndicate institution). §perf Part B: the
-      /// DYNAMIC slice only — the client joins it onto Welcome's catalog.
+      operations?: OperationView[];
+      midgame_stage: MidgameStage;
+      diplomacy?: DiplomacyView | null;
+      /// §research R6: the viewer's OWN corporation research picture. Present
+      /// regardless of syndicate membership. §perf Part B: the DYNAMIC slice
+      /// only — the client joins it onto Welcome's catalog.
       research?: ResearchDynView | null;
       // (§perf Part B: standing_orders / battle_reports / capture_reports /
       // rankings moved to the change-gated "Sections" message.)

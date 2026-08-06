@@ -14,16 +14,19 @@
 pub mod body;
 pub mod build;
 pub mod cargo;
+pub mod captain;
 pub mod colony;
 pub mod combat;
 pub mod command;
 pub mod config;
 pub mod detection;
 pub mod doctrine;
+pub mod diplomacy;
 pub mod emplace;
 pub use emplace::{Emplacement, EmplacementKind};
 pub mod event;
 pub mod explore;
+pub mod founding;
 pub mod fuel;
 pub mod galaxy;
 pub mod ground;
@@ -33,6 +36,7 @@ pub mod math;
 pub mod module;
 pub mod movement;
 pub mod node;
+pub mod operation;
 pub mod pirate;
 pub mod production;
 pub mod rankings;
@@ -47,9 +51,13 @@ pub mod tca;
 pub mod transit;
 pub mod world;
 
-pub use body::{Body, BodyKind};
+pub use body::{Body, BodyKind, BodySize, BodySpecial, Environment, Geology, PlanetaryProfile};
 pub use build::{BuildJob, BuildKind, SlotPool, StructureKind};
 pub use cargo::{Cargo, Commodity};
+pub use captain::{
+    Captain, CaptainAttribute, CaptainAttributes, CaptainLossFate, CaptainPortrait,
+    CaptainPortraitAge, CaptainSighting, CaptainTitle,
+};
 pub use colony::FoodState;
 pub use combat::{
     BattleOutcomeSummary, BattleRecord, Forces, Losses, RoundNote, RoundRecord, SideRecord,
@@ -67,13 +75,18 @@ pub use event::{
     OrderRejectReason, RaidOutcome, TradeEvent, TradeRejectReason,
 };
 pub use explore::{RichnessBand, SURVEY_INITIAL_RADIUS};
+pub use founding::{FoundingProgram, FoundingStage};
 pub use galaxy::{Blockade, Deposit, HomeSlot, StarSystem, claim_cost_for};
-pub use ids::{EntityId, PlayerId, SyndicateId};
+pub use ids::{EntityId, OperationId, PlayerId, SyndicateId};
 pub use market::{LimitOrder, Market, Side};
 pub use math::Vec2;
 pub use module::{DamageType, Family, Loadout, ModuleKind, weapon_family};
 pub use movement::{MoveStep, advance_toward, intercept_point, pursue_step};
 pub use node::{NODE_REGION_RADIUS, NODES_PER_CORP, Node, NodeBonus, node_bonus_for};
+pub use operation::{
+    Contribution, KnownOperation, MidgameStage, Operation, OperationIssuer, OperationKind,
+    OperationReward, OperationScope, OperationState, PendingOperationReport,
+};
 pub use pirate::{Enclave, PIRATE_ENCLAVE_COUNT};
 pub use production::{Assignment, SuspendReason};
 pub use rankings::{RankingCategory, RankingRow, RankingStats};
@@ -86,7 +99,7 @@ pub use specialist::SpecialistKind;
 pub use standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
 pub use syndicate::{
     DoctrineFit, SYNDICATE_MAX_FITS, SYNDICATE_MAX_FRAC, SYNDICATE_MIN_CAP, Syndicate,
-    syndicate_cap,
+    SyndicateRole, syndicate_cap,
 };
 pub use tca::{
     CharterStatus, FreightRun, RunLeg, Shipment, ShipmentDir, ShipmentId, charter_status,

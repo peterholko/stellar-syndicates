@@ -6,7 +6,7 @@
 //! until a scout snapshots it (like fortifications), periodically launches a dark
 //! raider PACK (owned by the [`crate::ids::PlayerId::PIRATE`] sentinel — so it
 //! reuses ALL the fleet/combat/raid code by owner comparison) that hunts
-//! BROADCASTING convoys within its radius, escalates on a slow clock if ignored,
+//! corporate convoys within its local hunting radius, escalates on a slow clock if ignored,
 //! and is suppressed by ASSAULTING the base (a platform-equivalent defense pool ∝
 //! tier). Pirates STEAL (raid brevity) — they never siege, never capture — so the
 //! standing defense handles them fully offline; loss rates are bounded by the same
@@ -43,7 +43,7 @@ pub const PIRATE_PACK_PER_TIER: u32 = 1;
 /// founding corp's first convoys reach the hub unmolested. The steady 90 s cadence
 /// (`PIRATE_LAUNCH_PERIOD`) only takes over after this initial delay.
 pub const PIRATE_FIRST_LAUNCH_SECS: f64 = 300.0;
-/// NEW-PLAYER GRACE: a corp's broadcasting convoys are INVISIBLE to pirate hunting
+/// NEW-PLAYER GRACE: a corp's convoys are invisible to pirate hunting
 /// for this long after the corp JOINS (keyed on `Corporation.joined_tick`, not
 /// wall-clock game time). This is what protects a LATECOMER who drops into an
 /// already-escalated galaxy — they get the same undefended-onboarding window a

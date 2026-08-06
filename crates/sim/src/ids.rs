@@ -162,6 +162,43 @@ impl<'de> Deserialize<'de> for SyndicateId {
     }
 }
 
+/// Identifies a contract, competitive objective, or multi-stage operation.
+/// Operations have their own deterministic allocator and use the same decimal
+/// string wire convention as every other id exposed to JavaScript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct OperationId(pub u64);
+
+impl std::fmt::Display for OperationId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "O{}", self.0)
+    }
+}
+
+impl Serialize for OperationId {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for OperationId {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl de::Visitor<'_> for V {
+            type Value = OperationId;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a u64 as a decimal string or number")
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<OperationId, E> {
+                v.parse::<u64>().map(OperationId).map_err(de::Error::custom)
+            }
+            fn visit_u64<E: de::Error>(self, v: u64) -> Result<OperationId, E> {
+                Ok(OperationId(v))
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

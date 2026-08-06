@@ -394,27 +394,27 @@ pub enum EventPayload {
         manifest: std::collections::BTreeMap<crate::module::ModuleKind, u32>,
         pos: crate::math::Vec2,
     },
-    /// §research: a syndicate COMPLETED a programme — its effect applies instantly
-    /// galaxy-wide (design decision #5). OWNER-ONLY to the syndicate's members.
+    /// §research: a corporation COMPLETED a programme — its effect applies
+    /// instantly across that corporation. OWNER-ONLY.
     ResearchCompleted {
-        syndicate: crate::ids::SyndicateId,
+        owner: PlayerId,
         programme: String,
     },
-    /// §research: a tier's verb GATE was first crossed for a syndicate (a new
+    /// §research: a tier's verb GATE was first crossed for a corporation (a new
     /// row of programmes opened). OWNER-ONLY.
     TierUnlocked {
-        syndicate: crate::ids::SyndicateId,
+        owner: PlayerId,
         field: crate::research::Field,
         school: Option<crate::research::School>,
         tier: u8,
     },
-    /// §research: the syndicate's research CLOCK stalled (no staffed/funded
+    /// §research: the corporation's research CLOCK stalled (no staffed/funded
     /// Academy) or resumed. OWNER-ONLY. Fires once per transition.
     ResearchStalled {
-        syndicate: crate::ids::SyndicateId,
+        owner: PlayerId,
     },
     ResearchResumed {
-        syndicate: crate::ids::SyndicateId,
+        owner: PlayerId,
     },
     /// §economy Part 4: a personnel convoy LANDED its passengers into a
     /// system's resident pool. OWNER-ONLY, own clock (own-economy precedent).
@@ -476,6 +476,31 @@ pub enum EventPayload {
         pos: crate::math::Vec2,
         plunder: std::collections::BTreeMap<crate::cargo::Commodity, u32>,
     },
+    /// An operation report was emitted at `pos`. The operation's own known-copy
+    /// queue controls its panel state; this event supplies timeline/history copy
+    /// on the same positioned wavefront.
+    OperationUpdated {
+        operation: crate::ids::OperationId,
+        recipient: PlayerId,
+        state: crate::operation::OperationState,
+        progress: u32,
+        goal: u32,
+        pos: crate::math::Vec2,
+        /// Exact time this frozen report reaches `recipient`.
+        arrive_at: f64,
+    },
+    /// A diplomatic message or state transition. `recipient` is explicit so the
+    /// server never broadcasts private negotiations; `origin` prices the normal
+    /// CC-to-CC information leg.
+    DiplomacyUpdated {
+        recipient: PlayerId,
+        other: PlayerId,
+        state: crate::diplomacy::RelationState,
+        kind: crate::diplomacy::DiplomacyNoticeKind,
+        origin: crate::math::Vec2,
+        /// Exact time this notice becomes actionable in the recipient's view.
+        arrive_at: f64,
+    },
     /// §node: an EXOTIC system AWAKENED into a capturable node at the configured
     /// awakening time. Announced GALAXY-WIDE, light-delayed from the node's position
     /// to each observer's command center (same gate as a rival claim). `bonus` names
@@ -514,10 +539,10 @@ pub enum EventPayload {
         system: EntityId,
         pos: crate::math::Vec2,
     },
-    /// §explore Part 3: a system's HIDDEN TRAIT revealed to its (new) owner —
-    /// fired at claim AND at capture (the knowledge transfers as spoils). The
-    /// blind claimer's gamble resolving IS the reveal. OWNER-ONLY, light-delayed
-    /// from the system (knowledge travels home at c, like the survey report).
+    /// §explore Part 3: a system's economic trait reported to its (new) owner —
+    /// fired at claim AND at capture (the knowledge also transfers as spoils).
+    /// A prior survey may already have revealed it through the View. OWNER-ONLY,
+    /// light-delayed from the system (knowledge travels home at c, like survey).
     TraitRevealed {
         owner: PlayerId,
         system: EntityId,
@@ -916,6 +941,9 @@ impl RaidOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum BuildRejectReason {
+    /// Colony construction is withheld until the corporation completes its
+    /// founding programme. Other ships and structures remain available.
+    FoundingProgramme,
     /// Every development slot at the system is used (built + in-progress).
     NoSlot,
     /// §yards: the system's gating YARD is below the tier this hull needs — or,
@@ -985,9 +1013,9 @@ pub enum TradeRejectReason {
     /// 0 — raiders, corvettes, scouts and colony ships carry none) or the lot
     /// would overflow what its convoys can lift.
     NoCargoRoom { capacity: u32 },
-    /// §TCA Part 5: the fleet is already carrying a DIFFERENT commodity. A
-    /// player convoy's hold is single-commodity (unchanged in this phase) —
-    /// unload first.
+    /// Legacy wire/save value from the retired single-commodity hold. Mixed
+    /// manifests no longer emit this refusal, but deserializing old timelines
+    /// remains supported.
     CargoMismatch,
     /// §TCA Phase 2: your charter is SUSPENDED — the Authority will take no NEW
     /// freight booking from you. Shipments already queued or aboard still
@@ -1023,6 +1051,13 @@ pub enum OrderRejectReason {
     Unsupplied,
     NotAJumpFleet,
     TargetInGravityWell,
+    /// PvP is withheld during founder protection. PvE remains legal.
+    FounderProtection,
+    /// A syndicate pact, non-aggression agreement, ceasefire, or separation
+    /// window currently protects the target.
+    DiplomaticProtection,
+    /// Territorial coercion requires declared war or a defender's live reprisal.
+    FormalWarRequired,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -67,8 +67,9 @@ MAX_PLAYERS=12 cargo run --release -p server
 | `GALAXY_SEED` | `0xC0FFEE` | deterministic generation seed |
 | `MAX_PLAYERS` | 4 | sizes the galaxy (radius scales as `4000 × √players`) |
 | `HOME_RING_SU` | 80,000 su nominal outer ring | optional absolute home-ring radius override; useful for replaying archived layouts |
+| `SIM_PACING` | 4 | sim seconds per wall second for compressed balance playtests; set to `1` for standard/production pacing |
 | `DATABASE_URL` | unset | Postgres DSN; unset means an in-memory no-op stub |
-| `SNAPSHOT_EVERY_TICKS` | 300 | full-world snapshot cadence (10 s at 30 Hz) |
+| `SNAPSHOT_EVERY_TICKS` | pacing-adjusted | full-world snapshot cadence; approximately 10 wall seconds (1,200 ticks at 4×, 300 at 1×) |
 | `RUST_LOG` | — | e.g. `info` |
 
 Endpoints: `/ws` (the game), `/healthz`, and `/status` (connection and session meta, kept
@@ -163,6 +164,7 @@ built, and §21 the open questions.
 | **Movement** | Straight thruster/warp travel with constant per-kind speeds, analytic interception, and formation speed set by the slowest member. Raider/Scout-only fleets also have a 50,000 su jump: 10 s stationary spool, gravity-well lockout, warp-equivalent fuel cost, instantaneous relocation, and a light-delayed served snap. |
 | **Standing upkeep** | Every fleet eats Provisions every second, wherever it is, online or off — the ceiling on force. Charged on crew rather than tonnage, paid from the owner's nearest stocked system. A shortfall **immobilizes** a fleet and never destroys it: it keeps its guns and its course, and moves again the moment it is fed. |
 | **Fleets** | A fleet is a **roster of individual hulls** — each with its own id, fit, and remaining hull. Build/join, merge, split at owned systems; twelve hull kinds including a research-gated Destroyer→Titan capital ladder. |
+| **Officers** | A home-Academy Captain roster with physical assignment/reserve duty, light-delayed remote progression, XP and eight service ranks, weighted command capacity, four bounded specialties, and delayed rescue/injury/capture/death outcomes after fleet loss. |
 | **Persistent damage** | Battle damage lives on the individual ship, survives the battle, the snapshot, and any merge or split, and never heals on its own. Nothing is pooled or apportioned; a hull held in reserve takes none. Repaired at an Ordnance Foundry on the standard factor chain — an unsupplied yard mends less, never destroys. |
 | **Combat** | An individual-ship tactical engine — positioned combatants, range bands, live torpedoes, five published role scripts, per-battle isolated seeded RNG. Modules with a one-to-one counter matrix and fitting-point budgets. Battle records, a Pixi replay theater, and a Monte Carlo pre-commit estimator that samples the real engine. |
 | **Standing defense** | Corvette screens, defense platforms, autonomous pickets, and per-fleet postures — all running with the owner offline. |
@@ -173,8 +175,10 @@ built, and §21 the open questions.
 | **Ground war** | Settling and conquering are different acts with different hulls: a colony ship takes *unclaimed* ground, held ground takes **marines**. A landing is *fought* — seeded rounds on their own clock, with suppression re-read every tick, so relief that breaks a blockade can turn an invasion already on the ground. A pre-commit estimate sampled from the real engine prices the gamble first, including what happens if the guns leave. |
 | **Ground theater** | Every landing leaves a replayable record: both sides' strength round by round, the fraction of the garrison pinned at each moment, and derived beats (guns lifted, lead changed hands). Participants read exact troop counts; an observer with sensor coverage sees the fight's shape without its arithmetic. Rounds arrive on their own light. |
 | **Plunder** | A held blockade strips the stockpile it strangles, into the blockader's own hold — so the loot still has to survive the trip home. Bounded by rate, hold room, and a per-commodity reserve the besieger can never strip below: a colony always survives and recovers. |
-| **Research** | Six programme boards with twelve schools, 111 programmes, verb gates, and a goods-funded clock distributed across your Academies. |
-| **Syndicates** | Capped alliances with shared research, doctrine fits, and one flagship; membership propagates at light speed. |
+| **Research** | Six corporation-owned programme boards with twelve schools, 111 programmes, verb gates, and a goods-funded clock distributed across your Academies. Joining or leaving a Syndicate never grants, pauses, or removes research. |
+| **Syndicates** | Capped alliances with Founder/Officer/Quartermaster/Member permissions, shared operations, doctrine fits and one flagship; membership propagates at light speed. |
+| **Operations** | One light-honest contract engine for bounties, surveys, deliveries, salvage, escorts, enforcement, strategic control, regional competitions and staged syndicate projects. |
+| **Diplomacy** | Non-aggression pacts, ceasefires and declared wars with light-travel notices, activation grace, post-syndicate separation and defender-only reprisal. |
 | **Neutrals** | Pirate enclaves that escalate if ignored (with an onboarding grace window per corporation) and the Authority's freighters and enforcement squadrons. |
 | **Async loop** | Standing logistics orders, corp doctrine, offline accrual, and a reconnect digest of what became observable while you were away. |
 | **Ops** | 12 players in one galaxy with the loop keeping up; snapshot persistence with restart recovery; reconnect resumes a corporation. |
@@ -211,8 +215,9 @@ forced to a target by retuning that calibration constant.
 
 - **`crates/sim` is pure.** No I/O, no async, no networking, no database. `World::step` takes
   commands and returns the next state plus events; determinism comes from a seeded RNG and a
-  fixed 30 Hz timestep. This is both the determinism guarantee and the oracle for a future
-  headless balance harness.
+  fixed 30 Hz timestep. The Academy-to-first-colony balance harness runs that same engine and
+  emits milestone CSV across seeds and opening strategies:
+  `cargo run --release -p sim --example opening_balance -- --seeds 100`.
 - **One Tokio task owns the world** and the session registry, so there are no locks and no
   data races on game state — by construction, not by discipline.
 - **axum + WebSockets are pure I/O.** Connections take intents and push filtered state; they

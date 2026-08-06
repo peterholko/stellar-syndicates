@@ -7,8 +7,8 @@
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import { label } from "./icons";
 import type { BodyView, GalaxyInfo, GhostView, PathPointView, ShipKind, SystemInfo, Vec2 } from "./protocol";
-import { countClassLabel, fleetExactCount } from "./protocol";
-import { liveSimTime, type ViewState } from "./state";
+import { countClassLabel, fleetCargoManifest, fleetExactCount } from "./protocol";
+import { JUMP_DEPARTURE_TTL_S, liveSimTime, type ViewState } from "./state";
 import { STAR_TYPES, starAnchor, starIconUrl, starTypeFor, starVisualRatio } from "./stars";
 import { buildVisualSystem, SystemViewScene, type SystemBodyDetail } from "./systemview";
 
@@ -81,6 +81,9 @@ const COL_REPORT = 0xffd24a; // known convoy cargo label (gold = intel)
 const COL_THREAT = 0xff4d4d; // detected raider (alert red)
 const COL_ESTIMATE = 0xffae5c; // crude intercept estimate (soft amber, fuzzy)
 const COL_DELAYED = 0xe2ad62; // presumed own jump, awaiting destination light
+const COL_JUMP = 0xa98cff; // jump-drive charge / historical departure scar
+const COL_SENSOR = 0x59d5c7; // base sensor capability: CC + Raider pickets
+const COL_OPERATION = 0xf3c969; // arrived objective intelligence, distinct from routes/ownership
 // Ships render in their NATURAL art — no per-syndicate body tint (a future
 // ownership indicator is TBD). This neutral is only the primitive fallback hull
 // shown before the sprite art loads; it must NOT imply ownership.
@@ -124,6 +127,16 @@ interface ReacquireFx {
   startedMs: number;
 }
 
+interface RivalJumpArrivalFx {
+  pos: Vec2;
+  startedMs: number;
+}
+
+interface JumpDepartureFx {
+  pos: Vec2;
+  learnedAt: number;
+}
+
 // §perf: pooled per-system draw objects (drawSystems). One `g` carries ALL the
 // system's geometry (glow, ownership rings, blockade/enclave/node dashes,
 // selection ring, dot fallback) exactly as the old per-frame Graphics did; the
@@ -141,6 +154,10 @@ interface SystemGfx {
 // Ship sprites are top-down with the nose at -y; the heading convention here points
 // +x at angle 0, so rotate the sprite by +90° to align its nose with the heading.
 const SHIP_ART_FACING = Math.PI / 2;
+// The privateer cutout fills more of its 256px canvas than the corporate
+// Interceptor art. Calibrate its canvas down so both Raider-class hulls have
+// the same visible length; its broader salvaged silhouette remains intentional.
+const PRIVATEER_ART_CALIB = 0.73;
 
 // On-map ship sprite sizes (screen px at the fit zoom) — big enough that the
 // detailed art reads, with the convoy clearly LARGER than the nimble raider.
@@ -163,6 +180,7 @@ const EMPLACEMENT_PX = 34;
 const EMPLACEMENT_MAX_PX = 96;
 const SMOOTH_RATE = 9.0; // e-folds per second
 const REACQUIRE_FX_MS = 500; // Tunable: served jump snap arrival pulse.
+const RIVAL_JUMP_ARRIVAL_FX_MS = 2_200; // Tunable: arrival flash + warning chevrons.
 // Any fleet may snap across genuinely discontinuous newly arrived information;
 // ordinary corrections remain eased.
 const SMOOTH_SNAP_SU = 4_000;
@@ -212,6 +230,10 @@ const BATTLE_ONGOING_PX = 52; // the in-progress icon size (pulse scales it a bi
 // fade into the dark. Both tunable.
 const AFTERMATH_FADE_SECS = 240;
 const AFTERMATH_FLOOR_ALPHA = 0.15;
+// A jump scar is a short-lived bookmark, not a retained report: it fades all
+// the way out after giving a player who looked elsewhere time to notice it.
+const JUMP_DEPARTURE_PX = 32;
+const JUMP_DEPARTURE_HIT_PX = 20;
 
 // FLEET FORMATION sprites (§fleet-art): a fleet marker draws a formation image —
 // lead ship + escorts — picked by the flagship's FAMILY and a size TIER derived
@@ -327,6 +349,7 @@ export class Renderer {
   /// World-space cursor, for the siting preview. Null when the pointer is off-map.
   cursorWorld: { x: number; y: number } | null = null;
   private routesGfx = new Graphics();
+  private operationGfx = new Graphics();
   private systemsLayer = new Container();
   private anchorsLayer = new Container();
   private orderLayer = new Container();
@@ -343,6 +366,7 @@ export class Renderer {
   private homeText: Text | null = null; // the viewer's "HOME" seat label (pooled)
   private bgGfx: Graphics | null = null; // hub glow rings (pooled)
   private hubText: Text | null = null; // the "HUB" label (pooled)
+  private sensorGfx = new Graphics(); // honest CC + Raider sensor ranges
   // §perf: pooled per-system draw objects, keyed by system id. Rebuilt only when
   // geometry is dirty (camera / new View / selection) or an animated system is
   // present — never allocated per frame.
@@ -352,7 +376,12 @@ export class Renderer {
   // the ghosts (a marker never hides a ship), over bodies/estimates.
   private aftermathLayer = new Container();
   private aftermathGfx = new Graphics();
+  private jumpDepartureGfx = new Graphics();
   private aftermathSprites = new Map<number, Sprite>();
+  private jumpDepartureFx = new Map<string, JumpDepartureFx>();
+  /// Historical departure currently selected in the right-hand detail dock.
+  /// Key shape matches the retained event ledger: fleet + exact departure time.
+  selectedJumpDepartureKey: string | null = null;
   private battleSprites = new Map<string, Sprite>(); // pooled ongoing-battle icons, keyed by engagement id
   private battleHits: { id: string; sx: number; sy: number }[] = []; // §one-battle-one-icon click targets
   private aftermathHits: { id: number; sx: number; sy: number }[] = [];
@@ -365,6 +394,11 @@ export class Renderer {
   private ghostsLayer = new Container();
   private reacquireGfx = new Graphics();
   private reacquireFx: ReacquireFx[] = [];
+  private rivalJumpArrivalGfx = new Graphics();
+  private rivalJumpArrivalFx: RivalJumpArrivalFx[] = [];
+  /// Last jump-emission time animated for each rival. A View remains current for
+  /// many render frames, so the one-frame wire fact still needs local de-duping.
+  private rivalJumpArrivalSeen = new Map<string, number>();
   private signalsLayer = new Container();
   private signalsGfx = new Graphics();
   private interceptLabels = new Map<string, Text>();
@@ -385,6 +419,7 @@ export class Renderer {
   // Ship sprites (convoy = freighter, raider = attack ship), top-down (nose = -y).
   private texConvoy: Texture | null = null;
   private texRaider: Texture | null = null;
+  private texPrivateer: Texture | null = null;
   private texCorvette: Texture | null = null;
   private texColony: Texture | null = null;
   private texScout: Texture | null = null;
@@ -472,19 +507,22 @@ export class Renderer {
     // the per-layer camera math are unchanged — only the parent is now galaxyRoot.
     this.galaxyRoot.addChild(
       this.bg,
+      this.sensorGfx, // base capability rings, beneath every map object
       this.emplacementLayer, // ...and what you built on them sits just above
       this.bodyLayer, // celestial body sprites, under the data cues that decorate them
       this.systemsLayer,
       this.anchorsLayer,
-      this.routesGfx, // convoy broadcast routes, under ghosts
+      this.operationGfx, // known contract/objective sites, under routes and fleets
+      this.routesGfx, // visible convoy routes, under ghosts
       this.orderLayer,
       this.interceptGfx, // soft intercept estimate, under the ghosts it guides
       this.aftermathLayer, // §battle-aftermath markers, under the ghosts
       this.reacquireGfx, // served jump discontinuity, beneath the fresh marker
       this.ghostsLayer,
+      this.rivalJumpArrivalGfx, // warning chevrons must remain legible over the arrival
       this.signalsLayer,
     );
-    this.aftermathLayer.addChild(this.aftermathGfx);
+    this.aftermathLayer.addChild(this.aftermathGfx, this.jumpDepartureGfx);
     // §perf: pooled persistent graphics for the order + anchor + command-center
     // layers (drawn via clear()+redraw, never re-allocated per frame). Child order
     // preserves the old draw order: anchor circles, then HOME label, then the
@@ -526,12 +564,13 @@ export class Renderer {
     // A star SYSTEM draws its assigned star-type icon (12 types). The hub is the
     // trade station. habitable_planet / sun are intentionally NOT loaded — reserved
     // for a future habitable-world / market-body concept, not generic systems.
-    const [hub, station, deepSpaceSensor, convoy, raider, corvette, colony, scout] = await Promise.all([
+    const [hub, station, deepSpaceSensor, convoy, raider, privateer, corvette, colony, scout] = await Promise.all([
       load("/art/wormhole_hub.png"),
       load("/art/celestial_sprites/mining_station.png"),
       load("/art/celestial_sprites/deep_space_sensor.png"),
       load("/art/ship_sprites/cargo_freighter.png"),
       load("/art/ship_sprites/raider_attack_ship.png"),
+      load("/art/ship_sprites/privateer_raider_ship.png"),
       load("/art/ship_sprites/corvette_escort_ship.png"),
       load("/art/ship_sprites/colony_ship.png"),
       load("/art/ship_sprites/scout_utility_ship.png"),
@@ -564,6 +603,7 @@ export class Renderer {
     this.texDeepSpaceSensor = deepSpaceSensor;
     this.texConvoy = convoy;
     this.texRaider = raider;
+    this.texPrivateer = privateer;
     this.texCorvette = corvette;
     this.texColony = colony;
     this.texScout = scout;
@@ -1553,6 +1593,76 @@ export class Renderer {
     }
   }
 
+  /// A rival departure leaves a short-lived, destination-free scar at the
+  /// observed origin. The split chevrons + broken ring deliberately differ
+  /// from the owner's single directional presumed-location arrow: this says
+  /// only "jumped away from here." Events are retained client-side so looking
+  /// elsewhere at the instant of departure does not erase the clue.
+  private drawJumpDepartures(state: ViewState): void {
+    for (const departure of state.jumpDepartures) {
+      const key = `${departure.fleet}:${departure.departed_at.toFixed(6)}`;
+      if (!this.jumpDepartureFx.has(key)) {
+        this.jumpDepartureFx.set(key, {
+          pos: { ...departure.pos },
+          learnedAt: departure.learned_at,
+        });
+      }
+    }
+
+    const g = this.jumpDepartureGfx;
+    g.clear();
+    const now = liveSimTime();
+    for (const [key, scar] of this.jumpDepartureFx) {
+      const age = Math.max(0, now - scar.learnedAt);
+      if (age >= JUMP_DEPARTURE_TTL_S) {
+        this.jumpDepartureFx.delete(key);
+        continue;
+      }
+      const t = age / JUMP_DEPARTURE_TTL_S;
+      const smooth = t * t * (3 - 2 * t);
+      const alpha = 0.78 * (1 - smooth);
+      const s = this.worldToScreen(scar.pos);
+      const r = JUMP_DEPARTURE_PX * 0.48;
+
+      if (key === this.selectedJumpDepartureKey) {
+        g.circle(s.x, s.y, JUMP_DEPARTURE_PX * 0.66)
+          .stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
+      }
+
+      // Broken ring = a discontinuity at this point; the opposed hollow
+      // chevrons = departure without claiming a direction or destination.
+      g.arc(s.x, s.y, r, Math.PI * 0.12, Math.PI * 0.88)
+        .stroke({ width: 1.2, color: COL_JUMP, alpha: alpha * 0.7 });
+      g.arc(s.x, s.y, r, Math.PI * 1.12, Math.PI * 1.88)
+        .stroke({ width: 1.2, color: COL_JUMP, alpha: alpha * 0.7 });
+      g.moveTo(s.x - 2, s.y - 6)
+        .lineTo(s.x - 10, s.y)
+        .lineTo(s.x - 2, s.y + 6)
+        .stroke({ width: 1.8, color: COL_JUMP, alpha });
+      g.moveTo(s.x + 2, s.y - 6)
+        .lineTo(s.x + 10, s.y)
+        .lineTo(s.x + 2, s.y + 6)
+        .stroke({ width: 1.8, color: COL_JUMP, alpha });
+      g.circle(s.x, s.y, 1.5).fill({ color: COL_JUMP, alpha: alpha * 0.75 });
+
+      // A brief arrival ripple calls attention to fresh departure light; the
+      // icon itself then decays slowly and monotonically for two minutes.
+      if (age < 5) {
+        const p = age / 5;
+        g.circle(s.x, s.y, r + p * 12).stroke({
+          width: 1,
+          color: COL_JUMP,
+          alpha: (1 - p) * 0.45,
+        });
+      }
+    }
+  }
+
+  /// Fixed-screen click radius for the split-chevron historical marker.
+  jumpDepartureHitRadius(): number {
+    return JUMP_DEPARTURE_HIT_PX;
+  }
+
   /// Hit-test the capture markers (screen-space, fixed radius). Consumed by
   /// main.ts's map click, checked alongside the aftermath markers.
   capturePick(sx: number, sy: number): number | null {
@@ -1592,9 +1702,44 @@ export class Renderer {
     g.circle(s.x, s.y, 5).stroke({ width: 1.5, color: COL_OWN, alpha: 0.9 });
   }
 
+  /// Draw the same mobile sensor sources the server uses: the fixed command
+  /// center and own Raider-bearing fleets. Sensor Arrays draw their own range in
+  /// `drawEmplacements`. These dashed circles are BASE capability, not a promise
+  /// that every target flips at the edge: target size/speed still scales its
+  /// detection signature.
+  private drawSensorRanges(state: ViewState): void {
+    const g = this.sensorGfx;
+    g.clear();
+    if (!state.galaxy) return;
 
-  /// Convoy broadcast routes: because convoys broadcast position + heading, show
-  /// their waypoints and the path between them (light-delayed like the rest).
+    const drawRange = (pos: Vec2, rangeSu: number, alpha: number): void => {
+      const s = this.worldToScreen(pos);
+      const radius = rangeSu * this.scale;
+      if (radius < 1) return;
+      if (s.x + radius < 0 || s.x - radius > this.viewW
+          || s.y + radius < 0 || s.y - radius > this.viewH) return;
+      let segments = Math.max(24, Math.min(256, Math.ceil(Math.PI * 2 * radius / 9)));
+      if (segments % 2 !== 0) segments += 1;
+      dashedCircle(g, s.x, s.y, radius, segments);
+      g.stroke({ width: 1, color: COL_SENSOR, alpha });
+    };
+
+    if (state.commandCenter) drawRange(state.commandCenter, state.galaxy.sensor_range, 0.28);
+    for (const ghost of state.ghosts) {
+      if (!ghost.own || ghost.jump_presumed) continue;
+      const composition = ghost.composition ?? [];
+      const hasRaider = composition.some((stack) => stack.kind === "raider" && stack.count > 0)
+        || (composition.length === 0 && ghost.kind === "raider");
+      if (!hasRaider) continue;
+      const hasScout = composition.some((stack) => stack.kind === "scout" && stack.count > 0);
+      const multiplier = hasScout ? state.galaxy.scout_sensor_mult : 1;
+      drawRange(ghost.pos, state.galaxy.sensor_range * multiplier, 0.20);
+    }
+  }
+
+
+  /// Routes for convoys that are actually in this served picture (own, detected,
+  /// or otherwise public), light-delayed like the rest.
   private drawRoutes(state: ViewState): void {
     const g = this.routesGfx;
     g.clear();
@@ -1607,6 +1752,31 @@ export class Renderer {
       if (pts.length > 2) g.lineTo(pts[0].x, pts[0].y); // close the patrol loop
       g.stroke({ width: 1, color, alpha: 0.2 });
       for (const p of pts) g.circle(p.x, p.y, 2.4).stroke({ width: 1, color, alpha: 0.45 });
+    }
+  }
+
+  /// Objective locations are drawn only from the operation reports already in
+  /// this player's View. A remote completion therefore retires its marker when
+  /// that completion light arrives—not when truth changes at the site.
+  private drawOperations(state: ViewState): void {
+    const g = this.operationGfx;
+    g.clear();
+    for (const operation of state.operations) {
+      if (operation.state !== "offered" && operation.state !== "active") continue;
+      const p = this.worldToScreen(operation.target_pos);
+      const r = operation.joined ? 8 : 6;
+      const color = operation.scope.scope === "syndicate" ? COL_JUMP : COL_OPERATION;
+      const alpha = operation.joined ? 0.82 : 0.48;
+      g.moveTo(p.x, p.y - r);
+      g.lineTo(p.x + r, p.y);
+      g.lineTo(p.x, p.y + r);
+      g.lineTo(p.x - r, p.y);
+      g.closePath();
+      g.stroke({ width: operation.joined ? 1.5 : 1, color, alpha });
+      g.circle(p.x, p.y, 1.6).fill({ color, alpha: alpha * 0.9 });
+      if (operation.state === "active") {
+        g.circle(p.x, p.y, r + 4).stroke({ width: 1, color, alpha: alpha * 0.28 });
+      }
     }
   }
 
@@ -1915,6 +2085,12 @@ export class Renderer {
   }
 
   private fleetMarker(ghost: GhostView): { tex: Texture; mult: number } | null {
+    // Pirate/privateer Raiders are a different hull culture, not corporate
+    // Interceptors wearing an amber pip. Keep their dedicated single-hull art
+    // at every LOD and fleet size; the count badge still carries pack strength.
+    if (ghost.pirate) {
+      return this.texPrivateer ? { tex: this.texPrivateer, mult: PRIVATEER_ART_CALIB } : null;
+    }
     // §fleet-lod: far zoomed out, a single bold low-detail icon replaces the
     // detailed hull/formation (no fine detail is legible at that size anyway; the
     // count badge still conveys fleet size). Runs before the formation pick so it
@@ -2042,6 +2218,80 @@ export class Renderer {
         color: COL_OWN,
         alpha: 0.55 * (1 - t),
       });
+    }
+  }
+
+  /// A rival arrival is keyed to the server's served jump-crossing fact, never
+  /// inferred from screen distance. That distinction matters: fog corrections
+  /// and newly detected ordinary ships may also appear abruptly, but only this
+  /// event is evidence that a jump has just reached the viewer's picture.
+  private noteRivalJumpArrival(ghost: GhostView, simTime: number): void {
+    if (ghost.own || !ghost.jumped) return;
+    const emittedAt = simTime - ghost.age;
+    const previous = this.rivalJumpArrivalSeen.get(ghost.id);
+    if (previous !== undefined && Math.abs(previous - emittedAt) < 1e-6) return;
+    this.rivalJumpArrivalSeen.set(ghost.id, emittedAt);
+    this.rivalJumpArrivalFx.push({
+      pos: { ...ghost.pos },
+      startedMs: performance.now(),
+    });
+  }
+
+  private updateRivalJumpArrivals(): void {
+    const now = performance.now();
+    const g = this.rivalJumpArrivalGfx;
+    g.clear();
+    for (let i = this.rivalJumpArrivalFx.length - 1; i >= 0; i--) {
+      const fx = this.rivalJumpArrivalFx[i];
+      const t = clamp01((now - fx.startedMs) / RIVAL_JUMP_ARRIVAL_FX_MS);
+      if (t >= 1) {
+        this.rivalJumpArrivalFx.splice(i, 1);
+        continue;
+      }
+      const s = this.worldToScreen(fx.pos);
+      const smooth = t * t * (3 - 2 * t);
+      const pulse = 0.75 + 0.25 * Math.sin(now / 90);
+
+      // Violet space-collapse: one ring contracts onto the hull while a weaker
+      // shock ring expands away. Both are fixed-screen geometry, so the event
+      // remains equally readable at chart and inspection zoom.
+      const collapseT = clamp01(t / 0.34);
+      const collapseSmooth = collapseT * collapseT * (3 - 2 * collapseT);
+      g.circle(s.x, s.y, 52 - 39 * collapseSmooth).stroke({
+        width: 2.2,
+        color: COL_JUMP,
+        alpha: (1 - collapseT) * 0.9,
+      });
+      g.circle(s.x, s.y, 10 + 46 * smooth).stroke({
+        width: 1.3,
+        color: COL_JUMP,
+        alpha: (1 - t) * 0.5,
+      });
+      g.circle(s.x, s.y, 7 + 5 * (1 - collapseSmooth)).fill({
+        color: 0xffffff,
+        alpha: (1 - collapseT) * 0.13,
+      });
+
+      // Four threat-red chevrons point IN at the arrived contact. They linger
+      // after the jump flash, making this read as a hostile warning rather than
+      // an own-fleet reacquisition or an unexplained sprite pop.
+      const warnIn = clamp01(t / 0.12);
+      const warnOut = 1 - clamp01((t - 0.58) / 0.42);
+      const warningAlpha = warnIn * warnOut * pulse;
+      const radius = 44 - 10 * collapseSmooth;
+      for (let n = 0; n < 4; n++) {
+        const a = n * Math.PI / 2;
+        const outward = { x: Math.cos(a), y: Math.sin(a) };
+        const inward = { x: -outward.x, y: -outward.y };
+        const tangent = { x: -outward.y, y: outward.x };
+        const cx = s.x + outward.x * radius;
+        const cy = s.y + outward.y * radius;
+        const apex = { x: cx + inward.x * 6, y: cy + inward.y * 6 };
+        g.moveTo(cx - inward.x * 3 + tangent.x * 6, cy - inward.y * 3 + tangent.y * 6)
+          .lineTo(apex.x, apex.y)
+          .lineTo(cx - inward.x * 3 - tangent.x * 6, cy - inward.y * 3 - tangent.y * 6)
+          .stroke({ width: 2.2, color: COL_THREAT, alpha: warningAlpha });
+      }
     }
   }
 
@@ -2226,6 +2476,30 @@ export class Renderer {
     // for. `sp.cone` still carries the survey ring, pending badge, threat ring
     // and signature flare below.
     sp.cone.clear();
+    if (ghost.jump_spool) {
+      // This is the RETARDED drive report attached to the visible ghost. Rivals
+      // get the same observable charge-up (but never its destination), so a jump
+      // is telegraphed instead of reading as an unexplained disappearance.
+      const total = state.galaxy?.jump_spool_s ?? 10;
+      const remaining = Math.max(0, ghost.jump_spool.remaining - dt);
+      const progress = total > 0 ? Math.max(0, Math.min(1, 1 - remaining / total)) : 1;
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 115);
+      const r = this.fleetHitRadius(ghost) + 8;
+      sp.cone.circle(0, 0, r + pulse * 2).fill({ color: COL_JUMP, alpha: 0.035 + pulse * 0.025 });
+      sp.cone.circle(0, 0, r).stroke({ width: 1, color: COL_JUMP, alpha: 0.25 });
+      if (progress > 0.002) {
+        sp.cone.arc(0, 0, r, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2)
+          .stroke({ width: 2.4, color: COL_JUMP, alpha: 0.82 });
+      }
+      // Three orbiting charge motes keep the effect alive even in the earliest
+      // served frames, before the progress arc has appreciable length.
+      const phase = performance.now() / 360;
+      for (let i = 0; i < 3; i++) {
+        const a = phase + i * Math.PI * 2 / 3;
+        sp.cone.circle(Math.cos(a) * (r + 3), Math.sin(a) * (r + 3), 1.5)
+          .fill({ color: COL_JUMP, alpha: 0.45 + pulse * 0.35 });
+      }
+    }
     // A successful departure report may beat every report emitted at the new
     // location. The player authored that destination, so draw it as a stationary
     // arrow—but keep the yellow delay cue until destination light confirms it.
@@ -2451,16 +2725,20 @@ export class Renderer {
     } else if (own) {
       // Own ships are light-delayed too now — always surface staleness so the fog
       // reads as "reporting from Xs ago," not a glitch. Convoys also show cargo.
-      const cargo = ghost.kind === "convoy"
-        ? (ghost.cargo ? `${label(ghost.cargo.commodity)} ×${ghost.cargo.units}  ` : "")
+      const manifest = fleetCargoManifest(ghost);
+      const cargo = ghost.kind === "convoy" && manifest.length
+        ? `${manifest.slice(0, 2).map((stack) => `${label(stack.commodity)} ×${stack.units}`).join(" · ")}${manifest.length > 2 ? ` · +${manifest.length - 2}` : ""}  `
         : "";
       txt = `${cargo}${stale}`;
       col = COL_OWN;
       lalpha = sel ? 0.95 : 0.7;
     } else if (ghost.kind === "convoy") {
-      const cargo = ghost.cargo ? `${label(ghost.cargo.commodity)} ×${ghost.cargo.units}` : "cargo ?";
+      const manifest = fleetCargoManifest(ghost);
+      const cargo = manifest.length
+        ? `${manifest.slice(0, 2).map((stack) => `${label(stack.commodity)} ×${stack.units}`).join(" · ")}${manifest.length > 2 ? ` · +${manifest.length - 2}` : ""}`
+        : "cargo ?";
       txt = `${cargo}  ${stale}`;
-      col = ghost.cargo ? COL_REPORT : COL_OTHER; // known cargo = gold (intel!)
+      col = manifest.length ? COL_REPORT : COL_OTHER; // known cargo = gold (intel!)
       lalpha = 0.9;
     } else if (ghost.kind === "freighter") {
       // §TCA: an Authority hull is named, in the Authority's own steel-blue —
@@ -2561,19 +2839,10 @@ export class Renderer {
       this.frameDt = this.lastFrameMs > 0 ? Math.min((nowMs - this.lastFrameMs) / 1000, 0.25) : 1 / 60;
       this.lastFrameMs = nowMs;
 
-      // Sensor coverage is not rendered as a single certainty ring: detection is
-      // `bubble × signature`, so a quiet raider is only caught at 0.4× that
-      // radius while a big fleet at speed is caught well outside it. The circle
-      // therefore claimed a certainty it never had, in both directions, and the
-      // speed-signature work will widen that gap further. Same reasoning that
-      // retired the uncertainty cones: a shape that lies is worse than no shape.
-      //
-      // Coverage still governs everything it always did — it is simply reported
-      // as a NUMBER on the Sensor Array that projects it, rather than drawn as a
-      // boundary the player can misread as a guarantee.
-      // this.drawSensorCoverage(state, dt);
+      this.drawSensorRanges(state);
       this.drawSystems(state, geomDirty);
       this.drawHubBody();
+      this.drawOperations(state);
       this.drawRoutes(state);
       this.drawAnchors(state);
       this.drawCommandCenter(state);
@@ -2610,6 +2879,7 @@ export class Renderer {
         state.systems.filter((s) => s.blockade !== null).map((s) => s.id),
       );
       for (const ghost of state.ghosts) {
+        this.noteRivalJumpArrival(ghost, state.simTime);
         if (engaged.has(ghost.id)) {
           const sp = this.ghosts.get(ghost.id);
           if (sp) { sp.seen = true; sp.container.visible = false; } // keep pooled, hidden
@@ -2638,12 +2908,14 @@ export class Renderer {
         }
       }
       this.updateReacquisitions();
+      this.updateRivalJumpArrivals();
 
       this.drawOrders(state, orderFleetIds);
       this.drawIntercepts(state, ghostById);
       this.drawBattles(state);
       this.drawAftermath(state);
       this.drawCaptures(state);
+      this.drawJumpDepartures(state);
       this.drawSignals(state, screenById, dt);
       // §perf: record what this frame's geometry was drawn against, so the next
       // frame can decide whether a rebuild is needed.

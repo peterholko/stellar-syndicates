@@ -302,6 +302,9 @@ pub struct StepOutcome {
 pub struct SideMods {
     pub opening_bonus: bool, // First Strike / Grand Batteries
     pub flak_mult: f64,      // PD roll multiplier (1.0 = base)
+    /// Captain Command bonus. Small and capped in `captain.rs`; multiplies
+    /// damage, never accuracy, range, targeting, or survivability.
+    pub damage_mult: f64,
 }
 
 impl SideMods {
@@ -310,6 +313,14 @@ impl SideMods {
             1.0
         } else {
             self.flak_mult
+        }
+    }
+
+    pub fn damage(&self) -> f64 {
+        if self.damage_mult <= 0.0 {
+            1.0
+        } else {
+            self.damage_mult
         }
     }
 }
@@ -868,7 +879,13 @@ impl TacticalState {
                 1.0
             };
             let raid_mult = if raid { RAID_DMG_MULT } else { 1.0 };
-            let base = mult * aw * HIT_DMG_CAL * aff * opening * raid_mult;
+            let base = mult
+                * aw
+                * HIT_DMG_CAL
+                * aff
+                * opening
+                * raid_mult
+                * mods[side as usize].damage();
             match family {
                 DamageType::Torpedo => {
                     let dmg = base * self.rng.range(DMG_VAR.0, DMG_VAR.1);

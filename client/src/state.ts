@@ -3,10 +3,14 @@
 // verification); in M3 it becomes a delayed, fogged picture.
 
 import type {
-  EmplacementView, AnchorView, CharterView, FleetDoctrine, FreightView, GalaxyInfo, GhostView, MarketView, PathPointView, PendingOrderView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
+  EmplacementView, AnchorView, CaptainRosterView, CharterView, FleetDoctrine, FoundingView, FreightView, GalaxyInfo, GhostView, JumpDepartureView, MarketView, PathPointView, PendingOrderView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
 import { defaultDoctrine } from "./protocol";
 
 export type LinkStatus = "connecting" | "online" | "offline";
+
+/// Historical jump scars are client-retained for this long after their
+/// light-delayed arrival, even if the player was inside another map view.
+export const JUMP_DEPARTURE_TTL_S = 120;
 
 const CLOCK_MAX_SLEW = 0.05; // Tunable: at most ±5% catch-up / fall-back.
 const CLOCK_GAIN = 3.3; // Tunable: unconstrained errors converge in roughly 0.3 s.
@@ -16,29 +20,40 @@ let renderClockReady = false;
 let renderClockSim = 0;
 let renderClockWallMs = 0;
 let renderClockRate = 1;
+let renderClockNominalRate = 1;
 
 /// The one continuous render clock. Snapping it to every 10 Hz View leaked
 /// transport jitter straight into pixels: displacement = clock error × object
 /// speed × zoom, most visibly on the deliberately un-eased order comet. Normal
-/// View error is absorbed by a bounded positive slew, so this clock is monotonic
-/// by construction. A >1 s discontinuity instead hard-snaps on purpose, covering
-/// reconnects, server restarts, and a tab waking after a long suspension.
-export function syncRenderClock(simTime: number, wallMs = performance.now()): void {
+/// View error is absorbed by a bounded positive slew around the server's pacing
+/// rate, so this clock is monotonic by construction at either 1× production or
+/// accelerated playtest pacing. A >1 s discontinuity instead hard-snaps on
+/// purpose, covering reconnects, server restarts, and a tab waking after a long
+/// suspension.
+export function syncRenderClock(
+  simTime: number,
+  nominalRate = renderClockNominalRate,
+  wallMs = performance.now(),
+): void {
+  const nextNominal = Number.isFinite(nominalRate) && nominalRate > 0 ? nominalRate : 1;
   if (!renderClockReady) {
     renderClockReady = true;
     renderClockSim = simTime;
     renderClockWallMs = wallMs;
-    renderClockRate = 1;
+    renderClockNominalRate = nextNominal;
+    renderClockRate = nextNominal;
     return;
   }
 
   const current = liveSimTime(wallMs);
   const error = simTime - current;
+  renderClockNominalRate = nextNominal;
   renderClockSim = Math.abs(error) > CLOCK_SNAP_S ? simTime : current;
   renderClockWallMs = wallMs;
+  const maxSlew = nextNominal * CLOCK_MAX_SLEW;
   renderClockRate = Math.abs(error) > CLOCK_SNAP_S
-    ? 1
-    : 1 + Math.max(-CLOCK_MAX_SLEW, Math.min(CLOCK_MAX_SLEW, error * CLOCK_GAIN));
+    ? nextNominal
+    : nextNominal + Math.max(-maxSlew, Math.min(maxSlew, error * CLOCK_GAIN));
 }
 
 export function liveSimTime(wallMs = performance.now()): number {
@@ -85,6 +100,8 @@ export interface ViewState {
   playerId: PlayerId | null;
   name: string;
   tickHz: number;
+  /// Sim seconds advanced per wall second. Four during the fast balance profile.
+  pacingScale: number;
   tick: number;
   simTime: number;
   /// Distinct corporations the player can currently SEE (self + rivals whose
@@ -101,6 +118,11 @@ export interface ViewState {
   /// keyed by system id, paired with the static `galaxy.systems` geology.
   systems: SystemStateView[];
   ghosts: GhostView[];
+  captains: CaptainRosterView[];
+  captainCapacity: number;
+  /// Departure wavefronts visible in the latest View. The renderer retains each
+  /// unique event briefly as a fading historical scar; these carry no target.
+  jumpDepartures: JumpDepartureView[];
   /// §emplacements: your own structures standing in open space.
   emplacements: EmplacementView[];
   market: MarketView | null;
@@ -118,6 +140,8 @@ export interface ViewState {
   freight: FreightView | null;
   /// §TCA Phase 2: the player's OWN charter standing and band.
   charter: CharterView | null;
+  /// Server-authoritative new-corporation programme and founder safety.
+  founding: FoundingView | null;
   /// §perf Part B: the static charter band ladder — arrives once in Welcome.
   charterLadder: [string, number][];
   /// §perf Part B: the static research programme catalog — arrives once in
@@ -146,6 +170,10 @@ export interface ViewState {
   syndicate: import("./protocol").SyndicateView | null;
   /// §syndicates Part 1: pending invitations the viewer may accept.
   syndicateInvites: import("./protocol").SyndicateInviteView[];
+  /// Operations are already filtered to the latest report that has arrived.
+  operations: import("./protocol").OperationView[];
+  midgameStage: import("./protocol").MidgameStage;
+  diplomacy: import("./protocol").DiplomacyView | null;
   /// §rankings: the PUBLISHED leaderboard (public snapshot on the ledger close).
   rankings: import("./protocol").RankingRow[];
   /// §research R6: the viewer's OWN research picture (null if unaffiliated).
@@ -193,6 +221,7 @@ export function initialState(): ViewState {
     playerId: null,
     name: "",
     tickHz: 30,
+    pacingScale: 1,
     tick: 0,
     simTime: 0,
     corpsInView: 0,
@@ -202,6 +231,9 @@ export function initialState(): ViewState {
     anchors: [],
     systems: [],
     ghosts: [],
+    captains: [],
+    captainCapacity: 1,
+    jumpDepartures: [],
     emplacements: [],
     market: null,
     priceHistory: {},
@@ -209,6 +241,7 @@ export function initialState(): ViewState {
     wallet: null,
     freight: null,
     charter: null,
+    founding: null,
     charterLadder: [],
     researchCatalog: [],
     standingOrders: [],
@@ -221,6 +254,9 @@ export function initialState(): ViewState {
     captureReports: [],
     syndicate: null,
     syndicateInvites: [],
+    operations: [],
+    midgameStage: "home_development",
+    diplomacy: null,
     rankings: [],
     research: null,
     battleViewed: new Set(),

@@ -367,6 +367,10 @@ impl Timeline {
                 } => {
                     let name = system_name(world, *system);
                     let text = match reason {
+                        sim::BuildRejectReason::FoundingProgramme => format!(
+                            "Can't build {} at {name}: complete the Founding Programme before launching a colony ship.",
+                            build_label(*what)
+                        ),
                         sim::BuildRejectReason::NoSlot => format!(
                             "Can't build {} at {name}: every development slot is used — systems must specialize.",
                             build_label(*what)
@@ -417,10 +421,19 @@ impl Timeline {
                              order, and moves again the moment it is fed."
                                 .to_string(),
                         sim::OrderRejectReason::NotAJumpFleet =>
-                            "Order refused: only all-Raider or all-Scout formations carry jump drives."
+                            "Order refused: only all-Interceptor or all-Scout formations carry jump drives."
                                 .to_string(),
                         sim::OrderRejectReason::TargetInGravityWell =>
                             "Order refused: jump destinations must be outside every system and Market Hub gravity well."
+                                .to_string(),
+                        sim::OrderRejectReason::FounderProtection =>
+                            "Order refused: Founder Protection currently prevents combat between corporations. PvE targets remain legal."
+                                .to_string(),
+                        sim::OrderRejectReason::DiplomaticProtection =>
+                            "Order refused: a syndicate pact, non-aggression agreement, ceasefire, or separation window protects that target."
+                                .to_string(),
+                        sim::OrderRejectReason::FormalWarRequired =>
+                            "Order refused: blockading territory requires an active war declaration or your corporation's live right of reprisal."
                                 .to_string(),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);
@@ -871,14 +884,16 @@ impl Timeline {
                         let what = match trait_ {
                             sim::explore::SystemTrait::BonusVein { commodity } => {
                                 format!(
-                                    "Bonus Vein — its {} deposit runs ×{} richer",
+                                    "Bonus Vein — its {} deposit gains ×{} natural yield (within the ×{} site cap)",
                                     commodity.slug(),
-                                    sim::explore::BONUS_VEIN_MULT
+                                    sim::explore::BONUS_VEIN_MULT,
+                                    sim::explore::NATURAL_SPECIALTY_CAP,
                                 )
                             }
                             sim::explore::SystemTrait::DeepDeposits => format!(
-                                "Deep Deposits — base ×{} richer, but the FIRST Extractor tier is wasted breaking through",
-                                sim::explore::DEEP_DEPOSITS_BASE_MULT
+                                "Deep Deposits — natural yield gains ×{} (within the ×{} site cap), but the FIRST Extractor tier is wasted breaking through",
+                                sim::explore::DEEP_DEPOSITS_BASE_MULT,
+                                sim::explore::NATURAL_SPECIALTY_CAP,
                             ),
                             sim::explore::SystemTrait::UnstableGeology => format!(
                                 "Unstable Geology — development costs ×{} here",
@@ -1006,27 +1021,22 @@ impl Timeline {
                         ),
                     );
                 }
-                // §research: syndicate-wide institution news — pushed to every
-                // member at once (their own private research, like the roster; no
-                // light delay). A completed programme's effect is already live.
-                EventPayload::ResearchCompleted {
-                    syndicate,
-                    programme,
-                } => {
+                // §research: corporation-owned institution news. It is private
+                // administration, so only its owner receives it and no alliance
+                // membership can disclose or duplicate it.
+                EventPayload::ResearchCompleted { owner, programme } => {
                     let name = sim::research::programme(programme)
                         .map(|p| p.name)
                         .unwrap_or("a programme");
-                    for &p in members_of(world, *syndicate).iter() {
-                        self.push(
-                            p,
-                            e.time,
-                            TimelineSeverity::Good,
-                            format!("Research complete: {name} — its effect is live galaxy-wide."),
-                        );
-                    }
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Good,
+                        format!("Research complete: {name} — its effect is live corporation-wide."),
+                    );
                 }
                 EventPayload::TierUnlocked {
-                    syndicate,
+                    owner,
                     field,
                     school,
                     tier,
@@ -1035,30 +1045,112 @@ impl Timeline {
                         Some(s) => format!("{} · {}", field.title(), s.title()),
                         None => field.title().to_string(),
                     };
-                    for &p in members_of(world, *syndicate).iter() {
-                        self.push(
-                            p,
-                            e.time,
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Info,
+                        format!("Tier {tier} unlocked on {where_}."),
+                    );
+                }
+                EventPayload::ResearchStalled { owner } => {
+                    self.push(*owner, e.time, TimelineSeverity::Warn, "Research stalled — no staffed Academy is contributing. Post crew to an Academy to resume.".to_string());
+                }
+                EventPayload::ResearchResumed { owner } => {
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Good,
+                        "Research resumed — a staffed Academy is contributing again."
+                            .to_string(),
+                    );
+                }
+                EventPayload::OperationUpdated {
+                    operation,
+                    recipient,
+                    state,
+                    progress,
+                    arrive_at,
+                    ..
+                } => {
+                    if *state == sim::OperationState::Active && *progress > 0 {
+                        continue; // progress lives on the board; don't flood the check-in journal
+                    }
+                    let text = match state {
+                        sim::OperationState::Offered => "A new private operation is available.",
+                        sim::OperationState::Active => "A new public or shared operation is active.",
+                        sim::OperationState::Completed => {
+                            "Operation completed — its reward has arrived."
+                        }
+                        sim::OperationState::Failed => "An operation failed.",
+                        sim::OperationState::Expired => "An operation expired.",
+                        sim::OperationState::Abandoned => continue,
+                    };
+                    let severity = match state {
+                        sim::OperationState::Completed => TimelineSeverity::Good,
+                        sim::OperationState::Failed | sim::OperationState::Expired => {
+                            TimelineSeverity::Warn
+                        }
+                        _ => TimelineSeverity::Info,
+                    };
+                    self.push(
+                        *recipient,
+                        *arrive_at,
+                        severity,
+                        format!("{text} [operation {operation}]"),
+                    );
+                }
+                EventPayload::DiplomacyUpdated {
+                    recipient,
+                    other,
+                    state,
+                    kind,
+                    arrive_at,
+                    ..
+                } => {
+                    let who = world
+                        .players
+                        .get(other)
+                        .map(|corp| corp.name.clone())
+                        .unwrap_or_else(|| format!("{other}"));
+                    let (severity, text) = match kind {
+                        sim::diplomacy::DiplomacyNoticeKind::Proposal => (
                             TimelineSeverity::Info,
-                            format!("Tier {tier} unlocked on {where_}."),
-                        );
-                    }
-                }
-                EventPayload::ResearchStalled { syndicate } => {
-                    for &p in members_of(world, *syndicate).iter() {
-                        self.push(p, e.time, TimelineSeverity::Warn, "Research stalled — no staffed Academy is contributing. Post crew to an Academy to resume.".to_string());
-                    }
-                }
-                EventPayload::ResearchResumed { syndicate } => {
-                    for &p in members_of(world, *syndicate).iter() {
-                        self.push(
-                            p,
-                            e.time,
+                            format!("Diplomatic proposal received from {who}."),
+                        ),
+                        sim::diplomacy::DiplomacyNoticeKind::Accepted => (
                             TimelineSeverity::Good,
-                            "Research resumed — a staffed Academy is contributing again."
-                                .to_string(),
-                        );
-                    }
+                            format!("{who} accepted the proposed {:?} agreement.", state),
+                        ),
+                        sim::diplomacy::DiplomacyNoticeKind::Rejected => (
+                            TimelineSeverity::Warn,
+                            format!("{who} rejected the diplomatic proposal."),
+                        ),
+                        sim::diplomacy::DiplomacyNoticeKind::Declaration => (
+                            TimelineSeverity::Bad,
+                            format!(
+                                "WAR DECLARATION received from {who}; the warning period has begun."
+                            ),
+                        ),
+                        sim::diplomacy::DiplomacyNoticeKind::Activated => (
+                            TimelineSeverity::Bad,
+                            format!("War with {who} is now active."),
+                        ),
+                        sim::diplomacy::DiplomacyNoticeKind::Cancelled => (
+                            TimelineSeverity::Warn,
+                            format!("{who} has given notice to end the agreement."),
+                        ),
+                        sim::diplomacy::DiplomacyNoticeKind::Separation => (
+                            TimelineSeverity::Info,
+                            format!("Separation protection with {who} is active."),
+                        ),
+                        sim::diplomacy::DiplomacyNoticeKind::Reprisal => (
+                            TimelineSeverity::Warn,
+                            format!(
+                                "Hostile action by {who} grants a limited right of reprisal."
+                            ),
+                        ),
+                    };
+                    self.push(*recipient, *arrive_at, severity, text);
                 }
                 _ => {}
             }
@@ -1153,16 +1245,6 @@ fn system_name(world: &World, id: sim::EntityId) -> String {
         .unwrap_or_else(|| format!("{id}"))
 }
 
-/// §research: the members of a syndicate (for fanning institution news out to the
-/// whole roster). Empty if the syndicate is gone.
-fn members_of(world: &World, sid: sim::SyndicateId) -> Vec<PlayerId> {
-    world
-        .syndicates
-        .get(&sid)
-        .map(|s| s.members.iter().copied().collect())
-        .unwrap_or_default()
-}
-
 /// A short label for a fleet in the timeline — "your <flagship> fleet".
 fn fleet_label(world: &World, id: sim::EntityId) -> String {
     match world.fleets.get(&id) {
@@ -1170,7 +1252,7 @@ fn fleet_label(world: &World, id: sim::EntityId) -> String {
             let k = match f.flagship_kind() {
                 sim::ShipKind::Builder => "construction ship",
                 sim::ShipKind::Convoy => "convoy",
-                sim::ShipKind::Raider => "raider",
+                sim::ShipKind::Raider => "interceptor",
                 sim::ShipKind::Corvette => "corvette",
                 sim::ShipKind::Colony => "colony",
                 sim::ShipKind::Transport => "transport",
@@ -1211,7 +1293,7 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         } => "a Convoy",
         sim::BuildKind::Ship {
             ship: sim::ShipKind::Raider,
-        } => "a Raider",
+        } => "an Interceptor",
         sim::BuildKind::Ship {
             ship: sim::ShipKind::Corvette,
         } => "a Corvette",
@@ -1253,6 +1335,7 @@ fn build_label(what: sim::BuildKind) -> &'static str {
             sim::SpecialistKind::IndustrialEngineer => "an Industrial Engineer (training)",
             sim::SpecialistKind::NavalArchitect => "a Naval Architect (training)",
         },
+        sim::BuildKind::RecruitCaptain { .. } => "an officer commission",
         // §modules Part B3: a module in manufacture.
         sim::BuildKind::Module { module } => match module {
             sim::ModuleKind::MassDriver => "a Mass Driver",
@@ -1268,7 +1351,7 @@ fn kind_word(k: ShipKind) -> &'static str {
     match k {
         ShipKind::Builder => "construction ship",
         ShipKind::Convoy => "convoy",
-        ShipKind::Raider => "raider",
+        ShipKind::Raider => "interceptor",
         ShipKind::Corvette => "corvette",
         ShipKind::Colony => "colony ship",
         ShipKind::Transport => "troop transport",

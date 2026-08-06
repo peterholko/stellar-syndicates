@@ -1,7 +1,7 @@
-//! §research — PROGRAMME BOARDS WITH SCHOOLS (v6). A syndicate-wide tech layer:
+//! §research — PROGRAMME BOARDS WITH SCHOOLS (v6). A corporation-wide tech layer:
 //! six FIELDS, each Tier I (open) → Tier II (field verb gate) → two SCHOOLS
 //! (own verb gate, Tiers III–V). NO EXCLUSIVITY — every programme is
-//! researchable by every syndicate; identity is the ORDER you chose on a
+//! researchable by every corporation; identity is the ORDER you chose on a
 //! one-at-a-time continuous clock.
 //!
 //! This module owns the FRAMEWORK (R1): the catalog data model, the tier-gate
@@ -10,8 +10,8 @@
 //! the effect wiring (R4) live at their sim sites and read from here.
 //!
 //! Determinism & compat (design law 1): the catalog is `const`; all keyed
-//! syndicate state is `BTreeMap`/`BTreeSet`; `ResearchState` is `#[serde(default)]`
-//! on the `Syndicate`, so old snapshots load with empty research and tick clean.
+//! corporation state is `BTreeMap`/`BTreeSet`; `ResearchState` is
+//! `#[serde(default)]` on `Corporation`, so old snapshots migrate cleanly.
 //! Programme ids are `&'static str` in the catalog but `String` in serialized
 //! state (a `&'static str` can't be deserialized), bridged by string equality.
 
@@ -401,10 +401,10 @@ pub struct Programme {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SYNDICATE RESEARCH STATE (serde-default on `Syndicate`)
+// CORPORATION RESEARCH STATE (serde-default on `Corporation`)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// A syndicate's whole research picture. All keyed maps are `BTreeMap`/
+/// A corporation's whole research picture. All keyed maps are `BTreeMap`/
 /// `BTreeSet` (deterministic) and every field is serde-default (old snaps load
 /// empty). Owner-only in the view (design law 3).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -1867,7 +1867,7 @@ fn is_predecessor(q: &Programme, p: &Programme) -> bool {
     }
 }
 
-/// Is programme `id` researchable now for this syndicate? Pure: Tier I is always
+/// Is programme `id` researchable now for this corporation? Pure: Tier I is always
 /// open (hidden entries never are); higher tiers need the tier gate met AND a
 /// completed Tier-(N−1) programme on the ladder.
 pub fn is_available(
@@ -1906,11 +1906,11 @@ pub fn cost_of(id: &str) -> f64 {
 // THE `mods` LOOKUP LAYER (R4 reads it; completion just updates `completed`)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The aggregate EFFECT MODS a syndicate's completed research grants: for every
+/// The aggregate EFFECT MODS a corporation's completed research grants: for every
 /// completed `Effect::Mods`, fold its factors in — multiplicatively for normal
 /// keys (base 1.0), additively for the bucket keys (base 0.0). Recomputed on
 /// demand (design decision #5: effects are lazy over `completed`, never stored),
-/// so completion is instant and galaxy-wide.
+/// so completion is instant and corporation-wide.
 pub fn mods(state: &ResearchState) -> BTreeMap<ModKey, f64> {
     let mut m: BTreeMap<ModKey, f64> = BTreeMap::new();
     for id in &state.completed {

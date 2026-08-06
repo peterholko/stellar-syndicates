@@ -379,8 +379,8 @@ pub struct Shipment {
 /// A physical freighter run: one [`crate::ship::ShipKind::Freighter`] fleet (owned
 /// by [`PlayerId::TCA`]) carrying many owners' many shipments to one destination and
 /// back. The MANIFEST rides HERE, not in `Fleet.cargo` — a freighter carries a mix
-/// of owners/commodities, whereas `Fleet.cargo` stays the single-commodity
-/// player-convoy field. Keyed in [`crate::world::World::freight_runs`] by the
+/// of owners as well as commodities, whereas a player fleet's cargo manifest has
+/// no per-stack owner. Keyed in [`crate::world::World::freight_runs`] by the
 /// freighter fleet id.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FreightRun {

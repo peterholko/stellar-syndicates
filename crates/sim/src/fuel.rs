@@ -57,7 +57,7 @@ pub const FUEL_PER_MASS_DISTANCE: f64 = 1.0e-6;
 /// continuously, so the silo emptied itself. Once fleets carry their own, the
 /// seed just sits there, and its real cost shows up. This leaves room for the
 /// economy to breathe while still covering a couple of full refills.
-pub const FUEL_HOME_SEED: f64 = 180.0;
+pub const FUEL_HOME_SEED: f64 = 60.0;
 
 /// The commodity that fuels movement (and so is the one operation kind that is
 /// EXEMPT from the charge — a convoy hauling Fuel must move without needing Fuel,

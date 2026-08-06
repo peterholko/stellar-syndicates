@@ -24,7 +24,10 @@ pub const COURSE_LOCK_RAD: f64 = 0.09;
 /// Jump-drive playtest tunables.
 pub const JUMP_SPOOL_S: f64 = 10.0;
 pub const JUMP_RANGE: f64 = 50_000.0;
-pub const JUMP_FUEL_FACTOR: f64 = WARP_FACTOR;
+/// Infinite during jump-drive playtesting: the existing cost/check/debit path
+/// remains intact, but every jump prices to zero. Restore `WARP_FACTOR` when
+/// jump fuel is ready to become part of the balance again.
+pub const JUMP_FUEL_FACTOR: f64 = f64::INFINITY;
 
 /// Radius of a gravity well. Warp and jump drives cannot operate inside it.
 pub const HYPERLIMIT: f64 = 900.0;
