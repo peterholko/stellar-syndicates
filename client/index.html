@@ -29,6 +29,12 @@
         --panel-shadow: 0 10px 40px rgba(0,0,0,0.5);
         --btn-bg: #131a2c;
         --btn-bg-hover: #1b2740;
+        /* Measured from the wrapping HUD by main.ts. All fixed map chrome starts
+           from the same edge instead of independently guessing its height. */
+        --hud-safe-top: 66px;
+        --detail-safe-top: calc(var(--hud-safe-top) + 44px);
+        --founding-safe-bottom: var(--hud-safe-top);
+        --left-detail-safe-top: calc(var(--founding-safe-bottom) + 44px);
       }
       * { box-sizing: border-box; }
       html, body {
@@ -103,17 +109,22 @@
       /* Server-authored opening objective. Compact and persistent: one action,
          one reason, never a wall of tutorial prose. */
       #founding-guide {
-        position: fixed; top: 66px; left: 14px; width: 330px;
+        position: fixed; top: var(--hud-safe-top); left: 14px;
+        width: min(330px, calc(100vw - 28px));
         display: none; padding: 11px 12px;
         background: rgba(8, 12, 22, 0.94);
         border: 1px solid #294131; border-left: 3px solid var(--positive);
-        border-radius: 7px; z-index: 5; box-shadow: var(--panel-shadow);
-        backdrop-filter: blur(5px);
+        border-radius: 7px; z-index: 21; box-shadow: var(--panel-shadow);
+        backdrop-filter: blur(5px); max-height: calc(100vh - var(--hud-safe-top) - 14px);
+        overflow-y: auto;
       }
       #founding-guide.is-open { display: block; }
       #founding-guide .fg-top { display: flex; align-items: center; gap: 8px; }
       #founding-guide .fg-step { color: var(--positive); font-size: 10px; text-transform: uppercase; letter-spacing: .8px; }
       #founding-guide .fg-shield { margin-left: auto; color: var(--info); font-size: 10px; }
+      #founding-guide .fg-mini-title { display: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 11px; font-weight: 700; }
+      #founding-guide .fg-minimize { flex: none; width: 22px; height: 20px; padding: 0; cursor: pointer; border: 1px solid #294131; border-radius: 4px; background: rgba(255,255,255,.035); color: var(--dim); font: inherit; line-height: 18px; }
+      #founding-guide .fg-minimize:hover { color: var(--ink); border-color: var(--positive); }
       #founding-guide .fg-title { margin-top: 4px; color: var(--ink); font-size: 13px; font-weight: 700; }
       #founding-guide .fg-copy { margin-top: 4px; color: var(--dim); font-size: 11px; line-height: 1.45; }
       #founding-guide .fg-compare { display: grid; gap: 5px; margin-top: 8px; }
@@ -127,6 +138,15 @@
       #founding-guide .fg-prospect.is-known em { color: #b8f3c3; }
       #founding-guide .fg-action { margin-top: 8px; width: 100%; padding: 6px 8px; cursor: pointer; border-radius: 5px; border: 1px solid #31543d; background: #10241a; color: #b8f3c3; font: inherit; font-size: 11px; }
       #founding-guide .fg-action:hover { background: #173522; }
+      #founding-guide.is-minimized { width: min(330px, calc(100vw - 28px)); padding: 7px 8px; overflow: hidden; }
+      #founding-guide.is-minimized .fg-top { gap: 7px; }
+      #founding-guide.is-minimized .fg-step { flex: none; }
+      #founding-guide.is-minimized .fg-mini-title { display: block; flex: 1; }
+      #founding-guide.is-minimized .fg-shield,
+      #founding-guide.is-minimized .fg-title,
+      #founding-guide.is-minimized .fg-copy,
+      #founding-guide.is-minimized .fg-compare,
+      #founding-guide.is-minimized .fg-action { display: none; }
 
       /* Command readout (bottom-left) */
       #readout {
@@ -175,18 +195,28 @@
       #legend {
         position: fixed; right: 14px; bottom: 14px;
         display: none;
-        padding: 9px 12px;
+        padding: 7px 9px 9px;
         background: rgba(8, 12, 22, 0.78);
         border: 1px solid #18233b; border-radius: 6px;
         font-size: 11px; line-height: 1.7; color: var(--dim);
         z-index: 5;
       }
+      #legend.is-collapsed { padding: 4px; }
+      #legend-toggle {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        width: 100%; padding: 3px 5px; color: var(--ink); background: transparent;
+        border: 0; border-radius: 4px; font: inherit; font-size: 10px; cursor: pointer;
+      }
+      #legend-toggle:hover, #legend-toggle:focus-visible { color: var(--accent); background: rgba(79,195,255,0.06); outline: none; }
+      #legend-toggle .legend-toggle__chev { color: var(--dim); }
+      #legend-body { margin-top: 4px; padding: 4px 3px 0; border-top: 1px solid rgba(255,255,255,0.07); }
+      #legend.is-collapsed #legend-body { display: none; }
       #legend .row { display: flex; align-items: center; gap: 7px; }
       #legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 
       /* Delayed reports log (top-center) */
       #reports-log {
-        position: fixed; top: 58px; left: 50%; transform: translateX(-50%);
+        position: fixed; top: var(--hud-safe-top); left: 50%; transform: translateX(-50%);
         display: flex; flex-direction: column; gap: 6px;
         width: min(560px, 80vw);
         z-index: 6; pointer-events: none;
@@ -236,7 +266,7 @@
 
       /* Check-in panel (§16, Layer 3) — centered "welcome back" digest, toggle L */
       #checkin {
-        position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
+        position: fixed; top: calc(var(--hud-safe-top) + 8px); left: 50%; transform: translateX(-50%);
         display: none;
         width: 468px; max-height: 74vh; overflow-y: auto;
         padding: 14px 16px;
@@ -250,7 +280,7 @@
       #checkin #checkin-toggle { cursor: pointer; }
       /* Section sub-heads. The Warehouse tab uses the same idiom as the check-in
          digest, so the rule is shared rather than duplicated. */
-      #checkin .ci-sub, #market .ci-sub { color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.6px; margin: 10px 0 5px; }
+      #checkin .ci-sub, #market .ci-sub { display: flex; align-items: center; gap: var(--icon-gap); color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.6px; margin: 10px 0 5px; }
       #checkin .ci-sub:first-child, #market .ci-sub:first-child { margin-top: 0; }
       #checkin .ci { display: flex; align-items: flex-start; gap: var(--icon-gap); padding: 5px 8px; margin-bottom: 4px; border-left: 2px solid #2a3a58; border-radius: 4px; background: rgba(20,26,40,0.5); line-height: 1.4; }
       #checkin .ci .t { color: var(--dim); font-size: 10px; margin-left: auto; flex: none; padding-left: 8px; }
@@ -289,8 +319,8 @@
 
       /* ---- right-docked rail ---- */
       #rail {
-        position: fixed; top: 58px; right: 14px; bottom: 14px;
-        width: min(400px, calc(100vw - 28px));
+        position: fixed; top: var(--hud-safe-top); right: 14px; bottom: 14px;
+        width: min(480px, calc(100vw - 28px));
         display: none; flex-direction: column;
         background: var(--panel-bg);
         border: 1px solid var(--border);
@@ -316,7 +346,7 @@
              city-screen column shown while INSIDE an owned system's view. Same
              kit as the rail; mutually exclusive with it (view vs galaxy). ---- */
       #sysview-manage {
-        position: fixed; top: 58px; right: 14px; bottom: 14px;
+        position: fixed; top: var(--hud-safe-top); right: 14px; bottom: 14px;
         width: min(480px, 94vw);
         display: none; flex-direction: column;
         background: var(--panel-bg);
@@ -331,13 +361,13 @@
       #sysview-manage .svm-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
       #sysview-manage .svm-close { cursor: pointer; color: var(--dim); font-size: 13px; padding: 0 4px; background: none; border: 0; border-radius: 4px; font: inherit; line-height: 1; }
       #sysview-manage .svm-close:hover { color: var(--ink); }
-      #sysview-manage .svm-slots { font-size: 13px; font-weight: 700; letter-spacing: 0.5px; }
+      #sysview-manage .svm-slots { display: inline-flex; align-items: center; gap: var(--icon-gap); font-size: 13px; font-weight: 700; letter-spacing: 0.5px; }
       #sysview-manage .svm-slots.is-warn { color: var(--warn); }
 
       /* ---- Ship details panel — shares the right-dock slot with the rail ---- */
       #ship-panel {
-        position: fixed; top: 58px; right: 14px; bottom: 14px;
-        width: min(400px, calc(100vw - 28px));
+        position: fixed; top: var(--hud-safe-top); right: 14px; bottom: 14px;
+        width: min(480px, calc(100vw - 28px));
         display: none; flex-direction: column;
         background: var(--panel-bg);
         border: 1px solid var(--border);
@@ -359,15 +389,9 @@
       #ship-panel .sp-arrow { display: inline-block; color: var(--accent); }
       #ship-panel .sp-note { color: var(--dim); line-height: 1.45; margin: 2px 0 10px; }
       #ship-panel .sp-status-strip {
-        display: grid; grid-template-columns: minmax(62px, .7fr) minmax(178px, 1.8fr) minmax(84px, 1fr);
-        grid-template-areas: "seen drive domain" "heading position position";
+        display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 9px 12px; margin: 0; padding: 11px 0 12px; border-bottom: 1px solid var(--border);
       }
-      #ship-panel .sp-status-strip:not(.sp-status-strip--emplacement) .stat:nth-child(1) { grid-area: seen; }
-      #ship-panel .sp-status-strip:not(.sp-status-strip--emplacement) .stat:nth-child(2) { grid-area: drive; }
-      #ship-panel .sp-status-strip:not(.sp-status-strip--emplacement) .stat:nth-child(3) { grid-area: domain; }
-      #ship-panel .sp-status-strip:not(.sp-status-strip--emplacement) .stat:nth-child(4) { grid-area: heading; }
-      #ship-panel .sp-status-strip:not(.sp-status-strip--emplacement) .stat:nth-child(5) { grid-area: position; }
       #ship-panel .sp-status-strip:not(.sp-status-strip--emplacement) .stat:nth-child(2) dd { white-space: nowrap; font-size: 12px; }
       #ship-panel .sp-status-strip--emplacement { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); grid-template-areas: none; }
       #ship-panel .sp-zone { padding: 12px 0; border-bottom: 1px solid rgba(79,195,255,0.10); }
@@ -407,6 +431,14 @@
       .officer-doctrine { margin-top: 10px; padding: 8px; border-left: 2px solid #ffae5c; background: rgba(255,174,92,0.05); color: var(--dim); font-size: 9px; line-height: 1.45; }
       #ship-panel .sp-zone--now { margin: 11px 0 0; padding: 10px 11px; border: 1px solid rgba(79,195,255,0.18); border-left: 3px solid var(--accent); border-radius: 7px; background: rgba(20,31,47,0.62); }
       #ship-panel .sp-zone--now .sp-zone__title { color: var(--accent); }
+      #ship-panel .sp-current { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+      #ship-panel .sp-current__label { color: var(--dim); text-transform: uppercase; letter-spacing: 0.65px; font-size: 9px; }
+      #ship-panel .sp-current > :last-child { margin-left: auto; }
+      #ship-panel .sp-tab-body { min-height: 120px; }
+      #ship-panel .sp-command-group { margin: 12px 0 0; padding: 9px 10px 2px; border: 1px solid rgba(79,195,255,0.23); border-radius: 7px; background: rgba(79,195,255,0.045); }
+      #ship-panel .sp-command-group__title { color: var(--accent); text-transform: uppercase; font-size: 10px; font-weight: 700; letter-spacing: 0.9px; }
+      #ship-panel .sp-command-group .sp-zone { padding: 9px 0; }
+      #ship-panel .sp-command-group .sp-zone:last-child { border-bottom: 0; }
       #ship-panel .sp-now-row { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; align-items: start; margin-top: 6px; line-height: 1.4; }
       #ship-panel .sp-now-row:first-of-type { margin-top: 0; }
       #ship-panel .sp-now__label { color: var(--dim); font-size: 9px; letter-spacing: 0.5px; text-transform: uppercase; padding-top: 2px; }
@@ -479,7 +511,7 @@
       .stat dd.is-accent { color: var(--accent); }
 
       .seg { display: inline-flex; border: 1px solid var(--field-bd); border-radius: 6px; overflow: hidden; }
-      .seg button { background: var(--field-bg); color: var(--dim); border: 0; font: inherit; font-size: 11px; padding: 4px 10px; cursor: pointer; }
+      .seg button { display: inline-flex; align-items: center; justify-content: center; gap: var(--icon-gap); background: var(--field-bg); color: var(--dim); border: 0; font: inherit; font-size: 11px; padding: 4px 10px; cursor: pointer; }
       .seg button:hover { color: var(--ink); }
       .seg button.is-active { background: var(--accent); color: #04121d; font-weight: 700; }
 
@@ -504,6 +536,58 @@
       .panel-title .eyebrow { color: var(--dim); text-transform: uppercase; letter-spacing: 1px; font-size: 9px; }
       .panel-title h2 { margin: 2px 0 0; font-size: 15px; letter-spacing: 0.5px; color: var(--ink); font-weight: 700; }
       .panel-title__right { display: flex; gap: 6px; align-items: center; }
+      /* ---- Shared information hierarchy for Planet/System/Ship/Market. ----
+         Cards group decisions without changing any command or fog boundary.
+         A primary card contains the next likely verb; quieter cards hold
+         reference data, so dense panels can be scanned top-to-bottom. */
+      .ux-stack { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+      .ux-stack[hidden] { display: none; }
+      .ux-section {
+        min-width: 0; padding: 9px 10px;
+        border: 1px solid rgba(79,195,255,0.11); border-radius: 7px;
+        background: rgba(10,17,28,0.34);
+      }
+      .ux-section--primary { border-color: rgba(79,195,255,0.27); background: rgba(79,195,255,0.055); }
+      .ux-section__head {
+        display: flex; align-items: center; gap: var(--icon-gap); min-height: var(--icon-sm);
+        margin-bottom: 8px; color: var(--ink); text-transform: uppercase;
+        font-size: 10px; font-weight: 700; letter-spacing: 0.75px;
+      }
+      .ux-section__head small { margin-left: auto; color: var(--dim); font-size: 9px; font-weight: 400; letter-spacing: 0; text-transform: none; }
+      .ux-section__body > :first-child { margin-top: 0; }
+      .ux-section__body > :last-child { margin-bottom: 0; }
+      .ux-primary-actions { margin: 4px 0 10px; }
+      .ux-alert { margin: 0 0 10px; padding: 7px 9px; border-left: 3px solid var(--warn); border-radius: 4px; background: rgba(255,180,84,0.07); }
+      .ux-alert--danger { border-left-color: var(--negative); background: rgba(255,107,107,0.07); }
+      .ux-alert .mhint, .ux-alert > :first-child { margin-top: 0 !important; }
+      .ux-tabs {
+        position: sticky; top: 0; z-index: 2;
+        display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
+        gap: 3px; margin: 0 0 10px; padding: 4px;
+        border: 1px solid var(--border); border-radius: 7px;
+        background: rgba(8,14,23,0.94); backdrop-filter: blur(6px);
+      }
+      .ux-tab {
+        display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+        min-width: 0; padding: 6px 7px; border: 0; border-radius: 5px;
+        color: var(--dim); background: transparent; font: inherit; font-size: 10px;
+        cursor: pointer;
+      }
+      .ux-tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ux-tab:hover, .ux-tab:focus-visible { color: var(--ink); outline: none; background: rgba(255,255,255,0.045); }
+      .ux-tab.is-active { color: #04121d; background: var(--accent); font-weight: 700; }
+      .ux-tab.is-active .icon { filter: brightness(0.35); }
+      .ux-tab-body { min-width: 0; padding: 1px 1px 8px; }
+      .ux-details { margin-top: 10px; border-top: 1px solid var(--border); }
+      .ux-details summary { display: flex; align-items: center; gap: 6px; padding: 9px 1px 5px; color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.65px; cursor: pointer; }
+      .ux-details[open] summary { color: var(--ink); }
+      .ux-details__body { padding: 0 1px 6px; }
+      .sp-empty { padding: 14px 2px; color: var(--dim); font-size: 10px; }
+      .panel-subhead {
+        display: flex; align-items: center; gap: var(--icon-gap); min-height: var(--icon-sm);
+        margin: 12px 0 5px; color: var(--dim); text-transform: uppercase;
+        font-size: 9px; letter-spacing: 0.6px;
+      }
       /* .act/.mhint kit is shared by the rail tabs, the System View management
          column (§management-home), and the planet panel's contextual offers. */
       .tab .mhint, #svm-body .mhint, #planet-panel .mhint { margin-top: 10px; font-size: 10px; line-height: 1.4; color: var(--dim); }
@@ -527,9 +611,9 @@
 
       /* ---- System view (SYSTEM tab) ---- */
       /* Star-type feature: concept-art banner + type name in the System view. */
-      .sysview__star { margin: 4px 0 12px; }
-      .sysview__star .star-art { display: block; width: 100%; height: 116px; object-fit: cover; border-radius: 7px; border: 1px solid var(--border); background: #05070d; }
-      .sysview__star .star-cap { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+      .sysview__star { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 10px; margin: 2px 0 10px; }
+      .sysview__star .star-art { display: block; width: 64px; height: 64px; object-fit: cover; border-radius: 7px; border: 1px solid var(--border); background: #05070d; }
+      .sysview__star .star-cap { display: flex; align-items: center; gap: 8px; margin-top: 0; }
       .sysview__star .star-type { font-size: 11px; letter-spacing: 0.4px; color: var(--ink); font-weight: 700; }
       .sysview__deps { margin: 4px 0 6px; }
       .deps-head { display: flex; align-items: center; gap: var(--icon-gap); color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.6px; margin-bottom: 5px; min-height: var(--icon-sm); }
@@ -584,12 +668,17 @@
       .sysfleet__summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); font-size: 10px; margin-top: 2px; }
       .sysfleet__meta { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
       .sysfleet__seen { font-size: 9px; white-space: nowrap; }
+      #tab-fleets .fleet-roster__summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+      #tab-fleets .fleet-roster__group { margin-top: 11px; }
+      #tab-fleets .fleet-roster__group:first-of-type { margin-top: 5px; }
+      #tab-fleets .sysfleet__row { padding: 8px; }
+      #tab-fleets .fleet-roster__activity { display: block; margin-top: 3px; color: var(--dim); font-size: 10px; }
       .sys-prod { display: grid; grid-template-columns: var(--icon-resource) 1fr auto auto; align-items: center; gap: 8px; padding: 2px 0; min-height: calc(var(--icon-resource) + 4px); }
       /* Structure / commodity NAME cell: never wrap a building name mid-word;
          truncate with an ellipsis only in the rare case it can't fit. */
       .sys-prod .sp-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
       /* Staffing / idle production rows have NO leading icon and a VARIABLE
-         number of trailing controls (crew ±, "unstaffed", "+ crew"), so the
+         number of trailing controls (worker assignment, "unstaffed"), so the
          4-column grid wrapped extras onto a 2nd row where one landed in the
          1fr track and ballooned. Lay them out as a flex line instead: the name
          grows/truncates, everything after it stays inline at content width. */
@@ -601,9 +690,13 @@
       #wh-table .ord[data-wh-c] { cursor: pointer; padding: 2px 4px; margin-inline: -4px; border-radius: 3px; }
       #wh-table .ord[data-wh-c]:hover { background: var(--btn-bg); }
       #wh-table .ord.is-active { color: var(--accent); }
+      .hubberth { display: flex; align-items: center; gap: 7px; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.055); }
+      .hubberth__fleet { min-width: 0; flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 7px; border: 0; border-radius: 4px; background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+      .hubberth__fleet:hover { background: var(--btn-bg); }
+      .hubberth__fleet small { display: block; margin-top: 2px; color: var(--dim); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .act.act--mini { width: auto; margin: 0; padding: 3px 8px; font-size: 11px; display: inline-flex; line-height: 1.2; white-space: nowrap; }
       .conv-idle { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 11px; }
-      /* The crew ± / "+ crew" controls are the full-width stacked .act by
+      /* The Assign / Unassign controls are the full-width stacked .act by
          default (see the #planet-panel .act rule) — in this flex line they must
          stay content-sized, or they grow and starve the name. Same override the
          .devs-row .act buttons get. */
@@ -620,7 +713,7 @@
       .build-opt .bo-gate { margin-left: 6px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--warn); }
       /* §modules: the loadout FIT PICKER — toggleable module chips above the yard. */
       .fit-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
-      .fit-chip { font-size: 11px; padding: 2px 8px; border-radius: 10px; opacity: 0.7; }
+      .fit-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 8px; border-radius: 10px; opacity: 0.7; }
       .fit-chip.is-on { opacity: 1; border-color: var(--accent); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
       /* §fitting: the FITTING BAR (used/total points + per-module cost chips;
          red when over budget), the grandfathered "legacy fit" tag, and the
@@ -628,7 +721,8 @@
       .fitbar { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
       .fitbar.is-over, .fitbar.is-over b { color: var(--negative); }
       .fitbar .fitbar-over { font-size: 9px; letter-spacing: 0.5px; color: var(--negative); font-weight: 700; }
-      .fit-cost-chip { font-size: 10px; padding: 0 4px; border: 1px solid var(--border); border-radius: 8px; color: var(--dim); white-space: nowrap; }
+      .fit-cost-chip { display: inline-flex; align-items: center; gap: 2px; font-size: 10px; padding: 0 4px; border: 1px solid var(--border); border-radius: 8px; color: var(--dim); white-space: nowrap; }
+      .module-inline, .module-ledger, .module-ledger > span { display: inline-flex; align-items: center; gap: 4px; }
       .fit-legacy { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--warn); border: 1px solid var(--warn); border-radius: 8px; padding: 0 5px; }
       .fit-saved { display: inline-flex; align-items: center; gap: 0; }
       .fit-saved .fit-del { padding: 2px 5px; font-size: 10px; color: var(--dim); }
@@ -661,6 +755,13 @@
          icon override keeps the commodity art compact inline (roster + vitals). */
       .devs-row .dev-contrib { color: var(--positive); display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; font-variant-numeric: tabular-nums; }
       #svm-body .devs-row .dev-contrib .icon, #svm-body .stat dd .icon { width: var(--icon-sm); height: var(--icon-sm); font-size: calc(var(--icon-sm) - 2px); }
+      .stat dd .icon { margin-right: 4px; }
+      .body-profile-tags, .colony-role, .action-line, .pp-feature { display: flex; align-items: center; gap: var(--icon-gap); flex-wrap: wrap; }
+      .body-profile-tags .icon { margin-right: 1px; }
+      .action-line > span { min-width: 0; }
+      .action-line small { display: block; margin-top: 3px; color: var(--dim); font-size: 9px; line-height: 1.35; }
+      .action-line small .icon { margin-right: 3px; }
+      #planet-panel .pp-pool { display: inline-flex; align-items: center; gap: 4px; }
       /* Section divider between the System panel's info groups (stockpile /
          planets / colony vitals / queue). */
       #svm-body .svm-div { height: 0; border-top: 1px solid var(--border); margin: 2px 0 10px; }
@@ -706,8 +807,9 @@
       .board__head span:nth-child(3), .board__head span:nth-child(4) { text-align: right; }
       .board__head span:last-child { text-align: right; }
       .composer { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; }
+      .composer.composer--flush { border-top: 0; margin-top: 0; padding-top: 0; }
       .composer__row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
-      .composer__row label { color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; min-width: 42px; }
+      .composer__row label { display: inline-flex; align-items: center; gap: 4px; color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; min-width: 42px; }
       .composer__row input[type="number"] { width: 70px; background: var(--field-bg); border: 1px solid var(--field-bd); border-radius: 4px; color: var(--ink); font: inherit; padding: 3px 6px; }
       .composer__row.toggle { font-size: 11px; color: var(--dim); gap: 5px; }
       .composer__row label.lim { min-width: auto; text-transform: none; letter-spacing: 0; color: var(--dim); display: flex; align-items: center; gap: 4px; font-size: 11px; }
@@ -741,6 +843,14 @@
       #zoom-controls button:hover { border-color: var(--accent); color: var(--accent); }
       #zoom-controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
       #zoom-controls #zoom-reset { font-size: 13px; }
+      #zoom-level {
+        width: 38px; padding: 4px 0; align-self: center;
+        background: rgba(8,12,22,0.82); color: var(--accent);
+        border: 1px solid var(--border); border-radius: 5px;
+        font-size: 10px; font-weight: 700; line-height: 1;
+        letter-spacing: .2px; text-align: center;
+        font-variant-numeric: tabular-nums; backdrop-filter: blur(4px);
+      }
 
       /* ---- §emplacements: the siting toolbar ------------------------------- */
       /* Sits under the zoom column, on the map rather than in a panel: siting is
@@ -759,7 +869,7 @@
 
       /* ---- System View: breadcrumb + planet details panel (semantic-zoom LOD) ---- */
       #breadcrumb {
-        position: fixed; top: 58px; left: 14px;
+        position: fixed; top: var(--founding-safe-bottom); left: 14px;
         display: none; align-items: center; gap: 8px;
         padding: 7px 12px;
         background: rgba(8, 12, 22, 0.86);
@@ -778,25 +888,27 @@
       #breadcrumb .bc-link:focus-visible, #breadcrumb .bc-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
       #planet-panel {
-        position: fixed; top: 100px; left: 14px;
+        position: fixed; top: var(--left-detail-safe-top); left: 14px;
         width: min(480px, 94vw); display: none; flex-direction: column;
         background: var(--panel-bg); border: 1px solid var(--border);
         border-top: 2px solid var(--accent); border-radius: 8px;
         /* §bodies: the ACTION SURFACE sits above the summary column when both
            wide panels overlap — Esc/✕ returns to the summary. */
         box-shadow: var(--panel-shadow); font-size: 12px; z-index: 8;
-        backdrop-filter: blur(4px); max-height: 70vh; overflow-y: auto;
+        backdrop-filter: blur(4px); max-height: min(70vh, calc(100vh - var(--left-detail-safe-top) - 14px)); overflow-y: auto;
       }
       #planet-panel.is-open { display: flex; }
       #planet-panel .pp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 10px 12px 8px; border-bottom: 1px solid var(--border); }
       #planet-panel .pp-swatch { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: -1px; border: 1px solid rgba(255,255,255,0.2); }
       #planet-panel .pp-kindrow { display: flex; align-items: center; gap: 12px; }
-      #planet-panel .pp-thumb { width: 96px; height: 96px; object-fit: contain; flex: none; }
+      #planet-panel .pp-thumb { width: 64px; height: 64px; object-fit: contain; flex: none; }
       #planet-panel .pp-close { cursor: pointer; color: var(--dim); font-size: 13px; padding: 0 4px; background: none; border: 0; border-radius: 4px; font: inherit; line-height: 1; }
       #planet-panel .pp-close:hover { color: var(--ink); }
       #planet-panel .pp-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
       #planet-panel .pp-body { padding: 12px 14px; }
       #planet-panel .pp-desc { color: var(--ink); line-height: 1.5; margin: 2px 0 10px; }
+      #planet-panel .pp-summary { margin-bottom: 10px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 7px; background: rgba(255,255,255,0.025); }
+      #planet-panel .pp-summary .pp-desc { margin: 7px 0 0; color: var(--dim); }
       #planet-panel .pp-note { color: var(--dim); line-height: 1.45; font-size: 10px; margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
       /* §build-panel: the collapsed "Build" section on the planet panel — pool
          readouts at a glance + one button into the dedicated builder. */
@@ -808,7 +920,7 @@
       /* ---- §build-panel: the dedicated structure builder, docked to the RIGHT of
              the planet panel (a sibling, not a modal — geology stays readable). ---- */
       .build-shell {
-        position: fixed; top: 100px; left: calc(14px + min(480px, 94vw) + 10px);
+        position: fixed; top: var(--detail-safe-top); left: calc(14px + min(480px, 94vw) + 10px);
         width: min(760px, 94vw); display: none; flex-direction: column;
         background: var(--panel-bg); border: 1px solid var(--border);
         border-top: 2px solid var(--accent); border-radius: 8px;
@@ -818,7 +930,9 @@
       .build-shell.is-open { display: flex; }
       /* Below the fit-both-panels breakpoint, the builder TAKES OVER the planet
          panel's slot (stacks over it) instead of pushing off-screen. */
-      @media (max-width: 1279px) { .build-shell { left: 14px; } }
+      @media (max-width: 1279px) {
+        .build-shell { top: var(--left-detail-safe-top); left: 14px; max-height: calc(100vh - var(--left-detail-safe-top) - 14px); }
+      }
       .build-shell .bp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 10px 12px 6px; }
       .build-shell .bp-head h2 { margin: 0; font-size: 15px; }
       .build-shell .bp-head .eyebrow { color: var(--dim); text-transform: uppercase; font-size: 9px; letter-spacing: 0.7px; }
@@ -890,12 +1004,12 @@
              branded (ember top stripe). Opened by clicking an aftermath marker
              or a battle entry in the reports log. ---- */
       #battle-panel {
-        position: fixed; top: 100px; left: 14px;
+        position: fixed; top: var(--left-detail-safe-top); left: 14px;
         width: 320px; display: none; flex-direction: column;
         background: var(--panel-bg); border: 1px solid var(--border);
         border-top: 2px solid #d08a5a; border-radius: 8px;
         box-shadow: var(--panel-shadow); font-size: 12px; z-index: 7;
-        backdrop-filter: blur(4px); max-height: 70vh; overflow-y: auto;
+        backdrop-filter: blur(4px); max-height: min(70vh, calc(100vh - var(--left-detail-safe-top) - 14px)); overflow-y: auto;
       }
       #battle-panel.is-open { display: flex; }
       #battle-panel .pp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 10px 12px 8px; border-bottom: 1px solid var(--border); }
@@ -937,18 +1051,19 @@
 
       /* ---- Wormhole Hub detail panel — the planet-panel idiom, hub-branded. ---- */
       #hub-panel {
-        position: fixed; top: 100px; left: 14px;
+        position: fixed; top: var(--left-detail-safe-top); left: 14px;
         width: 320px; display: none; flex-direction: column;
         background: var(--panel-bg); border: 1px solid var(--border);
         border-top: 2px solid #c99bff; border-radius: 8px;
         box-shadow: var(--panel-shadow); font-size: 12px; z-index: 7;
-        backdrop-filter: blur(4px); max-height: 74vh; overflow-y: auto;
+        backdrop-filter: blur(4px); max-height: min(74vh, calc(100vh - var(--left-detail-safe-top) - 14px)); overflow-y: auto;
       }
       #hub-panel.is-open { display: flex; }
       #hub-panel .pp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 10px 12px 8px; border-bottom: 1px solid var(--border); }
       #hub-panel .pp-close { cursor: pointer; color: var(--dim); font-size: 13px; padding: 0 4px; background: none; border: 0; border-radius: 4px; font: inherit; line-height: 1; }
       #hub-panel .pp-close:hover { color: var(--ink); }
       #hub-panel .pp-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+      #hub-panel .hub-tabs { padding: 10px 12px 0; }
       #hub-panel .hub-art { display: block; width: 100%; height: 148px; object-fit: cover; background: #05070d; border-bottom: 1px solid var(--border); }
       #hub-panel .pp-body { padding: 12px 14px; }
       #hub-panel .pp-desc { color: var(--ink); line-height: 1.5; margin: 0 0 10px; }
@@ -959,12 +1074,12 @@
 
       /* ---- §syndicates: the alliance panel (hub-panel idiom, ally-green top) ---- */
       #syndicate-panel {
-        position: fixed; top: 100px; left: 14px;
+        position: fixed; top: var(--left-detail-safe-top); left: 14px;
         width: 320px; display: none; flex-direction: column;
         background: var(--panel-bg); border: 1px solid var(--border);
         border-top: 2px solid #74e08c; border-radius: 8px;
         box-shadow: var(--panel-shadow); font-size: 12px; z-index: 8;
-        backdrop-filter: blur(4px); max-height: 74vh; overflow-y: auto;
+        backdrop-filter: blur(4px); max-height: min(74vh, calc(100vh - var(--left-detail-safe-top) - 14px)); overflow-y: auto;
       }
       #syndicate-panel.is-open { display: flex; }
       #syndicate-panel .pp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 12px 8px; border-bottom: 1px solid var(--border); }
@@ -987,7 +1102,7 @@
 
       /* ---- Operations: arrived contracts + strategic objectives ------------ */
       #operations-panel {
-        display: none; position: fixed; z-index: 20; top: 48px; right: 12px;
+        display: none; position: fixed; z-index: 20; top: var(--hud-safe-top); right: 12px;
         width: min(470px, calc(100vw - 24px)); max-height: calc(100vh - 64px);
         flex-direction: column; overflow: hidden; color: var(--ink);
         background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px;
@@ -1003,6 +1118,9 @@
       #operations-panel .op-chapter small { display: block; margin-top: 3px; color: var(--dim); line-height: 1.4; }
       #operations-panel .op-sec { color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: .7px; margin-top: 3px; }
       #operations-panel .op-card { padding: 9px 10px; border: 1px solid var(--border); border-left: 3px solid #75859c; border-radius: 6px; background: rgba(18,25,38,.72); }
+      #operations-panel .op-card.has-hull { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 9px; align-items: start; }
+      #operations-panel .op-card-body { min-width: 0; }
+      #operations-panel .op-hull { width: 60px; height: 60px; object-fit: contain; align-self: center; filter: drop-shadow(0 2px 5px rgba(0,0,0,.72)); }
       #operations-panel .op-card.is-active { border-left-color: #ffd27d; }
       #operations-panel .op-card.is-completed { border-left-color: #74e08c; opacity: .82; }
       #operations-panel .op-card.is-failed, #operations-panel .op-card.is-expired, #operations-panel .op-card.is-abandoned { border-left-color: #ff7a6b; opacity: .65; }
@@ -1015,6 +1133,7 @@
       #operations-panel .op-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--dim); font-size: 9px; font-variant-numeric: tabular-nums; }
       #operations-panel .op-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
       #operations-panel .act { cursor: pointer; padding: 5px 8px; border: 1px solid var(--field-bd); border-radius: 5px; background: var(--btn-bg); color: var(--ink); font: inherit; font-size: 10px; }
+      #operations-panel .op-title { display: inline-flex; align-items: center; gap: var(--icon-gap); }
       #operations-panel .act:hover { border-color: #ffd27d; color: #ffe2aa; }
       #operations-panel .op-empty { color: var(--dim); padding: 8px; border: 1px dashed var(--border); border-radius: 6px; }
       #operations-panel input { width: 66px; background: var(--field-bg); color: var(--ink); border: 1px solid var(--field-bd); border-radius: 4px; padding: 4px 6px; font: inherit; }
@@ -1024,12 +1143,12 @@
              its own navbar destination, not a market tab, because the charter is
              who you are to the Authority, not something you shop for. ---- */
       #faction-panel {
-        position: fixed; top: 100px; left: 14px;
+        position: fixed; top: var(--left-detail-safe-top); left: 14px;
         width: 320px; display: none; flex-direction: column;
         background: var(--panel-bg); border: 1px solid var(--border);
         border-top: 2px solid var(--warn); border-radius: 8px;
         box-shadow: var(--panel-shadow); font-size: 12px; z-index: 8;
-        backdrop-filter: blur(4px); max-height: 74vh; overflow-y: auto;
+        backdrop-filter: blur(4px); max-height: min(74vh, calc(100vh - var(--left-detail-safe-top) - 14px)); overflow-y: auto;
       }
       #faction-panel.is-open { display: flex; }
       #faction-panel .pp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 12px 8px; border-bottom: 1px solid var(--border); }
@@ -1051,7 +1170,7 @@
 
       /* ---- §research R6: the Programme Boards panel (house-width modal) ---- */
       #research-panel {
-        position: fixed; top: 78px; left: 50%; transform: translateX(-50%);
+        position: fixed; top: calc(var(--hud-safe-top) + 8px); left: 50%; transform: translateX(-50%);
         width: min(760px, 94vw); display: none; flex-direction: column;
         background: var(--panel-bg); border: 1px solid var(--border);
         border-top: 2px solid #5ad1e0; border-radius: 8px;
@@ -1139,7 +1258,7 @@
 
       /* ---- Hub Exchange overlay (opened from the navbar / M — system-independent) ---- */
       #market {
-        position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
+        position: fixed; top: calc(var(--hud-safe-top) + 8px); left: 50%; transform: translateX(-50%);
         display: none;
         width: min(760px, 94vw); max-height: 78vh; overflow-y: auto;
         padding: 14px 16px;
@@ -1150,6 +1269,9 @@
       }
       #market.is-open { display: block; }
       #market #market-close { margin-left: 2px; }
+      #market > .ux-stack { margin-top: 10px; }
+      #market .ux-section .mkt-orders { margin-top: 0; }
+      #market .ux-section .mhint:last-child { margin-bottom: 0; }
 
       /* ---- §battle-records: the BATTLE VIEWER overlay (the light-cone replay) ----
              House width, centered like the Market, stacked above it (z 9). ---- */
@@ -1281,6 +1403,30 @@
         border: 1px dashed var(--border); }
       .bv-agoline { color: var(--dim); font-size: 10px; margin-top: 4px; }
       .bv-empty { color: var(--dim); text-align: center; padding: 18px 0; font-style: italic; }
+
+      /* ---- Map chrome arbitration -----------------------------------------
+         The founding guide is the persistent top-left objective. It never moves
+         or disappears while active; the measured safe-top variables place other
+         left-side panels below it. Only the player's minimize button collapses it. */
+      body.is-system-view #readout,
+      body.is-system-view #legend,
+      body.is-right-dock-open #legend,
+      body.is-focus-overlay-open #readout,
+      body.is-focus-overlay-open #legend { display: none !important; }
+      body.is-system-view #planet-panel {
+        max-height: min(70vh, calc(100vh - var(--left-detail-safe-top) - 14px));
+      }
+      body.is-system-view.is-planet-panel-open #zoom-controls,
+      body.is-system-view.is-build-panel-open #zoom-controls { display: none !important; }
+      body.is-system-view.is-build-panel-open #sysview-manage { display: none !important; }
+      @media (max-width: 1279px) {
+        /* At the builder take-over breakpoint, remove the underlying planet
+           card instead of leaving two interactive panels stacked in one slot. */
+        body.is-system-view.is-build-panel-open #planet-panel { display: none !important; }
+      }
+      @media (max-height: 560px) {
+        body.is-system-view #planet-panel { max-height: calc(100vh - var(--left-detail-safe-top) - 14px); }
+      }
     </style>
   </head>
   <body>
@@ -1298,6 +1444,7 @@
       <div class="spacer"></div>
       <nav class="hud-nav" aria-label="Hub destinations">
         <button id="nav-market" class="hud-btn" type="button" title="Hub Exchange (M)"><img class="cicon" src="/art/ui_icons/svg/concept-market-exchange.svg" width="14" height="14" alt="" />Market</button>
+        <button id="nav-fleets" class="hud-btn" type="button" title="All fleets — docked and under way (V)"><img class="cicon" src="/art/ui_icons/svg/concept-fleet.svg" width="14" height="14" alt="" />Fleets</button>
         <button id="nav-research" class="hud-btn" type="button" title="Research — programme boards (R)">🔬 Research</button>
         <button id="nav-officers" class="hud-btn" type="button" title="Officers — Captain roster (P)">★ Officers</button>
         <button id="nav-operations" class="hud-btn" type="button" title="Operations — contracts and strategic objectives (U)">◎ Operations</button>
@@ -1365,6 +1512,7 @@
       <div class="rail__tabs">
         <div class="seg" id="rail-tabs">
           <button data-tab="system">System</button>
+          <button data-tab="fleets">Fleets</button>
           <button data-tab="logistics">Logistics</button>
           <button data-tab="doctrine">Doctrine</button>
           <button data-tab="officers">Officers</button>
@@ -1375,6 +1523,9 @@
       <div class="rail__body">
         <!-- SYSTEM tab — rich master→detail star-system view, built by JS. -->
         <div id="tab-system" class="tab"></div>
+
+        <!-- FLEETS — every owner fleet, including hulls hidden while docked. -->
+        <div id="tab-fleets" class="tab"></div>
 
         <!-- LOGISTICS tab — standing orders (§15), automation that runs offline. -->
         <div id="standing" class="tab">
@@ -1453,14 +1604,20 @@
       <div id="market-wallet" class="stat-strip"></div>
       <div class="seg" id="market-tabs" role="tablist" style="margin: 6px 0 8px">
         <button data-mtab="exchange" class="is-active" role="tab">Exchange</button>
-        <button data-mtab="warehouse" role="tab">Warehouse</button>
+        <button data-mtab="warehouse" role="tab"><img class="icon icon--sm" src="/art/ui_icons/panel/concept-warehouse.png" alt="" />Warehouse</button>
         <button data-mtab="specialists" role="tab">Specialists</button>
-        <button data-mtab="modules" role="tab">Modules</button>
+        <button data-mtab="modules" role="tab"><img class="icon icon--sm" src="/art/ui_icons/panel/module-mass-driver.png" alt="" />Modules</button>
       </div>
-      <div id="market-pane-exchange">
-        <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span title="Units of this good in your Market Warehouse — the only pool Buy/Sell settle against. The other place your goods can sit is a system's stockpile.">STORED</span></div>
-        <div id="market-board"></div>
-        <div class="composer">
+      <div id="market-pane-exchange" class="ux-stack">
+        <section class="ux-section">
+          <div class="ux-section__head"><img class="icon icon--sm" src="/art/ui_icons/panel/concept-stockpile.png" alt="" /><span>Market prices</span><small>select a commodity</small></div>
+          <div class="board__head"><span></span><span>commodity</span><span>history</span><span>price · trend</span><span title="Units of this good in your Market Warehouse — the only pool Buy/Sell settle against. The other place your goods can sit is a system's stockpile.">STORED</span></div>
+          <div id="market-board"></div>
+          <div class="mhint dim">Last-synced, light-delayed prices. History is observed, not forecast.</div>
+        </section>
+        <section class="ux-section ux-section--primary">
+          <div class="ux-section__head"><img class="icon icon--sm" src="/art/ui_icons/panel/concept-warehouse.png" alt="" /><span>Trade ticket</span></div>
+          <div class="composer composer--flush">
           <div class="composer__row"><label>Order</label>
             <div class="seg" id="mk-side"><button data-side="buy" class="is-active">Buy</button><button data-side="sell">Sell</button></div>
             <span class="composer__sel" id="mk-sel">—</span>
@@ -1471,51 +1628,68 @@
           <div class="composer__preview" id="mk-preview"></div>
           <button class="act act--primary" id="mk-submit">Buy</button>
           <div class="mhint" id="mk-feedback"></div>
-        </div>
-        <div class="mkt-orders" id="market-orders"></div>
-        <div class="mhint dim">Prices are the <b>last-synced</b> hub ticker — light-delayed, so what you see is old. The sparkline is your own observed history; the trend glyph is observed, not a forecast.</div>
+          </div>
+        </section>
+        <section class="ux-section">
+          <div class="ux-section__head"><img class="icon icon--sm" src="/art/ui_icons/panel/status-construction-queue.png" alt="" /><span>Open orders</span></div>
+          <div class="mkt-orders" id="market-orders"></div>
+        </section>
       </div>
       <!-- §TCA → §market-ux: the WAREHOUSE tab — your stock at the hub and the ONE
            place goods cross between it and your systems. Both channels live here,
            chosen by the CARRIER toggle, because they are the same decision made two
            ways: the Authority's scheduled hull (a fee, a timetable, someone else's
-           risk to fly) or one of your own convoys (free, immediate, yours to lose).
+           risk to fly) or one of your own freighters (free, immediate, yours to lose).
            Your charter STANDING, which prices the Authority's half, is in Faction. -->
-      <div id="market-pane-warehouse" hidden>
+      <div id="market-pane-warehouse" class="ux-stack" hidden>
         <!-- §TCA: the WAREHOUSE — the only stock the Exchange trades against. Rows
              are clickable: picking one loads it into the shipping composer below. -->
-        <div class="ci-sub">Your warehouse · at the Wormhole Hub</div>
-        <div id="wh-table" class="mkt-orders"></div>
+        <section class="ux-section">
+          <div class="ux-section__head"><img class="icon icon--sm" src="/art/ui_icons/panel/concept-warehouse.png" alt="" /><span>Warehouse inventory</span><small>click a good to ship it</small></div>
+          <div id="wh-table" class="mkt-orders"></div>
+        </section>
+        <section class="ux-section">
+          <div class="ux-section__head"><img class="icon icon--sm" src="/art/ui_icons/panel/concept-manifest.png" alt="" /><span>Docked fleets</span></div>
+          <div id="wh-berths"></div>
+        </section>
 
-        <div class="ci-sub">Move goods · warehouse ↔ your systems</div>
-        <div class="composer">
-          <div class="composer__row"><label>Carrier</label>
+        <section class="ux-section ux-section--primary">
+          <div class="ux-section__head"><img class="icon icon--sm" src="/art/ui_icons/panel/concept-freight-route.png" alt="" /><span>Book freight</span></div>
+          <div class="composer composer--flush">
+          <div class="composer__row"><label><img class="icon icon--sm" src="/art/ui_icons/panel/concept-authority-freighter.png" alt="" />Carrier</label>
             <div class="seg" id="fr-carrier">
               <button data-carrier="tca" class="is-active" title="The Terran Charter Authority's scheduled common carrier. Costs a fee (charged now and destroyed), rides a fixed timetable, and can carry goods BOTH ways. The freighter is a real, raidable hull — but it isn't yours to lose.">Authority freight</button>
             </div>
             <span class="dim" title="To haul personally, select a real cargo fleet at this hub, load it, and issue its route from the fleet panel.">Owned hulls are managed from their fleet panel.</span>
           </div>
-          <div class="composer__row"><label>Direction</label>
+          <div class="composer__row"><label><img class="icon icon--sm" src="/art/ui_icons/panel/concept-freight-route.png" alt="" />Direction</label>
             <div class="seg" id="fr-dir"><button data-dir="outbound" class="is-active">Warehouse → system</button><button data-dir="inbound">System → warehouse</button></div>
           </div>
           <div class="composer__row"><label>System</label><select id="fr-system"></select></div>
-          <div class="composer__row"><label>Goods</label><select id="fr-commodity"></select>
-            <label>Qty</label><input type="number" id="fr-qty" min="1" value="100" /></div>
+          <div class="composer__row"><label><img class="icon icon--sm" src="/art/ui_icons/panel/concept-manifest.png" alt="" />Goods</label><select id="fr-commodity"></select>
+            <label>Qty</label><input type="number" id="fr-qty" min="1" value="100" />
+            <button class="act" id="fr-add" title="Add or update this commodity in the mixed freight manifest."><img class="icon icon--sm" src="/art/ui_icons/panel/concept-manifest.png" alt="" />Add cargo</button></div>
+          <div id="fr-manifest" class="mkt-orders"></div>
           <div class="composer__row" id="fr-sell-row"><label>On arrival</label><label class="lim" title="Sell the lot at the Global Market the moment it lands at the Market Hub, on that tick's quantity-aware curve."><input type="checkbox" id="fr-sell" /> sell on arrival</label></div>
           <div class="composer__preview" id="fr-preview"></div>
-          <button class="act act--primary" id="fr-submit">Book freight</button>
+          <button class="act act--primary" id="fr-submit"><img class="icon icon--sm" src="/art/ui_icons/panel/concept-authority-freighter.png" alt="" />Book freight</button>
           <div class="mhint" id="fr-feedback"></div>
-        </div>
-        <div class="ci-sub">Shipments in hand</div>
-        <div id="fr-queue" class="mkt-orders"></div>
+          </div>
+        </section>
+        <section class="ux-section">
+          <div class="ux-section__head"><img class="icon icon--sm" src="/art/ui_icons/panel/concept-authority-freighter.png" alt="" /><span>Shipments in hand</span></div>
+          <div id="fr-queue" class="mkt-orders"></div>
+        </section>
       </div>
-      <div id="market-pane-specialists" hidden>
-        <div id="sp-rows"></div>
-        <div class="mhint" id="sp-feedback"></div>
+      <div id="market-pane-specialists" class="ux-stack" hidden>
+        <section class="ux-section"><div class="ux-section__head"><span>Available specialists</span></div>
+          <div id="sp-rows"></div><div class="mhint" id="sp-feedback"></div>
+        </section>
       </div>
-      <div id="market-pane-modules" hidden>
-        <div id="mod-rows"></div>
-        <div class="mhint" id="mod-feedback"></div>
+      <div id="market-pane-modules" class="ux-stack" hidden>
+        <section class="ux-section"><div class="ux-section__head"><img class="icon icon--sm" src="/art/ui_icons/panel/module-mass-driver.png" alt="" /><span>Combat modules</span></div>
+          <div id="mod-rows"></div><div class="mhint" id="mod-feedback"></div>
+        </section>
       </div>
     </div>
 
@@ -1539,19 +1713,25 @@
 
     <div id="zoom-controls">
       <button id="zoom-in" type="button" title="Zoom in (scroll up · +)" aria-label="Zoom in">+</button>
+      <output id="zoom-level" title="Galaxy magnification relative to the fit-to-map view" aria-label="Map zoom level">1.0×</output>
       <button id="zoom-reset" type="button" title="Fit galaxy (reset view)" aria-label="Fit galaxy">⊡</button>
       <button id="zoom-out" type="button" title="Zoom out (scroll down · −)" aria-label="Zoom out">−</button>
     </div>
 
     <div id="legend">
-      <div class="row"><span class="dot" style="background:#4fc3ff"></span> your ships / systems — delayed, crisp only near HQ</div>
-      <div class="row"><span class="dot" style="background:#ff7a6b"></span> rivals — claims &amp; ghosts arrive light-delayed</div>
-      <div class="row"><img class="cicon" src="/art/ui_icons/svg/concept-command-center-hq.svg" width="13" height="13" alt="" /> command center · <img class="cicon" src="/art/ui_icons/svg/concept-sensor-range.svg" width="13" height="13" alt="" /> sensor range</div>
-      <div class="row"><span class="dim">colonize (send a colony ship) → produce → ship to hub (raidable) → sell</span></div>
-      <div class="row"><span class="dim">click a system = open it · raider + click rival = raid · R = recall · Δt = staleness</span></div>
-      <div class="row"><span class="dim">scroll = zoom · drag = pan · ⊡ = fit · arrows/+/− also work</span></div>
-      <div class="row"><span class="dim">rail: S = system · O = logistics · F = doctrine · Esc = close</span></div>
-      <div class="row"><span class="dim">top bar: M = market · L = check-in log</span></div>
+      <button id="legend-toggle" type="button" aria-expanded="true" aria-controls="legend-body">
+        <span id="legend-toggle-label">Hide map help</span><span class="legend-toggle__chev" aria-hidden="true">▾</span>
+      </button>
+      <div id="legend-body">
+        <div class="row"><span class="dot" style="background:#4fc3ff"></span> your ships / systems — delayed, crisp only near HQ</div>
+        <div class="row"><span class="dot" style="background:#ff7a6b"></span> rivals — claims &amp; ghosts arrive light-delayed</div>
+        <div class="row"><img class="cicon" src="/art/ui_icons/svg/concept-command-center-hq.svg" width="13" height="13" alt="" /> command center · <img class="cicon" src="/art/ui_icons/svg/concept-sensor-range.svg" width="13" height="13" alt="" /> sensor range</div>
+        <div class="row"><span class="dim">colonize (send a colony ship) → produce → ship to hub (raidable) → sell</span></div>
+        <div class="row"><span class="dim">click a system = open it · raider + click rival = raid · R = recall · Δt = staleness</span></div>
+        <div class="row"><span class="dim">scroll = zoom · drag = pan · ⊡ = fit · arrows/+/− also work</span></div>
+        <div class="row"><span class="dim">rail: S = system · O = logistics · F = doctrine · Esc = close</span></div>
+        <div class="row"><span class="dim">top bar: M = market · L = check-in log</span></div>
+      </div>
     </div>
 
     <div id="join">

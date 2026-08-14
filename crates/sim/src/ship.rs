@@ -209,11 +209,10 @@ impl ShipKind {
         )
     }
 
-    /// Whether this hull projects the corporation's standard mobile sensor
-    /// bubble. The command center is the fixed source; in the field the Raider
-    /// is the picket. Corporate logistics hulls do not become free sensor buoys.
+    /// Whether this hull projects a mobile sensor bubble. Raiders carry the
+    /// standard picket suite; Convoys carry a short-range traffic/threat set.
     pub fn projects_sensor(self) -> bool {
-        matches!(self, ShipKind::Raider)
+        matches!(self, ShipKind::Raider | ShipKind::Convoy)
     }
 
     /// Jump drives are carried only by the two dark reconnaissance/strike hulls.
@@ -227,6 +226,7 @@ impl ShipKind {
     pub fn sensor_mult(self) -> f64 {
         match self {
             ShipKind::Scout => SCOUT_SENSOR_MULT,
+            ShipKind::Convoy => CONVOY_SENSOR_MULT,
             _ => 1.0,
         }
     }
@@ -620,7 +620,9 @@ pub fn marine_capacity(kind: ShipKind) -> u32 {
 #[serde(rename_all = "snake_case")]
 pub enum DockSite {
     /// The Terran Market Hub at the wormhole hub — the galaxy's busiest dock,
-    /// and the one place every corporation's traffic converges.
+    /// and the one place every corporation's traffic converges. Hub berths are
+    /// deliberately unmetered: qualifying fleets do not reserve or exhaust
+    /// slots there.
     Hub,
     /// A star system this fleet's owner (or an ally) holds.
     System(EntityId),
@@ -632,10 +634,9 @@ pub enum DockSite {
 /// with cargo but not repaired, and nothing anywhere said why.
 ///
 /// Sized as a docking APPROACH rather than a contact: it is generous enough that
-/// a player who parked "at" a system is docked, which matters more now that
-/// docking is a state they can see. Nothing under way can trip it — the
-/// predicate requires an Idle fleet — so a ship merely passing near a world is
-/// never captured by it. Tunable.
+/// a player who parked "at" a system or the Market Hub is docked. Nothing under
+/// way can trip it — the predicate requires an Idle fleet — so a ship merely
+/// passing near a facility is never captured by it. Tunable.
 pub const DOCK_RADIUS: f64 = 260.0;
 
 /// Radius (sim units) within which an arriving COLONY SHIP settles an
@@ -654,6 +655,10 @@ pub const CORVETTE_PROTECT_RADIUS: f64 = 1300.0;
 /// entire reason to exist: 1.5 × 2200 = 3300 su — out-seeing a tier-1 Sensor
 /// Array). Tunable.
 pub const SCOUT_SENSOR_MULT: f64 = 1.5;
+
+/// A Convoy sees one quarter as far as a command center or Raider picket:
+/// 0.25 × the current 80,000-su base = 20,000 su. Tunable.
+pub const CONVOY_SENSOR_MULT: f64 = 0.25;
 
 /// Range (sim units) at which a SCOUT passing a RIVAL-owned system captures an
 /// intel snapshot of its fortifications (§scout part 2). ≈ the Defense
@@ -726,6 +731,12 @@ pub enum FleetOrder {
     /// (proportional steer-and-correct) and is driven by the world (it needs the
     /// target's state).
     Intercept {
+        target: EntityId,
+    },
+    /// Shadow a named friendly fleet and defend it using the Interceptor's own
+    /// local sensor picture. The world owns the moving formation point and any
+    /// defensive sortie; unlike Intercept, reaching the target opens no combat.
+    Guard {
         target: EntityId,
     },
     /// BLOCKADE a rival system (§contestable-territory Part 1): fly to the
@@ -821,6 +832,10 @@ pub enum TradeMission {
 pub struct DefenseEngagement {
     pub target: EntityId,
     pub patrol: Vec<Vec2>,
+    /// A direct Guard order to resume after this defensive sortie. `None`
+    /// preserves the older patrol-picket lifecycle and old snapshots.
+    #[serde(default)]
+    pub guard: Option<EntityId>,
 }
 
 /// §roster — ONE INDIVIDUAL HULL. Fleets are ROSTERS now, not histograms: every
@@ -913,6 +928,20 @@ impl DriveState {
     }
 }
 
+/// The committed leg of an Intercept/Attack pursuit. Targets may turn, but a
+/// warp drive cannot: the world holds this analytic lead point steady until the
+/// bounded replan time, then pays the ordinary drop/turn/spool cost if needed.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PursuitPlan {
+    pub target: EntityId,
+    /// Last discontinuous relocation seen when this leg was priced. A changed
+    /// stamp invalidates the commitment immediately.
+    #[serde(default)]
+    pub target_jump: Option<f64>,
+    pub aim: Vec2,
+    pub replan_at: f64,
+}
+
 /// A FLEET: the map/sim unit (GDD §13.1). One or more ships of mixed kinds
 /// moving, fighting, and being observed as a SINGLE entity. A fleet-of-one is
 /// the N=1 case and behaves exactly as the old single ship-per-unit world.
@@ -947,6 +976,10 @@ pub struct Fleet {
     pub pos: Vec2,
     pub vel: Vec2,
     pub order: FleetOrder,
+    /// Stable warp leg for a moving-target order. `None` for every other order;
+    /// serde default preserves pre-planner snapshots.
+    #[serde(default)]
+    pub pursuit_plan: Option<PursuitPlan>,
     /// True-time stamp of the last discontinuous relocation. The view samples
     /// this in commit 3; no player-facing surface reads it directly.
     #[serde(default)]
@@ -1037,6 +1070,11 @@ pub struct Fleet {
     /// and, via the retarded velocity, the fleet's detection signature.
     #[serde(default)]
     pub transit: TransitMode,
+    /// The one scripted founding privateer is a visibly limping Raider. Keeping
+    /// the marker on the fleet confines the speed handicap to that encounter;
+    /// ordinary pirates and every player Raider retain the normal hull table.
+    #[serde(default)]
+    pub founding_privateer: bool,
     /// §economy Part 4: SPECIALIST PASSENGERS aboard (kind → headcount) —
     /// people, not cargo, but they ride the SAME two-tier fog rule: the
     /// broadcast never includes them, a sensor-revealed manifest does. Berths
@@ -1149,6 +1187,7 @@ impl Fleet {
             pos,
             vel: Vec2::ZERO,
             order,
+            pursuit_plan: None,
             last_jump: None,
             cargo,
             cargo_extra: BTreeMap::new(),
@@ -1163,6 +1202,7 @@ impl Fleet {
             stalled: false,
             damage: BTreeMap::new(),
             transit: TransitMode::Full,
+            founding_privateer: false,
             passengers: BTreeMap::new(),
             modules: BTreeMap::new(),
             posture: crate::doctrine::EngagementPosture::Passive,
@@ -1494,7 +1534,8 @@ impl Fleet {
         self.composition.keys().any(|k| k.broadcasts())
     }
 
-    /// A mobile sensor source exists when the formation carries a Raider.
+    /// A mobile sensor source exists when the formation carries a Raider or a
+    /// Convoy. Their actual ranges remain distinct through `sensor_mult`.
     pub fn projects_sensor(&self) -> bool {
         self.composition.keys().any(|k| k.projects_sensor())
     }
@@ -1517,13 +1558,20 @@ impl Fleet {
         )
     }
 
-    /// The range multiplier of a mobile sensor fleet. Callers first require
-    /// `projects_sensor`; a Scout aboard that Raider fleet extends its vision.
+    /// The range multiplier of a mobile sensor fleet. A Raider carries the full
+    /// bubble and can be boosted by a Scout; a Convoy alone always uses its
+    /// short-range traffic suite (a Scout alone remains no sensor source).
     pub fn sensor_mult(&self) -> f64 {
-        self.composition
-            .keys()
-            .map(|k| k.sensor_mult())
-            .fold(1.0_f64, f64::max)
+        if self.contains(ShipKind::Raider) {
+            self.composition
+                .keys()
+                .map(|k| k.sensor_mult())
+                .fold(1.0_f64, f64::max)
+        } else if self.contains(ShipKind::Convoy) {
+            CONVOY_SENSOR_MULT
+        } else {
+            0.0
+        }
     }
 
     /// Total EMPTY-HULL mass = Σ hull_mass(kind) × count.
@@ -1702,10 +1750,16 @@ impl Fleet {
     /// colony's pace, telegraphing itself by physics. Cargo does NOT slow a fleet
     /// (constant-speed model, §14.1) — it costs FUEL (mass), not time.
     pub fn max_speed(&self) -> f64 {
-        self.composition
+        let hull_speed = self
+            .composition
             .keys()
             .map(|k| k.max_speed())
-            .fold(f64::INFINITY, f64::min)
+            .fold(f64::INFINITY, f64::min);
+        if self.founding_privateer {
+            hull_speed * crate::founding::PRIVATEER_SPEED_MULT
+        } else {
+            hull_speed
+        }
     }
 
     /// Total offensive weight = Σ attack_weight(kind) × count.
@@ -1932,7 +1986,7 @@ impl Fleet {
             // machinery as any other order, so a chase lights warp exactly like
             // its prey. Contact is the world's call (resolve_raids), so arrival
             // never ends the order: retire the leg and hold for the next aim.
-            FleetOrder::Intercept { .. } | FleetOrder::Attack { .. } => {
+            FleetOrder::Intercept { .. } | FleetOrder::Attack { .. } | FleetOrder::Guard { .. } => {
                 // The world owns true target state and performs this step using
                 // the same drive machinery with a temporary fixed aim.
                 self.vel = Vec2::ZERO;
@@ -2048,10 +2102,19 @@ mod tests {
     }
 
     #[test]
-    fn only_raider_bearing_fleets_project_mobile_sensors() {
-        assert!(fleet(&[(ShipKind::Raider, 1)], None).projects_sensor());
-        assert!(fleet(&[(ShipKind::Raider, 1), (ShipKind::Convoy, 2)], None).projects_sensor());
-        assert!(!fleet(&[(ShipKind::Convoy, 2)], None).projects_sensor());
+    fn raiders_and_convoys_project_distinct_mobile_sensors() {
+        let raider = fleet(&[(ShipKind::Raider, 1)], None);
+        assert!(raider.projects_sensor());
+        assert_eq!(raider.sensor_mult(), 1.0);
+
+        let convoy = fleet(&[(ShipKind::Convoy, 2)], None);
+        assert!(convoy.projects_sensor());
+        assert_eq!(convoy.sensor_mult(), CONVOY_SENSOR_MULT);
+
+        let escort = fleet(&[(ShipKind::Raider, 1), (ShipKind::Convoy, 2)], None);
+        assert!(escort.projects_sensor());
+        assert_eq!(escort.sensor_mult(), 1.0);
+
         assert!(!fleet(&[(ShipKind::Scout, 1)], None).projects_sensor());
     }
 

@@ -4,11 +4,11 @@
 //! advance from things that actually happened in the world, so reconnecting or
 //! playing from another client cannot skip the opening lessons.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::EntityId;
+use crate::{cargo::Commodity, ids::EntityId};
 
 /// Earliest point at which a corporation may deliberately end founder safety.
 pub const FOUNDER_PROTECTION_MIN_S: f64 = 30.0 * 60.0;
@@ -20,6 +20,33 @@ pub const FOUNDER_PROTECTION_MAX_S: f64 = 24.0 * 60.0 * 60.0;
 /// pacing a staffed Tier-I Academy therefore produces the first result in about
 /// three wall minutes; later programmes use the ordinary season-scale costs.
 pub const FIRST_RESEARCH_REMAINING_S: f64 = 12.0 * 60.0;
+
+/// The Rogue Privateer pays money, never a conjured construction manifest. This
+/// is the rounded base-market value of the retired mixed-goods bounty plus its
+/// old cash award: enough purchasing power for the founding imports, while the
+/// player still has to choose, buy, freight, and receive every manufactured good.
+pub const PRIVATEER_CREDIT_BOUNTY: f64 = 4_500.0;
+
+/// The tutorial threat starts well downrange. Its lateral offset and slow
+/// convergence make the ordinary 20,000-su Freighter contact a useful warning
+/// rather than a one-second ambush at 4× pacing.
+pub const PRIVATEER_LEAD_SU: f64 = 45_000.0;
+/// Lateral displacement from the Freighter's actual outbound route. The threat
+/// must first turn and converge instead of spawning directly in its path.
+pub const PRIVATEER_ROUTE_OFFSET_SU: f64 = 25_000.0;
+/// A limping tutorial Raider: barely faster than a Convoy, less than half the
+/// starting Interceptor's speed. Ordinary enclave pirates remain untouched.
+pub const PRIVATEER_SPEED_MULT: f64 = 0.45;
+/// The tutorial privateer begins damaged, but has enough hull to make the
+/// Interceptor's first battle readable instead of disappearing on the opening
+/// hit. Ordinary enclave pirates remain full-health and are unaffected.
+pub const PRIVATEER_HULL_FRAC: f64 = 0.50;
+/// Its improvised weapons are deliberately weak. A caught Freighter therefore
+/// takes damage over time instead of being erased by the ordinary raid burst,
+/// leaving a real relief window for the player's Interceptor. Combined with the
+/// larger damaged-hull fraction above, this spreads the tutorial threat over a
+/// much longer exchange rather than increasing its lethality.
+pub const PRIVATEER_DAMAGE_MULT: f64 = 0.05;
 
 /// Three legible opening choices surfaced by the guide. They remain ordinary
 /// catalogue programmes: the player may ignore them and choose any open Tier I.
@@ -33,11 +60,17 @@ pub const RECOMMENDED_FIRST_RESEARCH: [&str; 3] =
 #[serde(rename_all = "snake_case")]
 pub enum FoundingStage {
     BuildShipyard,
-    LeaveHomeWell,
-    DefeatPrivateer,
     BuildMine,
     BuildConvoy,
-    FirstSale,
+    /// Prepare the opening export. The first meaningful departure by ANY owned
+    /// Freighter starts the privateer lesson regardless of its manifest; the two
+    /// required export receipts remain a separate later milestone.
+    #[serde(alias = "leave_home_well")]
+    ExportProduction,
+    DefeatPrivateer,
+    /// Wait for both guarded export-sale receipts to reach the command center.
+    #[serde(alias = "first_sale")]
+    CompleteExport,
     BuildAcademy,
     FirstResearch,
     BuildScout,
@@ -66,20 +99,33 @@ pub struct FoundingProgram {
     pub started_at: f64,
     #[serde(default)]
     pub interceptor: Option<EntityId>,
+    /// Initially the player's first built Freighter; rebound to whichever owned
+    /// Freighter actually departs first and becomes the privateer's target.
+    #[serde(default)]
+    pub convoy: Option<EntityId>,
     #[serde(default)]
     pub privateer: Option<EntityId>,
-    /// When evidence of the Interceptor crossing the home well reaches the CC.
+    /// Legacy standalone-flight report, retained for snapshot compatibility.
     #[serde(default)]
     pub departure_report_at: Option<f64>,
     #[serde(default)]
     pub privateer_report_at: Option<f64>,
     #[serde(default)]
     pub reward_granted: bool,
-    /// When the first Market Hub sale receipt reaches the command center.
+    /// When both required opening export receipts have reached the command center.
+    /// Retains its save-field name so old snapshots migrate without a custom pass.
     #[serde(default)]
     pub sale_report_at: Option<f64>,
-    /// A player-owned Convoy has physically delivered goods to the Market Hub.
-    /// An instant sale of bounty inventory cannot satisfy the hauling lesson.
+    /// Per-commodity report arrival for the opening export pair. The tutorial
+    /// displays and advances from these arrival clocks, never Market-Hub truth.
+    #[serde(default)]
+    pub opening_export_reports: BTreeMap<Commodity, f64>,
+    /// Goods physically landed by the founding Convoy at the Market Hub. A
+    /// warehouse buy-and-resell cannot masquerade as the protected export run.
+    #[serde(default)]
+    pub opening_export_deliveries: BTreeSet<Commodity>,
+    /// Legacy v1 physical-haul bit. Retained only for snapshot compatibility;
+    /// new corporations use the per-commodity guarded-delivery ledger above.
     #[serde(default)]
     pub market_haul_completed: bool,
     #[serde(default)]
@@ -117,11 +163,14 @@ impl Default for FoundingProgram {
             enabled: false,
             started_at: 0.0,
             interceptor: None,
+            convoy: None,
             privateer: None,
             departure_report_at: None,
             privateer_report_at: None,
             reward_granted: false,
             sale_report_at: None,
+            opening_export_reports: BTreeMap::new(),
+            opening_export_deliveries: BTreeSet::new(),
             market_haul_completed: false,
             initial_surveyed: 0,
             survey_candidates: Vec::new(),

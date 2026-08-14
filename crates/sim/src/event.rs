@@ -38,6 +38,9 @@ pub enum OrderKind {
     Attack,
     /// A SURVEY order (§explore Part 2) — chart a system's exact geology on-site.
     Survey,
+    /// A GUARD order — an Interceptor shadows a named friendly fleet and
+    /// autonomously breaks off to engage threats before resuming formation.
+    Guard,
 }
 
 impl OrderKind {
@@ -54,6 +57,7 @@ impl OrderKind {
             OrderKind::Blockade => "blockade",
             OrderKind::Attack => "attack",
             OrderKind::Survey => "survey",
+            OrderKind::Guard => "guard",
         }
     }
 }
@@ -841,7 +845,14 @@ pub enum TradeEvent {
         player: PlayerId,
         system: EntityId,
         commodity: Commodity,
+        /// Units moved at this milestone. For a partial destination delivery,
+        /// this is the amount that fit in storage.
         units: u32,
+        /// Units from this lot still aboard after a partial destination delivery.
+        /// Zero for every other milestone. Kept on the same receipt so a bounded
+        /// unload can never look like the Authority silently lost the remainder.
+        #[serde(default)]
+        remaining: u32,
         stage: FreightStage,
     },
 }

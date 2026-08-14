@@ -594,6 +594,7 @@ impl GameLoop {
                             // arrays' coverage (§buildings step 2b).
                             // Scout multiplier on a Raider-bearing sensor fleet.
                             scout_sensor_mult: sim::ship::SCOUT_SENSOR_MULT,
+                            convoy_sensor_mult: sim::ship::CONVOY_SENSOR_MULT,
                             sensor_array_base: sim::build::SENSOR_ARRAY_BASE,
                             sensor_array_per_tier: sim::build::SENSOR_ARRAY_PER_TIER,
                             // Platform protection radius, for the owner's own
@@ -604,6 +605,8 @@ impl GameLoop {
                             provisions_per_million_per_s: sim::colony::PROVISIONS_PER_MILLION_PER_S,
                             pop_cap_per_habitat_tier: sim::colony::POP_CAP_PER_HABITAT_TIER,
                             pop_growth_per_s: sim::colony::POP_GROWTH_PER_S,
+                            migrant_cohort_people: sim::migration::MIGRANT_COHORT_PEOPLE,
+                            migration_base_interval_s: sim::migration::MIGRATION_BASE_INTERVAL_S,
                             specialist_hire_cost: sim::specialist::SPECIALIST_HIRE_COST,
                             // §economy Part 3: the refinery hint rate (full converter table on the wire in Part 6).
                             fuel_refinery_rate: sim::production::converter_for(
@@ -726,6 +729,18 @@ impl GameLoop {
                         self.pending.push(Command::CommitRaid {
                             player_id,
                             raider_id,
+                            target_id,
+                        });
+                    }
+                }
+                ClientMsg::GuardFleet {
+                    interceptor_id,
+                    target_id,
+                } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::GuardFleet {
+                            player_id,
+                            interceptor_id,
                             target_id,
                         });
                     }
@@ -1076,6 +1091,15 @@ impl GameLoop {
                         });
                     }
                 }
+                ClientMsg::HaulToSystem { fleet_id, system } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::HaulToSystem {
+                            player_id,
+                            fleet_id,
+                            system,
+                        });
+                    }
+                }
                 ClientMsg::PayReinstatement { points } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending
@@ -1321,6 +1345,36 @@ impl GameLoop {
                             workers,
                             specialists,
                             body_id,
+                        });
+                    }
+                }
+                ClientMsg::SetMigrationPolicy {
+                    system_id,
+                    body_id,
+                    policy,
+                } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetMigrationPolicy {
+                            player_id,
+                            system_id,
+                            body_id,
+                            policy,
+                        });
+                    }
+                }
+                ClientMsg::RelocateMigrants {
+                    from_system,
+                    from_body,
+                    to_system,
+                    to_body,
+                } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::RelocateMigrants {
+                            player_id,
+                            from_system,
+                            from_body,
+                            to_system,
+                            to_body,
                         });
                     }
                 }
@@ -2301,6 +2355,12 @@ impl GameLoop {
                     .then_some(known_privateer)
                     .flatten(),
                 bounty_received: corp.founding.reward_granted,
+                opening_exports: corp
+                    .founding
+                    .opening_export_reports
+                    .iter()
+                    .filter_map(|(&commodity, &report_at)| (report_at <= now).then_some(commodity))
+                    .collect(),
                 survey_candidates: corp.founding.survey_candidates.clone(),
             };
 
@@ -2852,7 +2912,7 @@ fn build_options() -> Vec<BuildOptionView> {
     let ships = [
         (
             "convoy",
-            "Convoy",
+            "Freighter",
             BuildKind::Ship {
                 ship: ShipKind::Convoy,
             },

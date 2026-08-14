@@ -21,6 +21,17 @@ pub const WARP_DROP_S: f64 = 1.0;
 /// the hull can turn on thrusters before spooling again.
 pub const COURSE_LOCK_RAD: f64 = 0.09;
 
+/// Minimum time a pursuit commits to one analytic warp leg before pricing a
+/// new lead point. A moving target may turn, but re-solving every tick makes a
+/// course-locked drive chatter between warp and impulse. Tunable.
+pub const PURSUIT_REPLAN_S: f64 = 30.0;
+
+/// Inside this distance, an intercept computer may make sub-course-lock warp
+/// corrections to close the last moving-target gap. Large turns still force a
+/// drop; this prevents near-contact warp flicker without making warp generally
+/// steerable. Tunable.
+pub const PURSUIT_TERMINAL_GUIDANCE_SU: f64 = 15_000.0;
+
 /// Jump-drive playtest tunables.
 pub const JUMP_SPOOL_S: f64 = 10.0;
 pub const JUMP_RANGE: f64 = 50_000.0;

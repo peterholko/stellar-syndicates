@@ -836,8 +836,9 @@ pub const POP_DEVELOPED: f64 = 0.010;
 pub const POP_MAJOR: f64 = 0.050;
 
 /// The population tier: 0 below `POP_DEVELOPED`, 1 from there, 2 at `POP_MAJOR`.
-/// Population only ever grows (§economy Part 2), so pools never shrink under a
-/// player — no un-build edge case.
+/// Shortages never kill population (§economy Part 2), but physical relocation
+/// can shrink a local pool. Existing structures remain grandfathered, so there
+/// is still no destructive un-build edge case.
 pub fn pop_tier(population: f64) -> u32 {
     if population >= POP_MAJOR {
         2

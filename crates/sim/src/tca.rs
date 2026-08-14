@@ -34,10 +34,11 @@ use crate::ids::{EntityId, PlayerId};
 /// rarer, larger convoys.)
 pub const TCA_DEPARTURE_PERIOD: f64 = 120.0;
 
-/// Max units a single corporation may load per destination per departure. Bookings
-/// beyond this don't reject — they roll forward FIFO to later departures. UNIFORM
-/// across destinations: how much a freighter lifts is a property of the HULL, not
-/// of what the receiving colony has built, so no ground structure raises it.
+/// Max TOTAL units a single corporation may load per destination per departure,
+/// shared fairly across every commodity it has queued. Bookings beyond this don't
+/// reject — each commodity's remainder rolls forward FIFO to later departures.
+/// UNIFORM across destinations: how much a freighter lifts is a property of the
+/// HULL, not of what the receiving colony has built, so no ground structure raises it.
 pub const TCA_SHIPMENT_CAP: u32 = 400;
 
 /// The AD-VALOREM part of the freight fee: this fraction of the cargo's market

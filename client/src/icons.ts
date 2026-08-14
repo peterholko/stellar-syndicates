@@ -2,25 +2,29 @@
 // used EVERYWHERE, so an icon reads the same in every panel and swapping in
 // generated art later is a one-file change.
 //
-// Each entry is either ART-BACKED (`art` = a bundled SVG slug under
-// /art/ui_icons/svg/, rendered crisp) or a PLACEHOLDER (`glyph` = a unicode/emoji
-// stand-in until dedicated art is generated — `placeholder: true`, surfaced in
-// the icon-generation batch). Every entry carries a default `tip` (hover text),
-// because in the icon-first UI the words live in tooltips, not on screen.
+// Each entry is ART-BACKED (resource PNG, generated panel PNG, or legacy SVG) or
+// a PLACEHOLDER (`glyph` = a unicode/emoji stand-in until dedicated art exists).
+// Every entry carries a default `tip` (hover text), because in the icon-first UI
+// the words live in tooltips, not on screen.
 //
 // Render through `icon()` / `chip()` / `badgeChip()` — never hand-roll an <img>.
 
 export type IconKey =
   // resources
-  | "fuel" | "ore" | "alloys" | "provisions" | "volatiles" | "credits"
+  | "fuel" | "ore" | "alloys" | "provisions" | "volatiles" | "credits" | "biomass"
   // economy / structures
   | "storage" | "slots" | "shipyard" | "sensor" | "defense" | "habitat" | "refinery" | "interdictor"
-  | "extractor" | "orbital_warehouse" | "build" | "queue"
+  | "extractor" | "orbital_warehouse" | "build" | "queue" | "warehouse" | "manifest" | "freightRoute" | "authorityFreighter"
+  // planetary profile / colony identity
+  | "planetHabitable" | "planetHostile" | "planetUninhabitable"
+  | "geologyPoor" | "geologyRich" | "geologyUltraRich"
+  | "featureFertile" | "featureLowGravity" | "featurePrecursor"
+  | "roleAgriculture" | "roleMining" | "roleFuel" | "roleElectronics" | "roleShipbuilding" | "rolePopulation" | "roleOutpost"
   // fleets / ship kinds
   | "fleet" | "scout" | "raider" | "corvette" | "convoy" | "colony"
   // verbs / orders
   | "move" | "attack" | "raid" | "withdraw" | "reinforce" | "recall" | "blockade" | "siege"
-  | "doctrine" | "posture" | "claim" | "cargo" | "market"
+  | "doctrine" | "posture" | "claim" | "cargo" | "market" | "jump" | "dock" | "undock" | "unload" | "escort"
   // transit / signature
   | "stealth" | "flank" | "sensorRange"
   // order lifecycle (light-delayed round trip)
@@ -28,6 +32,9 @@ export type IconKey =
   // status / intel
   | "unfed" | "fed" | "warning" | "unknown" | "intel" | "battle" | "aftermath" | "captured" | "lost"
   | "commandCenter" | "uncertainty" | "hub" | "success" | "info" | "home" | "mouse" | "shift" | "time"
+  | "population" | "workforce" | "food" | "upkeep"
+  // combat modules
+  | "moduleMassDriver" | "moduleTorpedoRack" | "modulePointDefense" | "moduleReflectivePlating" | "moduleWhippleArmor"
   // syndicates (§syndicates)
   | "syndicate" | "ally" | "garrison";
 
@@ -44,6 +51,8 @@ interface IconDef {
   png?: string;
   /** General 128px UI PNG under /art/ui_icons/png/128/. */
   png128?: string;
+  /** Generated 64px transparent panel PNG under /art/ui_icons/panel/. */
+  panel?: string;
   /** Bundled SVG slug (art-backed) — takes precedence over `glyph`. */
   art?: string;
   /** Unicode/emoji placeholder when there is no art yet. */
@@ -54,9 +63,11 @@ interface IconDef {
   placeholder: boolean;
 }
 
-// R(name) = downscaled PNG; A(slug) = art-backed SVG; P(glyph) = emoji placeholder.
+// R(name) = resource PNG; N(name) = generated panel PNG; A(slug) = legacy SVG;
+// P(glyph) = emoji placeholder.
 const R = (png: string, tip: string): IconDef => ({ png, tip, placeholder: false });
 const R128 = (png128: string, tip: string): IconDef => ({ png128, tip, placeholder: false });
+const N = (panel: string, tip: string): IconDef => ({ panel, tip, placeholder: false });
 const A = (art: string, tip: string): IconDef => ({ art, tip, placeholder: false });
 const P = (glyph: string, tip: string): IconDef => ({ glyph, tip, placeholder: true });
 
@@ -68,25 +79,47 @@ export const ICONS: Record<IconKey, IconDef> = {
   provisions: R("provisions", "Provisions"),
   volatiles: R("volatiles", "Volatiles"),
   credits: R("credits", "Credits"),
+  biomass: N("resource-biomass", "Biomass"),
   // economy / structures
-  storage: P("📦", "Storage / stockpile capacity"),
-  slots: P("▦", "Development slots (used / total)"),
-  shipyard: P("🛠", "Shipyard tier"),
+  storage: N("concept-stockpile", "Storage / stockpile capacity"),
+  slots: N("status-development-slots", "Development slots (used / total)"),
+  shipyard: N("role-shipbuilding", "Shipyard tier"),
   sensor: A("concept-sensor-range", "Sensor array"),
   defense: P("🛡", "Defense platform tier"),
   habitat: P("🏠", "Habitat tier (output boost)"),
   refinery: P("⚗", "Fuel refinery (Volatiles → Fuel)"),
   interdictor: P("⛓", "Interdictor"),
   extractor: P("⛏", "Extractor tier (output ×1.5)"),
-  orbital_warehouse: P("🏬", "Orbital Warehouse tier (storage cap)"),
+  orbital_warehouse: N("concept-warehouse", "Orbital Warehouse tier (storage cap)"),
   build: A("action-build", "Build"),
-  queue: P("🔨", "Under construction"),
+  queue: N("status-construction-queue", "Under construction"),
+  warehouse: N("concept-warehouse", "Market Warehouse"),
+  manifest: N("concept-manifest", "Cargo manifest"),
+  freightRoute: N("concept-freight-route", "Freight route"),
+  authorityFreighter: N("concept-authority-freighter", "Authority freighter"),
+  // planetary profile / colony identity
+  planetHabitable: N("planet-habitable", "Habitable world"),
+  planetHostile: N("planet-hostile", "Hostile world"),
+  planetUninhabitable: N("planet-uninhabitable", "Uninhabitable world"),
+  geologyPoor: N("geology-poor", "Poor mineral geology"),
+  geologyRich: N("geology-rich", "Rich mineral geology"),
+  geologyUltraRich: N("geology-ultra-rich", "Ultra-rich mineral geology"),
+  featureFertile: N("feature-fertile", "Fertile biosphere"),
+  featureLowGravity: N("feature-low-gravity", "Low gravity"),
+  featurePrecursor: N("feature-precursor", "Precursor ruins"),
+  roleAgriculture: N("role-agriculture", "Agricultural exporter"),
+  roleMining: N("role-mining", "Mining center"),
+  roleFuel: N("role-fuel-production", "Fuel complex"),
+  roleElectronics: N("role-electronics", "Electronics center"),
+  roleShipbuilding: N("role-shipbuilding", "Shipbuilding center"),
+  rolePopulation: N("role-population-center", "Population center"),
+  roleOutpost: N("role-strategic-outpost", "Strategic outpost"),
   // fleets / ship kinds
   fleet: A("concept-fleet", "Fleet"),
   scout: P("🛰", "Scout"),
   raider: P("🗡", "Interceptor"),
   corvette: P("🛡", "Corvette"),
-  convoy: A("concept-convoy", "Convoy"),
+  convoy: A("concept-convoy", "Freighter"),
   colony: P("🏗", "Colony ship"),
   // verbs / orders
   move: A("action-move-travel", "Move"),
@@ -100,8 +133,13 @@ export const ICONS: Record<IconKey, IconDef> = {
   doctrine: A("action-standing-order", "Fleet doctrine"),
   posture: P("🎯", "Engagement posture"),
   claim: A("action-claim-system", "Claim"),
-  cargo: A("action-load-cargo", "Cargo"),
+  cargo: N("concept-manifest", "Cargo"),
   market: A("concept-market-exchange", "Hub market"),
+  jump: N("action-jump", "Jump"),
+  dock: N("action-dock", "Dock"),
+  undock: N("action-undock", "Undock"),
+  unload: N("action-unload-cargo", "Unload cargo"),
+  escort: N("action-escort", "Escort"),
   // transit / signature
   stealth: P("🌑", "Stealth transit (quiet, ~2× trip)"),
   flank: P("💨", "Full speed (loud — high signature)"),
@@ -131,6 +169,16 @@ export const ICONS: Record<IconKey, IconDef> = {
   mouse: P("🖱", "Click"),
   shift: P("⇧🖱", "Shift+click"),
   time: P("🕘", "Time"),
+  population: N("status-population", "Population"),
+  workforce: N("status-workforce", "Workforce"),
+  food: N("status-food-supply", "Food supply"),
+  upkeep: N("status-upkeep", "Upkeep"),
+  // combat modules
+  moduleMassDriver: N("module-mass-driver", "Mass Driver"),
+  moduleTorpedoRack: N("module-torpedo-rack", "Torpedo Rack"),
+  modulePointDefense: N("module-point-defense", "Point-Defense Screen"),
+  moduleReflectivePlating: N("module-reflective-plating", "Reflective Plating"),
+  moduleWhippleArmor: N("module-whipple-armor", "Whipple Armor"),
   // syndicates
   syndicate: P("🤝", "Syndicate (alliance)"),
   ally: P("🟢", "Syndicate ally"),
@@ -140,6 +188,7 @@ export const ICONS: Record<IconKey, IconDef> = {
 const ART_BASE = "/art/ui_icons/svg/";
 const PNG_BASE = "/art/ui_icons/resource/"; // downscaled 64px resource PNGs
 const PNG_128_BASE = "/art/ui_icons/png/128/"; // high-DPI general UI PNGs
+const PANEL_BASE = "/art/ui_icons/panel/"; // generated transparent 64px panel PNGs
 const escAttr = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
 /** ICON SIZE TOKENS — the ONE source of truth for icon dimensions (mapped to the
@@ -155,7 +204,7 @@ export type IconSize = "sm" | "md" | "lg";
 // asked for — they're the game's currency and must read at a glance in every
 // context. They get their own `--icon-resource` token (see index.html), applied
 // here regardless of the caller's size, so it stays consistent everywhere.
-const RESOURCE_KEYS = new Set<IconKey>(["fuel", "ore", "alloys", "provisions", "volatiles", "credits"]);
+const RESOURCE_KEYS = new Set<IconKey>(["fuel", "ore", "alloys", "provisions", "volatiles", "credits", "biomass"]);
 
 /** Render one icon at a SIZE TOKEN (never a pixel size). `tip` overrides the
  *  registry default; `cls` adds classes. Art → crisp <img>; placeholder → an
@@ -171,6 +220,9 @@ export function icon(key: IconKey, size: IconSize = "sm", tip?: string, cls = ""
   }
   if (def.png128) {
     return `<img class="${c}" src="${PNG_128_BASE}${def.png128}.png" alt="" title="${t}" />`;
+  }
+  if (def.panel) {
+    return `<img class="${c}" src="${PANEL_BASE}${def.panel}.png" alt="" title="${t}" />`;
   }
   if (def.art) {
     return `<img class="${c}" src="${ART_BASE}${def.art}.svg" alt="" title="${t}" />`;

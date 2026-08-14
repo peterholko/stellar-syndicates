@@ -9,6 +9,7 @@ import { label } from "./icons";
 import type { BodyView, GalaxyInfo, GhostView, PathPointView, ShipKind, SystemInfo, Vec2 } from "./protocol";
 import { countClassLabel, fleetCargoManifest, fleetExactCount } from "./protocol";
 import { JUMP_DEPARTURE_TTL_S, liveSimTime, type ViewState } from "./state";
+import { hashId } from "./prng";
 import { STAR_TYPES, starAnchor, starIconUrl, starTypeFor, starVisualRatio } from "./stars";
 import { buildVisualSystem, SystemViewScene, type SystemBodyDetail } from "./systemview";
 
@@ -82,7 +83,8 @@ const COL_THREAT = 0xff4d4d; // detected raider (alert red)
 const COL_ESTIMATE = 0xffae5c; // crude intercept estimate (soft amber, fuzzy)
 const COL_DELAYED = 0xe2ad62; // presumed own jump, awaiting destination light
 const COL_JUMP = 0xa98cff; // jump-drive charge / historical departure scar
-const COL_SENSOR = 0x59d5c7; // base sensor capability: CC + Raider pickets
+const COL_WARP_WAKE = 0x8ad8ff; // active warp-drive wake, neutral across factions
+const COL_SENSOR = 0x59d5c7; // sensor capability: CC, Raider pickets, short Convoy rings
 const COL_OPERATION = 0xf3c969; // arrived objective intelligence, distinct from routes/ownership
 // Ships render in their NATURAL art — no per-syndicate body tint (a future
 // ownership indicator is TBD). This neutral is only the primitive fallback hull
@@ -119,6 +121,10 @@ interface GhostSprite {
   seen: boolean;
   /// The WORLD position actually drawn, eased toward the newest served report.
   shown?: { x: number; y: number };
+  /// A battle marker temporarily owns this fleet's map position. When the
+  /// marker releases it, reconcile from that contact point without treating
+  /// the ordinary post-battle flight as a discontinuous reacquisition.
+  returningFromBattle?: boolean;
 }
 
 interface ReacquireFx {
@@ -158,6 +164,11 @@ const SHIP_ART_FACING = Math.PI / 2;
 // Interceptor art. Calibrate its canvas down so both Raider-class hulls have
 // the same visible length; its broader salvaged silhouette remains intentional.
 const PRIVATEER_ART_CALIB = 0.73;
+// NPC pirate packs are one simulation family but not one stamped-out hull.
+// The variant is a deterministic cosmetic pick from the SERVED fleet id: it
+// changes no stats, reveals no composition, and remains stable across Views.
+const PIRATE_CORSAIR_ART_CALIB = 0.70;
+const PIRATE_BOARDING_ART_CALIB = 0.70;
 
 // On-map ship sprite sizes (screen px at the fit zoom) — big enough that the
 // detailed art reads, with the convoy clearly LARGER than the nimble raider.
@@ -179,10 +190,12 @@ const HYPERLIMIT_SU = 900;
 const EMPLACEMENT_PX = 34;
 const EMPLACEMENT_MAX_PX = 96;
 const SMOOTH_RATE = 9.0; // e-folds per second
+const BATTLE_EXIT_SMOOTH_RATE = 2.0; // Tunable: make the marker→fleet handoff readable.
 const REACQUIRE_FX_MS = 500; // Tunable: served jump snap arrival pulse.
 const RIVAL_JUMP_ARRIVAL_FX_MS = 2_200; // Tunable: arrival flash + warning chevrons.
 // Any fleet may snap across genuinely discontinuous newly arrived information;
-// ordinary corrections remain eased.
+// ordinary corrections remain eased. A fleet leaving a battle is explicitly
+// continuous: it starts at the battle marker and flies back into its served track.
 const SMOOTH_SNAP_SU = 4_000;
 const SMOOTH_SNAP_S = 0.75; // ...or this many seconds of its own travel, whichever is larger
 const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
@@ -420,6 +433,8 @@ export class Renderer {
   private texConvoy: Texture | null = null;
   private texRaider: Texture | null = null;
   private texPrivateer: Texture | null = null;
+  private texPirateCorsair: Texture | null = null;
+  private texPirateBoarding: Texture | null = null;
   private texCorvette: Texture | null = null;
   private texColony: Texture | null = null;
   private texScout: Texture | null = null;
@@ -604,6 +619,12 @@ export class Renderer {
     this.texConvoy = convoy;
     this.texRaider = raider;
     this.texPrivateer = privateer;
+    const [pirateCorsair, pirateBoarding] = await Promise.all([
+      load("/art/ship_sprites/npc-contractors/pirate_corsair.png"),
+      load("/art/ship_sprites/npc-contractors/pirate_boarding_raider.png"),
+    ]);
+    this.texPirateCorsair = pirateCorsair;
+    this.texPirateBoarding = pirateBoarding;
     this.texCorvette = corvette;
     this.texColony = colony;
     this.texScout = scout;
@@ -721,6 +742,12 @@ export class Renderer {
   // --- Semantic-zoom (galaxy ⇄ system) — presentation only ------------------
   get viewMode(): MapViewMode {
     return this.mode;
+  }
+  /// Current galaxy-camera magnification relative to the fit-to-map view.
+  /// This is presentation state only; semantic System/Battle views are named by
+  /// the DOM indicator instead of pretending their schematics share this scale.
+  zoomFactor(): number {
+    return this.scale / this.fitScale();
   }
   /// True when the galaxy camera is at its deepest zoom — the cue for "zoom in
   /// again to enter the System View" (see main.ts's wheel handler).
@@ -1703,7 +1730,7 @@ export class Renderer {
   }
 
   /// Draw the same mobile sensor sources the server uses: the fixed command
-  /// center and own Raider-bearing fleets. Sensor Arrays draw their own range in
+  /// center and own mobile sensor fleets. Sensor Arrays draw their own range in
   /// `drawEmplacements`. These dashed circles are BASE capability, not a promise
   /// that every target flips at the edge: target size/speed still scales its
   /// detection signature.
@@ -1730,9 +1757,13 @@ export class Renderer {
       const composition = ghost.composition ?? [];
       const hasRaider = composition.some((stack) => stack.kind === "raider" && stack.count > 0)
         || (composition.length === 0 && ghost.kind === "raider");
-      if (!hasRaider) continue;
+      const hasConvoy = composition.some((stack) => stack.kind === "convoy" && stack.count > 0)
+        || (composition.length === 0 && ghost.kind === "convoy");
+      if (!hasRaider && !hasConvoy) continue;
       const hasScout = composition.some((stack) => stack.kind === "scout" && stack.count > 0);
-      const multiplier = hasScout ? state.galaxy.scout_sensor_mult : 1;
+      const multiplier = hasRaider
+        ? (hasScout ? state.galaxy.scout_sensor_mult : 1)
+        : state.galaxy.convoy_sensor_mult;
       drawRange(ghost.pos, state.galaxy.sensor_range * multiplier, 0.20);
     }
   }
@@ -1843,6 +1874,22 @@ export class Renderer {
       dashedLine(g, from.x, from.y, to.x, to.y, 6, 5);
       g.stroke({ width: 1, color: COL_ROUTE, alpha: 0.45 });
       g.circle(to.x, to.y, 3).stroke({ width: 1, color: COL_ROUTE, alpha: 0.7 });
+    }
+
+    // Direct guard assignments join TWO SERVED ghosts. The line is therefore
+    // information-honest at both ends: it never reaches for either fleet's true
+    // position or an eased/dead-reckoned glyph. A sparse dash distinguishes the
+    // continuing relationship from a fixed destination route.
+    for (const guard of state.ghosts) {
+      if (!guard.own || !guard.guard_target || !drawableFleetIds.has(guard.id)) continue;
+      const charge = state.ghosts.find((candidate) =>
+        candidate.id === guard.guard_target && candidate.own);
+      if (!charge) continue;
+      const from = this.worldToScreen(guard.pos);
+      const to = this.worldToScreen(charge.pos);
+      dashedLine(g, from.x, from.y, to.x, to.y, 3, 7);
+      g.stroke({ width: 1.15, color: COL_ROUTE, alpha: 0.52 });
+      g.circle(to.x, to.y, 4).stroke({ width: 1.1, color: COL_ROUTE, alpha: 0.72 });
     }
 
     // Pending fixed-destination orders: dashed/dim green, with the same Orders
@@ -2085,11 +2132,22 @@ export class Renderer {
   }
 
   private fleetMarker(ghost: GhostView): { tex: Texture; mult: number } | null {
-    // Pirate/privateer Raiders are a different hull culture, not corporate
-    // Interceptors wearing an amber pip. Keep their dedicated single-hull art
-    // at every LOD and fleet size; the count badge still carries pack strength.
+    // Pirate Raiders are a hull CULTURE, not corporate Interceptors wearing an
+    // amber pip. Pick one of the available silhouettes deterministically from
+    // the served id and keep it at every LOD; count still rides the honest badge.
     if (ghost.pirate) {
-      return this.texPrivateer ? { tex: this.texPrivateer, mult: PRIVATEER_ART_CALIB } : null;
+      const variants = [
+        this.texPrivateer ? { tex: this.texPrivateer, mult: PRIVATEER_ART_CALIB } : null,
+        this.texPirateCorsair ? { tex: this.texPirateCorsair, mult: PIRATE_CORSAIR_ART_CALIB } : null,
+        this.texPirateBoarding ? { tex: this.texPirateBoarding, mult: PIRATE_BOARDING_ART_CALIB } : null,
+      ].filter((variant): variant is { tex: Texture; mult: number } => variant !== null);
+      return variants.length > 0 ? variants[hashId(ghost.id) % variants.length] : null;
+    }
+    // A migrant run reuses the Authority's physical freighter hull in the sim,
+    // but the map reads it as a passenger liner. The colony transport silhouette
+    // distinguishes it from commodity freight without inventing a second truth.
+    if (ghost.migrant) {
+      return this.texColony ? { tex: this.texColony, mult: 1 } : null;
     }
     // §fleet-lod: far zoomed out, a single bold low-detail icon replaces the
     // detailed hull/formation (no fine detail is legible at that size anyway; the
@@ -2453,12 +2511,19 @@ export class Renderer {
     } else {
       const jump = Math.hypot(target.x - prev.x, target.y - prev.y);
       const snapAt = Math.max(SMOOTH_SNAP_SU, Math.hypot(ghost.vel.x, ghost.vel.y) * SMOOTH_SNAP_S);
-      if (jump > snapAt) {
+      if (jump > snapAt && !sp.returningFromBattle) {
         if (own) this.spawnReacquisition(prev, target);
         sp.shown = { ...target };
       } else {
-        const k = 1 - Math.exp(-SMOOTH_RATE * Math.max(this.frameDt, 1 / 240));
+        const rate = sp.returningFromBattle ? BATTLE_EXIT_SMOOTH_RATE : SMOOTH_RATE;
+        const k = 1 - Math.exp(-rate * Math.max(this.frameDt, 1 / 240));
         sp.shown = { x: prev.x + (target.x - prev.x) * k, y: prev.y + (target.y - prev.y) * k };
+        // Once safely inside the ordinary no-snap envelope, restore the normal
+        // correction policy. It cannot teleport on the following frame, and a
+        // formation-flying guard cannot remain in handoff mode forever.
+        if (sp.returningFromBattle && jump <= snapAt * 0.8) {
+          sp.returningFromBattle = false;
+        }
       }
     }
     const s = this.worldToScreen(sp.shown);
@@ -2476,6 +2541,52 @@ export class Renderer {
     // for. `sp.cone` still carries the survey ring, pending badge, threat ring
     // and signature flare below.
     sp.cone.clear();
+    const speed = Math.hypot(ghost.vel.x, ghost.vel.y);
+    const warpCruising = !presumedJump
+      && typeof ghost.drive === "object"
+      && "cruising" in ghost.drive
+      && ghost.drive.cruising === "warp"
+      && speed > 0.5;
+    if (warpCruising) {
+      // A small screen-space wake distinguishes active WARP from impulse without
+      // changing the hull, hit target, or faction color. Drive is the RETARDED
+      // served state, so rivals gain no information beyond the motion report
+      // already used by the panel. Fixed-pixel geometry stays readable at every
+      // zoom while a pair of motes flowing aft keeps the effect alive.
+      const ux = Math.cos(angle);
+      const uy = Math.sin(angle);
+      const nx = -uy;
+      const ny = ux;
+      const hull = this.fleetHitRadius(ghost);
+      const start = Math.max(5, hull * 0.42);
+      const length = Math.min(34, 12 + hull * 0.7);
+      const end = start + length;
+      const wing = Math.max(2, hull * 0.16);
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 105);
+      const point = (aft: number, side: number): [number, number] => [
+        -ux * aft + nx * side,
+        -uy * aft + ny * side,
+      ];
+      const [a1x, a1y] = point(start, wing);
+      const [a2x, a2y] = point(start, -wing);
+      const [ex, ey] = point(end, 0);
+      sp.cone.poly([a1x, a1y, a2x, a2y, ex, ey])
+        .fill({ color: COL_WARP_WAKE, alpha: 0.035 + pulse * 0.025 });
+      const [cx, cy] = point(start * 0.72, 0);
+      const [tx, ty] = point(end, 0);
+      sp.cone.moveTo(cx, cy).lineTo(tx, ty)
+        .stroke({ width: 2.2, color: COL_WARP_WAKE, alpha: 0.32 + pulse * 0.18 });
+      const phase = (performance.now() / 420) % 1;
+      for (let i = 0; i < 2; i++) {
+        const t = (phase + i * 0.5) % 1;
+        const aft = start + t * length;
+        const side = (i === 0 ? -1 : 1) * wing * 0.72;
+        const [mx, my] = point(aft, side);
+        const [mtx, mty] = point(Math.min(end, aft + 5), side);
+        sp.cone.moveTo(mx, my).lineTo(mtx, mty)
+          .stroke({ width: 1.1, color: 0xd9f4ff, alpha: 0.3 + pulse * 0.28 });
+      }
+    }
     if (ghost.jump_spool) {
       // This is the RETARDED drive report attached to the visible ghost. Rivals
       // get the same observable charge-up (but never its destination), so a jump
@@ -2744,7 +2855,7 @@ export class Renderer {
       // §TCA: an Authority hull is named, in the Authority's own steel-blue —
       // neutral against both the own and rival palettes. Without this branch it
       // fell through every case and drew NO label at all.
-      txt = `AUTHORITY  ${stale}`;
+      txt = `${ghost.migrant ? "MIGRANT LINER" : "AUTHORITY"}  ${stale}`;
       col = COL_TCA;
       lalpha = 0.9;
     }
@@ -2862,8 +2973,10 @@ export class Renderer {
       // them converge normally until the battle's light arrives. Its participant
       // ids are exactly the ghosts revealed at the site, so this never hides a
       // fleet the icon doesn't represent.
-      const engaged = new Set<string>();
-      for (const b of state.battles) for (const p of b.participants) engaged.add(p);
+      const engaged = new Map<string, Vec2>();
+      for (const b of state.battles) {
+        for (const p of b.participants) engaged.set(p, b.pos);
+      }
       // §dock: BERTHED hulls are not drawn on the star chart. A docked ship
       // belongs to the system view — drawing it here is what buried systems
       // under stacks of overlapping sprites and forced the hit-radius caps
@@ -2880,9 +2993,17 @@ export class Renderer {
       );
       for (const ghost of state.ghosts) {
         this.noteRivalJumpArrival(ghost, state.simTime);
-        if (engaged.has(ghost.id)) {
-          const sp = this.ghosts.get(ghost.id);
-          if (sp) { sp.seen = true; sp.container.visible = false; } // keep pooled, hidden
+        const battlePos = engaged.get(ghost.id);
+        if (battlePos) {
+          // The single battle icon owns every participant's visible position.
+          // Keep the suppressed sprite parked at that SAME player-known point,
+          // so a survivor emerges from the marker rather than reappearing at
+          // the pre-contact cache (often back beside the guarded Freighter).
+          const sp = this.ghostSprite(ghost.id);
+          sp.shown = { ...battlePos };
+          sp.returningFromBattle = true;
+          sp.seen = true;
+          sp.container.visible = false; // keep pooled, hidden
           continue; // not in screenById → no order line either
         }
         const sp0 = this.ghosts.get(ghost.id);

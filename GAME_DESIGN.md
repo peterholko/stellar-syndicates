@@ -390,7 +390,7 @@ phantom response.
 
 ### 6.3 Who sees what
 
-Your command center, Raider pickets, and standing Sensor Arrays stream sensor data continuously,
+Your command center, Raider pickets, Convoys, and standing Sensor Arrays stream sensor data continuously,
 each sample delayed by its straight warp-light distance. **Your own forces** appear as an always-addressable but
 retarded picture. **Rival forces** are present only when their emitted light was detectable
 by one of your assets; dark contacts disappear outside that served coverage.
@@ -433,9 +433,10 @@ formation speed for roughly double the trip time and the corresponding drop in s
 Pursuit is always Full.
 
 **Sensor coverage** is the union of bubbles from your command center, every Raider-bearing
-fleet, and every Sensor Array on a system you own (110,000 su at tier 1, +44,000 per tier
-after). A Scout attached to a Raider fleet preserves its 1.5× range multiplier; a pure
-Scout is reconnaissance, not a free mobile detection buoy. One coverage function feeds all three consumers:
+fleet, every Convoy fleet, and every Sensor Array on a system you own (110,000 su at tier 1,
++44,000 per tier after). A Convoy's local traffic/threat suite reaches 20,000 su (0.25× the
+standard bubble). A Scout attached to a Raider fleet preserves its 1.5× range multiplier;
+a pure Scout is reconnaissance, not a free mobile detection buoy. One coverage function feeds all three consumers:
 the view filter, picket sensing, and the client's rendering.
 
 ### 6.4 The intel ladder
@@ -1025,7 +1026,8 @@ production” uses booked Authority freight, paying the same fee and queue as a 
 A player Convoy's hold is a **mixed manifest under one aggregate capacity**. Dockside loads
 may add or top up any commodity until the fleet's combined hold is full; unloading moves
 every stack, and a haul deposits or sells each stack independently. Storage headroom is
-shared across the manifest, so any overflow stays aboard and continues to the Market Hub.
+shared across the manifest, so overflow on a player hull stays aboard at the destination
+berth and can supply local structure or ship construction directly.
 Fuel cost and valuation count total units, while sensor visibility reveals the complete
 manifest under the existing cargo-intel rule. A successful raid likewise seizes the whole
 mixed manifest rather than silently discarding all but one commodity.
@@ -1250,8 +1252,8 @@ The three remaining non-producing structures:
 - **Orbital Warehouse** raises the system's total storage cap: 700 base, +400 per tier. A
   full system's production *idles* at the cap and resumes when goods ship out. Over-cap
   stockpiles are grandfathered — the cap blocks new inflow only and never destroys what is
-  stored. An inbound delivery fills the headroom and the same convoy carries any excess
-  onward to sell at the hub.
+  stored. An inbound player delivery fills the headroom; any excess stays aboard its docked
+  Freighter and is available to structure or ship construction.
 - **Sensor Array** projects a standing sensor bubble for its owner (§6.3).
 - **Defense Platform** is the priciest development, because fortification is an investment
   (§8.5).
@@ -1301,37 +1303,44 @@ larder would be a death spiral.
 A fresh corporation begins lean: Habitat I, Bioharvester I and Agroplex I; two of its three
 workforce cohorts staff food and one is unassigned. Its Market Warehouse is empty, it has
 2,000 credits, and its only hull is an **Interceptor** (the internal save/wire kind remains
-`raider`). The home stockpile is deliberately a two-step construction kit: 32 Machinery,
-65 Alloys and 15 Electronics build Shipyard I and then Mining Complex I exactly; 60 Fuel is
-the movement runway.
+`raider`). The home stockpile is deliberately a three-project local kit: 42 Machinery,
+90 Alloys, 15 Electronics and 10 Polymers build Shipyard I, Mining Complex I, and one
+Convoy exactly; 60 Fuel is the movement runway. The first market import comes later.
 
 The server-authoritative programme advances in this order:
 
 1. Build Shipyard I.
-2. Take the Interceptor beyond the home gravity well; the step advances only when that
-   crossing report reaches the command center.
-3. Defeat the assigned damaged Rogue Privateer through ordinary combat; its outcome and
-   bounty wait for battle light.
-4. Build Mining Complex I from the remainder of the opening kit.
-5. Freight the bounty kit home and build a Convoy.
-6. Physically haul goods to the Market Hub and sell them; an instant sale of untouched
-   warehouse inventory does not count, and the step waits for the sale receipt's light.
-7. Establish and staff Academy I.
+2. Build and staff Mining Complex I from the next portion of the local kit; the existing
+   Agroplex supplies the other opening export.
+3. Build a Convoy from the final local portion. No market purchase or freight wait interrupts
+   these first three construction lessons.
+4. Load both home-produced Provisions and Metallic Ore, then dispatch the Convoy to the
+   Market Hub with sell-on-arrival enabled.
+5. The founding Convoy's ordinary 20,000-su sensor detects a limping Rogue Privateer
+   converging from well off the trade route. The Interceptor has time to catch this weakest
+   scripted pirate before it reaches the shipment. Its damaged hull lasts long enough to
+   make the battle readable, while its improvised weapons damage a caught Convoy gradually
+   rather than destroying it in an opening burst; the outcome and bounty wait for battle
+   light.
+6. Let the surviving Convoy complete both sales. The step waits until both sale receipts'
+   light reaches the command center.
+7. Buy and import the Academy materials, then establish and staff Academy I.
 8. Choose and complete any Tier-I corporate research programme. A one-time founding grant
    covers its material basket and leaves 12 Academy-minutes of real throughput; Drive
    Tuning, Deep Bores and Med Bays are guide recommendations, not hard gates.
-9. Freight the remaining bounty kit home and build a Scout.
+9. Buy and import the Scout materials, then build it.
 10. Survey both assigned nearby prospects and receive both reports: one population-led,
     one industry-led. Their exact bodies, geology and scored roles remain survey-gated.
 11. Compare the reports, freight the authorized exact Colony Ship kit home, and build it.
     Expansion construction unlocks when the second report arrives.
 12. Physically establish the second holding. Only then is the founding programme complete.
 
-The bounty deposits 65 Alloys, 10 Machinery, 10 Polymers, 31 Electronics, 8 Fuel and 20
-Provisions in the Market Warehouse, plus 750 credits: exactly one Convoy, Academy and Scout
-kit with the first-research reserve. The two survey reports separately authorize one exact
-Colony Ship kit (45 Alloys, 15 Machinery, 20 Polymers, 30 Provisions and 15 Fuel) at the
-Market Warehouse. Founder
+The privateer pays a **4,500-credit bounty** and no goods. The Convoy is locally funded so
+the opening remains active; Academy and Scout materials must then be bought at the market
+and imported, introducing the slower supply chain only after the player has earned the
+money and understands why protected logistics matters.
+The two survey reports separately authorize one exact Colony Ship kit (45 Alloys, 15
+Machinery, 20 Polymers, 30 Provisions and 15 Fuel) at the Market Warehouse. Founder
 Protection blocks corporation-versus-corporation aggression but not PvE. It cannot be
 voluntarily broken until 30 minutes have elapsed and the privateer report has arrived; it
 then remains until that corporation initiates PvP, with a hard 24-hour ceiling. Existing
@@ -1860,9 +1869,10 @@ base itself — a platform-equivalent defense pool of 2 tiers per enclave tier. 
 base lies dormant 600 s and respawns weaker.
 
 The ramp is deliberately Civ-barbarian shaped: a fresh enclave opens with a *lone* bandit and
-only becomes a real pack if ignored. Nothing hunts at all for the first 300 s, and each
+only becomes a real pack if ignored. No ambient enclave hunts for the first 300 s, and each
 corporation gets a 240 s grace window measured from **its own join**, so a latecomer dropping
-into an escalated galaxy gets the same undefended onboarding a founder got. Pirates steal,
+into an escalated galaxy gets the same protection from unscripted piracy. The founding
+programme's single damaged Convoy pursuer is the deliberate tutorial exception. Pirates steal,
 never siege and never capture, so standing defense handles them fully offline, and their loss
 rates are bounded by the same raid caps as players.
 

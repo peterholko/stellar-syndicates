@@ -124,7 +124,7 @@ pub struct StarSystem {
     /// §economy Part 2: the colony's FOOD STATE on the 4-rung ladder (replaces
     /// the old binary `habitat_fed`). Recomputed every tick for owned systems
     /// from stock coverage vs population demand; hunger only SUSPENDS
-    /// (efficiency drops, growth stops) — nothing is destroyed, nobody dies
+    /// (efficiency drops, immigration pauses) — nothing is destroyed, nobody dies
     /// (async-fair). Owner-only in the View. `default` WellSupplied is right
     /// for old snapshots (population defaults 0 = no demand) and corrected on
     /// the first tick regardless; the old `habitat_fed` key is simply ignored.
@@ -370,7 +370,7 @@ impl StarSystem {
     }
 
     /// §bodies: seed `millions` of population onto the system's natural
-    /// habitable body (colony landings, home bootstraps, migration, tests).
+    /// habitable body (colony landings, home bootstraps, save migration, tests).
     pub fn seed_population(&mut self, millions: f64) {
         let Some(target) = self.site_for(crate::build::StructureKind::Habitat) else {
             self.legacy_population += millions; // pre-migration shell
@@ -1080,15 +1080,16 @@ pub fn generate_home_system(
         claim_cost,
         owner: None,
         claimed_at: None,
-        // The reduced founding kit pays for exactly the two opening projects:
-        // Shipyard I (20 Machinery, 40 Alloys, 15 Electronics) and Mining
-        // Complex I (12 Machinery, 25 Alloys). Convoy/Scout materials are earned
-        // from the assigned privateer encounter rather than granted at spawn.
+        // The local founding kit pays exactly for Shipyard I, Mining Complex I,
+        // and the first Convoy. That hull must exist before the guarded-export
+        // lesson, so the player's first market import waits until the privateer
+        // bounty funds an Academy instead of interrupting the opening with freight.
         stockpile: [
             (Commodity::Provisions, crate::colony::HOME_PROVISIONS_SEED),
-            (Commodity::Machinery, 32.0),
-            (Commodity::Alloys, 65.0),
+            (Commodity::Machinery, 42.0),
+            (Commodity::Alloys, 90.0),
             (Commodity::Electronics, 15.0),
+            (Commodity::Polymers, 10.0),
         ]
         .into_iter()
         .collect(),

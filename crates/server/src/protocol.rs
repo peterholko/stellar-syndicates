@@ -23,7 +23,7 @@ use sim::{
 /// surveyed systems now carry authoritative, bounded colony-opportunity cards.
 /// A client seeing an unexpected version can warn the user to refresh; the
 /// server sends it in [`ServerMsg::Welcome`].
-pub const PROTOCOL_VERSION: u32 = 25;
+pub const PROTOCOL_VERSION: u32 = 27;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -71,6 +71,12 @@ pub enum ClientMsg {
     /// Commit one of the player's raiders to intercept a target ship (§8).
     CommitRaid {
         raider_id: EntityId,
+        target_id: EntityId,
+    },
+
+    /// Assign a dedicated Interceptor to shadow and defend another owned fleet.
+    GuardFleet {
+        interceptor_id: EntityId,
         target_id: EntityId,
     },
 
@@ -126,6 +132,12 @@ pub enum ClientMsg {
         fleet_id: EntityId,
         #[serde(default)]
         sell_on_arrival: bool,
+    },
+    /// Send a loaded player freighter from its Hub berth to an owned system;
+    /// its mixed manifest unloads into that system on arrival.
+    HaulToSystem {
+        fleet_id: EntityId,
+        system: EntityId,
     },
 
     /// §TCA Phase 2: buy charter standing back from the Authority (credits burned,
@@ -249,6 +261,21 @@ pub enum ClientMsg {
         /// §bodies: the body whose line this staffs; omitted targets the holder.
         #[serde(default)]
         body_id: Option<u32>,
+    },
+
+    /// Owner-only civilian immigration policy for one inhabited body.
+    SetMigrationPolicy {
+        system_id: EntityId,
+        body_id: u32,
+        policy: sim::MigrationPolicy,
+    },
+
+    /// Relocate one physical workforce cohort between owned colonies.
+    RelocateMigrants {
+        from_system: EntityId,
+        from_body: u32,
+        to_system: EntityId,
+        to_body: u32,
     },
 
     /// §economy Part 4: sign a Sol specialist contract — credits now, a
@@ -579,6 +606,9 @@ pub struct FoundingView {
     pub interceptor: Option<EntityId>,
     pub privateer: Option<EntityId>,
     pub bounty_received: bool,
+    /// Opening exports whose sale receipts have reached the command center.
+    /// Market-Hub truth stays hidden until the ordinary receipt light arrives.
+    pub opening_exports: Vec<Commodity>,
     /// The two nearby prospects assigned to the opening survey chapter. Their
     /// ids are objectives, not survey results: composition/geology still arrive
     /// only through the ordinary served system picture.
@@ -850,13 +880,15 @@ pub struct GalaxyInfo {
     pub jump_range: f64,
     pub jump_spool_s: f64,
     pub hyperlimit: f64,
-    /// Base detection radius of the command center and Raider pickets.
+    /// Full detection radius of the command center and Raider pickets.
     pub sensor_range: f64,
     /// Raider cruise speed (sim units / s) — lets the client compute a CRUDE,
     /// drifting intercept estimate for a committed raid (rendered as a soft zone).
     pub raider_speed: f64,
     /// Multiplier when a Scout accompanies a Raider-bearing sensor fleet.
     pub scout_sensor_mult: f64,
+    /// Short-range multiplier for a Convoy's traffic/threat sensor.
+    pub convoy_sensor_mult: f64,
     /// Sensor-array bubble tunables (§buildings step 2b): a tier-N array projects
     /// `base + per_tier · (N−1)` — lets the client draw its own arrays' coverage.
     pub sensor_array_base: f64,
@@ -865,11 +897,16 @@ pub struct GalaxyInfo {
     /// draw a subtle ring on the OWNER's own defended systems.
     pub defense_platform_radius: f64,
     /// §economy Part 2 colony tunables — for the owner-only colony readout:
-    /// Provisions/s eaten per million population, population capacity per
-    /// Habitat tier (millions), and growth (millions/s while Well Supplied).
+    /// Provisions/s eaten per million population and population capacity per
+    /// Habitat tier (millions). `pop_growth_per_s` is retained at zero for
+    /// rolling-wire compatibility; demographic growth is physical migration.
     pub provisions_per_million_per_s: f64,
     pub pop_cap_per_habitat_tier: f64,
     pub pop_growth_per_s: f64,
+    /// Physical immigration tunables: people per liner and the corporation's
+    /// base interval between Hub allocations before appeal/research modifiers.
+    pub migrant_cohort_people: u32,
+    pub migration_base_interval_s: f64,
     /// §economy Part 6: Sol's standing specialist contract price (credits) —
     /// for the hire panel.
     pub specialist_hire_cost: f64,
@@ -1413,6 +1450,10 @@ pub struct BodyView {
     pub structures: BTreeMap<String, u32>,
     /// OWNER-ONLY: population on this body (millions); 0 for rivals.
     pub population: f64,
+    /// OWNER-ONLY civilian immigration policy; rivals receive `closed`.
+    pub migration_policy: sim::MigrationPolicy,
+    /// OWNER-ONLY people already aboard liners bound here; 0 for rivals.
+    pub inbound_migrants: u32,
 }
 
 /// §economy Part 6: a colony's workforce numbers — owner-only.
@@ -1978,6 +2019,11 @@ pub struct GhostView {
     /// yours. (Current-state like `docked`, with the same staleness caveat.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<Vec<PathPointView>>,
+    /// Owner-only, light-delayed identity of the fleet this Interceptor is
+    /// guarding. It is sampled with `path`, so assignment compliance never
+    /// appears before the served fleet picture reaches it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard_target: Option<EntityId>,
     /// §emplacements: OWN fleets only — the timed job this hull is holding
     /// station to finish (raising a structure, or tearing a rival's down) and
     /// how far along it is. Absent when it is doing neither. Rivals never get
@@ -2065,6 +2111,10 @@ pub struct GhostView {
     /// common carrier. Drives its own neutral tint, distinct from a corp convoy.
     #[serde(default)]
     pub tca: bool,
+    /// This Authority hull is a civilian migrant liner rather than commodity
+    /// freight. Identity is sampled with the track and remains light-delayed.
+    #[serde(default)]
+    pub migrant: bool,
     /// §TCA: the freighter's MANIFEST as this viewer may read it — their own lots
     /// always, everyone else's only from inside sensor range. Empty for any other
     /// fleet, and empty for a freighter a distant rival is merely watching.

@@ -131,7 +131,8 @@ impl SimConfig {
             system_count: 12 + player_count * 4,
             // Local sensor bubbles are 80,000 su (20% of a four-player galaxy
             // radius): coverage remains islands around the command center and
-            // Raider pickets, leaving meaningful blind space between homes.
+            // Raider pickets. Convoys carry only a 0.25× local traffic sensor,
+            // leaving meaningful blind space between homes.
             // Expressed through GALAXY_SCALE to preserve the chart-unit convention;
             // system-scale constants (docking, hyperlimit, claim) do not scale.
             sensor_range: 1600.0 * crate::config::GALAXY_SCALE,

@@ -307,10 +307,18 @@ pub struct Body {
     /// on several bodies of one system now.
     #[serde(default)]
     pub structures: BTreeMap<crate::build::StructureKind, u32>,
-    /// Population living on THIS body (in its Habitats). Grows per body
-    /// toward this body's habitat capacity; NEVER decreases (async-fair).
+    /// Population living on THIS body (in its Habitats). It changes through
+    /// physical founding/migrant arrivals rather than appearing every tick.
     #[serde(default)]
     pub population: f64,
+    /// Owner policy for Authority immigration into this body. `Managed` is the
+    /// safe default: fill posted jobs, but do not blindly fill every Habitat.
+    #[serde(default)]
+    pub migration_policy: crate::migration::MigrationPolicy,
+    /// People already allocated to physical liners bound for this body. Stored
+    /// beside population so capacity reservations survive snapshots.
+    #[serde(default)]
+    pub inbound_migrants: u32,
     /// Production assignments on THIS body's structures. Staffing draws the
     /// SHARED system workforce pool (labor commutes inside the well).
     #[serde(default)]
@@ -488,6 +496,8 @@ impl Body {
         self.profile.size.habitat_capacity_mult() * self.profile.environment.habitat_capacity_mult()
     }
 
+    /// Natural environment's appeal to prospective migrants. Kept under the
+    /// historical method name for wire compatibility with rolling clients.
     pub fn population_growth_mult(&self) -> f64 {
         self.profile.environment.growth_mult()
     }
@@ -835,6 +845,8 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
             deposits: std::mem::take(&mut p.deposits),
             structures: BTreeMap::new(),
             population: 0.0,
+            migration_policy: Default::default(),
+            inbound_migrants: 0,
             assignments: BTreeMap::new(),
         });
         for (k, m) in p.moons.iter_mut().enumerate() {
@@ -855,6 +867,8 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
             deposits: deps,
             structures: BTreeMap::new(),
             population: 0.0,
+            migration_policy: Default::default(),
+            inbound_migrants: 0,
             assignments: BTreeMap::new(),
         });
         next_id += 1;
@@ -961,6 +975,8 @@ mod tests {
             deposits: vec![dep(Commodity::MetallicOre, 0.4)],
             structures: BTreeMap::new(),
             population: 0.0,
+            migration_policy: Default::default(),
+            inbound_migrants: 0,
             assignments: BTreeMap::new(),
         };
         assert_eq!(b.resource_slots(), 1);
@@ -998,6 +1014,8 @@ mod tests {
             deposits: vec![],
             structures: BTreeMap::new(),
             population: 0.0,
+            migration_policy: Default::default(),
+            inbound_migrants: 0,
             assignments: BTreeMap::new(),
         };
         assert_eq!(
@@ -1037,6 +1055,8 @@ mod tests {
             deposits: vec![dep(Commodity::MetallicOre, 0.4)],
             structures: BTreeMap::new(),
             population: 0.0,
+            migration_policy: Default::default(),
+            inbound_migrants: 0,
             assignments: BTreeMap::new(),
         };
         let mut found = None;
@@ -1087,6 +1107,8 @@ mod tests {
             deposits: vec![dep(Commodity::MetallicOre, 0.4)],
             structures: BTreeMap::new(),
             population: 0.0,
+            migration_policy: Default::default(),
+            inbound_migrants: 0,
             assignments: BTreeMap::new(),
         };
         assert!((b.habitat_capacity_mult() - 2.25).abs() < 1e-9);

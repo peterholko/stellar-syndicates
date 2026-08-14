@@ -53,6 +53,15 @@ pub enum Command {
         target_id: EntityId,
     },
 
+    /// Assign one of the player's dedicated Interceptor fleets to guard another
+    /// owned fleet. The standing order is light-delayed like movement and raid
+    /// commands; once delivered, local defensive reactions need no CC round trip.
+    GuardFleet {
+        player_id: PlayerId,
+        interceptor_id: EntityId,
+        target_id: EntityId,
+    },
+
     /// Recall a raider (break off, return home). Also light-delayed — it may
     /// arrive too late to matter ("commanding into the past").
     RecallRaid {
@@ -433,6 +442,27 @@ pub enum Command {
         specialists: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32>,
     },
 
+    /// Set one body's civilian immigration policy. This is private local
+    /// administration; it schedules future physical liners but never teleports
+    /// people or recalls a liner already under way.
+    SetMigrationPolicy {
+        player_id: PlayerId,
+        system_id: EntityId,
+        body_id: u32,
+        policy: crate::migration::MigrationPolicy,
+    },
+
+    /// Move one 1,000-person cohort between two owned inhabited bodies. The
+    /// source is debited when the liner departs; the destination is credited
+    /// only on physical arrival.
+    RelocateMigrants {
+        player_id: PlayerId,
+        from_system: EntityId,
+        from_body: u32,
+        to_system: EntityId,
+        to_body: u32,
+    },
+
     /// §economy Part 4: sign a Sol SPECIALIST CONTRACT — `SPECIALIST_HIRE_COST`
     /// credits debited instantly (price-certain), then a personnel convoy
     /// spawns at the hub carrying the specialist to `dest_system`
@@ -526,6 +556,15 @@ pub enum Command {
         fleet_id: EntityId,
         #[serde(default)]
         sell_on_arrival: bool,
+    },
+
+    /// HAUL BACK TO A SYSTEM: send a loaded player fleet from its Market Hub
+    /// berth to an owned system. The existing `DeliverToSystem` mission unloads
+    /// the mixed manifest on arrival and leaves the hull idle at that berth.
+    HaulToSystem {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        system: EntityId,
     },
 
     /// §TCA Phase 2: PAY REINSTATEMENT — buy charter standing back from the

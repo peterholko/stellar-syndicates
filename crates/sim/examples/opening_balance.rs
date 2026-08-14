@@ -276,10 +276,11 @@ fn run(seed: u64, strategy: Strategy) -> Result<String, String> {
         .home_system
         .expect("new corp has home");
 
-    // Deterministic post-sale baseline. The earlier chapter already consumed
-    // the starter kit on Shipyard I + Mining Complex I and consumed the Convoy
-    // portion of the privateer bounty. The remaining lots are exactly Academy,
-    // Scout, and the first programme's Electronics.
+    // Deterministic post-import baseline. The earlier chapter consumed the
+    // starter kit on Shipyard I + Mining Complex I, exported both opening goods,
+    // then spent part of the privateer credits on Convoy, Academy, and Scout
+    // materials. The example starts after that market/freight lesson so it can
+    // measure the slower research-and-expansion portion of the opening.
     {
         let system = world
             .systems
@@ -305,7 +306,15 @@ fn run(seed: u64, strategy: Strategy) -> Result<String, String> {
         .into_iter()
         .collect();
         corp.founding.reward_granted = true;
-        corp.founding.market_haul_completed = true;
+        corp.founding.opening_export_reports = [
+            (Commodity::Provisions, world.time),
+            (Commodity::MetallicOre, world.time),
+        ]
+        .into_iter()
+        .collect();
+        corp.founding.opening_export_deliveries = [Commodity::Provisions, Commodity::MetallicOre]
+            .into_iter()
+            .collect();
         corp.founding.sale_report_at = Some(world.time);
         corp.founding
             .set_stage(FoundingStage::BuildAcademy, world.time);

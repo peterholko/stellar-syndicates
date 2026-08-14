@@ -167,7 +167,12 @@ export interface BodyView {
   deposits: Deposit[] | null;
   structures: Record<string, number>;
   population: number;
+  /// Owner-only immigration state. Rivals receive `closed` and zero inbound.
+  migration_policy: MigrationPolicy;
+  inbound_migrants: number;
 }
+
+export type MigrationPolicy = "closed" | "managed" | "open" | "priority";
 
 export interface ColonyOpportunityView {
   role: "population_world" | "mining_world" | "fuel_complex" | "electronics_center" | "agricultural_exporter" | "shipbuilding_center" | "strategic_outpost";
@@ -371,10 +376,12 @@ export interface GalaxyInfo {
   jump_range: number; // maximum point-to-point jump distance (su)
   jump_spool_s: number; // uninterrupted spool before instantaneous relocation
   hyperlimit: number; // gravity-well exclusion radius at both jump endpoints
-  sensor_range: number; // base detection radius of the command center / Raider pickets
+  sensor_range: number; // full detection radius of the command center / Raider pickets
   raider_speed: number; // raider cruise speed — for the crude intercept estimate
   /// Multiplier when a Scout accompanies a Raider-bearing sensor fleet.
   scout_sensor_mult: number;
+  /// Short-range traffic/threat sensor carried by Convoys.
+  convoy_sensor_mult: number;
   /// Sensor-array bubble tunables (§buildings step 2b): a tier-N array projects
   /// base + per_tier·(N−1) — for drawing our own arrays' coverage.
   sensor_array_base: number;
@@ -382,12 +389,14 @@ export interface GalaxyInfo {
   /// Defense Platform protection radius (§buildings step 2c) — for the subtle
   /// ring on our OWN defended systems (owner-only by construction).
   defense_platform_radius: number;
-  /// §economy Part 2 colony tunables: Provisions/s eaten per million
-  /// population; capacity (millions) per Habitat tier; growth (millions/s
-  /// while Well Supplied) — for the owner-only colony readout.
+  /// §economy Part 2 colony tunables: Provisions/s eaten per million and
+  /// capacity (millions) per Habitat tier. pop_growth_per_s remains zero on
+  /// the rolling wire; post-founding population arrives on migrant liners.
   provisions_per_million_per_s: number;
   pop_cap_per_habitat_tier: number;
   pop_growth_per_s: number;
+  migrant_cohort_people: number;
+  migration_base_interval_s: number;
   /// Sol's standing specialist contract price (credits) — the hire panel.
   specialist_hire_cost: number;
   /// §economy Part 3: Fuel Refinery converter rate — Fuel/s at tier-throughput
@@ -546,7 +555,7 @@ export type TradeEvent =
   | { event: "StockDispatched"; player: PlayerId; commodity: Commodity; units: number; system: EntityId }
   | { event: "Rejected"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null; reason: TradeRejectReason }
   | { event: "FreightBooked"; player: PlayerId; system: EntityId; commodity: Commodity; units: number; direction: ShipmentDir; fee: number; depart_at: number; eta: number }
-  | { event: "FreightMoved"; player: PlayerId; system: EntityId; commodity: Commodity; units: number; stage: FreightStage }
+  | { event: "FreightMoved"; player: PlayerId; system: EntityId; commodity: Commodity; units: number; remaining?: number; stage: FreightStage }
   | { event: "Loaded"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null }
   | { event: "Unloaded"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null }
   | { event: "CharterReinstated"; player: PlayerId; points: number; cost: number; before: number; after: number };
@@ -849,6 +858,8 @@ export interface GhostView {
   route: Vec2[] | null;
   /// §course-plan: own fleets only — the remaining legs the sim is flying.
   path?: PathPointView[] | null;
+  /** Owner-only, served identity of the fleet this Interceptor is guarding. */
+  guard_target?: EntityId | null;
   /// §emplacements: own fleets only — the timed job this hull is holding
   /// station to finish (raising a structure, or wrecking a rival's) and how far
   /// along it is. Absent when neither. Drives the progress bar and the order
@@ -903,6 +914,8 @@ export interface GhostView {
   /// §TCA: a Terran Charter Authority FREIGHTER — the scheduled common carrier.
   /// Drives its own neutral tint, distinct from a corporation's convoy.
   tca?: boolean;
+  /// Authority passenger service carrying one physical migrant cohort.
+  migrant?: boolean;
   /// §TCA: the freighter's manifest as YOU may read it — your own lots always,
   /// anyone else's only from inside sensor range. Empty for any other fleet.
   manifest?: ManifestEntryView[];
@@ -955,6 +968,7 @@ export type ClientMsg =
   /// §emplacements: send a COMBATANT fleet to tear down a rival's structure.
   | { type: "DemolishEmplacement"; fleet: EntityId; target: EntityId }
   | { type: "CommitRaid"; raider_id: EntityId; target_id: EntityId }
+  | { type: "GuardFleet"; interceptor_id: EntityId; target_id: EntityId }
   | { type: "RecallRaid"; raider_id: EntityId }
   | { type: "MarketBuy"; commodity: Commodity; units: number; max_unit_price?: number | null; ship_to?: EntityId | null }
   // §TCA: book Authority freight, and the player-convoy logistics verbs.
@@ -965,6 +979,7 @@ export type ClientMsg =
   | { type: "SystemLoad"; fleet_id: EntityId; system: EntityId; commodity: Commodity; units: number }
   | { type: "SystemUnload"; fleet_id: EntityId; system: EntityId }
   | { type: "HaulToMarketHub"; fleet_id: EntityId; sell_on_arrival: boolean }
+  | { type: "HaulToSystem"; fleet_id: EntityId; system: EntityId }
   | { type: "SetEngageFreight"; fleet_id: EntityId; on: boolean }
   | { type: "PayReinstatement"; points: number }
   | { type: "MarketSell"; commodity: Commodity; units: number; min_unit_price?: number | null }
@@ -992,6 +1007,8 @@ export type ClientMsg =
   // §economy: the 16 structure slugs (the server accepts legacy slugs via alias).
   | { type: "DevelopSystem"; system_id: EntityId; upgrade: string; body_id?: number }
   | { type: "SetAssignment"; system_id: EntityId; structure: string; workers: number; specialists?: Record<string, number>; body_id?: number }
+  | { type: "SetMigrationPolicy"; system_id: EntityId; body_id: number; policy: MigrationPolicy }
+  | { type: "RelocateMigrants"; from_system: EntityId; from_body: number; to_system: EntityId; to_body: number }
   | { type: "HireSpecialist"; specialist: string; dest_system: EntityId }
   | { type: "TrainSpecialist"; system_id: EntityId; specialist: string }
   | { type: "TransferSpecialists"; from: EntityId; to: EntityId; manifest: Record<string, number> }
@@ -1297,7 +1314,7 @@ export interface LossRange {
 }
 
 // §order-lifecycle: the flavor of a light-delayed order (mirrors sim OrderKind).
-export type OrderKind = "move" | "jump" | "construct" | "demolish" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey";
+export type OrderKind = "move" | "jump" | "construct" | "demolish" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey" | "guard";
 
 // §battles-take-time: an ongoing battle as this player perceives it, light-gated.
 // ONE battle entity = ONE map icon at `pos`; `participants` are the fleet ids
@@ -1454,11 +1471,11 @@ export interface PendingOrderView {
 
 export type FoundingStage =
   | "build_shipyard"
-  | "leave_home_well"
-  | "defeat_privateer"
   | "build_mine"
   | "build_convoy"
-  | "first_sale"
+  | "export_production"
+  | "defeat_privateer"
+  | "complete_export"
   | "build_academy"
   | "first_research"
   | "build_scout"
@@ -1476,6 +1493,8 @@ export interface FoundingView {
   interceptor?: EntityId | null;
   privateer?: EntityId | null;
   bounty_received: boolean;
+  /** Opening export receipts that have reached the command center. */
+  opening_exports: Commodity[];
   /** Assigned prospects only; their economic details remain survey-gated. */
   survey_candidates: EntityId[];
 }

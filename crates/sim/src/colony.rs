@@ -1,12 +1,12 @@
 //! §economy Part 2 — COLONY LIFE: population, workforce, and the food-state
 //! ladder. This replaces the old binary Habitat fed/unfed boost with a colony
-//! that EATS (Provisions ∝ population), GROWS (toward Habitat capacity, only
-//! while well-supplied), and STAFFS industry (workforce units for Part 3's
-//! production assignments).
+//! that EATS (Provisions ∝ population), receives physical MIGRANT LINERS, and
+//! STAFFS industry (workforce units for Part 3's production assignments).
 //!
-//! The one law above all tunables: POPULATION NEVER DECREASES. Famine walks
-//! the food ladder down and freezes growth — it never kills. A returning
-//! player finds their colony hungry and idle, exactly as big as they left it
+//! The one law above all tunables: SHORTAGES NEVER KILL POPULATION. Famine
+//! walks the food ladder down and suspends work; demographic numbers change
+//! only when a physical passenger hull departs, arrives, or is lost. A
+//! returning player finds a hungry colony idle rather than silently erased
 //! (§5.1 async-fair: shortages SUSPEND, they never destroy).
 
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum FoodState {
     /// The stockpile is EMPTY. Part 3 suspends everything but raw extraction
-    /// and defenses. Growth stops. Nobody dies — ever.
+    /// and defenses. Immigration pauses. Nobody dies from a shortage — ever.
     NoProvisions,
     /// Hand-to-mouth (under `FOOD_RATIONING_S` seconds of stock). Workforce at
     /// half efficiency; Part 3 also suspends ADVANCED-tier assignments.
@@ -29,7 +29,7 @@ pub enum FoodState {
     /// A thin buffer (under `FOOD_WELL_S` seconds of stock). Mild drag.
     Rationing,
     /// Comfortable stock (≥ `FOOD_WELL_S` seconds of demand). Full efficiency,
-    /// and the ONLY state in which population grows. Also the vacuous state of
+    /// and a prerequisite for new migrant allocations. Also the vacuous state of
     /// a colony with no population (no demand = no problem) — the `default`,
     /// so pre-economy snapshots load as untroubled.
     #[default]
@@ -79,15 +79,16 @@ impl FoodState {
 /// Tunable.
 pub const PROVISIONS_PER_MILLION_PER_S: f64 = 40.0;
 
-// --- CAPACITY + GROWTH ------------------------------------------------------
+// --- CAPACITY ---------------------------------------------------------------
 
 /// Population capacity (millions) per Habitat tier. One tier houses 25,000
 /// people; the value remains expressed in millions on the simulation wire.
 pub const POP_CAP_PER_HABITAT_TIER: f64 = 0.025;
 
-/// Population growth (millions/second) while Well Supplied and under capacity:
-/// one person per second. Linear and flat, with no compounding surprises.
-pub const POP_GROWTH_PER_S: f64 = 0.000_001;
+/// Retained on the rolling wire for old clients. Population no longer grows in
+/// the production tick; physical migrant liners are the sole post-founding
+/// inflow, so the honest legacy rate is zero.
+pub const POP_GROWTH_PER_S: f64 = 0.0;
 
 /// A colony ship plants one 1,000-person workforce cohort.
 pub const COLONY_FOUNDING_POP: f64 = 0.001;

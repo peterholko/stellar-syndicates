@@ -39,9 +39,9 @@ pub const PIRATE_DEFENSE_PER_TIER: u32 = 2;
 /// PvP counter-triangle) untouched — this scales the PIRATE pack, not the hull.
 pub const PIRATE_PACK_PER_TIER: u32 = 1;
 /// Seconds before an enclave launches its FIRST-EVER pack (seeded at generation).
-/// Deliberately long: nothing hunts the galaxy during the opening minutes, so a
-/// founding corp's first convoys reach the hub unmolested. The steady 90 s cadence
-/// (`PIRATE_LAUNCH_PERIOD`) only takes over after this initial delay.
+/// Deliberately long: no AMBIENT enclave hunts the galaxy during the opening
+/// minutes. The founding programme owns its one damaged, scripted Convoy threat;
+/// the steady 90 s cadence only takes over after this initial delay.
 pub const PIRATE_FIRST_LAUNCH_SECS: f64 = 300.0;
 /// NEW-PLAYER GRACE: a corp's convoys are invisible to pirate hunting
 /// for this long after the corp JOINS (keyed on `Corporation.joined_tick`, not

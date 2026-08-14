@@ -464,7 +464,7 @@ impl Timeline {
                     if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
                         let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         self.push(*owner, observe, TimelineSeverity::Bad, format!(
-                            "{name} is under BLOCKADE — a rival fleet holds station; convoys in and out are cut off. Break the blockade (relief, a new defense tier) to restore your supply lines."
+                            "{name} is under BLOCKADE — a rival fleet holds station; freighters in and out are cut off. Break the blockade (relief, a new defense tier) to restore your supply lines."
                         ));
                     }
                     self.push(*by, e.time, TimelineSeverity::Good, format!(
@@ -1251,7 +1251,7 @@ fn fleet_label(world: &World, id: sim::EntityId) -> String {
         Some(f) => {
             let k = match f.flagship_kind() {
                 sim::ShipKind::Builder => "construction ship",
-                sim::ShipKind::Convoy => "convoy",
+                sim::ShipKind::Convoy => "freighter",
                 sim::ShipKind::Raider => "interceptor",
                 sim::ShipKind::Corvette => "corvette",
                 sim::ShipKind::Colony => "colony",
@@ -1290,7 +1290,7 @@ fn build_label(what: sim::BuildKind) -> &'static str {
         } => "a Construction Ship",
         sim::BuildKind::Ship {
             ship: sim::ShipKind::Convoy,
-        } => "a Convoy",
+        } => "a Freighter",
         sim::BuildKind::Ship {
             ship: sim::ShipKind::Raider,
         } => "an Interceptor",
@@ -1350,7 +1350,7 @@ fn build_label(what: sim::BuildKind) -> &'static str {
 fn kind_word(k: ShipKind) -> &'static str {
     match k {
         ShipKind::Builder => "construction ship",
-        ShipKind::Convoy => "convoy",
+        ShipKind::Convoy => "freighter",
         ShipKind::Raider => "interceptor",
         ShipKind::Corvette => "corvette",
         ShipKind::Colony => "colony ship",
@@ -1544,7 +1544,7 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                 ),
                 sim::TradeRejectReason::NoCargoRoom { capacity } if capacity == 0 => (
                     Warn,
-                    format!("That fleet has no cargo hold — only convoys haul goods (tried {units} {com})."),
+                    format!("That fleet has no cargo hold — only freighters haul goods (tried {units} {com})."),
                 ),
                 sim::TradeRejectReason::NoCargoRoom { capacity } => (
                     Warn,
@@ -1658,6 +1658,7 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
         TradeEvent::FreightMoved {
             commodity,
             units,
+            remaining,
             system,
             stage,
             ..
@@ -1667,6 +1668,12 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
             match stage {
                 sim::FreightStage::Departed => return None,
                 sim::FreightStage::CollectedForPickup => return None,
+                sim::FreightStage::DeliveredToSystem if remaining > 0 => (
+                    Warn,
+                    format!(
+                        "Authority freight delivered {units} {com} to {name}; storage was full, so {remaining} remains aboard for return to your Market Warehouse."
+                    ),
+                ),
                 sim::FreightStage::DeliveredToSystem => (
                     Good,
                     format!("Authority freight delivered {units} {com} to {name}."),
@@ -1758,7 +1765,7 @@ fn raid_entry(
             if i_attack {
                 (Info, "Your quarry escaped to the hub.".to_string())
             } else {
-                (Good, "Your convoy reached the hub safely.".to_string())
+                (Good, "Your freighter reached the hub safely.".to_string())
             }
         }
     }

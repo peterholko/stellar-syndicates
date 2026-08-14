@@ -142,11 +142,10 @@ struct Track {
     /// exact count the `count_class` bucket exists to hide. Gated on coverage
     /// exactly like `composition`.
     damage_frac: f64,
-    /// §dock: WHERE this fleet is berthed, if it is. Sampled per tick like any
-    /// other track state, so a light-delayed sighting reports the dock as it was
-    /// when the light left — a fleet you see berthed may have sailed since,
-    /// exactly like everything else on this track.
-    docked: Option<sim::DockSite>,
+    /// §dock: berth transitions by emission time. This must follow the served
+    /// sample, not current truth: the marker, Docked label, and cargo controls
+    /// are one picture and must arrive on one wavefront.
+    docks: VecDeque<(f64, Option<sim::DockSite>)>,
     /// §emplacements: the timed job this hull is holding station to finish, or
     /// `None`. Served OWN-ONLY (like `path`): a rival must not learn what a
     /// parked hull is working on from its ghost.
@@ -160,6 +159,10 @@ struct Track {
     job: Option<crate::protocol::JobView>,
     /// The fleet's direct flight plans in force at each retarded sighting.
     plans: VecDeque<(f64, Vec<Vec2>)>,
+    /// The named charge of a direct Guard order in force at each sighting.
+    /// Separate from `plans`: the target identity drives panel copy while the
+    /// served target position drives only the map line.
+    guards: VecDeque<(f64, Option<EntityId>)>,
     /// Ordered oldest→newest.
     samples: VecDeque<Sample>,
     /// Last sim time this track was updated (for pruning dead ships).
@@ -191,6 +194,10 @@ struct Track {
     /// viewer keeps seeing its ghost until the light of the departure reaches their
     /// command center (§6).
     gone: Option<(f64, Vec2)>,
+    /// Stable role identity for an Authority passenger hull. Latched on first
+    /// record so its retarded ghost does not turn back into commodity freight
+    /// when the true-space run lands and is retired.
+    migrant: bool,
 }
 
 /// §node regional effects for the DARK-fleet view — computed by the game loop
@@ -390,16 +397,19 @@ impl PositionHistory {
                     modules: Default::default(),
                     route: None,
                     gone: None,
+                    migrant: world.migrant_runs.contains_key(id),
                     damage_frac: 0.0,
-                    docked: None,
+                    docks: VecDeque::new(),
                     job: None,
                     plans: VecDeque::new(),
+                    guards: VecDeque::new(),
                 }),
             };
             if track.owner != ship.owner {
                 track.owner_name = owner_name(ship.owner);
             }
             track.owner = ship.owner;
+            track.migrant |= world.migrant_runs.contains_key(id);
             let captain = world
                 .players
                 .get(&ship.owner)
@@ -422,7 +432,10 @@ impl PositionHistory {
             track.max_speed = ship.max_speed();
             track.count_class = ship.count_class();
             track.damage_frac = ship.damage_fraction();
-            track.docked = world.dock_of(*id);
+            let docked = world.dock_of(*id);
+            if track.docks.back().is_none_or(|(_, previous)| *previous != docked) {
+                track.docks.push_back((now, docked));
+            }
             use crate::protocol::{JobKind, JobView};
             let frac = |t0: f64, secs: f64| {
                 if secs > 0.0 {
@@ -475,6 +488,16 @@ impl PositionHistory {
             }
             while track.plans.len() > 1 && track.plans[1].0 <= now - self.horizon {
                 track.plans.pop_front();
+            }
+            let guard = match ship.order {
+                sim::ship::FleetOrder::Guard { target } => Some(target),
+                _ => None,
+            };
+            if track.guards.back().is_none_or(|(_, previous)| *previous != guard) {
+                track.guards.push_back((now, guard));
+            }
+            while track.guards.len() > 1 && track.guards[1].0 <= now - self.horizon {
+                track.guards.pop_front();
             }
             track.last_seen = now;
             track.cargo = ship.cargo_stacks();
@@ -581,7 +604,7 @@ impl PositionHistory {
     ///   a broadcaster's manifest becomes exact only inside coverage.
     ///
     /// Sensor coverage is the union of `sensor_range` circles around the
-    /// player's command center and Raider-bearing fleets, taken at their
+    /// player's command center and sensor-projecting fleets, taken at their
     /// **observed (delayed) positions**, plus standing arrays.
     /// Detection therefore happens in the command center's delayed composite
     /// frame, using only light that has arrived: a raider is detected exactly
@@ -604,7 +627,7 @@ impl PositionHistory {
     }
 
     /// §emplacements: the viewer's SENSOR COVERAGE as `(center, radius)` sources
-    /// — their command center, their Raider fleets' bubbles at the RETARDED
+    /// — their command center, their mobile bubbles at the RETARDED
     /// positions their light shows, and any standing arrays.
     ///
     /// This is the same union `view_for_with_arrays` builds for dark-fleet
@@ -712,6 +735,7 @@ impl PositionHistory {
             /// §emplacements: build progress (served own-only).
             job: Option<crate::protocol::JobView>,
             path: Vec<Vec2>,
+            guard_target: Option<EntityId>,
             composition: &'a BTreeMap<ShipKind, u32>,
             loadouts:
                 &'a std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>,
@@ -727,6 +751,7 @@ impl PositionHistory {
             /// thereby reveal — the kill before its light arrives (§6). Never set
             /// for a raider that was never detected, so it can't conjure existence.
             destroyed_detected: bool,
+            migrant: bool,
         }
         let mut pre = Vec::new();
         // Coverage as (center, radius) sources: the command center + own Raider
@@ -789,7 +814,12 @@ impl PositionHistory {
                 max_speed: track.max_speed,
                 count_class: track.count_class,
                 damage_frac: track.damage_frac,
-                docked: track.docked,
+                docked: track
+                    .docks
+                    .iter()
+                    .rev()
+                    .find(|(emitted, _)| *emitted <= sample.time + 1e-9)
+                    .and_then(|(_, dock)| *dock),
                 job: track.job,
                 path: track
                     .plans
@@ -798,6 +828,12 @@ impl PositionHistory {
                     .find(|(t, _)| *t <= sample.time)
                     .map(|(_, p)| p.clone())
                     .unwrap_or_default(),
+                guard_target: track
+                    .guards
+                    .iter()
+                    .rev()
+                    .find(|(t, _)| *t <= sample.time)
+                    .and_then(|(_, target)| *target),
                 composition: &track.composition,
                 loadouts: &track.loadouts,
                 sample,
@@ -806,6 +842,7 @@ impl PositionHistory {
                 modules: &track.modules,
                 route: &track.route,
                 destroyed_detected,
+                migrant: track.migrant,
             });
         }
 
@@ -1004,6 +1041,7 @@ impl PositionHistory {
                         .map(|pos| crate::protocol::PathPointView { pos: *pos })
                         .collect()
                 }),
+                guard_target: own.then_some(p.guard_target).flatten(),
                 drive: Some(p.sample.drive),
                 jump_spool: p.sample.jump_spool.map(|(started, waiting_for_fuel, spool_secs)| {
                     crate::protocol::JumpSpoolView {
@@ -1085,6 +1123,7 @@ impl PositionHistory {
                 // loop from authoritative freight state (this history-only view
                 // can't see runs); `revealed` is the Tier-2 gate it needs.
                 tca: p.owner.is_tca(),
+                migrant: p.migrant,
                 manifest: Vec::new(),
                 revealed: detected,
                 engage_freight: None,
@@ -1484,6 +1523,12 @@ pub fn filter_systems(
                                 Default::default()
                             },
                             population: if own { b.population } else { 0.0 },
+                            migration_policy: if own {
+                                b.migration_policy
+                            } else {
+                                sim::MigrationPolicy::Closed
+                            },
+                            inbound_migrants: if own { b.inbound_migrants } else { 0 },
                         }
                     })
                     .collect(),
@@ -2363,6 +2408,11 @@ fn order_path(order: &FleetOrder, _pos: Vec2) -> Vec<Vec2> {
         | FleetOrder::Demolish { site, .. }
         | FleetOrder::Blockade { station: site, .. }
         | FleetOrder::Survey { station: site, .. } => vec![*site],
+        // A moving guard charge has no fixed flight plan. Its served identity
+        // is carried separately and the client joins the two served ghosts;
+        // recording its true position as a "plan" every tick would retain an
+        // unbounded-looking trail of obsolete moving destinations.
+        FleetOrder::Guard { .. } => Vec::new(),
         _ => Vec::new(),
     }
 }
@@ -2630,9 +2680,10 @@ mod tests {
             max_speed: kind.max_speed(),
             count_class: CountClass::from_count(1),
             damage_frac: 0.0,
-            docked: None,
+            docks: VecDeque::new(),
             job: None,
             plans: VecDeque::new(),
+            guards: VecDeque::new(),
             samples: samples.into(),
             last_seen: last,
             cargo,
@@ -2641,6 +2692,7 @@ mod tests {
             modules: Default::default(),
             route: None,
             gone: None,
+            migrant: false,
         }
     }
 
@@ -2728,6 +2780,38 @@ mod tests {
         assert_eq!(before[0].captain.as_ref().unwrap().level, 1);
         let after = history.view_for(owner, Vec2::ZERO, df(400.0), 6.0);
         assert_eq!(after[0].captain.as_ref().unwrap().level, 2);
+    }
+
+    #[test]
+    fn docking_status_rides_the_same_light_as_the_served_position() {
+        let owner = PlayerId(7_701);
+        let pos = Vec2::new(2_000.0, 0.0);
+        let sample = |time| Sample {
+            time,
+            pos,
+            vel: Vec2::ZERO,
+            jump: false,
+            jump_origin: None,
+            jump_presumed: false,
+            jump_departed: false,
+            jump_spool: None,
+            captain: None,
+            loud: false,
+            drive: sim::ship::DriveState::Thrusters,
+        };
+        let mut track = track_from(vec![sample(0.0), sample(10.0)], owner, ShipKind::Convoy);
+        track.docks = VecDeque::from([
+            (0.0, None),
+            (10.0, Some(sim::DockSite::Hub)),
+        ]);
+        let history = history_with(track);
+
+        // 2,000 su / 400 su/s warp light = 5 seconds. The dock label cannot
+        // precede the t=10 position report that established the berth.
+        let before = history.view_for(owner, Vec2::ZERO, df(400.0), 14.9);
+        assert_eq!(before[0].docked, None);
+        let arrived = history.view_for(owner, Vec2::ZERO, df(400.0), 15.0);
+        assert_eq!(arrived[0].docked.as_deref(), Some("hub"));
     }
 
     fn history_of(tracks: Vec<(EntityId, Track)>, sensor_range: f64) -> PositionHistory {
@@ -3989,6 +4073,8 @@ mod tests {
             deposits: vec![],
             structures: [(sim::StructureKind::Garrison, 2)].into_iter().collect(),
             population: 0.0,
+            migration_policy: Default::default(),
+            inbound_migrants: 0,
             assignments: Default::default(),
         });
         let systems = vec![sys];
@@ -4195,6 +4281,8 @@ mod tests {
                 deposits: vec![],
                 structures: [(sim::StructureKind::Garrison, 4)].into_iter().collect(),
                 population: 0.0,
+                migration_policy: Default::default(),
+                inbound_migrants: 0,
                 assignments: Default::default(),
             });
             let systems = vec![sys];
@@ -5217,9 +5305,10 @@ mod tests {
             max_speed: f.max_speed(),
             count_class: f.count_class(),
             damage_frac: f.damage_fraction(),
-            docked: None,
+            docks: VecDeque::new(),
             job: None,
             plans: VecDeque::new(),
+            guards: VecDeque::new(),
             samples: samples.into(),
             last_seen: 100.0,
             cargo: Vec::new(),
@@ -5228,6 +5317,7 @@ mod tests {
             modules: Default::default(),
             route: None,
             gone: None,
+            migrant: false,
         }
     }
 
@@ -5378,6 +5468,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn guard_assignment_rides_the_same_delayed_sighting_as_the_fleet() {
+        let target = EntityId(2);
+        let mut track = fleet_track(
+            VIEWER,
+            Vec2::new(8_000.0, 0.0),
+            &[(ShipKind::Raider, 1)],
+        );
+        track.guards = VecDeque::from([(0.0, None), (10.0, Some(target))]);
+        let hist = history_of(vec![(EntityId(1), track)], 500.0);
+        // Effective light speed is 300 su/s: the t=10 assignment report from
+        // 8,000 su reaches the CC at t=36.667, never at true assignment time.
+        let before = hist.view_for(VIEWER, Vec2::ZERO, df(300.0), 36.6);
+        assert_eq!(before[0].guard_target, None);
+        let arrived = hist.view_for(VIEWER, Vec2::ZERO, df(300.0), 36.7);
+        assert_eq!(arrived[0].guard_target, Some(target));
+    }
+
     /// A DARK fleet (raiders/scouts only) is omitted entirely outside coverage;
     /// when it IS seen (inside coverage) its composition shows in full — there is
     /// no half-seen dark fleet, so the reveal is consistent.
@@ -5492,25 +5600,40 @@ mod tests {
         );
     }
 
-    /// Mobile coverage belongs to Raider-bearing fleets, not free logistics or
-    /// pure Scout hulls.
+    /// Convoys project their deliberately short 0.25× traffic sensor; Raiders
+    /// project the full mobile ring. Pure Scout hulls remain no source.
     #[test]
-    fn only_a_raider_bearing_fleet_projects_mobile_coverage() {
+    fn convoy_mobile_coverage_is_one_quarter_of_a_raider_ring() {
         let cc = Vec2::new(0.0, 0.0);
-        // Contact 5000 su out; own fleet at 4200 → inside the 1000 su base ring.
-        let with_convoy = history_of(
+        // At 800 su from the Convoy the contact is outside its 250-su ring.
+        let outside_convoy = history_of(
             vec![
                 at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider),
                 at(2, 4200.0, 0.0, VIEWER, ShipKind::Convoy),
             ],
             1000.0,
         );
-        let v = with_convoy.view_for(VIEWER, cc, df(300.0), 60.0);
+        let v = outside_convoy.view_for(VIEWER, cc, df(300.0), 60.0);
         assert!(
             !v.iter().any(|g| g.kind == ShipKind::Raider && !g.own),
-            "a nearby corporate convoy is not a sensor buoy"
+            "a Convoy must not inherit the full Raider ring"
         );
 
+        // At 200 su the same dark contact is inside the Convoy's short ring.
+        let inside_convoy = history_of(
+            vec![
+                at(1, 4400.0, 0.0, RIVAL, ShipKind::Raider),
+                at(2, 4200.0, 0.0, VIEWER, ShipKind::Convoy),
+            ],
+            1000.0,
+        );
+        let v = inside_convoy.view_for(VIEWER, cc, df(300.0), 60.0);
+        assert!(
+            v.iter().any(|g| g.kind == ShipKind::Raider && !g.own),
+            "the Convoy detects a contact inside its 0.25× ring"
+        );
+
+        // A Raider at the original site still covers the full 1000 su.
         let with_raider = history_of(
             vec![
                 at(1, 5000.0, 0.0, RIVAL, ShipKind::Raider),

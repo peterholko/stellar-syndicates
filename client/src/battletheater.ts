@@ -101,9 +101,16 @@ const SHIP_ART: Record<ShipKind, string> = {
   titan: "titan_flagship.png",
 };
 const STATION_ART = "/art/celestial_sprites/mining_station.png";
-const PRIVATEER_ART = "/art/ship_sprites/privateer_raider_ship.png";
-// Mirrors the map renderer's visible-hull calibration for this fuller cutout.
-const PRIVATEER_ART_CALIB = 0.73;
+// Pirate hull culture: one deterministic silhouette per engagement. Tactical
+// keyframes carry a side and kind but no fleet id, so the battle id is the
+// stable cosmetic seed; this never changes combat truth or replay timing.
+const PIRATE_RAIDER_ART = [
+  { url: "/art/ship_sprites/privateer_raider_ship.png", calib: 0.73 },
+  { url: "/art/ship_sprites/npc-contractors/pirate_corsair.png", calib: 0.70 },
+  { url: "/art/ship_sprites/npc-contractors/pirate_boarding_raider.png", calib: 0.70 },
+] as const;
+const pirateRaiderArt = (battleId: string) =>
+  PIRATE_RAIDER_ART[hashId(`${battleId}:pirate-hull`) % PIRATE_RAIDER_ART.length];
 
 const texCache = new Map<string, Texture | null>();
 const texPending = new Set<string>();
@@ -1008,8 +1015,13 @@ function dressShip(v: ShipVis): void {
   const mine = own !== null && v.side === own;
   const tint = mine ? TINT_OWN : TINT_FOE;
   const pirateRaider = v.kind === "raider" && st.pirateId !== null && st.rec.sides[v.side]?.corp === st.pirateId;
-  const px = v.plat ? 26 : spritePx(v.kind) * (pirateRaider ? PRIVATEER_ART_CALIB : 1);
-  const tex = v.plat ? resolveTexture(STATION_ART) : pirateRaider ? resolveTexture(PRIVATEER_ART) : shipTexture(v.kind);
+  const pirateArt = pirateRaider ? pirateRaiderArt(st.rec.id) : null;
+  const px = v.plat ? 26 : spritePx(v.kind) * (pirateArt?.calib ?? 1);
+  const tex = v.plat
+    ? resolveTexture(STATION_ART)
+    : pirateArt
+      ? resolveTexture(pirateArt.url)
+      : shipTexture(v.kind);
   if (tex) {
     v.sprite.texture = tex;
     v.sprite.visible = true;
