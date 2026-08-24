@@ -1,18 +1,22 @@
 // Bootstrap: wire the join screen → WebSocket → view state → HUD + Pixi render.
 
 import { Net } from "./net";
-import { Renderer } from "./render";
-import { initialState, JUMP_DEPARTURE_TTL_S, liveSimTime, syncRenderClock, type LinkStatus, type PendingIntent, type ViewState } from "./state";
-import { countClassLabel, fleetExactCount, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BattleReportView, type BattleView, type BodyView, type BuildState, type CaptainAttribute, type CaptainRosterView, type CaptainView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type GroundRecordView, type JumpDepartureView, type KeyframeView, type LandingOddsView, type ManifestEntryView, type MigrationPolicy, type ModuleKind, type PendingOrderView, type ProgrammeView, type RaidOutcome, type RecordCount, type ResearchDynView, type ResearchView, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type StockSlot, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { renderer } from "./render";
+import { JUMP_DEPARTURE_TTL_S, liveSimTime, state, syncRenderClock, type LinkStatus, type PendingIntent, type ViewState } from "./state";
+import { countClassLabel, fleetExactCount, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BodyView, type BuildState, type CaptainAttribute, type CaptainRosterView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type GroundRecordView, type JumpDepartureView, type KeyframeView, type LandingOddsView, type ManifestEntryView, type MigrationPolicy, type ModuleKind, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { fleetCargoManifest, fleetCargoUnits } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
 import { theaterAttach, theaterAvailable, theaterClose, theaterDebug, theaterHash, theaterSetTime, theaterStep } from "./battletheater";
 import { groundTheaterAttach, groundTheaterAvailable, groundTheaterClose, groundTheaterDebug, groundTheaterSetTime, groundTheaterStep } from "./groundtheater";
 import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
-import { hashId } from "./prng";
-
-const state: ViewState = initialState();
+import { AAA_SERVICE_FEE, FUEL_PER_MASS_DISTANCE, HULL_MASS, WARP_FACTOR, aaaEstimate, battleReportForRecord, battleViewerTimers, berthed, bindFleetNet, clearBattleAftermathTimer, clearBattleCloseTimer, coLocatedOwnFleet, constructionStock, dockLoadStock, dockedAtSystem, dockedFreighterStock, estimatedFuelForLeg, fleetCargoCapacity, fleetFuelCapacity, fleetRosterDockName, guardCapable, hauls, hubDockedFleets, jumpCapable, recordForReport, sendCrew, shipKindLabel, shipMass, shipRoleLore, sideFamily, sumOwnComposition, systemFleetsAt, type SalvoFamily } from "./core/derive/fleet";
+import { SHIP_STATS, SURVEY_SECS_UI, TCA_INCIDENT_LOSS_UI, armedSelection, battleCommandDelay, clearJumpDepartureSelection, intentSummary, intentTargetLabel, jumpDepartureSelection, latestGroundRecordFor, latestPendingOrder, loadBattleMarks, nextDecisionLabel, orderEtaRange, orderObject, orderPoint, saveBattleMarks, siegeProgress, syncOrderLifecycles, updateSignals } from "./core/derive/orders";
+import { COMMODITIES, FITTING_POINTS, MODULE_SLOTS, POOL_LABEL, POOL_OF, SHIP_YARD, YARD_TITLE, bindMarketDerive, bodyPoolUsage, buildOption, dispatchBuildKey, fitLegal, freightDraft, freightDraftEntries, hullResearched, kitAffordable, kitCostLabel, marketAverageQuote, marketReservations, moduleLedgerAt, moduleRecipeValue, ownedHaulDestinations, poolUsage, pruneMarketReservations, recentMarketOrders, recordPriceHistory, recordRecentMarketOrder, reserveMarketOrder, reservedMarketCredits, settleMarketReservation, shipOption, shippableStock, shipyardBoost, slipsFor, spendableMarketCredits, structOption, systemFlavor, warehouseUnits, type BuildOpt, type Pool, type PoolUse, type ShipOpt, type StructOpt } from "./core/derive/market";
+import { bindResearchNet, mergeResearch, nodeBonusDesc, projectedBand, researchQueueIds, sendResearchQueue } from "./core/derive/research";
+import { captainXpFloor, fleetCommandLoad, captainTitle, officerFleetName, affinityLine, traitLine } from "./core/derive/captains";
+import { HYPERLIMIT_SU, REPORT_RECENT_S, allySystems, commandDelayTo, emplacementLabel, endpointLabel, foundingHomeSystemId, freshSurveyReports, gravityWellAt, knownDeposits, locName, nearestKnownDock, nearestSystemName, noteSurveyReports, operationSystemName, ownedSystems, pushSystemDynamic, systemName, systemUnderCursor, viewedSystemId } from "./core/derive/geo";
+import { agoLabel, arrivalLocal, doneAtLocal, fmt, fmtBuildDur, fmtDur, fmtEta, operationCopy, operationHullArt, operationIcon, operationReward, operationTitle, rejectText, trend, triggerLabel } from "./core/derive/format";
 
 // --- DOM handles -----------------------------------------------------------
 // Wire protocol version this build speaks — kept in sync with the server's
@@ -294,7 +298,6 @@ function morphElement(target: Element, source: Element): void {
 }
 
 // --- Renderer --------------------------------------------------------------
-const renderer = new Renderer();
 let rendererReady = false;
 
 // Debug hook (harmless): lets tooling inspect the live view state and transform.
@@ -342,21 +345,6 @@ function updateZoomLevel(): void {
     : `${text.toLowerCase()} semantic view`;
 }
 
-// Advance the OUTBOUND order signal each frame (the only traveling signal). This
-// is the ONLY client-side timing computation: interpolating outbound progress
-// between server-provided times. No delay is computed from truth or a client c.
-// The signal is dropped once the order reaches the ship — from then on the ship's
-// reaction is seen directly on the map (no inbound/response animation).
-function updateSignals(): void {
-  const estSimNow = liveSimTime();
-  state.commandSignals = state.commandSignals.filter((s) => {
-    if (estSimNow >= s.arrive) return false; // order has arrived — the comet is done
-    const outSpan = s.arrive - s.depart;
-    s.pOut = outSpan > 1e-3 ? (estSimNow - s.depart) / outSpan : 1;
-    return true;
-  });
-}
-
 const readout = () => $("readout");
 
 // --- UI kit (Stellar-Charters-inspired) — string-template helpers every panel
@@ -364,7 +352,6 @@ const readout = () => $("readout");
 // wire interaction through ONE delegated listener per root (handler-safe across
 // re-renders). Tone is always a class → color-via-CSS-var, so the whole workspace
 // themes from index.html's :root tokens. ------------------------------------
-const fmt = (n: number) => Math.round(n).toLocaleString();
 const fmtPopulation = (millions: number): string => {
   const people = Math.max(0, Math.round(millions * 1_000_000));
   return people >= 1_000_000
@@ -389,94 +376,6 @@ function spark(data: number[], w = 60, h = 18): string {
     .join(" ");
   return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">` +
     `<polyline fill="none" stroke="${stroke}" stroke-width="1.5" vector-effect="non-scaling-stroke" points="${path}"/></svg>`;
-}
-
-// Observed price trend, derived ONLY from the client's own (light-delayed) price
-// history — NOT a server "pressure" signal (the server exposes none; fabricating
-// one would break the fog model). Dual color+glyph encoding reads without color.
-function trend(h: number[]): { glyph: string; tone: string } {
-  if (!h || h.length < 4) return { glyph: "▬", tone: "tone-flat" };
-  const ref = h[h.length - 4] || 1;
-  const pct = (h[h.length - 1] - h[h.length - 4]) / Math.abs(ref);
-  if (pct > 0.04) return { glyph: "▲▲", tone: "tone-up" };
-  if (pct > 0.004) return { glyph: "▲", tone: "tone-up" };
-  if (pct < -0.04) return { glyph: "▼▼", tone: "tone-down" };
-  if (pct < -0.004) return { glyph: "▼", tone: "tone-down" };
-  return { glyph: "▬", tone: "tone-flat" };
-}
-
-// currentColor line icons (recolor for free via the parent's `color`).
-// Mirror of the sim's commodity value-rank (also in render.ts) — for flavor text
-// and dominant-resource selection. Client-only; no server data.
-const COMMODITY_VALUE: Record<Commodity, number> = {
-  biomass: 5, silicates: 6, metallic_ore: 8, volatiles: 9, rare_elements: 22,
-  provisions: 9, fuel: 14, polymers: 16, alloys: 26, electronics: 34,
-  machinery: 48, armaments: 56,
-};
-
-// Mirror of the sim's fuel-cost model (crates/sim/src/fuel.rs + ship.rs) — so the
-// own-ship panel can show this ship's fuel burn rate honestly. Movement burns
-// FUEL_PER_MASS_DISTANCE × distance × mass, mass = hull + cargoUnits·CARGO_MASS.
-const FUEL_PER_MASS_DISTANCE = 1.0e-6;
-const FUEL_PER_HULL_MASS = 0.035;
-const WARP_FACTOR = 5;
-// Authority Astral Assistance (AAA), mirrored from sim::tca. Quotes are marked
-// estimates because the Hub executes against its current price when requested.
-const AAA_FUEL_PRICE_MULT = 3;
-const AAA_SERVICE_FEE = 1_000;
-const AAA_RESERVE_FRAC = 0.10;
-const HULL_MASS: Record<ShipKind, number> = {
-  convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80,
-  // §ladder: 2.5× / 5× / 10× / 20× / 40× the Corvette (mirrors ship.rs).
-  destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
-  // §ground: the troop transport (mirrors ship.rs).
-  transport: 7000,
-  // §TCA: the Authority's carrier (mirrors ship.rs).
-  freighter: 6000,
-  // §emplacements: the crane (mirrors ship.rs).
-  builder: 2500,
-};
-const CARGO_MASS_PER_UNIT = 28;
-// Mirrors `sim::ship::CARGO_UNITS_PER_CONVOY`. The sim's Convoy hull is named
-// Freighter in player-facing copy; merged fleets gain one hold per such hull.
-const CARGO_UNITS_PER_FREIGHTER = 250;
-function fleetCargoCapacity(g: GhostView): number {
-  const freighters = g.composition
-    ? g.composition.reduce((count, ship) => count + (ship.kind === "convoy" ? ship.count : 0), 0)
-    : g.kind === "convoy" ? 1 : 0;
-  return freighters * CARGO_UNITS_PER_FREIGHTER;
-}
-// §TCA Phase 2: mirrors `tca::TCA_STANDING_LOSS_PER_INCIDENT` — used only for the
-// client-side "projected status" preview on hostile orders. A forecast, never a
-// promise: the real citation lands when its light reaches the Market Hub.
-const TCA_INCIDENT_LOSS_UI = 10;
-const fleetHullMass = (g: GhostView) => g.composition
-  ? g.composition.reduce((mass, ship) => mass + HULL_MASS[ship.kind] * ship.count, 0)
-  : HULL_MASS[g.kind];
-const shipMass = (g: GhostView) =>
-  fleetHullMass(g) + (g.own ? fleetCargoUnits(g) * CARGO_MASS_PER_UNIT : 0);
-const fleetFuelCapacity = (g: GhostView) => g.fuel_capacity ?? fleetHullMass(g) * FUEL_PER_HULL_MASS;
-
-function estimatedFuelForLeg(g: GhostView, dest: Vec2): number {
-  const distance = Math.hypot(dest.x - g.pos.x, dest.y - g.pos.y);
-  const logisticsMult = g.captain
-    ? 1 - Math.min(0.10, Math.max(0, g.captain.attributes.logistics - 1) * 0.02)
-    : 1;
-  const warp = FUEL_PER_MASS_DISTANCE * distance * shipMass(g) / WARP_FACTOR;
-  const wellDistance = Math.min(distance, HYPERLIMIT_SU * 2);
-  const wellSurcharge = FUEL_PER_MASS_DISTANCE * wellDistance * shipMass(g) * (1 - 1 / WARP_FACTOR);
-  return (warp + wellSurcharge) * logisticsMult;
-}
-
-function aaaEstimate(g: GhostView): { fuel: number; cost: number } {
-  const capacity = fleetFuelCapacity(g);
-  const room = Math.max(0, capacity - (g.fuel ?? 0));
-  const destination = g.path?.at(-1)?.pos;
-  const packageFuel = destination
-    ? Math.min(room, estimatedFuelForLeg(g, destination) + capacity * AAA_RESERVE_FRAC)
-    : room;
-  const marketFuel = state.market?.prices.find((price) => price.commodity === "fuel")?.price ?? COMMODITY_VALUE.fuel;
-  return { fuel: packageFuel, cost: AAA_SERVICE_FEE + packageFuel * marketFuel * AAA_FUEL_PRICE_MULT };
 }
 
 // The native Stellar Syndicates icon set (/art/ui_icons/svg) — full-color SVG,
@@ -786,14 +685,8 @@ function buildRail(): void {
 // layer over GhostView — it shows ONLY what the per-player view already reveals, so
 // a rival's cargo/route/internal state never leaks. ------------------------------
 let shipPanelBuilt = false;
-let selectedJumpDepartureKey: string | null = null;
 const jumpDepartureKey = (d: Pick<JumpDepartureView, "fleet" | "departed_at">): string =>
   `${d.fleet}:${d.departed_at.toFixed(6)}`;
-
-function clearJumpDepartureSelection(): void {
-  selectedJumpDepartureKey = null;
-  renderer.selectedJumpDepartureKey = null;
-}
 // The panel is rebuilt with every fresh View, so disclosure state must outlive
 // its DOM. Sets make the default collapsed and keep each fleet's choice stable.
 const expandedShipPolicies = new Set<string>();
@@ -1013,7 +906,7 @@ function selectEmplacement(id: string): void {
 }
 function selectJumpDeparture(key: string): void {
   deselectShip();
-  selectedJumpDepartureKey = key;
+  jumpDepartureSelection.key = key;
   renderer.selectedJumpDepartureKey = key;
   state.selectedSystemId = null;
   closeRail();
@@ -1037,29 +930,10 @@ function deselectShip(): void {
 // shelters in the bubble; the server judges the true position either way.
 const TCA_SOVEREIGN_RADIUS = 900;
 
-const SHIP_KIND_LABEL: Record<ShipKind, string> = {
-  convoy: "Freighter", raider: "Interceptor", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
-  destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
-  transport: "Troop Transport",
-  builder: "Construction Ship",
-  freighter: "Authority Freighter",
-};
-const shipKindLabel = (k: ShipKind): string => SHIP_KIND_LABEL[k] ?? k;
-
 // --- Deliberate map orders: preview first, transmit only on confirmation. ----
 let intentBarBuilt = false;
 let jumpAiming: string | null = null;
 let guardAiming: string | null = null;
-
-function jumpCapable(g: GhostView): boolean {
-  const composition = g.composition ?? [];
-  return g.own && composition.length > 0
-    && composition.every((c) => c.kind === "raider" || c.kind === "scout");
-}
-
-function guardCapable(g: GhostView): boolean {
-  return g.own && g.kind === "raider";
-}
 
 function clearGuardAiming(preserveReadout = false): void {
   if (guardAiming === null) return;
@@ -1098,64 +972,6 @@ function armJumpAiming(ship: GhostView): void {
   readout().innerHTML = `<b>Jump drive armed.</b> Pick a point within ` +
     `<b>${Math.round(state.galaxy.jump_range).toLocaleString()} su</b>. ` +
     `<span class="dim">Both ends must be clear of gravity wells · Esc cancels.</span>`;
-}
-
-function gravityWellAt(pos: Vec2): string | null {
-  const galaxy = state.galaxy;
-  if (!galaxy) return null;
-  if (Math.hypot(pos.x - galaxy.hub.x, pos.y - galaxy.hub.y) < galaxy.hyperlimit) {
-    return "the Market Hub's gravity well";
-  }
-  const system = galaxy.systems.find((s) =>
-    Math.hypot(pos.x - s.pos.x, pos.y - s.pos.y) < galaxy.hyperlimit,
-  );
-  return system ? `${system.name}'s gravity well` : null;
-}
-
-function intentTargetLabel(intent: PendingIntent): string {
-  if (intent.verb === "raid" || intent.verb === "attack" || intent.verb === "guard") {
-    const target = state.ghosts.find((g) => g.id === intent.targetId);
-    if (intent.verb === "guard") {
-      return target ? `your ${shipKindLabel(target.kind)} fleet` : "friendly fleet";
-    }
-    return target ? `rival ${shipKindLabel(target.kind)}` : "rival contact";
-  }
-  if (intent.verb === "blockade" || intent.verb === "survey") {
-    return state.galaxy?.systems.find((s) => s.id === intent.targetId)?.name ?? "target system";
-  }
-  if (intent.verb === "demolish") {
-    const target = state.emplacements.find((e) => e.id === intent.targetId);
-    return target ? `rival ${emplacementLabel(target.kind)}` : "rival structure";
-  }
-  return "this destination";
-}
-
-function intentSummary(intent: PendingIntent): string {
-  const ship = state.ghosts.find((g) => g.id === intent.shipId && g.own);
-  const shipName = ship ? shipKindLabel(ship.kind) : "fleet";
-  const signal = ship ? `${ship.age.toFixed(0)}s` : "?";
-  const target = intentTargetLabel(intent);
-  let summary = "";
-  switch (intent.verb) {
-    case "move": summary = `Move ${shipName} → ${target} · signal ~${signal}`; break;
-    case "jump": {
-      const spool = state.galaxy?.jump_spool_s ?? 10;
-      const point = intent.dest ? orderPoint(intent.dest) : "destination";
-      summary = `Jump ${shipName} → ${point} — ~${spool.toFixed(0)} s spool, then instant relocation · signal ~${signal}`;
-      break;
-    }
-    case "raid": summary = `RAID ${target} — intercept and steal cargo · signal ~${signal}`; break;
-    case "attack": summary = `ATTACK ${target} — full battle, destroys it · signal ~${signal}`; break;
-    case "guard": summary = `GUARD ${target} — shadow and defend · signal ~${signal}`; break;
-    case "blockade": summary = `BLOCKADE ${target} — strangle its logistics · signal ~${signal}`; break;
-    case "demolish": summary = `DEMOLISH ${target} — hold station until it falls · signal ~${signal}`; break;
-    case "survey": summary = `SURVEY ${target} — active sensing, ~${SURVEY_SECS_UI}s on-site · signal ~${signal}`; break;
-  }
-  const authority = (intent.verb === "raid" || intent.verb === "attack")
-    && state.ghosts.find((g) => g.id === intent.targetId)?.tca;
-  return authority
-    ? `${summary} · Authority citation projects ${projectedBand(TCA_INCIDENT_LOSS_UI)}`
-    : summary;
 }
 
 function renderIntentBar(): void {
@@ -1379,33 +1195,6 @@ function confirmPendingIntent(): void {
 // suppress the noisy sub-second states.
 const LIFECYCLE_MIN_S = 1.5;
 
-// Replace the tracked lifecycles from the View. The wire is a flat owner-only
-// list; group it per fleet for panel/map lookup and preserve oldest-first order.
-function syncOrderLifecycles(list: PendingOrderView[], _simTime: number): void {
-  const next = new Map<string, PendingOrderView[]>();
-  for (const p of list) {
-    const queue = next.get(p.fleet_id) ?? [];
-    queue.push(p);
-    next.set(p.fleet_id, queue);
-  }
-  for (const queue of next.values()) {
-    queue.sort((a, b) => a.issued_at - b.issued_at || a.id - b.id);
-  }
-  state.pendingOrders = next;
-  const lost = new Set(list.filter((order) => order.lost).map((order) => order.id));
-  if (lost.size) {
-    state.commandSignals = state.commandSignals.filter((signal) => !lost.has(signal.orderId));
-  }
-  if (state.selectedOrderId !== null && !list.some((p) => p.id === state.selectedOrderId)) {
-    state.selectedOrderId = null;
-  }
-}
-
-function latestPendingOrder(fleetId: string): PendingOrderView | undefined {
-  const queue = state.pendingOrders.get(fleetId);
-  return queue?.[queue.length - 1];
-}
-
 const fmtCountdown = (secs: number): string => {
   const s = Math.max(0, Math.round(secs));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -1446,38 +1235,6 @@ function notifyNewBattles(battles: import("./protocol").BattleView[]): void {
 }
 
 const orderEta = (secs: number): string => `~${Math.max(0, Math.ceil(secs))}s`;
-const ORDER_ETA_FUDGE_LO = 0.10; // Tunable: optimistic side of the served estimate band.
-const ORDER_ETA_FUDGE_HI = 0.25; // Tunable: covers drive-drop and route variance.
-function orderEtaRange(responseAt: number, now: number): string {
-  const delta = responseAt - now;
-  if (delta <= 0) return "overdue · unconfirmed";
-  const lo = Math.max(0, Math.ceil(delta * (1 - ORDER_ETA_FUDGE_LO)));
-  const hi = Math.max(lo, Math.ceil(delta * (1 + ORDER_ETA_FUDGE_HI)));
-  return `ETA range ~${lo}–${hi}s`;
-}
-const orderPoint = (p: Vec2): string =>
-  `(${Math.round(p.x).toLocaleString()} · ${Math.round(p.y).toLocaleString()})`;
-
-function orderObject(p: PendingOrderView): string {
-  const target = p.target_id ? state.ghosts.find((g) => g.id === p.target_id) : undefined;
-  const emplacement = p.target_id ? state.emplacements.find((e) => e.id === p.target_id) : undefined;
-  switch (p.kind) {
-    case "move": return `Move → ${p.dest ? orderPoint(p.dest) : "destination"}`;
-    case "jump": return `Jump → ${p.dest ? orderPoint(p.dest) : "destination"}`;
-    case "raid": return `Raid → ${target ? `rival ${shipKindLabel(target.kind)}` : "rival contact"}`;
-    case "attack": return "Attack → rival contact";
-    case "construct": {
-      const what = p.emplacement === "deep_space_sensor" ? "Deep Space Sensor" : "structure";
-      return `Construct → ${what}`;
-    }
-    case "demolish": return `Demolish → ${emplacement ? label(emplacement.kind) : "rival structure"}`;
-    case "blockade": return `Blockade → ${p.target_id ? systemName(p.target_id) : "rival system"}`;
-    case "survey": return `Survey → ${p.target_id ? systemName(p.target_id) : "system"}`;
-    case "guard": return `Guard → ${target ? `your ${shipKindLabel(target.kind)} fleet` : "friendly fleet"}`;
-    case "recall": return "Recall → home";
-    case "withdraw": return "Withdraw → home";
-  }
-}
 
 function ordersZone(g: GhostView): string {
   const queue = state.pendingOrders.get(g.id) ?? [];
@@ -1645,24 +1402,6 @@ function compositionSection(g: GhostView): string {
   return `<div class="sp-sec">Composition</div><div class="sp-line dim">${icon("unknown", "sm", "Composition unknown — this fleet is out of your sensor range, so you have only the size estimate, never the exact makeup.")} est. <b>${countClassLabel(g.count_class)}</b> ships</div>`;
 }
 
-// Another of your OWN fleets co-located with `g` (within the claim radius) — the
-// merge candidate. Composition/merge is done at a berth; the server enforces the
-// "at an owned system, idle" rule and soft-rejects otherwise.
-const MERGE_COLOCATE_RADIUS = 80; // matches COLONY_CLAIM_RADIUS on the server
-function coLocatedOwnFleet(g: GhostView): GhostView | null {
-  let best: GhostView | null = null;
-  let bestD = MERGE_COLOCATE_RADIUS;
-  for (const o of state.ghosts) {
-    if (!o.own || o.id === g.id) continue;
-    const d = Math.hypot(o.pos.x - g.pos.x, o.pos.y - g.pos.y);
-    if (d <= bestD) {
-      best = o;
-      bestD = d;
-    }
-  }
-  return best;
-}
-
 // Split controls belong to the fleet payload: they change the composition being
 // described, rather than the standing policy or the merge-only management fold.
 function splitControls(g: GhostView): string {
@@ -1709,9 +1448,6 @@ function headingCell(g: GhostView): string {
   const deg = (Math.atan2(p1.y - p0.y, p1.x - p0.x) * 180) / Math.PI;
   return stat("Heading", `<span class="sp-arrow" aria-hidden="true" style="transform:rotate(${deg.toFixed(0)}deg)">➤</span> ${sp.toFixed(0)} su/s`);
 }
-
-// Mirrors sim transit::HYPERLIMIT — the radius inside which no drive can light.
-const HYPERLIMIT_SU = 900;
 
 // The drive row is evaluated in the sighting's own retarded frame. Warp's
 // short spool/drop transitions read as impulse until cruise is established.
@@ -1849,50 +1585,6 @@ function fuelSection(g: GhostView): string {
     `${tank}</div>`;
 }
 
-function captainXpFloor(level: number): number {
-  const n = Math.max(0, level - 1);
-  return 100 * n * (n + 1) / 2;
-}
-
-// Mirrors sim::captain::command_weight. This is preview math only; the sim
-// enforces merge/build authority. Showing the same weighted burden beside the
-// served exact composition explains why rank limits both hull type and count.
-const CAPTAIN_COMMAND_WEIGHT: Record<ShipKind, number> = {
-  scout: 1,
-  convoy: 1,
-  builder: 1,
-  freighter: 1,
-  raider: 2,
-  corvette: 4,
-  colony: 4,
-  transport: 4,
-  destroyer: 8,
-  cruiser: 16,
-  battleship: 32,
-  dreadnought: 64,
-  titan: 128,
-};
-
-function fleetCommandLoad(g: GhostView): number {
-  return (g.composition ?? []).reduce(
-    (total, stack) => total + CAPTAIN_COMMAND_WEIGHT[stack.kind] * stack.count,
-    0,
-  );
-}
-
-function captainTitle(title: CaptainView["title"]): string {
-  switch (title) {
-    case "lieutenant": return "Lieutenant";
-    case "lieutenant_commander": return "Lieutenant-Commander";
-    case "commander": return "Commander";
-    case "captain": return "Captain";
-    case "rear_admiral": return "Rear Admiral";
-    case "vice_admiral": return "Vice Admiral";
-    case "admiral": return "Admiral";
-    case "fleet_admiral": return "Fleet Admiral";
-  }
-}
-
 function captainSection(g: GhostView): string {
   const c = g.captain;
   if (!c) {
@@ -1939,11 +1631,6 @@ function captainSection(g: GhostView): string {
     `<div class="captain-xp"><span style="width:${progress.toFixed(1)}%"></span></div>` +
     `<div class="captain-xp__copy">${c.level >= 10 ? "maximum level" : `${c.xp.toLocaleString()} / ${c.next_level_xp.toLocaleString()} XP`} · ${g.age.toFixed(1)}s old</div>` +
     `<div class="captain-stats">${stats}</div>${points}<button class="act" data-act="open-officers">Manage assignment</button></div></section>`;
-}
-
-function officerFleetName(g: GhostView): string {
-  const exact = fleetExactCount(g);
-  return `${shipKindLabel(g.kind)} fleet${exact === null ? "" : ` · ${exact} ship${exact === 1 ? "" : "s"}`}`;
 }
 
 function officerCard(entry: CaptainRosterView, home: string | null): string {
@@ -2129,31 +1816,6 @@ function ownBody(g: GhostView): string {
     `<div class="sp-tab-body">${active}</div>`;
 }
 
-type DockTarget = { key: string; name: string; pos: Vec2; distance: number };
-
-/// The nearest berth in the PLAYER'S SERVED picture. Choosing it here keeps the
-/// button epistemically identical to clicking that known map object yourself;
-/// the resulting MoveShip still travels through the ordinary delayed-order
-/// pipeline and the sim alone decides whether the fleet is docked on arrival.
-/// Extend this candidate list when another object becomes a real DockSite.
-function nearestKnownDock(g: GhostView): DockTarget | null {
-  const candidates: DockTarget[] = [];
-  const add = (key: string, name: string, pos: Vec2) => candidates.push({
-    key, name, pos, distance: Math.hypot(pos.x - g.pos.x, pos.y - g.pos.y),
-  });
-  if (state.galaxy) {
-    add("hub", "Wormhole Hub", state.galaxy.hub);
-    for (const system of state.galaxy.systems) {
-      const served = state.systems.find((entry) => entry.id === system.id);
-      if (served?.owner === state.playerId || served?.ally) {
-        add(`system:${system.id}`, system.name, system.pos);
-      }
-    }
-  }
-  candidates.sort((a, b) => a.distance - b.distance || a.key.localeCompare(b.key));
-  return candidates[0] ?? null;
-}
-
 function dockingSection(g: GhostView): string {
   if (g.docked === "hub") {
     return shipZone("Docking", `<div class="sp-line action-line" title="A movement order undocks this fleet automatically.">${icon("dock", "md")}<span>Docked at <b>Wormhole Hub</b></span></div>`);
@@ -2282,20 +1944,6 @@ function rivalBody(g: GhostView): string {
   return shipZone("Payload", parts.join(""));
 }
 
-function shipRoleLore(g: GhostView): string {
-  if (g.kind === "colony") {
-    return "Colonists + infrastructure. Send it to an unclaimed system: on arrival the system becomes yours and the ship is consumed (it becomes the colony). It broadcasts its voyage — slow, visible, raidable — so escort it. If someone claims the target first, it holds there intact; redirect it.";
-  }
-  if (g.kind === "corvette") {
-    return "A dedicated defender: any raid contact on one of your freighters within its protect radius must fight through this corvette first. Park it beside a freighter as an escort or at an owned system as a garrison; it cannot raid.";
-  }
-  if (g.kind === "scout") {
-    const mult = state.galaxy?.scout_sensor_mult ?? 1.5;
-    return `Projects a ×${mult} mobile sensor bubble. Sweep rival space to reveal dark contacts, cargo, and defense intel. It carries no cargo or weapons and dies if engaged.`;
-  }
-  return "";
-}
-
 function updateJumpDeparturePanel(root: HTMLElement, key: string): void {
   const departure = state.jumpDepartures.find((d) => jumpDepartureKey(d) === key);
   if (!departure) {
@@ -2341,8 +1989,8 @@ function updateShipPanel(): void {
     return;
   }
   const root = $("ship-panel");
-  if (selectedJumpDepartureKey) {
-    updateJumpDeparturePanel(root, selectedJumpDepartureKey);
+  if (jumpDepartureSelection.key) {
+    updateJumpDeparturePanel(root, jumpDepartureSelection.key);
     return;
   }
   if (!state.selectedShipId) return;
@@ -2447,82 +2095,6 @@ const MIDGAME_COPY: Record<import("./protocol").MidgameStage, [string, string]> 
   contested_expansion: ["Contested expansion", "Public objectives and scarce sites now put your plans against rival corporations."],
   regional_power: ["Regional power", "Hold strategic nodes and organize multi-stage syndicate operations."],
 };
-
-function operationSystemName(id: string): string {
-  return state.galaxy?.systems.find((s) => s.id === id)?.name ?? formatId(id);
-}
-
-function operationTitle(o: import("./protocol").OperationView): string {
-  const k = o.kind;
-  switch (k.kind) {
-    case "pirate_bounty": return `Suppress ${operationSystemName(k.system)} enclave`;
-    case "survey_expedition": return `Survey ${operationSystemName(k.system)}`;
-    case "market_delivery": return `Deliver ${k.units} ${label(k.commodity)}`;
-    case "rescue_salvage": return "Recover a distress site";
-    case "convoy_escort": return "Escort an Authority freighter";
-    case "authority_enforcement": return `Authority enforcement · ${formatId(k.target)}`;
-    case "strategic_control": return `Hold ${operationSystemName(k.system)} strategic node`;
-    case "regional_mandate": return "Regional Authority mandate";
-    case "syndicate_megaproject": return `Syndicate project · ${operationSystemName(k.system)}`;
-  }
-}
-
-function operationIcon(o: import("./protocol").OperationView): string {
-  switch (o.kind.kind) {
-    case "convoy_escort": return icon("escort", "md", "Freighter escort");
-    case "market_delivery": return icon("freightRoute", "md", "Market delivery");
-    case "survey_expedition": return icon("planetUninhabitable", "md", "Survey expedition");
-    case "strategic_control": return icon("roleOutpost", "md", "Strategic control");
-    default: return icon("manifest", "md", "Operation contract");
-  }
-}
-
-const NPC_HULL_ROOT = "/art/ship_sprites/npc-contractors";
-function operationHullArt(o: import("./protocol").OperationView): string | null {
-  const pick = (names: string[]): string => names[hashId(o.id) % names.length];
-  switch (o.kind.kind) {
-    case "pirate_bounty":
-      return `${NPC_HULL_ROOT}/${pick(["pirate_corsair.png", "pirate_boarding_raider.png"])}`;
-    case "survey_expedition":
-      return `${NPC_HULL_ROOT}/survey_vessel.png`;
-    case "rescue_salvage":
-      return `${NPC_HULL_ROOT}/${pick(["rescue_cutter.png", "salvage_tug.png", "salvage_carrier.png"])}`;
-    case "market_delivery":
-      return `${NPC_HULL_ROOT}/${o.kind.units >= 80 ? "salvage_carrier.png" : "contract_courier.png"}`;
-    case "convoy_escort":
-    case "authority_enforcement":
-      return `${NPC_HULL_ROOT}/contract_escort.png`;
-    default:
-      return null;
-  }
-}
-
-function operationCopy(o: import("./protocol").OperationView): string {
-  const k = o.kind;
-  switch (k.kind) {
-    case "pirate_bounty": return `Tier ${k.tier} enclave. Destroy its base; confirmation follows the battle report.`;
-    case "survey_expedition": return "Send a Scout, complete the on-site dwell, and wait for the survey report.";
-    case "market_delivery": return "Physically deliver or sell this commodity at the Market Hub.";
-    case "rescue_salvage": return `${k.units} ${label(k.commodity)} remain at the reported wreck position. A cargo fleet must recover them.`;
-    case "convoy_escort": return "Assign a fleet and remain close when the protected freighter reaches its destination.";
-    case "authority_enforcement": return "Join the public response against a proscribed corporation.";
-    case "strategic_control": return "Capture and continuously supply the node through the published hold interval.";
-    case "regional_mandate": return "Survey, trade, and suppress piracy inside the region. Highest contribution wins at close.";
-    case "syndicate_megaproject": {
-      const good = k.stage === 0 ? "Alloys" : k.stage === 1 ? "Electronics" : "Machinery";
-      return `Stage ${k.stage + 1}/3 · freight ${good} to the project system; arrivals are consumed and credited to their sender. The host may also commit its local stock.`;
-    }
-  }
-}
-
-function operationReward(o: import("./protocol").OperationView): string {
-  const bits: string[] = [];
-  if (o.reward.credits) bits.push(`${Math.round(o.reward.credits).toLocaleString()} cr`);
-  if (o.reward.authority_standing) bits.push(`+${o.reward.authority_standing} standing`);
-  if (o.reward.captain_xp) bits.push(`${o.reward.captain_xp} Captain XP`);
-  if (o.reward.research_insight) bits.push(`${Math.round(o.reward.research_insight)} research`);
-  return bits.join(" · ");
-}
 
 function openOperations(): void {
   $("operations-panel").classList.add("is-open");
@@ -2687,14 +2259,6 @@ const SCHOOL_TITLE: Record<string, string> = {
 const ROMAN = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII"];
 let lastResearchSig = "";
 
-function fmtEta(secs: number): string {
-  if (!isFinite(secs) || secs <= 0) return "—";
-  const h = secs / 3600;
-  if (h < 1) return `${Math.max(1, Math.round(secs / 60))}m`;
-  if (h < 48) return `${h.toFixed(1)}h`;
-  return `${(h / 24).toFixed(1)}d`;
-}
-
 function openResearch(): void {
   $("research-panel").classList.add("is-open");
   $("nav-research").classList.add("is-active");
@@ -2708,17 +2272,6 @@ function closeResearch(): void {
 function toggleResearch(): void {
   if ($("research-panel").classList.contains("is-open")) closeResearch();
   else openResearch();
-}
-
-// The full ordered queue the player controls = [active, ...queue-ahead]. Sending
-// it back as SetResearchQueue re-promotes the front to active (the sim's rule).
-function researchQueueIds(): string[] {
-  const r = state.research;
-  if (!r) return [];
-  return r.active ? [r.active.id, ...r.queue] : [...r.queue];
-}
-function sendResearchQueue(ids: string[]): void {
-  if (net) net.send({ type: "SetResearchQueue", queue: ids });
 }
 
 function researchNode(p: ProgrammeView, pos: number | null): string {
@@ -2931,15 +2484,6 @@ function buildHubPanel(): void {
   });
 }
 
-function hubDockedFleets(): GhostView[] {
-  // Docking is intentionally the SERVED report. A newly arrived fleet does not
-  // appear early, and a departed one remains listed until its departure light
-  // reaches the command center.
-  return state.ghosts
-    .filter((g) => g.own && g.docked === "hub")
-    .sort((a, b) => shipKindLabel(a.kind).localeCompare(shipKindLabel(b.kind)) || a.id.localeCompare(b.id));
-}
-
 function updateHubPanel(): void {
   const panel = $("hub-panel");
   if (!panel.classList.contains("is-open")) return;
@@ -3010,29 +2554,6 @@ function toggleCheckin(): void {
 // All state lives in the renderer (viewMode); this layer only wires the UX.
 const hex6 = (n: number) => "#" + (n >>> 0).toString(16).padStart(6, "0").slice(-6);
 
-// The star system under a screen point (for double-click / deep-zoom enter).
-// Each star counts within its OWN rendered disk (so a deep-zoom giant's rim is
-// enterable) or within `slack` of its center (so small stars stay easy to hit);
-// the NEAREST CENTER wins among qualifiers — aiming at a small star always
-// beats a visually larger neighbor whose disk merely blankets the same pixel.
-function systemUnderCursor(sx: number, sy: number, slack = 22): SystemInfo | null {
-  if (!state.galaxy) return null;
-  let best: SystemInfo | null = null;
-  let bestD = Infinity;
-  for (const sys of state.galaxy.systems) {
-    const s = renderer.worldToScreen(sys.pos);
-    const d = Math.hypot(s.x - sx, s.y - sy);
-    if (d < Math.max(slack, renderer.systemHitRadius(sys)) && d < bestD) { bestD = d; best = sys; }
-  }
-  return best;
-}
-
-/// §explore R2: OUR known geology for a system — the exact deposit table iff we
-/// surveyed it or own it (from the light-gated view), else null (band only).
-function knownDeposits(sysId: string): Deposit[] | null {
-  return state.systems.find((s) => s.id === sysId)?.deposits ?? null;
-}
-
 function showBreadcrumb(name: string): void {
   $("bc-system").textContent = name;
   $("breadcrumb").classList.add("is-open");
@@ -3079,22 +2600,6 @@ function exitSystem(): void {
 type SystemManageTab = "overview" | "worlds" | "production" | "construction";
 let systemManageTab: SystemManageTab = "worlds";
 let sysviewManageBuilt = false;
-/// The currently-viewed system id, or null when not in the System View.
-function viewedSystemId(): string | null {
-  const m = renderer.viewMode;
-  return m.type === "system" ? m.systemId : null;
-}
-/// §bodies: feed the scene its per-body dynamic layer straight from the wire —
-/// the roster (public geography; a rival's bodies carry no structures, so fog
-/// needs no client gate), the build queue (owner-only on the wire), the food.
-function pushSystemDynamic(sid: string): void {
-  const dyn = state.systems.find((s) => s.id === sid);
-  renderer.setSystemDynamic(
-    dyn?.bodies ?? [],
-    (dyn?.builds ?? []).map((j) => ({ key: j.key, body_id: j.body_id })),
-    dyn?.habitat_fed ?? true,
-  );
-}
 /// Per-View refresh while inside the System View: feed the scene's markers (a
 /// cached no-op unless a build completed) and re-render the management column.
 function updateSysviewDynamic(): void {
@@ -3654,22 +3159,6 @@ function openPlanetPanel(d: SystemBodyDetail): void {
 // client only adds presentation state: VIEWED (marker dims) and DISMISSED
 // (marker hidden — the report stays in the retained list). Both persist to
 // localStorage so a reload keeps the read/dismissed status.
-const BATTLE_LS_KEY = "ss_battle_marks";
-function loadBattleMarks(): void {
-  try {
-    const raw = localStorage.getItem(BATTLE_LS_KEY);
-    if (!raw) return;
-    const m = JSON.parse(raw) as { viewed?: number[]; dismissed?: number[] };
-    state.battleViewed = new Set(m.viewed ?? []);
-    state.battleDismissed = new Set(m.dismissed ?? []);
-  } catch { /* corrupt marks → start clean */ }
-}
-function saveBattleMarks(): void {
-  // Prune to ids the server still retains (the list is capped, so this stays tiny).
-  const live = new Set(state.battleReports.map((r) => r.id));
-  const keep = (s: Set<number>) => [...s].filter((id) => live.has(id));
-  localStorage.setItem(BATTLE_LS_KEY, JSON.stringify({ viewed: keep(state.battleViewed), dismissed: keep(state.battleDismissed) }));
-}
 loadBattleMarks();
 // Clicking a top-center notification DISMISSES it (quick fade → remove). A
 // battle report also opens its full results panel (the map marker + reports
@@ -3720,16 +3209,6 @@ function buildBattlePanel(): void {
 // §one-battle-one-icon: the ongoing battle whose panel is open (client-local),
 // so the View handler can keep its elapsed / echo countdowns / losses live.
 let openOngoingBattleId: string | null = null;
-/// The nearest system's name, as a human-readable "where" for a battle site.
-function nearestSystemName(p: Vec2): string {
-  let best = "";
-  let bestD = Infinity;
-  for (const s of state.galaxy?.systems ?? []) {
-    const d = Math.hypot(s.pos.x - p.x, s.pos.y - p.y);
-    if (d < bestD) { bestD = d; best = s.name; }
-  }
-  return bestD < 200 ? `at ${best}` : best ? `near ${best} (${bestD.toFixed(0)} su out)` : `at (${p.x.toFixed(0)}, ${p.y.toFixed(0)})`;
-}
 function openBattlePanel(id: number): void {
   const r = state.battleReports.find((x) => x.id === id);
   if (!r) return; // rotated out of the retained list
@@ -3798,25 +3277,6 @@ const battleForceHW = new Map<string, BattleForceHW>();
 const COUNT_CLASS_ORD: Record<CountClass, number> = {
   one: 0, two_to_three: 1, four_to_seven: 2, eight_to_fifteen: 3, sixteen_to_thirty: 4, thirty_one_plus: 5,
 };
-// Sum a set of own ghosts' EXACT compositions into a per-kind tally.
-function sumOwnComposition(ghosts: GhostView[]): Map<ShipKind, number> {
-  const m = new Map<ShipKind, number>();
-  for (const g of ghosts) {
-    const comp = g.composition ?? [{ kind: g.kind, count: 1 }];
-    for (const c of comp) m.set(c.kind, (m.get(c.kind) ?? 0) + c.count);
-  }
-  return m;
-}
-// One-way COMMAND delay (§3): command-center → battle anchor, at light speed.
-// The same math the order echo-lifecycle uses; null before the galaxy/CC arrive.
-function battleCommandDelay(b: BattleView): number | null {
-  if (!state.commandCenter || !state.galaxy) return null;
-  return Math.hypot(b.pos.x - state.commandCenter.x, b.pos.y - state.commandCenter.y) / state.galaxy.c;
-}
-// A one-way delay mapped onto the player's wall-clock, to the second ("~14:32:10").
-function arrivalLocal(delaySecs: number): string {
-  return new Date(Date.now() + delaySecs * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
 
 // Per-class ship glyph for the live force strip (reuses the shared UI icon set).
 const SHIP_ICON: Record<ShipKind, string> = {
@@ -3991,23 +3451,15 @@ let bvLoopRunning = false;
 let lastBattleViewerSig = ""; // §perf: skip identical 10 Hz viewer rebuilds
 let bvSemantic = false; // entered by map zoom; presentation still follows the player's arrived light
 let bvClosing = false;
-let bvCloseTimer: number | null = null;
 let bvLastBattleAge: number | null = null; // last SERVED BattleView.age, never geometry-derived
 let bvLastFrontier = -1;
 let bvLastArrivalWallMs = 0;
-let bvAftermathTimer: number | null = null;
 let bvHandoffArmed = false; // only a conclusion consumed while following auto-hands off
 const BV_ROUND_SECS = 0.55; // wall-seconds per round at 1× playback
 const BV_STALE_MS = 4500;
 const BV_TRANSITION_MS = 480; // matches render.ts's semantic-view crossfade
 
 const bvRecordFor = (id: string): BattleRecordView | undefined => state.battleRecords.find((r) => r.id === id);
-/// §battle-records: a concluded aftermath report has a DIFFERENT id space than
-/// the record (its id is a report counter, the record's is the engagement id),
-/// so join by the shared engagement-anchor position.
-function recordForReport(r: BattleReportView): BattleRecordView | undefined {
-  return state.battleRecords.find((rec) => rec.pos.x === r.pos.x && rec.pos.y === r.pos.y);
-}
 
 let battleViewerBuilt = false;
 function buildBattleViewer(): void {
@@ -4249,24 +3701,6 @@ function renderGroundViewer(): void {
 
 type BattleViewerOpenOpts = { semantic?: boolean };
 
-function clearBattleAftermathTimer(): void {
-  if (bvAftermathTimer !== null) {
-    clearTimeout(bvAftermathTimer);
-    bvAftermathTimer = null;
-  }
-}
-
-function clearBattleCloseTimer(): void {
-  if (bvCloseTimer !== null) {
-    clearTimeout(bvCloseTimer);
-    bvCloseTimer = null;
-  }
-}
-
-function battleReportForRecord(rec: BattleRecordView): BattleReportView | undefined {
-  return state.battleReports.find((r) => r.pos.x === rec.pos.x && r.pos.y === rec.pos.y);
-}
-
 function openBattleViewer(id: string, opts: BattleViewerOpenOpts = {}): void {
   const rec = bvRecordFor(id);
   if (!rec) return; // no access → no viewer (fog); the affordance is guarded too
@@ -4339,8 +3773,8 @@ function closeBattleViewer(after?: () => void): void {
   bvClosing = true;
   renderer.exitBattleView();
   $("battle-viewer").classList.add("is-leaving");
-  bvCloseTimer = window.setTimeout(() => {
-    bvCloseTimer = null;
+  battleViewerTimers.close = window.setTimeout(() => {
+    battleViewerTimers.close = null;
     if (!bvClosing) return; // cancelled/reopened: this callback is stale
     bvSemantic = false;
     finishBattleViewerClose(after, true);
@@ -4375,11 +3809,11 @@ function enterBattleViewer(id: string): void {
 /// aftermath report. Participants hand off through that existing panel; sensor
 /// observers (who have no private report) remain on the concluded replay.
 function maybeScheduleBattleAftermath(rec: BattleRecordView): void {
-  if (!bvSemantic || bvClosing || !bvHandoffArmed || bvLive || rec.outcome === null || bvAftermathTimer !== null) return;
+  if (!bvSemantic || bvClosing || !bvHandoffArmed || bvLive || rec.outcome === null || battleViewerTimers.aftermath !== null) return;
   const report = battleReportForRecord(rec);
   if (!report) return;
-  bvAftermathTimer = window.setTimeout(() => {
-    bvAftermathTimer = null;
+  battleViewerTimers.aftermath = window.setTimeout(() => {
+    battleViewerTimers.aftermath = null;
     closeBattleViewer(() => openBattlePanel(report.id));
   }, 900);
 }
@@ -4473,15 +3907,8 @@ const bvRC = (arr: RecordCount[], k: ShipKind): RecordCount | undefined => arr.f
 // hitter it brought (torpedo > driver > beam), derived from its participant-only
 // initial loadouts; drives the replay's salvo arrow color + label. `beam` is the
 // stock default (unfitted brawlers / no weapon modules).
-type SalvoFamily = "beam" | "driver" | "torpedo";
 const FAMILY_COLOR: Record<SalvoFamily, string> = { beam: "var(--accent)", driver: "#e8a13a", torpedo: "#e0574b" };
 const FAMILY_LABEL: Record<SalvoFamily, string> = { beam: "beam", driver: "drivers", torpedo: "torpedoes" };
-function sideFamily(sv: SideRecordView): SalvoFamily {
-  const mods = (sv.loadouts ?? []).flatMap((st) => st.modules);
-  if (mods.includes("torpedo_rack")) return "torpedo";
-  if (mods.includes("mass_driver")) return "driver";
-  return "beam";
-}
 // §tactical T3: the TRUTH MAP — an SVG top-down of the recorded keyframe.
 // Real positions, torpedo salvos, and exact deaths; ship dots scale with mass
 // class, dim with damage; platforms draw as emplacement squares. The viewer's
@@ -5253,54 +4680,6 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
     }
 }
 
-// §emplacements: the KIT each structure consumes, mirrored from the sim's
-// `emplacement_recipe` (build.rs) exactly like siteError mirrors site_check —
-// the server charges silently, so the honest refusal has to live here. Keep
-// in lockstep with the Rust recipes.
-const EMPLACE_KITS: Record<string, [Commodity, number][]> = {
-  deep_space_sensor: [["alloys", 60], ["electronics", 120], ["fuel", 40]],
-};
-
-// Pretty "40 Alloys + 60 Electronics + 30 Fuel" for tooltips and refusals.
-function kitCostLabel(kind: string): string {
-  return (EMPLACE_KITS[kind] ?? [])
-    .map(([c, n]) => `${n} ${label(c)}`)
-    .join(" + ");
-}
-
-// §emplacements: does ANY system of ours cover the full kit? Mirrors the
-// server's charge rule (one system pays for everything; no pooling across
-// systems). Stockpiles are owner-only in the view, so `stockpile` is present
-// exactly for the systems this rule may draw from.
-function kitAffordable(kind: string): boolean {
-  const kit = EMPLACE_KITS[kind];
-  if (!kit) return true;
-  return state.systems.some(
-    (s) => s.stockpile !== null && kit.every(([c, n]) => (s.stockpile!.find((x) => x.commodity === c)?.units ?? 0) >= n),
-  );
-}
-
-// §emplacements: the player's currently selected fleet IF it has teeth — the
-// client mirror of the sim's `is_combatant()` gate on demolition, read off the
-// same per-hull attack weights the panel shows. A crane or a convoy is not a
-// wrecking crew, so selecting one leaves a rival structure merely inspectable.
-function armedSelection(): GhostView | undefined {
-  const g = state.selectedShipId
-    ? state.ghosts.find((x) => x.id === state.selectedShipId && x.own)
-    : undefined;
-  if (!g) return undefined;
-  const armed = g.composition?.length
-    ? g.composition.some((c) => (SHIP_STATS[c.kind]?.atk ?? 0) > 0)
-    : (SHIP_STATS[g.kind]?.atk ?? 0) > 0;
-  return armed ? g : undefined;
-}
-
-// §emplacements: wire slug → display name. `label()` already title-cases the
-// slug, so the vocabulary stays owned by the sim rather than re-typed here.
-function emplacementLabel(kind: string): string {
-  return label(kind);
-}
-
 // §emplacements: what each standing structure IS, in the player's terms —
 // the same sentence the build button promises, so a structure explains itself
 // when clicked months after it was placed.
@@ -5592,27 +4971,6 @@ function installInteraction(): void {
   });
 }
 
-// --- Star System view (SYSTEM tab) — a master→detail workspace (§4, §9) -------
-// The galaxy map is the master list (click a system); this tab is the detail:
-// header + light-gated ownership + stat strip + geology readout + production
-// readout (owner-only) + valid context actions, plus an owned-systems rail when
-// you hold several. Fog-safe: ownership/stockpile use exactly the light-gated
-// fields the View already provides; a rival's system shows only that it's held.
-// One delegated listener (set once) survives the per-render innerHTML rewrites.
-
-// Eyebrow flavor, derived client-side from position + OUR known geology
-// (§explore: the exact composition is survey knowledge — unsurveyed systems
-// show only the public band).
-function systemFlavor(sys: SystemInfo, deps: Deposit[] | null): string {
-  const frac = state.galaxy ? Math.hypot(sys.pos.x, sys.pos.y) / state.galaxy.radius : 0;
-  const tier = frac > 0.6 ? "frontier" : frac > 0.33 ? "mid-rim" : "core";
-  if (deps === null) return `unsurveyed ${tier}`;
-  if (!deps.length) return "barren system";
-  const dom = deps.reduce((a, b) =>
-    a.richness * COMMODITY_VALUE[a.resource] >= b.richness * COMMODITY_VALUE[b.resource] ? a : b);
-  return `${label(dom.resource)}-rich ${tier}`;
-}
-
 function depositRow(d: Deposit): string {
   const pct = Math.min(100, d.richness * 40);
   const reserves = d.reserves === null
@@ -5631,35 +4989,6 @@ function depositRow(d: Deposit): string {
 // readout shows the ACTUAL current output, not the intrinsic geology (which the
 // Geology section above shows unmodified).
 const EXTRACTOR_RICHNESS_MULT = 1.5;
-
-// §explore Part 2 — UI mirror of the sim's SURVEY_SECS (the dwell duration), for
-// the order readout + the progress-ring tooltip. Display only, never authoritative.
-const SURVEY_SECS_UI = 20;
-
-function dockedFreighterStock(systemId: EntityId): Map<Commodity, number> {
-  const cargo = new Map<Commodity, number>();
-  for (const fleet of state.ghosts) {
-    if (!fleet.own || !hauls(fleet) || !dockedAtSystem(fleet, systemId)) continue;
-    for (const stack of fleetCargoManifest(fleet)) {
-      cargo.set(stack.commodity, (cargo.get(stack.commodity) ?? 0) + stack.units);
-    }
-  }
-  return cargo;
-}
-
-function constructionStock(dyn: SystemStateView): {
-  stockpile: Map<Commodity, number>;
-  freighters: Map<Commodity, number>;
-  available: Map<Commodity, number>;
-} {
-  const stockpile = new Map((dyn.stockpile ?? []).map((slot) => [slot.commodity, slot.units]));
-  const freighters = dockedFreighterStock(dyn.id);
-  const available = new Map(stockpile);
-  for (const [commodity, units] of freighters) {
-    available.set(commodity, (available.get(commodity) ?? 0) + units);
-  }
-  return { stockpile, freighters, available };
-}
 
 function constructionStockTotal(stockpiled: number, freight: number): string {
   const total = stockpiled + freight;
@@ -5778,59 +5107,6 @@ function assignmentLines(dyn: SystemStateView | undefined, withControls: boolean
 // Ship build keys — units, not developments: they never consume a development
 // slot (mirrors the sim's slot rule in world.rs apply_build).
 const SHIP_KEYS = new Set(["convoy", "raider", "corvette", "colony", "scout", "destroyer", "cruiser", "battleship", "dreadnought", "titan"]);
-
-// §economy Part 6 / §bodies: worker assignment control → SetAssignment. `spec` is
-// "bodyId:slug:workers" — the line lives ON a body now; posted specialists are
-// preserved server-side only if re-sent, so we send the current line's along.
-function sendCrew(systemId: EntityId, spec: string): void {
-  if (!net) return;
-  const [bid, slug, n] = spec.split(":");
-  const body_id = Number(bid);
-  const dyn = state.systems.find((s) => s.id === systemId);
-  const line = dyn?.assignments?.find((a) => a.body_id === body_id && a.structure === slug);
-  net.send({ type: "SetAssignment", system_id: systemId, structure: slug, workers: Math.max(0, Number(n) || 0), specialists: line?.specialists ?? {}, body_id });
-}
-// §yards: WHICH YARD builds each hull, and at what tier — mirrors the sim's
-// `build::yard_for`. Light hulls keep the Shipyard (homes bootstrap at tier 1, so
-// convoys and scouts build turn one; raiders are earned at tier 2); the line of
-// battle wants a Naval Drydock and the super-capitals a Capital Slipway.
-const SHIP_YARD: Record<string, { yard: string; tier: number }> = {
-  convoy: { yard: "shipyard", tier: 1 },
-  scout: { yard: "shipyard", tier: 1 },
-  colony: { yard: "shipyard", tier: 1 },
-  raider: { yard: "shipyard", tier: 2 },
-  corvette: { yard: "shipyard", tier: 2 },
-  destroyer: { yard: "naval_drydock", tier: 1 },
-  cruiser: { yard: "naval_drydock", tier: 2 },
-  battleship: { yard: "naval_drydock", tier: 3 },
-  dreadnought: { yard: "capital_slipway", tier: 1 },
-  titan: { yard: "capital_slipway", tier: 2 },
-  // §ground: troops muster at a BARRACKS, not a shipyard — the one hull whose
-  // gate sits outside the yard family entirely.
-  transport: { yard: "garrison", tier: 1 },
-};
-// §yards: what a yard needs standing on the same SYSTEM before it can be founded
-// — mirrors `build::yard_prereq`. Drives the build panel's gate copy.
-const YARD_PREREQ: Record<string, { yard: string; tier: number }> = {
-  naval_drydock: { yard: "shipyard", tier: 2 },
-  capital_slipway: { yard: "naval_drydock", tier: 3 },
-  ordnance_foundry: { yard: "shipyard", tier: 1 },
-};
-const YARD_TITLE: Record<string, string> = {
-  shipyard: "Shipyard", naval_drydock: "Naval Drydock",
-  capital_slipway: "Capital Slipway", ordnance_foundry: "Ordnance Foundry",
-  garrison: "Garrison",
-};
-/// §yards M1: a yard's tier is its SLIPWAY COUNT (mirrors `build::slips_for`,
-/// SLIPS_PER_TIER = 1) — how many hulls it can hold on the stocks at once.
-const slipsFor = (tier: number): number => Math.max(0, tier);
-// §ladder: the Line programme that unlocks each capital hull (mirrors
-// research.rs) — the client's research-gate copy; the sim enforces it.
-const HULL_PROGRAMME: Record<string, string> = {
-  destroyer: "hull_line_iv_destroyer", cruiser: "hull_line_v_cruiser",
-  battleship: "hull_line_vi_battleship", dreadnought: "hull_line_vii_dreadnought", titan: "hull_line_viii_titan",
-};
-
 // --- §build-progress: the construction QUEUE (Travian-style) -----------------
 // Rows derive ENTIRELY from the job timestamps the view already carries:
 // `complete_time` (sim-time) from the server + the recipe's `build_secs` from
@@ -5848,14 +5124,7 @@ const BUILD_ICON: Record<string, string> = {
   // §ground: the garrison and the hull it musters.
   garrison: "status-warning-threat", transport: "action-claim-system",
 };
-const buildOption = (key: string) => state.galaxy?.build_options.find((o) => o.key === key);
 const buildLabel = (key: string): string => buildOption(key)?.label ?? key;
-/// The absolute wall-clock completion ("done 14:32" local) — the async-planning
-/// detail: sim-time delta mapped onto the player's clock.
-function doneAtLocal(completeTime: number): string {
-  const ms = Date.now() + Math.max(0, completeTime - liveSimTime()) * 1000;
-  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
 // Brief ✓ resolve when a watched job leaves the queue (the completion notice /
 // digest entry are unchanged — this is just the row's exit animation). The
 // last-seen stamp keeps a long-closed panel from "flashing" stale history.
@@ -5951,40 +5220,13 @@ const MODULE_TIP: Record<ModuleKind, string> = {
   reflective_plating: "Armor: blunts incoming BEAM into this ship.",
   whipple_armor: "Armor: blunts incoming DRIVER into this ship.",
 };
-const MODULE_SLOTS: Record<string, number> = {
-  corvette: 2, raider: 2, scout: 1, convoy: 0, colony: 0,
-  destroyer: 3, cruiser: 4, battleship: 4, dreadnought: 5, titan: 6,
-};
 // §fitting: per-module FITTING-POINT costs + per-hull budgets (mirrors sim
 // ModuleKind::fitting_cost / ship::fitting_points) — the SECOND constraint
 // besides slots; both render in the fitting bar and gate the queue button.
 const MODULE_FIT_COST: Record<ModuleKind, number> = {
   mass_driver: 2, torpedo_rack: 3, point_defense_screen: 2, reflective_plating: 2, whipple_armor: 3,
 };
-const FITTING_POINTS: Record<string, number> = {
-  corvette: 5, raider: 4, scout: 2, convoy: 2, colony: 2,
-  // §ladder: the big budgets — capitals are where combinations live.
-  destroyer: 8, cruiser: 12, battleship: 18, dreadnought: 28, titan: 45,
-};
 const fitCost = (mods: ModuleKind[]): number => mods.reduce((s, m) => s + (MODULE_FIT_COST[m] ?? 0), 0);
-// §fitting: is (kind, mods) legal — both slots and budget? (mirrors Loadout::validate)
-function fitLegal(kind: string, mods: ModuleKind[]): boolean {
-  return mods.length <= (MODULE_SLOTS[kind] ?? 0) && fitCost(mods) <= (FITTING_POINTS[kind] ?? 0);
-}
-// §fitting: the hull-AFFINITY factor line for a (kind, fit) — the named
-// multiplier the sim applies (mirrors ship::hull_affinity); null when none.
-function affinityLine(kind: string, mods: ModuleKind[]): string | null {
-  const hasWeapon = mods.some((m) => m === "torpedo_rack" || m === "mass_driver" || m === "point_defense_screen");
-  if (kind === "raider" && mods.includes("torpedo_rack")) return "Interceptor torpedo affinity ×1.25";
-  if (kind === "corvette" && mods.includes("point_defense_screen")) return "Corvette interception affinity ×1.25";
-  // §ladder: each capital's one named factor.
-  if (kind === "destroyer" && !mods.includes("torpedo_rack") && !mods.includes("mass_driver")) return "Destroyer beam affinity ×1.20";
-  if (kind === "cruiser" && (mods.includes("reflective_plating") || mods.includes("whipple_armor"))) return "Cruiser protection affinity ×1.20";
-  if (kind === "battleship" && mods.includes("mass_driver")) return "Battleship driver affinity ×1.20";
-  if (kind === "dreadnought" && mods.includes("point_defense_screen")) return "Dreadnought interception affinity ×1.30";
-  if (kind === "titan" && (hasWeapon || mods.length === 0)) return "Titan weapon affinity ×1.10";
-  return null;
-}
 // The hull's standing affinity note (shown in the build detail even unfitted).
 const HULL_AFFINITY_NOTE: Record<string, string> = {
   raider: "torpedo ×1.25", corvette: "interception ×1.25",
@@ -6004,26 +5246,8 @@ function fittingBar(kind: string, mods: ModuleKind[]): string {
 // Sol's module spread (mirrors sim MODULE_BUY_MULT / MODULE_SELL_MULT) — DISPLAY
 // only; the server prices the real charge on execution (shown "~").
 const MODULE_BUY_MULT = 2.0, MODULE_SELL_MULT = 0.5;
-// A module's goods VALUE = its recipe commodities priced at the observed hub
-// market (the same basis the sim uses), or null if the price board isn't in yet.
-function moduleRecipeValue(m: ModuleKind): number | null {
-  const o = buildOption(`module:${m}`);
-  if (!o || !state.market) return null;
-  const price = new Map(state.market.prices.map((p) => [p.commodity, p.price]));
-  let v = 0;
-  for (const c of o.costs) {
-    const p = price.get(c.commodity as Commodity);
-    if (p === undefined) return null;
-    v += c.units * p;
-  }
-  return v;
-}
 // The FIT the player is composing for the next warship build (module slugs, ≤2).
 let pendingFit: ModuleKind[] = [];
-// The module ledger at a system (owner-only; {} if unseen).
-function moduleLedgerAt(sid: string): Record<string, number> {
-  return state.systems.find((s) => s.id === sid)?.modules ?? {};
-}
 // §modules Part B3: the module FORGE for a body with an Armaments Complex —
 // the system ledger line + one manufacture button per module (BuildModule),
 // costs/afford drawn from the shared build_options channel ("module:<slug>").
@@ -6058,30 +5282,6 @@ function fitPicker(dyn: SystemStateView | undefined): string {
   return `<div class="mhint" style="margin:4px 0 2px" title="Pick up to 2 modules to fit the next warship built here; a ship takes as many as its hull has slots (Interceptor/Corvette 2, Scout 1).">${svgIcon("action-build", "sm")} fit next build: <b>${cur}</b></div>` +
     `<div class="fit-row">${chips}</div>`;
 }
-// (buildOptionRow removed — the inline structure/ship rows it drew are gone; the
-//  dedicated build panels now own that gating via structOption / shipOption.)
-
-// §explore Part 3: the trait line (name + one-line effect) for the OWNER's
-// system panel. Warn-tinted for the lemon. Slug "bonus_vein:<commodity>" carries
-// the vein's commodity.
-function traitLine(slug: string): { title: string; desc: string; warn: boolean } {
-  if (slug.startsWith("bonus_vein:")) {
-    const c = slug.split(":")[1];
-    return { title: "Bonus Vein", desc: `Its ${label(c)} deposit gains ×1.5 natural yield, within the ×3 site cap.`, warn: false };
-  }
-  switch (slug) {
-    case "deep_deposits":
-      return { title: "Deep Deposits", desc: "Natural yield gains ×1.5 (within the ×3 cap), but the FIRST Extractor tier is wasted breaking through.", warn: false };
-    case "unstable_geology":
-      return { title: "Unstable Geology", desc: "Development costs ×1.25 here — survey before committing.", warn: true };
-    case "volatile_pockets":
-      return { title: "Volatile Pockets", desc: "Refinery output ×1.3 here.", warn: false };
-    case "precursor_cache":
-      return { title: "Precursor Cache", desc: "A one-time 40 Alloys was deposited to the stockpile at claim.", warn: false };
-    default:
-      return { title: label(slug), desc: "", warn: false };
-  }
-}
 
 // §planetary-opportunities: the server scores these from the SAME capped
 // natural multipliers as production. The client only names that surveyed fact;
@@ -6099,84 +5299,8 @@ function colonyOpportunityBlock(dyn: SystemStateView | undefined): string {
   return `<div class="deps-head" style="margin-top:8px" title="Roles revealed by the survey. Scores compare this natural site with the dependable home baseline; staffing, structures and research come later.">Colony opportunities</div>${rows}`;
 }
 
-// §node: one-line description of what a node's bonus does (by slug). Used in the
-// system panel + inbox so the tactical payoff is always legible.
-function nodeBonusDesc(slug: string): string {
-  switch (slug) {
-    case "relay_anchor":
-      return "Halves your command delay to targets in its region — orders and their echoes land twice as fast nearby.";
-    case "veil":
-      return "Your dark fleets in its region run quieter — detected only at half the usual range.";
-    case "deep_scan":
-      return "Your sensors resolve EXACT composition on anything already visible in its region (bucket → exact).";
-    default:
-      return "A tactical edge to whoever holds it.";
-  }
-}
-
 // §body-management: the monolithic buildPanel is gone — its pool readout
 // lives in the summary, its rows on the body panels (openPlanetPanel).
-
-// Slug → pool. Exact live PER-BODY budgets ride the owner-only BodyView because
-// size now changes industrial ground and population changes tiers; the client
-// must not maintain a second economic formula.
-const POOL_OF: Record<string, "resource" | "industrial" | "infrastructure"> = {
-  mining_complex: "resource", volatile_harvester: "resource", bioharvester: "resource",
-  smelter: "industrial", electronics_fabricator: "industrial", chemical_works: "industrial",
-  fuel_refinery: "industrial", machine_works: "industrial", armaments_complex: "industrial",
-  // §yards: the whole yard family is industrial — the tightest pool, which is
-  // why a shipbuilding world visibly gives up its other industry.
-  shipyard: "industrial", naval_drydock: "industrial", capital_slipway: "industrial", ordnance_foundry: "industrial",
-  agroplex: "infrastructure", habitat: "infrastructure", orbital_warehouse: "infrastructure",
-  sensor_array: "infrastructure", defense_platform: "infrastructure", academy: "infrastructure",
-  // §ground: a garrison is barracks and armories — people, not heavy industry.
-  garrison: "infrastructure",
-};
-// Extraction structure → the deposit commodities it works — MIRRORS the sim's
-// production.rs extraction_structure (a mine only works its own rock).
-const EXTRACTION_OF: Record<string, Commodity[]> = {
-  mining_complex: ["metallic_ore", "silicates", "rare_elements"],
-  volatile_harvester: ["volatiles"],
-  bioharvester: ["biomass"],
-};
-type PoolUse = Record<"resource" | "industrial" | "infrastructure", { used: number; total: number }>;
-function bodyPoolTotals(b: BodyView): Record<"resource" | "industrial" | "infrastructure", number> {
-  return {
-    resource: b.resource_slots ?? 0,
-    industrial: b.industrial_slots ?? 0,
-    infrastructure: b.infrastructure_slots ?? 0,
-  };
-}
-/// THIS body's pools, counting built structures AND pending NEW-structure jobs
-/// (mirrors pool_slots_built + pool_slots_pending — tier-ups are exempt).
-function bodyPoolUsage(b: BodyView, dyn: SystemStateView | undefined): PoolUse {
-  const totals = bodyPoolTotals(b);
-  const used = { resource: 0, industrial: 0, infrastructure: 0 };
-  for (const [slug, t] of Object.entries(b.structures ?? {})) {
-    if (t > 0 && POOL_OF[slug]) used[POOL_OF[slug]] += 1;
-  }
-  const pending = new Set((dyn?.builds ?? [])
-    .filter((j) => j.body_id === b.id && POOL_OF[j.key] && ((b.structures ?? {})[j.key] ?? 0) === 0)
-    .map((j) => j.key));
-  for (const slug of pending) used[POOL_OF[slug]] += 1;
-  return {
-    resource: { used: used.resource, total: totals.resource },
-    industrial: { used: used.industrial, total: totals.industrial },
-    infrastructure: { used: used.infrastructure, total: totals.infrastructure },
-  };
-}
-/// The summary strip: pools SUMMED across the roster (a system fact).
-function poolUsage(dyn: SystemStateView | undefined): PoolUse {
-  const sum = { resource: { used: 0, total: 0 }, industrial: { used: 0, total: 0 }, infrastructure: { used: 0, total: 0 } };
-  for (const b of dyn?.bodies ?? []) {
-    const totals = bodyPoolTotals(b);
-    for (const k of ["resource", "industrial", "infrastructure"] as const) sum[k].total += totals[k];
-    for (const [slug, t] of Object.entries(b.structures ?? {})) {
-      if (t > 0 && POOL_OF[slug]) sum[POOL_OF[slug]].used += 1;
-    }
-  }
-  return sum;
-}
 
 // ---- §build-panel: the dedicated structure builder ---------------------------
 // A client-only UI over the SAME DevelopSystem command — the per-structure grid
@@ -6184,8 +5308,6 @@ function poolUsage(dyn: SystemStateView | undefined): PoolUse {
 // planet panel stays a lens on the body while you choose what to build. All the
 // slot / afford / tier / deposit gating below is the ONE source of truth shared
 // by the row list, the detail, and the Queue button.
-type Pool = "resource" | "industrial" | "infrastructure";
-const POOL_LABEL: Record<Pool, string> = { resource: "Resource", industrial: "Industrial", infrastructure: "Infrastructure" };
 // Structure → the closest registry icon (art only; mirrors systemview's family).
 const STRUCT_ICON: Record<string, IconKey> = {
   mining_complex: "extractor", volatile_harvester: "extractor", bioharvester: "extractor",
@@ -6222,44 +5344,6 @@ const STRUCT_INFO: Record<string, { desc: string; effect: string }> = {
   academy: { desc: "Trains specialists and powers corporate research.", effect: "Enables specialist training + a research contribution." },
 };
 
-type BuildOpt = { key: string; label: string; costs: { commodity: string; units: number }[]; build_secs: number };
-interface StructOpt {
-  o: BuildOpt; pool: Pool; currentTier: number; targetTier: number;
-  foundsNew: boolean; tierUp: boolean;
-  afford: boolean; poolFull: boolean; noDeposit: boolean;
-  /// §yards: the co-located yard this one needs, unmet (`null` when satisfied).
-  yardPrereq: { yard: string; tier: number; have: number } | null;
-  buildable: boolean; reason: string;
-}
-/// The sim-mirroring state for building `o` on `body` — current/target tier,
-/// whether it founds a NEW slot vs. deepens in place, and every precondition
-/// (afford / pool-full / matching-deposit). `buildable` = all pass (Queue is
-/// live); `reason` is the first failing gate. Lifted out of the old inline build
-/// rows so the list, the detail, and the button can never disagree.
-function structOption(o: BuildOpt, dyn: SystemStateView, body: BodyView, pools: PoolUse): StructOpt {
-  const pool = POOL_OF[o.key];
-  const currentTier = (body.structures ?? {})[o.key] ?? 0;
-  const pendingAhead = (dyn.builds ?? []).filter((j) => j.body_id === body.id && j.key === o.key).length;
-  const foundsNew = currentTier === 0 && pendingAhead === 0;
-  const targetTier = currentTier + pendingAhead + 1;
-  const have = constructionStock(dyn).available;
-  const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
-  const poolFull = foundsNew && !!pool && pools[pool].used >= pools[pool].total;
-  const extractsFrom = EXTRACTION_OF[o.key];
-  const noDeposit = foundsNew && !!extractsFrom && !(body.deposits ?? []).some((d) => extractsFrom.includes(d.resource as Commodity));
-  // §yards: a yard needs the one below it standing on the same SYSTEM (not this
-  // body — the ladder belongs to a shipbuilding world, so it may spread across
-  // bodies). Checked on every tier, so a Drydock can't outgrow its Shipyard.
-  const pre = YARD_PREREQ[o.key];
-  const preHave = pre ? (dyn.structures?.[pre.yard] ?? 0) : 0;
-  const yardPrereq = pre && preHave < pre.tier ? { ...pre, have: preHave } : null;
-  const buildable = !poolFull && !noDeposit && !yardPrereq && afford;
-  const reason = noDeposit ? "No matching deposit on this body — a mine only works its own rock."
-    : yardPrereq ? `Needs ${YARD_TITLE[yardPrereq.yard] ?? yardPrereq.yard} tier ${yardPrereq.tier} somewhere in this system (have ${yardPrereq.have}).`
-    : poolFull ? `This body's ${POOL_LABEL[pool]} slots are full (${pools[pool].used}/${pools[pool].total}).`
-      : !afford ? "Not enough goods available at this system." : "";
-  return { o, pool, currentTier, targetTier, foundsNew, tierUp: !foundsNew, afford, poolFull, noDeposit, yardPrereq, buildable, reason };
-}
 const romanTier = (n: number): string => ROMAN[n] ?? String(n);
 
 // Build-panel state: which body it targets + the currently-selected structure.
@@ -6501,78 +5585,6 @@ const SHIP_HULL_ICON: Record<string, IconKey> = {
   // §ladder: no dedicated icons yet — the fleet mark stands in.
   destroyer: "fleet", cruiser: "fleet", battleship: "fleet", dreadnought: "fleet", titan: "fleet",
 };
-// Per-hull stats + one-line role, mirroring crates/sim/src/ship.rs (speed / hull
-// mass / attack+defense weights / module slots). Display only — the COSTS + gates
-// that matter for the command come from build_options + SHIP_REQ.
-const SHIP_STATS: Record<string, { role: string; speed: number; hull: number; atk: number; def: number; slots: number; cap: string }> = {
-  scout: { role: "Eyes of the fleet — fastest hull, gathers intel; unarmed, dies if caught.", speed: 115, hull: 80, atk: 0, def: 0, slots: 1, cap: "No cargo · widest sensor bubble" },
-  corvette: { role: "Armored escort/garrison — built to be shot at; too slow to chase raiders.", speed: 65, hull: 800, atk: 1, def: 4, slots: 2, cap: "No cargo · screens freighters" },
-  raider: { role: "Fast corporate interceptor — patrols, responds to threats, and can seize hostile cargo.", speed: 100, hull: 200, atk: 3, def: 2, slots: 2, cap: "No cargo · jump capable" },
-  convoy: { role: "Bulk freighter — carries goods to the hub; raidable, wants an escort.", speed: 40, hull: 4500, atk: 0, def: 1, slots: 0, cap: "Hauls cargo (raidable)" },
-  colony: { role: "Settlement ship — carries colonists to physically claim a system.", speed: 33, hull: 6000, atk: 0, def: 1, slots: 0, cap: "Carries a colony (one claim)" },
-  // §ladder: the research-gated warship ladder — capitals buy PRESENCE, never
-  // efficiency (weight per Armaments peaks at Destroyer/Cruiser).
-  destroyer: { role: "The first ship of the line — heavy beam broadsides (beam ×1.20).", speed: 55, hull: 2000, atk: 2.4, def: 2.6, slots: 3, cap: "Line IV research · 8 fit pts" },
-  cruiser: { role: "The season's prestige warship — armored core (protection ×1.20); the efficiency peak.", speed: 45, hull: 4000, atk: 4.5, def: 5.5, slots: 4, cap: "Line V research · 12 fit pts" },
-  battleship: { role: "The siege anchor — driver broadsides (driver ×1.20); accelerates a siege clock on station.", speed: 36, hull: 8000, atk: 8, def: 12, slots: 4, cap: "Line VI research · 18 fit pts" },
-  dreadnought: { role: "The fleet screen — a PD fit screens the whole side at platform grade (interception ×1.30).", speed: 29, hull: 16000, atk: 12, def: 26, slots: 5, cap: "Line VII research · 28 fit pts" },
-  titan: { role: "The flagship — broadly good at every weapon (×1.10), best at nothing; one per syndicate.", speed: 23, hull: 32000, atk: 24, def: 44, slots: 6, cap: "Line VIII research · 45 fit pts · singleton" },
-};
-interface ShipOpt { o: BuildOpt; needTier: number; yardTier: number; yardShort: boolean; afford: boolean; maxAff: number; buildable: boolean; reason: string; slipsFull: boolean; slips: number; foundingLocked: boolean; }
-/// Ship gating mirrored from the sim: shipyard-tier gate (SHIP_REQ vs the system's
-/// shipyard tier — the same field the old inline rows read) + afford, plus the
-/// max affordable count for the quantity stepper. `buildable` = tier ok + affords 1.
-// §ladder: is this hull's Line programme completed? (Capitals only — the five
-// original hulls never need research. Mirrors the sim's NeedsResearch gate.)
-function hullResearched(key: string): boolean {
-  const prog = HULL_PROGRAMME[key];
-  if (!prog) return true;
-  return state.research?.programmes.find((p) => p.id === prog)?.state === "completed";
-}
-function shipOption(o: BuildOpt, dyn: SystemStateView): ShipOpt {
-  const have = constructionStock(dyn).available;
-  // §yards: read the gating yard's tier from the owner-only structures map
-  // (`shipyard_tier` only ever knew about the Shipyard).
-  const gate = SHIP_YARD[o.key] ?? { yard: "shipyard", tier: 1 };
-  const yardTier = dyn.structures?.[gate.yard] ?? 0;
-  const needTier = gate.tier;
-  const yardShort = yardTier < needTier;
-  const unresearched = !hullResearched(o.key);
-  const foundingLocked = o.key === "colony" && !!state.founding && !state.founding.expansion_unlocked;
-  const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
-  const maxAff = o.costs.length
-    ? Math.max(0, Math.min(...o.costs.map((c) => Math.floor((have.get(c.commodity as Commodity) ?? 0) / c.units))))
-    : 0;
-  // §yards M1: SLIPWAYS. Hulls in progress at this system that this same yard
-  // gates occupy its slips; a full yard can't lay another keel until one frees.
-  const slips = slipsFor(yardTier);
-  const occupied = (dyn.builds ?? []).filter((j) => SHIP_YARD[j.key]?.yard === gate.yard).length;
-  const slipsFull = !yardShort && occupied >= slips;
-  const buildable = !foundingLocked && !yardShort && !unresearched && !slipsFull && afford;
-  const reason = foundingLocked
-    ? "Complete the Founding Programme to unlock expansion."
-    : unresearched
-    ? "Requires its Line programme on the Hulls research board."
-    : yardShort ? `Needs ${YARD_TITLE[gate.yard] ?? gate.yard} tier ${needTier} (have ${yardTier}).`
-    : slipsFull ? `All ${slips} slipway${slips === 1 ? "" : "s"} busy — raise the ${YARD_TITLE[gate.yard] ?? gate.yard} or wait for a hull to launch.`
-    : !afford ? "Not enough goods available at this system." : "";
-  return { o, needTier, yardTier, yardShort: yardShort || unresearched, afford, maxAff, buildable, reason, slipsFull, slips, foundingLocked };
-}
-// A build duration for humans: seconds under 2 min, then minutes / hours / days
-// (a capital keel is a season event — "8d" reads, "691200s" doesn't).
-function fmtBuildDur(secs: number): string {
-  if (secs < 120) return `${Math.round(secs)}s`;
-  if (secs < 7200) return `${Math.round(secs / 60)}m`;
-  if (secs < 172800) return `${(secs / 3600).toFixed(secs < 36000 ? 1 : 0).replace(/\.0$/, "")}h`;
-  return `${(secs / 86400).toFixed(1).replace(/\.0$/, "")}d`;
-}
-/// The staffed-shipyard build-time multiplier (mirrors the sim: build_ticks /
-/// (1 + SHIPYARD_BOOST·staffing·skill), SHIPYARD_BOOST = 0.25). 1.0 when the yard
-/// has no worker assigned here (the AssignmentView carries the resolved factors).
-function shipyardBoost(dyn: SystemStateView, body: BodyView): number {
-  const a = (dyn.assignments ?? []).find((x) => x.body_id === body.id && x.structure === "shipyard");
-  return a ? 1 + 0.25 * a.staffing * a.skill : 1;
-}
 function shipRowHtml(st: ShipOpt): string {
   const sel = st.o.key === shipSelectedKind ? " is-sel" : "";
   const off = st.buildable ? "" : " is-off";
@@ -6740,29 +5752,6 @@ function ownedSystemsRail(): string {
   }).join("") + `</div>`;
 }
 
-/// Own fleets the player's SERVED picture places at this system. Deliberately
-/// never corrected from server truth or client projection: a departed fleet
-/// remains listed until its departure light reaches the command center.
-function dockedAtSystem(g: GhostView, systemId: string): boolean {
-  // DockSite currently reaches the client through Display ("E29") while
-  // SystemInfo uses the EntityId wire form ("29"). Keep that transport quirk at
-  // this seam so every system-facing client view still compares one identity.
-  return g.docked === systemId || g.docked === `E${systemId}`;
-}
-
-function systemFleetsAt(sys: SystemInfo): GhostView[] {
-  return state.ghosts
-    .filter((g) => g.own && (
-      dockedAtSystem(g, sys.id)
-      || (g.docked == null && Math.hypot(g.pos.x - sys.pos.x, g.pos.y - sys.pos.y) <= HYPERLIMIT_SU)
-    ))
-    .sort((a, b) => {
-      const docked = Number(dockedAtSystem(b, sys.id)) - Number(dockedAtSystem(a, sys.id));
-      if (docked !== 0) return docked;
-      return shipKindLabel(a.kind).localeCompare(shipKindLabel(b.kind)) || a.id.localeCompare(b.id);
-    });
-}
-
 function systemFleetsSection(sys: SystemInfo, fleets: GhostView[]): string {
   if (fleets.length === 0) return "";
   const rows = fleets.map((g) => {
@@ -6792,12 +5781,6 @@ function systemFleetsSection(sys: SystemInfo, fleets: GhostView[]): string {
 }
 
 let lastFleetRosterSig = "";
-
-function fleetRosterDockName(g: GhostView): string | null {
-  if (g.docked === "hub") return "Wormhole Hub";
-  if (!g.docked) return null;
-  return state.galaxy?.systems.find((system) => dockedAtSystem(g, system.id))?.name ?? "known berth";
-}
 
 function fleetRosterRow(g: GhostView): string {
   const exact = fleetExactCount(g);
@@ -6927,34 +5910,6 @@ function buildSystemTab(): void {
       case "market": openMarket(); break;
     }
   });
-}
-
-// §step1 build sink, shared by every build UI (the System View management
-// column, its contextual body offers, and the rail's remaining paths):
-// ships → BuildShip; developments → DevelopSystem. Same system-level commands
-// as always — no UI adds a new gameplay verb.
-function dispatchBuildKey(k: string, sid: string, bodyId?: number): void {
-  if (!net) return;
-  if (k === "convoy" || k === "raider" || k === "corvette" || k === "colony" || k === "scout") {
-    // §modules Part B4: a warship build carries the composed FIT, clamped to this
-    // hull's module slots (so a 2-module fit on a 1-slot scout sends just 1, not a
-    // silent server reject). The ledger is debited server-side.
-    const fit = pendingFit.filter((m) => (moduleLedgerAt(sid)[m] ?? 0) > 0).slice(0, MODULE_SLOTS[k] ?? 0);
-    net.send({ type: "BuildShip", system_id: sid, ship_kind: k, loadout: fit.length ? fit : undefined });
-  }
-  // §modules Part B3: "module:<slug>" → manufacture into the system ledger.
-  else if (k.startsWith("module:")) net.send({ type: "BuildModule", system_id: sid, module: k.slice(7) as ModuleKind });
-  // §bodies: the body panel names its body; omitted → the sim auto-sites.
-  else net.send({ type: "DevelopSystem", system_id: sid, upgrade: k, body_id: bodyId }); // §economy: any structure slug
-}
-
-// What "Ship production → hub" will ACTUALLY dispatch: the system's NON-FUEL
-// stock in whole units. MIRRORS the sim's apply_ship_production rule — Fuel is
-// retained as the system's operating reserve (it powers movement; sell it via
-// the Market), so it must neither light the button nor be promised in feedback.
-// The View's stockpile is already owner-only whole units, so this is exact.
-function shippableStock(dyn: SystemStateView | undefined): StockSlot[] {
-  return (dyn?.stockpile ?? []).filter((s) => s.commodity !== "fuel" && s.units >= 1);
 }
 
 let lastSystemTabSig = "";
@@ -7326,106 +6281,13 @@ function showEngagementEstimate(e: import("./protocol").EngagementEstimate): voi
 // sparklines + honest staleness, and a buy/sell composer that surfaces the
 // integrated curve, finite external liquidity, and the separate physical
 // freight decision. UI-only: same messages, same lagged-price model. ----------
-const COMMODITIES: Commodity[] = [
-  "metallic_ore", "rare_elements", "silicates", "volatiles", "biomass",
-  "alloys", "electronics", "polymers", "fuel", "provisions",
-  "machinery", "armaments",
-];
-
 // The composer's local selection (the board is the master list, this the detail).
 const composer: { side: Side; commodity: Commodity } = { side: "buy", commodity: "fuel" };
-
-type MarketReservation = {
-  kind: "market" | "limit";
-  side: Side;
-  commodity: Commodity;
-  orderUnits: number;
-  units: number;
-  credits: number;
-  limitPrice?: number;
-  issuedAt: number;
-};
-
-type RecentMarketOrder = {
-  side: Side;
-  commodity: Commodity;
-  units: number;
-  unitPrice: number;
-  limitFill: boolean;
-  observedAt: number;
-};
-const RECENT_MARKET_ORDER_LIMIT = 8;
-const recentMarketOrders: RecentMarketOrder[] = [];
 
 // Settlement is instant at the Market Hub, but the account report is not. Keep
 // the player's own just-issued commitments as a pessimistic local overlay until
 // the delayed receipt arrives; this prevents the stale wallet from offering the
 // same credits or goods twice without pretending the estimate is server truth.
-const marketReservations: MarketReservation[] = [];
-function pruneMarketReservations(): void {
-  const ttl = Math.max(5, (state.market?.staleness ?? 0) + 2);
-  const now = liveSimTime();
-  for (let i = marketReservations.length - 1; i >= 0; i--) {
-    if (now - marketReservations[i].issuedAt > ttl) marketReservations.splice(i, 1);
-  }
-}
-function reservedMarketCredits(): number {
-  pruneMarketReservations();
-  return marketReservations.reduce((sum, reservation) => sum + reservation.credits, 0);
-}
-function spendableMarketCredits(): number {
-  return Math.max(0, (state.wallet?.credits ?? 0) - reservedMarketCredits());
-}
-function reserveMarketOrder(reservation: Omit<MarketReservation, "issuedAt">): void {
-  marketReservations.push({ ...reservation, issuedAt: liveSimTime() });
-}
-function settleMarketReservation(trade: TradeEvent): void {
-  let kind: MarketReservation["kind"] | null = null;
-  let side: Side | null = null;
-  let commodity: Commodity | null = null;
-  if (trade.event === "Bought") [kind, side, commodity] = ["market", "buy", trade.commodity];
-  else if (trade.event === "Sold") [kind, side, commodity] = ["market", "sell", trade.commodity];
-  else if (trade.event === "LimitPlaced") [kind, side, commodity] = ["limit", trade.side, trade.commodity];
-  else if (trade.event === "Rejected") commodity = trade.commodity;
-  else return;
-  const index = marketReservations.findIndex((reservation) =>
-    reservation.commodity === commodity
-      && (kind === null || reservation.kind === kind)
-      && (side === null || reservation.side === side));
-  if (index >= 0) marketReservations.splice(index, 1);
-}
-
-// Recent means the execution receipt has reached the corporation—not that a
-// client-side estimate expired. Open limit orders remain in the served book;
-// only completed market trades and observed limit fills enter this history.
-function recordRecentMarketOrder(trade: TradeEvent): void {
-  let row: RecentMarketOrder | null = null;
-  if (trade.event === "Bought") {
-    row = { side: "buy", commodity: trade.commodity, units: trade.units, unitPrice: trade.unit_price, limitFill: false, observedAt: liveSimTime() };
-  } else if (trade.event === "Sold") {
-    row = { side: "sell", commodity: trade.commodity, units: trade.units, unitPrice: trade.unit_price, limitFill: false, observedAt: liveSimTime() };
-  } else if (trade.event === "LimitFilled") {
-    row = { side: trade.side, commodity: trade.commodity, units: trade.units, unitPrice: trade.unit_price, limitFill: true, observedAt: liveSimTime() };
-  }
-  if (!row) return;
-  recentMarketOrders.unshift(row);
-  recentMarketOrders.length = Math.min(recentMarketOrders.length, RECENT_MARKET_ORDER_LIMIT);
-}
-
-// Accumulate the OBSERVED hub prices into a per-commodity rolling history (the
-// sparkline data source). Fog-safe: it only ever stores the lagged prices the
-// player has already been shown. Throttled to ~1 Hz of sim-time, capped.
-const PRICE_HISTORY_CAP = 60; // ~1 minute at 1 Hz sampling
-function recordPriceHistory(): void {
-  if (!state.market) return;
-  if (state.simTime - state.lastPriceSampleAt < 0.9) return; // throttle
-  state.lastPriceSampleAt = state.simTime;
-  for (const p of state.market.prices) {
-    const series = (state.priceHistory[p.commodity] ??= []);
-    series.push(p.price);
-    if (series.length > PRICE_HISTORY_CAP) series.shift();
-  }
-}
 
 let marketBuilt = false;
 // §market-ux: which Market tab is showing — survives close/reopen within the
@@ -7752,16 +6614,7 @@ function renderModulesPane(): void {
 // Mirrors sim::market's quantity integration so the stale quote includes the
 // order's OWN impact. The server is authoritative; this only derives the default
 // ±10% protection sent with the order and the preview shown to the player.
-const MARKET_DEPTH = 1600;
-const MARKET_HALF_SPREAD = 0.01;
 const MARKET_PROTECTION_FRAC = 0.10;
-function marketAverageQuote(mid: number, units: number, side: Side): number {
-  const x = units / MARKET_DEPTH;
-  if (side === "buy") {
-    return mid * MARKET_DEPTH * Math.expm1(x) / units * (1 + MARKET_HALF_SPREAD);
-  }
-  return mid * MARKET_DEPTH * (1 - Math.exp(-x)) / units * (1 - MARKET_HALF_SPREAD);
-}
 
 // The submit button carries the ordinary estimate and protection rule. The line
 // beneath it is warnings-only: if nothing needs attention, it disappears.
@@ -7834,12 +6687,6 @@ let freightDir: ShipmentDir = "outbound";
 /// The pending multi-commodity Authority booking. The wire keeps one shipment
 /// per line; the scheduled loader combines them into one physical mixed manifest
 /// while respecting the shared hull allowance.
-const freightDraft = new Map<Commodity, number>();
-function freightDraftEntries(): { commodity: Commodity; units: number }[] {
-  return COMMODITIES
-    .filter((commodity) => (freightDraft.get(commodity) ?? 0) > 0)
-    .map((commodity) => ({ commodity, units: freightDraft.get(commodity)! }));
-}
 function renderFreightDraft(): void {
   const entries = freightDraftEntries();
   $("fr-manifest").innerHTML = entries.length
@@ -7847,14 +6694,6 @@ function renderFreightDraft(): void {
         `<div class="ord">${commodityIcon(entry.commodity, "sm")} <b>${entry.units}</b> ${esc(label(entry.commodity))}` +
         `<button class="o-rm" data-fr-remove="${entry.commodity}" title="Remove this commodity from the booking">Remove</button></div>`).join("")
     : `<div class="mhint dim">Add several goods here; one Authority freighter carries the mixed manifest within its shared capacity.</div>`;
-}
-/// Units of `c` in the player's Market Warehouse.
-function warehouseUnits(c: Commodity): number {
-  const reported = state.wallet?.warehouse?.find((w) => w.commodity === c)?.units ?? 0;
-  const reserved = marketReservations
-    .filter((reservation) => reservation.commodity === c)
-    .reduce((sum, reservation) => sum + reservation.units, 0);
-  return Math.max(0, reported - reserved);
 }
 /// Fill a <select> with the player's owned freight destinations, preserving the
 /// current choice where possible.
@@ -8020,12 +6859,6 @@ function renderShipmentQueue(): void {
         })
         .join("")
     : `<div class="mhint dim">No freight booked.</div>`;
-}
-
-/// A short duration ("2m 10s") for the freight timetable.
-function fmtDur(secs: number): string {
-  const s = Math.max(0, Math.round(secs));
-  return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
 }
 
 function renderRestingOrders(): void {
@@ -8195,33 +7028,6 @@ function addTradeNews(t: TradeEvent): void {
   setTimeout(() => el.classList.add("fade"), 12000);
 }
 
-// --- Standing orders panel (§15) — constrained logistics automation ----------
-function systemName(id: string): string {
-  return state.galaxy?.systems.find((x) => x.id === id)?.name ?? id;
-}
-function ownedSystems(): { id: string; name: string }[] {
-  if (state.playerId === null) return [];
-  return state.systems
-    .filter((s) => s.owner === state.playerId)
-    .map((s) => ({ id: s.id, name: systemName(s.id) }));
-}
-// §syndicates Part 3: SYNDICATE-ally systems (per the viewer's known membership)
-// are valid AID destinations for standing orders / convoys — deliveries credit the
-// ally's stockpile (blockades still interdict the run).
-function allySystems(): { id: string; name: string }[] {
-  return state.systems
-    .filter((s) => s.ally)
-    .map((s) => ({ id: s.id, name: systemName(s.id) }));
-}
-function endpointLabel(e: StandingEndpoint): string {
-  return e.kind === "hub" ? "hub" : e.kind === "home" ? "home" : systemName(e.id);
-}
-function triggerLabel(t: StandingTrigger): string {
-  if (t.kind === "above_threshold") return `when stock ≥ ${t.threshold}`;
-  if (t.kind === "percent_surplus") return `${t.percent}% of surplus over ${t.floor}`;
-  return `keep dest ≥ ${t.target}`;
-}
-
 let standingBuilt = false;
 function buildStandingPanel(): void {
   if (standingBuilt) return;
@@ -8388,17 +7194,6 @@ function updateDoctrinePanel(): void {
   }
 }
 
-// --- Check-in loop (§16, Layer 3) — timeline digest + attention surfacing ----
-// Presence buys AWARENESS, not advantage: when you check in, here's what became
-// observable while you were away, and the decisions waiting for you. The timeline
-// is server-composed (light-correct, buffered offline); the attention items are
-// derived right here from the player's own View — no extra information, just a
-// summary of what they can already see.
-function agoLabel(at: number): string {
-  const d = Math.max(0, state.simTime - at);
-  return d < 90 ? `${d.toFixed(0)}s ago` : `${(d / 60).toFixed(0)}m ago`;
-}
-
 // §contestable-territory Part 2: siege progress for a system's blockade view
 // field. Returns null unless the (defense-suppressed) siege clock is running.
 // `pct` fills a bar; `left` is the capture countdown; `ripe` = a landing force
@@ -8469,17 +7264,6 @@ function landingOddsLine(o: LandingOddsView | null | undefined): string {
   return `<div class="deps-head" style="margin-top:4px"><span class="dim">Your ${o.marines} marines —</span> ${chip}${warn}</div>`;
 }
 
-/// §dock: the hulls BERTHED at a dock, from the ghosts this viewer already has.
-///
-/// Derived client-side on purpose: the ghost list is already fog-filtered, so
-/// counting it can neither invent intel nor lose any. The galaxy map stops
-/// drawing these sprites and this count takes their place — the same
-/// information, in a form you can actually read when six convoys are stacked on
-/// one star. `site` is a system id, or "hub" for the Market Hub.
-function berthed(site: string): GhostView[] {
-  return state.ghosts.filter((g) => dockedAtSystem(g, site));
-}
-
 /// The berth readout for a system panel: how many hulls are parked here, and
 /// whose. Rival hulls are counted separately — you can see that someone else's
 /// ships are sitting on this ground, which is exactly what their sprites used
@@ -8498,26 +7282,6 @@ function berthLine(systemId: string): string {
     `</div>`;
 }
 
-/// The most recent landing at a system that this viewer can see. Fog-safe by
-/// construction: `state.groundRecords` only ever holds what the server sent us.
-function latestGroundRecordFor(system: string): GroundRecordView | undefined {
-  let best: GroundRecordView | undefined;
-  for (const r of state.groundRecords) {
-    if (r.system !== system) continue;
-    // A running landing always wins — it is the live thing.
-    if (r.outcome === null) return r;
-    if (!best || r.started_at > best.started_at) best = r;
-  }
-  return best;
-}
-
-function siegeProgress(dyn: SystemStateView | undefined): { pct: number; left: number; ripe: boolean } | null {
-  if (!dyn?.blockade || dyn.blockade.siege_since == null || !state.galaxy) return null;
-  const total = state.galaxy.siege_secs || 1;
-  const elapsed = Math.max(0, liveSimTime() - dyn.blockade.siege_since);
-  return { pct: Math.min(100, (elapsed / total) * 100), left: Math.max(0, total - elapsed), ripe: elapsed >= total };
-}
-
 // ================= DECISION INBOX (§decision-inbox) =========================
 // The digest's PRIMARY surface: not "what happened" but "what deserves a
 // decision". Every item is a PURE FUNCTION of already-delivered, OWNER-GATED View
@@ -8534,7 +7298,6 @@ const INBOX_W = {
   captureWon: 28, battleReport: 26, noAutomation: 20,
 };
 const HOSTILE_CONCERN_MULT = 1.6; // a raider within this × sensor_range of an asset
-const REPORT_RECENT_S = 300; // capture/battle reports surface only while this fresh
 const IDLE_UNITS = 30; // idle-stockpile threshold
 const MAX_HOSTILE_ITEMS = 4;
 
@@ -8550,45 +7313,6 @@ let currentInbox: InboxItem[] = [];
 // view field is the single source, so this is fog-safe by construction). Seeded
 // silently on the first View (the join payload isn't news); systems WE own are
 // suppressed (claiming reveals by holding, not by a report).
-let knownGeologyIds: Set<string> | null = null;
-const freshSurveyReports = new Map<string, number>(); // system id → sim-time noticed
-
-function noteSurveyReports(simTime: number): void {
-  const cur = new Set(state.systems.filter((x) => x.deposits != null).map((x) => x.id));
-  if (knownGeologyIds === null) {
-    knownGeologyIds = cur; // first View: seed silently
-    return;
-  }
-  for (const id of cur) {
-    if (!knownGeologyIds.has(id)) {
-      knownGeologyIds.add(id);
-      const dyn = state.systems.find((x) => x.id === id);
-      if (dyn?.owner !== state.playerId) freshSurveyReports.set(id, simTime);
-    }
-  }
-  // Age out stale reports (they remain in the log/panel; the CARD is for the
-  // decision window).
-  for (const [id, t] of freshSurveyReports) {
-    if (simTime - t > REPORT_RECENT_S) freshSurveyReports.delete(id);
-  }
-}
-
-// One-way command delay (cc → pos) — the SAME echo math the order lifecycle uses;
-// null before the galaxy/CC arrive.
-function commandDelayTo(pos: Vec2): number | null {
-  if (!state.commandCenter || !state.galaxy) return null;
-  return Math.hypot(pos.x - state.commandCenter.x, pos.y - state.commandCenter.y) / state.galaxy.c;
-}
-// Nearest KNOWN system name to a point (for naming a battle/report location).
-function locName(pos: Vec2): string {
-  if (!state.galaxy) return `(${Math.round(pos.x)}, ${Math.round(pos.y)})`;
-  let best: { name: string; d: number } | null = null;
-  for (const s of state.galaxy.systems) {
-    const d = Math.hypot(s.pos.x - pos.x, s.pos.y - pos.y);
-    if (!best || d < best.d) best = { name: s.name, d };
-  }
-  return best ? best.name : `(${Math.round(pos.x)}, ${Math.round(pos.y)})`;
-}
 // Deep-link actions (close the inbox, focus the relevant panel/target).
 function inboxFocusSystem(id: string): void { state.selectedShipId = null; state.selectedOrderId = null; state.selectedSystemId = id; closeCheckin(); openRail("system"); }
 function inboxFocusFleet(id: string): void { closeCheckin(); selectShip(id); }
@@ -8879,31 +7603,6 @@ function computeInbox(): InboxItem[] {
   return out;
 }
 
-// The "all clear" line — the single most check-in-respecting sentence in the
-// game: when nothing needs a decision, show the NEXT known timestamp that will.
-function nextDecisionLabel(): string {
-  const now = liveSimTime();
-  let at = Infinity, label = "";
-  const consider = (t: number, l: string) => { if (t > now && t < at) { at = t; label = l; } };
-  const owned = state.systems.filter((s) => s.owner === state.playerId);
-  for (const s of owned) {
-    for (const b of s.builds ?? []) consider(b.complete_time, `a build completes at ${systemName(s.id)}`);
-    if (s.blockade?.siege_since != null && state.galaxy) consider(s.blockade.siege_since + state.galaxy.siege_secs, `the siege at ${systemName(s.id)} completes`);
-  }
-  for (const queue of state.pendingOrders.values()) {
-    for (const p of queue) if (!p.lost) consider(p.response_at, "an order response is expected");
-  }
-  // §explore Part 4: an in-flight survey DWELL — its completion is often the
-  // soonest thing worth waiting for (owner-only live progress, honest estimate).
-  for (const g of state.ghosts) {
-    if (g.own && g.survey_progress != null) {
-      consider(now + (1 - g.survey_progress) * SURVEY_SECS_UI, "a survey completes");
-    }
-  }
-  if (!isFinite(at)) return "All quiet — nothing scheduled needs you.";
-  return `Nothing needs you until ${doneAtLocal(at)} (${label}).`;
-}
-
 // Render one inbox card (headline+icon, age chip, stakes, confidence, action row
 // with per-button delivery times for order-issuing verbs).
 function inboxCardHtml(it: InboxItem, i: number): string {
@@ -8971,23 +7670,9 @@ function updateCheckinPanel(): void {
 
 // --- Networking ------------------------------------------------------------
 let net: Net | null = null;
-
-// §perf Part B: join the View's DYNAMIC research slice onto the static Welcome
-// catalog, rebuilding the full per-node shape the research panel reads. Joined
-// by id (both lists come from the same visible_ids order, but the join never
-// relies on that). A dyn entry without a catalog row is dropped — it cannot be
-// rendered without name/board metadata (and can only mean a server/client
-// catalog drift, which the protocol-version check already warns about).
-function mergeResearch(dyn: ResearchDynView): ResearchView {
-  const cat = new Map(state.researchCatalog.map((p) => [p.id, p]));
-  const programmes: ProgrammeView[] = [];
-  for (const d of dyn.programmes) {
-    const p = cat.get(d.id);
-    if (!p) continue;
-    programmes.push({ ...p, state: d.state, gate: d.gate ?? null });
-  }
-  return { active: dyn.active, queue: dyn.queue, rate: dyn.rate, stalled: dyn.stalled, academies: dyn.academies, programmes };
-}
+bindFleetNet(() => net);
+bindResearchNet(() => net);
+bindMarketDerive(() => net, () => pendingFit);
 
 // §perf: coalesce the per-View panel refreshes. Views arrive at ~10 Hz, but if the
 // main thread stalls (a GC pause, a background tab that just refocused) the queued
@@ -9027,19 +7712,6 @@ function foundingGuideHeader(step: string, shield: string, title: string): strin
     `<span class="fg-mini-title">${esc(title)}</span><span class="fg-shield">${esc(shield)}</span>` +
     `<button class="fg-minimize" type="button" data-founding-minimize aria-expanded="${expanded}" ` +
     `title="${expanded ? "Minimize tutorial" : "Expand tutorial"}" aria-label="${expanded ? "Minimize tutorial" : "Expand tutorial"}">${expanded ? "−" : "+"}</button></div>`;
-}
-
-function foundingHomeSystemId(): string | null {
-  if (!state.playerId || !state.galaxy || !state.commandCenter) return null;
-  const pos = new Map(state.galaxy.systems.map((s) => [s.id, s.pos]));
-  return state.systems
-    .filter((s) => s.owner === state.playerId && pos.has(s.id))
-    .sort((a, b) => {
-      const ap = pos.get(a.id)!;
-      const bp = pos.get(b.id)!;
-      return Math.hypot(ap.x - state.commandCenter!.x, ap.y - state.commandCenter!.y)
-        - Math.hypot(bp.x - state.commandCenter!.x, bp.y - state.commandCenter!.y);
-    })[0]?.id ?? null;
 }
 
 // The programme assigns places, not answers. Before a report arrives these
@@ -9681,44 +8353,7 @@ $("legend-toggle").addEventListener("click", () => {
   }
 });
 
-
-/// §TCA Part 5: dockside LOGISTICS for one of the player's own convoys — load and
-/// unload across the Market Warehouse or an owned system's stockpile, and
-/// the haul order that sends a loaded hull to the Market Hub. Only offered when
-/// the fleet is actually alongside a dock and idle; the sim soft-rejects anything
-/// else, but there is no point showing a button that will only ever be refused.
-/// Does this fleet lift cargo? UI mirror of the sim's `Fleet::cargo_capacity()`:
-/// convoy HULLS carry, and it never consults the flagship. An escorted lot whose
-/// flagship is a warship still hauls.
-function hauls(g: GhostView): boolean {
-  return g.kind === "convoy" || !!g.composition?.some((c) => c.kind === "convoy" && c.count > 0);
-}
-
 const haulDestinationByFleet = new Map<EntityId, EntityId>();
-function ownedHaulDestinations(): { id: EntityId; name: string }[] {
-  const owned = new Set(
-    state.systems
-      .filter((system) => system.owner === state.playerId)
-      .map((system) => system.id),
-  );
-  return (state.galaxy?.systems ?? [])
-    .filter((system) => owned.has(system.id))
-    .map((system) => ({ id: system.id, name: system.name }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function dockLoadStock(g: GhostView): [Commodity, number][] {
-  if (g.docked === "hub") {
-    return (state.wallet?.warehouse ?? []).map((w) => [w.commodity, w.units]);
-  }
-  if (!g.docked) return [];
-  const system = (state.galaxy?.systems ?? []).find((candidate) =>
-    dockedAtSystem(g, candidate.id)
-    && state.systems.find((served) => served.id === candidate.id)?.owner === state.playerId);
-  if (!system) return [];
-  return (state.systems.find((entry) => entry.id === system.id)?.stockpile ?? [])
-    .map((slot) => [slot.commodity, slot.units]);
-}
 
 function dockLoadOptions(g: GhostView): string {
   return dockLoadStock(g)
@@ -9826,48 +8461,6 @@ function logisticsSection(g: GhostView): string {
 }
 
 
-/// §TCA: plain-language text for a soft-rejected order or booking. Every one of
-/// these costs the player NOTHING — the wording says what to do instead.
-function rejectText(t: Extract<TradeEvent, { event: "Rejected" }>): string {
-  const com = t.commodity;
-  const where = t.system ? systemName(t.system) : null;
-  switch (t.reason.reason) {
-    case "insufficient_warehouse_stock":
-      return `Your Market Warehouse holds ${t.reason.have} ${com} — ship goods in first (Authority freight, or one of your freighters).`;
-    case "not_your_system":
-      return `The Authority serves your own colonies only — ${where ?? "that system"} isn't yours.`;
-    case "insufficient_system_stock":
-      return `${where ?? "That system"} holds ${t.reason.have} ${com} — not enough to collect ${t.units}.`;
-    case "cannot_afford_fee":
-      return `Freight fee is ${fmt(t.reason.fee)} Cr — more than your treasury.`;
-    case "destination_blockaded":
-      return `The Authority reports ${where ?? "that system"} BLOCKADED and won't book freight there.`;
-    case "fleet_unavailable":
-      return `That fleet must be yours, idle, and out of a fight to handle cargo.`;
-    case "out_of_logistics_range":
-      return `That fleet is too far from the dock — bring it alongside first.`;
-    case "no_cargo_room":
-      return t.reason.capacity === 0
-        ? `That fleet has no cargo hold — only freighters haul goods.`
-        : `Not enough hold for ${t.units} ${com}: this fleet lifts ${t.reason.capacity} units.`;
-    case "cargo_mismatch":
-      return `This older server refused a mixed load. Unload before loading ${com}.`;
-    case "charter_suspended":
-      return `Your charter is SUSPENDED — the Authority takes no new freight. Freight already booked still completes; pay reinstatement, or haul it yourself.`;
-    case "charter_revoked":
-      return `Your charter is REVOKED — the Exchange is closed to you. Your warehouse is still yours to fetch from; pay reinstatement to trade again.`;
-    case "cant_afford":
-      return t.units === 0
-        ? `Reinstatement costs ${fmt(t.reason.cost)} credits — more than your treasury.`
-        : `This purchase needs ${fmt(t.reason.cost)} credits including penalties — more than your treasury.`;
-    case "price_protection":
-      return `Price protection stopped the order: your bound was ${t.reason.bound.toFixed(2)}, but the true average price was ${t.reason.actual.toFixed(2)}. Nothing traded.`;
-    case "market_liquidity":
-      return `The Global Market can clear only ${t.reason.available} units immediately. Nothing traded — reduce the lot or place a limit order.`;
-  }
-}
-
-
 // --- §TCA Phase 2: the FACTION panel — your charter status --------------------
 // A top-navbar destination of its own (⚖ / `C`), beside Syndicate: the charter is
 // WHO YOU ARE to the Authority, not something you shop for, so it no longer rides
@@ -9962,28 +8555,6 @@ function syncReinstateCost(): void {
   const restorable = Math.max(0, ch.max_standing - ch.standing);
   const points = Math.min(want, restorable);
   out.textContent = `${fmt(points * ch.reinstate_cost_per_point)} Cr for ${points.toFixed(0)} pts`;
-}
-
-/// §TCA Phase 2: the projected band after `loss` more standing — the client-side
-/// forecast behind the "this will be cited" confirmations. A PREVIEW, not a
-/// promise: the citation only lands when its light reaches the Market Hub, and
-/// standing regenerates in the meantime.
-function projectedBand(loss: number): string {
-  const ch = state.charter;
-  if (!ch) return "unknown";
-  const after = ch.standing - loss;
-  // Walk the server-supplied ladder (static, from Welcome): the first row whose
-  // threshold we are at or below names the band (row 1, Sanctioned, is a strict
-  // "below").
-  const ladder = state.charterLadder;
-  if (!ladder.length) return "unknown";
-  let title = ladder[0][0];
-  for (let i = 1; i < ladder.length; i++) {
-    const [name, at] = ladder[i];
-    const hit = i === 1 ? after < at : after <= at;
-    if (hit) title = name;
-  }
-  return title;
 }
 
 /// Confirm a hostile act against an Authority hull. NEVER a hard block — the

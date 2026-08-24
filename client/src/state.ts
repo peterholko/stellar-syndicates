@@ -220,6 +220,11 @@ export interface ViewState {
   commandSignals: CommandSignal[];
 }
 
+// The one client-side served picture. Keeping its identity stable lets the
+// shared derive modules and whichever shell is mounted read and mutate the
+// same view without threading it through every established helper signature.
+export const state: ViewState = initialState();
+
 export function initialState(): ViewState {
   return {
     playerId: null,

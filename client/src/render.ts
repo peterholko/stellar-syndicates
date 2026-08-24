@@ -3309,3 +3309,7 @@ function dashedCircle(g: Graphics, x: number, y: number, radius: number, segment
     g.arc(x, y, radius, a0, a1);
   }
 }
+
+// The scene survives shell changes; desktop and mobile both operate on this
+// single renderer instance while presenting different DOM chrome around it.
+export const renderer = new Renderer();
