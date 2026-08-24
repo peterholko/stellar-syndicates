@@ -4,6 +4,10 @@
 
 import type { ClientMsg, ServerMsg } from "./protocol";
 
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_MAX_MS = 30_000;
+const RECONNECT_JITTER = 0.2;
+
 export interface NetHandlers {
   onOpen: () => void;
   onMessage: (msg: ServerMsg) => void;
@@ -27,17 +31,42 @@ function resolveServerUrl(): string {
 
 export class Net {
   private ws: WebSocket | null = null;
+  private reconnectTimer: number | null = null;
+  private reconnectAttempt = 0;
+  private stopped = false;
   readonly url: string;
 
   constructor(private handlers: NetHandlers) {
     this.url = resolveServerUrl();
+    document.addEventListener("visibilitychange", this.handleVisibilityChange);
   }
 
   connect(): void {
+    this.stopped = false;
+    this.clearReconnect();
+    this.open();
+  }
+
+  disconnect(): void {
+    this.stopped = true;
+    this.clearReconnect();
+    document.removeEventListener("visibilitychange", this.handleVisibilityChange);
+    const ws = this.ws;
+    this.ws = null;
+    if (ws && ws.readyState < WebSocket.CLOSING) ws.close();
+  }
+
+  private open(): void {
+    if (this.stopped || (this.ws && this.ws.readyState < WebSocket.CLOSING)) return;
     const ws = new WebSocket(this.url);
     this.ws = ws;
-    ws.onopen = () => this.handlers.onOpen();
+    ws.onopen = () => {
+      if (this.ws !== ws) return;
+      this.reconnectAttempt = 0;
+      this.handlers.onOpen();
+    };
     ws.onmessage = (ev) => {
+      if (this.ws !== ws) return;
       try {
         this.handlers.onMessage(JSON.parse(ev.data) as ServerMsg);
       } catch (e) {
@@ -46,9 +75,44 @@ export class Net {
         console.warn("dropping unparseable server frame:", e, ev.data);
       }
     };
-    ws.onclose = () => this.handlers.onClose();
-    ws.onerror = (e) => this.handlers.onError(e);
+    ws.onclose = () => {
+      if (this.ws !== ws) return;
+      this.ws = null;
+      this.handlers.onClose();
+      this.scheduleReconnect();
+    };
+    ws.onerror = (e) => {
+      if (this.ws !== ws) return;
+      this.handlers.onError(e);
+      // Browsers report connection failures through both error and close, but
+      // only close owns the retry so one failed socket cannot schedule twice.
+      try { ws.close(); } catch { /* close will follow or the next wake retries */ }
+    };
   }
+
+  private scheduleReconnect(): void {
+    if (this.stopped || this.reconnectTimer !== null) return;
+    const base = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** this.reconnectAttempt);
+    const jitter = 1 - RECONNECT_JITTER + Math.random() * RECONNECT_JITTER * 2;
+    const delay = Math.min(RECONNECT_MAX_MS, Math.round(base * jitter));
+    this.reconnectAttempt += 1;
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      this.open();
+    }, delay);
+  }
+
+  private clearReconnect(): void {
+    if (this.reconnectTimer === null) return;
+    window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+  }
+
+  private handleVisibilityChange = (): void => {
+    if (document.visibilityState !== "visible" || this.stopped || this.connected) return;
+    this.clearReconnect();
+    this.open();
+  };
 
   send(msg: ClientMsg): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {

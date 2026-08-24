@@ -99,6 +99,7 @@ function setHud(): void {
   const link = $("hud-link");
   const labels: Record<LinkStatus, string> = {
     connecting: "connecting…",
+    reconnecting: "reconnecting…",
     online: "● online",
     offline: "✕ disconnected",
   };
@@ -9319,9 +9320,12 @@ function join(): void {
   joinBtn.disabled = true;
   state.name = name;
   state.link = "connecting";
+  net?.disconnect();
 
   net = new Net({
     onOpen: () => {
+      state.link = state.playerId === null ? "connecting" : "reconnecting";
+      setHud();
       net!.send({ type: "Join", name });
       (window as unknown as { __ss: { net?: unknown } }).__ss.net = net; // debug hook
     },
@@ -9623,14 +9627,16 @@ function join(): void {
       setHud();
     },
     onClose: () => {
-      state.link = "offline";
-      joinBtn.disabled = false;
+      const resuming = state.playerId !== null;
+      state.link = resuming ? "reconnecting" : "offline";
+      joinBtn.disabled = resuming;
       setHud();
     },
     onError: () => {
-      state.link = "offline";
-      joinErr.textContent = `Could not reach server at ${net?.url ?? ""}.`;
-      joinBtn.disabled = false;
+      const resuming = state.playerId !== null;
+      state.link = resuming ? "reconnecting" : "offline";
+      if (!resuming) joinErr.textContent = `Could not reach server at ${net?.url ?? ""}.`;
+      joinBtn.disabled = resuming;
       setHud();
     },
   });

@@ -6,7 +6,7 @@ import type {
   EmplacementView, AnchorView, CaptainRosterView, CharterView, FleetDoctrine, FoundingView, FreightView, GalaxyInfo, GhostView, JumpDepartureView, MarketView, PathPointView, PendingOrderView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
 import { defaultDoctrine } from "./protocol";
 
-export type LinkStatus = "connecting" | "online" | "offline";
+export type LinkStatus = "connecting" | "reconnecting" | "online" | "offline";
 
 /// Historical jump scars are client-retained for this long after their
 /// light-delayed arrival, even if the player was inside another map view.
