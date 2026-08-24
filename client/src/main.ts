@@ -5412,6 +5412,7 @@ function installInteraction(): void {
     }
   });
   const endPress = (e: PointerEvent) => {
+    if (e.pointerType !== "mouse") renderer.cursorWorld = null;
     if (!down) return;
     down = false;
     try { canvas.releasePointerCapture(e.pointerId); } catch { /* not captured */ }
@@ -5424,7 +5425,11 @@ function installInteraction(): void {
     panning = false;
   };
   canvas.addEventListener("pointerup", endPress);
-  canvas.addEventListener("pointercancel", () => { down = false; panning = false; });
+  canvas.addEventListener("pointercancel", (e: PointerEvent) => {
+    if (e.pointerType !== "mouse") renderer.cursorWorld = null;
+    down = false;
+    panning = false;
+  });
 
   // Mouse wheel zooms toward the cursor. preventDefault stops the page scrolling;
   // over a panel the wheel hits the panel (not the canvas), so panels still scroll.
