@@ -49,6 +49,30 @@
       }
       #app { position: fixed; inset: 0; }
       canvas { display: block; }
+      #app > canvas,
+      .bv-theater-holder canvas { touch-action: none; }
+      #founding-guide,
+      #standing-list,
+      #checkin,
+      #rail .rail__body,
+      .svm-body,
+      #ship-panel .sp-body,
+      .sysrail,
+      #market,
+      .build-shell .bp-list,
+      .build-shell .bp-detail,
+      #planet-panel,
+      #research-panel,
+      #research-panel .rp-body,
+      #operations-panel,
+      #operations-panel .op-body,
+      #syndicate-panel,
+      #faction-panel,
+      #battle-viewer,
+      #ground-viewer {
+        touch-action: pan-y;
+        overscroll-behavior: contain;
+      }
 
       /* Join overlay */
       #join {
