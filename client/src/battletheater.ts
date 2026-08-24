@@ -297,7 +297,7 @@ async function initApp(): Promise<void> {
     background: "#05070d",
     antialias: true,
     autoDensity: true,
-    resolution: window.devicePixelRatio || 1,
+    resolution: Math.min(window.devicePixelRatio || 1, 2),
   });
   holder.appendChild(app.canvas);
   holder.appendChild(tooltip);

@@ -510,7 +510,7 @@ export class Renderer {
       resizeTo: window,
       antialias: true,
       autoDensity: true,
-      resolution: window.devicePixelRatio || 1,
+      resolution: Math.min(window.devicePixelRatio || 1, 2),
     });
     mount.appendChild(this.app.canvas);
     this.emplacementLayer.addChild(
