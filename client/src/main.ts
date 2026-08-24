@@ -47,6 +47,8 @@ function syncHudSafeTop(): void {
 new ResizeObserver(syncHudSafeTop).observe(hud);
 new ResizeObserver(syncFoundingGuideClearance).observe(foundingGuide);
 window.addEventListener("resize", syncHudSafeTop);
+window.visualViewport?.addEventListener("resize", syncHudSafeTop);
+window.visualViewport?.addEventListener("scroll", syncHudSafeTop);
 
 const RIGHT_DOCK_IDS = ["rail", "ship-panel", "sysview-manage"] as const;
 const FOCUS_OVERLAY_IDS = [
