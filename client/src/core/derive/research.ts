@@ -70,8 +70,8 @@ export function projectedBand(loss: number): string {
 // relies on that). A dyn entry without a catalog row is dropped — it cannot be
 // rendered without name/board metadata (and can only mean a server/client
 // catalog drift, which the protocol-version check already warns about).
-export function mergeResearch(dyn: ResearchDynView): ResearchView {
-  const cat = new Map(state.researchCatalog.map((p) => [p.id, p]));
+export function mergeResearch(dyn: ResearchDynView, st = state): ResearchView {
+  const cat = new Map(st.researchCatalog.map((p) => [p.id, p]));
   const programmes: ProgrammeView[] = [];
   for (const d of dyn.programmes) {
     const p = cat.get(d.id);

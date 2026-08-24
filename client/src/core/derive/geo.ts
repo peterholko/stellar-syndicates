@@ -143,8 +143,8 @@ export function endpointLabel(e: StandingEndpoint): string {
 }
  // system id → sim-time noticed
 
-export function noteSurveyReports(simTime: number): void {
-  const cur = new Set(state.systems.filter((x) => x.deposits != null).map((x) => x.id));
+export function noteSurveyReports(simTime: number, st = state): void {
+  const cur = new Set(st.systems.filter((x) => x.deposits != null).map((x) => x.id));
   if (knownGeologyIds === null) {
     knownGeologyIds = cur; // first View: seed silently
     return;
@@ -152,8 +152,8 @@ export function noteSurveyReports(simTime: number): void {
   for (const id of cur) {
     if (!knownGeologyIds.has(id)) {
       knownGeologyIds.add(id);
-      const dyn = state.systems.find((x) => x.id === id);
-      if (dyn?.owner !== state.playerId) freshSurveyReports.set(id, simTime);
+      const dyn = st.systems.find((x) => x.id === id);
+      if (dyn?.owner !== st.playerId) freshSurveyReports.set(id, simTime);
     }
   }
   // Age out stale reports (they remain in the log/panel; the CARD is for the

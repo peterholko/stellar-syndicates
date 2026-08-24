@@ -115,7 +115,7 @@ export function intentSummary(intent: PendingIntent): string {
 
 // Replace the tracked lifecycles from the View. The wire is a flat owner-only
 // list; group it per fleet for panel/map lookup and preserve oldest-first order.
-export function syncOrderLifecycles(list: PendingOrderView[], _simTime: number): void {
+export function syncOrderLifecycles(list: PendingOrderView[], _simTime: number, st = state): void {
   const next = new Map<string, PendingOrderView[]>();
   for (const p of list) {
     const queue = next.get(p.fleet_id) ?? [];
@@ -125,13 +125,13 @@ export function syncOrderLifecycles(list: PendingOrderView[], _simTime: number):
   for (const queue of next.values()) {
     queue.sort((a, b) => a.issued_at - b.issued_at || a.id - b.id);
   }
-  state.pendingOrders = next;
+  st.pendingOrders = next;
   const lost = new Set(list.filter((order) => order.lost).map((order) => order.id));
   if (lost.size) {
-    state.commandSignals = state.commandSignals.filter((signal) => !lost.has(signal.orderId));
+    st.commandSignals = st.commandSignals.filter((signal) => !lost.has(signal.orderId));
   }
-  if (state.selectedOrderId !== null && !list.some((p) => p.id === state.selectedOrderId)) {
-    state.selectedOrderId = null;
+  if (st.selectedOrderId !== null && !list.some((p) => p.id === st.selectedOrderId)) {
+    st.selectedOrderId = null;
   }
 }
 

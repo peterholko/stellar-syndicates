@@ -398,12 +398,12 @@ export function recordRecentMarketOrder(trade: TradeEvent): void {
   recentMarketOrders.length = Math.min(recentMarketOrders.length, RECENT_MARKET_ORDER_LIMIT);
 }
  // ~1 minute at 1 Hz sampling
-export function recordPriceHistory(): void {
-  if (!state.market) return;
-  if (state.simTime - state.lastPriceSampleAt < 0.9) return; // throttle
-  state.lastPriceSampleAt = state.simTime;
-  for (const p of state.market.prices) {
-    const series = (state.priceHistory[p.commodity] ??= []);
+export function recordPriceHistory(st = state): void {
+  if (!st.market) return;
+  if (st.simTime - st.lastPriceSampleAt < 0.9) return; // throttle
+  st.lastPriceSampleAt = st.simTime;
+  for (const p of st.market.prices) {
+    const series = (st.priceHistory[p.commodity] ??= []);
     series.push(p.price);
     if (series.length > PRICE_HISTORY_CAP) series.shift();
   }

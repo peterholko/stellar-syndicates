@@ -2,8 +2,8 @@
 
 import { Net } from "./net";
 import { renderer } from "./render";
-import { JUMP_DEPARTURE_TTL_S, liveSimTime, state, syncRenderClock, type LinkStatus, type PendingIntent, type ViewState } from "./state";
-import { countClassLabel, fleetExactCount, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BodyView, type BuildState, type CaptainAttribute, type CaptainRosterView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type GroundRecordView, type JumpDepartureView, type KeyframeView, type LandingOddsView, type ManifestEntryView, type MigrationPolicy, type ModuleKind, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
+import { JUMP_DEPARTURE_TTL_S, liveSimTime, state, type LinkStatus, type PendingIntent, type ViewState } from "./state";
+import { countClassLabel, fleetExactCount, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BodyView, type BuildState, type CaptainAttribute, type CaptainRosterView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type GroundRecordView, type KeyframeView, type LandingOddsView, type ManifestEntryView, type MigrationPolicy, type ModuleKind, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { fleetCargoManifest, fleetCargoUnits } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
 import { type SystemBodyDetail } from "./systemview";
@@ -11,17 +11,16 @@ import { theaterAttach, theaterAvailable, theaterClose, theaterDebug, theaterHas
 import { groundTheaterAttach, groundTheaterAvailable, groundTheaterClose, groundTheaterDebug, groundTheaterSetTime, groundTheaterStep } from "./groundtheater";
 import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
 import { AAA_SERVICE_FEE, FUEL_PER_MASS_DISTANCE, HULL_MASS, WARP_FACTOR, aaaEstimate, battleReportForRecord, battleViewerTimers, berthed, bindFleetNet, clearBattleAftermathTimer, clearBattleCloseTimer, coLocatedOwnFleet, constructionStock, dockLoadStock, dockedAtSystem, dockedFreighterStock, estimatedFuelForLeg, fleetCargoCapacity, fleetFuelCapacity, fleetRosterDockName, guardCapable, hauls, hubDockedFleets, jumpCapable, recordForReport, sendCrew, shipKindLabel, shipMass, shipRoleLore, sideFamily, sumOwnComposition, systemFleetsAt, type SalvoFamily } from "./core/derive/fleet";
-import { SHIP_STATS, SURVEY_SECS_UI, TCA_INCIDENT_LOSS_UI, armedSelection, battleCommandDelay, clearJumpDepartureSelection, intentSummary, intentTargetLabel, jumpDepartureSelection, latestGroundRecordFor, latestPendingOrder, loadBattleMarks, nextDecisionLabel, orderEtaRange, orderObject, orderPoint, saveBattleMarks, siegeProgress, syncOrderLifecycles, updateSignals } from "./core/derive/orders";
-import { COMMODITIES, FITTING_POINTS, MODULE_SLOTS, POOL_LABEL, POOL_OF, SHIP_YARD, YARD_TITLE, bindMarketDerive, bodyPoolUsage, buildOption, dispatchBuildKey, fitLegal, freightDraft, freightDraftEntries, hullResearched, kitAffordable, kitCostLabel, marketAverageQuote, marketReservations, moduleLedgerAt, moduleRecipeValue, ownedHaulDestinations, poolUsage, pruneMarketReservations, recentMarketOrders, recordPriceHistory, recordRecentMarketOrder, reserveMarketOrder, reservedMarketCredits, settleMarketReservation, shipOption, shippableStock, shipyardBoost, slipsFor, spendableMarketCredits, structOption, systemFlavor, warehouseUnits, type BuildOpt, type Pool, type PoolUse, type ShipOpt, type StructOpt } from "./core/derive/market";
-import { bindResearchNet, mergeResearch, nodeBonusDesc, projectedBand, researchQueueIds, sendResearchQueue } from "./core/derive/research";
+import { SHIP_STATS, SURVEY_SECS_UI, TCA_INCIDENT_LOSS_UI, armedSelection, battleCommandDelay, clearJumpDepartureSelection, intentSummary, intentTargetLabel, jumpDepartureSelection, latestGroundRecordFor, latestPendingOrder, loadBattleMarks, nextDecisionLabel, orderEtaRange, orderObject, orderPoint, saveBattleMarks, siegeProgress, updateSignals } from "./core/derive/orders";
+import { COMMODITIES, FITTING_POINTS, MODULE_SLOTS, POOL_LABEL, POOL_OF, SHIP_YARD, YARD_TITLE, bindMarketDerive, bodyPoolUsage, buildOption, dispatchBuildKey, fitLegal, freightDraft, freightDraftEntries, hullResearched, kitAffordable, kitCostLabel, marketAverageQuote, marketReservations, moduleLedgerAt, moduleRecipeValue, ownedHaulDestinations, poolUsage, pruneMarketReservations, recentMarketOrders, recordRecentMarketOrder, reserveMarketOrder, reservedMarketCredits, settleMarketReservation, shipOption, shippableStock, shipyardBoost, slipsFor, spendableMarketCredits, structOption, systemFlavor, warehouseUnits, type BuildOpt, type Pool, type PoolUse, type ShipOpt, type StructOpt } from "./core/derive/market";
+import { bindResearchNet, nodeBonusDesc, projectedBand, researchQueueIds, sendResearchQueue } from "./core/derive/research";
 import { captainXpFloor, fleetCommandLoad, captainTitle, officerFleetName, affinityLine, traitLine } from "./core/derive/captains";
-import { HYPERLIMIT_SU, REPORT_RECENT_S, allySystems, commandDelayTo, emplacementLabel, endpointLabel, foundingHomeSystemId, freshSurveyReports, gravityWellAt, knownDeposits, locName, nearestKnownDock, nearestSystemName, noteSurveyReports, operationSystemName, ownedSystems, pushSystemDynamic, systemName, systemUnderCursor, viewedSystemId } from "./core/derive/geo";
+import { HYPERLIMIT_SU, REPORT_RECENT_S, allySystems, commandDelayTo, emplacementLabel, endpointLabel, foundingHomeSystemId, freshSurveyReports, gravityWellAt, knownDeposits, locName, nearestKnownDock, nearestSystemName, operationSystemName, ownedSystems, pushSystemDynamic, systemName, systemUnderCursor, viewedSystemId } from "./core/derive/geo";
 import { agoLabel, arrivalLocal, doneAtLocal, fmt, fmtBuildDur, fmtDur, fmtEta, operationCopy, operationHullArt, operationIcon, operationReward, operationTitle, rejectText, trend, triggerLabel } from "./core/derive/format";
+import type { CoreEvent } from "./core/events";
+import { applyLinkStatus, applyServerMessage, jumpDepartureKey } from "./core/session";
 
 // --- DOM handles -----------------------------------------------------------
-// Wire protocol version this build speaks — kept in sync with the server's
-// PROTOCOL_VERSION. v28 adds dispatch chevrons for all remote fleet/Hub orders.
-const EXPECTED_PROTOCOL_VERSION = 28;
 const CONTACT_STALE_AGE_S = 8;
 const $ = (id: string) => document.getElementById(id)!;
 const joinScreen = $("join");
@@ -685,8 +684,6 @@ function buildRail(): void {
 // layer over GhostView — it shows ONLY what the per-player view already reveals, so
 // a rival's cargo/route/internal state never leaks. ------------------------------
 let shipPanelBuilt = false;
-const jumpDepartureKey = (d: Pick<JumpDepartureView, "fleet" | "departed_at">): string =>
-  `${d.fleet}:${d.departed_at.toFixed(6)}`;
 // The panel is rebuilt with every fresh View, so disclosure state must outlive
 // its DOM. Sets make the default collapsed and keep each fleet's choice stable.
 const expandedShipPolicies = new Set<string>();
@@ -7982,6 +7979,79 @@ function applyViewRefresh(): void {
   updateCheckinPanel(); // the check-in modal; guards itself, refreshes ages
 }
 
+function handleCoreEvents(events: CoreEvent[]): void {
+  for (const event of events) {
+    switch (event.kind) {
+      case "LinkChanged":
+      case "GalaxyUpdated":
+      case "CommandSignal":
+      case "CommandChevron":
+      case "BattleConcluded":
+        break;
+      case "ProtocolMismatch":
+        console.warn(`protocol mismatch: server v${event.server}, client expects v${event.client} — a refresh may be needed`);
+        break;
+      case "Welcomed":
+        joinScreen.style.display = "none";
+        hud.style.display = "flex";
+        $("readout").style.display = "block";
+        $("legend").style.display = "block";
+        $("zoom-controls").style.display = "flex";
+        buildRail();
+        buildSystemTab();
+        buildMarketPanel();
+        buildStandingPanel();
+        buildDoctrinePanel();
+        updateDoctrinePanel();
+        setRailTab("system");
+        buildCheckinPanel();
+        openCheckin();
+        void startRenderer();
+        break;
+      case "ViewApplied":
+        renderer.stateVersion++;
+        notifyNewBattles(state.battles);
+        if (openOngoingBattleId !== null && $("battle-panel").classList.contains("is-open")) updateOngoingBattlePanel();
+        scheduleViewRefresh();
+        break;
+      case "BattleRecordsApplied":
+        refreshOpenBattleViewer();
+        break;
+      case "GroundRecordsApplied":
+        refreshOpenGroundViewer();
+        break;
+      case "SectionsApplied":
+        scheduleViewRefresh();
+        break;
+      case "OrderConfirmed":
+        addTransientReport(
+          "✓",
+          "good",
+          `<b>Order confirmed</b> — ${esc(label(event.orderKind))} response light arrived`,
+        );
+        break;
+      case "ReportArrived":
+        addReport(event.report);
+        break;
+      case "EstimateReady":
+        showEngagementEstimate(event.estimate);
+        break;
+      case "TimelineApplied":
+        updateCheckinPanel();
+        break;
+      case "TradeSettled":
+        addTradeNews(event.trade);
+        break;
+      case "JoinRejected":
+        joinErr.textContent = event.message;
+        break;
+      case "ServerError":
+        readout().innerHTML = `<span style="color:var(--warn)">Server refused: ${esc(event.message)}</span>`;
+        break;
+    }
+  }
+}
+
 function join(): void {
   const name = nameInput.value.trim();
   if (!name) {
@@ -7991,322 +8061,29 @@ function join(): void {
   joinErr.textContent = "";
   joinBtn.disabled = true;
   state.name = name;
-  state.link = "connecting";
+  handleCoreEvents(applyLinkStatus("connecting", state));
   net?.disconnect();
 
   net = new Net({
     onOpen: () => {
-      state.link = state.playerId === null ? "connecting" : "reconnecting";
+      handleCoreEvents(applyLinkStatus(state.playerId === null ? "connecting" : "reconnecting", state));
       setHud();
       net!.send({ type: "Join", name });
       (window as unknown as { __ss: { net?: unknown } }).__ss.net = net; // debug hook
     },
     onMessage: (msg) => {
-      switch (msg.type) {
-        case "Welcome":
-          marketReservations.length = 0;
-          if (state.playerId !== null && state.playerId !== msg.player_id) recentMarketOrders.length = 0;
-          // Wire protocol check (§FLEETS bumped to 2): warn if the server speaks a
-          // newer dialect than this build — the View shape may have drifted.
-          if (typeof msg.protocol_version === "number" && msg.protocol_version !== EXPECTED_PROTOCOL_VERSION) {
-            console.warn(`protocol mismatch: server v${msg.protocol_version}, client expects v${EXPECTED_PROTOCOL_VERSION} — a refresh may be needed`);
-          }
-          state.playerId = msg.player_id;
-          state.name = msg.name;
-          state.tickHz = msg.tick_hz;
-          state.pacingScale = msg.pacing_scale;
-          state.tick = msg.tick;
-          syncRenderClock(msg.sim_time, state.pacingScale);
-          state.simTime = msg.sim_time;
-          state.galaxy = msg.galaxy;
-          // §perf Part B: the static tables that used to ride every View.
-          state.charterLadder = msg.charter_ladder;
-          state.researchCatalog = msg.research_catalog;
-          // §perf Part A: a fresh connection re-streams every record from an
-          // empty server-side cursor — drop what the OLD connection held so a
-          // record pruned while we were away can't linger (the client-only
-          // §theater demo record is the one deliberate survivor).
-          state.battleRecords = state.battleRecords.filter((r) => r.id === "demo-battle");
-          // §perf Part B: the change-gated sections re-stream in full on a fresh
-          // connection (empty server-side signatures) — reset the held copies so
-          // nothing stale survives a reconnect.
-          state.standingOrders = [];
-          state.battleReports = [];
-          state.captureReports = [];
-          state.rankings = [];
-          state.link = "online";
-          // Swap from the join screen to the galaxy view.
-          joinScreen.style.display = "none";
-          hud.style.display = "flex";
-          $("readout").style.display = "block";
-          $("legend").style.display = "block";
-          $("zoom-controls").style.display = "flex";
-          // Wire the rail (System/Logistics/Doctrine), the navbar Market overlay,
-          // and the navbar Log. The rail + Market stay CLOSED on join so the map is
-          // uncluttered — opened by clicking a system, S/O/F, or the navbar/M.
-          buildRail();
-          buildSystemTab();
-          buildMarketPanel();
-          buildStandingPanel();
-          buildDoctrinePanel();
-          updateDoctrinePanel();
-          setRailTab("system");
-          // Fresh session: re-latch the "while you were away" boundary from the
-          // next Timeline digest, and open the check-in panel for the welcome-back.
-          state.awaySet = false;
-          buildCheckinPanel();
-          openCheckin();
-          void startRenderer();
-          break;
-        case "GalaxyUpdate":
-          // §over-capacity homes: the star chart grew after our Welcome (a new
-          // corp's freshly-minted home). Fresh OBJECT identity on purpose — the
-          // renderer re-ingests the galaxy on the next frame by identity check.
-          if (state.galaxy) state.galaxy = { ...state.galaxy, systems: msg.systems };
-          break;
-        case "View":
-          // §perf: a new authoritative View — bump the renderer's state version so
-          // its dirty-gated galaxy geometry (systems/anchors) rebuilds this frame.
-          renderer.stateVersion++;
-          state.tick = msg.tick;
-          syncRenderClock(msg.sim_time, state.pacingScale);
-          state.simTime = msg.sim_time;
-          state.commandCenter = msg.command_center;
-          state.anchors = msg.anchors;
-          state.systems = msg.systems;
-          state.ghosts = msg.ghosts;
-          state.captains = msg.captains ?? [];
-          state.captainCapacity = msg.captain_capacity ?? 1;
-          // Retain unique departure facts across Views (and while the player is
-          // inside System/Battle View), like a tiny local history ledger. Every
-          // entry was already light-gated by the server; this stores no truth.
-          const departures = new Map(
-            state.jumpDepartures.map((d) => [jumpDepartureKey(d), d]),
-          );
-          for (const d of msg.jump_departures ?? []) {
-            departures.set(jumpDepartureKey(d), d);
-          }
-          state.jumpDepartures = [...departures.values()].filter(
-            (d) => msg.sim_time - d.learned_at < JUMP_DEPARTURE_TTL_S,
-          );
-          state.emplacements = msg.emplacements ?? [];
-          state.market = msg.market;
-          state.wallet = msg.wallet;
-          state.freight = msg.freight;
-          state.charter = msg.charter;
-          state.founding = msg.founding;
-          state.doctrine = msg.doctrine;
-          state.battles = msg.battles;
-          // (§perf Part A/B: battle records stream via "BattleRecords";
-          // standing orders / reports / rankings arrive via "Sections" — both
-          // on the reliable lane, only when changed. State keeps the last copy.)
-          state.syndicate = msg.syndicate ?? null;
-          state.syndicateInvites = msg.syndicate_invites ?? [];
-          state.operations = msg.operations ?? [];
-          state.midgameStage = msg.midgame_stage;
-          state.diplomacy = msg.diplomacy ?? null;
-          // §perf Part B: the wire carries only the DYNAMIC research slice —
-          // join it onto the static Welcome catalog for the panel's full shape.
-          state.research = msg.research ? mergeResearch(msg.research) : null;
-          noteSurveyReports(msg.sim_time); // §explore Part 4: survey-report cards
-          notifyNewBattles(msg.battles);
-          syncOrderLifecycles(msg.pending_orders, msg.sim_time);
-          // A move order is DONE when its ship is SEEN parked at the ordered
-          // destination. Without this sweep the record lived forever, and
-          // everything keyed on it stayed stale after arrival: the activity
-          // chip read "en route" at rest, the fuel line quoted a spent order,
-          // and — the bug that surfaced it — a Construction Ship's build
-          // buttons stayed disabled for good after its first move, swallowing
-          // clicks with no feedback (a disabled button fires no events).
-          for (const [id, dest] of Object.entries(state.orders)) {
-            const g = state.ghosts.find((x) => x.id === id && x.own);
-            if (!g) continue; // momentary gap — keep the record, not a guess
-            const parked = Math.hypot(g.vel.x, g.vel.y) < 0.5;
-            if (parked && Math.hypot(g.pos.x - dest.x, g.pos.y - dest.y) < 500) {
-              delete state.orders[id];
-            }
-          }
-          // Accumulate observed prices every View (fog-safe history for the
-          // sparklines), even when the Market tab is closed.
-          recordPriceHistory();
-          // §one-battle-one-icon: keep an open ongoing-battle panel live. This runs
-          // INLINE on every View (not coalesced): it accumulates a per-View high-
-          // water tally of forces (peaks in a View skipped by coalescing would be
-          // lost); its own DOM rebuild is signature-gated, so this stays cheap.
-          if (openOngoingBattleId !== null && $("battle-panel").classList.contains("is-open")) updateOngoingBattlePanel();
-          // Everything else the View drives is a pure/idempotent refresh — coalesce
-          // it onto one rAF so a queued burst collapses to a single DOM pass.
-          scheduleViewRefresh();
-          // Light-respecting "corps in view": distinct owners we can actually
-          // see (self + rivals whose light has arrived). Never a raw count.
-          state.corpsInView = new Set(msg.ghosts.map((g) => g.owner)).size;
-          state.link = "online";
-          break;
-        case "BattleRecords": {
-          // §perf Part A: merge record INCREMENTS into the held store. Each
-          // updated record becomes a NEW object (append-rounds via spread), so
-          // the phase-1 content compares (viewer signature, theater bindRecord)
-          // fire exactly as they did when the View replaced the whole array.
-          // Untouched records keep their identity — no churn. The client-only
-          // §theater demo record is never named by the server, so it survives.
-          let recs = state.battleRecords;
-          for (const id of msg.removed ?? []) recs = recs.filter((r) => r.id !== id);
-          for (const u of msg.updates ?? []) {
-            const prev = recs.find((r) => r.id === u.id);
-            // A new record arrives WITH a header; a header on an existing record
-            // is a refresh (flagship christened) that keeps the held rounds.
-            const base: BattleRecordView | undefined = u.header
-              ? { id: u.id, ...u.header, rounds: prev?.rounds ?? [], light_frontier_tick: u.light_frontier_tick, outcome: prev?.outcome ?? null }
-              : prev;
-            if (!base) continue; // increment for a record we never got — drop safely
-            const next: BattleRecordView = {
-              ...base,
-              rounds: u.new_rounds?.length ? [...base.rounds, ...u.new_rounds] : base.rounds,
-              light_frontier_tick: u.light_frontier_tick,
-              outcome: u.outcome ?? base.outcome ?? null,
-            };
-            // Replace IN PLACE; append only a genuinely new record. Moving an
-            // updated record to the tail would reorder the array, and
-            // recordForReport's first-position-match join could then bind an
-            // aftermath report to the WRONG battle at a twice-contested site
-            // (the old full-set View kept the server's stable BTreeMap order).
-            recs = prev ? recs.map((r) => (r.id === u.id ? next : r)) : recs.concat([next]);
-          }
-          state.battleRecords = recs;
-          // Keep an open replay live without waiting for the next View's refresh
-          // (cheap — it signature-guards itself).
-          refreshOpenBattleViewer();
-          break;
-        }
-        case "GroundRecords": {
-          // §ground G2: merge landing-record increments, identical discipline to
-          // BattleRecords above — updated records become NEW objects so content
-          // compares fire; untouched ones keep identity; position is stable.
-          let grecs = state.groundRecords;
-          for (const id of msg.removed ?? []) grecs = grecs.filter((r) => r.id !== id);
-          for (const u of msg.updates ?? []) {
-            const prev = grecs.find((r) => r.id === u.id);
-            const base: GroundRecordView | undefined = u.header
-              ? { id: u.id, ...u.header, rounds: prev?.rounds ?? [], light_frontier_tick: u.light_frontier_tick, outcome: prev?.outcome ?? null }
-              : prev;
-            if (!base) continue; // increment for a record we never got — drop safely
-            const next: GroundRecordView = {
-              ...base,
-              rounds: u.new_rounds?.length ? [...base.rounds, ...u.new_rounds] : base.rounds,
-              light_frontier_tick: u.light_frontier_tick,
-              outcome: u.outcome ?? base.outcome ?? null,
-            };
-            grecs = prev ? grecs.map((r) => (r.id === u.id ? next : r)) : grecs.concat([next]);
-          }
-          state.groundRecords = grecs;
-          refreshOpenGroundViewer();
-          break;
-        }
-        case "Sections": {
-          // §perf Part B: a slow-moving section changed — replace the held copy.
-          // Absent fields are UNCHANGED (keep the last value); the panels read
-          // state as always and refresh on the coalesced View cadence.
-          if (msg.standing_orders) state.standingOrders = msg.standing_orders;
-          if (msg.battle_reports) state.battleReports = msg.battle_reports;
-          if (msg.capture_reports) state.captureReports = msg.capture_reports;
-          if (msg.rankings) state.rankings = msg.rankings;
-          scheduleViewRefresh();
-          break;
-        }
-        case "CommandSignal": {
-          // Your order is crossing space to your ship (the violet comet); you'll
-          // see the ship react on the map when its light arrives. Identity is per
-          // ORDER: multiple commands to one fleet genuinely coexist in flight.
-          state.commandSignals = state.commandSignals.filter((s) => s.orderId !== msg.order_id);
-          state.commandSignals.push({
-            orderId: msg.order_id,
-            shipId: msg.ship_id,
-            targetPos: undefined,
-            depart: msg.depart_time,
-            arrive: msg.arrive_time,
-            pOut: 0,
-            hops: msg.hops ?? [],
-          });
-          break;
-        }
-        case "CommandChevron": {
-          // Dispatch-only remote instructions use the same violet visual as a
-          // movement order. orderId=0 deliberately keeps them out of the order
-          // row/confirmation lifecycle; arrival means only that the chevron has
-          // reached its player-known target.
-          state.commandSignals.push({
-            orderId: 0,
-            shipId: msg.fleet_id ?? "",
-            targetPos: msg.target_pos,
-            depart: msg.depart_time,
-            arrive: msg.arrive_time,
-            pOut: 0,
-            hops: [],
-          });
-          break;
-        }
-        case "OrderConfirmed": {
-          state.commandSignals = state.commandSignals.filter((signal) => signal.orderId !== msg.order_id);
-          addTransientReport(
-            "✓",
-            "good",
-            `<b>Order confirmed</b> — ${esc(label(msg.kind))} response light arrived`,
-          );
-          break;
-        }
-        case "Report": {
-          // The server delivers this exactly when the destruction's light reaches
-          // THIS player's command center — the same moment the doomed ghost
-          // vanishes on their map at the kill site. So we just NOTIFY now: no
-          // travelling ring (the map already IS the inbound feed). Two players at
-          // different distances are notified at different times, each synced to
-          // when they see it (§6).
-          addReport(msg.report);
-          // The raid is over — drop its intercept estimate.
-          delete state.raids[msg.report.attacker_ship];
-          break;
-        }
-        case "EngagementEstimate":
-          showEngagementEstimate(msg);
-          break;
-        case "Timeline":
-          state.timeline = msg.entries;
-          // Latch the "while you were away" boundary from the FIRST digest of the
-          // session (the connect message); live re-sends keep that boundary so the
-          // away-section doesn't empty out mid-session.
-          if (!state.awaySet) {
-            state.awaySince = msg.away_since;
-            state.awaySet = true;
-          }
-          updateCheckinPanel();
-          break;
-        case "Trade":
-          addTradeNews(msg.trade);
-          break;
-        case "Error":
-          // Before Welcome this is a join problem and belongs under the name
-          // field. AFTER joining, that element is hidden with the overlay — a
-          // server refusal (e.g. a wire message this server can't parse) must
-          // land in the readout or it is invisible. That invisibility buried
-          // the missing-BuildEmplacement-variant bug.
-          if (state.playerId !== null) {
-            readout().innerHTML = `<span style="color:var(--warn)">Server refused: ${esc(msg.message)}</span>`;
-          } else {
-            joinErr.textContent = msg.message;
-          }
-          break;
-      }
+      handleCoreEvents(applyServerMessage(msg, state));
       setHud();
     },
     onClose: () => {
       const resuming = state.playerId !== null;
-      state.link = resuming ? "reconnecting" : "offline";
+      handleCoreEvents(applyLinkStatus(resuming ? "reconnecting" : "offline", state));
       joinBtn.disabled = resuming;
       setHud();
     },
     onError: () => {
       const resuming = state.playerId !== null;
-      state.link = resuming ? "reconnecting" : "offline";
+      handleCoreEvents(applyLinkStatus(resuming ? "reconnecting" : "offline", state));
       if (!resuming) joinErr.textContent = `Could not reach server at ${net?.url ?? ""}.`;
       joinBtn.disabled = resuming;
       setHud();
