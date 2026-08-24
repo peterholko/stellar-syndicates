@@ -770,7 +770,7 @@ export type CaptainPortrait =
   | "luca_ferraro"
   | "karim_ben_youssef"
   | "mateo_quispe"
-  | "talia_faumuina"
+  | "litia_naivalu"
   | "ana_luisa_nascimento"
   | "elena_valdes"
   | "daphne_markou"
@@ -854,6 +854,15 @@ export interface GhostView {
   jump_presumed?: JumpPresumptionView | null;
   /// Speed at that retarded moment (su/s).
   speed?: number;
+  /** Owner-only bunker telemetry from this same delayed sighting. */
+  fuel?: number | null;
+  fuel_capacity?: number | null;
+  /** Owner-only: the served fleet picture is held for lack of carried fuel. */
+  stalled?: boolean;
+  /** AAA has accepted this fleet's callout and its tender is outbound. */
+  rescue_inbound?: boolean;
+  /** This Authority hull is an Authority Astral Assistance rescue tender. */
+  rescue_service?: boolean;
   // Convoys broadcast a route (waypoints); raiders don't (null).
   route: Vec2[] | null;
   /// §course-plan: own fleets only — the remaining legs the sim is flying.
@@ -970,7 +979,7 @@ export type ClientMsg =
   | { type: "CommitRaid"; raider_id: EntityId; target_id: EntityId }
   | { type: "GuardFleet"; interceptor_id: EntityId; target_id: EntityId }
   | { type: "RecallRaid"; raider_id: EntityId }
-  | { type: "MarketBuy"; commodity: Commodity; units: number; max_unit_price?: number | null; ship_to?: EntityId | null }
+  | { type: "MarketBuy"; commodity: Commodity; units: number; max_unit_price?: number | null }
   // §TCA: book Authority freight, and the player-convoy logistics verbs.
   | { type: "BookFreightOut"; system: EntityId; commodity: Commodity; units: number }
   | { type: "BookFreightIn"; system: EntityId; commodity: Commodity; units: number; sell_on_arrival: boolean }
@@ -980,6 +989,7 @@ export type ClientMsg =
   | { type: "SystemUnload"; fleet_id: EntityId; system: EntityId }
   | { type: "HaulToMarketHub"; fleet_id: EntityId; sell_on_arrival: boolean }
   | { type: "HaulToSystem"; fleet_id: EntityId; system: EntityId }
+  | { type: "RequestFuelRescue"; fleet_id: EntityId }
   | { type: "SetEngageFreight"; fleet_id: EntityId; on: boolean }
   | { type: "PayReinstatement"; points: number }
   | { type: "MarketSell"; commodity: Commodity; units: number; min_unit_price?: number | null }
@@ -1605,6 +1615,17 @@ export type ServerMsg =
       /// Optional path hops. Absent/empty means one straight leg.
       /// fractions of the whole window. Absent/empty = straight run.
       hops?: { pos: Vec2; frac: number }[];
+    }
+  | {
+      // The same outbound chevron for remote instructions outside the ordinary
+      // movement-order lifecycle: fleet administration and Market Hub business.
+      // It reports dispatch, not acceptance. A fixed target also lets Hub-bound
+      // chevrons render without pretending the Hub is a fleet.
+      type: "CommandChevron";
+      fleet_id?: EntityId;
+      target_pos: Vec2;
+      depart_time: number;
+      arrive_time: number;
     }
   | { type: "OrderConfirmed"; order_id: number; ship_id: EntityId; kind: OrderKind }
   | ({ type: "EngagementEstimate" } & EngagementEstimate)

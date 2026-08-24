@@ -142,6 +142,9 @@ struct Track {
     /// exact count the `count_class` bucket exists to hide. Gated on coverage
     /// exactly like `composition`.
     damage_frac: f64,
+    /// Owner-only carried bunkerage by emission time. It follows the same served
+    /// sighting as position without making fuel available to rival consumers.
+    bunkers: VecDeque<(f64, f64, f64, bool)>,
     /// §dock: berth transitions by emission time. This must follow the served
     /// sample, not current truth: the marker, Docked label, and cargo controls
     /// are one picture and must arrive on one wavefront.
@@ -198,6 +201,8 @@ struct Track {
     /// record so its retarded ghost does not turn back into commodity freight
     /// when the true-space run lands and is retired.
     migrant: bool,
+    /// Stable role identity for an Authority Astral Assistance tender.
+    rescue_service: bool,
 }
 
 /// §node regional effects for the DARK-fleet view — computed by the game loop
@@ -398,7 +403,9 @@ impl PositionHistory {
                     route: None,
                     gone: None,
                     migrant: world.migrant_runs.contains_key(id),
+                    rescue_service: world.fuel_rescues.contains_key(id),
                     damage_frac: 0.0,
+                    bunkers: VecDeque::new(),
                     docks: VecDeque::new(),
                     job: None,
                     plans: VecDeque::new(),
@@ -410,6 +417,7 @@ impl PositionHistory {
             }
             track.owner = ship.owner;
             track.migrant |= world.migrant_runs.contains_key(id);
+            track.rescue_service |= world.fuel_rescues.contains_key(id);
             let captain = world
                 .players
                 .get(&ship.owner)
@@ -432,6 +440,12 @@ impl PositionHistory {
             track.max_speed = ship.max_speed();
             track.count_class = ship.count_class();
             track.damage_frac = ship.damage_fraction();
+            track
+                .bunkers
+                .push_back((now, ship.fuel, ship.fuel_capacity(), ship.stalled));
+            while track.bunkers.len() > 1 && track.bunkers[1].0 <= now - self.horizon {
+                track.bunkers.pop_front();
+            }
             let docked = world.dock_of(*id);
             if track.docks.back().is_none_or(|(_, previous)| *previous != docked) {
                 track.docks.push_back((now, docked));
@@ -730,6 +744,9 @@ impl PositionHistory {
             count_class: CountClass,
             /// §roster: aggregate damage fraction, gated like `composition`.
             damage_frac: f64,
+            fuel: f64,
+            fuel_capacity: f64,
+            stalled: bool,
             /// §dock: the berth this sighting was taken at, if any.
             docked: Option<sim::DockSite>,
             /// §emplacements: build progress (served own-only).
@@ -752,6 +769,7 @@ impl PositionHistory {
             /// for a raider that was never detected, so it can't conjure existence.
             destroyed_detected: bool,
             migrant: bool,
+            rescue_service: bool,
         }
         let mut pre = Vec::new();
         // Coverage as (center, radius) sources: the command center + own Raider
@@ -814,6 +832,24 @@ impl PositionHistory {
                 max_speed: track.max_speed,
                 count_class: track.count_class,
                 damage_frac: track.damage_frac,
+                fuel: track
+                    .bunkers
+                    .iter()
+                    .rev()
+                    .find(|(emitted, ..)| *emitted <= sample.time + 1e-9)
+                    .map_or(0.0, |(_, fuel, _, _)| *fuel),
+                fuel_capacity: track
+                    .bunkers
+                    .iter()
+                    .rev()
+                    .find(|(emitted, ..)| *emitted <= sample.time + 1e-9)
+                    .map_or(0.0, |(_, _, capacity, _)| *capacity),
+                stalled: track
+                    .bunkers
+                    .iter()
+                    .rev()
+                    .find(|(emitted, ..)| *emitted <= sample.time + 1e-9)
+                    .is_some_and(|(_, _, _, stalled)| *stalled),
                 docked: track
                     .docks
                     .iter()
@@ -843,6 +879,7 @@ impl PositionHistory {
                 route: &track.route,
                 destroyed_detected,
                 migrant: track.migrant,
+                rescue_service: track.rescue_service,
             });
         }
 
@@ -1063,6 +1100,11 @@ impl PositionHistory {
                     None
                 },
                 speed: p.sample.vel.length(),
+                fuel: own.then_some(p.fuel),
+                fuel_capacity: own.then_some(p.fuel_capacity),
+                stalled: own && p.stalled,
+                rescue_inbound: false,
+                rescue_service: p.rescue_service,
                 id: p.id,
                 owner: p.owner,
                 kind: p.flagship,
@@ -2680,6 +2722,7 @@ mod tests {
             max_speed: kind.max_speed(),
             count_class: CountClass::from_count(1),
             damage_frac: 0.0,
+            bunkers: VecDeque::new(),
             docks: VecDeque::new(),
             job: None,
             plans: VecDeque::new(),
@@ -2693,6 +2736,7 @@ mod tests {
             route: None,
             gone: None,
             migrant: false,
+            rescue_service: false,
         }
     }
 
@@ -5305,6 +5349,7 @@ mod tests {
             max_speed: f.max_speed(),
             count_class: f.count_class(),
             damage_frac: f.damage_fraction(),
+            bunkers: VecDeque::new(),
             docks: VecDeque::new(),
             job: None,
             plans: VecDeque::new(),
@@ -5318,6 +5363,7 @@ mod tests {
             route: None,
             gone: None,
             migrant: false,
+            rescue_service: false,
         }
     }
 

@@ -16,8 +16,8 @@ const state: ViewState = initialState();
 
 // --- DOM handles -----------------------------------------------------------
 // Wire protocol version this build speaks — kept in sync with the server's
-// PROTOCOL_VERSION. v27 adds the player-freighter Hub → system haul.
-const EXPECTED_PROTOCOL_VERSION = 27;
+// PROTOCOL_VERSION. v28 adds dispatch chevrons for all remote fleet/Hub orders.
+const EXPECTED_PROTOCOL_VERSION = 28;
 const CONTACT_STALE_AGE_S = 8;
 const $ = (id: string) => document.getElementById(id)!;
 const joinScreen = $("join");
@@ -27,15 +27,12 @@ const joinErr = $("join-err");
 const hud = $("hud");
 const foundingGuide = $("founding-guide");
 
-function syncFoundingSafeBottom(): void {
+function syncFoundingGuideClearance(): void {
   const guideBox = foundingGuide.getBoundingClientRect();
-  const hudBox = hud.getBoundingClientRect();
-  const bottom = foundingGuide.classList.contains("is-open") && guideBox.height > 0
-    ? guideBox.bottom + 8
-    : hudBox.bottom + 8;
-  if (bottom > 0) {
-    document.documentElement.style.setProperty("--founding-safe-bottom", `${Math.ceil(bottom)}px`);
-  }
+  const clearance = foundingGuide.classList.contains("is-open") && guideBox.height > 0
+    ? guideBox.height + 22 // 14px viewport inset + 8px breathing room
+    : 14;
+  document.documentElement.style.setProperty("--founding-guide-clearance", `${Math.ceil(clearance)}px`);
 }
 
 // The navbar wraps as the viewport narrows, so fixed panels cannot safely use a
@@ -45,10 +42,10 @@ function syncHudSafeTop(): void {
   const box = hud.getBoundingClientRect();
   if (box.height <= 0) return;
   document.documentElement.style.setProperty("--hud-safe-top", `${Math.ceil(box.bottom) + 4}px`);
-  syncFoundingSafeBottom();
+  syncFoundingGuideClearance();
 }
 new ResizeObserver(syncHudSafeTop).observe(hud);
-new ResizeObserver(syncFoundingSafeBottom).observe(foundingGuide);
+new ResizeObserver(syncFoundingGuideClearance).observe(foundingGuide);
 window.addEventListener("resize", syncHudSafeTop);
 
 const RIGHT_DOCK_IDS = ["rail", "ship-panel", "sysview-manage"] as const;
@@ -418,6 +415,13 @@ const COMMODITY_VALUE: Record<Commodity, number> = {
 // own-ship panel can show this ship's fuel burn rate honestly. Movement burns
 // FUEL_PER_MASS_DISTANCE × distance × mass, mass = hull + cargoUnits·CARGO_MASS.
 const FUEL_PER_MASS_DISTANCE = 1.0e-6;
+const FUEL_PER_HULL_MASS = 0.035;
+const WARP_FACTOR = 5;
+// Authority Astral Assistance (AAA), mirrored from sim::tca. Quotes are marked
+// estimates because the Hub executes against its current price when requested.
+const AAA_FUEL_PRICE_MULT = 3;
+const AAA_SERVICE_FEE = 1_000;
+const AAA_RESERVE_FRAC = 0.10;
 const HULL_MASS: Record<ShipKind, number> = {
   convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80,
   // §ladder: 2.5× / 5× / 10× / 20× / 40× the Corvette (mirrors ship.rs).
@@ -430,12 +434,47 @@ const HULL_MASS: Record<ShipKind, number> = {
   builder: 2500,
 };
 const CARGO_MASS_PER_UNIT = 28;
+// Mirrors `sim::ship::CARGO_UNITS_PER_CONVOY`. The sim's Convoy hull is named
+// Freighter in player-facing copy; merged fleets gain one hold per such hull.
+const CARGO_UNITS_PER_FREIGHTER = 250;
+function fleetCargoCapacity(g: GhostView): number {
+  const freighters = g.composition
+    ? g.composition.reduce((count, ship) => count + (ship.kind === "convoy" ? ship.count : 0), 0)
+    : g.kind === "convoy" ? 1 : 0;
+  return freighters * CARGO_UNITS_PER_FREIGHTER;
+}
 // §TCA Phase 2: mirrors `tca::TCA_STANDING_LOSS_PER_INCIDENT` — used only for the
 // client-side "projected status" preview on hostile orders. A forecast, never a
 // promise: the real citation lands when its light reaches the Market Hub.
 const TCA_INCIDENT_LOSS_UI = 10;
+const fleetHullMass = (g: GhostView) => g.composition
+  ? g.composition.reduce((mass, ship) => mass + HULL_MASS[ship.kind] * ship.count, 0)
+  : HULL_MASS[g.kind];
 const shipMass = (g: GhostView) =>
-  HULL_MASS[g.kind] + (g.own ? fleetCargoUnits(g) * CARGO_MASS_PER_UNIT : 0);
+  fleetHullMass(g) + (g.own ? fleetCargoUnits(g) * CARGO_MASS_PER_UNIT : 0);
+const fleetFuelCapacity = (g: GhostView) => g.fuel_capacity ?? fleetHullMass(g) * FUEL_PER_HULL_MASS;
+
+function estimatedFuelForLeg(g: GhostView, dest: Vec2): number {
+  const distance = Math.hypot(dest.x - g.pos.x, dest.y - g.pos.y);
+  const logisticsMult = g.captain
+    ? 1 - Math.min(0.10, Math.max(0, g.captain.attributes.logistics - 1) * 0.02)
+    : 1;
+  const warp = FUEL_PER_MASS_DISTANCE * distance * shipMass(g) / WARP_FACTOR;
+  const wellDistance = Math.min(distance, HYPERLIMIT_SU * 2);
+  const wellSurcharge = FUEL_PER_MASS_DISTANCE * wellDistance * shipMass(g) * (1 - 1 / WARP_FACTOR);
+  return (warp + wellSurcharge) * logisticsMult;
+}
+
+function aaaEstimate(g: GhostView): { fuel: number; cost: number } {
+  const capacity = fleetFuelCapacity(g);
+  const room = Math.max(0, capacity - (g.fuel ?? 0));
+  const destination = g.path?.at(-1)?.pos;
+  const packageFuel = destination
+    ? Math.min(room, estimatedFuelForLeg(g, destination) + capacity * AAA_RESERVE_FRAC)
+    : room;
+  const marketFuel = state.market?.prices.find((price) => price.commodity === "fuel")?.price ?? COMMODITY_VALUE.fuel;
+  return { fuel: packageFuel, cost: AAA_SERVICE_FEE + packageFuel * marketFuel * AAA_FUEL_PRICE_MULT };
+}
 
 // The native Stellar Syndicates icon set (/art/ui_icons/svg) — full-color SVG,
 // crisp at any size, used as <img>. Resources / Actions / Concepts / Status. This
@@ -797,6 +836,20 @@ function buildShipPanel(): void {
       net.send({ type: "MoveShip", ship_id: fleet.id, dest: dock.pos });
       readout().innerHTML = `<b>Docking order sent</b> · ${esc(dock.name)} ` +
         `<span class="dim">· ${Math.round(dock.distance).toLocaleString()} su from the served sighting · signal outbound</span>`;
+    } else if (act === "fuel-rescue" && state.selectedShipId && net) {
+      const fleet = state.ghosts.find((g) => g.id === state.selectedShipId && g.own);
+      if (!fleet?.stalled || fleet.rescue_inbound) return;
+      const quote = aaaEstimate(fleet);
+      const proceed = window.confirm(
+        `Call Authority Astral Assistance?\n\n` +
+          `Emergency fuel: ~${fmt(quote.fuel)} units\n` +
+          `Estimated charge: ~${fmt(quote.cost)} credits\n` +
+          `(3× current Fuel price + ${fmt(AAA_SERVICE_FEE)}-credit callout fee)\n\n` +
+          `A physical AAA tender will fly from the Wormhole Hub. The dispatch fee is not refunded if the tender is lost.`,
+      );
+      if (!proceed) return;
+      net.send({ type: "RequestFuelRescue", fleet_id: fleet.id });
+      readout().innerHTML = `<b>AAA callout requested</b> · awaiting Authority dispatch receipt`;
     } else if (act === "toggle-policy" && state.selectedShipId) {
       if (expandedShipPolicies.has(state.selectedShipId)) expandedShipPolicies.delete(state.selectedShipId);
       else expandedShipPolicies.add(state.selectedShipId);
@@ -903,10 +956,13 @@ function buildShipPanel(): void {
         const system = (root.querySelector(".lg-haul-system") as HTMLSelectElement | null)?.value as EntityId | undefined;
         const destination = ownedHaulDestinations().find((candidate) => candidate.id === system);
         if (!destination) return;
+        const destinationPos = state.galaxy?.systems.find((candidate) => candidate.id === destination.id)?.pos;
+        if (destinationPos && !confirmHaulFuel(g, destinationPos, destination.name)) return;
         net.send({ type: "HaulToSystem", fleet_id, system: destination.id });
         readout().innerHTML = `<b>Return haul ordered</b> · ${esc(destination.name)}`;
       } else {
         const sell = !!(root.querySelector(".lg-sell") as HTMLInputElement | null)?.checked;
+        if (state.galaxy && !confirmHaulFuel(g, state.galaxy.hub, "the Market Hub")) return;
         net.send({ type: "HaulToMarketHub", fleet_id, sell_on_arrival: sell });
       }
     }
@@ -1678,6 +1734,12 @@ function regimeCell(g: GhostView): string {
     const tip = `Delayed jump telemetry (${age.toFixed(1)}s old): ${reported.toFixed(1)}s remained when this report left. The map snaps when departure light reaches command.`;
     return stat("Drive", `<span style="color:var(--warn)" title="${esc(tip)}">Jump Drive Spooling · ${seconds}s</span>`);
   }
+  if (g.stalled) {
+    const tip = g.rescue_inbound
+      ? "Fuel exhausted. Authority Astral Assistance has dispatched a physical tender; this fleet's held order will resume after fuel transfer."
+      : "Fuel exhausted. The fleet is holding its current order and will resume when refuelled.";
+    return stat("Drive", `<span style="color:var(--warn)" title="${esc(tip)}">Fuel exhausted · holding</span>`);
+  }
   if (cruising === "warp") {
     const tip = "Warp drive: five times impulse, and it flies anywhere — no lane needed, no heading to hold.";
     return stat("Drive", `<span title="${esc(tip)}">Warp</span>`);
@@ -1715,6 +1777,8 @@ function ownActivity(g: GhostView): string {
   if (state.commandSignals.some((s) => s.shipId === g.id)) return a("delivered", "signal outbound", "Your command is still crossing space to this fleet.");
   if (g.jump_presumed) return a("delay", "presumed at jump destination", "Awaiting the first report emitted at the new location.");
   if (g.jump_spool) return a("move", g.jump_spool.waiting_for_fuel ? "jump ready · awaiting fuel" : "jump drive spooling", "Delayed telemetry from this fleet's jump drive.");
+  if (g.rescue_inbound) return a("fuel", "AAA rescue active", "An Authority Astral Assistance tender is physically en route from the Wormhole Hub.");
+  if (g.stalled) return a("fuel", "out of fuel · holding", "The fleet keeps its current order and resumes when emergency fuel reaches it.");
   if (g.job) {
     const pct = Math.round(g.job.progress * 100);
     return g.job.kind === "demolishing"
@@ -1760,22 +1824,26 @@ function jobProgress(g: GhostView): string {
 }
 
 function fuelSection(g: GhostView): string {
-  const reserve = state.wallet ? state.wallet.fuel_total : 0;
+  const fuel = Math.max(0, g.fuel ?? 0);
+  const capacity = fleetFuelCapacity(g);
   const logisticsMult = g.captain
     ? 1 - Math.min(0.10, Math.max(0, g.captain.attributes.logistics - 1) * 0.02)
     : 1;
   const rate = FUEL_PER_MASS_DISTANCE * 1000 * shipMass(g) * logisticsMult;
-  const dest = state.orders[g.id];
-  let primary = `Burn ~${rate.toFixed(1)}/1k su`;
-  let secondary = "this fleet at its current mass";
+  const dest = state.orders[g.id] ?? g.path?.at(-1)?.pos;
+  let primary = g.fuel == null ? "Tank report unavailable" : `Tank ${fmt(fuel)} / ${fmt(capacity)}`;
+  let secondary = `burn ~${(rate / WARP_FACTOR).toFixed(1)}/1k su in warp`;
   if (dest) {
-    const cost = FUEL_PER_MASS_DISTANCE * Math.hypot(dest.x - g.pos.x, dest.y - g.pos.y) * shipMass(g) * logisticsMult;
-    primary = `Current order ~${fmt(cost)}`;
-    secondary = `burn ${rate.toFixed(1)}/1k su`;
+    const cost = estimatedFuelForLeg(g, dest);
+    secondary = `current leg needs ~${fmt(cost)}`;
   }
+  const pct = capacity > 0 ? Math.max(0, Math.min(100, fuel / capacity * 100)) : 0;
+  const tank = g.fuel == null
+    ? chip("fuel", "delayed telemetry", "The server has not served a tank reading for this fleet yet.", "sm")
+    : chip("fuel", `${pct.toFixed(0)}%`, `Carried fuel at this fleet's latest served sighting (${g.age.toFixed(1)}s information delay).`, "sm");
   return `<div class="sp-sec">${icon("fuel", "sm")} Fuel</div><div class="sp-fuel">` +
-    `<span class="sp-fuel__burn" title="This fleet's fuel burn at its current mass, and the cost of its current order when one exists."><b>${primary}</b><small>${secondary}</small></span>` +
-    `${chip("fuel", `corp reserve ${fmt(reserve)}`, "Corporation-wide reserve shared by every fleet — not this ship's tank.", "sm")}</div>`;
+    `<span class="sp-fuel__burn" title="Tank level and trip estimate come from this fleet's latest information-delayed report."><b>${primary}</b><small>${secondary}</small></span>` +
+    `${tank}</div>`;
 }
 
 function captainXpFloor(level: number): number {
@@ -2014,10 +2082,18 @@ function ownBody(g: GhostView): string {
   const payload: string[] = [compositionSection(g)];
   if (hauls(g)) {
     const manifest = fleetCargoManifest(g);
+    const used = fleetCargoUnits(g);
+    const capacity = fleetCargoCapacity(g);
+    const free = Math.max(0, capacity - used);
+    const full = capacity > 0 && used >= capacity;
     const cargo = manifest.length
       ? manifest.map((stack) => `<div class="sp-cargo">${commodityIcon(stack.commodity, "md")} <b>${fmt(stack.units)}</b> ${esc(label(stack.commodity))}</div>`).join("")
       : `<span class="dim">empty hold</span>`;
-    payload.push(`<div class="sp-sec">Cargo · ${fmt(fleetCargoUnits(g))} units</div>${cargo}`);
+    payload.push(
+      `<div class="sp-sec">${icon("cargo", "sm")} Cargo hold · ${fmt(used)} / ${fmt(capacity)} units</div>` +
+      `<div class="storage-row">${bar(capacity > 0 ? (used / capacity) * 100 : 0, full ? "is-warn" : "")}` +
+      `<span class="storage-warn">${full ? badge("warn", "hold full") : `${fmt(free)} units free`}</span></div>${cargo}`,
+    );
     if (g.route && g.route.length) {
       const d = g.route[g.route.length - 1];
       payload.push(`<div class="sp-sec">${icon("freightRoute", "sm")} Route</div><div class="sp-line" title="The waypoints this freighter will fly; the last is its destination.">${g.route.length} leg${g.route.length > 1 ? "s" : ""} → (${d.x.toFixed(0)}, ${d.y.toFixed(0)})</div>`);
@@ -2026,6 +2102,7 @@ function ownBody(g: GhostView): string {
   }
   payload.push(fuelSection(g));
   const commands = dockingSection(g) +
+    fuelRescueSection(g) +
     (guardCapable(g) ? shipZone("Escort", guardSection(g), "sp-zone--guard") : "") +
     (jumpCapable(g) ? shipZone("Jump drive", jumpSection(g), "sp-zone--jump") : "") +
     (g.kind === "builder" ? shipZone("Construct", emplaceSection(g), "sp-zone--construct") : "");
@@ -2096,6 +2173,31 @@ function dockingSection(g: GhostView): string {
   );
 }
 
+function fuelRescueSection(g: GhostView): string {
+  if (!g.own || (!g.stalled && !g.rescue_inbound)) return "";
+  if (g.rescue_inbound) {
+    return shipZone(
+      "Authority Astral Assistance",
+      `<div class="sp-line action-line">${icon("fuel", "md")}<span><b>AAA rescue active</b><br><span class="dim">Physical tender dispatched from the Wormhole Hub</span></span></div>`,
+      "sp-zone--rescue",
+    );
+  }
+  const quote = aaaEstimate(g);
+  const affordable = (state.wallet?.credits ?? 0) + 1e-6 >= quote.cost;
+  const price = state.market?.prices.find((entry) => entry.commodity === "fuel")?.price;
+  const detail = price == null
+    ? `~${fmt(quote.cost)} Cr · 3× Fuel price + ${fmt(AAA_SERVICE_FEE)} callout`
+    : `~${fmt(quote.cost)} Cr · ${price.toFixed(1)} × 3 per Fuel + ${fmt(AAA_SERVICE_FEE)} callout`;
+  return shipZone(
+    "Out of fuel",
+    `<div class="sp-line"><button class="act act--primary" data-act="fuel-rescue"${affordable ? "" : " disabled"} ` +
+      `title="AAA dispatches a physical rescue tender from the Wormhole Hub. Payment is charged at dispatch and is non-refundable if the tender is lost.">` +
+      `${icon("fuel", "md")} Call AAA rescue · ~${fmt(quote.cost)} Cr</button></div>` +
+      `<div class="sp-line ${affordable ? "dim" : "warn"}">${affordable ? detail : `Need ~${fmt(quote.cost)} Cr · treasury ${fmt(state.wallet?.credits ?? 0)} Cr`}</div>`,
+    "sp-zone--rescue",
+  );
+}
+
 // §syndicates Part 3: if this OWN fleet is stationed as an ally GARRISON, show its
 // host + supply state (fed = the host is covering its Provisions upkeep; UNFED =
 // its defense is suspended until fed — nothing destroyed).
@@ -2127,7 +2229,12 @@ function rivalBody(g: GhostView): string {
       ? manifest.map((stack) => `<div class="sp-line">${chip(stack.commodity as IconKey, `${fmt(stack.units)} ${esc(label(stack.commodity))}`, "Cargo — visible because this freighter is inside your sensor coverage.")}</div>`).join("")
       : `<div class="sp-line dim">${icon("unknown", "sm", "Cargo unknown — this freighter is out of your sensor range. It is revealed only inside your coverage.")} unknown</div>`));
   } else if (g.kind === "freighter") {
-    if (g.migrant) {
+    if (g.rescue_service) {
+      parts.push(
+        `<div class="sp-sec">${icon("fuel", "sm")} Authority Astral Assistance</div>` +
+        `<div class="sp-line"><b>AAA Rescue Tender</b><span class="dim">Emergency fuel service operating from the Wormhole Hub.</span></div>`,
+      );
+    } else if (g.migrant) {
       const cohort = state.galaxy?.migrant_cohort_people ?? 1_000;
       parts.push(
         `<div class="sp-sec">${icon("population", "sm")} Civilian passengers</div>` +
@@ -2272,7 +2379,7 @@ function updateShipPanel(): void {
           : "rival contact";
   const title = g.tca
     ? g.kind === "freighter"
-      ? g.migrant ? "Authority Migrant Liner" : "Authority Freighter"
+      ? g.rescue_service ? "AAA Rescue Tender" : g.migrant ? "Authority Migrant Liner" : "Authority Freighter"
       : "Authority Enforcement"
     : g.pirate && g.kind === "raider"
       ? "Pirate Raider"
@@ -3159,11 +3266,11 @@ function updateSysviewManage(): void {
     ["construction", "Build", "queue"],
   ];
   const active = systemManageTab === "overview"
-    ? storageBar + vitals + poolStrip + groundLine(dyn) + garrisonHost
+    ? vitals + poolStrip + groundLine(dyn) + garrisonHost
     : systemManageTab === "worlds"
       ? devs
       : systemManageTab === "production"
-        ? productionReadout(dyn) + converterBanner(dyn)
+        ? storageBar + productionReadout(dyn) + converterBanner(dyn)
         : berthLine(sid) + queue;
   const alert = blockadeBanner ? `<div class="ux-alert ux-alert--danger">${blockadeBanner}</div>` : "";
   setHtml($("svm-body"), alert + uxTabBar(tabs, systemManageTab, "svm-tab") +
@@ -4944,7 +5051,7 @@ function handleMapClick(sx: number, sy: number, shift = false): void {
           });
         } else {
           const contact = g.tca && g.kind === "freighter"
-            ? g.migrant ? "Authority Migrant Liner" : "Authority Freighter"
+            ? g.rescue_service ? "AAA Rescue Tender" : g.migrant ? "Authority Migrant Liner" : "Authority Freighter"
             : shipKindLabel(g.kind);
           cands.push({
             key: `ship:${g.id}`, sortD: d, label: contact,
@@ -7224,10 +7331,23 @@ type MarketReservation = {
   kind: "market" | "limit";
   side: Side;
   commodity: Commodity;
+  orderUnits: number;
   units: number;
   credits: number;
+  limitPrice?: number;
   issuedAt: number;
 };
+
+type RecentMarketOrder = {
+  side: Side;
+  commodity: Commodity;
+  units: number;
+  unitPrice: number;
+  limitFill: boolean;
+  observedAt: number;
+};
+const RECENT_MARKET_ORDER_LIMIT = 8;
+const recentMarketOrders: RecentMarketOrder[] = [];
 
 // Settlement is instant at the Market Hub, but the account report is not. Keep
 // the player's own just-issued commitments as a pessimistic local overlay until
@@ -7267,6 +7387,23 @@ function settleMarketReservation(trade: TradeEvent): void {
   if (index >= 0) marketReservations.splice(index, 1);
 }
 
+// Recent means the execution receipt has reached the corporation—not that a
+// client-side estimate expired. Open limit orders remain in the served book;
+// only completed market trades and observed limit fills enter this history.
+function recordRecentMarketOrder(trade: TradeEvent): void {
+  let row: RecentMarketOrder | null = null;
+  if (trade.event === "Bought") {
+    row = { side: "buy", commodity: trade.commodity, units: trade.units, unitPrice: trade.unit_price, limitFill: false, observedAt: liveSimTime() };
+  } else if (trade.event === "Sold") {
+    row = { side: "sell", commodity: trade.commodity, units: trade.units, unitPrice: trade.unit_price, limitFill: false, observedAt: liveSimTime() };
+  } else if (trade.event === "LimitFilled") {
+    row = { side: trade.side, commodity: trade.commodity, units: trade.units, unitPrice: trade.unit_price, limitFill: true, observedAt: liveSimTime() };
+  }
+  if (!row) return;
+  recentMarketOrders.unshift(row);
+  recentMarketOrders.length = Math.min(recentMarketOrders.length, RECENT_MARKET_ORDER_LIMIT);
+}
+
 // Accumulate the OBSERVED hub prices into a per-commodity rolling history (the
 // sparkline data source). Fog-safe: it only ever stores the lagged prices the
 // player has already been shown. Throttled to ~1 Hz of sim-time, capped.
@@ -7297,8 +7434,12 @@ function setMarketTab(tab: MarketTab): void {
   ($("market-pane-warehouse") as HTMLElement).hidden = tab !== "warehouse";
   ($("market-pane-specialists") as HTMLElement).hidden = tab !== "specialists";
   ($("market-pane-modules") as HTMLElement).hidden = tab !== "modules";
-  document.querySelectorAll<HTMLElement>("#market-tabs button").forEach((b) =>
-    b.classList.toggle("is-active", b.dataset.mtab === tab));
+  document.querySelectorAll<HTMLButtonElement>("#market-tabs button").forEach((b) => {
+    const selected = b.dataset.mtab === tab;
+    b.classList.toggle("is-active", selected);
+    b.setAttribute("aria-selected", String(selected));
+    b.tabIndex = selected ? 0 : -1;
+  });
   updateMarket();
 }
 function buildMarketPanel(): void {
@@ -7308,6 +7449,18 @@ function buildMarketPanel(): void {
   $("market-tabs").addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest("[data-mtab]") as HTMLElement | null;
     if (b?.dataset.mtab) setMarketTab(b.dataset.mtab as MarketTab);
+  });
+  $("market-tabs").addEventListener("keydown", (e) => {
+    if (!(e instanceof KeyboardEvent) || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+    const tabs = [...document.querySelectorAll<HTMLButtonElement>("#market-tabs button")];
+    const current = tabs.indexOf(e.target as HTMLButtonElement);
+    if (current < 0) return;
+    e.preventDefault();
+    const next = e.key === "Home" ? 0
+      : e.key === "End" ? tabs.length - 1
+      : (current + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    tabs[next].focus();
+    setMarketTab(tabs[next].dataset.mtab as MarketTab);
   });
   // §modules Part B3: the Sol MODULE market — buy ships a crate to your home
   // (price-certain, delivery-risky); sell dispatches from home, clears on arrival.
@@ -7394,7 +7547,6 @@ function buildMarketPanel(): void {
     renderComposer();
   });
   $("mk-qty").addEventListener("input", renderComposer);
-  $("mk-shipto").addEventListener("change", renderComposer);
   // --- §TCA + §market-ux: the WAREHOUSE tab's shipping composer ---
   const frCom = $("fr-commodity") as HTMLSelectElement;
   frCom.innerHTML = COMMODITIES.map((c) => `<option value="${c}">${label(c)}</option>`).join("");
@@ -7459,13 +7611,14 @@ function buildMarketPanel(): void {
         kind: "limit",
         side: composer.side,
         commodity: c,
+        orderUnits: qty,
         units: composer.side === "sell" ? qty : 0,
         credits: composer.side === "buy" ? qty * limitPrice : 0,
+        limitPrice,
       });
     } else {
       const observed = state.market?.prices.find((p) => p.commodity === c)?.price;
       if (observed === undefined) {
-        $("mk-feedback").textContent = "No observed market quote is available yet.";
         return;
       }
       const quotedAverage = marketAverageQuote(observed, qty, composer.side);
@@ -7479,7 +7632,6 @@ function buildMarketPanel(): void {
               commodity: c,
               units: qty,
               max_unit_price: protectionPrice,
-              ship_to: shipToValue(),
             }
           : {
               type: "MarketSell",
@@ -7492,13 +7644,14 @@ function buildMarketPanel(): void {
         kind: "market",
         side: composer.side,
         commodity: c,
+        orderUnits: qty,
         units: composer.side === "sell" ? qty : 0,
         credits: composer.side === "buy"
           ? qty * protectionPrice * (1 + (state.charter?.market_penalty_frac ?? 0))
           : 0,
       });
     }
-    $("mk-feedback").textContent = `Order sent: ${composer.side} ${qty} ${label(c)}${limitOn && limitPrice > 0 ? ` @ ${limitPrice}` : ""}.`;
+    renderIncomingMarketOrders();
   });
 }
 
@@ -7602,8 +7755,8 @@ function marketAverageQuote(mid: number, units: number, side: Side): number {
   return mid * MARKET_DEPTH * (1 - Math.exp(-x)) / units * (1 - MARKET_HALF_SPREAD);
 }
 
-// The composer preview surfaces the buy/sell asymmetry in plain language — the
-// honest-fog centerpiece (teaches the lightspeed economy, not shipping fees).
+// The submit button carries the ordinary estimate and protection rule. The line
+// beneath it is warnings-only: if nothing needs attention, it disappears.
 function renderComposer(): void {
   if (!state.market) return;
   const c = composer.commodity;
@@ -7614,42 +7767,56 @@ function renderComposer(): void {
   const qty = Math.max(1, Math.floor(Number(($("mk-qty") as HTMLInputElement).value) || 0));
   const limitOn = ($("mk-limit-on") as HTMLInputElement).checked;
   const submit = $("mk-submit");
+  const preview = $("mk-preview");
+  preview.innerHTML = "";
   if (limitOn) {
-    $("mk-preview").innerHTML = `<span title="It rests on the book and clears in the periodic uniform-price batch — reacting fastest confers no edge; partial fills carry to the next batch."><b>Limit ${composer.side} ${qty} ${label(c)}</b> → rests, clears in the <span class="accent">batch</span></span>`;
     submit.textContent = `Place limit ${composer.side}`;
+    submit.title = "Rests on the book and clears in the periodic uniform-price batch. Reacting fastest confers no edge; partial fills carry to the next batch.";
   } else if (composer.side === "buy") {
     const average = price === undefined ? undefined : marketAverageQuote(price, qty, "buy");
     const penFrac = state.charter?.market_penalty_frac ?? 0;
     const pen = average !== undefined ? qty * average * penFrac : 0;
-    const penNote = pen > 0.005 ? ` <span class="warn">(incl. ${fmt(pen)} Cr charter penalty)</span>` : "";
-    const cost = average !== undefined ? fmt(qty * average * (1 + penFrac)) : "?";
-    const bound = average !== undefined ? (average * (1 + MARKET_PROTECTION_FRAC)).toFixed(2) : "?";
-    const to = shipToValue();
-    const dest = to ? ` → booked onto Authority freight for <b>${esc(systemName(to))}</b>` : "";
-    const poolNote = liquidity && qty > liquidity.available_buy
-      ? ` <span class="warn">· observed supply ${liquidity.available_buy}</span>`
-      : "";
-    $("mk-preview").innerHTML = `<span title="Quantity impact is included. The order cancels if its true average exceeds the protected bound. Sol liquidity is finite and the displayed pool is light-delayed.">Observed estimate <b>~${cost} Cr</b>${penNote}${poolNote} · protected ≤ <span class="accent">${bound}/u</span> → your <b>Market Warehouse</b>${dest}</span>`;
-    submit.textContent = `Buy ${qty} ${label(c)}`;
+    const warnings: string[] = [];
+    if (average === undefined) {
+      warnings.push(`<span class="warn">No observed quote yet.</span>`);
+      submit.textContent = `Buy ${qty} ${label(c)}`;
+      submit.title = "Waiting for a light-delayed market quote.";
+    } else {
+      const cost = fmt(qty * average * (1 + penFrac));
+      const bound = (average * (1 + MARKET_PROTECTION_FRAC)).toFixed(2);
+      submit.textContent = `Buy ${qty} ${label(c)} · ~${cost} Cr`;
+      submit.title = `Cancels if the true average exceeds ~${bound}/u (+${Math.round(MARKET_PROTECTION_FRAC * 100)}%). Quantity impact included; prices are light-delayed.`;
+    }
+    if (liquidity && qty > liquidity.available_buy) {
+      warnings.push(`<span class="warn" title="The displayed pool is light-delayed; the server soft-rejects an order beyond true available liquidity.">observed supply ${liquidity.available_buy}</span>`);
+    }
+    if (pen > 0.005) warnings.push(`<span class="warn">includes ${fmt(pen)} Cr charter penalty</span>`);
+    preview.innerHTML = warnings.join(" · ");
   } else {
     const average = price === undefined ? undefined : marketAverageQuote(price, qty, "sell");
     const held = warehouseUnits(c);
     const penFrac = state.charter?.market_penalty_frac ?? 0;
     const pen = average !== undefined ? qty * average * penFrac : 0;
-    const penNote = pen > 0.005 ? ` <span class="warn">(after ${fmt(pen)} Cr charter penalty)</span>` : "";
-    const gain = average !== undefined ? fmt(qty * average * (1 - penFrac)) : "?";
-    const bound = average !== undefined ? (average * (1 - MARKET_PROTECTION_FRAC)).toFixed(2) : "?";
-    const short = held < qty;
-    const poolNote = liquidity && qty > liquidity.available_sell
-      ? ` <span class="warn">· observed demand ${liquidity.available_sell}</span>`
-      : "";
-    $("mk-preview").innerHTML = short
-      ? `<span class="warn" title="Selling draws ONLY from your Market Warehouse. Ship goods in first — Authority freight or one of your own freighters.">Warehouse holds <b>${held}</b> ${label(c)} — <b>${qty - held}</b> short</span>`
-      : `<span title="Quantity impact is included. The order cancels if its true average falls below the protected bound. Sol liquidity is finite and the displayed pool is light-delayed.">Observed proceeds <b>~${gain} Cr</b>${penNote}${poolNote} · protected ≥ <span class="accent">${bound}/u</span> from your Market Warehouse</span>`;
-    submit.textContent = `Sell ${qty} ${label(c)}`;
+    const warnings: string[] = [];
+    if (average === undefined) {
+      warnings.push(`<span class="warn">No observed quote yet.</span>`);
+      submit.textContent = `Sell ${qty} ${label(c)}`;
+      submit.title = "Waiting for a light-delayed market quote.";
+    } else {
+      const gain = fmt(qty * average * (1 - penFrac));
+      const bound = (average * (1 - MARKET_PROTECTION_FRAC)).toFixed(2);
+      submit.textContent = `Sell ${qty} ${label(c)} · ~${gain} Cr`;
+      submit.title = `Cancels if the true average falls below ~${bound}/u (−${Math.round(MARKET_PROTECTION_FRAC * 100)}%). Quantity impact included; prices are light-delayed.`;
+    }
+    if (held < qty) {
+      warnings.push(`<span class="warn" title="Selling draws only from your Market Warehouse. Move goods there first through the Warehouse tab.">Warehouse holds ${held} — ${qty - held} short</span>`);
+    }
+    if (liquidity && qty > liquidity.available_sell) {
+      warnings.push(`<span class="warn" title="The displayed pool is light-delayed; the server soft-rejects an order beyond true available liquidity.">observed demand ${liquidity.available_sell}</span>`);
+    }
+    if (pen > 0.005) warnings.push(`<span class="warn">${fmt(pen)} Cr charter penalty deducted</span>`);
+    preview.innerHTML = warnings.join(" · ");
   }
-  // The ship-to selector is a BUY-only composition.
-  ($("mk-shipto-row") as HTMLElement).style.display = composer.side === "buy" && !limitOn ? "flex" : "none";
 }
 
 // --- §TCA: the Market Warehouse, freight desk, and shipment queue -------
@@ -7680,11 +7847,6 @@ function warehouseUnits(c: Commodity): number {
     .filter((reservation) => reservation.commodity === c)
     .reduce((sum, reservation) => sum + reservation.units, 0);
   return Math.max(0, reported - reserved);
-}
-/// The chosen `ship_to` destination on a buy (null = leave it at the Market Hub).
-function shipToValue(): EntityId | null {
-  const v = ($("mk-shipto") as HTMLSelectElement | null)?.value ?? "";
-  return v ? (v as EntityId) : null;
 }
 /// Fill a <select> with the player's owned freight destinations, preserving the
 /// current choice where possible.
@@ -7867,6 +8029,32 @@ function renderRestingOrders(): void {
     : "");
 }
 
+// The player knows an instruction was sent, but the Market Hub's delayed
+// account report has not returned yet. Keep that honest local acknowledgement
+// here—not under the trade button and not mixed into the observed order book.
+function renderIncomingMarketOrders(): void {
+  pruneMarketReservations();
+  setHtml($("market-incoming-orders"), marketReservations.length
+    ? marketReservations.map((order) => {
+        const action = order.side === "buy" ? "Buy" : "Sell";
+        const limit = order.limitPrice === undefined ? "" : ` @ ${order.limitPrice.toFixed(1)}`;
+        return `<div class="ord">${icon("inTransit", "sm")} <b>${action} ${order.orderUnits} ${esc(label(order.commodity))}${limit}</b>` +
+          ` <span class="dim">· sent · awaiting Market Hub</span></div>`;
+      }).join("")
+    : `<span class="dim">No incoming orders.</span>`);
+}
+
+function renderRecentMarketOrders(): void {
+  setHtml($("market-recent-orders"), recentMarketOrders.length
+    ? recentMarketOrders.map((order) => {
+        const action = order.side === "buy" ? "Bought" : "Sold";
+        const source = order.limitFill ? "limit fill · " : "";
+        return `<div class="ord">${icon("confirmed", "sm")} <b>${action} ${order.units} ${esc(label(order.commodity))} @ ${order.unitPrice.toFixed(1)}</b>` +
+          ` <span class="dim">· ${source}${esc(agoLabel(order.observedAt))}</span></div>`;
+      }).join("")
+    : `<span class="dim">No recent executions.</span>`);
+}
+
 let lastMarketSig = "";
 function updateMarket(): void {
   if (renderDeferred("market", updateMarket)) return; // §single-click
@@ -7885,7 +8073,8 @@ function updateMarket(): void {
   if (ae && mp.contains(ae) && (ae.tagName === "INPUT" || ae.tagName === "SELECT")) return;
   const sig = JSON.stringify([
     state.wallet.credits, state.wallet.warehouse, state.wallet.fuel_total,
-    marketReservations.map((reservation) => [reservation.kind, reservation.side, reservation.commodity, reservation.units, reservation.credits]),
+    marketReservations.map((reservation) => [reservation.kind, reservation.side, reservation.commodity, reservation.orderUnits, reservation.units, reservation.credits, reservation.limitPrice]),
+    recentMarketOrders.map((order) => [order.side, order.commodity, order.units, order.unitPrice, order.limitFill, order.observedAt]),
     state.charter, state.freight,
     state.systems.map((s) => [s.id, s.owner]),
     state.ghosts.filter((g) => g.own && g.docked === "hub").map((g) => [g.id, g.kind, g.composition, g.cargo, g.cargo_manifest]),
@@ -7897,15 +8086,16 @@ function updateMarket(): void {
   const fresh = $("market-fresh");
   fresh.className = "badge " + (stale > 0.5 ? "badge--warn" : "badge--positive");
   fresh.textContent = stale > 0.5 ? `~${stale.toFixed(0)}s stale` : "live";
-  fresh.title = "Last-synced ticker — light-delayed";
+  fresh.title = "Last-synced, light-delayed prices. History is observed, not forecast.";
   $("market-wallet").innerHTML = statStrip([
     stat("Credits", `${reservedMarketCredits() > 0 ? "~" : ""}${fmt(spendableMarketCredits())} Cr`, "is-accent"),
     stat("Equity", `${fmt(state.wallet.valuation)} Cr`),
   ]);
   renderMarketBoard();
-  fillSystemSelect($("mk-shipto") as HTMLSelectElement, "keep at the hub");
   renderComposer();
   renderRestingOrders();
+  renderIncomingMarketOrders();
+  renderRecentMarketOrders();
   renderSpecialistsPane();
   renderModulesPane();
   renderWarehouse();
@@ -7916,6 +8106,11 @@ function updateMarket(): void {
 
 function addTradeNews(t: TradeEvent): void {
   settleMarketReservation(t);
+  recordRecentMarketOrder(t);
+  if ($("market").classList.contains("is-open")) {
+    renderIncomingMarketOrders();
+    renderRecentMarketOrders();
+  }
   const log = $("reports-log");
   let text = "";
   switch (t.event) {
@@ -8893,6 +9088,14 @@ function updateFoundingGuide(): void {
   const foundingHome = foundingHomeId
     ? state.systems.find((system) => system.id === foundingHomeId)
     : undefined;
+  const mineBody = foundingHome?.bodies.find(
+    (body) => (body.structures?.mining_complex ?? 0) > 0,
+  );
+  const mineStaffed = !!mineBody && (foundingHome?.assignments ?? []).some(
+    (assignment) => assignment.body_id === mineBody.id
+      && assignment.structure === "mining_complex"
+      && assignment.workers > 0,
+  );
   const academyBody = foundingHome?.bodies.find(
     (body) => (body.structures?.academy ?? 0) > 0,
   );
@@ -8909,9 +9112,15 @@ function updateFoundingGuide(): void {
       copy: "Your local founding kit covers the Shipyard, Mining Complex and first Freighter—no market import is required yet. Establish orbital shipbuilding.",
       action: "home", label: "Open home system",
     },
-    build_mine: {
+    build_mine: mineBody ? {
+      title: mineStaffed ? "Mining Complex staffed" : "Assign worker to Mining Complex I",
+      copy: mineStaffed
+        ? `Mining Complex I on ${mineBody.name} is staffed and producing Metallic Ore.`
+        : `Mining Complex I is complete on ${mineBody.name}. Open that world and select Assign worker; an unstaffed mine produces no ore.`,
+      action: "mine", label: `Open ${mineBody.name}`,
+    } : {
       title: "Build Mining Complex I",
-      copy: "Use the next part of the local kit to establish Mining Complex I on the ore body, then assign the free worker. Your Agroplex already produces the other export: Provisions.",
+      copy: "Use the next part of the local kit to establish Mining Complex I on the ore body. Your Agroplex already produces the other export: Provisions.",
       action: "home", label: "Open home system",
     },
     build_convoy: {
@@ -8974,6 +9183,8 @@ function updateFoundingGuide(): void {
   const c = content[f.stage];
   const selectable = c.action === "home"
     ? !!foundingHomeSystemId()
+    : c.action === "mine"
+      ? !!foundingHomeId && !!mineBody
     : c.action === "academy"
       ? !!foundingHomeId && !!academyBody
     : c.action === "interceptor"
@@ -9008,7 +9219,7 @@ $("founding-guide").addEventListener("click", (e) => {
       // Session-only fallback; see initialization above.
     }
     updateFoundingGuide();
-    syncFoundingSafeBottom();
+    syncFoundingGuideClearance();
     return;
   }
   const candidate = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-founding-candidate]")?.dataset.foundingCandidate;
@@ -9021,6 +9232,15 @@ $("founding-guide").addEventListener("click", (e) => {
   if (action === "home") {
     const id = foundingHomeSystemId();
     if (id) { state.selectedSystemId = id; openRail("system"); }
+  } else if (action === "mine") {
+    const id = foundingHomeSystemId();
+    const dyn = id ? state.systems.find((system) => system.id === id) : undefined;
+    const body = dyn?.bodies.find((candidate) => (candidate.structures?.mining_complex ?? 0) > 0);
+    const sys = id ? state.galaxy?.systems.find((candidate) => candidate.id === id) : undefined;
+    if (sys && body) {
+      enterSystem(sys);
+      openBodyPanelById(String(body.id));
+    }
   } else if (action === "academy") {
     const id = foundingHomeSystemId();
     const dyn = id ? state.systems.find((system) => system.id === id) : undefined;
@@ -9102,6 +9322,7 @@ function join(): void {
       switch (msg.type) {
         case "Welcome":
           marketReservations.length = 0;
+          if (state.playerId !== null && state.playerId !== msg.player_id) recentMarketOrders.length = 0;
           // Wire protocol check (§FLEETS bumped to 2): warn if the server speaks a
           // newer dialect than this build — the View shape may have drifted.
           if (typeof msg.protocol_version === "number" && msg.protocol_version !== EXPECTED_PROTOCOL_VERSION) {
@@ -9317,10 +9538,27 @@ function join(): void {
           state.commandSignals.push({
             orderId: msg.order_id,
             shipId: msg.ship_id,
+            targetPos: undefined,
             depart: msg.depart_time,
             arrive: msg.arrive_time,
             pOut: 0,
             hops: msg.hops ?? [],
+          });
+          break;
+        }
+        case "CommandChevron": {
+          // Dispatch-only remote instructions use the same violet visual as a
+          // movement order. orderId=0 deliberately keeps them out of the order
+          // row/confirmation lifecycle; arrival means only that the chevron has
+          // reached its player-known target.
+          state.commandSignals.push({
+            orderId: 0,
+            shipId: msg.fleet_id ?? "",
+            targetPos: msg.target_pos,
+            depart: msg.depart_time,
+            arrive: msg.arrive_time,
+            pOut: 0,
+            hops: [],
           });
           break;
         }
@@ -9476,6 +9714,20 @@ function dockLoadOptions(g: GhostView): string {
     .join("");
 }
 
+/// The player may knowingly risk a marginal leg, but never discovers the tank
+/// limit only after departure. Both numbers are from the latest served fleet
+/// picture, so the confirmation is explicitly an estimate rather than truth.
+function confirmHaulFuel(g: GhostView, dest: Vec2, destinationName: string): boolean {
+  if (g.fuel == null) return true; // rolling-server compatibility
+  const needed = estimatedFuelForLeg(g, dest);
+  if (g.fuel + 1e-6 >= needed) return true;
+  return window.confirm(
+    `Fuel warning\n\nLatest tank report: ${fmt(g.fuel)} Fuel.\n` +
+      `Estimated need to ${destinationName}: ~${fmt(needed)} Fuel.\n\n` +
+      `The Freighter may run dry and hold its current order. Emergency AAA service costs 3× the Fuel market price plus a ${fmt(AAA_SERVICE_FEE)}-credit callout fee.\n\nDepart anyway?`,
+  );
+}
+
 // Keep the resource picker live without replacing the native control. An OPEN
 // native select is the exception: even morphing only its option children at View
 // cadence resets the popup's highlighted choice to item one in some browsers.
@@ -9492,10 +9744,16 @@ function syncDockLoadControls(root: HTMLElement, g: GhostView): void {
   if (selected && [...select.options].some((option) => option.value === selected)) {
     select.value = selected;
   }
-  const empty = select.options.length === 0;
-  select.disabled = empty;
+  const free = Math.max(0, fleetCargoCapacity(g) - fleetCargoUnits(g));
+  const unavailable = select.options.length === 0 || free === 0;
+  select.disabled = unavailable;
+  const quantity = root.querySelector(".lg-qty") as HTMLInputElement | null;
+  if (quantity) {
+    quantity.max = String(Math.max(1, free));
+    quantity.disabled = unavailable;
+  }
   const load = root.querySelector('[data-act="load"]') as HTMLButtonElement | null;
-  if (load) load.disabled = empty;
+  if (load) load.disabled = unavailable;
 }
 
 function logisticsSection(g: GhostView): string {
@@ -9511,19 +9769,22 @@ function logisticsSection(g: GhostView): string {
   const where = atHub ? "the hub" : esc(sys!.name);
   const rows: string[] = [`<div class="sp-sec">${icon("manifest", "sm")} Logistics · ${where}</div>`];
   const manifest = fleetCargoManifest(g);
+  const free = Math.max(0, fleetCargoCapacity(g) - fleetCargoUnits(g));
   if (manifest.length) {
     const summary = manifest.map((stack) => `${fmt(stack.units)} ${esc(label(stack.commodity))}`).join(" · ");
     rows.push(`<div class="sp-line"><button class="act" data-act="unload" title="Put every commodity stack ashore at ${esc(where)}.">${icon("unload", "md")} Unload all · ${summary}</button></div>`);
   }
   // Load: pick a commodity + amount from whatever the dock actually holds.
   const options = dockLoadOptions(g);
-  if (options) {
+  if (options && free > 0) {
     rows.push(
       `<div class="sp-line"><select class="lg-com" data-act="noop">` +
       options +
-      `</select> <input class="lg-qty" type="number" min="1" value="50" style="width:5.5em" /> ` +
-      `<button class="act" data-act="load" title="Add whole units from ${esc(where)} to this fleet's mixed cargo manifest, up to its total hold capacity.">${icon("manifest", "sm")} Load</button></div>`,
+      `</select> <input class="lg-qty" type="number" min="1" max="${free}" value="${Math.min(50, free)}" style="width:5.5em" /> ` +
+      `<button class="act" data-act="load" title="Add cargo from ${esc(where)}. This fleet has ${fmt(free)} units of hold space remaining.">${icon("manifest", "sm")} Load · ${fmt(free)} free</button></div>`,
     );
+  } else if (options) {
+    rows.push(`<div class="sp-line">${badge("warn", "hold full")} Unload cargo to make room.</div>`);
   }
   if (manifest.length && !atHub) {
     rows.push(

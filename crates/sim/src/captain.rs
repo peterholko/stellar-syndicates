@@ -125,7 +125,8 @@ pub enum CaptainPortrait {
     LucaFerraro,
     KarimBenYoussef,
     MateoQuispe,
-    TaliaFaumuina,
+    #[serde(alias = "talia_faumuina")]
+    LitiaNaivalu,
     AnaLuisaNascimento,
     ElenaValdes,
     DaphneMarkou,
@@ -151,7 +152,7 @@ impl CaptainPortrait {
             Self::LucaFerraro => "luca_ferraro",
             Self::KarimBenYoussef => "karim_ben_youssef",
             Self::MateoQuispe => "mateo_quispe",
-            Self::TaliaFaumuina => "talia_faumuina",
+            Self::LitiaNaivalu => "litia_naivalu",
             Self::AnaLuisaNascimento => "ana_luisa_nascimento",
             Self::ElenaValdes => "elena_valdes",
             Self::DaphneMarkou => "daphne_markou",
@@ -331,8 +332,8 @@ impl Captain {
                 CaptainAttribute::Navigation,
             ),
             9 => (
-                "Talia Faumuina",
-                CaptainPortrait::TaliaFaumuina,
+                "Litia Naivalu",
+                CaptainPortrait::LitiaNaivalu,
                 CaptainAttribute::Command,
             ),
             10 => (
@@ -586,8 +587,8 @@ mod tests {
             ),
             (
                 9,
-                "Talia Faumuina",
-                CaptainPortrait::TaliaFaumuina,
+                "Litia Naivalu",
+                CaptainPortrait::LitiaNaivalu,
                 CaptainAttribute::Command,
             ),
             (
@@ -663,6 +664,17 @@ mod tests {
             assert_eq!(c.portrait, portrait);
             assert_eq!(c.attribute(focus), 2);
         }
+    }
+
+    #[test]
+    fn the_outgoing_talia_portrait_slug_loads_as_litia() {
+        let portrait: CaptainPortrait =
+            serde_json::from_str("\"talia_faumuina\"").expect("legacy portrait slug loads");
+        assert_eq!(portrait, CaptainPortrait::LitiaNaivalu);
+        assert_eq!(
+            serde_json::to_string(&portrait).unwrap(),
+            "\"litia_naivalu\""
+        );
     }
 
     #[test]

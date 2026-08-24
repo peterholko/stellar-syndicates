@@ -41,6 +41,16 @@ pub const TCA_DEPARTURE_PERIOD: f64 = 120.0;
 /// HULL, not of what the receiving colony has built, so no ground structure raises it.
 pub const TCA_SHIPMENT_CAP: u32 = 400;
 
+// --- AUTHORITY ASTRAL ASSISTANCE (AAA) ------------------------------------
+/// Emergency bunker fuel is deliberately punitive: calling a tender is a way
+/// out of a stranded state, never the economical way to plan a voyage.
+pub const TCA_RESCUE_FUEL_PRICE_MULT: f64 = 3.0;
+/// Flat dispatch charge, burned when the rescue tender leaves the Hub.
+pub const TCA_RESCUE_SERVICE_FEE: f64 = 1_000.0;
+/// Reserve added to the estimated remaining leg. This covers well transit and
+/// leaves the rescued fleet with enough margin that the service feels reliable.
+pub const TCA_RESCUE_RESERVE_FRAC: f64 = 0.10;
+
 /// The AD-VALOREM part of the freight fee: this fraction of the cargo's market
 /// value (at booking time) is charged. A pure credit SINK — destroyed, never paid
 /// to anyone, never refunded (Phase 1 has no TCA treasury).
@@ -394,6 +404,39 @@ pub struct FreightRun {
     pub manifest: Vec<ShipmentId>,
     /// The aboard shipment records, keyed by id (deterministic iteration).
     pub shipments: BTreeMap<ShipmentId, Shipment>,
+}
+
+/// Which half of an Authority Astral Assistance run the tender is flying.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RescueLeg {
+    Outbound,
+    Returning,
+}
+
+/// One physical AAA fuel tender. The customer pays at dispatch; the tender then
+/// flies from the Market Hub to the stranded fleet, transfers the booked fuel,
+/// and returns. The sidecar keeps service bookkeeping off the ordinary cargo
+/// manifest so rescue fuel cannot be raided as trade goods.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FuelRescueRun {
+    pub tender: EntityId,
+    pub customer: EntityId,
+    pub owner: PlayerId,
+    pub fuel: f64,
+    pub cost: f64,
+    pub leg: RescueLeg,
+}
+
+/// Why an AAA callout was not accepted. Typed so the owner receives an exact,
+/// local explanation instead of a button that appears to do nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RescueRejectReason {
+    FleetUnavailable,
+    NotStranded,
+    AlreadyDispatched,
+    CannotAfford { needed: f64, have: f64 },
 }
 
 impl FreightRun {

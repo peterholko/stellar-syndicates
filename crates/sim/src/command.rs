@@ -81,14 +81,6 @@ pub enum Command {
         /// above this bound. `None` preserves old saved-command compatibility.
         #[serde(default)]
         max_unit_price: Option<f64>,
-        /// §TCA: ONE-CHECKBOX composition — on a successful purchase, immediately
-        /// attempt a [`Command::BookFreightOut`] of the whole lot to this owned
-        /// system. If that booking soft-rejects (unowned, unaffordable fee, …) the
-        /// goods simply stay in the warehouse and the owner gets the reject notice.
-        /// `None` = leave the lot at the Market Hub. serde default so old clients
-        /// and pre-feature commands still parse.
-        #[serde(default)]
-        ship_to: Option<EntityId>,
     },
 
     /// Sell at market (§9, §TCA): draws ONLY from the corp's Market Warehouse
@@ -565,6 +557,14 @@ pub enum Command {
         player_id: PlayerId,
         fleet_id: EntityId,
         system: EntityId,
+    },
+
+    /// Call Authority Astral Assistance for a fleet whose carried fuel has run
+    /// out. Payment is settled at the Hub immediately; a physical Authority
+    /// tender then flies to the fleet and transfers the emergency fuel.
+    RequestFuelRescue {
+        player_id: PlayerId,
+        fleet_id: EntityId,
     },
 
     /// §TCA Phase 2: PAY REINSTATEMENT — buy charter standing back from the

@@ -982,7 +982,66 @@ impl Timeline {
                     kind,
                 } => {
                     self.push(*owner, e.time, TimelineSeverity::Warn,
-                        format!("A {} was held — out of fuel (needed ~{:.0}). Stockpile fuel near your fleet.", kind.label(), needed));
+                        format!("A {} was held — out of fuel (needed ~{:.0}). Refuel at a berth or call Authority Astral Assistance from the fleet panel.", kind.label(), needed));
+                }
+                EventPayload::FuelRescueDispatched {
+                    owner,
+                    fuel,
+                    cost,
+                    ..
+                } => {
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Info,
+                        format!(
+                            "Authority Astral Assistance dispatched a rescue tender with ~{fuel:.0} Fuel — {cost:.0} credits charged."
+                        ),
+                    );
+                }
+                EventPayload::FuelRescueCompleted {
+                    owner, fuel, pos, ..
+                } => {
+                    let observe = world
+                        .players
+                        .get(owner)
+                        .map_or(e.time, |corp| e.time + sim::transit::delay(*pos, corp.command_center, world.config.c));
+                    self.push(
+                        *owner,
+                        observe,
+                        TimelineSeverity::Good,
+                        format!(
+                            "AAA rescue complete — ~{fuel:.0} Fuel transferred; the fleet resumed its held order."
+                        ),
+                    );
+                }
+                EventPayload::FuelRescueFailed { owner, pos, .. } => {
+                    let observe = world
+                        .players
+                        .get(owner)
+                        .map_or(e.time, |corp| e.time + sim::transit::delay(*pos, corp.command_center, world.config.c));
+                    self.push(
+                        *owner,
+                        observe,
+                        TimelineSeverity::Bad,
+                        "AAA rescue failed before service; the dispatch charge was not refunded.".to_string(),
+                    );
+                }
+                EventPayload::FuelRescueRejected { owner, reason, .. } => {
+                    let why = match reason {
+                        sim::RescueRejectReason::FleetUnavailable => "that fleet is unavailable".to_string(),
+                        sim::RescueRejectReason::NotStranded => "the latest Authority check says the fleet is not fuel-stalled".to_string(),
+                        sim::RescueRejectReason::AlreadyDispatched => "a rescue tender is already outbound".to_string(),
+                        sim::RescueRejectReason::CannotAfford { needed, have } => {
+                            format!("the callout costs {needed:.0} credits; your treasury holds {have:.0}")
+                        }
+                    };
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Warn,
+                        format!("AAA callout refused — {why}."),
+                    );
                 }
                 // §order-lifecycle (OWNER-ONLY). "Delivered" is the player's own
                 // command data (they computed delivery at issue), shown on their
@@ -1008,7 +1067,10 @@ impl Timeline {
                     );
                 }
                 EventPayload::OrderConfirmed {
-                    owner, fleet, kind, ..
+                    owner,
+                    fleet,
+                    kind,
+                    ..
                 } => {
                     let name = fleet_label(world, *fleet);
                     self.push(

@@ -13,12 +13,11 @@
 //!   data never stales. Lives in
 //!   [`crate::world::Corporation::surveyed`], gated in the server View.
 //!
-//! The band VALUE weights are the market's fixed BOOTSTRAP PRICE ANCHORS
-//! ([`crate::market::base_price`] — Provisions 6 · Ore 8 · Fuel 10 · Volatiles 18
-//! · Alloys 26), NOT live prices: the band must be static and public, and those
-//! anchors are already the one fixed per-commodity value table (the client
-//! mirrors them as `COMMODITY_VALUE`; `claim_cost_for` uses them too). One
-//! source of truth — a second weight table would only drift.
+//! The band VALUE weights are the market's fixed BOOTSTRAP PRICE ANCHORS, NOT
+//! live prices: the band must be static and public. [`band_value`] and
+//! [`crate::galaxy::claim_cost_for`] both call [`crate::market::base_price`]
+//! directly. The authoritative numeric table lives there; do not duplicate it
+//! in this comment, where a later economy rebalance could silently make it stale.
 //!
 //! Band THRESHOLDS are the terciles of `band_value` across all systems, computed
 //! once at galaxy generation and stored on the `World` (deposits never change, so

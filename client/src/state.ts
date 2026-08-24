@@ -62,14 +62,18 @@ export function liveSimTime(wallMs = performance.now()): number {
   return renderClockSim + elapsed * renderClockRate;
 }
 
-// The OUTBOUND command signal: the violet comet of an order crossing space from
-// the command center to the ship, over [depart, arrive]. Pure rendering — the
-// client only interpolates between the server-provided times. There is no inbound
-// "response" leg: the ship's reaction is seen directly on the map in delayed
-// light, so animating a confirmation travelling home would just duplicate the map.
+// The OUTBOUND command signal: the violet chevron of an instruction crossing
+// space from the command center to a fleet or the Market Hub over [depart,
+// arrive]. Pure rendering — the client only interpolates between server-provided
+// times. There is no inbound "response" leg: the resulting served picture is the
+// response, so animating a second signal home would duplicate it.
 export interface CommandSignal {
+  /// Zero means a dispatch-only chevron with no order-lifecycle row.
   orderId: number;
+  /// Empty for a fixed target such as the Market Hub.
   shipId: string;
+  /// Fixed endpoint, or player-known fallback when a fleet glyph is suppressed.
+  targetPos?: Vec2;
   depart: number; // sim-time the order left the command center
   arrive: number; // sim-time it reaches the ship (observed)
   pOut: number; // 0..1 outbound progress, recomputed each frame

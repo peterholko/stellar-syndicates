@@ -26,7 +26,7 @@ use crate::pirate::{self, Enclave};
 use crate::ship::{DefenseEngagement, DockSite, Fleet, FleetOrder, ShipKind, TradeMission};
 use crate::standing::{Endpoint, OrderStatus, StandingOrder, Trigger};
 use crate::syndicate::{Syndicate, syndicate_cap};
-use crate::tca::{FreightRun, RunLeg, Shipment, ShipmentDir, ShipmentId};
+use crate::tca::{FreightRun, FuelRescueRun, RescueLeg, RunLeg, Shipment, ShipmentDir, ShipmentId};
 
 /// A player's corporation — their persistent presence in the galaxy. Grows in
 /// later milestones (credits, holdings, fleets).
@@ -761,6 +761,10 @@ pub struct World {
     /// so pre-feature snapshots load with no runs.
     #[serde(default)]
     pub freight_runs: BTreeMap<EntityId, crate::tca::FreightRun>,
+    /// Authority Astral Assistance fuel tenders in flight, keyed by the tender
+    /// fleet. The stranded customer's order remains installed throughout.
+    #[serde(default)]
+    pub fuel_rescues: BTreeMap<EntityId, crate::tca::FuelRescueRun>,
     /// Authority passenger liners carrying external immigrants from the Hub.
     /// The fleet is the physical risk; this sidecar is its passenger manifest.
     #[serde(default)]
@@ -1018,6 +1022,7 @@ impl World {
             pending_survey_reports: Vec::new(),
             freight_queue: BTreeMap::new(),
             freight_runs: BTreeMap::new(),
+            fuel_rescues: BTreeMap::new(),
             migrant_runs: BTreeMap::new(),
             next_migration_at: BTreeMap::new(),
             next_shipment_id: 0,
@@ -1205,6 +1210,10 @@ impl World {
         });
         self.pending_diplomacy_notices
             .retain(|notice| self.players.contains_key(&notice.recipient));
+        self.fuel_rescues.retain(|tender, run| {
+            self.fleets.contains_key(tender)
+                && (run.leg == RescueLeg::Returning || self.fleets.contains_key(&run.customer))
+        });
         // §order-queue migration: pre-identity snapshots deserialize pending
         // commands as id 0. Preserve every lifecycle and assign each legacy
         // entry a distinct id before the next command is scheduled.
@@ -2199,10 +2208,14 @@ impl World {
         //     gate. Runs whether or not the owner is connected.
         self.weapons_free_offense();
 
-        // 3. Integrate continuous movement (flip-and-burn, patrols, and raider
+        // 3. Integrate standing-order movement (drive transitions, patrols, and
         //    interception pursuit).
         self.integrate_movement(&mut events);
         self.refuel_docked();
+        // A physical AAA tender transfers fuel only after it reaches the dry
+        // fleet. The customer's existing order is never replaced; clearing the
+        // stall lets that exact order resume on the next movement tick.
+        self.resolve_fuel_rescues(&mut events);
         self.step_constructions(&mut events);
         self.step_demolitions(&mut events);
 
@@ -3647,7 +3660,7 @@ impl World {
         // rule — and the owner is told (light-delayed from the wreck).
         members.retain(|id| self.fleets.get(id).is_some_and(|f| !f.is_empty()));
         let mut lost: Vec<Event> = Vec::new();
-        let mut wrecked: Vec<EntityId> = Vec::new();
+        let mut wrecked: Vec<(EntityId, Vec2)> = Vec::new();
         self.fleets.retain(|id, f| {
             if f.is_empty() {
                 if !f.passengers.is_empty() {
@@ -3671,7 +3684,7 @@ impl World {
                         },
                     ));
                 }
-                wrecked.push(*id);
+                wrecked.push((*id, f.pos));
                 false
             } else {
                 true
@@ -3682,9 +3695,10 @@ impl World {
         // it — every shipper aboard is told, and the run is cleaned up so no orphan
         // survives the hull. (What a raider managed to seize was already loaded
         // onto it above; from the shipper's side the lot is gone either way.)
-        for id in wrecked {
+        for (id, pos) in wrecked {
             self.scuttle_freight_run(id, events);
             self.scuttle_migrant_run(id);
+            self.scuttle_fuel_rescue(id, pos, events);
         }
     }
 
@@ -3707,6 +3721,49 @@ impl World {
             return;
         };
         self.release_migrant_reservation(run);
+    }
+
+    /// A destroyed AAA tender ends its callout. If the CUSTOMER was destroyed,
+    /// the tender turns home and the same owner-only failure report is emitted.
+    fn scuttle_fuel_rescue(&mut self, fleet: EntityId, pos: Vec2, events: &mut Vec<Event>) {
+        if let Some(run) = self.fuel_rescues.remove(&fleet) {
+            events.push(Event::new(
+                self.time,
+                EventPayload::FuelRescueFailed {
+                    owner: run.owner,
+                    fleet: run.customer,
+                    tender: run.tender,
+                    pos,
+                },
+            ));
+            return;
+        }
+        let tenders: Vec<EntityId> = self
+            .fuel_rescues
+            .iter()
+            .filter_map(|(&tender, run)| (run.customer == fleet).then_some(tender))
+            .collect();
+        for tender in tenders {
+            let Some(run) = self.fuel_rescues.get_mut(&tender) else {
+                continue;
+            };
+            if run.leg == RescueLeg::Returning {
+                continue;
+            }
+            run.leg = RescueLeg::Returning;
+            if let Some(tender_fleet) = self.fleets.get_mut(&tender) {
+                tender_fleet.order = FleetOrder::MoveTo { dest: self.hub };
+            }
+            events.push(Event::new(
+                self.time,
+                EventPayload::FuelRescueFailed {
+                    owner: run.owner,
+                    fleet,
+                    tender,
+                    pos,
+                },
+            ));
+        }
     }
 
     /// Resolve BATTLES this tick (§battles-take-time). Combat is deterministic
@@ -7180,7 +7237,6 @@ impl World {
                 commodity,
                 units,
                 max_unit_price,
-                ship_to,
             } => {
                 let units = *units;
                 if units == 0 {
@@ -7274,20 +7330,6 @@ impl World {
                         penalty,
                     }),
                 ));
-                // §TCA one-checkbox composition: hand the whole lot straight to
-                // the Authority for delivery. If the booking soft-rejects, the
-                // goods simply stay in the warehouse and the owner is told why.
-                if let Some(dest) = *ship_to {
-                    self.book_freight(
-                        *player_id,
-                        dest,
-                        *commodity,
-                        units,
-                        ShipmentDir::Outbound,
-                        false,
-                        events,
-                    );
-                }
             }
             Command::MarketSell {
                 player_id,
@@ -7486,6 +7528,12 @@ impl World {
                     f.mission = Some(TradeMission::DeliverToSystem { system: *system });
                     f.order = FleetOrder::MoveTo { dest };
                 }
+            }
+            Command::RequestFuelRescue {
+                player_id,
+                fleet_id,
+            } => {
+                self.request_fuel_rescue(*player_id, *fleet_id, events);
             }
             Command::PayReinstatement { player_id, points } => {
                 // §TCA Phase 2: buy standing back. INSTANT, like its `MarketBuy` /
@@ -9363,8 +9411,9 @@ impl World {
         }
         self.next_build_id += 1;
         // §planetary-identity: environment prices construction TIME, while a
-        // Low-Gravity special accelerates ships. Both lock at enqueue alongside
-        // the staffed-yard boost — no mid-job retiming as crews or knowledge move.
+        // Low-Gravity special accelerates ship construction. Both lock at enqueue
+        // alongside the staffed-yard boost — no mid-job retiming as workforce or
+        // knowledge moves.
         let site_time_mult = sys
             .bodies
             .iter()
@@ -12642,6 +12691,231 @@ impl World {
         ShipmentId(self.next_shipment_id)
     }
 
+    // ==== AUTHORITY ASTRAL ASSISTANCE (AAA) ================================
+
+    /// Conservative fuel package for the fleet's remaining assignment. Warp
+    /// prices the long leg; a ten-percent tank reserve covers drive transitions
+    /// and the destination well. Unknown/moving-target orders receive a full
+    /// refill because no honest fixed-leg estimate exists.
+    fn fuel_rescue_package(&self, fleet_id: EntityId) -> Option<f64> {
+        let fleet = self.fleets.get(&fleet_id)?;
+        let room = (fleet.fuel_capacity() - fleet.fuel).max(0.0);
+        if room <= 1e-9 {
+            return None;
+        }
+        let fixed_dest = match fleet.order {
+            FleetOrder::MoveTo { dest }
+            | FleetOrder::Jump { dest, .. }
+            | FleetOrder::Construct { site: dest, .. }
+            | FleetOrder::Demolish { site: dest, .. }
+            | FleetOrder::Blockade { station: dest, .. }
+            | FleetOrder::Survey { station: dest, .. } => Some(dest),
+            FleetOrder::Patrol {
+                ref waypoints,
+                index,
+                ..
+            } => (!waypoints.is_empty()).then(|| waypoints[index % waypoints.len()]),
+            FleetOrder::Idle
+            | FleetOrder::Intercept { .. }
+            | FleetOrder::Guard { .. }
+            | FleetOrder::Attack { .. } => None,
+        };
+        let Some(dest) = fixed_dest else {
+            return Some(room);
+        };
+        let captain_mult = self
+            .active_captain_for_fleet(fleet.owner, fleet_id)
+            .map_or(1.0, |captain| captain.logistics_fuel_mult());
+        let distance = fleet.pos.distance(dest);
+        let warp = crate::fuel::fuel_cost(distance, fleet.mass()) / crate::transit::WARP_FACTOR;
+        // A fixed leg may spend up to one well radius leaving and one arriving
+        // on impulse. Add only the difference over the warp-priced distance.
+        let well_distance = distance.min(crate::transit::HYPERLIMIT * 2.0);
+        let well_surcharge = crate::fuel::fuel_cost(well_distance, fleet.mass())
+            * (1.0 - 1.0 / crate::transit::WARP_FACTOR);
+        let cruise = (warp + well_surcharge) * captain_mult;
+        let reserve = fleet.fuel_capacity() * crate::tca::TCA_RESCUE_RESERVE_FRAC;
+        Some((cruise + reserve).min(room))
+    }
+
+    /// Book a physical emergency tender. The Hub charges its current standing
+    /// Fuel price at the published rescue multiple plus the flat callout fee;
+    /// AAA draws from its strategic reserve rather than external Exchange
+    /// liquidity, so a market shortage can never make a stranded fleet permanent.
+    fn request_fuel_rescue(
+        &mut self,
+        owner: PlayerId,
+        fleet_id: EntityId,
+        events: &mut Vec<Event>,
+    ) {
+        use crate::tca::RescueRejectReason;
+        let reject = |reason| {
+            Event::new(
+                self.time,
+                EventPayload::FuelRescueRejected {
+                    owner,
+                    fleet: fleet_id,
+                    reason,
+                },
+            )
+        };
+        let Some(fleet) = self.fleets.get(&fleet_id) else {
+            events.push(reject(RescueRejectReason::FleetUnavailable));
+            return;
+        };
+        if fleet.owner != owner {
+            events.push(reject(RescueRejectReason::FleetUnavailable));
+            return;
+        }
+        if !fleet.stalled {
+            events.push(reject(RescueRejectReason::NotStranded));
+            return;
+        }
+        if self
+            .fuel_rescues
+            .values()
+            .any(|run| run.customer == fleet_id && run.leg == RescueLeg::Outbound)
+        {
+            events.push(reject(RescueRejectReason::AlreadyDispatched));
+            return;
+        }
+        let Some(fuel) = self.fuel_rescue_package(fleet_id) else {
+            events.push(reject(RescueRejectReason::NotStranded));
+            return;
+        };
+        let cost = crate::tca::TCA_RESCUE_SERVICE_FEE
+            + fuel
+                * self.market.price(crate::fuel::MOVEMENT_FUEL)
+                * crate::tca::TCA_RESCUE_FUEL_PRICE_MULT;
+        let have = self.players.get(&owner).map_or(0.0, |corp| corp.credits);
+        if have + 1e-9 < cost {
+            events.push(reject(RescueRejectReason::CannotAfford { needed: cost, have }));
+            return;
+        }
+
+        if let Some(corp) = self.players.get_mut(&owner) {
+            corp.credits -= cost;
+        }
+        let tender = self.alloc_entity_id();
+        self.fleets.insert(
+            tender,
+            Fleet::single(
+                tender,
+                PlayerId::TCA,
+                ShipKind::Freighter,
+                self.hub,
+                FleetOrder::Guard { target: fleet_id },
+                None,
+            ),
+        );
+        self.fuel_rescues.insert(
+            tender,
+            FuelRescueRun {
+                tender,
+                customer: fleet_id,
+                owner,
+                fuel,
+                cost,
+                leg: RescueLeg::Outbound,
+            },
+        );
+        events.push(Event::new(
+            self.time,
+            EventPayload::FuelRescueDispatched {
+                owner,
+                fleet: fleet_id,
+                tender,
+                fuel,
+                cost,
+            },
+        ));
+    }
+
+    /// Transfer booked fuel at physical contact, then send the tender home. A
+    /// dead customer or tender does not conjure fuel or a refund: the callout was
+    /// dispatched and exposed to the same travel/combat risk as other hulls.
+    fn resolve_fuel_rescues(&mut self, events: &mut Vec<Event>) {
+        let ids: Vec<EntityId> = self.fuel_rescues.keys().copied().collect();
+        for tender in ids {
+            let Some(run) = self.fuel_rescues.get(&tender).cloned() else {
+                continue;
+            };
+            let Some(tender_fleet) = self.fleets.get(&tender) else {
+                self.fuel_rescues.remove(&tender);
+                continue;
+            };
+            match run.leg {
+                RescueLeg::Outbound => {
+                    let Some(customer) = self.fleets.get(&run.customer) else {
+                        let pos = tender_fleet.pos;
+                        if let Some(fleet) = self.fleets.get_mut(&tender) {
+                            fleet.order = FleetOrder::MoveTo { dest: self.hub };
+                        }
+                        if let Some(active) = self.fuel_rescues.get_mut(&tender) {
+                            active.leg = RescueLeg::Returning;
+                        }
+                        events.push(Event::new(
+                            self.time,
+                            EventPayload::FuelRescueFailed {
+                                owner: run.owner,
+                                fleet: run.customer,
+                                tender,
+                                pos,
+                            },
+                        ));
+                        continue;
+                    };
+                    let close = tender_fleet.pos.distance(customer.pos)
+                        <= GUARD_STANDOFF_SU + GUARD_FORMATION_LOCK_SU + 1.0;
+                    let under_fire = self.engagements.values().any(|engagement| {
+                        engagement.attackers.contains(&tender)
+                            || engagement.defenders.contains(&tender)
+                            || engagement.attackers.contains(&run.customer)
+                            || engagement.defenders.contains(&run.customer)
+                    });
+                    if !close || under_fire {
+                        continue;
+                    }
+                    let (pos, delivered) = {
+                        let customer = self
+                            .fleets
+                            .get_mut(&run.customer)
+                            .expect("customer checked above");
+                        let delivered = customer.refuel(run.fuel);
+                        if delivered > 1e-9 {
+                            customer.stalled = false;
+                        }
+                        (customer.pos, delivered)
+                    };
+                    if let Some(fleet) = self.fleets.get_mut(&tender) {
+                        fleet.order = FleetOrder::MoveTo { dest: self.hub };
+                    }
+                    if let Some(active) = self.fuel_rescues.get_mut(&tender) {
+                        active.leg = RescueLeg::Returning;
+                    }
+                    events.push(Event::new(
+                        self.time,
+                        EventPayload::FuelRescueCompleted {
+                            owner: run.owner,
+                            fleet: run.customer,
+                            tender,
+                            fuel: delivered,
+                            pos,
+                        },
+                    ));
+                }
+                RescueLeg::Returning => {
+                    if matches!(tender_fleet.order, FleetOrder::Idle)
+                        && tender_fleet.pos.distance(self.hub) <= crate::ship::DOCK_RADIUS
+                    {
+                        self.fuel_rescues.remove(&tender);
+                        self.fleets.remove(&tender);
+                    }
+                }
+            }
+        }
+    }
+
     // ==== §TCA Part 5: PLAYER-CONVOY LOGISTICS ==============================
 
     /// Check the shared preconditions for dockside logistics on `fleet_id`: it must
@@ -15731,12 +16005,18 @@ impl World {
                     }
                 }
                 S::BuildMine => {
-                    let built = snapshot.home_system.is_some_and(|home| {
+                    let staffed = snapshot.home_system.is_some_and(|home| {
                         self.systems.iter().find(|s| s.id == home).is_some_and(|s| {
-                            s.tier(crate::build::StructureKind::MiningComplex) >= 1
+                            s.bodies.iter().any(|body| {
+                                body.tier(crate::build::StructureKind::MiningComplex) >= 1
+                                    && body
+                                        .assignments
+                                        .get(&crate::build::StructureKind::MiningComplex)
+                                        .is_some_and(|assignment| assignment.workers > 0)
+                            })
                         })
                     });
-                    if built && let Some(corp) = self.players.get_mut(&owner) {
+                    if staffed && let Some(corp) = self.players.get_mut(&owner) {
                         corp.founding.set_stage(S::BuildConvoy, self.time);
                     }
                 }
@@ -22862,6 +23142,159 @@ mod tests {
             w.fleets[&convoy].pos.distance(held) > 1e-6,
             "a refuelled fleet resumes the order it was holding",
         );
+    }
+
+    #[test]
+    fn aaa_charges_the_published_premium_and_dispatches_a_physical_tender() {
+        let mut w = test_world();
+        let id = PlayerId(7);
+        w.step(&[Command::AddPlayer {
+            id,
+            name: "Acme".into(),
+        }]);
+        let freighter = player_ship(&mut w, id, ShipKind::Convoy);
+        let start = w.hub + Vec2::new(40_000.0, 20_000.0);
+        let destination = start + Vec2::new(60_000.0, 0.0);
+        {
+            let fleet = w.fleets.get_mut(&freighter).unwrap();
+            fleet.pos = start;
+            fleet.order = FleetOrder::MoveTo { dest: destination };
+            fleet.fuel = 0.0;
+            fleet.stalled = true;
+        }
+        w.players.get_mut(&id).unwrap().credits = 1_000_000.0;
+        let booked_fuel = w.fuel_rescue_package(freighter).unwrap();
+        let booked_cost = crate::tca::TCA_RESCUE_SERVICE_FEE
+            + booked_fuel
+                * w.market.price(crate::fuel::MOVEMENT_FUEL)
+                * crate::tca::TCA_RESCUE_FUEL_PRICE_MULT;
+        let credits_before = w.players[&id].credits;
+
+        let events = w.step(&[Command::RequestFuelRescue {
+            player_id: id,
+            fleet_id: freighter,
+        }]);
+
+        let run = w
+            .fuel_rescues
+            .values()
+            .next()
+            .expect("an accepted callout creates a rescue run");
+        let tender = w
+            .fleets
+            .get(&run.tender)
+            .expect("the run is represented by a physical fleet");
+        assert_eq!(tender.owner, PlayerId::TCA);
+        assert_eq!(tender.flagship_kind(), ShipKind::Freighter);
+        assert!(matches!(
+            tender.order,
+            FleetOrder::Guard { target } if target == freighter
+        ));
+        assert!((run.fuel - booked_fuel).abs() < 1e-9);
+        assert!((run.cost - booked_cost).abs() < 1e-9);
+        assert!((w.players[&id].credits - (credits_before - booked_cost)).abs() < 1e-6);
+        assert!(events.iter().any(|event| matches!(
+            event.payload,
+            EventPayload::FuelRescueDispatched { fleet, tender: event_tender, .. }
+                if fleet == freighter && event_tender == run.tender
+        )));
+    }
+
+    #[test]
+    fn aaa_transfers_at_contact_then_the_held_order_resumes() {
+        let mut w = test_world();
+        let id = PlayerId(7);
+        w.step(&[Command::AddPlayer {
+            id,
+            name: "Acme".into(),
+        }]);
+        let freighter = player_ship(&mut w, id, ShipKind::Convoy);
+        let start = w.hub + Vec2::new(50_000.0, 20_000.0);
+        let destination = start + Vec2::new(80_000.0, 0.0);
+        {
+            let fleet = w.fleets.get_mut(&freighter).unwrap();
+            fleet.pos = start;
+            fleet.order = FleetOrder::MoveTo { dest: destination };
+            fleet.fuel = 0.0;
+            fleet.stalled = true;
+        }
+        w.players.get_mut(&id).unwrap().credits = 1_000_000.0;
+        w.step(&[Command::RequestFuelRescue {
+            player_id: id,
+            fleet_id: freighter,
+        }]);
+        let tender = *w.fuel_rescues.keys().next().unwrap();
+
+        // Dispatch is not a remote refill: the customer stays dry until the
+        // Authority hull physically reaches it.
+        assert_eq!(w.fleets[&freighter].fuel, 0.0);
+        assert!(w.fleets[&freighter].stalled);
+        w.fleets.get_mut(&tender).unwrap().pos = start;
+        let events = w.step(&[]);
+
+        let customer = &w.fleets[&freighter];
+        assert!(customer.fuel > 0.0, "contact transfers the booked bunker fuel");
+        assert!(!customer.stalled, "the dry hold is released at transfer");
+        assert!(matches!(
+            customer.order,
+            FleetOrder::MoveTo { dest } if dest.distance(destination) < 1e-9
+        ));
+        assert_eq!(w.fuel_rescues[&tender].leg, RescueLeg::Returning);
+        assert!(matches!(
+            w.fleets[&tender].order,
+            FleetOrder::MoveTo { dest } if dest.distance(w.hub) < 1e-9
+        ));
+        assert!(events.iter().any(|event| matches!(
+            event.payload,
+            EventPayload::FuelRescueCompleted { fleet, tender: event_tender, .. }
+                if fleet == freighter && event_tender == tender
+        )));
+
+        let transfer_pos = customer.pos;
+        w.step(&[]);
+        assert!(
+            w.fleets[&freighter].pos.distance(transfer_pos) > 1e-6,
+            "the original trip resumes without issuing a replacement order"
+        );
+    }
+
+    #[test]
+    fn aaa_refuses_an_unaffordable_callout_without_charging_or_spawning() {
+        let mut w = test_world();
+        let id = PlayerId(7);
+        w.step(&[Command::AddPlayer {
+            id,
+            name: "Acme".into(),
+        }]);
+        let freighter = player_ship(&mut w, id, ShipKind::Convoy);
+        {
+            let fleet = w.fleets.get_mut(&freighter).unwrap();
+            fleet.pos = w.hub + Vec2::new(50_000.0, 0.0);
+            fleet.order = FleetOrder::MoveTo {
+                dest: w.hub + Vec2::new(100_000.0, 0.0),
+            };
+            fleet.fuel = 0.0;
+            fleet.stalled = true;
+        }
+        w.players.get_mut(&id).unwrap().credits = 0.0;
+        let fleets_before = w.fleets.len();
+
+        let events = w.step(&[Command::RequestFuelRescue {
+            player_id: id,
+            fleet_id: freighter,
+        }]);
+
+        assert_eq!(w.players[&id].credits, 0.0);
+        assert_eq!(w.fleets.len(), fleets_before);
+        assert!(w.fuel_rescues.is_empty());
+        assert!(events.iter().any(|event| matches!(
+            event.payload,
+            EventPayload::FuelRescueRejected {
+                fleet,
+                reason: crate::tca::RescueRejectReason::CannotAfford { .. },
+                ..
+            } if fleet == freighter
+        )));
     }
 
     #[test]
@@ -30335,7 +30768,6 @@ mod tests {
             commodity: Fuel,
             units: 50,
             max_unit_price: None,
-            ship_to: None,
         }]);
         // Instant settlement: the quantity-aware quote is debited now.
         let spent = credits0 - w.players[&id].credits;
@@ -30428,7 +30860,6 @@ mod tests {
             commodity: Alloys,
             units,
             max_unit_price: None,
-            ship_to: None,
         }]);
         assert!(events.iter().any(|event| matches!(
             event.payload,
@@ -31988,7 +32419,6 @@ mod tests {
                 commodity: Alloys,
                 units: 10,
                 max_unit_price: None,
-                ship_to: None,
             },
             Command::MarketSell {
                 player_id: id,
@@ -33413,63 +33843,6 @@ mod tests {
         assert!(w.freight_queue.is_empty());
     }
 
-    /// `MarketBuy { ship_to }` is ONE checkbox: buy, then hand the lot straight to
-    /// the Authority. If the booking can't be honored the goods simply stay in the
-    /// warehouse and the owner is told why.
-    #[test]
-    fn market_buy_ship_to_books_freight_or_leaves_the_lot_in_the_warehouse() {
-        use crate::cargo::Commodity::Fuel;
-        let mut w = test_world();
-        let id = PlayerId(1);
-        w.step(&[Command::AddPlayer {
-            id,
-            name: "Acme".into(),
-        }]);
-        // Start from an empty hub warehouse so the assertions below read as
-        // absolute totals rather than deltas off the starting stock.
-        clear_warehouse(&mut w, id);
-        let colony = near_hub_colony(&mut w, id, 1200.0);
-        // Happy path: the lot is bought AND booked in one command.
-        w.step(&[Command::MarketBuy {
-            player_id: id,
-            commodity: Fuel,
-            units: 40,
-            max_unit_price: None,
-            ship_to: Some(colony),
-        }]);
-        assert_eq!(
-            wh(&w, id, Fuel),
-            0,
-            "the whole lot went straight onto the freight queue"
-        );
-        assert_eq!(w.freight_queue.values().map(|s| s.units).sum::<u32>(), 40);
-
-        // Sad path: a rival's system — the goods stay bought, and stay put.
-        let rival_sys = near_hub_colony(&mut w, PlayerId(2), 1500.0);
-        let ev = w.step(&[Command::MarketBuy {
-            player_id: id,
-            commodity: Fuel,
-            units: 25,
-            max_unit_price: None,
-            ship_to: Some(rival_sys),
-        }]);
-        assert!(
-            ev.iter().any(|e| matches!(
-                &e.payload,
-                EventPayload::Trade(TradeEvent::Rejected {
-                    reason: TradeRejectReason::NotYourSystem,
-                    ..
-                })
-            )),
-            "the failed leg reports why"
-        );
-        assert_eq!(
-            wh(&w, id, Fuel),
-            25,
-            "the purchase stands; the lot simply stays at the Market Hub"
-        );
-    }
-
     #[test]
     #[ignore = "§galaxy-scale: awaiting re-baseline. The 50× galaxy rescale and per-tick fuel changed travel times and stockpile readings under it; the behaviour it asserts is still wanted. Re-enable with `cargo test -- --ignored`."]
     fn stock_system_moves_warehouse_goods_into_a_system_stockpile() {
@@ -33610,7 +33983,6 @@ mod tests {
             commodity: Alloys,
             units: 10_000_000,
             max_unit_price: None,
-            ship_to: None,
         }]);
         assert_eq!(w.players[&id].credits, credits0);
         assert_eq!(wh(&w, id, Alloys), 10, "a rejected buy deposits nothing");
@@ -40829,6 +41201,20 @@ mod tests {
             .find(|s| s.id == home_system)
             .unwrap()
             .set_tier(crate::build::StructureKind::MiningComplex, 1);
+        w.advance_founding_programs(&[]);
+        assert_eq!(
+            w.players[&owner].founding.stage,
+            crate::founding::FoundingStage::BuildMine,
+            "building the mine is only half the lesson — it must be staffed"
+        );
+        w.systems
+            .iter_mut()
+            .find(|s| s.id == home_system)
+            .unwrap()
+            .assign(
+                crate::build::StructureKind::MiningComplex,
+                crate::production::Assignment::crew(1),
+            );
         w.advance_founding_programs(&[]);
         assert_eq!(
             w.players[&owner].founding.stage,

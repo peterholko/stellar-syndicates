@@ -590,6 +590,38 @@ pub enum EventPayload {
         kind: crate::fuel::ShortfallKind,
     },
 
+    /// Authority Astral Assistance accepted an emergency call and dispatched a
+    /// physical tender from the Market Hub. Owner-only, immediate local receipt.
+    FuelRescueDispatched {
+        owner: PlayerId,
+        fleet: EntityId,
+        tender: EntityId,
+        fuel: f64,
+        cost: f64,
+    },
+    /// The tender reached the customer and transferred its emergency bunkerage.
+    /// Positioned so the receipt rides the same light as the resumed fleet.
+    FuelRescueCompleted {
+        owner: PlayerId,
+        fleet: EntityId,
+        tender: EntityId,
+        fuel: f64,
+        pos: crate::math::Vec2,
+    },
+    /// The tender or its customer was lost before service could be completed.
+    FuelRescueFailed {
+        owner: PlayerId,
+        fleet: EntityId,
+        tender: EntityId,
+        pos: crate::math::Vec2,
+    },
+    /// A callout was refused without charging anything.
+    FuelRescueRejected {
+        owner: PlayerId,
+        fleet: EntityId,
+        reason: crate::tca::RescueRejectReason,
+    },
+
     /// A rival BLOCKADE was ESTABLISHED at one of `owner`'s systems (§contestable-
     /// territory Part 1): a hostile fleet took station and interdiction began.
     /// Light-delayed from the system to the OWNER (they learn a rival arrived

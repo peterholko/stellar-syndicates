@@ -62,14 +62,12 @@ fn drive(w: &mut World, ticks: u64) {
                 commodity: Fuel,
                 units: 20,
                 max_unit_price: None,
-                ship_to: None,
             });
             cmds.push(Command::MarketBuy {
                 player_id: b,
                 commodity: Alloys,
                 units: 15,
                 max_unit_price: None,
-                ship_to: None,
             });
         }
         if t % 101 == 5 {

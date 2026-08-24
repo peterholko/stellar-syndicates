@@ -176,7 +176,7 @@ const PIRATE_BOARDING_ART_CALIB = 0.70;
 const SHIP_PX_CONVOY = 56;
 const SHIP_PX_RAIDER = 40;
 const SHIP_PX_CORVETTE = 48; // between raider and convoy — the size hierarchy
-const SHIP_PX_COLONY = 64; // the biggest thing flying
+const SHIP_PX_COLONY = 64; // a large civilian ark, below the capital ladder
 const SHIP_PX_SCOUT = 30; // the smallest hull on the map
 const SHIP_ZOOM_MIN = 0.9; // shrink floor when zoomed out
 // §emplacements: kept in step with `emplace::MIN_SPACING`. (Standing sensors
@@ -258,25 +258,22 @@ type FleetFamily = "freighter" | "raider" | "corvette" | "scout";
 // Per-tier designer multipliers on the formation canvas (relative feel knobs —
 // e.g. make armadas read a touch grander). 1.0 = lead-ship parity (see below).
 const TIER_SCALE: Record<FleetTier, number> = { wing: 1.0, squadron: 1.0, armada: 1.0 };
-// Measured per-sprite calibration = (single sprite's subject height fraction) /
-// (formation's LEAD-ship height fraction), so the LEAD ship renders at exactly
-// the single sprite's on-screen size — no size pop when a fleet crosses a tier
-// boundary (e.g. 3 → 4 ships). Derived from the shipped art; remeasure if the
-// art changes.
+// Each current formation is composed with its lead ship at the same full-canvas
+// scale as the single-hull sprite, so 1.0 preserves that hull exactly across a
+// fleet-tier change; the smaller escorts expand the silhouette around it.
 const FLEET_LEAD_CALIB: Record<FleetFamily, Record<FleetTier, number>> = {
-  freighter: { wing: 0.95, squadron: 1.08, armada: 0.99 },
-  raider: { wing: 0.86, squadron: 0.92, armada: 1.02 },
-  corvette: { wing: 0.95, squadron: 0.81, armada: 1.06 },
-  scout: { wing: 0.81, squadron: 1.07, armada: 0.96 },
+  freighter: { wing: 1, squadron: 1, armada: 1 },
+  raider: { wing: 1, squadron: 1, armada: 1 },
+  corvette: { wing: 1, squadron: 1, armada: 1 },
+  scout: { wing: 1, squadron: 1, armada: 1 },
 };
 
-// §fleet-lod: at far zoom-out the detailed hull/formation art muddies down to a
-// few dozen pixels, so below this zoom ratio r (= scale / fitScale) the
-// freighter / raider / corvette fleets swap to bold LOW-DETAIL ICONS that read
-// cleanly when tiny (the count badge still carries fleet size). Scout and colony
-// have no icon yet and keep their detailed art at every zoom. Tunable — raise to
-// keep icons through more of the zoom range, lower for an earlier hand-off to the
-// detailed art + formations.
+// §fleet-lod: at far zoom-out formation detail muddies down to a few dozen
+// pixels, so below this zoom ratio r (= scale / fitScale) freighter / raider /
+// corvette fleets swap to a single matching hull silhouette; the count badge
+// still carries fleet size. Scout and colony keep their detailed art throughout.
+// Tunable — raise to keep the single silhouette longer, lower for an earlier
+// hand-off to the detailed formation.
 const LOD_ICON_ZOOM_MAX = 2.5;
 // The icon families (a subset of FleetFamily — scout is excluded, no icon yet).
 type LodFamily = "freighter" | "raider" | "corvette";
@@ -429,8 +426,10 @@ export class Renderer {
   private texStation: Texture | null = null;
   private texHub: Texture | null = null; // the wormhole aperture + station landmark
   private texDeepSpaceSensor: Texture | null = null;
-  // Ship sprites (convoy = freighter, raider = attack ship), top-down (nose = -y).
+  // Role-specific ship sprites, all top-down (nose = -y). Authority freight is
+  // deliberately separate from the corporation's modular Freighter silhouette.
   private texConvoy: Texture | null = null;
+  private texAuthorityFreighter: Texture | null = null;
   private texRaider: Texture | null = null;
   private texPrivateer: Texture | null = null;
   private texPirateCorsair: Texture | null = null;
@@ -438,13 +437,15 @@ export class Renderer {
   private texCorvette: Texture | null = null;
   private texColony: Texture | null = null;
   private texScout: Texture | null = null;
+  private texTransport: Texture | null = null;
+  private texBuilder: Texture | null = null;
   // §ladder: the capital ladder (sliced from the capital-ships sheet).
   private texDestroyer: Texture | null = null;
   private texCruiser: Texture | null = null;
   private texBattleship: Texture | null = null;
   private texDreadnought: Texture | null = null;
   private texTitan: Texture | null = null;
-  // §fleet-lod: bold low-detail fleet icons shown at far zoom-out (freighter =
+  // §fleet-lod: matching single-hull markers shown at far zoom-out (freighter =
   // convoy, raider, corvette). Null → the detailed art is used at every zoom.
   private texIconFreighter: Texture | null = null;
   private texIconRaider: Texture | null = null;
@@ -579,16 +580,32 @@ export class Renderer {
     // A star SYSTEM draws its assigned star-type icon (12 types). The hub is the
     // trade station. habitable_planet / sun are intentionally NOT loaded — reserved
     // for a future habitable-world / market-body concept, not generic systems.
-    const [hub, station, deepSpaceSensor, convoy, raider, privateer, corvette, colony, scout] = await Promise.all([
+    const [
+      hub,
+      station,
+      deepSpaceSensor,
+      convoy,
+      authorityFreighter,
+      raider,
+      privateer,
+      corvette,
+      colony,
+      scout,
+      transport,
+      builder,
+    ] = await Promise.all([
       load("/art/wormhole_hub.png"),
       load("/art/celestial_sprites/mining_station.png"),
       load("/art/celestial_sprites/deep_space_sensor.png"),
+      load("/art/ship_sprites/corporate_freighter.png"),
       load("/art/ship_sprites/cargo_freighter.png"),
       load("/art/ship_sprites/raider_attack_ship.png"),
       load("/art/ship_sprites/privateer_raider_ship.png"),
       load("/art/ship_sprites/corvette_escort_ship.png"),
       load("/art/ship_sprites/colony_ship.png"),
       load("/art/ship_sprites/scout_utility_ship.png"),
+      load("/art/ship_sprites/troop_transport.png"),
+      load("/art/ship_sprites/construction_tender.png"),
     ]);
     // §ladder: the capital ladder, same 256px top-down/nose-up idiom.
     const [destroyer, cruiser, battleship, dreadnought, titan] = await Promise.all([
@@ -617,6 +634,7 @@ export class Renderer {
     }
     this.texDeepSpaceSensor = deepSpaceSensor;
     this.texConvoy = convoy;
+    this.texAuthorityFreighter = authorityFreighter;
     this.texRaider = raider;
     this.texPrivateer = privateer;
     const [pirateCorsair, pirateBoarding] = await Promise.all([
@@ -628,6 +646,8 @@ export class Renderer {
     this.texCorvette = corvette;
     this.texColony = colony;
     this.texScout = scout;
+    this.texTransport = transport;
+    this.texBuilder = builder;
     // §battle-aftermath: the battle-state icons (background-removed, downscaled
     // to 256 — they render at ~22-26px screen-space and never grow). The drawn
     // fallback markers still cover a failed/missing load.
@@ -637,9 +657,9 @@ export class Renderer {
     ]);
     this.texBattleOngoing = battleOngoing;
     this.texBattleAftermath = battleAftermath;
-    // §fleet-lod: the far-zoom low-detail icons. They render at ~a few dozen px
-    // from a large source, so enable mipmaps for shimmer-free minification (same
-    // as the hub landmark). A missing file just leaves the detailed art in place.
+    // §fleet-lod: the far-zoom single-hull markers. They render at a few dozen
+    // px from their 256px source, so enable mipmaps for shimmer-free minification.
+    // A missing file simply leaves the detailed art in place.
     const [iconFreighter, iconRaider, iconCorvette] = await Promise.all([
       load("/art/ship_sprites/icon_freighter.png"),
       load("/art/ship_sprites/icon_raider.png"),
@@ -2052,13 +2072,10 @@ export class Renderer {
       case "battleship": return this.texBattleship;
       case "dreadnought": return this.texDreadnought;
       case "titan": return this.texTitan;
-      // §TCA: the Authority freighter reuses the bulk-hauler art; its neutral
-      // TINT is what distinguishes it from a corporation's convoy.
-      case "freighter": return this.texConvoy;
-      // §ground: the troopship rides the colony hull until it has its own art.
-      case "transport": return this.texColony;
-      // §emplacements: the crane rides the bulk-hauler art until it has its own.
-      case "builder": return this.texConvoy;
+      // §TCA: Authority freight keeps its own neutral bulk-hauler silhouette.
+      case "freighter": return this.texAuthorityFreighter;
+      case "transport": return this.texTransport;
+      case "builder": return this.texBuilder;
     }
   }
 
@@ -2071,18 +2088,18 @@ export class Renderer {
       case "corvette": return "corvette";
       case "scout": return "scout";
       case "colony": return null;
-      // §ground: a landing force draws its single fat hull + count badge, like
-      // the colony ship it shares art with.
+      // §ground: a landing force draws its dedicated single hull + count badge.
       case "transport": return null;
-      // §ladder: a capital IS the formation — always the single (placeholder)
-      // hull + count badge, like the colony ship.
+      // §ladder: a capital IS the formation — its role silhouette stays primary,
+      // with the count badge carrying any additional hulls.
       case "destroyer":
       case "cruiser":
       case "battleship":
       case "dreadnought":
       case "titan":
         return null;
-      case "freighter": return "freighter";
+      // Authority freight does not borrow the corporation's formation art.
+      case "freighter": return null;
       // §emplacements: a builder fleet draws as the single working hull.
       case "builder": return null;
     }
@@ -2116,7 +2133,7 @@ export class Renderer {
   /// computed against the SINGLE sprite's canvas, so the formation's LEAD ship
   /// renders at exactly the single sprite's size at every zoom — growing a
   /// fleet adds escorts around the flagship, it never inflates the flagship.
-  /// §fleet-lod: the low-detail icon + calibration for a flagship kind, or null
+  /// §fleet-lod: the matching single-hull marker + calibration, or null
   /// when the family has no icon (scout/colony) or it hasn't loaded yet. Only
   /// freighter (convoy), raider, and corvette carry icons.
   private lodIconMarker(kind: ShipKind): { tex: Texture; mult: number } | null {
@@ -2149,10 +2166,9 @@ export class Renderer {
     if (ghost.migrant) {
       return this.texColony ? { tex: this.texColony, mult: 1 } : null;
     }
-    // §fleet-lod: far zoomed out, a single bold low-detail icon replaces the
-    // detailed hull/formation (no fine detail is legible at that size anyway; the
-    // count badge still conveys fleet size). Runs before the formation pick so it
-    // covers single ships AND multi-ship fleets of these families.
+    // §fleet-lod: far zoomed out, a single matching hull replaces the formation
+    // (fine formation detail is not legible there; the count badge still conveys
+    // fleet size). Runs first so one consistent silhouette covers all fleet tiers.
     if (this.scale / this.fitScale() < LOD_ICON_ZOOM_MAX) {
       const icon = this.lodIconMarker(ghost.kind);
       if (icon) return icon;
@@ -2375,14 +2391,20 @@ export class Renderer {
   ///  2. Neighborhood: r=12→24 ramps the indicator to SHIP_MAX_PX, then it
   ///     freezes throughout the approach so increasing world-space separation
   ///     remains visible beside the later body bloom.
-  /// All kinds converge to the SAME max size: up close the art's SHAPE
-  /// distinguishes convoy vs raider, so identical max size is intended.
+  /// All kinds converge to the SAME max size: up close their role-specific
+  /// silhouettes do the class reading, so identical max size is intended.
   private shipSizePx(kind: ShipKind): number {
-    // §ladder: capitals scale by MASS CLASS — each rung visibly bigger, the
-    // Titan the largest thing flying (procedural placeholder sizing).
+    // §ladder: capitals scale by MASS CLASS — each role-specific silhouette is
+    // visibly larger than the last, with the Titan the largest thing flying.
     const capital: Partial<Record<ShipKind, number>> = { destroyer: 52, cruiser: 60, battleship: 70, dreadnought: 82, titan: 96 };
     const base = capital[kind]
-      ?? (kind === "convoy" ? SHIP_PX_CONVOY : kind === "raider" ? SHIP_PX_RAIDER : kind === "corvette" ? SHIP_PX_CORVETTE : kind === "colony" ? SHIP_PX_COLONY : SHIP_PX_SCOUT);
+      ?? (kind === "convoy" || kind === "freighter" ? SHIP_PX_CONVOY
+        : kind === "raider" ? SHIP_PX_RAIDER
+          : kind === "corvette" ? SHIP_PX_CORVETTE
+            : kind === "colony" ? SHIP_PX_COLONY
+              : kind === "transport" ? 58
+                : kind === "builder" ? 52
+                  : SHIP_PX_SCOUT);
     const r = this.scale / this.fitScale();
     const indicator = base * Math.max(SHIP_ZOOM_MIN, Math.min(SHIP_ZOOM_MAX, r));
     return this.deepZoomPx(indicator, SHIP_MAX_PX);
@@ -2855,7 +2877,7 @@ export class Renderer {
       // §TCA: an Authority hull is named, in the Authority's own steel-blue —
       // neutral against both the own and rival palettes. Without this branch it
       // fell through every case and drew NO label at all.
-      txt = `${ghost.migrant ? "MIGRANT LINER" : "AUTHORITY"}  ${stale}`;
+      txt = `${ghost.rescue_service ? "AAA RESCUE" : ghost.migrant ? "MIGRANT LINER" : "AUTHORITY"}  ${stale}`;
       col = COL_TCA;
       lalpha = 0.9;
     }
@@ -3167,11 +3189,9 @@ export class Renderer {
   }
 
   /// Draw the OUTBOUND command signal (server-timed; we only place it at its
-  /// interpolated `pOut`): the violet comet of an order in flight, command center
-  /// → ship. This is the ONE thing the map can't show — your command crossing
-  /// space, not yet arrived. The ship's REACTION needs no signal: it's seen
-  /// directly on the map (in delayed light) when the ghost changes course. So
-  /// there is no inbound/response leg, and raid results are a notification only.
+  /// interpolated `pOut`): the violet chevron of an instruction in flight from
+  /// the command center to a fleet or the Market Hub. The resulting served
+  /// picture is the response, so there is no duplicate inbound animation.
   private drawSignals(state: ViewState, screenById: Map<string, { x: number; y: number }>, dt: number): void {
     const g = this.signalsGfx;
     g.clear();
@@ -3186,17 +3206,20 @@ export class Renderer {
       // raw served ghost here made every new View move the final leg in a step,
       // even though drawGhost deliberately spreads that correction over several
       // frames; the comet therefore jittered beside an otherwise smooth ship.
-      let gp = screenById.get(sig.shipId);
-      if (!gp) {
+      let gp = sig.shipId ? screenById.get(sig.shipId) : undefined;
+      if (!gp && sig.shipId) {
         // Docked and battle-suppressed fleets have no rendered glyph. Aim from
         // the served picture only; never substitute authoritative position.
         const ghost = state.ghosts.find((x) => x.id === sig.shipId);
-        if (!ghost) continue;
-        const servedPinned = ghost.own && this.servedStreamPinned(ghost, state.simTime);
-        gp = this.worldToScreen(ghost.own && servedPinned
-          ? ghost.pos
-          : { x: ghost.pos.x + ghost.vel.x * dt, y: ghost.pos.y + ghost.vel.y * dt });
+        if (ghost) {
+          const servedPinned = ghost.own && this.servedStreamPinned(ghost, state.simTime);
+          gp = this.worldToScreen(ghost.own && servedPinned
+            ? ghost.pos
+            : { x: ghost.pos.x + ghost.vel.x * dt, y: ghost.pos.y + ghost.vel.y * dt });
+        }
       }
+      if (!gp && sig.targetPos) gp = this.worldToScreen(sig.targetPos);
+      if (!gp) continue;
 
       const p = Math.max(0, Math.min(1, sig.pOut));
       const focusing = state.selectedOrderId !== null;

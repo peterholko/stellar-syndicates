@@ -104,7 +104,8 @@ pub use syndicate::{
     SyndicateRole, syndicate_cap,
 };
 pub use tca::{
-    CharterStatus, FreightRun, RunLeg, Shipment, ShipmentDir, ShipmentId, charter_status,
+    CharterStatus, FreightRun, FuelRescueRun, RescueLeg, RescueRejectReason, RunLeg, Shipment,
+    ShipmentDir, ShipmentId, charter_status,
 };
 pub use world::{
     AcademyContribution, BattleInfo, Corporation, Engagement, IntelSnapshot, PendingCommandView,

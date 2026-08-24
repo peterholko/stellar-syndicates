@@ -1,12 +1,14 @@
 //! Ships: the mobile entities of the galaxy.
 //!
-//! Two types embody the §7 convoy-vs-raider dial — not a special rule, just
-//! different acceleration / top-speed. Convoys are slow and heavy; raiders are
-//! fast and light and can run a convoy down.
+//! Civilian and military hulls differ in formation speed, mass, cargo, sensors,
+//! and combat role. Those ordinary properties create the convoy/escort/raider
+//! tradeoffs; there is no special chase rule.
 //!
-//! Every ship moves under flip-and-burn and acts on a standing **order**; the
-//! world advances each ship once per tick. There is no real-time piloting — the
-//! async-native, lightspeed-bound design demands standing orders, not micro.
+//! Every fleet acts on a standing **order** and the world advances it once per
+//! tick. Movement is constant-speed within the active drive regime: thrusters
+//! steer, while warp locks the course and must drop before a meaningful turn.
+//! There is no real-time piloting — the async-native, lightspeed-bound design
+//! demands standing orders, not micro.
 
 use std::collections::BTreeMap;
 
@@ -20,7 +22,7 @@ use crate::movement::advance_toward;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ShipKind {
-    /// Slow, heavy hauler — the largest ship in the game (§7). Carries trade.
+    /// Slow, heavy, player-owned hauler. Carries trade.
     Convoy,
     /// Fast, light interceptor. Cuts chords across open space to run convoys
     /// down.
@@ -34,7 +36,7 @@ pub enum ShipKind {
     /// BROADCASTS under the Convention: a declared escort DETERS (a dark
     /// defender would just be a raider with extra steps).
     Corvette,
-    /// The SETTLEMENT ship (§ships part 3): the HEAVIEST hull flying — slow,
+    /// The SETTLEMENT ship (§ships part 3): a heavy civilian hull — slow and
     /// expensive to fuel — with no cargo bay (it IS the cargo: colonists +
     /// infrastructure). Claiming is now PHYSICAL: send it to an unclaimed
     /// system; on arrival ownership transfers and the ship is CONSUMED (it
@@ -43,7 +45,7 @@ pub enum ShipKind {
     /// raidable, escortable). Destroyed in transit = colonists lost.
     Colony,
     /// The ACTIVE-INTEL ship (§scout): the lightest hull in the game — fastest
-    /// to accelerate, cheapest to fuel — with NO cargo capacity and negligible
+    /// base cruise speed, cheapest to fuel — with NO cargo capacity and negligible
     /// combat strength (in any engagement it is simply destroyed; its defense is
     /// speed and darkness, not armor). Runs DARK like a raider, amplifies a
     /// Raider-bearing fleet's sensor bubble (`sensor_mult`), and near rival
@@ -106,9 +108,9 @@ pub enum ShipKind {
     Freighter,
 }
 
-/// Mass added per unit of cargo carried. A fully-loaded convoy is meaningfully
-/// heavier than an empty one, so it accelerates noticeably worse (a = F/m) — your
-/// richest shipments are also the most sluggish. Tunable.
+/// Mass added per unit of cargo carried. Under the constant-speed movement model
+/// cargo does NOT slow a fleet; the extra mass raises fuel burn over a given
+/// distance, so richer shipments are more expensive to move. Tunable.
 pub const CARGO_MASS_PER_UNIT: f64 = 28.0;
 
 /// §TCA Part 5: whole cargo UNITS one Convoy hull can lift. A fleet's capacity is
@@ -120,18 +122,17 @@ pub const CARGO_MASS_PER_UNIT: f64 = 28.0;
 pub const CARGO_UNITS_PER_CONVOY: u32 = 250;
 
 impl ShipKind {
-    /// Hull (empty) MASS, m₀. Trade convoys are ORDERS OF MAGNITUDE more massive
-    /// than raiders (here ~22×), which is what makes them ponderous — the
-    /// acceleration asymmetry emerges from this, not from hand-set accel consts.
-    /// The scout is the LIGHTEST hull (mass drives both acceleration and the
-    /// fuel-∝-mass trip cost, so light = fast AND cheap to run).
+    /// Hull (empty) MASS, m₀. Mass sets hull durability/tactical size and feeds
+    /// the fuel-capacity and fuel-cost calculations. Cruise speed is a separate
+    /// per-kind value in [`Self::max_speed`]; the constant-speed model has no
+    /// acceleration relationship to infer from mass.
     pub fn hull_mass(self) -> f64 {
         match self {
             ShipKind::Convoy => 4500.0,
             ShipKind::Builder => 2500.0, // a crane and its shops — working mass, no bulk hold
             ShipKind::Raider => 200.0,
             ShipKind::Corvette => 800.0,
-            ShipKind::Colony => 6000.0, // heaviest CIVILIAN hull — fuel-∝-mass bites
+            ShipKind::Colony => 6000.0, // heavy civilian hull — fuel-∝-mass bites
             ShipKind::Scout => 80.0,
             // §ladder: anchored to the Corvette (800) — 2.5× / 5× / 10× / 20× /
             // 40×. Mass drives fuel cost, so the capital fuel burn emerges here.
@@ -146,21 +147,17 @@ impl ShipKind {
         }
     }
 
-    /// CONSTANT cruise speed (sim units / s), GDD §14.1 — there is no
-    /// acceleration; a ship travels at exactly this speed (the fleet moves at its
-    /// slowest member's, [`Fleet::max_speed`]). All stay well below `c` (= 300)
-    /// so relativity is respected — nothing outruns its own light. Ordering
-    /// preserves the old relative feel (scout > raider > corvette > convoy >
-    /// colony).
+    /// Base CONSTANT cruise speed (sim units / s), GDD §14.1 — there is no
+    /// acceleration; a fleet uses its slowest member's value
+    /// ([`Fleet::max_speed`]), then the active drive regime applies its factor.
+    /// The light-speed relationship is enforced centrally by
+    /// [`crate::config::SimConfig`], so no duplicated `c` value belongs here.
+    /// Ordering preserves the old relative feel (scout > raider > corvette >
+    /// convoy > colony).
     ///
-    /// CALIBRATION (migration-gentle): magnitudes are set so a representative
-    /// galaxy-crossing trip (~8000 su, the 4-player galaxy radius) takes about as
-    /// long as the old flip-and-burn did — whose accel ramp meant its AVERAGE
-    /// speed was well under the max cap. Convoy anchors it: old convoy (a=1.5,
-    /// cap 48) crossed 8000 su in ≈199 s; constant 40 gives 8000/40 = 200 s. The
-    /// other kinds keep the old max-speed RATIOS off that anchor, so raider/
-    /// convoy chase dynamics and pacing hold (raider 8000 su: old ≈78 s, new 80 s;
-    /// colony old ≈233 s, new 242 s). Tunable.
+    /// These values are playtest tunables; their relative ordering is the design.
+    /// Warp multiplication belongs to [`crate::transit`], and the config tests
+    /// guard the light-to-hull speed ratio whenever this table changes.
     pub fn max_speed(self) -> f64 {
         match self {
             ShipKind::Convoy => 40.0,
@@ -706,7 +703,8 @@ impl TransitMode {
 pub enum FleetOrder {
     /// At rest, no goal.
     Idle,
-    /// Flip-and-burn to a fixed point, then go [`FleetOrder::Idle`].
+    /// Travel to a fixed point under the drive state machine, then go
+    /// [`FleetOrder::Idle`].
     MoveTo {
         dest: Vec2,
     },

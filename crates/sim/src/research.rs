@@ -637,8 +637,7 @@ pub fn field_affinity(field: Field) -> &'static [SpecialistKind] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CATALOG — the full six-board, ~108-programme translation of the v6 design
-// tables (docs/research-programme-boards-v6.md). Each field: Tier I (open) →
+// CATALOG — the full six-board programme set. Each field: Tier I (open) →
 // Tier II (field gate) → two schools × Tiers III–V. Effects use the existing
 // keys: `Mods` (mult/additive tuners), `Flag` (capability), `UnlockStructureTier`
 // (tier IV/V of an existing structure). A handful of NEW-CONTENT prizes — the two

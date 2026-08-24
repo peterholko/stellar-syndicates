@@ -19,11 +19,12 @@ use sim::{
     TradeEvent, TransitMode, Vec2,
 };
 
-/// The client↔server wire protocol version. BUMPED to 23 by §colony-roles:
-/// surveyed systems now carry authoritative, bounded colony-opportunity cards.
+/// The client↔server wire protocol version. BUMPED to 28 by the universal
+/// remote-order chevron: fleet and Market Hub instructions outside the ordinary
+/// movement queue now receive the same outbound map feedback.
 /// A client seeing an unexpected version can warn the user to refresh; the
 /// server sends it in [`ServerMsg::Welcome`].
-pub const PROTOCOL_VERSION: u32 = 27;
+pub const PROTOCOL_VERSION: u32 = 28;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -86,16 +87,13 @@ pub enum ClientMsg {
     },
 
     /// Buy at the Global Market (§9, §TCA): instant settlement into the
-    /// corp's warehouse. `ship_to` optionally hands the lot straight to Authority
-    /// freight for one of the corp's owned systems (the one-checkbox composition);
-    /// serde default so older clients still parse.
+    /// corporation's Market Warehouse. Moving the lot onward is a separate
+    /// instruction at the Warehouse freight desk.
     MarketBuy {
         commodity: Commodity,
         units: u32,
         #[serde(default)]
         max_unit_price: Option<f64>,
-        #[serde(default)]
-        ship_to: Option<EntityId>,
     },
 
     /// Sell at the Global Market (§9, §TCA): draws from the corp's
@@ -138,6 +136,10 @@ pub enum ClientMsg {
     HaulToSystem {
         fleet_id: EntityId,
         system: EntityId,
+    },
+    /// Dispatch an Authority Astral Assistance tender to a fuel-stalled fleet.
+    RequestFuelRescue {
+        fleet_id: EntityId,
     },
 
     /// §TCA Phase 2: buy charter standing back from the Authority (credits burned,
@@ -2011,6 +2013,21 @@ pub struct GhostView {
     /// already knows.
     #[serde(default)]
     pub speed: f64,
+    /// Owner-only bunker telemetry from this same retarded sighting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fuel: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fuel_capacity: Option<f64>,
+    /// Owner-only: this sighting found the fleet held for lack of carried fuel.
+    #[serde(default)]
+    pub stalled: bool,
+    /// Owner-only immediate administrative fact: AAA has accepted this fleet's
+    /// callout and its physical tender is outbound.
+    #[serde(default)]
+    pub rescue_inbound: bool,
+    /// Public role identity for an Authority Astral Assistance tender.
+    #[serde(default)]
+    pub rescue_service: bool,
     /// An observable convoy route (waypoints), light-delayed like its position.
     /// A silent rival convoy has no ghost at all outside detection coverage.
     pub route: Option<Vec<Vec2>>,
@@ -2340,6 +2357,20 @@ pub enum ServerMsg {
         /// single straight run and lets the client use its direct fallback.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         hops: Vec<SignalHopView>,
+    },
+
+    /// Outbound feedback for a remote instruction that does not enter the
+    /// fleet-movement order lifecycle: Market Hub business and immediate fleet
+    /// administration. It means only "the instruction left command"; it is not
+    /// an acceptance receipt. `fleet_id` lets the client bend the final leg onto
+    /// the same served/eased fleet glyph, while `target_pos` is the player-known
+    /// meeting point and the fixed endpoint for Hub instructions.
+    CommandChevron {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fleet_id: Option<EntityId>,
+        target_pos: Vec2,
+        depart_time: f64,
+        arrive_time: f64,
     },
 
     /// Arrived evidence that an order is in force. This is emitted only by the

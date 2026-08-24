@@ -82,17 +82,14 @@ function spritePx(kind: ShipKind): number {
 /// resolves — dropping a future PNG at the mapped path lights it up with zero
 /// code change.
 const SHIP_ART: Record<ShipKind, string> = {
-  convoy: "cargo_freighter.png",
-  // §TCA: the Authority hauler reuses the freighter art; its neutral tint sets it apart.
+  convoy: "corporate_freighter.png",
+  // §TCA: Authority freight keeps its own neutral bulk-hauler silhouette.
   freighter: "cargo_freighter.png",
-  // §emplacements: the crane rides the hauler art until it has its own.
-  builder: "cargo_freighter.png",
+  builder: "construction_tender.png",
   raider: "raider_attack_ship.png",
   corvette: "corvette_escort_ship.png",
   colony: "colony_ship.png",
-  // §ground: no dedicated troopship art yet — the colony hull stands in (same
-  // silhouette problem: a fat, unarmed carrier full of people).
-  transport: "colony_ship.png",
+  transport: "troop_transport.png",
   scout: "scout_utility_ship.png",
   destroyer: "destroyer_line_ship.png",
   cruiser: "cruiser_line_ship.png",
