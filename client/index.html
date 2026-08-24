@@ -47,6 +47,9 @@
         font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
         overflow: hidden;
       }
+      @media (pointer: coarse) {
+        input, select, textarea { font-size: 16px !important; }
+      }
       #app { position: fixed; inset: 0; }
       canvas { display: block; }
       #app > canvas,
