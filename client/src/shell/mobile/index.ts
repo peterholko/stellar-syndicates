@@ -130,6 +130,9 @@ class MobileShell implements Shell {
         byId("m-join-error").textContent = `Could not reach server at ${event.url}.`;
       } else if (event.kind === "ProtocolMismatch") {
         console.warn(`protocol mismatch: server v${event.server}, client expects v${event.client}`);
+      } else if (event.kind === "SessionReplaced") {
+        byId("m-join-error").textContent = "Signed out: this corporation was opened in another browser.";
+        byId<HTMLButtonElement>("m-join-button").disabled = false;
       } else if (event.kind === "IntentChanged") {
         if (event.readout) this.map?.showNotice(event.readout);
         this.syncIntentSheet();
@@ -199,7 +202,7 @@ class MobileShell implements Shell {
     byId("m-join-error").textContent = "";
     byId<HTMLButtonElement>("m-join-button").disabled = true;
     this.ctx.state.name = name;
-    if (this.ctx.net.connected) this.ctx.send({ type: "Join", name });
+    if (this.ctx.net.connected) this.ctx.net.join(name);
     else this.ctx.net.connect();
     this.renderStatus(true);
   }

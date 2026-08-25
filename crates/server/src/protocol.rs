@@ -19,12 +19,12 @@ use sim::{
     TradeEvent, TransitMode, Vec2,
 };
 
-/// The client↔server wire protocol version. BUMPED to 28 by the universal
-/// remote-order chevron: fleet and Market Hub instructions outside the ordinary
-/// movement queue now receive the same outbound map feedback.
+/// The client↔server wire protocol version. BUMPED to 29 by the single-session
+/// mobile handshake: Join now negotiates a 5/10 Hz View cadence and replacement
+/// closes carry a dedicated transport code.
 /// A client seeing an unexpected version can warn the user to refresh; the
 /// server sends it in [`ServerMsg::Welcome`].
-pub const PROTOCOL_VERSION: u32 = 28;
+pub const PROTOCOL_VERSION: u32 = 29;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -32,9 +32,12 @@ pub const PROTOCOL_VERSION: u32 = 28;
 pub enum ClientMsg {
     /// First message a connection must send: identify as a player. The name is
     /// hashed server-side into a stable [`PlayerId`] so reconnecting with the
-    /// same name resumes the same corporation.
+    /// same name resumes the same corporation. Older clients omit `view_hz`
+    /// and retain the desktop 10 Hz cadence.
     Join {
         name: String,
+        #[serde(default)]
+        view_hz: Option<u8>,
     },
 
     /// Order one of the player's own ships to a destination. Travels at light
@@ -2412,6 +2415,24 @@ pub fn player_id_from_name(name: &str) -> PlayerId {
 #[cfg(test)]
 mod wire_contract {
     use super::*;
+
+    #[test]
+    fn join_view_cadence_is_backward_compatible() {
+        let old: ClientMsg = serde_json::from_str(r#"{"type":"Join","name":"Meridian"}"#)
+            .expect("an older Join without a cadence keeps working");
+        let mobile: ClientMsg =
+            serde_json::from_str(r#"{"type":"Join","name":"Meridian","view_hz":5}"#)
+                .expect("a mobile Join carries its requested cadence");
+
+        assert!(matches!(old, ClientMsg::Join { view_hz: None, .. }));
+        assert!(matches!(
+            mobile,
+            ClientMsg::Join {
+                view_hz: Some(5),
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn jump_ship_parses_off_the_wire() {

@@ -653,14 +653,19 @@ impl GameLoop {
                 name,
                 outbound,
                 view_tx,
+                replace_tx,
+                view_divisor,
             } => {
-                let newly_online = self.sessions.insert(
+                let inserted = self.sessions.insert(
                     conn_id,
                     ConnInfo {
                         player_id,
                         name: name.clone(),
                         outbound,
                         view_tx,
+                        replace_tx,
+                        view_divisor,
+                        last_view_broadcast: None,
                         // Fresh delivery cursors: this connection's first broadcast
                         // sends full state (records, sections) — reconnect-safe.
                         sent: Default::default(),
@@ -752,16 +757,19 @@ impl GameLoop {
                     name,
                 });
                 info!(
-                    %player_id, conn_id, newly_online,
+                    %player_id, conn_id,
+                    newly_online = inserted.newly_online,
+                    replaced_conn = ?inserted.replaced_conn,
+                    view_hz = 10 / view_divisor,
                     online_players = self.sessions.online_player_count(),
                     connections = self.sessions.connection_count(),
                     "player connected"
                 );
             }
             GameInput::Disconnect { conn_id } => {
-                if let Some((player_id, now_offline)) = self.sessions.remove(conn_id) {
+                if let Some(player_id) = self.sessions.remove(conn_id) {
                     info!(
-                        %player_id, conn_id, now_offline,
+                        %player_id, conn_id,
                         online_players = self.sessions.online_player_count(),
                         "player disconnected"
                     );
@@ -1787,6 +1795,12 @@ impl GameLoop {
     /// receives true positions or another player's view — the fairness
     /// guarantee, enforced by [`PositionHistory::view_for`].
     fn broadcast(&mut self) {
+        // `broadcast` itself remains the canonical 10 Hz opportunity. The sole
+        // connection for each corporation decides whether this opportunity is
+        // due (desktop every one, mobile every two), so expensive fog/light
+        // construction scales with frames actually delivered rather than with
+        // accumulated darkness or a hidden parallel client.
+        let broadcast_index = self.world.tick / self.broadcast_every;
         // These issue-time estimates are ephemeral view state. Retire them with
         // the authoritative lifecycle they describe so completed orders cannot
         // accumulate forever, while still keeping every owner's private plan.
@@ -1811,11 +1825,10 @@ impl GameLoop {
         let tick = self.world.tick;
         let hub = self.world.hub;
 
-        // Build each online player's view ONCE (shared across their
-        // connections), plus any delayed reports whose light has now reached
-        // them. Everything is computed from THIS player's command center and
-        // light-gated. A connection whose corporation isn't in the world yet
-        // (AddPlayer not processed) simply gets nothing this tick.
+        // Build each DUE player's view once, plus any delayed reports whose
+        // light has now reached them. Everything is computed from THIS player's
+        // command center and light-gated. A connection whose corporation isn't
+        // in the world yet (AddPlayer not processed) simply stays due.
         let mut views: HashMap<PlayerId, ServerMsg> = HashMap::new();
         let mut reports: HashMap<PlayerId, Vec<ServerMsg>> = HashMap::new();
         let mut timelines: HashMap<PlayerId, ServerMsg> = HashMap::new();
@@ -1835,7 +1848,7 @@ impl GameLoop {
         let mut sections: HashMap<PlayerId, SectionData> = HashMap::new();
         // The published rankings are identical for everyone: one signature.
         let rankings_sig = sig_of(&self.world.rankings);
-        for player_id in self.sessions.online_players() {
+        for player_id in self.sessions.players_due_for_view(broadcast_index) {
             let Some(corp) = self.world.players.get(&player_id) else {
                 continue;
             };
@@ -2760,6 +2773,7 @@ impl GameLoop {
                 // the writer always emits the freshest, never a stale backlog.
                 // (Err only if the writer task is already gone; harmless.)
                 let _ = info.view_tx.send(Some(view.clone()));
+                info.last_view_broadcast = Some(broadcast_index);
             }
             // §perf Part A: this connection's battle-record increments, on the
             // RELIABLE lane (cursor committed only when the send succeeds).

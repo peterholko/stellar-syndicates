@@ -21,7 +21,7 @@ import {
 import { syncOrderLifecycles } from "./derive/orders";
 import { mergeResearch } from "./derive/research";
 
-export const EXPECTED_PROTOCOL_VERSION = 28;
+export const EXPECTED_PROTOCOL_VERSION = 29;
 
 export const jumpDepartureKey = (
   departure: Pick<JumpDepartureView, "fleet" | "departed_at">,
@@ -30,6 +30,12 @@ export const jumpDepartureKey = (
 export function applyLinkStatus(status: LinkStatus, st: ViewState): CoreEvent[] {
   st.link = status;
   return [{ kind: "LinkChanged", status }];
+}
+
+export function applySessionReplaced(st: ViewState): CoreEvent[] {
+  st.playerId = null;
+  st.link = "offline";
+  return [{ kind: "SessionReplaced" }];
 }
 
 // The server stream is reduced into the one shared, served ViewState here.

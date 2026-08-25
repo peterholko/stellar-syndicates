@@ -6,12 +6,12 @@
 //! construction, §14). The registry maps connections to player identities and
 //! holds each connection's per-player outbound stream.
 //!
-//! A player may hold more than one connection at once (e.g. two browser tabs);
-//! the registry tracks them per-player so a corporation is only considered
-//! "offline" when its last connection drops — important for M6 where a
-//! disconnected corporation keeps running on standing orders.
+//! A corporation has exactly one live client session. A newer connection
+//! replaces the older socket instead of creating two competing command surfaces
+//! or paying twice for the same private view. Disconnected corporations keep
+//! running on standing orders.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -94,8 +94,26 @@ pub struct ConnInfo {
     /// of replaying a queue of superseded frames (the old bounded mpsc dropped
     /// the *newest* view and kept the stale backlog — exactly backwards).
     pub view_tx: watch::Sender<Option<ServerMsg>>,
+    /// Tells the WebSocket task that a newer login for this corporation has
+    /// taken ownership of the session. Both its reader and writer observe this
+    /// signal, so the old browser receives a deliberate close instead of
+    /// reconnecting and fighting the new one.
+    pub replace_tx: watch::Sender<bool>,
+    /// Number of the server's 10 Hz broadcast opportunities between Views.
+    /// Desktop uses 1 (10 Hz); mobile uses 2 (5 Hz).
+    pub view_divisor: u64,
+    /// The last broadcast opportunity delivered to this connection. `None`
+    /// makes a newly joined client due immediately.
+    pub last_view_broadcast: Option<u64>,
     /// §perf: what this connection has already been sent (delta bookkeeping).
     pub sent: ConnSentState,
+}
+
+impl ConnInfo {
+    pub fn view_due(&self, broadcast: u64) -> bool {
+        self.last_view_broadcast
+            .is_none_or(|last| broadcast.saturating_sub(last) >= self.view_divisor)
+    }
 }
 
 /// Messages a connection sends to the authoritative loop.
@@ -108,6 +126,8 @@ pub enum GameInput {
         name: String,
         outbound: mpsc::Sender<ServerMsg>,
         view_tx: watch::Sender<Option<ServerMsg>>,
+        replace_tx: watch::Sender<bool>,
+        view_divisor: u64,
     },
     /// A connection has closed.
     Disconnect { conn_id: ConnId },
@@ -119,7 +139,12 @@ pub enum GameInput {
 #[derive(Default)]
 pub struct Sessions {
     conns: HashMap<ConnId, ConnInfo>,
-    by_player: HashMap<PlayerId, HashSet<ConnId>>,
+    by_player: HashMap<PlayerId, ConnId>,
+}
+
+pub struct InsertResult {
+    pub newly_online: bool,
+    pub replaced_conn: Option<ConnId>,
 }
 
 impl Sessions {
@@ -127,33 +152,32 @@ impl Sessions {
         Sessions::default()
     }
 
-    /// Register a connection. Returns `true` if this is the player's *first*
-    /// live connection (i.e. the corporation just came online).
-    pub fn insert(&mut self, conn_id: ConnId, info: ConnInfo) -> bool {
+    /// Register the corporation's sole connection. A newer login atomically
+    /// removes and closes its predecessor; the old connection's later
+    /// `Disconnect` is harmless because its id is no longer registered.
+    pub fn insert(&mut self, conn_id: ConnId, info: ConnInfo) -> InsertResult {
         let player_id = info.player_id;
+        let replaced_conn = self.by_player.insert(player_id, conn_id);
+        if let Some(old_id) = replaced_conn
+            && let Some(old) = self.conns.remove(&old_id)
+        {
+            let _ = old.replace_tx.send(true);
+        }
         self.conns.insert(conn_id, info);
-        let set = self.by_player.entry(player_id).or_default();
-        let was_offline = set.is_empty();
-        set.insert(conn_id);
-        was_offline
+        InsertResult {
+            newly_online: replaced_conn.is_none(),
+            replaced_conn,
+        }
     }
 
-    /// Remove a connection. Returns the player it belonged to and whether that
-    /// player is now fully offline (no remaining connections).
-    pub fn remove(&mut self, conn_id: ConnId) -> Option<(PlayerId, bool)> {
+    /// Remove the active connection. A replaced socket was already removed and
+    /// therefore cannot accidentally take its successor offline.
+    pub fn remove(&mut self, conn_id: ConnId) -> Option<PlayerId> {
         let info = self.conns.remove(&conn_id)?;
-        let now_offline = if let Some(set) = self.by_player.get_mut(&info.player_id) {
-            set.remove(&conn_id);
-            if set.is_empty() {
-                self.by_player.remove(&info.player_id);
-                true
-            } else {
-                false
-            }
-        } else {
-            true
-        };
-        Some((info.player_id, now_offline))
+        if self.by_player.get(&info.player_id) == Some(&conn_id) {
+            self.by_player.remove(&info.player_id);
+        }
+        Some(info.player_id)
     }
 
     /// Number of distinct players with at least one live connection.
@@ -161,12 +185,7 @@ impl Sessions {
         self.by_player.len()
     }
 
-    /// All distinct players with at least one live connection.
-    pub fn online_players(&self) -> Vec<PlayerId> {
-        self.by_player.keys().copied().collect()
-    }
-
-    /// Number of live connections (may exceed player count).
+    /// Number of live connections (equal to the online player count by policy).
     pub fn connection_count(&self) -> usize {
         self.conns.len()
     }
@@ -193,14 +212,28 @@ impl Sessions {
         }
     }
 
-    /// Send a message to every live connection of a player (e.g. immediate
+    /// Send a message to the player's sole live connection (e.g. immediate
     /// feedback for that player's own action).
     pub fn send_to_player(&self, player_id: PlayerId, msg: ServerMsg) {
-        if let Some(conns) = self.by_player.get(&player_id) {
-            for conn_id in conns {
-                self.send_to_conn(*conn_id, msg.clone());
-            }
+        if let Some(conn_id) = self.by_player.get(&player_id) {
+            self.send_to_conn(*conn_id, msg);
         }
+    }
+
+    /// Players whose sole connection is due for a filtered View on this 10 Hz
+    /// opportunity. This gates the expensive per-player picture construction,
+    /// not merely the final socket write: a mobile-only corporation therefore
+    /// costs 5 view builds per second as well as receiving 5 frames per second.
+    pub fn players_due_for_view(&self, broadcast: u64) -> Vec<PlayerId> {
+        self.by_player
+            .iter()
+            .filter_map(|(player_id, conn_id)| {
+                self.conns
+                    .get(conn_id)
+                    .filter(|info| info.view_due(broadcast))
+                    .map(|_| *player_id)
+            })
+            .collect()
     }
 
     /// Iterate over every live connection — used to push each one its own
@@ -240,5 +273,72 @@ impl GameHandle {
     /// connection will notice via its own closed channel).
     pub fn send(&self, input: GameInput) {
         let _ = self.tx.send(input);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn connection(player_id: PlayerId, view_divisor: u64) -> (ConnInfo, watch::Receiver<bool>) {
+        let (outbound, _out_rx) = mpsc::channel(OUTBOUND_CAPACITY);
+        let (view_tx, _view_rx) = watch::channel(None);
+        let (replace_tx, replace_rx) = watch::channel(false);
+        (
+            ConnInfo {
+                player_id,
+                name: "Test Corporation".into(),
+                outbound,
+                view_tx,
+                replace_tx,
+                view_divisor,
+                last_view_broadcast: None,
+                sent: ConnSentState::default(),
+            },
+            replace_rx,
+        )
+    }
+
+    #[test]
+    fn newest_login_owns_the_corporations_only_session() {
+        let player = PlayerId(42);
+        let mut sessions = Sessions::new();
+        let (first, mut first_replaced) = connection(player, 1);
+        let inserted = sessions.insert(1, first);
+        assert!(inserted.newly_online);
+        assert_eq!(inserted.replaced_conn, None);
+
+        let (second, _second_replaced) = connection(player, 2);
+        let inserted = sessions.insert(2, second);
+        assert!(!inserted.newly_online);
+        assert_eq!(inserted.replaced_conn, Some(1));
+        assert!(*first_replaced.borrow_and_update());
+        assert_eq!(sessions.connection_count(), 1);
+        assert_eq!(sessions.player_of(1), None);
+        assert_eq!(sessions.player_of(2), Some(player));
+
+        // The kicked socket closes later; its stale disconnect cannot remove
+        // the successor that now owns the corporation.
+        assert_eq!(sessions.remove(1), None);
+        assert_eq!(sessions.online_player_count(), 1);
+        assert_eq!(sessions.remove(2), Some(player));
+        assert_eq!(sessions.online_player_count(), 0);
+    }
+
+    #[test]
+    fn mobile_views_are_due_on_every_other_broadcast() {
+        let player = PlayerId(42);
+        let mut sessions = Sessions::new();
+        let (mobile, _replaced) = connection(player, 2);
+        sessions.insert(1, mobile);
+
+        assert_eq!(sessions.players_due_for_view(10), vec![player]);
+        sessions
+            .conns
+            .get_mut(&1)
+            .expect("mobile session")
+            .last_view_broadcast = Some(10);
+        assert!(sessions.players_due_for_view(11).is_empty());
+        assert_eq!(sessions.players_due_for_view(12), vec![player]);
     }
 }

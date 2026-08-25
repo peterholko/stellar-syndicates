@@ -7,11 +7,15 @@ import type { ClientMsg, ServerMsg } from "./protocol";
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 30_000;
 const RECONNECT_JITTER = 0.2;
+const SESSION_REPLACED_CLOSE_CODE = 4001;
+
+export type ViewHz = 5 | 10;
 
 export interface NetHandlers {
   onOpen: () => void;
   onMessage: (msg: ServerMsg) => void;
   onClose: () => void;
+  onSessionReplaced: () => void;
   onError: (e: Event) => void;
 }
 
@@ -34,6 +38,7 @@ export class Net {
   private reconnectTimer: number | null = null;
   private reconnectAttempt = 0;
   private stopped = false;
+  private viewHz: ViewHz = 10;
   readonly url: string;
 
   constructor(private handlers: NetHandlers) {
@@ -75,9 +80,18 @@ export class Net {
         console.warn("dropping unparseable server frame:", e, ev.data);
       }
     };
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (this.ws !== ws) return;
       this.ws = null;
+      if (event.code === SESSION_REPLACED_CLOSE_CODE) {
+        // This corporation permits one live client. A replacement is a
+        // deliberate sign-out, not a network failure: retrying would kick the
+        // newer browser and make the two tabs fight forever.
+        this.stopped = true;
+        this.clearReconnect();
+        this.handlers.onSessionReplaced();
+        return;
+      }
       this.handlers.onClose();
       this.scheduleReconnect();
     };
@@ -118,6 +132,14 @@ export class Net {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
     }
+  }
+
+  setViewHz(hz: ViewHz): void {
+    this.viewHz = hz;
+  }
+
+  join(name: string): void {
+    this.send({ type: "Join", name, view_hz: this.viewHz });
   }
 
   get connected(): boolean {

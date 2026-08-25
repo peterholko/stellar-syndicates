@@ -967,7 +967,7 @@ export function formatId(id: PlayerId): string {
 
 // Client → server.
 export type ClientMsg =
-  | { type: "Join"; name: string }
+  | { type: "Join"; name: string; view_hz?: 5 | 10 }
   | { type: "MoveShip"; ship_id: EntityId; dest: Vec2 }
   | { type: "JumpShip"; ship_id: EntityId; dest: Vec2 }
   /// §emplacements: the named Construction Ship builds a structure WHERE IT IS
@@ -1521,7 +1521,7 @@ export type ServerMsg =
       type: "Welcome";
       player_id: PlayerId;
       name: string;
-      // Wire protocol version (§FLEETS bumped it to 2) — a stale client can warn.
+      // Wire protocol version — a stale client can warn before contracts diverge.
       protocol_version: number;
       tick_hz: number;
       /** Sim seconds advanced per wall second; 1 is standard pacing. */

@@ -120,6 +120,11 @@ export function handleCoreEvents(events: CoreEvent[]): void {
           interactionInstalled = true;
         }
         break;
+      case "SessionReplaced":
+        joinScreen.style.display = "flex";
+        joinErr.textContent = "Signed out: this corporation was opened in another browser.";
+        joinBtn.disabled = false;
+        break;
       case "ViewApplied":
         renderer.stateVersion++;
         notifyNewBattles(state.battles);
@@ -190,7 +195,7 @@ export function join(): void {
   joinBtn.disabled = true;
   state.name = name;
   setHud();
-  if (net?.connected) net.send({ type: "Join", name });
+  if (net?.connected) net.join(name);
   else net?.connect();
 }
 

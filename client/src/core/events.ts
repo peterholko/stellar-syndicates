@@ -12,6 +12,7 @@ import type { LinkStatus, PendingIntent } from "../state";
 export type CoreEvent =
   | { kind: "LinkChanged"; status: LinkStatus }
   | { kind: "Welcomed"; playerId: PlayerId; name: string }
+  | { kind: "SessionReplaced" }
   | { kind: "ProtocolMismatch"; server: number; client: number }
   | { kind: "GalaxyUpdated" }
   | { kind: "ViewApplied" }

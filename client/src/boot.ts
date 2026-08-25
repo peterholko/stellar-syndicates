@@ -2,7 +2,7 @@ import "./styles/tokens.css";
 
 import { updateSignals } from "./core/derive/orders";
 import * as intent from "./core/intent";
-import { applyLinkStatus, applyServerMessage } from "./core/session";
+import { applyLinkStatus, applyServerMessage, applySessionReplaced } from "./core/session";
 import { Net } from "./net";
 import { renderer } from "./render";
 import type { CoreContext, Shell } from "./shell/types";
@@ -30,13 +30,16 @@ let net!: Net;
 net = new Net({
   onOpen: () => {
     present(applyLinkStatus(state.playerId === null ? "connecting" : "reconnecting", state));
-    if (state.name) net.send({ type: "Join", name: state.name });
+    if (state.name) net.join(state.name);
   },
   onMessage: (message) => {
     present(applyServerMessage(message, state));
   },
   onClose: () => {
     present(applyLinkStatus(state.playerId === null ? "offline" : "reconnecting", state));
+  },
+  onSessionReplaced: () => {
+    present(applySessionReplaced(state));
   },
   onError: () => {
     const events = applyLinkStatus(state.playerId === null ? "offline" : "reconnecting", state);
@@ -65,6 +68,7 @@ async function selectShell(): Promise<void> {
   const retainMobileAcrossRotation = activeKind === "mobile" && phoneShortSide <= 767;
   const kind = shellMedia.matches || retainMobileAcrossRotation ? "mobile" : "desktop";
   if (kind === activeKind) return;
+  net.setViewHz(kind === "mobile" ? 5 : 10);
   const generation = ++shellGeneration;
 
   try {
