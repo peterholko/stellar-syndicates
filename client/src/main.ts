@@ -75,12 +75,21 @@ function syncOverlayLayout(): void {
   document.body.classList.toggle("is-focus-overlay-open", FOCUS_OVERLAY_IDS.some(panelOpen));
   document.body.classList.toggle("is-planet-panel-open", panelOpen("planet-panel"));
   document.body.classList.toggle("is-build-panel-open", panelOpen("build-panel") || panelOpen("build-ship-panel"));
+
+  let mapRight = window.innerWidth;
+  for (const id of RIGHT_DOCK_IDS) {
+    if (!panelOpen(id)) continue;
+    const box = $(id).getBoundingClientRect();
+    if (box.width > 0) mapRight = Math.min(mapRight, box.left);
+  }
+  renderer.setCameraRect({ x: 0, y: 0, w: Math.max(1, mapRight), h: Math.max(1, window.innerHeight) });
 }
 const overlayLayoutObserver = new MutationObserver(syncOverlayLayout);
 for (const id of LAYOUT_WATCH_IDS) {
   overlayLayoutObserver.observe($(id), { attributes: true, attributeFilter: ["class", "style"] });
 }
 syncOverlayLayout();
+window.addEventListener("resize", syncOverlayLayout);
 
 function setHud(): void {
   $("hud-name").textContent = state.name || "—";
@@ -309,6 +318,7 @@ async function startRenderer(): Promise<void> {
   if (rendererReady) return;
   await renderer.init($("app"));
   rendererReady = true;
+  syncOverlayLayout();
   installInteraction();
   const frame = () => {
     updateSignals();

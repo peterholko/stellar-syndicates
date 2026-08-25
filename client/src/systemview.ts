@@ -48,6 +48,13 @@ export type PlanetKind =
   | "lava"
   | "barren";
 
+export interface CameraRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 // The established System View star size. Galaxy-map bloom must meet this
 // existing visible diameter; the planetary scene itself is not resized.
 const SYSTEM_STAR_VISIBLE_UNITS = 0.17;
@@ -375,6 +382,7 @@ export class SystemViewScene {
   private pulse: { sx: number; sy: number; r: number; until: number } | null = null;
   private viewW = 0;
   private viewH = 0;
+  private cameraRect: CameraRect = { x: 0, y: 0, w: 0, h: 0 };
   private sceneScale = 1;
   private starLayout: Vec2 = { x: 0, y: 0 };
 
@@ -429,7 +437,7 @@ export class SystemViewScene {
     this.lastStarTex = starTex;
     this.selected = null;
     this.buildStatic(vis, starTex);
-    this.layout(this.viewW, this.viewH);
+    this.layout(this.viewW, this.viewH, this.cameraRect);
   }
 
   currentId(): string | null {
@@ -641,14 +649,18 @@ export class SystemViewScene {
   /// label positions. Called on setSystem and on resize (camera is a fixed fit —
   /// there is no intra-system pan/zoom; zoom-out is an EXIT gesture, handled by
   /// the caller). Static graphics don't change — only the worldRoot transform.
-  layout(viewW: number, viewH: number): void {
+  layout(viewW: number, viewH: number, cameraRect: CameraRect = { x: 0, y: 0, w: viewW, h: viewH }): void {
     this.viewW = viewW;
     this.viewH = viewH;
     if (!viewW || !viewH) return;
-    const cx = viewW / 2;
-    const cy = viewH / 2;
+    const usable = cameraRect.w > 0 && cameraRect.h > 0
+      ? cameraRect
+      : { x: 0, y: 0, w: viewW, h: viewH };
+    this.cameraRect = { ...usable };
+    const cx = usable.x + usable.w / 2;
+    const cy = usable.y + usable.h / 2;
     this.starLayout = { x: cx, y: cy };
-    this.sceneScale = Math.min(viewW, viewH) * 0.42;
+    this.sceneScale = Math.min(usable.w, usable.h) * 0.42;
     this.worldRoot.position.set(cx, cy);
     this.worldRoot.scale.set(this.sceneScale);
 
@@ -664,7 +676,7 @@ export class SystemViewScene {
     // Backdrop vignette (subtle LOD separation from the galaxy).
     this.vignette.clear();
     this.vignette.rect(0, 0, viewW, viewH).fill({ color: 0x05070d, alpha: 0.35 });
-    this.vignette.circle(cx, cy, Math.min(viewW, viewH) * 0.5).fill({ color: 0x0a1120, alpha: 0.35 });
+    this.vignette.circle(cx, cy, Math.min(usable.w, usable.h) * 0.5).fill({ color: 0x0a1120, alpha: 0.35 });
 
     // Rebuild screen-space hit targets + labels from the cached schematic.
     this.bodies = [];
@@ -856,8 +868,8 @@ export class SystemViewScene {
     const g = this.overlay;
     g.clear();
     if (!this.viewW) return;
-    const cx = this.viewW / 2;
-    const cy = this.viewH / 2;
+    const cx = this.starLayout.x;
+    const cy = this.starLayout.y;
     const starR = 0.085 * this.sceneScale;
     const mine = owner !== null && owner === playerId;
     const rival = owner !== null && !mine;

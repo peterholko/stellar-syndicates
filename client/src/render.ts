@@ -11,7 +11,7 @@ import { countClassLabel, fleetCargoManifest, fleetExactCount } from "./protocol
 import { JUMP_DEPARTURE_TTL_S, liveSimTime, type ViewState } from "./state";
 import { hashId } from "./prng";
 import { STAR_TYPES, starAnchor, starIconUrl, starTypeFor, starVisualRatio } from "./stars";
-import { buildVisualSystem, SystemViewScene, type SystemBodyDetail } from "./systemview";
+import { buildVisualSystem, SystemViewScene, type CameraRect, type SystemBodyDetail } from "./systemview";
 
 // --- SEMANTIC-ZOOM VIEW MODE (galaxy ⇄ system) --------------------------------
 // The renderer hosts TWO scenes with INDEPENDENT coordinate systems: the galaxy
@@ -340,6 +340,8 @@ const HUB_ART_FILL = 0.93;
 
 export class Renderer {
   private app = new Application();
+  private initialized = false;
+  private cameraRectOverride: CameraRect | null = null;
   // A persistent starfield behind BOTH scenes (never faded), so the backdrop is
   // continuous across the galaxy⇄system LOD change.
   private starfield = new Container();
@@ -512,6 +514,7 @@ export class Renderer {
       autoDensity: true,
       resolution: Math.min(window.devicePixelRatio || 1, 2),
     });
+    this.initialized = true;
     mount.appendChild(this.app.canvas);
     this.emplacementLayer.addChild(
       this.emplaceGfx,
@@ -562,9 +565,9 @@ export class Renderer {
     void this.loadArt();
     window.addEventListener("resize", () => {
       this.recompute();
-      this.systemScene.layout(this.viewW, this.viewH); // the System View has its own fit camera
+      this.systemScene.layout(this.viewW, this.viewH, this.cameraRect); // the System View has its own fit camera
     });
-    this.systemScene.layout(this.viewW, this.viewH);
+    this.systemScene.layout(this.viewW, this.viewH, this.cameraRect);
   }
 
   /// Load the celestial + ship sprite textures. Each resolves independently; the
@@ -711,6 +714,48 @@ export class Renderer {
     return this.app.renderer.height / this.app.renderer.resolution;
   }
 
+  private viewportRect(): CameraRect {
+    const viewW = this.viewW;
+    const viewH = this.viewH;
+    const requested = this.cameraRectOverride ?? { x: 0, y: 0, w: viewW, h: viewH };
+    const x = Math.max(0, Math.min(Math.max(0, viewW - 1), requested.x));
+    const y = Math.max(0, Math.min(Math.max(0, viewH - 1), requested.y));
+    return {
+      x,
+      y,
+      w: Math.max(1, Math.min(requested.w, viewW - x)),
+      h: Math.max(1, Math.min(requested.h, viewH - y)),
+    };
+  }
+
+  get cameraRect(): CameraRect {
+    return this.viewportRect();
+  }
+
+  setCameraRect(rect: CameraRect | null): void {
+    if (!this.initialized) {
+      this.cameraRectOverride = rect ? { ...rect } : null;
+      return;
+    }
+    const before = this.viewportRect();
+    const focus = this.galaxy
+      ? this.screenToWorld(before.x + before.w / 2, before.y + before.h / 2)
+      : null;
+    this.cameraRectOverride = rect ? { ...rect } : null;
+    const after = this.viewportRect();
+    if (before.x === after.x && before.y === after.y && before.w === after.w && before.h === after.h) return;
+    if (this.userView && focus) {
+      this.scale = this.clampScale(this.scale);
+      this.cx = after.x + after.w / 2 - focus.x * this.scale;
+      this.cy = after.y + after.h / 2 - focus.y * this.scale;
+      this.drawBackground();
+    } else {
+      this.recompute();
+    }
+    this.systemScene.layout(this.viewW, this.viewH, after);
+    this.viewDirty = true;
+  }
+
   worldToScreen(p: Vec2): { x: number; y: number } {
     return { x: this.cx + p.x * this.scale, y: this.cy + p.y * this.scale };
   }
@@ -722,7 +767,8 @@ export class Renderer {
   /// reset view, and the basis for the zoom clamp.
   private fitScale(): number {
     if (!this.galaxy) return 1;
-    return (Math.min(this.viewW, this.viewH) * 0.46) / this.galaxy.radius;
+    const rect = this.cameraRect;
+    return (Math.min(rect.w, rect.h) * 0.46) / this.galaxy.radius;
   }
   private clampScale(s: number): number {
     const fit = this.fitScale();
@@ -742,7 +788,8 @@ export class Renderer {
   }
   /// Zoom toward the viewport centre (for the +/− buttons).
   zoomByFactor(factor: number): void {
-    this.zoomAt(this.viewW / 2, this.viewH / 2, factor);
+    const rect = this.cameraRect;
+    this.zoomAt(rect.x + rect.w / 2, rect.y + rect.h / 2, factor);
   }
   /// Pan by a screen-pixel delta (drag).
   panBy(dx: number, dy: number): void {
@@ -786,14 +833,15 @@ export class Renderer {
 
   private systemEndpointCamera(sys: SystemInfo): { cx: number; cy: number; scale: number } {
     const scale = this.fitScale() * ZOOM_MAX_FACTOR;
-    return { cx: this.viewW / 2 - sys.pos.x * scale, cy: this.viewH / 2 - sys.pos.y * scale, scale };
+    const rect = this.cameraRect;
+    return { cx: rect.x + rect.w / 2 - sys.pos.x * scale, cy: rect.y + rect.h / 2 - sys.pos.y * scale, scale };
   }
 
   private prepareSystemScene(sys: SystemInfo, bodies: BodyView[]): void {
     this.systemFocus = { ...sys.pos };
     const st = starTypeFor(sys.id);
     this.systemScene.setSystem(buildVisualSystem(sys, bodies), this.starTex.get(st.slug) ?? null);
-    this.systemScene.layout(this.viewW, this.viewH);
+    this.systemScene.layout(this.viewW, this.viewH, this.cameraRect);
     this.systemScene.root.visible = true;
     this.systemScene.root.alpha = 0;
   }
@@ -833,11 +881,12 @@ export class Renderer {
   /// crossfades out and the galaxy pulls back.
   exitSystemView(): void {
     if (this.mode.type !== "system") return;
-    const restore = this.savedGalaxyCam ?? { cx: this.viewW / 2, cy: this.viewH / 2, scale: this.fitScale() };
+    const rect = this.cameraRect;
+    const restore = this.savedGalaxyCam ?? { cx: rect.x + rect.w / 2, cy: rect.y + rect.h / 2, scale: this.fitScale() };
     const camFrom = { cx: this.cx, cy: this.cy, scale: this.scale };
     this.systemScene.clearSelection();
     this.scrubGalaxyCam = null;
-    const focus = this.systemFocus ?? this.screenToWorld(this.viewW / 2, this.viewH / 2);
+    const focus = this.systemFocus ?? this.screenToWorld(rect.x + rect.w / 2, rect.y + rect.h / 2);
     this.mode = { type: "galaxy" };
     this.startTransition(
       { dir: "out", target: "system", driver: "autopilot", id: this.systemScene.currentId() ?? "", focus, start: performance.now(), camFrom, camTo: restore },
@@ -908,7 +957,8 @@ export class Renderer {
     const camFrom = { cx: this.cx, cy: this.cy, scale: this.scale };
     // Battle keeps the pre-continuum camera depth; only systems use the 96× approach.
     const toScale = this.fitScale() * MACHINE_ZOOM_END;
-    const camTo = { cx: this.viewW / 2 - pos.x * toScale, cy: this.viewH / 2 - pos.y * toScale, scale: toScale };
+    const rect = this.cameraRect;
+    const camTo = { cx: rect.x + rect.w / 2 - pos.x * toScale, cy: rect.y + rect.h / 2 - pos.y * toScale, scale: toScale };
     this.mode = { type: "battle", battleId };
     this.userView = true;
     this.startTransition(
@@ -922,7 +972,8 @@ export class Renderer {
   /// it was entered. Replay overlays opened by clicking never change viewMode.
   exitBattleView(): void {
     if (this.mode.type !== "battle") return;
-    const restore = this.savedGalaxyCam ?? { cx: this.viewW / 2, cy: this.viewH / 2, scale: this.fitScale() };
+    const rect = this.cameraRect;
+    const restore = this.savedGalaxyCam ?? { cx: rect.x + rect.w / 2, cy: rect.y + rect.h / 2, scale: this.fitScale() };
     const camFrom = { cx: this.cx, cy: this.cy, scale: this.scale };
     const battleId = this.mode.battleId;
     this.mode = { type: "galaxy" };
@@ -993,9 +1044,10 @@ export class Renderer {
       // the new viewport's limits.
       this.scale = this.clampScale(this.scale);
     } else {
+      const rect = this.cameraRect;
       this.scale = this.fitScale();
-      this.cx = this.viewW / 2;
-      this.cy = this.viewH / 2;
+      this.cx = rect.x + rect.w / 2;
+      this.cy = rect.y + rect.h / 2;
     }
     this.drawBackground();
     // Systems are redrawn per-frame in update() (ownership/stockpile are dynamic).
