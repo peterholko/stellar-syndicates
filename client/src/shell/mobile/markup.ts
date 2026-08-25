@@ -50,6 +50,14 @@ export const mobileMarkup = String.raw`
       <button type="button" data-destination="log"><span aria-hidden="true">⌖</span><small>Log</small></button>
     </nav>
 
+    <div id="m-rotate-gate" class="m-rotate-gate" role="dialog" aria-modal="true" aria-labelledby="m-rotate-title" hidden>
+      <div class="m-rotate-gate__card">
+        <span class="m-rotate-gate__icon" aria-hidden="true">▯↻</span>
+        <h2 id="m-rotate-title">Rotate back to portrait</h2>
+        <p>Your command session is still running. Portrait keeps the map, theaters, and controls legible.</p>
+      </div>
+    </div>
+
     <div id="m-join" class="m-join">
       <form id="m-join-form" class="m-join__card">
         <div class="m-join__eyebrow">Corporate command uplink</div>

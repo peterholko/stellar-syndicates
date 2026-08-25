@@ -341,6 +341,9 @@ const HUB_ART_FILL = 0.93;
 export class Renderer {
   private app = new Application();
   private initialized = false;
+  private viewportResizeFrame = 0;
+  private viewportResizeTimer: number | null = null;
+  private viewportResizeFocus: Vec2 | null = null;
   private cameraRectOverride: CameraRect | null = null;
   // A persistent starfield behind BOTH scenes (never faded), so the backdrop is
   // continuous across the galaxy⇄system LOD change.
@@ -563,11 +566,12 @@ export class Renderer {
     // Non-blocking: the map draws (primitives) immediately and swaps to sprites the
     // moment the textures resolve — so a slow load never blanks the map.
     void this.loadArt();
-    window.addEventListener("resize", () => {
-      this.recompute();
-      this.systemScene.layout(this.viewW, this.viewH, this.cameraRect); // the System View has its own fit camera
-    });
+    const viewportChanged = () => this.scheduleViewportResize();
+    window.addEventListener("resize", viewportChanged);
+    window.addEventListener("orientationchange", viewportChanged);
+    window.visualViewport?.addEventListener("resize", viewportChanged);
     this.systemScene.layout(this.viewW, this.viewH, this.cameraRect);
+    this.scheduleViewportResize();
   }
 
   /// Load the celestial + ship sprite textures. Each resolves independently; the
@@ -712,6 +716,48 @@ export class Renderer {
   }
   private get viewH(): number {
     return this.app.renderer.height / this.app.renderer.resolution;
+  }
+
+  /** Preserve the world point at the camera's centre across an entire mobile
+   * rotation burst. iOS can fire orientationchange while window dimensions are
+   * stale, then settle visualViewport later; the rAF pass keeps the response
+   * quick and the delayed pass makes the final renderer size authoritative. */
+  private scheduleViewportResize(): void {
+    if (!this.viewportResizeFocus && this.galaxy) {
+      const before = this.viewportRect();
+      this.viewportResizeFocus = this.screenToWorld(before.x + before.w / 2, before.y + before.h / 2);
+    }
+    if (this.viewportResizeFrame) cancelAnimationFrame(this.viewportResizeFrame);
+    this.viewportResizeFrame = requestAnimationFrame(() => {
+      this.viewportResizeFrame = 0;
+      this.applyViewportResize(false);
+    });
+    if (this.viewportResizeTimer !== null) window.clearTimeout(this.viewportResizeTimer);
+    this.viewportResizeTimer = window.setTimeout(() => {
+      this.viewportResizeTimer = null;
+      this.applyViewportResize(true);
+    }, 180);
+  }
+
+  private applyViewportResize(settled: boolean): void {
+    const viewport = window.visualViewport;
+    const width = Math.max(1, Math.round(viewport?.width ?? window.innerWidth));
+    const height = Math.max(1, Math.round(viewport?.height ?? window.innerHeight));
+    if (Math.abs(this.viewW - width) > 0.5 || Math.abs(this.viewH - height) > 0.5) {
+      this.app.renderer.resize(width, height);
+    }
+    if (this.galaxy && this.userView && this.viewportResizeFocus) {
+      this.scale = this.clampScale(this.scale);
+      const after = this.viewportRect();
+      this.cx = after.x + after.w / 2 - this.viewportResizeFocus.x * this.scale;
+      this.cy = after.y + after.h / 2 - this.viewportResizeFocus.y * this.scale;
+      this.drawBackground();
+    } else {
+      this.recompute();
+    }
+    this.systemScene.layout(this.viewW, this.viewH, this.cameraRect);
+    this.viewDirty = true;
+    if (settled) this.viewportResizeFocus = null;
   }
 
   private viewportRect(): CameraRect {

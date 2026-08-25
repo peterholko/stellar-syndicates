@@ -7,6 +7,23 @@
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
+.m-rotate-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  pointer-events: auto;
+  background: rgba(5, 7, 13, .96);
+  backdrop-filter: blur(16px);
+}
+.m-rotate-gate[hidden] { display: none; }
+.m-rotate-gate__card { width: min(360px, 88vw); display: grid; place-items: center; gap: 8px; text-align: center; }
+.m-rotate-gate__icon { color: var(--accent); font-size: 38px; line-height: 1; }
+.m-rotate-gate h2 { margin: 3px 0 0; color: var(--ink); font-size: 18px; }
+.m-rotate-gate p { margin: 0; color: var(--dim); font-size: 11px; line-height: 1.5; }
+
 .m-chrome {
   position: fixed;
   top: env(safe-area-inset-top);

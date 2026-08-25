@@ -8,7 +8,9 @@ import { renderer } from "./render";
 import type { CoreContext, Shell } from "./shell/types";
 import { state } from "./state";
 
-const MOBILE_SHELL_QUERY = "(max-width: 767px)";
+// Portrait phones enter on width; an already-landscape touch phone enters on
+// its short height. Desktop windows do not become mobile merely for being low.
+const MOBILE_SHELL_QUERY = "(max-width: 767px), (max-height: 767px) and (pointer: coarse)";
 
 const appElement = document.getElementById("app");
 const shellElement = document.getElementById("shell-root");
@@ -55,7 +57,13 @@ intent.bindIntentCore(() => net, present);
 const shellMedia = matchMedia(MOBILE_SHELL_QUERY);
 
 async function selectShell(): Promise<void> {
-  const kind = shellMedia.matches ? "mobile" : "desktop";
+  const viewport = window.visualViewport;
+  const phoneShortSide = Math.min(viewport?.width ?? window.innerWidth, viewport?.height ?? window.innerHeight);
+  // A phone that entered through the portrait mobile breakpoint remains on the
+  // same shell while rotated. The mobile shell owns the landscape gate; tearing
+  // it down here would also discard sheets, gesture state, and loaded Pixi views.
+  const retainMobileAcrossRotation = activeKind === "mobile" && phoneShortSide <= 767;
+  const kind = shellMedia.matches || retainMobileAcrossRotation ? "mobile" : "desktop";
   if (kind === activeKind) return;
   const generation = ++shellGeneration;
 

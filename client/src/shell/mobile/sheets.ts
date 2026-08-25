@@ -80,6 +80,7 @@ export class SheetStack {
     window.addEventListener("pointerup", (event) => this.endDrag(event), { signal });
     window.addEventListener("pointercancel", () => this.cancelDrag(), { signal });
     window.addEventListener("resize", () => this.layout(), { signal });
+    window.visualViewport?.addEventListener("resize", () => this.layout(), { signal });
     window.addEventListener("popstate", (event) => this.onPopState(event), { signal });
     this.back.addEventListener("click", () => this.pop(), { signal });
     this.close.addEventListener("click", () => this.closeAll(), { signal });
@@ -136,16 +137,18 @@ export class SheetStack {
   }
 
   cameraRect(): Rect {
+    const viewportW = window.visualViewport?.width ?? window.innerWidth;
+    const viewportH = window.visualViewport?.height ?? window.innerHeight;
     const top = this.chrome.hidden ? 0 : this.chrome.getBoundingClientRect().bottom;
     const bottom = this.current && !this.sheet.hidden
       ? this.sheet.getBoundingClientRect().top
       : this.tabs.hidden
-        ? window.innerHeight
+        ? viewportH
         : this.tabs.getBoundingClientRect().top;
     return {
       x: 0,
       y: Math.max(0, top),
-      w: Math.max(1, window.innerWidth),
+      w: Math.max(1, viewportW),
       h: Math.max(1, bottom - top),
     };
   }
@@ -233,10 +236,11 @@ export class SheetStack {
   }
 
   private detentHeights(): { half: number; full: number } {
+    const viewportH = window.visualViewport?.height ?? window.innerHeight;
     const chromeBottom = this.chrome.hidden ? 0 : this.chrome.getBoundingClientRect().bottom;
     const tabsHeight = this.tabs.hidden ? 0 : this.tabs.getBoundingClientRect().height;
-    const full = Math.max(240, window.innerHeight - chromeBottom - tabsHeight - 8);
-    const half = Math.min(full, Math.max(260, window.innerHeight * .48));
+    const full = Math.max(240, viewportH - chromeBottom - tabsHeight - 8);
+    const half = Math.min(full, Math.max(260, viewportH * .48));
     return { half, full };
   }
 

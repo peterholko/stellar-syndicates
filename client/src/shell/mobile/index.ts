@@ -30,6 +30,9 @@ class MobileShell implements Shell {
   private surfaces: MobileSurfaces | null = null;
   private parity: MobileParitySurfaces | null = null;
   private statusSignature = "";
+  private orientationMedia: MediaQueryList | null = null;
+  private viewportFrame = 0;
+  private viewportSettleTimer: number | null = null;
 
   async mount(root: HTMLElement, ctx: CoreContext): Promise<void> {
     this.root = root;
@@ -39,6 +42,14 @@ class MobileShell implements Shell {
     installPressGuard();
 
     const signal = this.abort.signal;
+    this.orientationMedia = matchMedia("(orientation: portrait)");
+    const viewportChanged = () => {
+      this.syncRotateGate();
+      this.scheduleViewportLayout();
+    };
+    this.orientationMedia.addEventListener("change", viewportChanged, { signal });
+    window.addEventListener("orientationchange", viewportChanged, { signal });
+    window.visualViewport?.addEventListener("resize", viewportChanged, { signal });
     this.sheets = new SheetStack(
       (entry) => this.renderSheet(entry),
       () => this.syncCameraRect(),
@@ -94,6 +105,8 @@ class MobileShell implements Shell {
     byId("m-founding").addEventListener("click", (event) => { this.surfaces?.handleClick(event); }, { signal });
 
     this.syncSessionVisibility();
+    this.syncRotateGate();
+    this.scheduleViewportLayout();
     this.renderStatus(true);
     this.surfaces.refreshFounding();
     if (ctx.state.playerId === null) byId<HTMLInputElement>("m-name").focus();
@@ -161,6 +174,11 @@ class MobileShell implements Shell {
     this.sheets = null;
     document.documentElement.style.removeProperty("--mobile-sheet-height");
     document.documentElement.style.removeProperty("--mobile-chrome-bottom");
+    if (this.viewportFrame) cancelAnimationFrame(this.viewportFrame);
+    if (this.viewportSettleTimer !== null) window.clearTimeout(this.viewportSettleTimer);
+    this.viewportFrame = 0;
+    this.viewportSettleTimer = null;
+    this.orientationMedia = null;
     this.abort = null;
     this.root?.replaceChildren();
     this.root = null;
@@ -198,6 +216,39 @@ class MobileShell implements Shell {
       if (button.dataset.destination === destination) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
+  }
+
+  /** Landscape is a temporary cover over the still-running mobile session.
+   * The media query is the law; neither the shell nor either Pixi theater is
+   * recreated while this overlay is present. */
+  private syncRotateGate(): void {
+    const gate = document.getElementById("m-rotate-gate");
+    if (!gate || !this.orientationMedia) return;
+    gate.hidden = this.orientationMedia.matches;
+  }
+
+  /** iOS reports rotation before visualViewport settles. Run once on the next
+   * paint and once after the resize burst, preserving the same sheet stack and
+   * asking mounted theaters to resize in place. */
+  private scheduleViewportLayout(): void {
+    if (this.viewportFrame) cancelAnimationFrame(this.viewportFrame);
+    this.viewportFrame = requestAnimationFrame(() => {
+      this.viewportFrame = 0;
+      this.applyViewportLayout();
+    });
+    if (this.viewportSettleTimer !== null) window.clearTimeout(this.viewportSettleTimer);
+    this.viewportSettleTimer = window.setTimeout(() => {
+      this.viewportSettleTimer = null;
+      this.applyViewportLayout();
+    }, 180);
+  }
+
+  private applyViewportLayout(): void {
+    this.sheets?.layout();
+    this.syncCameraRect();
+    const entry = this.sheets?.current ?? null;
+    this.battle?.sync(entry);
+    this.ground?.sync(entry);
   }
 
   private renderSheet(entry: SheetEntry): SheetView {
