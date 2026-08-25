@@ -2,7 +2,7 @@
 
 import { Net } from "./net";
 import { renderer } from "./render";
-import { liveSimTime, state, type LinkStatus, type PendingIntent, type ViewState } from "./state";
+import { liveSimTime, state, type LinkStatus, type ViewState } from "./state";
 import { countClassLabel, fleetExactCount, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BodyView, type BuildState, type CaptainAttribute, type CaptainRosterView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type GroundRecordView, type KeyframeView, type LandingOddsView, type ManifestEntryView, type MigrationPolicy, type ModuleKind, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { fleetCargoManifest, fleetCargoUnits } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
@@ -11,13 +11,14 @@ import { theaterAttach, theaterAvailable, theaterClose, theaterDebug, theaterHas
 import { groundTheaterAttach, groundTheaterAvailable, groundTheaterClose, groundTheaterDebug, groundTheaterSetTime, groundTheaterStep } from "./groundtheater";
 import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
 import { AAA_SERVICE_FEE, FUEL_PER_MASS_DISTANCE, HULL_MASS, WARP_FACTOR, aaaEstimate, battleReportForRecord, battleViewerTimers, berthed, bindFleetNet, clearBattleAftermathTimer, clearBattleCloseTimer, coLocatedOwnFleet, constructionStock, dockLoadStock, dockedAtSystem, dockedFreighterStock, estimatedFuelForLeg, fleetCargoCapacity, fleetFuelCapacity, fleetRosterDockName, guardCapable, hauls, hubDockedFleets, jumpCapable, recordForReport, sendCrew, shipKindLabel, shipMass, shipRoleLore, sideFamily, sumOwnComposition, systemFleetsAt, type SalvoFamily } from "./core/derive/fleet";
-import { SHIP_STATS, SURVEY_SECS_UI, TCA_INCIDENT_LOSS_UI, battleCommandDelay, clearJumpDepartureSelection, intentSummary, intentTargetLabel, jumpDepartureSelection, latestGroundRecordFor, latestPendingOrder, loadBattleMarks, nextDecisionLabel, orderEtaRange, orderObject, orderPoint, saveBattleMarks, siegeProgress, updateSignals } from "./core/derive/orders";
+import { SHIP_STATS, TCA_INCIDENT_LOSS_UI, battleCommandDelay, clearJumpDepartureSelection, intentSummary, jumpDepartureSelection, latestGroundRecordFor, latestPendingOrder, loadBattleMarks, nextDecisionLabel, orderEtaRange, orderObject, orderPoint, saveBattleMarks, siegeProgress, updateSignals } from "./core/derive/orders";
 import { COMMODITIES, FITTING_POINTS, MODULE_SLOTS, POOL_LABEL, POOL_OF, SHIP_YARD, YARD_TITLE, bindMarketDerive, bodyPoolUsage, buildOption, dispatchBuildKey, fitLegal, freightDraft, freightDraftEntries, hullResearched, kitAffordable, kitCostLabel, marketAverageQuote, marketReservations, moduleLedgerAt, moduleRecipeValue, ownedHaulDestinations, poolUsage, pruneMarketReservations, recentMarketOrders, recordRecentMarketOrder, reserveMarketOrder, reservedMarketCredits, settleMarketReservation, shipOption, shippableStock, shipyardBoost, slipsFor, spendableMarketCredits, structOption, systemFlavor, warehouseUnits, type BuildOpt, type Pool, type PoolUse, type ShipOpt, type StructOpt } from "./core/derive/market";
 import { bindResearchNet, nodeBonusDesc, projectedBand, researchQueueIds, sendResearchQueue } from "./core/derive/research";
 import { captainXpFloor, fleetCommandLoad, captainTitle, officerFleetName, affinityLine, traitLine } from "./core/derive/captains";
-import { HYPERLIMIT_SU, REPORT_RECENT_S, allySystems, commandDelayTo, emplacementLabel, endpointLabel, foundingHomeSystemId, freshSurveyReports, knownDeposits, locName, nearestKnownDock, nearestSystemName, operationSystemName, ownedSystems, pushSystemDynamic, systemName, systemUnderCursor, viewedSystemId } from "./core/derive/geo";
+import { HYPERLIMIT_SU, REPORT_RECENT_S, allySystems, commandDelayTo, emplacementLabel, endpointLabel, foundingHomeSystemId, freshSurveyReports, locName, nearestKnownDock, nearestSystemName, operationSystemName, ownedSystems, pushSystemDynamic, systemName, systemUnderCursor, viewedSystemId } from "./core/derive/geo";
 import { agoLabel, arrivalLocal, doneAtLocal, fmt, fmtBuildDur, fmtDur, fmtEta, operationCopy, operationHullArt, operationIcon, operationReward, operationTitle, rejectText, trend, triggerLabel } from "./core/derive/format";
 import type { CoreEvent } from "./core/events";
+import { armGuardAiming, armJumpAiming, beginPendingIntent, bindIntentCore, clearGuardAiming, clearJumpAiming, clearPendingIntent, confirmPendingIntent, intentAiming } from "./core/intent";
 import { resolveMapClick, resolveSystemClick, type MapClickResult } from "./core/mapclick";
 import { applyLinkStatus, applyServerMessage, jumpDepartureKey } from "./core/session";
 
@@ -923,54 +924,8 @@ function deselectShip(): void {
   $("ship-panel").classList.remove("is-open");
 }
 
-// §TCA: UI mirror of crates/sim/src/tca.rs::TCA_SOVEREIGN_RADIUS — keep in step.
-// Used only to HEDGE the attack/raid readout when a target's last-seen position
-// shelters in the bubble; the server judges the true position either way.
-const TCA_SOVEREIGN_RADIUS = 900;
-
 // --- Deliberate map orders: preview first, transmit only on confirmation. ----
 let intentBarBuilt = false;
-let jumpAiming: string | null = null;
-let guardAiming: string | null = null;
-
-function clearGuardAiming(preserveReadout = false): void {
-  if (guardAiming === null) return;
-  guardAiming = null;
-  if (!preserveReadout) readout().innerHTML = `<span class="dim">Guard targeting cancelled.</span>`;
-}
-
-function armGuardAiming(ship: GhostView): void {
-  if (!guardCapable(ship)) return;
-  clearJumpAiming(true);
-  clearPendingIntent(true);
-  guardAiming = ship.id;
-  updateShipPanel();
-  readout().innerHTML = `<b>Choose a fleet to guard.</b> Click another one of your fleet markers. ` +
-    `<span class="dim">The Interceptor will form up, engage local threats, then resume its station.</span>`;
-}
-
-function clearJumpAiming(preserveReadout = false): void {
-  if (jumpAiming === null) return;
-  jumpAiming = null;
-  renderer.jumpAimingShipId = null;
-  renderer.stateVersion++;
-  if (!preserveReadout) {
-    readout().innerHTML = `<span class="dim">Jump aiming cancelled.</span>`;
-  }
-}
-
-function armJumpAiming(ship: GhostView): void {
-  if (!state.galaxy || !jumpCapable(ship)) return;
-  clearGuardAiming(true);
-  clearPendingIntent(true);
-  jumpAiming = ship.id;
-  renderer.jumpAimingShipId = ship.id;
-  renderer.stateVersion++;
-  updateShipPanel();
-  readout().innerHTML = `<b>Jump drive armed.</b> Pick a point within ` +
-    `<b>${Math.round(state.galaxy.jump_range).toLocaleString()} su</b>. ` +
-    `<span class="dim">Both ends must be clear of gravity wells · Esc cancels.</span>`;
-}
 
 function renderIntentBar(): void {
   const root = $("intent-bar");
@@ -992,200 +947,6 @@ function buildIntentBar(): void {
     if (button?.dataset.act === "confirm-intent") confirmPendingIntent();
     else if (button?.dataset.act === "cancel-intent") clearPendingIntent();
   });
-}
-
-function clearPendingIntent(preserveReadout = false): void {
-  if (state.pendingIntent === null) return;
-  state.pendingIntent = null;
-  renderer.stateVersion++;
-  renderIntentBar();
-  if (!preserveReadout) {
-    const selected = state.selectedShipId
-      ? state.ghosts.find((g) => g.id === state.selectedShipId && g.own)
-      : undefined;
-    if (selected) {
-      readout().innerHTML = `<b>${esc(shipKindLabel(selected.kind))}</b> selected — details in the panel. ` +
-        `Click empty space to move it · click a <span style="color:#ff7a6b">rival</span> to raid · press <b>R</b> to recall.`;
-    }
-  }
-}
-
-function previewReadout(intent: PendingIntent): void {
-  const target = intentTargetLabel(intent);
-  const ship = state.ghosts.find((g) => g.id === intent.shipId && g.own);
-  switch (intent.verb) {
-    case "move":
-      readout().innerHTML = `Prospective route for your <b>${esc(ship ? shipKindLabel(ship.kind) : "fleet")}</b>. ` +
-        `<span class="dim">Compare the lighter dashed course with the solid current route, then confirm or cancel.</span>`;
-      break;
-    case "jump": {
-      const range = state.galaxy?.jump_range ?? 50_000;
-      readout().innerHTML = `Jump preview from the fleet's <b>light-delayed sighting</b>. ` +
-        `<span class="dim">The dashed circle is the estimated ${Math.round(range).toLocaleString()} su reach; ` +
-        `the sim checks the true fleet, range, and gravity wells when the signal arrives. Jump fuel is unlimited during playtesting.</span>`;
-      break;
-    }
-    case "raid":
-      readout().innerHTML = `Raid preview: pursue <b>${esc(target)}</b> to intercept and steal cargo. ` +
-        `<span class="dim">The target will be pursued from its true position when the order arrives.</span>`;
-      break;
-    case "attack":
-      readout().innerHTML = `Attack preview: your fleet will pursue <b>${esc(target)}</b> into a <b>FULL battle</b> to destroy it; cargo is lost with the fleet.`;
-      break;
-    case "guard":
-      readout().innerHTML = `Guard preview: form up with <b>${esc(target)}</b>. ` +
-        `<span class="dim">The Interceptor reacts from its own sensors, breaks off to meet a threat, then resumes formation without another command-center round trip.</span>`;
-      break;
-    case "blockade":
-      readout().innerHTML = `Blockade preview: take station at <b>${esc(target)}</b> and strangle its logistics; standing defense will contest it.`;
-      break;
-    case "demolish":
-      readout().innerHTML = `Demolition preview: tear down <b>${esc(target)}</b>. ` +
-        `<span class="dim">The fleet must hold station there to finish the job; driven off, the work resets.</span>`;
-      break;
-    case "survey":
-      readout().innerHTML = `Survey preview: fly to <b>${esc(target)}</b> and dwell ~${SURVEY_SECS_UI}s — active sensing is LOUD. ` +
-        `<span class="dim">The exact geology travels home at light speed.</span>`;
-      break;
-  }
-}
-
-function beginPendingIntent(intent: PendingIntent): void {
-  buildIntentBar();
-  state.pendingIntent = intent;
-  renderer.stateVersion++;
-  renderIntentBar();
-  previewReadout(intent);
-}
-
-function moveOrderReadout(ship: GhostView, dest: Vec2): string {
-  const out = ship.age; // ≈ light delay command-center → ship
-  // §explore Part 4: a COLONY ship sent toward an UNSURVEYED system is a
-  // blind claim — informational friction only (never blocks the order).
-  let blind = "";
-  if (ship.kind === "colony" && state.galaxy) {
-    const near = state.galaxy.systems.find((sys) => Math.hypot(sys.pos.x - dest.x, sys.pos.y - dest.y) <= 150);
-    if (near && knownDeposits(near.id) === null) {
-      blind = ` <span style="color:var(--warn)">Heading to <b>${esc(near.name)}</b> (${esc(near.band.toUpperCase())} band) — unsurveyed, claiming blind: its deposits, mineral grades and rare features are unknown.</span>`;
-    }
-  }
-  return `Order away to <b>${esc(shipKindLabel(ship.kind))}</b>. ` +
-    `Reaches it in <b>~${out.toFixed(0)}s</b> (your light), ` +
-    `you'll see it respond <b>~${(out * 2).toFixed(0)}s</b> from now. ` +
-    `<span class="dim">Estimated from a ${out.toFixed(0)}s-old sighting.</span>` + blind +
-    (out > 8
-      ? ` <span style="color:var(--warn)">That sighting is stale — the fleet has flown on since, and its picture will catch up in a rush once fresher light arrives.</span>`
-      : "");
-}
-
-function jumpOrderReadout(ship: GhostView): string {
-  const out = ship.age;
-  const spool = state.galaxy?.jump_spool_s ?? 10;
-  return `Jump order away to <b>${esc(shipKindLabel(ship.kind))}</b>. ` +
-    `It should reach the fleet in <b>~${out.toFixed(0)}s</b>, spool for <b>~${spool.toFixed(0)}s</b>, then relocate instantly. ` +
-    `<span class="dim">You see the departure and arrival only when their light reaches your command center.</span>`;
-}
-
-function confirmPendingIntent(): void {
-  const intent = state.pendingIntent;
-  const ship = intent ? state.ghosts.find((g) => g.id === intent.shipId && g.own) : undefined;
-  if (!intent || !ship || !net) {
-    clearPendingIntent();
-    return;
-  }
-  const targetGhost = state.ghosts.find((g) => g.id === intent.targetId);
-  const hubPos = state.galaxy?.hub;
-  const targetPos = targetGhost?.pos ?? intent.dest;
-  const believedSheltered = !!hubPos && !!targetPos
-    && Math.hypot(targetPos.x - hubPos.x, targetPos.y - hubPos.y) < TCA_SOVEREIGN_RADIUS;
-  const shelterNote = believedSheltered
-    ? ` <span class="warn">Its last-seen position is inside the Authority's sovereign zone — the order will be refused unless it has left the bubble.</span>`
-    : "";
-
-  switch (intent.verb) {
-    case "move":
-      if (!intent.dest) break;
-      net.send({ type: "MoveShip", ship_id: ship.id, dest: intent.dest });
-      state.orders[ship.id] = intent.dest;
-      readout().innerHTML = moveOrderReadout(ship, intent.dest);
-      break;
-    case "jump":
-      if (!intent.dest) break;
-      net.send({ type: "JumpShip", ship_id: ship.id, dest: intent.dest });
-      // A jump has no traversed route. Do not let an older client-local move
-      // line claim that this fleet is still flying through the intervening map.
-      delete state.orders[ship.id];
-      readout().innerHTML = jumpOrderReadout(ship);
-      break;
-    case "raid":
-      if (!intent.targetId) break;
-      net.send({ type: "CommitRaid", raider_id: ship.id, target_id: intent.targetId });
-      net.send({ type: "EstimateEngagement", attacker: ship.id, target: intent.targetId });
-      if (!believedSheltered) state.raids[ship.id] = intent.targetId;
-      delete state.orders[ship.id];
-      readout().innerHTML =
-        `Raid committed: your <b>${esc(shipKindLabel(ship.kind))}</b> → rival <b>${esc(targetGhost?.kind ?? "contact")}</b>. ` +
-        `The order sets off at light speed; your raider will pursue the rival's <i>true</i> position, ` +
-        `not the <b>${(targetGhost?.age ?? 0).toFixed(0)}s</b>-old ghost you see. ` +
-        (ship.composition?.some((c) => c.kind === "raider")
-          ? `<span class="dim">Shift+click to ATTACK (destroy) instead · Press R to recall.</span>`
-          : `<span class="dim">Press R to recall — it may arrive too late.</span>`) + shelterNote;
-      break;
-    case "attack":
-      if (!intent.targetId) break;
-      net.send({ type: "AttackFleet", fleet_id: ship.id, target_id: intent.targetId });
-      net.send({ type: "EstimateEngagement", attacker: ship.id, target: intent.targetId });
-      if (!believedSheltered) state.raids[ship.id] = intent.targetId;
-      delete state.orders[ship.id];
-      readout().innerHTML =
-        `Attack committed: your <b>${esc(shipKindLabel(ship.kind))}</b> → rival <b>${esc(targetGhost?.kind ?? "contact")}</b> to <b>destroy</b> it. ` +
-        `A FULL battle (a raid steals cargo; an attack kills — cargo is lost with the fleet). ` +
-        `Light-delayed pursuit of its <i>true</i> position. <span class="dim">Press R to recall — it may arrive too late.</span>` + shelterNote;
-      break;
-    case "guard":
-      if (!intent.targetId) break;
-      net.send({ type: "GuardFleet", interceptor_id: ship.id, target_id: intent.targetId });
-      delete state.raids[ship.id];
-      delete state.orders[ship.id];
-      readout().innerHTML =
-        `Guard order sent: your <b>${esc(shipKindLabel(ship.kind))}</b> → <b>${esc(targetGhost ? shipKindLabel(targetGhost.kind) : "friendly fleet")}</b>. ` +
-        `The assignment begins when the signal reaches the Interceptor; defensive reactions after that are local and automatic.`;
-      break;
-    case "blockade": {
-      if (!intent.targetId) break;
-      const system = state.galaxy?.systems.find((s) => s.id === intent.targetId);
-      net.send({ type: "BlockadeSystem", fleet_id: ship.id, system_id: intent.targetId });
-      delete state.orders[ship.id];
-      readout().innerHTML =
-        `Blockade ordered: your <b>raider fleet</b> → <b>${esc(system?.name ?? "target system")}</b>. ` +
-        `It sets off at light speed to take station and strangle the system's logistics; ` +
-        `standing defense will contest it. <span class="dim">Recall (R) to break off.</span>`;
-      break;
-    }
-    case "demolish": {
-      if (!intent.targetId) break;
-      const target = state.emplacements.find((e) => e.id === intent.targetId);
-      net.send({ type: "DemolishEmplacement", fleet: ship.id, target: intent.targetId });
-      readout().innerHTML =
-        `<b>${esc(shipKindLabel(ship.kind))}</b> ordered to tear down a rival <b>${esc(target ? emplacementLabel(target.kind) : "structure")}</b> ` +
-        `<span class="dim">(signal outbound). It must hold station there to finish the job — ` +
-        `driven off, the work resets.</span>`;
-      break;
-    }
-    case "survey": {
-      if (!intent.targetId) break;
-      const system = state.galaxy?.systems.find((s) => s.id === intent.targetId);
-      net.send({ type: "SurveySystem", fleet_id: ship.id, system_id: intent.targetId });
-      delete state.orders[ship.id];
-      readout().innerHTML =
-        `Survey ordered: your <b>scout fleet</b> → <b>${esc(system?.name ?? "target system")}</b>${system ? ` (${esc(system.band.toUpperCase())} band)` : ""}. ` +
-        `It flies on-site and dwells ~${SURVEY_SECS_UI}s — active sensing is LOUD (detectable farther). ` +
-        `<span class="dim">The exact geology travels home at light speed; allies receive a relayed copy.</span>`;
-      break;
-    }
-  }
-  updateShipPanel();
-  clearPendingIntent(true);
 }
 
 // --- §order-lifecycle: SIGNAL OUTBOUND → PRESUMED DELIVERED → CONFIRMED -------
@@ -1327,7 +1088,7 @@ function postureSection(g: GhostView): string {
 
 function jumpSection(g: GhostView): string {
   if (!jumpCapable(g) || !state.galaxy) return "";
-  const armed = jumpAiming === g.id;
+  const armed = intentAiming.jump === g.id;
   const range = Math.round(state.galaxy.jump_range).toLocaleString();
   return `<div class="sp-line"><button class="act${armed ? " is-on" : ""}" data-act="jump" ` +
     `title="Choose a served-picture destination within ${range} su. Both ends must be clear of gravity wells; the sim validates the true fleet when the delayed order arrives.">` +
@@ -1337,7 +1098,7 @@ function jumpSection(g: GhostView): string {
 
 function guardSection(g: GhostView): string {
   if (!guardCapable(g)) return "";
-  const armed = guardAiming === g.id;
+  const armed = intentAiming.guard === g.id;
   const target = g.guard_target
     ? state.ghosts.find((candidate) => candidate.id === g.guard_target && candidate.own)
     : undefined;
@@ -4359,7 +4120,7 @@ function applyMapClickResult(result: MapClickResult): void {
 // clears the selection/panel. No move orders, no raids — those are galaxy-only.
 function handleSystemClick(sx: number, sy: number): void {
   applyMapClickResult(resolveSystemClick(sx, sy, {
-    state, renderer, jumpAiming, guardAiming, emplaceArmed: null,
+    state, renderer, jumpAiming: intentAiming.jump, guardAiming: intentAiming.guard, emplaceArmed: null,
   }));
 }
 
@@ -4368,7 +4129,7 @@ function handleSystemClick(sx: number, sy: number): void {
 function handleMapClick(sx: number, sy: number, shift = false, long = false): void {
   renderer.selectedBattleMarkerId = null;
   applyMapClickResult(resolveMapClick(sx, sy, { shift, long }, {
-    state, renderer, jumpAiming, guardAiming, emplaceArmed: null,
+    state, renderer, jumpAiming: intentAiming.jump, guardAiming: intentAiming.guard, emplaceArmed: null,
   }));
 }
 
@@ -4617,10 +4378,10 @@ function installInteraction(): void {
     } else if (e.key === "Escape") {
       // A prospective order is the topmost map interaction: cancel it without
       // also closing the selection/panels beneath it.
-      if (jumpAiming) {
+      if (intentAiming.jump) {
         clearJumpAiming();
         updateShipPanel();
-      } else if (guardAiming) {
+      } else if (intentAiming.guard) {
         clearGuardAiming();
         updateShipPanel();
       } else if (state.pendingIntent) {
@@ -7737,6 +7498,14 @@ function handleCoreEvents(events: CoreEvent[]): void {
       case "TradeSettled":
         addTradeNews(event.trade);
         break;
+      case "IntentChanged":
+        if (event.renderIntentBar) {
+          buildIntentBar();
+          renderIntentBar();
+        }
+        if (event.refreshShip) updateShipPanel();
+        if (event.readout !== undefined) readout().innerHTML = event.readout;
+        break;
       case "JoinRejected":
         joinErr.textContent = event.message;
         break;
@@ -7746,6 +7515,8 @@ function handleCoreEvents(events: CoreEvent[]): void {
     }
   }
 }
+
+bindIntentCore(() => net, handleCoreEvents);
 
 function join(): void {
   const name = nameInput.value.trim();

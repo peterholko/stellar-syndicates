@@ -7,7 +7,7 @@ import type {
   RaidReport,
   TradeEvent,
 } from "../protocol";
-import type { LinkStatus } from "../state";
+import type { LinkStatus, PendingIntent } from "../state";
 
 export type CoreEvent =
   | { kind: "LinkChanged"; status: LinkStatus }
@@ -26,5 +26,14 @@ export type CoreEvent =
   | { kind: "EstimateReady"; estimate: EngagementEstimate }
   | { kind: "TimelineApplied" }
   | { kind: "TradeSettled"; trade: TradeEvent }
+  | {
+      kind: "IntentChanged";
+      intent: PendingIntent | null;
+      jumpAiming: string | null;
+      guardAiming: string | null;
+      readout?: string;
+      renderIntentBar?: boolean;
+      refreshShip?: boolean;
+    }
   | { kind: "JoinRejected"; message: string }
   | { kind: "ServerError"; message: string };
