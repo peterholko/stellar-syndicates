@@ -398,7 +398,7 @@ export class MobileMapInteraction {
         break;
       case "hub":
         this.clearSelection();
-        this.hooks.openSheet({ id: "market" });
+        this.hooks.openSheet({ id: "hub" });
         break;
       case "ongoingBattle":
         this.hooks.openSheet({ id: "battle", props: { id: target.id } });
@@ -413,10 +413,10 @@ export class MobileMapInteraction {
         break;
       case "systemBody":
         this.hooks.openSheet({
-          id: "system",
+          id: "planet",
           props: {
-            id: this.ctx.renderer.viewMode.type === "system" ? this.ctx.renderer.viewMode.systemId : null,
-            body: target.detail,
+            systemId: this.ctx.renderer.viewMode.type === "system" ? this.ctx.renderer.viewMode.systemId : null,
+            detail: target.detail,
           },
         });
         break;

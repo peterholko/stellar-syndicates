@@ -7,6 +7,7 @@ import { installPressGuard } from "../dom";
 import type { CoreContext, Rect, Shell } from "../types";
 import { MobileMapInteraction } from "./map";
 import { mountMobileMarkup } from "./markup";
+import { MobileParitySurfaces } from "./parity";
 import { activateSheetStack, pushSheet, replaceSheet, SheetStack, type SheetEntry, type SheetView } from "./sheets";
 import { MobileSurfaces } from "./surfaces";
 
@@ -23,6 +24,7 @@ class MobileShell implements Shell {
   private sheets: SheetStack | null = null;
   private map: MobileMapInteraction | null = null;
   private surfaces: MobileSurfaces | null = null;
+  private parity: MobileParitySurfaces | null = null;
   private statusSignature = "";
 
   async mount(root: HTMLElement, ctx: CoreContext): Promise<void> {
@@ -53,6 +55,14 @@ class MobileShell implements Shell {
       exitSemantic: () => this.map?.exitSemanticView(),
       notice: (html) => this.map?.showNotice(html),
     });
+    this.parity = new MobileParitySurfaces(ctx, this.sheets, {
+      openSheet: (entry) => this.openSheet(entry),
+      focusFleet: (id) => this.map?.focusFleet(id),
+      focusSystem: (id) => this.map?.focusSystem(id),
+      enterSystem: (id) => this.map?.enterSystem(id),
+      exitSemantic: () => this.map?.exitSemanticView(),
+      notice: (html) => this.map?.showNotice(html),
+    });
     byId("m-status-toggle").addEventListener("click", () => this.toggleStatus(), { signal });
     byId("m-armed-cancel").addEventListener("click", () => this.map?.cancelArmedMode(), { signal });
     byId<HTMLFormElement>("m-join-form").addEventListener("submit", (event) => {
@@ -67,6 +77,7 @@ class MobileShell implements Shell {
       else pushSheet(destination);
     }, { signal });
     byId("m-sheet-body").addEventListener("click", (event) => {
+      if (this.parity?.handleClick(event)) return;
       if (this.surfaces?.handleClick(event)) return;
       const action = (event.target as Element).closest<HTMLButtonElement>("button[data-mobile-act]")?.dataset.mobileAct;
       if (action === "confirm-intent") ctx.intent.confirmPendingIntent();
@@ -130,6 +141,7 @@ class MobileShell implements Shell {
     this.abort?.abort();
     this.map?.teardown();
     this.map = null;
+    this.parity = null;
     this.surfaces = null;
     activateSheetStack(null);
     this.sheets = null;
@@ -181,15 +193,22 @@ class MobileShell implements Shell {
       operations: ["Operations", "Contracts · objectives"],
       syndicate: ["Syndicate", "Alliance network"],
       faction: ["Faction", "Authority charter"],
+      rankings: ["Rankings", "Published campaign ledger"],
+      logistics: ["Auto-supply", "Standing logistics orders"],
+      doctrine: ["Fleet Doctrine", "Corporate fleet policy"],
       log: ["Check-in", "Decision inbox"],
       system: ["System", "System management"],
+      planet: ["World", "Planet management"],
+      build: ["Build", "Structure construction"],
+      shipyard: ["Shipyard", "Hull construction"],
+      hub: ["Wormhole Hub", "Market infrastructure"],
       ship: ["Fleet", "Fleet command"],
       battle: ["Battle", "Observed theater"],
       intent: ["Confirm order", "Command preview"],
     };
     const [title, eyebrow] = titles[entry.id];
     if (entry.id === "intent") return this.renderIntentSheet(title, eyebrow);
-    const surface = this.surfaces?.render(entry);
+    const surface = this.parity?.render(entry) ?? this.surfaces?.render(entry);
     if (surface) return surface;
     return {
       title,
