@@ -1,0 +1,268 @@
+import { bindFleetNet } from "../../core/derive/fleet";
+import { bindMarketDerive } from "../../core/derive/market";
+import { bindResearchNet } from "../../core/derive/research";
+import { type CoreEvent } from "../../core/events";
+import { bindIntentCore } from "../../core/intent";
+import { applyLinkStatus, applyServerMessage } from "../../core/session";
+import { label } from "../../icons";
+import { Net } from "../../net";
+import { renderer } from "../../render";
+import { state } from "../../state";
+import { __init_battle_2931, __init_battle_2936, openOngoingBattleId, refreshOpenBattleViewer, refreshOpenGroundViewer, updateOngoingBattlePanel } from "./battle";
+import { buildCheckinPanel, openCheckin, updateCheckinPanel } from "./checkin";
+import { updateFactionPanel } from "./faction";
+import { __init_founding_7165, __init_founding_7356, updateFoundingGuide } from "./founding";
+import { __init_mapchrome_142, __init_mapchrome_149, __init_mapchrome_150, __init_mapchrome_314, __init_mapchrome_315, __init_mapchrome_52, __init_mapchrome_53, __init_mapchrome_54, __init_mapchrome_55, __init_mapchrome_56, __init_mapchrome_7576, __init_mapchrome_7592, __init_mapchrome_7598, __init_mapchrome_7599, __init_mapchrome_88, __init_mapchrome_91, __init_mapchrome_92, $, addReport, esc, hud, joinBtn, joinErr, joinScreen, nameInput, readout, setHud, showEngagementEstimate, startRenderer } from "./mapchrome";
+import { addTradeNews, buildMarketPanel, updateHubPanel, updateMarket } from "./market";
+import { updateOperationsPanel } from "./operations";
+import { buildDoctrinePanel, buildRail, buildStandingPanel, buildSystemTab, railTab, setRailTab, updateDoctrinePanel, updateFleetsPanel, updateRankingsPanel, updateStandingPanel, updateSystemTab } from "./rail";
+import { updateResearchPanel } from "./research";
+import { addTransientReport, buildIntentBar, notifyNewBattles, renderIntentBar, updateOfficersPanel, updateShipPanel } from "./ship";
+import { updateSyndicatePanel } from "./syndicate";
+import { pendingFit, updateSysviewDynamic } from "./sysview";
+
+
+// --- Networking ------------------------------------------------------------
+export let net: Net | null = null;
+
+export function __init_index_7136(): void {
+bindFleetNet(() => net);
+}
+
+export function __init_index_7137(): void {
+bindResearchNet(() => net);
+}
+
+export function __init_index_7138(): void {
+bindMarketDerive(() => net, () => pendingFit);
+}
+
+
+// §perf: coalesce the per-View panel refreshes. Views arrive at ~10 Hz, but if the
+// main thread stalls (a GC pause, a background tab that just refocused) the queued
+// backlog is delivered in a burst — and re-running the whole DOM-refresh pipeline
+// once per queued message turns one hiccup into a multi-frame freeze. Instead we
+// stash the work on a single rAF: a burst collapses to ONE refresh reading the
+// latest state, and background tabs (where rAF doesn't fire) skip panel work
+// entirely until refocus. State ingestion + the ongoing-battle high-water tally
+// still run inline on every View (see the View handler), so no data is lost.
+export let viewRefreshRaf = 0;
+
+export function scheduleViewRefresh(): void {
+  if (viewRefreshRaf) return; // already queued — the pending frame reads latest state
+  viewRefreshRaf = requestAnimationFrame(() => {
+    viewRefreshRaf = 0;
+    applyViewRefresh();
+  });
+}
+
+
+export function applyViewRefresh(): void {
+  updateFoundingGuide();
+  // Refresh only the currently-visible rail tab — hidden tabs don't churn (they
+  // re-render on show via setRailTab). Each updater also guards itself.
+  if ($("rail").classList.contains("is-open")) {
+    if (railTab === "system") updateSystemTab();
+    else if (railTab === "fleets") updateFleetsPanel();
+    else if (railTab === "logistics") updateStandingPanel();
+    else if (railTab === "doctrine") updateDoctrinePanel();
+    else if (railTab === "officers") updateOfficersPanel();
+    else if (railTab === "rankings") updateRankingsPanel();
+  }
+  // The selected-ship panel keeps the information AGE ticking (and handles a
+  // contact passing out of view) while it's open.
+  if ($("ship-panel").classList.contains("is-open")) updateShipPanel();
+  // §syndicates: refresh the alliance roster/invites if the panel is open
+  // (guarded by a signature so a half-typed name survives).
+  if ($("syndicate-panel").classList.contains("is-open")) updateSyndicatePanel();
+  if ($("operations-panel").classList.contains("is-open")) updateOperationsPanel();
+  // §TCA: refresh the charter standing if the Faction panel is open (self-guarded).
+  updateFactionPanel();
+  // §research R6: refresh the Programme Boards if open (coarse signature).
+  if ($("research-panel").classList.contains("is-open")) updateResearchPanel();
+  // Hub berths are served fleet reports too: keep the open Fleets tab in step
+  // with arrivals and departures without revealing the authoritative dock list.
+  if ($("hub-panel").classList.contains("is-open")) updateHubPanel();
+  // §management-home: inside the System View, refresh the management column +
+  // the structure markers (setSystemDynamic is idempotent; the panels self-guard).
+  updateSysviewDynamic();
+  // §battle-records: keep an open replay viewer live — rounds grow, the light
+  // frontier advances, the outcome may arrive (guards itself).
+  refreshOpenBattleViewer();
+  // The Market is a navbar overlay now — refresh it when open.
+  if ($("market").classList.contains("is-open")) updateMarket();
+  updateCheckinPanel(); // the check-in modal; guards itself, refreshes ages
+}
+
+
+export function handleCoreEvents(events: CoreEvent[]): void {
+  for (const event of events) {
+    switch (event.kind) {
+      case "LinkChanged":
+      case "GalaxyUpdated":
+      case "CommandSignal":
+      case "CommandChevron":
+      case "BattleConcluded":
+        break;
+      case "ProtocolMismatch":
+        console.warn(`protocol mismatch: server v${event.server}, client expects v${event.client} — a refresh may be needed`);
+        break;
+      case "Welcomed":
+        joinScreen.style.display = "none";
+        hud.style.display = "flex";
+        $("readout").style.display = "block";
+        $("legend").style.display = "block";
+        $("zoom-controls").style.display = "flex";
+        buildRail();
+        buildSystemTab();
+        buildMarketPanel();
+        buildStandingPanel();
+        buildDoctrinePanel();
+        updateDoctrinePanel();
+        setRailTab("system");
+        buildCheckinPanel();
+        openCheckin();
+        void startRenderer();
+        break;
+      case "ViewApplied":
+        renderer.stateVersion++;
+        notifyNewBattles(state.battles);
+        if (openOngoingBattleId !== null && $("battle-panel").classList.contains("is-open")) updateOngoingBattlePanel();
+        scheduleViewRefresh();
+        break;
+      case "BattleRecordsApplied":
+        refreshOpenBattleViewer();
+        break;
+      case "GroundRecordsApplied":
+        refreshOpenGroundViewer();
+        break;
+      case "SectionsApplied":
+        scheduleViewRefresh();
+        break;
+      case "OrderConfirmed":
+        addTransientReport(
+          "✓",
+          "good",
+          `<b>Order confirmed</b> — ${esc(label(event.orderKind))} response light arrived`,
+        );
+        break;
+      case "ReportArrived":
+        addReport(event.report);
+        break;
+      case "EstimateReady":
+        showEngagementEstimate(event.estimate);
+        break;
+      case "TimelineApplied":
+        updateCheckinPanel();
+        break;
+      case "TradeSettled":
+        addTradeNews(event.trade);
+        break;
+      case "IntentChanged":
+        if (event.renderIntentBar) {
+          buildIntentBar();
+          renderIntentBar();
+        }
+        if (event.refreshShip) updateShipPanel();
+        if (event.readout !== undefined) readout().innerHTML = event.readout;
+        break;
+      case "JoinRejected":
+        joinErr.textContent = event.message;
+        break;
+      case "ServerError":
+        readout().innerHTML = `<span style="color:var(--warn)">Server refused: ${esc(event.message)}</span>`;
+        break;
+    }
+  }
+}
+
+
+export function __init_index_7529(): void {
+bindIntentCore(() => net, handleCoreEvents);
+}
+
+
+export function join(): void {
+  const name = nameInput.value.trim();
+  if (!name) {
+    joinErr.textContent = "Enter a corporation name.";
+    return;
+  }
+  joinErr.textContent = "";
+  joinBtn.disabled = true;
+  state.name = name;
+  handleCoreEvents(applyLinkStatus("connecting", state));
+  net?.disconnect();
+
+  net = new Net({
+    onOpen: () => {
+      handleCoreEvents(applyLinkStatus(state.playerId === null ? "connecting" : "reconnecting", state));
+      setHud();
+      net!.send({ type: "Join", name });
+      (window as unknown as { __ss: { net?: unknown } }).__ss.net = net; // debug hook
+    },
+    onMessage: (msg) => {
+      handleCoreEvents(applyServerMessage(msg, state));
+      setHud();
+    },
+    onClose: () => {
+      const resuming = state.playerId !== null;
+      handleCoreEvents(applyLinkStatus(resuming ? "reconnecting" : "offline", state));
+      joinBtn.disabled = resuming;
+      setHud();
+    },
+    onError: () => {
+      const resuming = state.playerId !== null;
+      handleCoreEvents(applyLinkStatus(resuming ? "reconnecting" : "offline", state));
+      if (!resuming) joinErr.textContent = `Could not reach server at ${net?.url ?? ""}.`;
+      joinBtn.disabled = resuming;
+      setHud();
+    },
+  });
+  net.connect();
+}
+
+
+export function __init_index_7571(): void {
+joinBtn.addEventListener("click", join);
+}
+
+export function __init_index_7572(): void {
+nameInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") join();
+});
+}
+
+export function __init_index_7575(): void {
+nameInput.focus();
+}
+
+
+__init_mapchrome_52();
+__init_mapchrome_53();
+__init_mapchrome_54();
+__init_mapchrome_55();
+__init_mapchrome_56();
+__init_mapchrome_88();
+__init_mapchrome_91();
+__init_mapchrome_92();
+__init_mapchrome_142();
+__init_mapchrome_149();
+__init_mapchrome_150();
+__init_mapchrome_314();
+__init_mapchrome_315();
+__init_battle_2931();
+__init_battle_2936();
+__init_index_7136();
+__init_index_7137();
+__init_index_7138();
+__init_founding_7165();
+__init_founding_7356();
+__init_index_7529();
+__init_index_7571();
+__init_index_7572();
+__init_index_7575();
+__init_mapchrome_7576();
+__init_mapchrome_7592();
+__init_mapchrome_7598();
+__init_mapchrome_7599();
