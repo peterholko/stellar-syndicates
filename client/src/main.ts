@@ -1,3 +1,5 @@
+import "./styles/tokens.css";
+
 import { mountDesktopMarkup } from "./shell/desktop/markup";
 
 const shellRoot = document.getElementById("shell-root");

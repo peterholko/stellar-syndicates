@@ -1,3 +1,5 @@
+import "../../styles/desktop.css";
+
 import { bindFleetNet } from "../../core/derive/fleet";
 import { bindMarketDerive } from "../../core/derive/market";
 import { bindResearchNet } from "../../core/derive/research";
