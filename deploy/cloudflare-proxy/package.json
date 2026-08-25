@@ -1,0 +1,16 @@
+{
+  "name": "stellar-syndicates-cloudflare-proxy",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cf-typegen": "wrangler types --include-runtime false",
+    "deploy": "wrangler deploy",
+    "typecheck": "npm run cf-typegen && tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260825.1",
+    "@types/node": "^26.3.0",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.125.0"
+  }
+}

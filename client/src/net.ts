@@ -29,8 +29,9 @@ function resolveServerUrl(): string {
   // In dev the page is on 5173 but the game server is on 8080; if we're already
   // served from the game server, location.port is 8080 and this still resolves.
   const host = location.hostname;
-  const port = location.port === "5173" || location.port === "" ? "8080" : location.port;
-  return `${proto}://${host}:${port}/ws`;
+  const port = location.port === "5173" ? "8080" : location.port;
+  const authority = port ? `${host}:${port}` : host;
+  return `${proto}://${authority}/ws`;
 }
 
 export class Net {
