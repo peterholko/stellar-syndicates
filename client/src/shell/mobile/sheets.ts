@@ -27,14 +27,18 @@ export interface SheetEntry {
   props?: unknown;
 }
 
+export type SheetDetent = "half" | "full";
+
 export interface SheetView {
   title: string;
   eyebrow?: string;
   html: string;
+  /// A dense workspace may open full-height while ordinary command sheets
+  /// retain the half-height default. Refreshes preserve the player's detent.
+  detent?: SheetDetent;
 }
 
 export type SheetRenderer = (entry: SheetEntry) => SheetView;
-export type SheetDetent = "half" | "full";
 
 const HISTORY_KEY = "stellarSyndicatesMobileSheet";
 let nextSession = 1;
@@ -173,8 +177,8 @@ export class SheetStack {
       this.onLayout();
       return;
     }
-    if (resetDetent) this.detent = "half";
     const view = this.renderEntry(entry);
+    if (resetDetent) this.detent = view.detent ?? "half";
     this.eyebrow.textContent = view.eyebrow ?? "Command workspace";
     this.title.textContent = view.title;
     this.back.hidden = this.entries.length < 2;

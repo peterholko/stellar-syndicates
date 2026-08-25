@@ -610,6 +610,100 @@ button.m-primary, .m-action-grid button.m-primary, .m-decision button.m-primary,
 .m-standing-row > button { flex: none; width: 32px; min-height: 32px; padding: 0; }
 .m-order.is-current { margin-inline: -5px; padding-inline: 13px; border-radius: 7px; background: rgba(79,195,255,.08); }
 
+/* Phase 6.1 — the portrait battle metaphor runs top → bottom. The two forces
+   keep the desktop record grammar, while the old horizontal salvo gutter turns
+   into a vertical exchange between them. */
+.m-battle { display: grid; gap: 9px; padding-bottom: 8px; }
+.m-battle-status {
+  display: grid;
+  grid-template-columns: 9px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid rgba(79,195,255,.22);
+  border-radius: 8px;
+  background: rgba(79,195,255,.055);
+  font-size: 9px;
+}
+.m-battle-status i { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+.m-battle-status span { color: var(--dim); font-size: 8px; text-align: right; }
+.m-battle-status.is-live i { background: var(--positive); box-shadow: 0 0 8px rgba(95,208,138,.7); animation: m-battle-pulse 1.4s ease-in-out infinite; }
+.m-battle-status.is-complete { border-color: var(--field-bd); background: rgba(255,255,255,.025); }
+@keyframes m-battle-pulse { 50% { opacity: .45; } }
+
+.m-battle .bv-sub { display: flex; align-items: center; justify-content: space-between; gap: 7px; color: var(--dim); font-size: 10px; }
+.m-battle .bv-vs { color: var(--ink); font-weight: 700; }
+.m-battle .bv-vs .you { color: var(--accent); }
+.m-battle .bv-vs .foe { color: var(--rival); }
+.m-battle-arena {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--field-bd);
+  border-radius: 10px;
+  background: rgba(255,255,255,.02);
+}
+.m-battle .bv-side { display: grid; gap: 6px; min-width: 0; }
+.m-battle .bv-side__hd { display: flex; align-items: center; gap: 7px; color: var(--dim); font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.m-battle .bv-side__hd strong { padding: 2px 5px; border: 1px solid rgba(79,195,255,.28); border-radius: 5px; color: var(--accent); font-size: 9px; }
+.m-battle .bv-side.right .bv-side__hd { flex-direction: row; text-align: left; }
+.m-battle .bv-fampip { margin-left: auto; font-size: 10px; letter-spacing: 0; text-transform: none; }
+.m-battle .bv-fits,
+.m-battle .bv-side.right .bv-fits { color: var(--dim); font-size: 10px; line-height: 1.45; text-align: left; }
+.m-battle .bv-krow,
+.m-battle .bv-side.right .bv-krow { display: grid; grid-template-columns: minmax(76px, 1fr) minmax(70px, 1.35fr) auto; align-items: center; gap: 7px; direction: ltr; }
+.m-battle .m-battle-kind { overflow: hidden; color: var(--ink); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.m-battle .bv-krow__bar { position: relative; height: 12px; overflow: hidden; border-radius: 4px; background: rgba(255,255,255,.065); }
+.m-battle .bv-krow__fill { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: var(--accent); }
+.m-battle .bv-side.right .bv-krow__fill { inset: 0 auto 0 0; background: var(--rival); }
+.m-battle .bv-krow__fill.gone { background: #4f596c; }
+.m-battle .bv-krow__n { min-width: 37px; color: var(--ink); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
+.m-battle .bv-krow__n.is-gone { color: var(--dim); text-decoration: line-through; }
+.m-battle .bv-krow__kill { margin-left: 3px; color: var(--negative); font-weight: 800; }
+.m-battle .bv-plat { justify-self: start; padding: 3px 6px; border: 1px dashed var(--field-bd); border-radius: 5px; color: var(--dim); font-size: 10px; }
+.m-battle .bv-plat.gone { border-color: var(--negative); color: var(--negative); text-decoration: line-through; }
+
+.m-battle-salvos { height: 54px; display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 66px; border-block: 1px solid rgba(255,255,255,.055); }
+.m-battle-salvos > span { color: var(--dim); font-size: 9px; }
+.m-battle-salvos .bv-arrow { position: relative; width: 8px !important; min-width: 8px; border-radius: 4px; opacity: .9; }
+.m-battle-salvos .bv-arrow.r { align-self: flex-start; margin: 3px 0 0; background: linear-gradient(180deg, rgba(79,195,255,.3), var(--accent)); }
+.m-battle-salvos .bv-arrow.l { align-self: flex-end; margin: 0 0 3px; background: linear-gradient(0deg, rgba(224,87,75,.3), #e0574b); }
+.m-battle-salvos .bv-arrow::after { content: ""; position: absolute; left: -3px; border: 7px solid transparent; }
+.m-battle-salvos .bv-arrow.r::after { bottom: -11px; border-top-color: currentColor; }
+.m-battle-salvos .bv-arrow.l::after { top: -11px; border-bottom-color: currentColor; }
+.m-battle-salvos .bv-arrow span { position: absolute; left: 13px; color: var(--dim); font-size: 8px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.m-battle-salvos .bv-arrow.r span { bottom: 0; }
+.m-battle-salvos .bv-arrow.l span { top: 0; }
+
+.m-tactical-stage { position: relative; min-height: 250px; overflow: hidden; border: 1px solid var(--field-bd); border-radius: 10px; background: #05070d; }
+.m-battle-theater { width: 100%; height: clamp(250px, 39dvh, 340px); }
+.m-tactical-stage > button { position: absolute; right: 7px; bottom: 7px; z-index: 4; min-height: 34px; padding: 5px 8px; border: 1px solid rgba(255,255,255,.2); border-radius: 7px; background: rgba(5,7,13,.8); color: var(--ink); font: inherit; font-size: 9px; }
+.m-battle .bv-theater-holder { position: relative; width: 100%; height: 100%; }
+.m-battle .bv-theater-holder canvas { width: 100%; height: 100%; object-fit: contain; }
+.m-battle .bv-theater-tip { position: absolute; z-index: 3; max-width: 170px; padding: 5px 7px; border: 1px solid var(--field-bd); border-radius: 5px; background: rgba(5,7,13,.93); color: var(--ink); font-size: 9px; pointer-events: none; }
+.m-battle .bv-theater-hint { position: absolute; left: 7px; bottom: 7px; max-width: 58%; color: var(--dim); font-size: 8px; pointer-events: none; }
+.m-battle .bv-theater-banner { position: absolute; inset: 9px auto auto 50%; z-index: 3; transform: translateX(-50%); padding: 4px 8px; border-radius: 5px; background: rgba(5,7,13,.84); color: var(--ink); font-size: 10px; white-space: nowrap; }
+.m-battle-truth { aspect-ratio: 1; max-height: 330px; margin-inline: auto; border: 1px solid var(--field-bd); border-radius: 10px; background: #05070d; }
+.m-battle-truth svg { display: block; width: 100%; height: 100%; }
+
+.m-battle .bv-notes { display: grid; gap: 5px; }
+.m-battle .bv-note { padding: 6px 8px; border-left: 2px solid #d08a5a; border-radius: 4px; background: rgba(208,138,90,.1); color: var(--ink); font-size: 10px; }
+.m-battle .bv-note.retreat { border-color: var(--warn); background: rgba(255,180,84,.1); }
+.m-battle .bv-note.join { border-color: var(--positive); background: rgba(95,208,138,.1); }
+.m-battle-transport { display: grid; gap: 7px; padding-top: 3px; }
+.m-battle-playback { display: flex; align-items: center; gap: 7px; }
+.m-battle .bv-btn { min-height: 38px; padding: 6px 10px; border: 1px solid var(--field-bd); border-radius: 7px; background: var(--btn-bg); color: var(--ink); font: inherit; font-size: 10px; }
+.m-battle .bv-btn.on { border-color: var(--accent); background: rgba(79,195,255,.12); color: var(--accent); }
+.m-battle .bv-speeds { display: inline-flex; gap: 4px; }
+.m-battle .bv-scrub { display: flex; align-items: stretch; gap: 2px; width: 100%; height: 28px; }
+.m-battle .bv-tick { flex: 1 1 0; min-width: 3px; min-height: 28px; padding: 0; border: 0; border-radius: 2px; background: rgba(255,255,255,.11); }
+.m-battle .bv-tick.seen { background: rgba(79,195,255,.38); }
+.m-battle .bv-tick.cur { background: var(--accent); }
+.m-battle .bv-hatch { flex: 0 0 38px; border: 1px dashed var(--field-bd); border-radius: 2px; background: repeating-linear-gradient(45deg, rgba(255,255,255,.04) 0 4px, rgba(255,255,255,.11) 4px 8px); }
+.m-battle-transport > small { color: var(--dim); font-size: 9px; line-height: 1.35; }
+
 .m-join {
   position: fixed;
   inset: 0;

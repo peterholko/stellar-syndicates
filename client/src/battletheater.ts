@@ -39,12 +39,23 @@ import { COL_OWN as TINT_OWN, COL_OTHER as TINT_FOE } from "./render";
 /// withdraw margin — mirrors the sim's WITHDRAW_EXIT_RADIUS 1400).
 const ARENA_R = 1000;
 const VIEW_R = 1500;
-/// Canvas size — the viewer overlay is min(1140px, 96vw) wide.
-const CANVAS_W = 1068;
-const CANVAS_H = 672;
+/// Logical canvas size. Desktop keeps the original 1068×672 stage; portrait
+/// viewers pass their measured stage at attach time. Keeping these mutable is
+/// deliberate: Pixi's application survives shell/viewport changes, so resizing
+/// must not recreate the WebGL context or discard the camera.
+const DEFAULT_CANVAS_W = 1068;
+const DEFAULT_CANVAS_H = 672;
+let CANVAS_W = DEFAULT_CANVAS_W;
+let CANVAS_H = DEFAULT_CANVAS_H;
 /// Arena → screen scale at zoom 1: fit the withdraw margin into the canvas
-/// height. The CAMERA multiplies this (wheel zoom, drag pan, auto-fit).
-const SCALE = CANVAS_H / (2 * VIEW_R);
+/// SHORT axis. The arena is radial, so using either width or height alone can
+/// clip it in portrait. The CAMERA multiplies this (zoom, pan, auto-fit).
+let SCALE = Math.min(CANVAS_W, CANVAS_H) / (2 * VIEW_R);
+
+export interface TheaterViewport {
+  width: number;
+  height: number;
+}
 
 /// Client mirror of the sim's hull masses (also mirrored in main.ts — keep in
 /// step with crates/sim/src/ship.rs::hull_mass).
@@ -215,6 +226,7 @@ let debrisG: Graphics | null = null;
 let debrisField: { x: number; y: number; dx: number; dy: number; r: number; tint: number; bornRound: number }[] = [];
 let banner: HTMLDivElement | null = null;
 let bannerKey = "";
+let cameraHint: HTMLDivElement | null = null;
 // Degradation ladder: rolling fps estimate → tier 0 full · 1 no miss-tracers
 // · 2 thinned drivers · 3 reduced debris. Torpedo arcs, flak, deaths, and
 // mitigation feedback are NEVER dropped (they carry information).
@@ -232,6 +244,8 @@ let camY = 0;
 let camZoom = DEFAULT_ZOOM;
 let dragging = false;
 let dragLast: [number, number] | null = null;
+const activePointers = new Map<number, [number, number]>();
+let pinchStart: { distance: number; zoom: number; worldX: number; worldY: number } | null = null;
 const CAM_ZOOM_MIN = 0.6;
 const CAM_ZOOM_MAX = 4.5;
 
@@ -240,6 +254,24 @@ const sy = (y: number) => CANVAS_H / 2 + (y - camY) * SCALE * camZoom;
 /// Screen → arena (for zoom-toward-cursor and drag panning).
 const ax = (px: number) => camX + (px - CANVAS_W / 2) / (SCALE * camZoom);
 const ay = (py: number) => camY + (py - CANVAS_H / 2) / (SCALE * camZoom);
+
+function resetCamera(): void {
+  camX = 0;
+  camY = 0;
+  camZoom = DEFAULT_ZOOM;
+}
+
+function configureViewport(viewport: TheaterViewport): boolean {
+  const width = Math.max(240, Math.min(1600, Math.round(viewport.width)));
+  const height = Math.max(240, Math.min(1200, Math.round(viewport.height)));
+  if (width === CANVAS_W && height === CANVAS_H) return false;
+  CANVAS_W = width;
+  CANVAS_H = height;
+  SCALE = Math.min(CANVAS_W, CANVAS_H) / (2 * VIEW_R);
+  app?.renderer.resize(CANVAS_W, CANVAS_H);
+  backdropKey = "";
+  return true;
+}
 
 /// Allocation-free deterministic jitter in [0,1) — integer-hash based, for
 /// per-frame cosmetics (PD fans, shake) where a full PRNG stream per frame
@@ -317,10 +349,10 @@ async function initApp(): Promise<void> {
   banner.className = "bv-theater-banner";
   banner.style.display = "none";
   holder.appendChild(banner);
-  const hint = document.createElement("div");
-  hint.className = "bv-theater-hint";
-  hint.textContent = "scroll zoom · drag pan · double-click resets";
-  holder.appendChild(hint);
+  cameraHint = document.createElement("div");
+  cameraHint.className = "bv-theater-hint";
+  cameraHint.textContent = "scroll zoom · drag pan · double-click resets";
+  holder.appendChild(cameraHint);
   // Camera controls: wheel zooms toward the cursor, drag pans, double-click
   // returns to auto-fit. (The theater takes no input that isn't a camera or
   // transport control — the standing interaction law.)
@@ -337,22 +369,54 @@ async function initApp(): Promise<void> {
     camY = wy - (my - CANVAS_H / 2) / (SCALE * camZoom);
   }, { passive: false });
   app.canvas.addEventListener("pointerdown", (ev: PointerEvent) => {
-    dragging = true;
-    dragLast = [ev.clientX, ev.clientY];
+    activePointers.set(ev.pointerId, [ev.clientX, ev.clientY]);
+    if (activePointers.size === 1) {
+      dragging = true;
+      dragLast = [ev.clientX, ev.clientY];
+    } else if (activePointers.size === 2) {
+      dragging = false;
+      dragLast = null;
+      const [a, b] = [...activePointers.values()];
+      const r = app!.canvas.getBoundingClientRect();
+      const mx = ((((a[0] + b[0]) / 2) - r.left) / r.width) * CANVAS_W;
+      const my = ((((a[1] + b[1]) / 2) - r.top) / r.height) * CANVAS_H;
+      pinchStart = {
+        distance: Math.max(1, Math.hypot(a[0] - b[0], a[1] - b[1])),
+        zoom: camZoom,
+        worldX: ax(mx),
+        worldY: ay(my),
+      };
+    }
     app?.canvas.setPointerCapture?.(ev.pointerId);
   });
-  const endDrag = () => { dragging = false; dragLast = null; };
-  app.canvas.addEventListener("pointerup", endDrag);
-  app.canvas.addEventListener("pointercancel", endDrag);
-  app.canvas.addEventListener("dblclick", () => {
-    camX = 0; // reset to the arena overview
-    camY = 0;
-    camZoom = DEFAULT_ZOOM;
-  });
+  const endPointer = (ev: PointerEvent) => {
+    activePointers.delete(ev.pointerId);
+    pinchStart = null;
+    const remaining = [...activePointers.values()][0];
+    dragging = !!remaining;
+    dragLast = remaining ?? null;
+  };
+  app.canvas.addEventListener("pointerup", endPointer);
+  app.canvas.addEventListener("pointercancel", endPointer);
+  app.canvas.addEventListener("dblclick", resetCamera);
   // Pointer-move does double duty: drag = pan; hover = torpedo-arc tooltip
   // (arcs are immediate-mode, so the canvas hit-tests the few live arc heads).
   app.canvas.addEventListener("pointermove", (ev: PointerEvent) => {
-    if (dragging && dragLast && app) {
+    if (activePointers.has(ev.pointerId)) activePointers.set(ev.pointerId, [ev.clientX, ev.clientY]);
+    if (activePointers.size >= 2 && pinchStart && app) {
+      const [a, b] = [...activePointers.values()];
+      const r0 = app.canvas.getBoundingClientRect();
+      if (r0.width < 2 || r0.height < 2) return;
+      const distance = Math.max(1, Math.hypot(a[0] - b[0], a[1] - b[1]));
+      const mx = ((((a[0] + b[0]) / 2) - r0.left) / r0.width) * CANVAS_W;
+      const my = ((((a[1] + b[1]) / 2) - r0.top) / r0.height) * CANVAS_H;
+      camZoom = Math.min(CAM_ZOOM_MAX, Math.max(CAM_ZOOM_MIN, pinchStart.zoom * distance / pinchStart.distance));
+      camX = pinchStart.worldX - (mx - CANVAS_W / 2) / (SCALE * camZoom);
+      camY = pinchStart.worldY - (my - CANVAS_H / 2) / (SCALE * camZoom);
+      hideTip();
+      return;
+    }
+    if (dragging && dragLast && activePointers.size === 1 && app) {
       const r0 = app.canvas.getBoundingClientRect();
       if (r0.width < 2 || r0.height < 2) return;
       const kx = CANVAS_W / r0.width, ky = CANVAS_H / r0.height;
@@ -393,14 +457,24 @@ async function initApp(): Promise<void> {
 /// record. Safe to call every render.
 let attachGen = 0; // bumped by theaterClose — cancels in-flight attaches
 
-export function theaterAttach(mount: HTMLElement, rec: BattleRecordView, pirateId: PlayerId | null = null): void {
+export function theaterAttach(
+  mount: HTMLElement,
+  rec: BattleRecordView,
+  pirateId: PlayerId | null = null,
+  viewport: TheaterViewport = { width: DEFAULT_CANVAS_W, height: DEFAULT_CANVAS_H },
+): void {
   const gen = attachGen;
+  const resized = configureViewport(viewport);
   ensureApp().then(
     () => {
       // A close that landed while init was in flight wins: stay closed.
       if (gen !== attachGen || !holder || !app) return;
       if (holder.parentElement !== mount) mount.appendChild(holder);
       bindRecord(rec, pirateId);
+      if (resized) buildBackdrop(rec);
+      if (cameraHint) cameraHint.textContent = matchMedia("(pointer: coarse)").matches
+        ? "pinch zoom · drag pan · Reset camera restores overview"
+        : "scroll zoom · drag pan · double-click resets";
       app.ticker.start();
     },
     () => {
@@ -419,10 +493,21 @@ export function theaterSetTime(round: number, frac: number, live: boolean): void
   st.live = live;
 }
 
+/// Reliable touch counterpart to double-click. Mobile chrome calls this from
+/// an explicit button; keeping the reset in the theater preserves one camera
+/// law across mouse and touch without synthesizing a fragile gesture.
+export function theaterResetCamera(): void {
+  resetCamera();
+}
+
 /// The viewer closed — stop rendering entirely (the map is never affected).
 export function theaterClose(): void {
   attachGen++; // cancel any attach still awaiting init
   st = null;
+  activePointers.clear();
+  pinchStart = null;
+  dragging = false;
+  dragLast = null;
   app?.ticker?.stop(); // ticker exists only once init completed
   if (holder?.parentElement) holder.parentElement.removeChild(holder);
 }
@@ -451,6 +536,7 @@ export function theaterDebug(): Record<string, unknown> | null {
     deaths: st.fx?.deaths.map((d) => ({ t: d.t, cls: d.cls, ship: d.shipIdx })) ?? null,
     debris: debrisField.length,
     tier: perfTier,
+    viewport: { width: CANVAS_W, height: CANVAS_H, scale: +SCALE.toFixed(4) },
     cam: { x: +camX.toFixed(1), y: +camY.toFixed(1), zoom: +camZoom.toFixed(3), withdrawFrom: st.withdrawFrom },
   };
 }
