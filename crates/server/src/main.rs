@@ -8,6 +8,7 @@
 //!
 //! Configuration via environment:
 //! * `PORT`         — HTTP/WS listen port (default 8080)
+//! * `BIND_ADDR`    — HTTP/WS bind IP (default 0.0.0.0)
 //! * `GALAXY_SEED`  — u64 seed for deterministic generation (default 0xC0FFEE)
 //! * `MAX_PLAYERS`  — sizes the galaxy (default 4)
 //! * `HOME_RING_SU`  — optional absolute home-ring radius override
@@ -25,7 +26,7 @@ mod timeline;
 mod view;
 mod ws;
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use axum::extract::{FromRef, State};
 use axum::routing::get;
@@ -96,6 +97,10 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let port = env_u64("PORT", 8080) as u16;
+    let bind_addr = std::env::var("BIND_ADDR")
+        .ok()
+        .and_then(|value| value.parse::<IpAddr>().ok())
+        .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     let seed = env_u64("GALAXY_SEED", 0xC0FFEE);
     let max_players = env_u64("MAX_PLAYERS", 4) as u32;
     let pacing_scale = pacing_scale();
@@ -176,7 +181,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let addr = SocketAddr::new(bind_addr, port);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!(%addr, "server listening (ws://<host>:{port}/ws)");
     axum::serve(listener, app).await?;
