@@ -101,6 +101,10 @@ const DELAY_ICON_PX = 36; // fixed screen px; source resolution is for high-DPI 
 // one system's local well geometry before the schematic handoff. ---
 const ZOOM_MIN_FACTOR = 0.9;
 const ZOOM_MAX_FACTOR = 96;
+// First login opens on the corporation's home region rather than the abstract
+// galaxy origin. At 4× the home, its sensor neighbourhood, and usually
+// the Market Hub all read together on both desktop and portrait phones.
+const INITIAL_HOME_ZOOM_FACTOR = 4;
 const MACHINE_ZOOM_END = 24;
 // Battle markers keep the old semantic doorway (0.62 × the former 24× max).
 // Extending the system approach must not push battle entry four times deeper.
@@ -487,6 +491,10 @@ export class Renderer {
   private renderedFrames = 0;
   private cx = 0;
   private cy = 0;
+  /// The first served View for a login establishes the useful home-region
+  /// camera once. Ordinary reconnects retain the player's pan/zoom; an explicit
+  /// sign-out clears playerId and arms the next login again.
+  private homeFocusedPlayerId: ViewState["playerId"] = null;
   /// True once the user has zoomed/panned — so a window resize PRESERVES their
   /// view (re-clamping scale) instead of snapping back to fit-to-galaxy.
   private userView = false;
@@ -1127,6 +1135,29 @@ export class Renderer {
     }
     this.drawBackground();
     // Systems are redrawn per-frame in update() (ownership/stockpile are dynamic).
+  }
+
+  private focusHomeOnFirstView(state: ViewState): void {
+    if (state.playerId === null) {
+      this.homeFocusedPlayerId = null;
+      return;
+    }
+    if (this.homeFocusedPlayerId === state.playerId || !state.commandCenter) return;
+
+    // A shell can reveal its map chrome in the same turn as Welcome. Do not
+    // consume the one-shot focus against a transient 1px camera rectangle; the
+    // next render frame will retry after layout has produced a real map area.
+    const rect = this.cameraRect;
+    if (rect.w < 64 || rect.h < 64) return;
+
+    this.scale = this.clampScale(this.fitScale() * INITIAL_HOME_ZOOM_FACTOR);
+    this.cx = rect.x + rect.w / 2 - state.commandCenter.x * this.scale;
+    this.cy = rect.y + rect.h / 2 - state.commandCenter.y * this.scale;
+    // Treat the intentional opening shot like a chosen camera so subsequent
+    // mobile viewport settling preserves its world focus instead of re-fitting.
+    this.userView = true;
+    this.homeFocusedPlayerId = state.playerId;
+    this.viewDirty = true;
   }
 
   private drawStarfield(): void {
@@ -3062,6 +3093,7 @@ export class Renderer {
     if (!state.galaxy) return;
     this.renderedFrames++;
     if (this.galaxy !== state.galaxy) this.setGalaxy(state.galaxy);
+    this.focusHomeOnFirstView(state);
 
     // Advance any galaxy⇄system transition (camera push + crossfade), and decide
     // which scene(s) to draw this frame. Only one scene is "live" at rest; during
