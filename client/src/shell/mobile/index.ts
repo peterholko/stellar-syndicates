@@ -6,6 +6,7 @@ import type { CoreEvent } from "../../core/events";
 import { installPressGuard } from "../dom";
 import type { CoreContext, Rect, Shell } from "../types";
 import { MobileBattleTheater } from "./battle";
+import { MobileGroundTheater } from "./ground";
 import { MobileMapInteraction } from "./map";
 import { mountMobileMarkup } from "./markup";
 import { MobileParitySurfaces } from "./parity";
@@ -25,6 +26,7 @@ class MobileShell implements Shell {
   private sheets: SheetStack | null = null;
   private map: MobileMapInteraction | null = null;
   private battle: MobileBattleTheater | null = null;
+  private ground: MobileGroundTheater | null = null;
   private surfaces: MobileSurfaces | null = null;
   private parity: MobileParitySurfaces | null = null;
   private statusSignature = "";
@@ -45,6 +47,7 @@ class MobileShell implements Shell {
     );
     activateSheetStack(this.sheets);
     this.battle = new MobileBattleTheater(ctx, this.sheets);
+    this.ground = new MobileGroundTheater(ctx, this.sheets);
     this.map = new MobileMapInteraction(ctx, {
       openSheet: (entry) => this.openSheet(entry),
       onSemanticChange: (mode) => this.semanticChanged(mode),
@@ -81,6 +84,7 @@ class MobileShell implements Shell {
     }, { signal });
     byId("m-sheet-body").addEventListener("click", (event) => {
       if (this.battle?.handleClick(event)) return;
+      if (this.ground?.handleClick(event)) return;
       if (this.parity?.handleClick(event)) return;
       if (this.surfaces?.handleClick(event)) return;
       const action = (event.target as Element).closest<HTMLButtonElement>("button[data-mobile-act]")?.dataset.mobileAct;
@@ -136,6 +140,7 @@ class MobileShell implements Shell {
     this.map?.tick();
     this.map?.syncArmedChip();
     this.battle?.tick();
+    this.ground?.tick();
   }
 
   cameraRect(): Rect {
@@ -148,6 +153,8 @@ class MobileShell implements Shell {
     this.map = null;
     this.battle?.close();
     this.battle = null;
+    this.ground?.close();
+    this.ground = null;
     this.parity = null;
     this.surfaces = null;
     activateSheetStack(null);
@@ -185,6 +192,7 @@ class MobileShell implements Shell {
 
   private syncDestination(entry: SheetEntry | null): void {
     this.battle?.sync(entry);
+    this.ground?.sync(entry);
     const destination = entry?.id ?? "";
     for (const button of byId("m-tabs").querySelectorAll<HTMLButtonElement>("button[data-destination]")) {
       if (button.dataset.destination === destination) button.setAttribute("aria-current", "page");
@@ -212,11 +220,12 @@ class MobileShell implements Shell {
       hub: ["Wormhole Hub", "Market infrastructure"],
       ship: ["Fleet", "Fleet command"],
       battle: ["Battle", "Observed theater"],
+      ground: ["Ground action", "Observed landing"],
       intent: ["Confirm order", "Command preview"],
     };
     const [title, eyebrow] = titles[entry.id];
     if (entry.id === "intent") return this.renderIntentSheet(title, eyebrow);
-    const surface = this.battle?.render(entry) ?? this.parity?.render(entry) ?? this.surfaces?.render(entry);
+    const surface = this.battle?.render(entry) ?? this.ground?.render(entry) ?? this.parity?.render(entry) ?? this.surfaces?.render(entry);
     if (surface) return surface;
     return {
       title,

@@ -273,6 +273,9 @@ export class MobileParitySurfaces {
         if (isSystemTab(button.dataset.tab)) this.systemTab = button.dataset.tab;
         this.sheets.refresh();
         break;
+      case "open-ground":
+        if (button.dataset.id) this.hooks.openSheet({ id: "ground", props: { id: button.dataset.id } });
+        break;
       case "open-planet": {
         const systemId = button.dataset.system;
         const bodyId = Number(button.dataset.body);
@@ -369,7 +372,7 @@ export class MobileParitySurfaces {
   }
 
   private ownsAction(action: string): boolean {
-    return /^(research|officer|operation|syndicate|diplomacy|flagship|faction|open-rankings|ranking|system|open-planet|open-build|open-shipyard|open-logistics|open-doctrine|planet|worker|migration|module-build|build|ship-|hub-|logistics|doctrine)/.test(action);
+    return /^(research|officer|operation|syndicate|diplomacy|flagship|faction|open-rankings|ranking|system|open-ground|open-planet|open-build|open-shipyard|open-logistics|open-doctrine|planet|worker|migration|module-build|build|ship-|hub-|logistics|doctrine)/.test(action);
   }
 
   private renderResearch(): SheetView {
@@ -597,6 +600,7 @@ export class MobileParitySurfaces {
       (mine ? `<span><small>Population</small><b>${fmtPopulation(dynamic?.population ?? 0)}</b></span><span><small>Storage</small><b>${fmt(dynamic?.storage_used ?? 0)}/${fmt(dynamic?.storage_cap ?? 0)}</b></span>` : "") + `</div>` +
       (mine ? `<section class="m-section"><h3>Development pools</h3><div class="m-ledger">${(["resource", "industrial", "infrastructure"] as Pool[]).map((pool) => `<span>${POOL_LABEL[pool]}<b>${pools[pool].used}/${pools[pool].total}</b></span>`).join("")}</div></section>` : "") +
       `<section class="m-section"><h3>Fleets at ${esc(name)}</h3><div class="m-list">${fleetRows || `<div class="m-muted">No own fleets in the served picture.</div>`}</div></section>` +
+      this.groundAction(systemId) +
       `<button type="button" class="m-wide-button" data-mobile-act="system-focus" data-id="${esc(systemId)}">Center on map</button>`;
   }
 
@@ -636,9 +640,23 @@ export class MobileParitySurfaces {
     const publicData = `<details class="m-details"><summary>World data</summary><div><div class="m-stat-grid"><span><small>Environment</small><b>${human(body.environment)}</b></span><span><small>Size</small><b>${human(body.size)}</b></span><span><small>Geology</small><b>${body.geology ? human(body.geology) : "Unsurveyed"}</b></span><span><small>Construction</small><b>×${body.construction_time_mult.toFixed(2)}</b></span></div>` +
       (body.special ? `<article class="m-feature-card"><small>RARE FEATURE</small><b>${human(body.special)}</b><span>${esc(body.special_effect ?? "Rare planetary feature")}</span></article>` : "") +
       `<section class="m-section"><h3>Deposits</h3>${body.deposits == null ? `<div class="m-muted">Geology unsurveyed.</div>` : body.deposits.map((deposit) => `<div class="m-order"><b>${human(deposit.resource)}</b><span>richness ${deposit.richness.toFixed(2)} · ${deposit.reserves == null ? "renewable" : `${fmt(deposit.reserves)} reserves`}</span></div>`).join("") || `<div class="m-muted">No deposits.</div>`}</section></div></details>`;
-    if (!mine) return { title: body.name, eyebrow: `${human(body.kind)} · observed world`, html: publicData };
+    const ground = this.groundAction(systemId);
+    if (!mine) return { title: body.name, eyebrow: `${human(body.kind)} · observed world`, html: publicData + ground };
     const active = this.planetTab === "economy" ? this.planetEconomy(systemId, dynamic, body) : this.planetTab === "population" ? this.planetPopulation(systemId, body) : this.planetInfrastructure(systemId, dynamic, body);
-    return { title: body.name, eyebrow: "Owned world · served management", html: `<div class="m-subtabs m-subtabs--3">${tabs}</div>${active}${publicData}` };
+    return { title: body.name, eyebrow: "Owned world · served management", html: `<div class="m-subtabs m-subtabs--3">${tabs}</div>${active}${publicData}${ground}` };
+  }
+
+  /** A ground record is already player-served and fog-filtered. Surfacing it
+   * here mirrors the desktop system/planet affordance without consulting the
+   * authoritative fight or inventing rounds beyond the arrived prefix. */
+  private groundAction(systemId: string): string {
+    const records = this.ctx.state.groundRecords.filter((record) => record.system === systemId);
+    const record = records.find((candidate) => candidate.outcome === null)
+      ?? records.sort((a, b) => b.started_at - a.started_at)[0];
+    if (!record) return "";
+    const label = record.outcome === null ? "Watch landing in progress" : "Replay latest landing";
+    const detail = record.fidelity === "participant" ? "Participant record" : "Observed from orbit";
+    return `<section class="m-section m-ground-link"><h3>Ground action</h3><button type="button" class="m-wide-button" data-mobile-act="open-ground" data-id="${esc(record.id)}">${label}</button><small>${detail} · ${record.rounds.length} arrived round${record.rounds.length === 1 ? "" : "s"}</small></section>`;
   }
 
   private planetEconomy(systemId: string, dynamic: SystemStateView, body: BodyView): string {

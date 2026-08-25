@@ -20,6 +20,7 @@ export type SheetId =
   | "hub"
   | "ship"
   | "battle"
+  | "ground"
   | "intent";
 
 export interface SheetEntry {
