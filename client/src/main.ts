@@ -2,7 +2,7 @@
 
 import { Net } from "./net";
 import { renderer } from "./render";
-import { JUMP_DEPARTURE_TTL_S, liveSimTime, state, type LinkStatus, type PendingIntent, type ViewState } from "./state";
+import { liveSimTime, state, type LinkStatus, type PendingIntent, type ViewState } from "./state";
 import { countClassLabel, fleetExactCount, formatId, freightFee, type AcademyRow, type AssignmentView, type BattleRecordView, type BodyView, type BuildState, type CaptainAttribute, type CaptainRosterView, type Commodity, type CompCount, type CountClass, type Deposit, type EngagementPosture, type EntityId, type FleetDoctrine, type GhostView, type GroundRecordView, type KeyframeView, type LandingOddsView, type ManifestEntryView, type MigrationPolicy, type ModuleKind, type ProgrammeView, type RaidOutcome, type RecordCount, type RoundNoteView, type RoundRecordView, type ShipKind, type ShipmentDir, type Side, type SideRecordView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type SystemInfo, type SystemStateView, type TimelineEntry, type TradeEvent, type Vec2 } from "./protocol";
 import { fleetCargoManifest, fleetCargoUnits } from "./protocol";
 import { starConceptUrl, starTypeFor } from "./stars";
@@ -11,13 +11,14 @@ import { theaterAttach, theaterAvailable, theaterClose, theaterDebug, theaterHas
 import { groundTheaterAttach, groundTheaterAvailable, groundTheaterClose, groundTheaterDebug, groundTheaterSetTime, groundTheaterStep } from "./groundtheater";
 import { badgeChip, chip, icon, type IconKey, type IconSize, label } from "./icons";
 import { AAA_SERVICE_FEE, FUEL_PER_MASS_DISTANCE, HULL_MASS, WARP_FACTOR, aaaEstimate, battleReportForRecord, battleViewerTimers, berthed, bindFleetNet, clearBattleAftermathTimer, clearBattleCloseTimer, coLocatedOwnFleet, constructionStock, dockLoadStock, dockedAtSystem, dockedFreighterStock, estimatedFuelForLeg, fleetCargoCapacity, fleetFuelCapacity, fleetRosterDockName, guardCapable, hauls, hubDockedFleets, jumpCapable, recordForReport, sendCrew, shipKindLabel, shipMass, shipRoleLore, sideFamily, sumOwnComposition, systemFleetsAt, type SalvoFamily } from "./core/derive/fleet";
-import { SHIP_STATS, SURVEY_SECS_UI, TCA_INCIDENT_LOSS_UI, armedSelection, battleCommandDelay, clearJumpDepartureSelection, intentSummary, intentTargetLabel, jumpDepartureSelection, latestGroundRecordFor, latestPendingOrder, loadBattleMarks, nextDecisionLabel, orderEtaRange, orderObject, orderPoint, saveBattleMarks, siegeProgress, updateSignals } from "./core/derive/orders";
+import { SHIP_STATS, SURVEY_SECS_UI, TCA_INCIDENT_LOSS_UI, battleCommandDelay, clearJumpDepartureSelection, intentSummary, intentTargetLabel, jumpDepartureSelection, latestGroundRecordFor, latestPendingOrder, loadBattleMarks, nextDecisionLabel, orderEtaRange, orderObject, orderPoint, saveBattleMarks, siegeProgress, updateSignals } from "./core/derive/orders";
 import { COMMODITIES, FITTING_POINTS, MODULE_SLOTS, POOL_LABEL, POOL_OF, SHIP_YARD, YARD_TITLE, bindMarketDerive, bodyPoolUsage, buildOption, dispatchBuildKey, fitLegal, freightDraft, freightDraftEntries, hullResearched, kitAffordable, kitCostLabel, marketAverageQuote, marketReservations, moduleLedgerAt, moduleRecipeValue, ownedHaulDestinations, poolUsage, pruneMarketReservations, recentMarketOrders, recordRecentMarketOrder, reserveMarketOrder, reservedMarketCredits, settleMarketReservation, shipOption, shippableStock, shipyardBoost, slipsFor, spendableMarketCredits, structOption, systemFlavor, warehouseUnits, type BuildOpt, type Pool, type PoolUse, type ShipOpt, type StructOpt } from "./core/derive/market";
 import { bindResearchNet, nodeBonusDesc, projectedBand, researchQueueIds, sendResearchQueue } from "./core/derive/research";
 import { captainXpFloor, fleetCommandLoad, captainTitle, officerFleetName, affinityLine, traitLine } from "./core/derive/captains";
-import { HYPERLIMIT_SU, REPORT_RECENT_S, allySystems, commandDelayTo, emplacementLabel, endpointLabel, foundingHomeSystemId, freshSurveyReports, gravityWellAt, knownDeposits, locName, nearestKnownDock, nearestSystemName, operationSystemName, ownedSystems, pushSystemDynamic, systemName, systemUnderCursor, viewedSystemId } from "./core/derive/geo";
+import { HYPERLIMIT_SU, REPORT_RECENT_S, allySystems, commandDelayTo, emplacementLabel, endpointLabel, foundingHomeSystemId, freshSurveyReports, knownDeposits, locName, nearestKnownDock, nearestSystemName, operationSystemName, ownedSystems, pushSystemDynamic, systemName, systemUnderCursor, viewedSystemId } from "./core/derive/geo";
 import { agoLabel, arrivalLocal, doneAtLocal, fmt, fmtBuildDur, fmtDur, fmtEta, operationCopy, operationHullArt, operationIcon, operationReward, operationTitle, rejectText, trend, triggerLabel } from "./core/derive/format";
 import type { CoreEvent } from "./core/events";
+import { resolveMapClick, resolveSystemClick, type MapClickResult } from "./core/mapclick";
 import { applyLinkStatus, applyServerMessage, jumpDepartureKey } from "./core/session";
 
 // --- DOM handles -----------------------------------------------------------
@@ -4289,392 +4290,86 @@ function openCapturePanel(id: number): void {
   $("battle-panel").classList.add("is-open");
 }
 
+// Apply a shell-neutral click decision through the existing desktop affordances.
+// The resolver owns legality and guard order; this wrapper owns DOM presentation.
+function applyMapClickResult(result: MapClickResult): void {
+  if (result.kind === "reject") {
+    if (result.clearAiming === "jump") clearJumpAiming(true);
+    else if (result.clearAiming === "guard") clearGuardAiming(true);
+    if (result.clearAiming) updateShipPanel();
+    readout().innerHTML = result.reason;
+    return;
+  }
+  if (result.kind === "intent") {
+    if (result.clearAiming === "jump") clearJumpAiming(true);
+    else if (result.clearAiming === "guard") clearGuardAiming(true);
+    if (result.clearAiming) updateShipPanel();
+    beginPendingIntent(result.intent);
+    if (result.readout) readout().innerHTML = result.readout;
+    return;
+  }
+  if (result.kind !== "select") return;
+
+  const target = result.target;
+  switch (target.type) {
+    case "fleet":
+      selectShip(target.id);
+      break;
+    case "jumpDeparture":
+      selectJumpDeparture(target.key);
+      break;
+    case "emplacement":
+      selectEmplacement(target.id);
+      break;
+    case "system":
+      state.selectedSystemId = target.id;
+      openRail("system");
+      break;
+    case "anchor":
+      break;
+    case "hub":
+      openHubPanel();
+      break;
+    case "ongoingBattle":
+      openOngoingBattlePanel(target.id);
+      break;
+    case "aftermath":
+      deselectShip();
+      state.selectedSystemId = null;
+      renderer.selectedBattleMarkerId = target.id;
+      openBattlePanel(target.id);
+      break;
+    case "capture":
+      deselectShip();
+      state.selectedSystemId = null;
+      renderer.selectedBattleMarkerId = target.id;
+      openCapturePanel(target.id);
+      break;
+    case "systemBody":
+      openPlanetPanel(target.detail);
+      break;
+    case "clearSystemBody":
+      closePlanetPanel();
+      break;
+  }
+  if ("readout" in target && target.readout) readout().innerHTML = target.readout;
+}
+
 // Click INSIDE the System View: a planet/moon opens its details; empty space
 // clears the selection/panel. No move orders, no raids — those are galaxy-only.
 function handleSystemClick(sx: number, sy: number): void {
-  const d = renderer.systemPick(sx, sy);
-  if (d) openPlanetPanel(d);
-  else closePlanetPanel();
+  applyMapClickResult(resolveSystemClick(sx, sy, {
+    state, renderer, jumpAiming, guardAiming, emplaceArmed: null,
+  }));
 }
 
-// §co-location cycling: the last selection click's spot + the stack it hit, so a
-// repeat click at the same spot advances through co-located selectables instead
-// of re-picking the same one. Reset implicitly whenever the spot or stack changes.
-let clickCycle: { sx: number; sy: number; keys: string; index: number } | null = null;
-
-// The map CLICK action (select own ship · select a star system incl. home ·
-// inspect a command anchor · raid a rival ghost · move order to empty space). All
-// hit-testing goes through screenToWorld, so it's correct at any zoom/pan. Run
-// ONLY on a tap (see installInteraction's click-vs-drag gate) — never on a pan.
-function handleMapClick(sx: number, sy: number, shift = false): void {
-    // §aftermath-select: any fresh map click drops the concluded-battle marker
-    // ring; the aftermath/capture branches below re-set it if they hit a marker.
-    renderer.selectedBattleMarkerId = null;
-    // Jump aiming owns the next map click, including clicks over systems. The
-    // preview is anchored to the SERVED ghost and public well geometry only;
-    // truth is deliberately left to the sim when the order arrives.
-    if (jumpAiming && state.galaxy) {
-      const ship = state.ghosts.find((g) => g.id === jumpAiming && g.own);
-      if (!ship || !jumpCapable(ship)) {
-        clearJumpAiming(true);
-        updateShipPanel();
-        readout().innerHTML = `<span style="color:var(--warn)">That fleet is no longer available for a jump.</span>`;
-        return;
-      }
-      const dest = renderer.screenToWorld(sx, sy);
-      const distance = Math.hypot(dest.x - ship.pos.x, dest.y - ship.pos.y);
-      const originWell = gravityWellAt(ship.pos);
-      const destinationWell = gravityWellAt(dest);
-      if (distance > state.galaxy.jump_range + 1e-6) {
-        readout().innerHTML = `<span style="color:var(--warn)"><b>Out of jump range.</b> ` +
-          `${Math.round(distance).toLocaleString()} su from the served sighting; maximum ` +
-          `${Math.round(state.galaxy.jump_range).toLocaleString()} su.</span>`;
-        return;
-      }
-      if (originWell) {
-        readout().innerHTML = `<span style="color:var(--warn)"><b>Cannot spool here.</b> ` +
-          `The served sighting is inside ${esc(originWell)}.</span>`;
-        return;
-      }
-      if (destinationWell) {
-        readout().innerHTML = `<span style="color:var(--warn)"><b>Cannot jump there.</b> ` +
-          `The destination is inside ${esc(destinationWell)}.</span>`;
-        return;
-      }
-      clearJumpAiming(true);
-      updateShipPanel();
-      beginPendingIntent({ shipId: ship.id, verb: "jump", dest });
-      return;
-    }
-    // Explicit escort targeting owns the next map click. Only another OWN,
-    // presently served fleet is a legal charge; the sim re-checks ownership
-    // when the light-delayed order reaches the Interceptor.
-    if (guardAiming) {
-      const interceptor = state.ghosts.find((g) => g.id === guardAiming && guardCapable(g));
-      if (!interceptor) {
-        clearGuardAiming(true);
-        updateShipPanel();
-        readout().innerHTML = `<span style="color:var(--warn)">That Interceptor is no longer available.</span>`;
-        return;
-      }
-      const target = state.ghosts
-        .filter((g) => g.own && g.id !== interceptor.id && !g.docked)
-        .map((g) => {
-          const point = renderer.worldToScreen(g.pos);
-          return { g, d: Math.hypot(point.x - sx, point.y - sy) };
-        })
-        .filter(({ g, d }) => d < Math.max(24, renderer.fleetHitRadius(g)))
-        .sort((a, b) => a.d - b.d || a.g.id.localeCompare(b.g.id))[0]?.g;
-      if (!target) {
-        readout().innerHTML = `<span style="color:var(--warn)"><b>Choose one of your fleet markers.</b> ` +
-          `Docked fleets are assigned after they undock. <span class="dim">Esc cancels.</span></span>`;
-        return;
-      }
-      clearGuardAiming(true);
-      updateShipPanel();
-      beginPendingIntent({ shipId: interceptor.id, verb: "guard", targetId: target.id, dest: target.pos });
-      return;
-    }
-    // §contestable-territory Part 1: BLOCKADE PREVIEW. With one of your RAIDER
-    // fleets selected, clicking a rival-owned system proposes a blockade there —
-    // the raider's second verb, mirroring "click a rival contact to raid." Runs
-    // BEFORE ordinary selection so the click previews the order rather than just
-    // selecting the system. (A raider is required; the sim re-checks on confirm.)
-    {
-      const selF = state.selectedShipId ? state.ghosts.find((x) => x.id === state.selectedShipId) : undefined;
-      if (selF && selF.own && selF.kind === "raider" && net && state.galaxy) {
-        let hitSys: SystemInfo | null = null;
-        let bestD = Infinity;
-        for (const sys of state.galaxy.systems) {
-          const s = renderer.worldToScreen(sys.pos);
-          const d = Math.hypot(s.x - sx, s.y - sy);
-          if (d < Math.max(15, renderer.systemHitRadius(sys)) && d < bestD) { bestD = d; hitSys = sys; }
-        }
-        const dyn = hitSys ? state.systems.find((s) => s.id === hitSys!.id) : undefined;
-        const rival = dyn && dyn.owner !== null && dyn.owner !== state.playerId;
-        if (hitSys && rival) {
-          beginPendingIntent({ shipId: selF.id, verb: "blockade", targetId: hitSys.id, dest: hitSys.pos });
-          return;
-        }
-      }
-      // §explore Part 2 — SURVEY-ON-CLICK (the blockade idiom for the scout's
-      // second job): a SCOUT-carrying own fleet selected + click an UNSURVEYED
-      // system → order a survey. Surveyed systems click-select normally (no
-      // intercept — you already know their geology).
-      if (selF && selF.own && net && state.galaxy && (selF.composition ?? []).some((c) => c.kind === "scout" && c.count > 0)) {
-        let hitSys: SystemInfo | null = null;
-        let bestD = Infinity;
-        for (const sys of state.galaxy.systems) {
-          const s = renderer.worldToScreen(sys.pos);
-          const d = Math.hypot(s.x - sx, s.y - sy);
-          if (d < Math.max(15, renderer.systemHitRadius(sys)) && d < bestD) { bestD = d; hitSys = sys; }
-        }
-        if (hitSys && knownDeposits(hitSys.id) === null) {
-          beginPendingIntent({ shipId: selF.id, verb: "survey", targetId: hitSys.id, dest: hitSys.pos });
-          return;
-        }
-      }
-    }
-
-    // Selection priority + CO-LOCATION CYCLING. A star SYSTEM and every visible
-    // SHIP are hit-tested TOGETHER, because things stack at one spot all the time:
-    // your starting fleet parks on your home system, a freshly-built ship spawns
-    // right on its shipyard, several fleets sit at one berth. A fixed priority
-    // can only ever surface ONE of them — whatever loses is then permanently
-    // unclickable (the parked-ship-vs-home-system tug-of-war). So instead,
-    // REPEATED clicks at the same spot CYCLE through everything hit there. The
-    // system sorts FIRST on a near-tie (SYSTEM_BIAS), so the home body still
-    // opens on the first click — but one more click reaches the ship on top of
-    // it. Ships out in open space still select on the first click as before.
-    const SYSTEM_BIAS = 5; // px the system may be "farther" and still sort ahead on a tie
-    const CLICK_CYCLE_PX = 10; // a click within this of the last cycles the stack
-
-    // Each candidate carries its selection side-effect (`pick`), a short `label`
-    // for the cycle hint, and its base `readout` message — the readout is set
-    // FRESH per pick (never appended), so cycling to the system clears stale
-    // ship text and the hint can't accumulate across clicks.
-    type Candidate = {
-      key: string;
-      sortD: number;
-      label: string;
-      pick: () => void;
-      readout: string;
-      enemy?: GhostView;
-    };
-    const cands: Candidate[] = [];
-
-    // §one-battle-one-icon: fleets ENGAGED in a battle are represented by the
-    // single battle icon (their own markers are suppressed), so exclude them from
-    // ship/rival hit-testing — otherwise a participant ghost sitting under the
-    // icon would swallow the click meant to OPEN the battle panel. A withdrawn
-    // fleet leaves the participant set, so its marker becomes clickable again.
-    const engagedIds = new Set<string>();
-    for (const bt of state.battles) for (const p of bt.participants) engagedIds.add(p);
-
-    const selected = state.selectedShipId
-      ? state.ghosts.find((x) => x.id === state.selectedShipId)
-      : undefined;
-    const haveOwn = !!selected && selected.own;
-    const haveRaider = haveOwn && selected!.kind === "raider";
-    const haveStrike = haveOwn
-      && !!selected!.composition?.some((c) => c.kind === "raider");
-
-    for (const g of state.ghosts) {
-      if (engagedIds.has(g.id)) continue;
-      if (g.docked) continue;
-      const s = renderer.worldToScreen(g.pos);
-      const d = Math.hypot(s.x - sx, s.y - sy);
-      // Hit radius tracks the MARKER's current on-screen size (formation sprite
-      // included), so it grows with the sprite in the deep-zoom native-size band;
-      // floored at 24px so normal-zoom clicking feels exactly as before.
-      const rad = Math.max(24, renderer.fleetHitRadius(g));
-      if (d < rad) {
-        if (g.own) {
-          cands.push({
-            key: `ship:${g.id}`, sortD: d, label: shipKindLabel(g.kind),
-            pick: () => selectShip(g.id), // opens the fog-aware ship panel; clears any system selection
-            readout: `<b>${esc(shipKindLabel(g.kind))}</b> selected — details in the panel. ` +
-              `Click empty space to move it · click a <span style="color:#ff7a6b">rival</span> to raid · press <b>R</b> to recall.`,
-          });
-        } else {
-          const contact = g.tca && g.kind === "freighter"
-            ? g.rescue_service ? "AAA Rescue Tender" : g.migrant ? "Authority Migrant Liner" : "Authority Freighter"
-            : shipKindLabel(g.kind);
-          cands.push({
-            key: `ship:${g.id}`, sortD: d, label: contact,
-            pick: () => selectShip(g.id),
-            readout: `<b>${esc(contact)}</b> selected — its light-delayed details are in the panel.`,
-            enemy: g,
-          });
-        }
-      }
-    }
-
-    // A jump scar is a real, light-delayed historical object. Keep it in the
-    // same co-location cycle as ships/systems so an origin on top of another
-    // marker remains reachable rather than letting either object steal clicks.
-    const jumpNow = liveSimTime();
-    for (const departure of state.jumpDepartures) {
-      if (jumpNow - departure.learned_at >= JUMP_DEPARTURE_TTL_S) continue;
-      const s = renderer.worldToScreen(departure.pos);
-      const d = Math.hypot(s.x - sx, s.y - sy);
-      if (d >= renderer.jumpDepartureHitRadius()) continue;
-      const key = jumpDepartureKey(departure);
-      const owner = departure.owner_name?.trim() || `Corporation ${formatId(departure.owner)}`;
-      cands.push({
-        key: `jump:${key}`,
-        sortD: d,
-        label: `${shipKindLabel(departure.kind)} jump scar`,
-        pick: () => selectJumpDeparture(key),
-        readout: `<b>Jump departure</b> selected — ${esc(owner)}'s ${esc(shipKindLabel(departure.kind))} fleet jumped away from here. ` +
-          `<span class="dim">Destination unknown; details in the panel.</span>`,
-      });
-    }
-
-    // Structures are map objects, not scenery: a sensor participates in the
-    // same candidate cycling as fleets and systems.
-    //
-    // With one of your ARMED fleets selected, clicking a RIVAL structure orders
-    // its demolition — the same grammar as "raider + click a rival contact =
-    // raid", so the verb needs no new UI. Anything else inspects.
-    for (const e of state.emplacements) {
-      const s = renderer.worldToScreen(e.pos);
-      const d = Math.hypot(s.x - sx, s.y - sy);
-      if (d >= renderer.emplacementHitRadius()) continue;
-      const striker = e.own ? undefined : armedSelection();
-      const name = emplacementLabel(e.kind);
-      if (striker) {
-        cands.push({
-          key: `emp:${e.id}`, sortD: d, label: `demolish ${name}`,
-          pick: () => beginPendingIntent({ shipId: striker.id, verb: "demolish", targetId: e.id, dest: e.pos }),
-          readout: `Demolition preview: tear down a rival <b>${esc(name)}</b>. ` +
-            `<span class="dim">The fleet must hold station there to finish the job; driven off, the work resets.</span>`,
-        });
-      } else {
-        cands.push({
-          key: `emp:${e.id}`, sortD: d, label: name,
-          pick: () => selectEmplacement(e.id),
-          readout: `<b>${esc(name)}</b> selected — details in the panel.`,
-        });
-      }
-    }
-
-    if (state.galaxy) {
-      for (const sys of state.galaxy.systems) {
-        const s = renderer.worldToScreen(sys.pos);
-        const d = Math.hypot(s.x - sx, s.y - sy);
-        // Hit radius follows the star's rendered disk in the deep-zoom band —
-        // capped (~90px) so a max-zoom giant never blankets the map — with the
-        // old 15px floor so normal-zoom clicking is unchanged.
-        const rad = Math.max(15, renderer.systemHitRadius(sys));
-        if (d < rad) {
-          cands.push({
-            key: `sys:${sys.id}`, sortD: d - SYSTEM_BIAS, label: sys.name,
-            pick: () => { state.selectedSystemId = sys.id; openRail("system"); }, // → setRailTab renders the detail
-            readout: `<b>${esc(sys.name)}</b> selected — details in the rail.`,
-          });
-        }
-      }
-    }
-
-    if (cands.length) {
-      cands.sort((a, b) => a.sortD - b.sortD);
-      const keys = cands.map((c) => c.key).join(",");
-      // Same spot + same stack as the previous click → advance to the next
-      // candidate; otherwise start at the front (the system, by the bias sort).
-      const prev = clickCycle;
-      const same = prev !== null
-        && Math.hypot(prev.sx - sx, prev.sy - sy) <= CLICK_CYCLE_PX
-        && prev.keys === keys;
-      const index = same ? (prev!.index + 1) % cands.length : 0;
-      clickCycle = { sx, sy, keys, index };
-      const chosen = cands[index];
-      let preserveActionReadout = false;
-      if (chosen.enemy && shift && haveStrike && net) {
-        // Shift is the explicit destroy gesture even inside a co-located stack.
-        beginPendingIntent({ shipId: selected!.id, verb: "attack", targetId: chosen.enemy.id, dest: chosen.enemy.pos });
-        preserveActionReadout = true;
-      } else if (chosen.enemy && cands.length === 1 && haveRaider && net) {
-        // A lone rival contact keeps the established raider-click grammar. In a
-        // stack, a normal click means inspect/cycle; otherwise a neutral carrier
-        // sitting under your Interceptor could never have its own panel opened.
-        beginPendingIntent({ shipId: selected!.id, verb: "raid", targetId: chosen.enemy.id, dest: chosen.enemy.pos });
-        preserveActionReadout = true;
-      } else {
-        chosen.pick();
-      }
-      // Fresh readout = the chosen thing's message, plus a stack hint naming what
-      // one more click reaches (so co-located things never read as unselectable).
-      let msg = chosen.readout;
-      if (chosen.enemy && cands.length === 1 && haveStrike && !haveRaider) {
-        msg += ` <span class="dim">Shift+click it to ATTACK with your selected fleet.</span>`;
-      }
-      if (cands.length > 1) {
-        const next = cands[(index + 1) % cands.length];
-        msg += ` <span class="dim">· ${cands.length} here — click again for <b>${esc(next.label)}</b>.</span>`;
-      }
-      if (!preserveActionReadout) readout().innerHTML = msg;
-      return;
-    }
-
-    // A home ANCHOR (command base) — the prominent "small circle" that marks where
-    // a corporation commands from. It is NOT a star system (no deposits to claim),
-    // so it has no System view; but clicking it should explain what it is instead
-    // of feeling dead. Light-gated: a rival's base reveals nothing beyond "they're
-    // here" (their systems/stockpiles/orders never leak). Own ships are picked
-    // above, so the parked starting fleet still selects normally.
-    let anchorPick: import("./protocol").AnchorView | null = null;
-    let bestA = 14;
-    for (const a of state.anchors) {
-      const s = renderer.worldToScreen(a.pos);
-      const d = Math.hypot(s.x - sx, s.y - sy);
-      if (d < bestA) {
-        bestA = d;
-        anchorPick = a;
-      }
-    }
-    if (anchorPick) {
-      const ownA = anchorPick.owner !== null && anchorPick.owner === state.playerId;
-      readout().innerHTML = ownA
-        ? `<b>Your command center</b> — your vantage on the galaxy. Everything you see is light-delayed from here; nothing reaches you faster than its light.`
-        : anchorPick.owner !== null
-          ? `<b>Rival command base</b> — a rival corporation commands from here. <span class="dim">You can see the base, but its systems, stockpiles &amp; orders never leak. To contest a rival, <b>claim and hold the star systems</b> around it.</span>`
-          : `<b>Empty command site</b> — no corporation is based here.`;
-      return;
-    }
-
-    // The WORMHOLE HUB landmark (public geography): show its detail panel.
-    // Checked AFTER ships/rivals so fleets parked at the hub stay individually
-    // selectable/raid-targetable; before the empty-space move order.
-    if (state.galaxy) {
-      const hs = renderer.worldToScreen(state.galaxy.hub);
-      if (Math.hypot(hs.x - sx, hs.y - sy) < Math.max(24, renderer.hubHitRadius())) {
-        openHubPanel();
-        return;
-      }
-    }
-
-    // §one-battle-one-icon: the ongoing BATTLE icon → the live battle panel
-    // (its participants' own markers are suppressed, so this is how you reach
-    // your engaged fleets to Withdraw). Checked here among the map chrome.
-    {
-      const hit = renderer.battlePick(sx, sy);
-      if (hit !== null) {
-        openOngoingBattlePanel(hit);
-        return;
-      }
-    }
-    // §battle-aftermath: a concluded-battle marker (owner-only UI) → its full
-    // results. After ships/systems/hub — the marker is small screen-space
-    // chrome and must never steal a gameplay click — before the move order.
-    {
-      const hit = renderer.aftermathPick(sx, sy);
-      if (hit !== null) {
-        // §aftermath-select: select it like any map object — standard ring + panel.
-        deselectShip();
-        state.selectedSystemId = null;
-        renderer.selectedBattleMarkerId = hit;
-        openBattlePanel(hit);
-        return;
-      }
-    }
-    // §contestable-territory Part 2: a capture marker → the capture results.
-    {
-      const hit = renderer.capturePick(sx, sy);
-      if (hit !== null) {
-        deselectShip();
-        state.selectedSystemId = null;
-        renderer.selectedBattleMarkerId = hit;
-        openCapturePanel(hit);
-        return;
-      }
-    }
-
-    // Empty space → move order for the selected OWN ship (a rival can't be moved).
-    if (haveOwn && net) {
-      const dest = renderer.screenToWorld(sx, sy);
-      beginPendingIntent({ shipId: selected!.id, verb: "move", dest });
-    }
+// The map CLICK action runs only on a tap (see installInteraction's click-vs-
+// drag gate). Shift and mobile long-press share the explicit ATTACK modifier.
+function handleMapClick(sx: number, sy: number, shift = false, long = false): void {
+  renderer.selectedBattleMarkerId = null;
+  applyMapClickResult(resolveMapClick(sx, sy, { shift, long }, {
+    state, renderer, jumpAiming, guardAiming, emplaceArmed: null,
+  }));
 }
 
 // §emplacements: what each standing structure IS, in the player's terms —

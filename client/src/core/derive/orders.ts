@@ -200,9 +200,9 @@ export function battleCommandDelay(b: BattleView): number | null {
 // client mirror of the sim's `is_combatant()` gate on demolition, read off the
 // same per-hull attack weights the panel shows. A crane or a convoy is not a
 // wrecking crew, so selecting one leaves a rival structure merely inspectable.
-export function armedSelection(): GhostView | undefined {
-  const g = state.selectedShipId
-    ? state.ghosts.find((x) => x.id === state.selectedShipId && x.own)
+export function armedSelection(st = state): GhostView | undefined {
+  const g = st.selectedShipId
+    ? st.ghosts.find((x) => x.id === st.selectedShipId && x.own)
     : undefined;
   if (!g) return undefined;
   const armed = g.composition?.length

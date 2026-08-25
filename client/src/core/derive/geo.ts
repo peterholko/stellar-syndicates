@@ -14,8 +14,8 @@ let knownGeologyIds: Set<string> | null = null;
 export const freshSurveyReports = new Map<string, number>();
 
 
-export function gravityWellAt(pos: Vec2): string | null {
-  const galaxy = state.galaxy;
+export function gravityWellAt(pos: Vec2, st = state): string | null {
+  const galaxy = st.galaxy;
   if (!galaxy) return null;
   if (Math.hypot(pos.x - galaxy.hub.x, pos.y - galaxy.hub.y) < galaxy.hyperlimit) {
     return "the Market Hub's gravity well";
@@ -76,8 +76,8 @@ export function systemUnderCursor(sx: number, sy: number, slack = 22): SystemInf
 
 /// §explore R2: OUR known geology for a system — the exact deposit table iff we
 /// surveyed it or own it (from the light-gated view), else null (band only).
-export function knownDeposits(sysId: string): Deposit[] | null {
-  return state.systems.find((s) => s.id === sysId)?.deposits ?? null;
+export function knownDeposits(sysId: string, st = state): Deposit[] | null {
+  return st.systems.find((s) => s.id === sysId)?.deposits ?? null;
 }
 
 /// The currently-viewed system id, or null when not in the System View.
