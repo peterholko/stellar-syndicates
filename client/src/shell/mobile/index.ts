@@ -367,7 +367,7 @@ class MobileShell implements Shell {
         : state.link === "connecting"
           ? "connecting…"
           : "offline";
-    const values = [credits, link, state.ghosts.length, state.name, state.playerId, state.simTime, state.corpsInView, state.wallet?.valuation];
+    const values = [credits, reserved, link, state.ghosts.length, state.name, state.playerId, state.simTime, state.corpsInView, state.wallet?.credits, state.wallet?.valuation];
     const signature = values.join("|");
     if (!force && signature === this.statusSignature) return;
     this.statusSignature = signature;
@@ -382,6 +382,8 @@ class MobileShell implements Shell {
     byId("m-time").textContent = state.link === "online" ? `${state.simTime.toFixed(1)}s` : "—";
     byId("m-corps").textContent = state.link === "online" ? String(state.corpsInView) : "—";
     byId("m-equity").textContent = state.wallet ? Math.round(state.wallet.valuation).toLocaleString() : "—";
+    byId("m-account-credits").textContent = state.wallet ? Math.round(state.wallet.credits).toLocaleString() : "—";
+    byId("m-reserved-credits").textContent = state.wallet ? Math.round(reserved).toLocaleString() : "—";
   }
 }
 

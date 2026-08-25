@@ -181,12 +181,20 @@ export class SheetStack {
       this.onLayout();
       return;
     }
+    const openDetails = resetDetent
+      ? new Set<string>()
+      : new Set([...this.body.querySelectorAll<HTMLDetailsElement>("details[open]")].map((detail, index) => this.detailsKey(detail, index)));
     const view = this.renderEntry(entry);
     if (resetDetent) this.detent = view.detent ?? "half";
     this.eyebrow.textContent = view.eyebrow ?? "Command workspace";
     this.title.textContent = view.title;
     this.back.hidden = this.entries.length < 2;
     setHtml(this.body, view.html);
+    if (openDetails.size) {
+      [...this.body.querySelectorAll<HTMLDetailsElement>("details")].forEach((detail, index) => {
+        if (openDetails.has(this.detailsKey(detail, index))) detail.open = true;
+      });
+    }
     this.onChange(entry);
     this.layout();
   }
@@ -194,6 +202,12 @@ export class SheetStack {
   private setDetent(detent: SheetDetent): void {
     this.detent = detent;
     this.layout();
+  }
+
+  private detailsKey(detail: HTMLDetailsElement, index: number): string {
+    return detail.dataset.mobileDetails
+      ?? detail.querySelector("summary")?.textContent?.trim()
+      ?? `details-${index}`;
   }
 
   private startDrag(event: PointerEvent): void {

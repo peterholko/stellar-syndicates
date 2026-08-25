@@ -598,7 +598,7 @@ export class MobileParitySurfaces {
     const fleetRows = fleets.map((fleet) => `<button type="button" class="m-list-row" data-mobile-act="system-fleet" data-id="${esc(fleet.id)}"><span class="m-list-row__icon">△</span><span class="m-list-row__main"><b>${esc(shipKindLabel(fleet.kind))} fleet</b><small>${fleet.docked ? "docked" : Math.hypot(fleet.vel.x, fleet.vel.y) > 1 ? "under way" : "holding"}</small></span><span class="m-list-row__meta"><small>${fleet.age.toFixed(1)}s delay</small></span></button>`).join("");
     return `<div class="m-stat-grid"><span><small>Owner</small><b>${mine ? "Your corporation" : dynamic?.owner ? "Rival" : "Unclaimed"}</b></span><span><small>Worlds</small><b>${dynamic?.bodies.length ?? 0}</b></span>` +
       (mine ? `<span><small>Population</small><b>${fmtPopulation(dynamic?.population ?? 0)}</b></span><span><small>Storage</small><b>${fmt(dynamic?.storage_used ?? 0)}/${fmt(dynamic?.storage_cap ?? 0)}</b></span>` : "") + `</div>` +
-      (mine ? `<section class="m-section"><h3>Development pools</h3><div class="m-ledger">${(["resource", "industrial", "infrastructure"] as Pool[]).map((pool) => `<span>${POOL_LABEL[pool]}<b>${pools[pool].used}/${pools[pool].total}</b></span>`).join("")}</div></section>` : "") +
+      (mine ? `<section class="m-section"><h3>Development pools</h3><div class="m-ledger">${(["resource", "industrial", "infrastructure"] as Pool[]).map((pool) => `<span>${POOL_LABEL[pool]}<b>${pools[pool].used}/${pools[pool].total}</b></span>`).join("")}</div>${this.developmentPoolHelp()}</section>` : "") +
       `<section class="m-section"><h3>Fleets at ${esc(name)}</h3><div class="m-list">${fleetRows || `<div class="m-muted">No own fleets in the served picture.</div>`}</div></section>` +
       this.groundAction(systemId) +
       `<button type="button" class="m-wide-button" data-mobile-act="system-focus" data-id="${esc(systemId)}">Center on map</button>`;
@@ -692,9 +692,13 @@ export class MobileParitySurfaces {
       const afford = !!recipe && recipe.costs.every((cost) => (have.get(cost.commodity as Commodity) ?? 0) >= cost.units);
       return `<div class="m-service-row"><span><b>${module.name}</b><small>ledger ${dynamic.modules?.[module.kind] ?? 0} · ${recipe?.costs.map((cost) => `${cost.units} ${human(cost.commodity)}`).join(" + ") ?? "recipe unavailable"}</small></span><button type="button" data-mobile-act="module-build" data-system="${esc(systemId)}" data-module="${module.kind}" ${afford ? "" : "disabled"}>Build</button></div>`;
     }).join("")}</section>` : "";
-    return `<section class="m-section m-section--first"><h3>Body slot pools</h3><div class="m-ledger">${(["resource", "industrial", "infrastructure"] as Pool[]).map((pool) => `<span>${POOL_LABEL[pool]}<b>${pools[pool].used}/${pools[pool].total}</b></span>`).join("")}</div></section>` +
+    return `<section class="m-section m-section--first"><h3>Body slot pools</h3><div class="m-ledger">${(["resource", "industrial", "infrastructure"] as Pool[]).map((pool) => `<span>${POOL_LABEL[pool]}<b>${pools[pool].used}/${pools[pool].total}</b></span>`).join("")}</div>${this.developmentPoolHelp()}</section>` +
       `<div class="m-action-grid"><button type="button" class="m-primary" data-mobile-act="open-build" data-system="${esc(systemId)}" data-body="${body.id}">Build structure</button>${(body.structures.shipyard ?? 0) > 0 ? `<button type="button" data-mobile-act="open-shipyard" data-system="${esc(systemId)}" data-body="${body.id}">Build ship</button>` : ""}</div>` +
       `<section class="m-section"><h3>Construction here</h3>${queue || `<div class="m-muted">Nothing queued.</div>`}</section>${modules}`;
+  }
+
+  private developmentPoolHelp(): string {
+    return `<details class="m-details m-help"><summary>How development pools work</summary><div><p>Each pool belongs to one world; system totals add those worlds together. The first tier of a distinct structure uses one slot from its matching pool. Upgrading that same structure uses no additional slot. Ships use shipyard capacity, not these pools.</p></div></details>`;
   }
 
   private setWorkers(button: HTMLElement): void {

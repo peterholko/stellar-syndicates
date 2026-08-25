@@ -8,9 +8,11 @@ import {
   reserveMarketOrder,
   settleMarketReservation,
   spendableMarketCredits,
+  kitAffordable,
+  kitCostLabel,
   warehouseUnits,
 } from "../../core/derive/market";
-import { fleetCargoCapacity, guardCapable, jumpCapable, shipKindLabel } from "../../core/derive/fleet";
+import { fleetCargoCapacity, guardCapable, jumpCapable, shipKindLabel, shipRoleLore } from "../../core/derive/fleet";
 import { foundingHomeSystemId } from "../../core/derive/geo";
 import {
   countClassLabel,
@@ -181,6 +183,20 @@ export class MobileSurfaces {
       case "fleet-rescue":
         if (button.dataset.id) this.ctx.send({ type: "RequestFuelRescue", fleet_id: button.dataset.id });
         break;
+      case "fleet-emplace": {
+        const fleet = this.ownFleet(button.dataset.id);
+        if (!fleet || fleet.kind !== "builder") break;
+        const busy = !!fleet.job || this.ctx.state.pendingOrders.has(fleet.id) || Math.hypot(fleet.vel.x, fleet.vel.y) >= 0.5;
+        const siteError = this.ctx.renderer.siteError("deep_space_sensor", fleet.pos, this.ctx.state);
+        if (busy) this.hooks.notice("The Construction Ship must be idle before it can build.");
+        else if (siteError) this.hooks.notice(`<span class="warn">Can't build here: ${esc(siteError)}</span>`);
+        else if (!kitAffordable("deep_space_sensor")) this.hooks.notice(`<span class="warn">No single owned system can supply ${esc(kitCostLabel("deep_space_sensor"))}.</span>`);
+        else {
+          this.ctx.send({ type: "BuildEmplacement", builder: fleet.id, emplacement: "deep_space_sensor" });
+          this.hooks.notice("Deep-Space Sensor order dispatched.");
+        }
+        break;
+      }
       case "system-select":
         if (button.dataset.id) this.hooks.focusSystem(button.dataset.id);
         break;
@@ -328,6 +344,10 @@ export class MobileSurfaces {
         }).join("")
       : `<div class="m-muted">No commands in flight.</div>`;
     const ownControls = fleet.own ? this.shipControls(fleet) : "";
+    const roleLore = fleet.own ? shipRoleLore(fleet) : "";
+    const supply = fleet.own && fleet.supplied === false
+      ? `<div class="m-warning"><b>Out of provisions.</b> This fleet keeps its guns and current order, but cannot depart again until supplied.</div>`
+      : "";
     return {
       title: `${shipKindLabel(fleet.kind)}${count && count > 1 ? " Fleet" : ""}`,
       eyebrow: fleet.own ? "Your served fleet picture" : fleet.pirate ? "Pirate contact" : "Observed contact",
@@ -335,7 +355,8 @@ export class MobileSurfaces {
         `<span><small>Information delay</small><b>${fmt(fleet.age, 1)}s</b></span>` +
         `<span><small>Drive</small><b>${esc(this.driveLabel(fleet))}</b></span>` +
         `<span><small>Fuel</small><b>${fleet.fuel == null ? "—" : `${fmt(fleet.fuel)}/${fmt(fleet.fuel_capacity ?? 0)}`}</b></span></div>` +
-        `<section class="m-section"><h3>Formation</h3><p>${esc(composition)}</p></section>` +
+        `<section class="m-section"><h3>Formation</h3><p>${esc(composition)}</p>${roleLore ? `<details class="m-details m-help"><summary>Fleet role</summary><div><p>${esc(roleLore)}</p></div></details>` : ""}</section>` +
+        supply +
         `<section class="m-section"><h3>Cargo</h3><div class="m-ledger">${cargo}</div></section>` +
         ownControls +
         `<section class="m-section"><h3>Orders</h3>${orderRows}</section>`,
@@ -343,23 +364,45 @@ export class MobileSurfaces {
   }
 
   private shipControls(fleet: GhostView): string {
-    const disabled = fleet.docked ? "disabled" : "";
     const jump = jumpCapable(fleet)
-      ? `<button type="button" data-mobile-act="fleet-jump" data-id="${esc(fleet.id)}" ${disabled}>Jump</button>` : "";
+      ? `<button type="button" data-mobile-act="fleet-jump" data-id="${esc(fleet.id)}">Jump</button>` : "";
     const guard = guardCapable(fleet)
-      ? `<button type="button" data-mobile-act="fleet-guard" data-id="${esc(fleet.id)}" ${disabled}>Guard</button>` : "";
+      ? `<button type="button" data-mobile-act="fleet-guard" data-id="${esc(fleet.id)}">Guard</button>` : "";
     const recall = this.ctx.state.raids[fleet.id]
       ? `<button type="button" data-mobile-act="fleet-recall" data-id="${esc(fleet.id)}">Recall</button>` : "";
     const unload = fleet.docked && fleetCargoUnits(fleet) > 0
       ? `<button type="button" data-mobile-act="fleet-unload" data-id="${esc(fleet.id)}">Unload</button>` : "";
     const rescue = fleet.stalled && !fleet.rescue_inbound
       ? `<button type="button" data-mobile-act="fleet-rescue" data-id="${esc(fleet.id)}">Call AAA Rescue</button>` : "";
+    const range = this.ctx.state.galaxy?.jump_range;
+    const commandHelp = `<details class="m-details m-help"><summary>Command rules</summary><div>` +
+      `<p>A movement order automatically undocks a berthed fleet. Full speed is fastest but makes dark hulls easier to detect; Stealth is quieter and takes about twice as long.</p>` +
+      (jump ? `<p>Jump destinations must be within ${fmt(range ?? 0)} su of the served sighting, with both ends clear of gravity wells. The true fleet is checked when the delayed order arrives.</p>` : "") +
+      (guard ? `<p>A Guard assignment is light-delayed. Once it arrives, defensive reactions happen locally without another command-center round trip.</p>` : "") +
+      `</div></details>`;
     return `<section class="m-section"><h3>Command</h3><div class="m-action-grid">` +
-      `<button type="button" class="m-primary" data-mobile-act="fleet-move" data-id="${esc(fleet.id)}" ${disabled}>Move</button>` +
+      `<button type="button" class="m-primary" data-mobile-act="fleet-move" data-id="${esc(fleet.id)}">Move</button>` +
       jump + guard + recall + unload + rescue +
       `<button type="button" data-mobile-act="fleet-transit" data-id="${esc(fleet.id)}" data-mode="full">Full speed</button>` +
       `<button type="button" data-mobile-act="fleet-transit" data-id="${esc(fleet.id)}" data-mode="stealth">Stealth</button>` +
-      `</div><small class="m-hint">Select an Interceptor, then tap a rival to raid. Long-press the rival to destroy.</small></section>`;
+      `</div><small class="m-hint">Select an Interceptor, then tap a rival to raid. Long-press the rival to destroy.</small>${commandHelp}</section>` +
+      this.emplacementControls(fleet);
+  }
+
+  private emplacementControls(fleet: GhostView): string {
+    if (fleet.kind !== "builder") return "";
+    const cost = kitCostLabel("deep_space_sensor");
+    const busy = !!fleet.job || this.ctx.state.pendingOrders.has(fleet.id) || Math.hypot(fleet.vel.x, fleet.vel.y) >= 0.5;
+    const siteError = this.ctx.renderer.siteError("deep_space_sensor", fleet.pos, this.ctx.state);
+    const affordable = kitAffordable("deep_space_sensor");
+    const reason = busy ? "Stop here and finish any current job first."
+      : siteError ? siteError
+        : !affordable ? "No single owned system can supply the full kit."
+          : "Open space is legal at this served position.";
+    return `<section class="m-section"><h3>Construction</h3><p>A Deep-Space Sensor is a stationary picket raised where this ship is parked.</p>` +
+      `<div class="m-order"><b>Kit</b><span>${esc(cost)}</span></div><small class="m-hint">One owned system pays the entire kit; stockpiles are not pooled.</small>` +
+      `<div class="${busy || siteError || !affordable ? "m-warning" : "m-muted"}">${esc(reason)}</div>` +
+      `<button type="button" class="m-wide-button m-primary" data-mobile-act="fleet-emplace" data-id="${esc(fleet.id)}" ${busy || siteError || !affordable ? "disabled" : ""}>Build Deep-Space Sensor here</button></section>`;
   }
 
   private renderSystem(entry: SheetEntry): SheetView {
@@ -435,7 +478,8 @@ export class MobileSurfaces {
       `<button type="button" data-mobile-act="market-side" data-side="sell" aria-pressed="${this.marketSide === "sell"}">Sell</button></div>` +
       `<label>Quantity<input id="m-market-qty" type="number" inputmode="numeric" min="1" value="1"></label>` +
       `<p>${selected ? `Observed ${fmt(selected.price, 2)} cr · liquidity ${this.marketSide === "buy" ? selected.available_buy : selected.available_sell}` : "No quote"}</p>` +
-      `<button type="button" class="m-primary" data-mobile-act="market-submit">Send ${human(this.marketSide)} order</button></section></div>` +
+      `<button type="button" class="m-primary" data-mobile-act="market-submit">Send ${human(this.marketSide)} order</button>` +
+      `<details class="m-details m-help"><summary>How Exchange orders clear</summary><div><p>Orders rest for the next uniform-price batch, so reacting fastest gives no advantage. Buys cancel above 10% over their estimated average; sells cancel below 10% under it. Quantity impact and the light-delayed liquidity picture are included.</p></div></details></section></div>` +
       `<section class="m-section"><h3>Open orders</h3>${openRows || `<div class="m-muted">None.</div>`}</section>` +
       `<section class="m-section"><h3>Incoming orders</h3>${incoming || `<div class="m-muted">None in flight.</div>`}</section>` +
       `<section class="m-section"><h3>Recent orders</h3>${recent || `<div class="m-muted">No execution receipts yet.</div>`}</section>`;
@@ -464,7 +508,8 @@ export class MobileSurfaces {
       `<label>Commodity<select id="m-freight-commodity">${commodities}</select></label>` +
       `<label>Units<input id="m-freight-qty" type="number" min="1" inputmode="numeric" value="1"></label>` +
       (this.freightDirection === "inbound" ? `<label class="m-check"><input id="m-freight-sell" type="checkbox"> Sell on arrival</label>` : "") +
-      `<button type="button" class="m-primary" data-mobile-act="freight-submit" ${terms.length ? "" : "disabled"}>Book shipment</button></section>` +
+      `<button type="button" class="m-primary" data-mobile-act="freight-submit" ${terms.length ? "" : "disabled"}>Book shipment</button>` +
+      `<details class="m-details m-help"><summary>Authority freight terms</summary><div><p>The fee is charged at booking and is not refunded if the physical, raidable freighter is lost. Lots beyond one departure's capacity ride later departures. Sell on arrival clears only after the cargo reaches the Hub.</p></div></details></section>` +
       `<section class="m-section"><h3>Shipments</h3>${shipments || `<div class="m-muted">No Authority shipments booked.</div>`}</section>` +
       (docked ? `<section class="m-section"><h3>Hub berths</h3><div class="m-list">${docked}</div></section>` : "");
   }
@@ -474,7 +519,7 @@ export class MobileSurfaces {
     const canHire = !!this.homeSystemId() && spendableMarketCredits() >= cost;
     return `<div class="m-list">${SPECIALISTS.map(([slug, name, role]) =>
       `<div class="m-service-row"><span><b>${name}</b><small>${role}</small></span><button type="button" data-mobile-act="hire-specialist" data-specialist="${slug}" ${canHire ? "" : "disabled"}>Hire · ${fmt(cost)} cr</button></div>`,
-    ).join("")}</div><p class="m-hint">Contracts ship to your home system on a raidable personnel liner.</p>`;
+    ).join("")}</div><p class="m-hint">A posted specialist multiplies matching production lines ×1.75. Contracts ship to your home system on a sub-light, raidable personnel liner.</p>`;
   }
 
   private renderModules(): string {

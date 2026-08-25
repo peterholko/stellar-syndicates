@@ -13,6 +13,9 @@ export const mobileMarkup = String.raw`
         <span class="m-stat"><small>Sim time</small><strong id="m-time">—</strong></span>
         <span class="m-stat"><small>Corps in view</small><strong id="m-corps">—</strong></span>
         <span class="m-stat"><small>Equity</small><strong id="m-equity">—</strong></span>
+        <span class="m-stat"><small>Account report</small><strong id="m-account-credits">—</strong></span>
+        <span class="m-stat"><small>Reserved by orders</small><strong id="m-reserved-credits">—</strong></span>
+        <p class="m-status-help">Credits above are spendable. Market buy orders reserve their maximum protected cost until execution or cancellation.</p>
       </div>
     </header>
 
