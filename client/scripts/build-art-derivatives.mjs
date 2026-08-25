@@ -67,8 +67,38 @@ async function buildLore() {
   return { sources: sources.length, written };
 }
 
-const [captains, lore] = await Promise.all([buildCaptains(), buildLore()]);
+async function buildPwaIcons() {
+  const source = path.join(publicArt, "stellar_syndicates_logo.png");
+  const outputDir = path.join(publicArt, "pwa");
+  await mkdir(outputDir, { recursive: true });
+  const variants = [
+    { name: "icon-192.png", size: 192, logo: 0.86 },
+    { name: "icon-512.png", size: 512, logo: 0.86 },
+    { name: "icon-maskable-512.png", size: 512, logo: 0.70 },
+    { name: "apple-touch-icon.png", size: 180, logo: 0.82 },
+  ];
+  let written = 0;
+  for (const variant of variants) {
+    const output = path.join(outputDir, variant.name);
+    if (!(await stale(source, output))) continue;
+    const logoSize = Math.round(variant.size * variant.logo);
+    const logo = await sharp(source).resize(logoSize, logoSize, { fit: "contain" }).png().toBuffer();
+    await sharp({
+      create: {
+        width: variant.size,
+        height: variant.size,
+        channels: 4,
+        background: "#05070d",
+      },
+    }).composite([{ input: logo, gravity: "center" }]).png({ compressionLevel: 9 }).toFile(output);
+    written++;
+  }
+  return { sources: variants.length, written };
+}
+
+const [captains, lore, pwa] = await Promise.all([buildCaptains(), buildLore(), buildPwaIcons()]);
 console.log(
   `art derivatives: ${captains.sources} captain portraits (${captains.written} written), ` +
-  `${lore.sources} lore illustrations (${lore.written} written)`,
+  `${lore.sources} lore illustrations (${lore.written} written), ` +
+  `${pwa.sources} PWA icons (${pwa.written} written)`,
 );
