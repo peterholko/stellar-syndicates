@@ -35,5 +35,6 @@ export type CoreEvent =
       renderIntentBar?: boolean;
       refreshShip?: boolean;
     }
+  | { kind: "TransportError"; url: string }
   | { kind: "JoinRejected"; message: string }
   | { kind: "ServerError"; message: string };

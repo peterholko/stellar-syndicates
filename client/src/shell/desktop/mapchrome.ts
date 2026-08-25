@@ -3,7 +3,7 @@ import { jumpCapable, shipKindLabel } from "../../core/derive/fleet";
 import { fmt } from "../../core/derive/format";
 import { nearestSystemName, systemUnderCursor } from "../../core/derive/geo";
 import { reservedMarketCredits, spendableMarketCredits } from "../../core/derive/market";
-import { saveBattleMarks, updateSignals } from "../../core/derive/orders";
+import { saveBattleMarks } from "../../core/derive/orders";
 import { armJumpAiming, beginPendingIntent, clearGuardAiming, clearJumpAiming, clearPendingIntent, confirmPendingIntent, intentAiming } from "../../core/intent";
 import { type MapClickResult, resolveMapClick, resolveSystemClick } from "../../core/mapclick";
 import { groundTheaterDebug } from "../../groundtheater";
@@ -11,6 +11,7 @@ import { badgeChip, icon, type IconKey, type IconSize, label } from "../../icons
 import { type BodyView, type Commodity, countClassLabel, formatId, type TimelineEntry } from "../../protocol";
 import { renderer } from "../../render";
 import { type LinkStatus, liveSimTime, state } from "../../state";
+import type { Rect } from "../types";
 import { bindLandingDelegate, buildBattlePanel, closeBattleViewer, enterBattleViewer, openBattlePanel, openBattleViewer, openGroundViewer, openOngoingBattlePanel, theaterDemo, theaterDemoLive } from "./battle";
 import { toggleCheckin } from "./checkin";
 import { closeFaction, toggleFaction } from "./faction";
@@ -107,13 +108,17 @@ export function syncOverlayLayout(): void {
   document.body.classList.toggle("is-planet-panel-open", panelOpen("planet-panel"));
   document.body.classList.toggle("is-build-panel-open", panelOpen("build-panel") || panelOpen("build-ship-panel"));
 
+  renderer.setCameraRect(desktopCameraRect());
+}
+
+export function desktopCameraRect(): Rect {
   let mapRight = window.innerWidth;
   for (const id of RIGHT_DOCK_IDS) {
     if (!panelOpen(id)) continue;
     const box = $(id).getBoundingClientRect();
     if (box.width > 0) mapRight = Math.min(mapRight, box.left);
   }
-  renderer.setCameraRect({ x: 0, y: 0, w: Math.max(1, mapRight), h: Math.max(1, window.innerHeight) });
+  return { x: 0, y: 0, w: Math.max(1, mapRight), h: Math.max(1, window.innerHeight) };
 }
 
 export const overlayLayoutObserver = new MutationObserver(syncOverlayLayout);
@@ -180,10 +185,6 @@ export {
 } from "../dom";
 
 
-// --- Renderer --------------------------------------------------------------
-export let rendererReady = false;
-
-
 // Debug hook (harmless): lets tooling inspect the live view state and transform.
 export function __init_mapchrome_314(): void {
 bindLandingDelegate();
@@ -194,26 +195,15 @@ export function __init_mapchrome_315(): void {
 }
 
 
-export async function startRenderer(): Promise<void> {
-  if (rendererReady) return;
-  await renderer.init($("app"));
-  rendererReady = true;
-  syncOverlayLayout();
-  installInteraction();
-  const frame = () => {
-    updateSignals();
-    renderer.update(state);
-    updateZoomLevel();
-    const scrubEndpoint = renderer.consumeSystemScrubEndpoint();
-    if (scrubEndpoint?.type === "system") {
-      const sys = state.galaxy?.systems.find((s) => s.id === scrubEndpoint.systemId);
-      if (sys) showSystemUi(sys);
-    } else if (scrubEndpoint?.type === "galaxy") {
-      hideSystemUi();
-    }
-    requestAnimationFrame(frame);
-  };
-  requestAnimationFrame(frame);
+export function onDesktopRenderFrame(): void {
+  updateZoomLevel();
+  const scrubEndpoint = renderer.consumeSystemScrubEndpoint();
+  if (scrubEndpoint?.type === "system") {
+    const sys = state.galaxy?.systems.find((s) => s.id === scrubEndpoint.systemId);
+    if (sys) showSystemUi(sys);
+  } else if (scrubEndpoint?.type === "galaxy") {
+    hideSystemUi();
+  }
 }
 
 
