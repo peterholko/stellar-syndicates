@@ -5,6 +5,7 @@ import { formatId } from "../../protocol";
 import type { CoreEvent } from "../../core/events";
 import type { CoreContext, Rect, Shell } from "../types";
 import { mountMobileMarkup } from "./markup";
+import { activateSheetStack, pushSheet, replaceSheet, SheetStack, type SheetEntry, type SheetView } from "./sheets";
 
 const byId = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -12,6 +13,7 @@ class MobileShell implements Shell {
   private root: HTMLElement | null = null;
   private ctx: CoreContext | null = null;
   private abort: AbortController | null = null;
+  private sheets: SheetStack | null = null;
   private statusSignature = "";
 
   async mount(root: HTMLElement, ctx: CoreContext): Promise<void> {
@@ -21,6 +23,13 @@ class MobileShell implements Shell {
     mountMobileMarkup(root);
 
     const signal = this.abort.signal;
+    this.sheets = new SheetStack(
+      (entry) => this.renderSheet(entry),
+      () => this.syncCameraRect(),
+      (entry) => this.syncDestination(entry),
+      signal,
+    );
+    activateSheetStack(this.sheets);
     byId("m-status-toggle").addEventListener("click", () => this.toggleStatus(), { signal });
     byId<HTMLFormElement>("m-join-form").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -28,7 +37,10 @@ class MobileShell implements Shell {
     }, { signal });
     byId("m-tabs").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("button[data-destination]");
-      if (button) this.selectDestination(button.dataset.destination ?? "");
+      if (!button) return;
+      const destination = button.dataset.destination as SheetEntry["id"];
+      if (this.sheets?.current) replaceSheet(destination);
+      else pushSheet(destination);
     }, { signal });
 
     this.syncSessionVisibility();
@@ -64,11 +76,13 @@ class MobileShell implements Shell {
   }
 
   cameraRect(): Rect {
-    return { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
+    return this.sheets?.cameraRect() ?? { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
   }
 
   teardown(): void {
     this.abort?.abort();
+    activateSheetStack(null);
+    this.sheets = null;
     this.abort = null;
     this.root?.replaceChildren();
     this.root = null;
@@ -95,13 +109,42 @@ class MobileShell implements Shell {
     const expanded = button.getAttribute("aria-expanded") !== "true";
     button.setAttribute("aria-expanded", String(expanded));
     byId("m-status-more").hidden = !expanded;
+    this.sheets?.layout();
   }
 
-  private selectDestination(destination: string): void {
+  private syncDestination(entry: SheetEntry | null): void {
+    const destination = entry?.id ?? "";
     for (const button of byId("m-tabs").querySelectorAll<HTMLButtonElement>("button[data-destination]")) {
       if (button.dataset.destination === destination) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
+  }
+
+  private renderSheet(entry: SheetEntry): SheetView {
+    const titles: Record<SheetEntry["id"], [string, string]> = {
+      market: ["Market Hub", "Exchange · warehouse"],
+      fleets: ["Fleets", "Corporate roster"],
+      research: ["Research", "Programme boards"],
+      officers: ["Officers", "Captain roster"],
+      operations: ["Operations", "Contracts · objectives"],
+      syndicate: ["Syndicate", "Alliance network"],
+      faction: ["Faction", "Authority charter"],
+      log: ["Check-in", "Decision inbox"],
+      system: ["System", "System management"],
+      ship: ["Fleet", "Fleet command"],
+      intent: ["Confirm order", "Command preview"],
+    };
+    const [title, eyebrow] = titles[entry.id];
+    return {
+      title,
+      eyebrow,
+      html: `<div class="m-sheet-placeholder"><b>${title}</b><span>This mobile workspace is connected to the shared navigation stack. Its live controls land in the core-loop pass.</span></div>`,
+    };
+  }
+
+  private syncCameraRect(): void {
+    if (!this.ctx) return;
+    this.ctx.renderer.setCameraRect(this.cameraRect());
   }
 
   private syncSessionVisibility(): void {
@@ -114,6 +157,7 @@ class MobileShell implements Shell {
       const reconnecting = this.ctx.state.link === "connecting" || this.ctx.state.link === "reconnecting";
       byId<HTMLButtonElement>("m-join-button").disabled = reconnecting && !!this.ctx.state.name;
     }
+    this.sheets?.layout();
   }
 
   private renderStatus(force = false): void {

@@ -16,6 +16,22 @@ export const mobileMarkup = String.raw`
       </div>
     </header>
 
+    <section id="m-sheet" class="m-sheet" data-detent="half" aria-labelledby="m-sheet-title" hidden>
+      <div class="m-sheet__grip-zone" data-sheet-drag>
+        <span class="m-sheet__grip" aria-hidden="true"></span>
+      </div>
+      <header class="m-sheet__header" data-sheet-drag>
+        <button id="m-sheet-back" type="button" aria-label="Back" hidden>←</button>
+        <div class="m-sheet__heading">
+          <small id="m-sheet-eyebrow">Command workspace</small>
+          <h2 id="m-sheet-title">Workspace</h2>
+        </div>
+        <button id="m-sheet-expand" type="button" aria-label="Expand sheet">↑</button>
+        <button id="m-sheet-close" type="button" aria-label="Close">×</button>
+      </header>
+      <div id="m-sheet-body" class="m-sheet__body"></div>
+    </section>
+
     <nav id="m-tabs" class="m-tabs" aria-label="Destinations" hidden>
       <button type="button" data-destination="market"><span aria-hidden="true">◇</span><small>Market</small></button>
       <button type="button" data-destination="fleets"><span aria-hidden="true">△</span><small>Fleets</small></button>
