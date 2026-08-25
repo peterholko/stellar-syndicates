@@ -210,6 +210,108 @@
 .m-sheet-placeholder b { font-size: 12px; }
 .m-sheet-placeholder span { color: var(--dim); font-size: 11px; line-height: 1.45; }
 
+.m-map-notice {
+  position: fixed;
+  z-index: 29;
+  top: calc(env(safe-area-inset-top, 0px) + 86px);
+  left: 50%;
+  width: min(86vw, 350px);
+  padding: 10px 12px;
+  transform: translate(-50%, -6px);
+  border: 1px solid rgba(143, 227, 160, .24);
+  border-radius: 12px;
+  background: rgba(7, 14, 24, .92);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .36);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.m-map-notice.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.m-armed {
+  position: fixed;
+  z-index: 30;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 76px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 5px 6px 5px 13px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(193, 139, 255, .48);
+  border-radius: 999px;
+  background: rgba(22, 12, 38, .94);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .38), 0 0 22px rgba(149, 90, 225, .13);
+  color: #e8d8ff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  white-space: nowrap;
+}
+
+.m-armed[hidden] { display: none; }
+
+.m-armed button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .08);
+  color: #fff;
+  font: inherit;
+}
+
+.m-intent-card {
+  display: grid;
+  gap: 14px;
+}
+
+.m-intent-card__verb {
+  color: #e7d3ff;
+  font-size: 22px;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.m-intent-card__route {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid rgba(183, 129, 255, .2);
+  border-radius: 12px;
+  background: rgba(140, 74, 225, .08);
+}
+
+.m-sheet-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr;
+  gap: 10px;
+}
+
+.m-sheet-actions button {
+  min-height: 48px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .045);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 750;
+}
+
+.m-sheet-actions .is-primary {
+  border-color: rgba(183, 129, 255, .55);
+  background: linear-gradient(180deg, rgba(149, 90, 225, .55), rgba(108, 53, 176, .62));
+  color: #fff;
+}
+
 .m-join {
   position: fixed;
   inset: 0;

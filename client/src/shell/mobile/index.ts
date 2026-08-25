@@ -4,16 +4,22 @@ import { reservedMarketCredits, spendableMarketCredits } from "../../core/derive
 import { formatId } from "../../protocol";
 import type { CoreEvent } from "../../core/events";
 import type { CoreContext, Rect, Shell } from "../types";
+import { MobileMapInteraction } from "./map";
 import { mountMobileMarkup } from "./markup";
 import { activateSheetStack, pushSheet, replaceSheet, SheetStack, type SheetEntry, type SheetView } from "./sheets";
 
 const byId = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
+const escapeHtml = (value: string): string => value.replace(
+  /[&<>\"]/g,
+  (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '\"': "&quot;" })[character]!,
+);
 
 class MobileShell implements Shell {
   private root: HTMLElement | null = null;
   private ctx: CoreContext | null = null;
   private abort: AbortController | null = null;
   private sheets: SheetStack | null = null;
+  private map: MobileMapInteraction | null = null;
   private statusSignature = "";
 
   async mount(root: HTMLElement, ctx: CoreContext): Promise<void> {
@@ -30,7 +36,12 @@ class MobileShell implements Shell {
       signal,
     );
     activateSheetStack(this.sheets);
+    this.map = new MobileMapInteraction(ctx, {
+      openSheet: (entry) => this.openSheet(entry),
+      onSemanticChange: (mode) => this.semanticChanged(mode),
+    }, signal);
     byId("m-status-toggle").addEventListener("click", () => this.toggleStatus(), { signal });
+    byId("m-armed-cancel").addEventListener("click", () => this.map?.cancelArmedMode(), { signal });
     byId<HTMLFormElement>("m-join-form").addEventListener("submit", (event) => {
       event.preventDefault();
       this.join();
@@ -41,6 +52,11 @@ class MobileShell implements Shell {
       const destination = button.dataset.destination as SheetEntry["id"];
       if (this.sheets?.current) replaceSheet(destination);
       else pushSheet(destination);
+    }, { signal });
+    byId("m-sheet-body").addEventListener("click", (event) => {
+      const action = (event.target as Element).closest<HTMLButtonElement>("button[data-mobile-act]")?.dataset.mobileAct;
+      if (action === "confirm-intent") ctx.intent.confirmPendingIntent();
+      else if (action === "cancel-intent") ctx.intent.clearPendingIntent();
     }, { signal });
 
     this.syncSessionVisibility();
@@ -57,6 +73,7 @@ class MobileShell implements Shell {
   }
 
   onCore(events: CoreEvent[]): void {
+    let refreshSheet = false;
     for (const event of events) {
       if (event.kind === "JoinRejected") {
         byId("m-join-error").textContent = event.message;
@@ -65,14 +82,25 @@ class MobileShell implements Shell {
         byId("m-join-error").textContent = `Could not reach server at ${event.url}.`;
       } else if (event.kind === "ProtocolMismatch") {
         console.warn(`protocol mismatch: server v${event.server}, client expects v${event.client}`);
+      } else if (event.kind === "IntentChanged") {
+        if (event.readout) this.map?.showNotice(event.readout);
+        this.syncIntentSheet();
+      } else if (event.kind === "ServerError") {
+        this.map?.showNotice(`<span class="warn">${escapeHtml(event.message)}</span>`);
+      }
+      if (event.kind === "ViewApplied" || event.kind === "TimelineApplied" || event.kind === "TradeSettled") {
+        refreshSheet = true;
       }
     }
     this.syncSessionVisibility();
     this.renderStatus(true);
+    if (refreshSheet) this.sheets?.refresh();
   }
 
   onViewTick(): void {
     this.renderStatus();
+    this.map?.tick();
+    this.map?.syncArmedChip();
   }
 
   cameraRect(): Rect {
@@ -81,6 +109,8 @@ class MobileShell implements Shell {
 
   teardown(): void {
     this.abort?.abort();
+    this.map?.teardown();
+    this.map = null;
     activateSheetStack(null);
     this.sheets = null;
     this.abort = null;
@@ -132,14 +162,65 @@ class MobileShell implements Shell {
       log: ["Check-in", "Decision inbox"],
       system: ["System", "System management"],
       ship: ["Fleet", "Fleet command"],
+      battle: ["Battle", "Observed theater"],
       intent: ["Confirm order", "Command preview"],
     };
     const [title, eyebrow] = titles[entry.id];
+    if (entry.id === "intent") return this.renderIntentSheet(title, eyebrow);
     return {
       title,
       eyebrow,
       html: `<div class="m-sheet-placeholder"><b>${title}</b><span>This mobile workspace is connected to the shared navigation stack. Its live controls land in the core-loop pass.</span></div>`,
     };
+  }
+
+  private renderIntentSheet(title: string, eyebrow: string): SheetView {
+    const intent = this.ctx?.state.pendingIntent;
+    if (!intent) {
+      return {
+        title,
+        eyebrow,
+        html: `<div class="m-sheet-placeholder"><span>No order is awaiting confirmation.</span></div>`,
+      };
+    }
+    const destination = intent.dest
+      ? `${Math.round(intent.dest.x).toLocaleString()}, ${Math.round(intent.dest.y).toLocaleString()} su`
+      : intent.targetId
+        ? `Target ${escapeHtml(intent.targetId)}`
+        : "Selected target";
+    return {
+      title,
+      eyebrow,
+      html: `<div class="m-intent-card">` +
+        `<div class="m-intent-card__verb">${escapeHtml(intent.verb)} order</div>` +
+        `<div class="m-intent-card__route"><small>Fleet</small><b>${escapeHtml(intent.shipId)}</b>` +
+        `<small>Destination</small><b>${destination}</b></div>` +
+        `<div class="m-sheet-actions"><button type="button" data-mobile-act="cancel-intent">Cancel</button>` +
+        `<button type="button" class="is-primary" data-mobile-act="confirm-intent">Send order</button></div></div>`,
+    };
+  }
+
+  private syncIntentSheet(): void {
+    if (!this.sheets) return;
+    if (this.ctx?.state.pendingIntent) {
+      if (this.sheets.current?.id === "intent") this.sheets.refresh();
+      else this.sheets.push("intent");
+    } else if (this.sheets.current?.id === "intent") {
+      this.sheets.pop();
+    }
+    this.map?.syncArmedChip();
+  }
+
+  private openSheet(entry: SheetEntry): void {
+    if (!this.sheets) return;
+    if (this.sheets.current?.id === entry.id) this.sheets.replace(entry.id, entry.props);
+    else this.sheets.push(entry.id, entry.props);
+  }
+
+  private semanticChanged(mode: "galaxy" | "system" | "battle"): void {
+    const current = this.sheets?.current?.id;
+    if (mode === "galaxy" && (current === "system" || current === "battle")) this.sheets?.pop();
+    else this.sheets?.refresh();
   }
 
   private syncCameraRect(): void {

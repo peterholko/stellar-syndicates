@@ -12,6 +12,7 @@ export type SheetId =
   | "log"
   | "system"
   | "ship"
+  | "battle"
   | "intent";
 
 export interface SheetEntry {

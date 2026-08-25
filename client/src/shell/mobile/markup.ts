@@ -16,6 +16,12 @@ export const mobileMarkup = String.raw`
       </div>
     </header>
 
+    <div id="m-map-notice" class="m-map-notice" role="status" hidden></div>
+    <div id="m-armed" class="m-armed" hidden>
+      <span id="m-armed-label">ORDER ARMED</span>
+      <button id="m-armed-cancel" type="button">Cancel</button>
+    </div>
+
     <section id="m-sheet" class="m-sheet" data-detent="half" aria-labelledby="m-sheet-title" hidden>
       <div class="m-sheet__grip-zone" data-sheet-drag>
         <span class="m-sheet__grip" aria-hidden="true"></span>
