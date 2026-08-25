@@ -138,7 +138,7 @@ export class MobileBattleTheater {
     const width = Math.max(240, Math.floor(rect.width));
     const height = Math.max(240, Math.floor(rect.height));
     this.lastViewport = `${width}x${height}`;
-    theaterAttach(mount, record, this.ctx.state.galaxy?.pirate_id ?? null, { width, height });
+    theaterAttach(mount, record, this.ctx.state.galaxy?.pirate_id ?? null, { width, height, maxFps: 30 });
     theaterSetTime(this.round, this.fraction, this.live);
   }
 

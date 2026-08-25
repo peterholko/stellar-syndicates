@@ -91,6 +91,12 @@ export class SheetStack {
     return this.entries.at(-1) ?? null;
   }
 
+  /** A full detent is opaque over the entire usable map rect. The shell can
+   * stop the galaxy ticker without stopping this sheet or either theater. */
+  coversMap(): boolean {
+    return this.current !== null && !this.sheet.hidden && this.detent === "full";
+  }
+
   push(id: SheetId, props?: unknown): void {
     this.entries.push({ id, props });
     history.pushState({

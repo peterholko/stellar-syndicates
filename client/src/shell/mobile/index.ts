@@ -156,6 +156,10 @@ class MobileShell implements Shell {
     this.ground?.tick();
   }
 
+  framePolicy() {
+    return { maxFps: 30, renderGalaxy: !this.sheets?.coversMap() };
+  }
+
   cameraRect(): Rect {
     return this.sheets?.cameraRect() ?? { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
   }

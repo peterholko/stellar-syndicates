@@ -41,6 +41,10 @@ export const shell: Shell = {
     if (active) runtime?.onDesktopViewTick();
   },
 
+  framePolicy() {
+    return { maxFps: 0, renderGalaxy: true };
+  },
+
   cameraRect(): Rect {
     return active && runtime
       ? runtime.desktopCameraRect()

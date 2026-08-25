@@ -55,6 +55,7 @@ let SCALE = Math.min(CANVAS_W, CANVAS_H) / (2 * VIEW_R);
 export interface TheaterViewport {
   width: number;
   height: number;
+  maxFps?: number;
 }
 
 /// Client mirror of the sim's hull masses (also mirrored in main.ts — keep in
@@ -475,6 +476,7 @@ export function theaterAttach(
       if (cameraHint) cameraHint.textContent = matchMedia("(pointer: coarse)").matches
         ? "pinch zoom · drag pan · Reset camera restores overview"
         : "scroll zoom · drag pan · double-click resets";
+      app.ticker.maxFPS = viewport.maxFps && viewport.maxFps > 0 ? viewport.maxFps : 0;
       app.ticker.start();
     },
     () => {

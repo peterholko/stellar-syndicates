@@ -482,6 +482,9 @@ export class Renderer {
   /// Seconds since the previous rendered frame — see the smoothing in `drawGhost`.
   private frameDt = 1 / 60;
   private lastFrameMs = 0;
+  private renderMaxFps = 0;
+  private renderPaused = false;
+  private renderedFrames = 0;
   private cx = 0;
   private cy = 0;
   /// True once the user has zoomed/panned — so a window resize PRESERVES their
@@ -572,6 +575,33 @@ export class Renderer {
     window.visualViewport?.addEventListener("resize", viewportChanged);
     this.systemScene.layout(this.viewW, this.viewH, this.cameraRect);
     this.scheduleViewportResize();
+  }
+
+  /** Keep Pixi's own stage ticker aligned with the shell's presentation loop.
+   * A full-screen mobile workspace is opaque, so stopping the galaxy ticker is
+   * lossless; resuming draws current served state on the very same Pixi app. */
+  setRenderPolicy(maxFps: number, renderGalaxy: boolean): void {
+    if (!this.initialized) return;
+    const normalizedFps = Number.isFinite(maxFps) && maxFps > 0 ? Math.max(1, maxFps) : 0;
+    if (normalizedFps !== this.renderMaxFps) {
+      this.renderMaxFps = normalizedFps;
+      this.app.ticker.maxFPS = normalizedFps;
+      this.app.canvas.dataset.renderFps = normalizedFps ? String(normalizedFps) : "display";
+    }
+    const paused = !renderGalaxy;
+    this.app.canvas.dataset.renderPaused = String(paused);
+    if (paused === this.renderPaused) return;
+    this.renderPaused = paused;
+    if (paused) this.app.stop();
+    else {
+      this.lastFrameMs = performance.now() - 1000 / (this.renderMaxFps || 60);
+      this.app.start();
+    }
+  }
+
+  /// Read-only acceptance hook exposed through `__ss.renderer`.
+  renderPolicyDebug(): { maxFps: number; paused: boolean; renderedFrames: number } {
+    return { maxFps: this.renderMaxFps, paused: this.renderPaused, renderedFrames: this.renderedFrames };
   }
 
   /// Load the celestial + ship sprite textures. Each resolves independently; the
@@ -3030,6 +3060,7 @@ export class Renderer {
 
   update(state: ViewState): void {
     if (!state.galaxy) return;
+    this.renderedFrames++;
     if (this.galaxy !== state.galaxy) this.setGalaxy(state.galaxy);
 
     // Advance any galaxy⇄system transition (camera push + crossfade), and decide

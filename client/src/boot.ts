@@ -101,10 +101,20 @@ async function selectShell(): Promise<void> {
 
 shellMedia.addEventListener("change", () => { void selectShell(); });
 
-function frame(): void {
-  updateSignals();
-  renderer.update(state);
-  activeShell?.onViewTick();
+let lastPresentedFrameMs = 0;
+
+function frame(now: number): void {
+  const policy = activeShell?.framePolicy() ?? { maxFps: 0, renderGalaxy: true };
+  renderer.setRenderPolicy(policy.maxFps, policy.renderGalaxy);
+  const interval = policy.maxFps > 0 ? 1000 / policy.maxFps : 0;
+  // A small tolerance prevents a 60 Hz display's floating-point cadence from
+  // turning the intended every-other-frame mobile schedule into every-third.
+  if (interval === 0 || lastPresentedFrameMs === 0 || now - lastPresentedFrameMs >= interval - 1) {
+    lastPresentedFrameMs = now;
+    updateSignals();
+    if (policy.renderGalaxy) renderer.update(state);
+    activeShell?.onViewTick();
+  }
   requestAnimationFrame(frame);
 }
 
