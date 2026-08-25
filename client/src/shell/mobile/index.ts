@@ -3,10 +3,12 @@ import "../../styles/mobile.css";
 import { reservedMarketCredits, spendableMarketCredits } from "../../core/derive/market";
 import { formatId } from "../../protocol";
 import type { CoreEvent } from "../../core/events";
+import { installPressGuard } from "../dom";
 import type { CoreContext, Rect, Shell } from "../types";
 import { MobileMapInteraction } from "./map";
 import { mountMobileMarkup } from "./markup";
 import { activateSheetStack, pushSheet, replaceSheet, SheetStack, type SheetEntry, type SheetView } from "./sheets";
+import { MobileSurfaces } from "./surfaces";
 
 const byId = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 const escapeHtml = (value: string): string => value.replace(
@@ -20,6 +22,7 @@ class MobileShell implements Shell {
   private abort: AbortController | null = null;
   private sheets: SheetStack | null = null;
   private map: MobileMapInteraction | null = null;
+  private surfaces: MobileSurfaces | null = null;
   private statusSignature = "";
 
   async mount(root: HTMLElement, ctx: CoreContext): Promise<void> {
@@ -27,6 +30,7 @@ class MobileShell implements Shell {
     this.ctx = ctx;
     this.abort = new AbortController();
     mountMobileMarkup(root);
+    installPressGuard();
 
     const signal = this.abort.signal;
     this.sheets = new SheetStack(
@@ -40,6 +44,15 @@ class MobileShell implements Shell {
       openSheet: (entry) => this.openSheet(entry),
       onSemanticChange: (mode) => this.semanticChanged(mode),
     }, signal);
+    this.surfaces = new MobileSurfaces(ctx, this.sheets, {
+      openSheet: (entry) => this.openSheet(entry),
+      focusFleet: (id) => this.map?.focusFleet(id),
+      focusSystem: (id) => this.map?.focusSystem(id),
+      armMove: (id) => this.map?.armMove(id),
+      enterSystem: (id) => this.map?.enterSystem(id),
+      exitSemantic: () => this.map?.exitSemanticView(),
+      notice: (html) => this.map?.showNotice(html),
+    });
     byId("m-status-toggle").addEventListener("click", () => this.toggleStatus(), { signal });
     byId("m-armed-cancel").addEventListener("click", () => this.map?.cancelArmedMode(), { signal });
     byId<HTMLFormElement>("m-join-form").addEventListener("submit", (event) => {
@@ -54,13 +67,16 @@ class MobileShell implements Shell {
       else pushSheet(destination);
     }, { signal });
     byId("m-sheet-body").addEventListener("click", (event) => {
+      if (this.surfaces?.handleClick(event)) return;
       const action = (event.target as Element).closest<HTMLButtonElement>("button[data-mobile-act]")?.dataset.mobileAct;
       if (action === "confirm-intent") ctx.intent.confirmPendingIntent();
       else if (action === "cancel-intent") ctx.intent.clearPendingIntent();
     }, { signal });
+    byId("m-founding").addEventListener("click", (event) => { this.surfaces?.handleClick(event); }, { signal });
 
     this.syncSessionVisibility();
     this.renderStatus(true);
+    this.surfaces.refreshFounding();
     if (ctx.state.playerId === null) byId<HTMLInputElement>("m-name").focus();
 
     const existing = (window as unknown as { __ss?: Record<string, unknown> }).__ss ?? {};
@@ -87,6 +103,8 @@ class MobileShell implements Shell {
         this.syncIntentSheet();
       } else if (event.kind === "ServerError") {
         this.map?.showNotice(`<span class="warn">${escapeHtml(event.message)}</span>`);
+      } else if (event.kind === "TradeSettled") {
+        this.surfaces?.onTrade(event.trade);
       }
       if (event.kind === "ViewApplied" || event.kind === "TimelineApplied" || event.kind === "TradeSettled") {
         refreshSheet = true;
@@ -94,6 +112,7 @@ class MobileShell implements Shell {
     }
     this.syncSessionVisibility();
     this.renderStatus(true);
+    if (refreshSheet) this.surfaces?.refreshFounding();
     if (refreshSheet) this.sheets?.refresh();
   }
 
@@ -111,8 +130,11 @@ class MobileShell implements Shell {
     this.abort?.abort();
     this.map?.teardown();
     this.map = null;
+    this.surfaces = null;
     activateSheetStack(null);
     this.sheets = null;
+    document.documentElement.style.removeProperty("--mobile-sheet-height");
+    document.documentElement.style.removeProperty("--mobile-chrome-bottom");
     this.abort = null;
     this.root?.replaceChildren();
     this.root = null;
@@ -167,10 +189,12 @@ class MobileShell implements Shell {
     };
     const [title, eyebrow] = titles[entry.id];
     if (entry.id === "intent") return this.renderIntentSheet(title, eyebrow);
+    const surface = this.surfaces?.render(entry);
+    if (surface) return surface;
     return {
       title,
       eyebrow,
-      html: `<div class="m-sheet-placeholder"><b>${title}</b><span>This mobile workspace is connected to the shared navigation stack. Its live controls land in the core-loop pass.</span></div>`,
+      html: `<div class="m-sheet-placeholder"><b>${title}</b><span>This workspace arrives in the Phase 5 mobile-parity pass.</span></div>`,
     };
   }
 
@@ -234,6 +258,7 @@ class MobileShell implements Shell {
     byId("m-join").hidden = ready;
     byId("m-chrome").hidden = !ready;
     byId("m-tabs").hidden = !ready;
+    if (!ready) byId("m-founding").hidden = true;
     if (!ready) {
       const reconnecting = this.ctx.state.link === "connecting" || this.ctx.state.link === "reconnecting";
       byId<HTMLButtonElement>("m-join-button").disabled = reconnecting && !!this.ctx.state.name;

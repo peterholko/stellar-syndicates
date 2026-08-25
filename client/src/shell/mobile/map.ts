@@ -32,6 +32,7 @@ export class MobileMapInteraction {
   private pinching = false;
   private longFired = false;
   private suppressTap = false;
+  private moveAimingShipId: string | null = null;
   private noticeTimer: number | null = null;
   private readonly previousTouchAction: string;
 
@@ -82,6 +83,8 @@ export class MobileMapInteraction {
         ? "JUMP · choose destination"
         : guard
           ? "GUARD · choose fleet"
+          : this.moveAimingShipId
+            ? "MOVE · choose destination"
           : "";
     chip.hidden = text === "";
     label.textContent = text;
@@ -91,7 +94,55 @@ export class MobileMapInteraction {
     if (this.ctx.state.pendingIntent) this.ctx.intent.clearPendingIntent();
     if (this.ctx.intent.intentAiming.jump) this.ctx.intent.clearJumpAiming();
     if (this.ctx.intent.intentAiming.guard) this.ctx.intent.clearGuardAiming();
+    this.moveAimingShipId = null;
     this.syncArmedChip();
+  }
+
+  focusFleet(id: string): void {
+    this.selectFleet(id);
+    this.ctx.renderer.stateVersion++;
+    this.hooks.openSheet({ id: "ship", props: { kind: "fleet", id } });
+  }
+
+  armMove(id: string): void {
+    const fleet = this.ctx.state.ghosts.find((ghost) => ghost.id === id && ghost.own);
+    if (!fleet) return;
+    this.selectFleet(id);
+    this.ctx.intent.clearJumpAiming(true);
+    this.ctx.intent.clearGuardAiming(true);
+    this.moveAimingShipId = id;
+    this.showNotice(`<b>Move armed.</b> Tap empty map space for the destination.`);
+    this.syncArmedChip();
+  }
+
+  focusSystem(id: string): void {
+    this.clearSelection();
+    this.ctx.state.selectedSystemId = id;
+    this.ctx.renderer.stateVersion++;
+    this.hooks.openSheet({ id: "system", props: { id } });
+  }
+
+  enterSystem(id: string): void {
+    const system = this.systemById(id);
+    if (!system) return;
+    const dynamic = this.ctx.state.systems.find((entry) => entry.id === id);
+    this.ctx.renderer.enterSystemView(system, dynamic?.bodies ?? []);
+    this.ctx.state.selectedSystemId = id;
+    this.ctx.renderer.setSystemDynamic(
+      dynamic?.bodies ?? [],
+      (dynamic?.builds ?? []).map((build) => ({ key: build.key, body_id: build.body_id })),
+      dynamic?.habitat_fed ?? true,
+    );
+    this.hooks.openSheet({ id: "system", props: { id, semantic: true } });
+    this.hooks.onSemanticChange("system", id);
+  }
+
+  exitSemanticView(): void {
+    if (this.ctx.renderer.isSystemScrubbing()) this.ctx.renderer.cancelSystemScrub();
+    else if (this.ctx.renderer.viewMode.type === "system") this.ctx.renderer.exitSystemView();
+    else if (this.ctx.renderer.viewMode.type === "battle") this.ctx.renderer.exitBattleView();
+    this.ctx.renderer.setSystemDynamic([], [], true);
+    this.hooks.onSemanticChange("galaxy");
   }
 
   showNotice(html: string): void {
@@ -318,6 +369,7 @@ export class MobileMapInteraction {
       if (result.clearAiming === "jump") this.ctx.intent.clearJumpAiming(true);
       else if (result.clearAiming === "guard") this.ctx.intent.clearGuardAiming(true);
       this.ctx.intent.beginPendingIntent(result.intent);
+      this.moveAimingShipId = null;
       if (result.readout) this.showNotice(result.readout);
       this.syncArmedChip();
       return;
@@ -327,8 +379,7 @@ export class MobileMapInteraction {
     const target = result.target;
     switch (target.type) {
       case "fleet":
-        this.selectFleet(target.id);
-        this.hooks.openSheet({ id: "ship", props: { kind: "fleet", id: target.id } });
+        this.focusFleet(target.id);
         break;
       case "jumpDeparture":
         this.clearSelection();
@@ -385,6 +436,7 @@ export class MobileMapInteraction {
     }
     this.ctx.intent.clearGuardAiming(true);
     this.ctx.renderer.selectedJumpDepartureKey = null;
+    this.moveAimingShipId = null;
     this.ctx.state.selectedShipId = id;
     this.ctx.state.selectedSystemId = null;
     this.ctx.state.selectedEmplacementId = null;

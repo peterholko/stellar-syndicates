@@ -19,8 +19,21 @@ const byId = (id: string): HTMLElement => document.getElementById(id)!;
 // defer nothing — each panel is guarded independently.
 export const pressGuard = { target: null as EventTarget | null, deferred: new Map<string, () => void>() };
 
+let pressGuardInstalled = false;
+
+// Both shells rebuild live panels from the 10 Hz served View. Install the guard
+// once at the shared DOM boundary so swapping shells never duplicates global
+// listeners, and mobile receives the same single-tap guarantee as desktop.
+export function installPressGuard(): void {
+  if (pressGuardInstalled) return;
+  pressGuardInstalled = true;
+  window.addEventListener("pointerdown", (event) => { pressGuard.target = event.target; }, true);
+  window.addEventListener("pointerup", () => setTimeout(flushPressGuard, 0), true);
+  window.addEventListener("pointercancel", () => setTimeout(flushPressGuard, 0), true);
+}
+
 export function __init_mapchrome_142(): void {
-  window.addEventListener("pointerdown", (e) => { pressGuard.target = e.target; }, true);
+  installPressGuard();
 }
 
 export function flushPressGuard(): void {
@@ -31,11 +44,11 @@ export function flushPressGuard(): void {
 }
 
 export function __init_mapchrome_149(): void {
-  window.addEventListener("pointerup", () => setTimeout(flushPressGuard, 0), true);
+  installPressGuard();
 }
 
 export function __init_mapchrome_150(): void {
-  window.addEventListener("pointercancel", () => setTimeout(flushPressGuard, 0), true);
+  installPressGuard();
 }
 
 // The same hazard one step earlier was HOVER: a panel that rebuilds on every View

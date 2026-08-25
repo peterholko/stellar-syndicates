@@ -21,6 +21,7 @@ export const mobileMarkup = String.raw`
       <span id="m-armed-label">ORDER ARMED</span>
       <button id="m-armed-cancel" type="button">Cancel</button>
     </div>
+    <aside id="m-founding" class="m-founding" aria-live="polite" hidden></aside>
 
     <section id="m-sheet" class="m-sheet" data-detent="half" aria-labelledby="m-sheet-title" hidden>
       <div class="m-sheet__grip-zone" data-sheet-drag>

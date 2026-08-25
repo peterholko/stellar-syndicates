@@ -1,4 +1,4 @@
-import { setHtml } from "../dom";
+import { renderDeferred, setHtml } from "../dom";
 import type { Rect } from "../types";
 
 export type SheetId =
@@ -118,7 +118,9 @@ export class SheetStack {
   }
 
   refresh(): void {
-    if (this.current) this.render(false);
+    if (!this.current) return;
+    if (renderDeferred("m-sheet", () => this.refresh())) return;
+    this.render(false);
   }
 
   cameraRect(): Rect {
@@ -137,9 +139,17 @@ export class SheetStack {
   }
 
   layout(): void {
-    if (!this.current || this.dragging) return;
+    const chromeBottom = this.chrome.hidden ? 0 : this.chrome.getBoundingClientRect().bottom;
+    document.documentElement.style.setProperty("--mobile-chrome-bottom", `${Math.ceil(chromeBottom)}px`);
+    if (!this.current) {
+      this.onLayout();
+      return;
+    }
+    if (this.dragging) return;
     const heights = this.detentHeights();
-    this.sheet.style.height = `${heights[this.detent]}px`;
+    const height = heights[this.detent];
+    this.sheet.style.height = `${height}px`;
+    document.documentElement.style.setProperty("--mobile-sheet-height", `${height}px`);
     this.sheet.dataset.detent = this.detent;
     this.expand.setAttribute("aria-label", this.detent === "half" ? "Expand sheet" : "Collapse sheet");
     this.expand.textContent = this.detent === "half" ? "↑" : "↓";
@@ -151,6 +161,7 @@ export class SheetStack {
     this.sheet.hidden = entry === null;
     if (!entry) {
       this.entries.length = 0;
+      document.documentElement.style.setProperty("--mobile-sheet-height", "0px");
       this.onChange(null);
       this.onLayout();
       return;
@@ -184,6 +195,7 @@ export class SheetStack {
     const heights = this.detentHeights();
     const height = Math.max(heights.half, Math.min(heights.full, this.dragStartHeight + this.dragStartY - event.clientY));
     this.sheet.style.height = `${height}px`;
+    document.documentElement.style.setProperty("--mobile-sheet-height", `${height}px`);
     this.onLayout();
   }
 
