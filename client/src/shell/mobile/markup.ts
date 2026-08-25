@@ -62,6 +62,10 @@ export const mobileMarkup = String.raw`
     </div>
 
     <div id="m-join" class="m-join">
+      <picture class="m-join__art" aria-hidden="true">
+        <source type="image/webp" srcset="/art/derived/lore/corporate_command_center-768.webp 768w, /art/derived/lore/corporate_command_center-1280.webp 1280w" sizes="100vw">
+        <img src="/art/lore_illustrations/corporate_command_center.png" alt="" decoding="async" fetchpriority="high">
+      </picture>
       <form id="m-join-form" class="m-join__card">
         <div class="m-join__eyebrow">Corporate command uplink</div>
         <h1>Stellar Syndicates</h1>

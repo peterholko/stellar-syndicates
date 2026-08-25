@@ -305,6 +305,10 @@ export const desktopMarkup = String.raw`
     </div>
 
     <div id="join">
+      <picture class="join-art" aria-hidden="true">
+        <source type="image/webp" srcset="/art/derived/lore/corporate_command_center-768.webp 768w, /art/derived/lore/corporate_command_center-1280.webp 1280w" sizes="100vw">
+        <img src="/art/lore_illustrations/corporate_command_center.png" alt="" decoding="async" fetchpriority="high">
+      </picture>
       <div class="card">
         <h1>Stellar Syndicates</h1>
         <p>Charter a corporation and command from your home anchor. Enter a name to join the galaxy — reconnecting with the same name resumes your corporation.</p>

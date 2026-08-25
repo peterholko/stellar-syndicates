@@ -10,6 +10,7 @@ import { badgeChip, chip, icon, type IconKey, label } from "../../icons";
 import { type CaptainAttribute, type CaptainRosterView, type Commodity, countClassLabel, type EngagementPosture, type EntityId, fleetCargoManifest, fleetCargoUnits, formatId, type GhostView, type ManifestEntryView, type ShipKind, type Vec2 } from "../../protocol";
 import { renderer } from "../../render";
 import { liveSimTime, state } from "../../state";
+import { captainPortrait } from "../art";
 import { confirmAuthorityHostility } from "./faction";
 import { net } from "./index";
 import { $, badge, bar, commodityIcon, CONTACT_STALE_AGE_S, esc, readout, renderDeferred, setHtml, stat, statStrip, svgIcon } from "./mapchrome";
@@ -759,7 +760,7 @@ export function captainSection(g: GhostView): string {
     ? `<div class="captain-xp__copy" title="${esc(commandTip)}">Command authority <b>${commandLoad} / ${c.command_capacity}</b> · ${commandFree} free</div>`
     : `<div class="captain-xp__copy warn" title="${esc(commandTip)}">Over command authority <b>${commandLoad} / ${c.command_capacity}</b> · bonuses suspended until split or promoted</div>`;
   const titledName = `${captainTitle(c.title)} ${c.name}`;
-  return `<section class="sp-zone sp-captain"><img class="captain-portrait" src="/art/captains/${c.portrait}_${c.portrait_age}.png" alt="Portrait of ${esc(titledName)}" />` +
+  return `<section class="sp-zone sp-captain">${captainPortrait(c.portrait, c.portrait_age, `Portrait of ${titledName}`, "captain-portrait", false)}` +
     `<div class="captain-card"><div class="sp-zone__title">Officer</div>` +
     `<div class="captain-name"><b>${esc(titledName)}</b><span>Level ${c.level}</span></div>` +
     commandLine +
@@ -836,7 +837,7 @@ export function officerCard(entry: CaptainRosterView, home: string | null): stri
   if (assigned) {
     actions += `<button class="act" data-officer-act="select-fleet" data-fleet="${esc(assigned.id)}">Select formation</button>`;
   }
-  return `<article class="officer-card"><img class="officer-card__portrait" src="/art/captains/${entry.portrait}_${portraitAge}.png" alt="Portrait of ${esc(titled)}" />` +
+  return `<article class="officer-card">${captainPortrait(entry.portrait, portraitAge, `Portrait of ${titled}`, "officer-card__portrait", true)}` +
     `<div><div class="officer-card__name"><b>${esc(titled)}</b>${badge(tone, status)}</div>` +
     `<div class="officer-card__meta">${esc(stats)}</div><div class="officer-card__bar"><span style="width:${progress.toFixed(1)}%"></span></div>` +
     `<div class="officer-card__xp">${esc(xp)}</div>${train}${actions}</div></article>`;
@@ -1403,4 +1404,3 @@ export function logisticsSection(g: GhostView): string {
   }
   return rows.join("");
 }
-

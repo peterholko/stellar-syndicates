@@ -39,6 +39,7 @@ import type {
 } from "../../protocol";
 import { liveSimTime } from "../../state";
 import type { SystemBodyDetail } from "../../systemview";
+import { captainPortrait } from "../art";
 import type { CoreContext } from "../types";
 import type { SheetEntry, SheetView } from "./sheets";
 import { SheetStack } from "./sheets";
@@ -475,7 +476,7 @@ export class MobileParitySurfaces {
       ? `<div class="m-inline-form"><select id="m-officer-fleet-${entry.id}">${eligible.map((fleet) => option(fleet.id, `${officerFleetName(fleet)} · ${fleetCommandLoad(fleet)}/${report!.command_capacity}`)).join("")}</select><button type="button" data-mobile-act="officer-assign" data-captain="${entry.id}">${entry.assigned_fleet ? "Transfer" : "Assign"}</button></div>` : "";
     const training = report && report.unspent > 0
       ? `<div class="m-chip-actions">${(["command", "navigation", "fieldcraft", "logistics"] as CaptainAttribute[]).map((attribute) => `<button type="button" data-mobile-act="officer-train" data-captain="${entry.id}" data-attribute="${attribute}" ${canTrain ? "" : "disabled"}>+ ${human(attribute)}</button>`).join("")}</div>` : "";
-    return `<article class="m-officer-card"><img src="/art/captains/${entry.portrait}_${age}.png" alt="Portrait of ${esc(titled)}"><div><header><b>${esc(titled)}</b><em>${esc(status)}</em></header>` +
+    return `<article class="m-officer-card">${captainPortrait(entry.portrait, age, `Portrait of ${titled}`, "m-officer-portrait", true)}<div><header><b>${esc(titled)}</b><em>${esc(status)}</em></header>` +
       (report ? `<small>Level ${report.level} · authority ${report.command_capacity}</small><div class="m-progress"><i style="width:${progress.toFixed(1)}%"></i></div><p>Cmd ${report.attributes.command} · Nav ${report.attributes.navigation} · Field ${report.attributes.fieldcraft} · Log ${report.attributes.logistics}</p>` : `<p>Personnel light has not reached command.</p>`) +
       training + assign + (entry.assigned_fleet && local ? `<button type="button" data-mobile-act="officer-reserve" data-captain="${entry.id}">Return to reserve</button>` : "") +
       (assigned ? `<button type="button" data-mobile-act="officer-fleet" data-id="${esc(assigned.id)}">Select formation</button>` : "") + `</div></article>`;
