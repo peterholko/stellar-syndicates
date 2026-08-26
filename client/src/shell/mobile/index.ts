@@ -155,7 +155,8 @@ class MobileShell implements Shell {
       if (!button) return;
       const destination = button.dataset.destination as SheetEntry["id"];
       if (destination === "log") this.markLogRead();
-      if (this.sheets?.current) replaceSheet(destination);
+      if (this.sheets?.current?.id === destination) this.sheets.closeAll();
+      else if (this.sheets?.current) replaceSheet(destination);
       else pushSheet(destination);
     }, { signal });
     byId("m-sheet-body").addEventListener("click", (event) => {

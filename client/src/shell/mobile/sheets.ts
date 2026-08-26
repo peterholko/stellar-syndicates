@@ -121,8 +121,11 @@ export class SheetStack {
       this.push(id, props);
       return;
     }
+    const sameSheet = this.current?.id === id;
     this.entries[this.entries.length - 1] = { id, props };
-    this.render();
+    // Replacing the same logical workspace is a refresh (often with newer
+    // props), not a fresh navigation: keep its detent and expanded details.
+    this.render(!sameSheet);
   }
 
   closeAll(): void {
