@@ -28,6 +28,7 @@ export class MobileMapInteraction {
   private longTimer: number | null = null;
   private primaryId: number | null = null;
   private lastPinchDistance = 0;
+  private lastPinchMidpoint: { x: number; y: number } | null = null;
   private panning = false;
   private pinching = false;
   private longFired = false;
@@ -165,6 +166,7 @@ export class MobileMapInteraction {
       this.pinching = true;
       this.suppressTap = true;
       this.lastPinchDistance = this.pinchDistance();
+      this.lastPinchMidpoint = this.pinchMidpoint();
     }
   }
 
@@ -185,11 +187,17 @@ export class MobileMapInteraction {
       this.pinching = true;
       this.suppressTap = true;
       const distance = this.pinchDistance();
+      const midpoint = this.pinchMidpoint();
+      const previousMidpoint = this.lastPinchMidpoint;
+      if (previousMidpoint && this.ctx.renderer.viewMode.type === "galaxy" && !this.ctx.renderer.isSystemScrubbing()) {
+        this.ctx.renderer.panBy(midpoint.x - previousMidpoint.x, midpoint.y - previousMidpoint.y);
+      }
       if (distance > 0 && this.lastPinchDistance > 0) {
         const factor = distance / this.lastPinchDistance;
-        if (Number.isFinite(factor) && factor > 0) this.applyPinch(factor);
+        if (Number.isFinite(factor) && factor > 0) this.applyPinch(factor, midpoint);
       }
       this.lastPinchDistance = distance;
+      this.lastPinchMidpoint = midpoint;
       return;
     }
 
@@ -215,8 +223,13 @@ export class MobileMapInteraction {
 
     if (wasPinching) {
       this.cancelLongPress();
-      if (this.points.size < 2) {
+      if (this.points.size >= 2) {
+        this.lastPinchDistance = this.pinchDistance();
+        this.lastPinchMidpoint = this.pinchMidpoint();
+      } else {
         this.pinching = false;
+        this.lastPinchDistance = 0;
+        this.lastPinchMidpoint = null;
         const remaining = this.points.entries().next().value as [number, PointerPoint] | undefined;
         if (remaining) {
           this.primaryId = remaining[0];
@@ -242,12 +255,18 @@ export class MobileMapInteraction {
   private pointerCancel(event: PointerEvent): void {
     this.points.delete(event.pointerId);
     this.cancelLongPress();
+    if (this.pinching && this.points.size < 2) {
+      this.pinching = false;
+      this.lastPinchDistance = 0;
+      this.lastPinchMidpoint = null;
+    }
     if (!this.points.size) {
       this.primaryId = null;
       this.panning = false;
       this.pinching = false;
       this.longFired = false;
       this.suppressTap = false;
+      this.lastPinchMidpoint = null;
     }
   }
 
@@ -279,10 +298,11 @@ export class MobileMapInteraction {
     return a && b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : { x: 0, y: 0 };
   }
 
-  private applyPinch(factor: number): void {
+  private applyPinch(factor: number, midpoint: { x: number; y: number }): void {
     const renderer = this.ctx.renderer;
-    const midpoint = this.pinchMidpoint();
     const scrubDelta = Math.log(factor) * SCRUB_PER_LOG_SCALE;
+    // Translation was already applied from the midpoint delta. A negligible
+    // scale delta skips only zoom; two-finger drag remains live.
     if (Math.abs(scrubDelta) < 0.0001) return;
 
     if (renderer.isSystemScrubbing()) {
