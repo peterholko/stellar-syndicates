@@ -180,7 +180,6 @@ class MobileShell implements Shell {
     this.renderStatus(true);
     this.surfaces.refreshFounding();
     this.syncFoundingNoticeOffset();
-    if (ctx.state.playerId === null) byId<HTMLInputElement>("m-name").focus();
 
     const existing = (window as unknown as { __ss?: Record<string, unknown> }).__ss ?? {};
     (window as unknown as { __ss: Record<string, unknown> }).__ss = {
