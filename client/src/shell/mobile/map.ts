@@ -1,6 +1,5 @@
 import { resolveMapClick, resolveSystemClick, type MapClickResult } from "../../core/mapclick";
 import type { SystemInfo } from "../../protocol";
-import { setHtml } from "../dom";
 import type { CoreContext } from "../types";
 import type { SheetEntry } from "./sheets";
 
@@ -18,6 +17,7 @@ interface PointerPoint {
 interface MobileMapHooks {
   openSheet(entry: SheetEntry): void;
   onSemanticChange(mode: "galaxy" | "system" | "battle", id?: string): void;
+  notice(html: string): void;
 }
 
 // Mobile owns gesture interpretation, while core/mapclick owns every gameplay
@@ -33,7 +33,6 @@ export class MobileMapInteraction {
   private longFired = false;
   private suppressTap = false;
   private moveAimingShipId: string | null = null;
-  private noticeTimer: number | null = null;
   private readonly previousTouchAction: string;
 
   constructor(
@@ -55,7 +54,6 @@ export class MobileMapInteraction {
 
   teardown(): void {
     this.cancelLongPress();
-    if (this.noticeTimer !== null) window.clearTimeout(this.noticeTimer);
     this.ctx.renderer.canvas.style.touchAction = this.previousTouchAction;
     this.points.clear();
   }
@@ -146,17 +144,7 @@ export class MobileMapInteraction {
   }
 
   showNotice(html: string): void {
-    const notice = document.getElementById("m-map-notice");
-    if (!notice) return;
-    setHtml(notice, html);
-    notice.hidden = false;
-    notice.classList.add("is-visible");
-    if (this.noticeTimer !== null) window.clearTimeout(this.noticeTimer);
-    this.noticeTimer = window.setTimeout(() => {
-      notice.classList.remove("is-visible");
-      notice.hidden = true;
-      this.noticeTimer = null;
-    }, 4200);
+    this.hooks.notice(html);
   }
 
   private pointerDown(event: PointerEvent): void {

@@ -50,7 +50,7 @@ export const mobileMarkup = String.raw`
       <button type="button" data-destination="operations"><span aria-hidden="true">◎</span><small>Ops</small></button>
       <button type="button" data-destination="syndicate"><span aria-hidden="true">⬡</span><small>Syndicate</small></button>
       <button type="button" data-destination="faction"><span aria-hidden="true">⚖</span><small>Faction</small></button>
-      <button type="button" data-destination="log"><span aria-hidden="true">⌖</span><small>Log</small></button>
+      <button type="button" data-destination="log"><span aria-hidden="true">⌖</span><small>Log</small><b id="m-log-badge" class="m-tab-badge" hidden>0</b></button>
     </nav>
 
     <div id="m-rotate-gate" class="m-rotate-gate" role="dialog" aria-modal="true" aria-labelledby="m-rotate-title" hidden>

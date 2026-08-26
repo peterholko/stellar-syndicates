@@ -125,6 +125,7 @@
 .m-tabs[hidden] { display: none; }
 
 .m-tabs button {
+  position: relative;
   min-width: 0;
   min-height: 50px;
   display: grid;
@@ -141,6 +142,24 @@
 .m-tabs button > span { font-size: 17px; line-height: 1; }
 .m-tabs button > small { overflow: hidden; font-size: 10px; text-overflow: ellipsis; }
 .m-tabs button[aria-current="page"] { background: rgba(79, 195, 255, .11); color: var(--accent); }
+.m-tab-badge {
+  position: absolute;
+  top: 2px;
+  right: max(2px, calc(50% - 19px));
+  min-width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+  border: 1px solid rgba(255, 255, 255, .3);
+  border-radius: 999px;
+  background: var(--negative);
+  color: #fff;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.m-tab-badge[hidden] { display: none; }
 
 .m-sheet {
   position: fixed;
@@ -235,24 +254,39 @@
   top: calc(var(--mobile-chrome-bottom, 48px) + 8px);
   left: 50%;
   width: min(86vw, 350px);
+  display: grid;
+  gap: 6px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.m-map-notice[hidden] { display: none; }
+
+.m-map-notice__item {
+  width: 100%;
   padding: 10px 12px;
-  transform: translate(-50%, -6px);
+  transform: translateY(-6px);
   border: 1px solid rgba(143, 227, 160, .24);
   border-radius: 12px;
   background: rgba(7, 14, 24, .92);
   box-shadow: 0 12px 34px rgba(0, 0, 0, .36);
   color: var(--ink);
+  font: inherit;
   font-size: 12px;
   line-height: 1.4;
   opacity: 0;
-  pointer-events: none;
+  pointer-events: auto;
+  text-align: left;
   transition: opacity 140ms ease, transform 140ms ease;
 }
 
-.m-map-notice.is-visible {
+.m-map-notice__item.is-visible {
   opacity: 1;
-  transform: translate(-50%, 0);
+  transform: translateY(0);
 }
+.m-map-notice__item.is-good { border-color: rgba(143, 227, 160, .38); }
+.m-map-notice__item.is-bad { border-color: rgba(255, 107, 107, .45); }
+.m-map-notice__item.is-quiet { border-color: rgba(255, 255, 255, .12); color: var(--dim); }
 
 .m-armed {
   position: fixed;

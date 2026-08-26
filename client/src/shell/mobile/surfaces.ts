@@ -20,6 +20,7 @@ import {
   fleetCargoUnits,
   fleetExactCount,
   type Commodity,
+  type EngagementEstimate,
   type GhostView,
   type ModuleKind,
   type Side,
@@ -70,6 +71,7 @@ const esc = (value: string): string => value.replace(
   (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '\"': "&quot;" })[character]!,
 );
 const human = (value: string): string => value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+const safeId = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/g, "_");
 const fmt = (value: number, digits = 0): string => Number.isFinite(value)
   ? value.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits })
   : "—";
@@ -82,6 +84,9 @@ export class MobileSurfaces {
   private marketSide: Side = "buy";
   private freightDirection: FreightDirection = "outbound";
   private readonly dismissedDecisions = new Set<string>();
+  private readonly engagementEstimates = new Map<string, EngagementEstimate>();
+  private readonly estimateAttackerByTarget = new Map<string, string>();
+  private readonly arrivedReports: { text: string; tone: "good" | "bad" | "warn"; at: number }[] = [];
   private foundingMinimized = false;
 
   constructor(
@@ -107,6 +112,31 @@ export class MobileSurfaces {
   onTrade(trade: TradeEvent): void {
     settleMarketReservation(trade);
     recordRecentMarketOrder(trade);
+  }
+
+  onEstimate(estimate: EngagementEstimate): void {
+    this.engagementEstimates.set(this.estimateKey(estimate.attacker, estimate.target), estimate);
+    this.estimateAttackerByTarget.set(estimate.target, estimate.attacker);
+  }
+
+  recordReport(text: string, tone: "good" | "bad" | "warn"): void {
+    this.arrivedReports.push({ text, tone, at: liveSimTime() });
+    if (this.arrivedReports.length > 20) this.arrivedReports.splice(0, this.arrivedReports.length - 20);
+  }
+
+  /** The unread badge keys the same live, served decisions as the Log sheet.
+   * Keys are stable for the lifetime of a decision and carry no extra truth. */
+  decisionKeys(): string[] {
+    const keys: string[] = [];
+    const founding = this.ctx.state.founding;
+    if (founding && founding.stage !== "complete") keys.push(`founding:${founding.stage}`);
+    for (const proposal of this.ctx.state.diplomacy?.incoming ?? []) keys.push(`treaty:${proposal.id}`);
+    for (const invite of this.ctx.state.syndicateInvites) keys.push(`syndicate:${invite.id}`);
+    for (const operation of this.ctx.state.operations.filter((candidate) => candidate.state === "offered" && !candidate.joined).slice(0, 3)) {
+      keys.push(`operation:${operation.id}`);
+    }
+    for (const battle of this.ctx.state.battles.filter((candidate) => candidate.own)) keys.push(`battle:${battle.id}`);
+    return keys.filter((key) => !this.dismissedDecisions.has(key));
   }
 
   refreshFounding(): void {
@@ -183,6 +213,16 @@ export class MobileSurfaces {
       case "fleet-rescue":
         if (button.dataset.id) this.ctx.send({ type: "RequestFuelRescue", fleet_id: button.dataset.id });
         break;
+      case "fleet-estimate": {
+        const target = button.dataset.target;
+        const attacker = target ? element<HTMLSelectElement>(`m-estimate-attacker-${safeId(target)}`)?.value : undefined;
+        if (attacker && target) {
+          this.estimateAttackerByTarget.set(target, attacker);
+          this.ctx.send({ type: "EstimateEngagement", attacker, target });
+          this.hooks.notice("Engagement projection requested.");
+        }
+        break;
+      }
       case "fleet-emplace": {
         const fleet = this.ownFleet(button.dataset.id);
         if (!fleet || fleet.kind !== "builder") break;
@@ -344,6 +384,7 @@ export class MobileSurfaces {
         }).join("")
       : `<div class="m-muted">No commands in flight.</div>`;
     const ownControls = fleet.own ? this.shipControls(fleet) : "";
+    const engagement = fleet.own ? "" : this.engagementSection(fleet);
     const roleLore = fleet.own ? shipRoleLore(fleet) : "";
     const supply = fleet.own && fleet.supplied === false
       ? `<div class="m-warning"><b>Out of provisions.</b> This fleet keeps its guns and current order, but cannot depart again until supplied.</div>`
@@ -358,9 +399,46 @@ export class MobileSurfaces {
         `<section class="m-section"><h3>Formation</h3><p>${esc(composition)}</p>${roleLore ? `<details class="m-details m-help"><summary>Fleet role</summary><div><p>${esc(roleLore)}</p></div></details>` : ""}</section>` +
         supply +
         `<section class="m-section"><h3>Cargo</h3><div class="m-ledger">${cargo}</div></section>` +
+        engagement +
         ownControls +
         `<section class="m-section"><h3>Orders</h3>${orderRows}</section>`,
     };
+  }
+
+  private engagementSection(target: GhostView): string {
+    const attackers = this.ctx.state.ghosts.filter((fleet) => fleet.own && !fleet.docked
+      && (fleet.kind === "raider" || fleet.composition?.some((stack) => stack.kind === "raider" && stack.count > 0)));
+    if (!attackers.length) return "";
+    const selected = this.estimateAttackerByTarget.get(target.id) ?? attackers[0]!.id;
+    const options = attackers.map((fleet) => {
+      const count = fleetExactCount(fleet);
+      return `<option value="${esc(fleet.id)}" ${fleet.id === selected ? "selected" : ""}>${esc(shipKindLabel(fleet.kind))}${count && count > 1 ? ` fleet · ${count} hulls` : ""}</option>`;
+    }).join("");
+    const estimate = this.engagementEstimates.get(this.estimateKey(selected, target.id))
+      ?? [...this.engagementEstimates.values()].find((candidate) => candidate.target === target.id);
+    return `<section class="m-section"><h3>Engagement projection</h3>` +
+      `<div class="m-inline-form"><select id="m-estimate-attacker-${safeId(target.id)}" aria-label="Attacking fleet">${options}</select>` +
+      `<button type="button" data-mobile-act="fleet-estimate" data-target="${esc(target.id)}">Estimate</button></div>` +
+      (estimate ? this.renderEngagementEstimate(estimate) : `<small class="m-hint">Uses the served composition and defense picture; results are estimates, not combat truth.</small>`) +
+      `</section>`;
+  }
+
+  private renderEngagementEstimate(estimate: EngagementEstimate): string {
+    const losses = estimate.own_loss_bands?.filter((row) => row.hi > 0).map((row) =>
+      `${row.lo === row.hi ? row.lo : `${row.lo}–${row.hi}`} ${shipKindLabel(row.kind)}`,
+    ).join(", ") || estimate.own_losses.filter((row) => row.count > 0).map((row) => `${row.count} ${shipKindLabel(row.kind)}`).join(", ") || "none";
+    const verdict = estimate.win_pct == null
+      ? "Projected engagement"
+      : `${Math.round(estimate.win_pct)}% ${estimate.win_pct >= 55 ? "favorable" : estimate.win_pct >= 45 ? "even" : "unfavorable"}`;
+    const picture = estimate.target_known
+      ? "exact reported composition"
+      : `typical hulls for an estimated ${countClassLabel(estimate.target_count_class)}-ship contact`;
+    return `<article class="m-feature-card"><small>Arrived projection</small><b>${esc(verdict)}</b>` +
+      `<span>Expected losses ${esc(losses)} · ${esc(picture)} · composition ${fmt(estimate.composition_age)}s old</span></article>`;
+  }
+
+  private estimateKey(attacker: string, target: string): string {
+    return `${attacker}:${target}`;
   }
 
   private shipControls(fleet: GhostView): string {
@@ -537,6 +615,9 @@ export class MobileSurfaces {
 
   private renderCheckin(): SheetView {
     const decisions = this.renderDecisions();
+    const reports = this.arrivedReports.slice().reverse().map((entry) =>
+      `<div class="m-log-row is-${entry.tone}"><span>${esc(entry.text)}</span><time>arrived ${fmt(Math.max(0, liveSimTime() - entry.at))}s ago</time></div>`,
+    ).join("");
     const timeline = this.ctx.state.timeline.slice().reverse().map((entry) =>
       `<div class="m-log-row is-${entry.severity}"><span>${esc(entry.text)}</span><time>${fmt(Math.max(0, liveSimTime() - entry.at_time))}s ago</time></div>`,
     ).join("");
@@ -544,6 +625,7 @@ export class MobileSurfaces {
       title: "Check-in",
       eyebrow: "Decision inbox · arrived reports",
       html: `<section class="m-section m-section--first"><h3>Decision inbox</h3>${decisions || `<div class="m-empty m-empty--good">No urgent decisions.</div>`}</section>` +
+        (reports ? `<section class="m-section"><h3>Arrived reports</h3>${reports}</section>` : "") +
         `<section class="m-section"><h3>Recent log</h3>${timeline || `<div class="m-muted">No reports yet.</div>`}</section>`,
     };
   }
