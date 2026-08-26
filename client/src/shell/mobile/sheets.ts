@@ -234,7 +234,6 @@ export class SheetStack {
     const height = Math.max(heights.half, Math.min(heights.full, this.dragStartHeight + this.dragStartY - event.clientY));
     this.sheet.style.height = `${height}px`;
     document.documentElement.style.setProperty("--mobile-sheet-height", `${height}px`);
-    this.onLayout();
   }
 
   private endDrag(event: PointerEvent): void {

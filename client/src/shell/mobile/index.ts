@@ -93,6 +93,7 @@ class MobileShell implements Shell {
   private orientationMedia: MediaQueryList | null = null;
   private viewportFrame = 0;
   private viewportSettleTimer: number | null = null;
+  private cameraRectSynced = false;
   private unreadReports = 0;
   private readonly readDecisionKeys = new Set<string>();
 
@@ -301,6 +302,7 @@ class MobileShell implements Shell {
     if (this.viewportSettleTimer !== null) window.clearTimeout(this.viewportSettleTimer);
     this.viewportFrame = 0;
     this.viewportSettleTimer = null;
+    this.cameraRectSynced = false;
     this.orientationMedia = null;
     this.abort = null;
     this.root?.replaceChildren();
@@ -387,8 +389,8 @@ class MobileShell implements Shell {
   }
 
   private applyViewportLayout(): void {
+    // SheetStack.layout owns the one camera synchronization for this pass.
     this.sheets?.layout();
-    this.syncCameraRect();
     const entry = this.sheets?.current ?? null;
     this.battle?.sync(entry);
     this.ground?.sync(entry);
@@ -479,7 +481,33 @@ class MobileShell implements Shell {
 
   private syncCameraRect(): void {
     if (!this.ctx) return;
-    this.ctx.renderer.setCameraRect(this.cameraRect());
+    const next = this.cameraRect();
+    const current = this.ctx.renderer.cameraRect;
+    if (!this.cameraRectSynced) {
+      this.ctx.renderer.setCameraRect(next);
+      this.cameraRectSynced = true;
+      return;
+    }
+    const same = Math.abs(next.x - current.x) < .5
+      && Math.abs(next.y - current.y) < .5
+      && Math.abs(next.w - current.w) < .5
+      && Math.abs(next.h - current.h) < .5;
+    if (same) return;
+
+    const viewportH = window.visualViewport?.height ?? window.innerHeight;
+    const verticalChange = Math.max(
+      Math.abs(next.y - current.y),
+      Math.abs(next.y + next.h - current.y - current.h),
+    );
+    const horizontalChange = Math.max(
+      Math.abs(next.x - current.x),
+      Math.abs(next.x + next.w - current.x - current.w),
+    );
+    // Coalesce small inset changes instead of asking setCameraRect to preserve
+    // focus around a slightly different center. The covered strip is not an
+    // interactive map surface, and a later material detent change catches up.
+    if (verticalChange < viewportH * .15 && horizontalChange < .5) return;
+    this.ctx.renderer.setCameraRect(next);
   }
 
   private syncSessionVisibility(): void {
