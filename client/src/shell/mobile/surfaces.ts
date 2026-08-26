@@ -94,7 +94,13 @@ export class MobileSurfaces {
     private readonly sheets: SheetStack,
     private readonly hooks: SurfaceHooks,
   ) {
-    try { this.foundingMinimized = localStorage.getItem(FOUNDING_MINIMIZED_KEY) === "1"; } catch { /* optional */ }
+    try {
+      const stored = localStorage.getItem(FOUNDING_MINIMIZED_KEY);
+      this.foundingMinimized = stored === null || stored === "1";
+    } catch {
+      // Locked-down storage still gets the unobtrusive phone default.
+      this.foundingMinimized = true;
+    }
   }
 
   render(entry: SheetEntry): SheetView | null {

@@ -91,6 +91,7 @@ class MobileShell implements Shell {
   private parity: MobileParitySurfaces | null = null;
   private statusSignature = "";
   private orientationMedia: MediaQueryList | null = null;
+  private foundingResizeObserver: ResizeObserver | null = null;
   private viewportFrame = 0;
   private viewportSettleTimer: number | null = null;
   private cameraRectSynced = false;
@@ -145,6 +146,8 @@ class MobileShell implements Shell {
       exitSemantic: () => this.map?.exitSemanticView(),
       notice: (html) => this.notices?.push(html),
     });
+    this.foundingResizeObserver = new ResizeObserver(() => this.syncFoundingNoticeOffset());
+    this.foundingResizeObserver.observe(byId("m-founding"));
     byId("m-status-toggle").addEventListener("click", () => this.toggleStatus(), { signal });
     byId("m-armed-cancel").addEventListener("click", () => this.map?.cancelArmedMode(), { signal });
     byId<HTMLFormElement>("m-join-form").addEventListener("submit", (event) => {
@@ -176,6 +179,7 @@ class MobileShell implements Shell {
     this.scheduleViewportLayout();
     this.renderStatus(true);
     this.surfaces.refreshFounding();
+    this.syncFoundingNoticeOffset();
     if (ctx.state.playerId === null) byId<HTMLInputElement>("m-name").focus();
 
     const existing = (window as unknown as { __ss?: Record<string, unknown> }).__ss ?? {};
@@ -304,6 +308,9 @@ class MobileShell implements Shell {
     this.viewportSettleTimer = null;
     this.cameraRectSynced = false;
     this.orientationMedia = null;
+    this.foundingResizeObserver?.disconnect();
+    this.foundingResizeObserver = null;
+    document.documentElement.style.removeProperty("--mobile-founding-stack-height");
     this.abort = null;
     this.root?.replaceChildren();
     this.root = null;
@@ -361,6 +368,12 @@ class MobileShell implements Shell {
     const count = this.unreadReports + unreadDecisions;
     badge.textContent = count > 99 ? "99+" : String(count);
     badge.hidden = count === 0;
+  }
+
+  private syncFoundingNoticeOffset(): void {
+    const founding = document.getElementById("m-founding");
+    const stackHeight = !founding || founding.hidden ? 0 : Math.ceil(founding.getBoundingClientRect().height) + 6;
+    document.documentElement.style.setProperty("--mobile-founding-stack-height", `${stackHeight}px`);
   }
 
   /** Landscape is a temporary cover over the still-running mobile session.
