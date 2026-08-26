@@ -15,9 +15,11 @@ import {
   type RoundRecordView,
   type ShipKind,
 } from "../../protocol";
+import { liveSimTime } from "../../state";
 import type { CoreContext } from "../types";
 import type { SheetEntry, SheetView } from "./sheets";
 import { SheetStack } from "./sheets";
+import { sheetFingerprint } from "./signature";
 
 const ROUND_SECS = 0.55;
 const FAMILY_COLOR: Record<SalvoFamily, string> = {
@@ -48,6 +50,7 @@ const propsOf = <T extends object>(entry: SheetEntry): Partial<T> => (entry.prop
  * consumes the exact same truth keyframes.
  */
 export class MobileBattleTheater {
+  private readonly renderSignatures = new Map<SheetEntry["id"], string>();
   private id: string | null = null;
   private round = 0;
   private fraction = 0;
@@ -65,21 +68,30 @@ export class MobileBattleTheater {
     const id = propsOf<{ id: string }>(entry).id;
     const record = id ? this.ctx.state.battleRecords.find((candidate) => candidate.id === id) : undefined;
     this.bind(id ?? null, record);
-    if (!id) return { title: "Battle", eyebrow: "Observed theater", html: `<div class="m-empty">No battle selected.</div>`, detent: "full" };
-    if (!record) {
-      return {
+    let view: SheetView;
+    if (!id) view = { title: "Battle", eyebrow: "Observed theater", html: `<div class="m-empty">No battle selected.</div>`, detent: "full" };
+    else if (!record) {
+      view = {
         title: "Battle",
         eyebrow: "Observed theater · awaiting light",
         html: `<div class="m-empty"><b>Record still arriving — light-delay.</b><br>The battle marker has arrived; its first replay frame is still in transit.</div>`,
         detent: "full",
       };
+    } else {
+      view = {
+        title: `Engagement ${esc(nearestSystemName(record.pos))}`,
+        eyebrow: `${record.outcome === null ? "Battle · delayed observation" : "Battle replay"}${record.raid ? " · raid" : ""}`,
+        html: this.viewer(record),
+        detent: "full",
+      };
     }
-    return {
-      title: `Engagement ${esc(nearestSystemName(record.pos))}`,
-      eyebrow: `${record.outcome === null ? "Battle · delayed observation" : "Battle replay"}${record.raid ? " · raid" : ""}`,
-      html: this.viewer(record),
-      detent: "full",
-    };
+    this.rememberSignature(entry);
+    return view;
+  }
+
+  refreshNeeded(entry: SheetEntry): boolean | null {
+    const signature = this.signature(entry);
+    return signature === null ? null : this.renderSignatures.get(entry.id) !== signature;
   }
 
   handleClick(event: Event): boolean {
@@ -236,6 +248,33 @@ export class MobileBattleTheater {
 
   private record(): BattleRecordView | undefined {
     return this.id ? this.ctx.state.battleRecords.find((candidate) => candidate.id === this.id) : undefined;
+  }
+
+  private rememberSignature(entry: SheetEntry): void {
+    const signature = this.signature(entry);
+    if (signature !== null) this.renderSignatures.set(entry.id, signature);
+  }
+
+  private signature(entry: SheetEntry): string | null {
+    if (entry.id !== "battle") return null;
+    const id = propsOf<{ id: string }>(entry).id ?? "";
+    const record = id ? this.ctx.state.battleRecords.find((candidate) => candidate.id === id) : undefined;
+    const roundIndex = record ? Math.max(0, Math.min(this.round, record.rounds.length - 1)) : 0;
+    const round = record?.rounds[roundIndex];
+    const recordSlice = record ? [
+      record.id, record.system, record.started_at, record.raid, record.fidelity, record.own_side, record.sides,
+      record.light_frontier_tick, record.outcome, record.rounds.length,
+      round ? [round.tick, round.counts, round.kills, round.dealt, round.notes, !!round.frame] : null,
+      record.rounds.slice(0, roundIndex + 1).map((candidate) => candidate.notes),
+      record.rounds.map((candidate) => !!candidate.frame),
+    ] : null;
+    const battle = this.ctx.state.battles.find((candidate) => candidate.id === id);
+    const participants = battle?.participants ?? [];
+    return sheetFingerprint([
+      Math.floor(liveSimTime()), entry.props ?? null, this.round, this.live, this.playing, this.speed,
+      this.ctx.renderer.viewMode.type, recordSlice, battle,
+      this.ctx.state.ghosts.filter((fleet) => fleet.own && participants.includes(fleet.id)).map((fleet) => [fleet.id, fleet.kind]),
+    ]);
   }
 
   private viewer(record: BattleRecordView): string {

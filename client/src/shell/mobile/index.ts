@@ -119,6 +119,7 @@ class MobileShell implements Shell {
       () => this.syncCameraRect(),
       (entry) => this.syncDestination(entry),
       signal,
+      (entry) => this.sheetRefreshNeeded(entry),
     );
     activateSheetStack(this.sheets);
     this.notices = new MobileNoticeStack(byId("m-map-notice"), (entry) => this.openSheet(entry), signal);
@@ -440,6 +441,14 @@ class MobileShell implements Shell {
       eyebrow,
       html: `<div class="m-sheet-placeholder"><b>${title}</b><span>This workspace arrives in the Phase 5 mobile-parity pass.</span></div>`,
     };
+  }
+
+  private sheetRefreshNeeded(entry: SheetEntry): boolean {
+    for (const renderer of [this.battle, this.ground, this.parity, this.surfaces]) {
+      const needed = renderer?.refreshNeeded(entry);
+      if (needed !== null && needed !== undefined) return needed;
+    }
+    return true;
   }
 
   private renderIntentSheet(title: string, eyebrow: string): SheetView {

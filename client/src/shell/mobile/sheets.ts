@@ -74,6 +74,7 @@ export class SheetStack {
     private readonly onLayout: () => void,
     private readonly onChange: (entry: SheetEntry | null) => void,
     signal: AbortSignal,
+    private readonly refreshNeeded: (entry: SheetEntry) => boolean = () => true,
   ) {
     this.sheet.addEventListener("pointerdown", (event) => this.startDrag(event), { signal });
     window.addEventListener("pointermove", (event) => this.moveDrag(event), { signal });
@@ -141,6 +142,7 @@ export class SheetStack {
 
   refresh(): void {
     if (!this.current) return;
+    if (!this.refreshNeeded(this.current)) return;
     if (renderDeferred("m-sheet", () => this.refresh())) return;
     this.render(false);
   }

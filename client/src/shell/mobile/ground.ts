@@ -6,9 +6,11 @@ import {
   groundTheaterStep,
 } from "../../groundtheater";
 import type { GroundRecordView } from "../../protocol";
+import { liveSimTime } from "../../state";
 import type { CoreContext } from "../types";
 import type { SheetEntry, SheetView } from "./sheets";
 import { SheetStack } from "./sheets";
+import { sheetFingerprint } from "./signature";
 
 const esc = (value: string): string => value.replace(
   /[&<>\"]/g,
@@ -23,6 +25,7 @@ const propsOf = <T extends object>(entry: SheetEntry): Partial<T> => (entry.prop
  * scrubbed. The canvas consumes the same record as desktop at every frame.
  */
 export class MobileGroundTheater {
+  private readonly renderSignatures = new Map<SheetEntry["id"], string>();
   private id: string | null = null;
   private round = 0;
   private fraction = 0;
@@ -39,22 +42,31 @@ export class MobileGroundTheater {
     const id = propsOf<{ id: string }>(entry).id;
     const record = id ? this.ctx.state.groundRecords.find((candidate) => candidate.id === id) : undefined;
     this.bind(id ?? null, record);
-    if (!id) return { title: "Ground action", eyebrow: "Observed landing", html: `<div class="m-empty">No landing selected.</div>`, detent: "full" };
-    if (!record) {
-      return {
+    let view: SheetView;
+    if (!id) view = { title: "Ground action", eyebrow: "Observed landing", html: `<div class="m-empty">No landing selected.</div>`, detent: "full" };
+    else if (!record) {
+      view = {
         title: "Ground action",
         eyebrow: "Observed landing · awaiting light",
         html: `<div class="m-empty">This landing record has not reached you.</div>`,
         detent: "full",
       };
+    } else {
+      const system = this.ctx.state.galaxy?.systems.find((candidate) => candidate.id === record.system);
+      view = {
+        title: `${record.attacking ? "Your landing" : "Landing"} · ${system?.name ?? "unknown system"}`,
+        eyebrow: record.fidelity === "participant" ? "Ground assault · participant record" : "Ground assault · observed from orbit",
+        html: this.viewer(record),
+        detent: "full",
+      };
     }
-    const system = this.ctx.state.galaxy?.systems.find((candidate) => candidate.id === record.system);
-    return {
-      title: `${record.attacking ? "Your landing" : "Landing"} · ${system?.name ?? "unknown system"}`,
-      eyebrow: record.fidelity === "participant" ? "Ground assault · participant record" : "Ground assault · observed from orbit",
-      html: this.viewer(record),
-      detent: "full",
-    };
+    this.rememberSignature(entry);
+    return view;
+  }
+
+  refreshNeeded(entry: SheetEntry): boolean | null {
+    const signature = this.signature(entry);
+    return signature === null ? null : this.renderSignatures.get(entry.id) !== signature;
   }
 
   handleClick(event: Event): boolean {
@@ -182,6 +194,26 @@ export class MobileGroundTheater {
 
   private record(): GroundRecordView | undefined {
     return this.id ? this.ctx.state.groundRecords.find((candidate) => candidate.id === this.id) : undefined;
+  }
+
+  private rememberSignature(entry: SheetEntry): void {
+    const signature = this.signature(entry);
+    if (signature !== null) this.renderSignatures.set(entry.id, signature);
+  }
+
+  private signature(entry: SheetEntry): string | null {
+    if (entry.id !== "ground") return null;
+    const id = propsOf<{ id: string }>(entry).id ?? "";
+    const record = id ? this.ctx.state.groundRecords.find((candidate) => candidate.id === id) : undefined;
+    const recordSlice = record ? [
+      record.id, record.system, record.started_at, record.fidelity, record.attacking,
+      record.marines_landed, record.defenders_initial, record.garrison_tiers,
+      record.suppression_at_drop, record.outcome,
+      record.rounds.map((round) => [round.tick, round.notes ?? []]),
+    ] : null;
+    return sheetFingerprint([
+      Math.floor(liveSimTime()), entry.props ?? null, this.round, this.live, this.playing, recordSlice,
+    ]);
   }
 
   private viewer(record: GroundRecordView): string {

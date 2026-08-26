@@ -31,6 +31,7 @@ import { renderDeferred, setHtml } from "../dom";
 import type { CoreContext } from "../types";
 import type { SheetEntry, SheetView } from "./sheets";
 import { SheetStack } from "./sheets";
+import { sheetFingerprint } from "./signature";
 
 type MarketTab = "exchange" | "warehouse" | "specialists" | "modules";
 type FreightDirection = "outbound" | "inbound";
@@ -79,6 +80,7 @@ const element = <T extends HTMLElement>(id: string): T | null => document.getEle
 const propsOf = <T extends object>(entry: SheetEntry): Partial<T> => (entry.props && typeof entry.props === "object" ? entry.props : {}) as Partial<T>;
 
 export class MobileSurfaces {
+  private readonly renderSignatures = new Map<SheetEntry["id"], string>();
   private marketTab: MarketTab = "exchange";
   private marketCommodity: Commodity = "fuel";
   private marketSide: Side = "buy";
@@ -104,15 +106,23 @@ export class MobileSurfaces {
   }
 
   render(entry: SheetEntry): SheetView | null {
+    let view: SheetView | null;
     switch (entry.id) {
-      case "fleets": return this.renderFleets();
-      case "ship": return this.renderShip(entry);
-      case "system": return this.renderSystem(entry);
-      case "market": return this.renderMarket();
-      case "log": return this.renderCheckin();
-      case "battle": return this.renderBattle(entry);
+      case "fleets": view = this.renderFleets(); break;
+      case "ship": view = this.renderShip(entry); break;
+      case "system": view = this.renderSystem(entry); break;
+      case "market": view = this.renderMarket(); break;
+      case "log": view = this.renderCheckin(); break;
+      case "battle": view = this.renderBattle(entry); break;
       default: return null;
     }
+    this.rememberSignature(entry);
+    return view;
+  }
+
+  refreshNeeded(entry: SheetEntry): boolean | null {
+    const signature = this.signature(entry);
+    return signature === null ? null : this.renderSignatures.get(entry.id) !== signature;
   }
 
   onTrade(trade: TradeEvent): void {
@@ -445,6 +455,51 @@ export class MobileSurfaces {
 
   private estimateKey(attacker: string, target: string): string {
     return `${attacker}:${target}`;
+  }
+
+  private rememberSignature(entry: SheetEntry): void {
+    const signature = this.signature(entry);
+    if (signature !== null) this.renderSignatures.set(entry.id, signature);
+  }
+
+  /** Cheap served-slice fingerprints replace 5 Hz HTML reconstruction. The
+   * one-second render clock keeps human-facing ages/countdowns alive. */
+  private signature(entry: SheetEntry): string | null {
+    const state = this.ctx.state;
+    const clock = Math.floor(liveSimTime());
+    const props = entry.props ?? null;
+    switch (entry.id) {
+      case "fleets":
+        return sheetFingerprint([clock, state.ghosts.filter((fleet) => fleet.own)]);
+      case "ship": {
+        const id = propsOf<{ id: string }>(entry).id ?? state.selectedShipId ?? "";
+        return sheetFingerprint([
+          clock, props, state.ghosts.find((fleet) => fleet.id === id), state.pendingOrders.get(id) ?? [], state.raids[id],
+          state.galaxy?.jump_range, [...this.engagementEstimates.values()], this.estimateAttackerByTarget.get(id),
+        ]);
+      }
+      case "system": {
+        const id = propsOf<{ id: string }>(entry).id ?? state.selectedSystemId ?? "";
+        return sheetFingerprint([clock, props, state.systems.find((system) => system.id === id), state.ghosts.filter((fleet) => fleet.docked === id)]);
+      }
+      case "market":
+        return sheetFingerprint([
+          clock, this.marketTab, this.marketCommodity, this.marketSide, this.freightDirection,
+          state.market, state.wallet, state.freight, state.systems, state.ghosts.filter((fleet) => fleet.own && fleet.docked === "hub"),
+          marketReservations, recentMarketOrders,
+        ]);
+      case "log":
+        return sheetFingerprint([
+          clock, state.timeline, state.founding, state.diplomacy, state.syndicateInvites, state.operations, state.battles,
+          [...this.dismissedDecisions], this.arrivedReports,
+        ]);
+      case "battle": {
+        const id = propsOf<{ id: string }>(entry).id ?? "";
+        return sheetFingerprint([clock, props, state.battles.find((battle) => battle.id === id), state.ghosts]);
+      }
+      default:
+        return null;
+    }
   }
 
   private shipControls(fleet: GhostView): string {

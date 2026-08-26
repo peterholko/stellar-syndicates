@@ -43,6 +43,7 @@ import { captainPortrait } from "../art";
 import type { CoreContext } from "../types";
 import type { SheetEntry, SheetView } from "./sheets";
 import { SheetStack } from "./sheets";
+import { sheetFingerprint } from "./signature";
 
 interface ParityHooks {
   openSheet(entry: SheetEntry): void;
@@ -113,6 +114,7 @@ const element = <T extends HTMLElement>(id: string): T | null => document.getEle
 const option = (value: string, label: string, selected = false): string => `<option value="${esc(value)}"${selected ? " selected" : ""}>${esc(label)}</option>`;
 
 export class MobileParitySurfaces {
+  private readonly renderSignatures = new Map<SheetEntry["id"], string>();
   private researchField = "propulsion";
   private operationTab: OperationTab = "active";
   private systemTab: SystemTab = "worlds";
@@ -129,22 +131,30 @@ export class MobileParitySurfaces {
   ) {}
 
   render(entry: SheetEntry): SheetView | null {
+    let view: SheetView | null;
     switch (entry.id) {
-      case "research": return this.renderResearch();
-      case "officers": return this.renderOfficers();
-      case "operations": return this.renderOperations();
-      case "syndicate": return this.renderSyndicate();
-      case "faction": return this.renderFaction();
-      case "rankings": return this.renderRankings();
-      case "logistics": return this.renderLogistics();
-      case "doctrine": return this.renderDoctrine();
-      case "system": return this.renderSystem(entry);
-      case "planet": return this.renderPlanet(entry);
-      case "build": return this.renderBuild(entry);
-      case "shipyard": return this.renderShipyard(entry);
-      case "hub": return this.renderHub();
+      case "research": view = this.renderResearch(); break;
+      case "officers": view = this.renderOfficers(); break;
+      case "operations": view = this.renderOperations(); break;
+      case "syndicate": view = this.renderSyndicate(); break;
+      case "faction": view = this.renderFaction(); break;
+      case "rankings": view = this.renderRankings(); break;
+      case "logistics": view = this.renderLogistics(); break;
+      case "doctrine": view = this.renderDoctrine(); break;
+      case "system": view = this.renderSystem(entry); break;
+      case "planet": view = this.renderPlanet(entry); break;
+      case "build": view = this.renderBuild(entry); break;
+      case "shipyard": view = this.renderShipyard(entry); break;
+      case "hub": view = this.renderHub(); break;
       default: return null;
     }
+    this.rememberSignature(entry);
+    return view;
+  }
+
+  refreshNeeded(entry: SheetEntry): boolean | null {
+    const signature = this.signature(entry);
+    return signature === null ? null : this.renderSignatures.get(entry.id) !== signature;
   }
 
   handleClick(event: Event): boolean {
@@ -862,6 +872,68 @@ export class MobileParitySurfaces {
     const doctrine = { ...this.ctx.state.doctrine } as FleetDoctrine;
     for (const field of DOCTRINE_FIELDS) (doctrine as unknown as Record<string, string>)[field.key] = element<HTMLSelectElement>(`m-doctrine-${field.key}`)?.value ?? doctrine[field.key];
     this.ctx.send({ type: "SetFleetDoctrine", doctrine });
+  }
+
+  private rememberSignature(entry: SheetEntry): void {
+    const signature = this.signature(entry);
+    if (signature !== null) this.renderSignatures.set(entry.id, signature);
+  }
+
+  /** Fingerprint only the served slice used by the active workspace. Serializing
+   * these small owner-facing records is much cheaper than rebuilding its HTML. */
+  private signature(entry: SheetEntry): string | null {
+    const state = this.ctx.state;
+    const clock = Math.floor(liveSimTime());
+    const props = entry.props ?? null;
+    switch (entry.id) {
+      case "research":
+        return sheetFingerprint([clock, this.researchField, state.research]);
+      case "officers":
+        return sheetFingerprint([clock, state.captains, state.captainCapacity, state.systems, state.ghosts.filter((fleet) => fleet.own)]);
+      case "operations":
+        return sheetFingerprint([clock, this.operationTab, state.midgameStage, state.operations, state.ghosts.filter((fleet) => fleet.own)]);
+      case "syndicate":
+        return sheetFingerprint([clock, state.syndicate, state.syndicateInvites, state.diplomacy, state.systems, state.ghosts.filter((fleet) => fleet.own)]);
+      case "faction":
+        return sheetFingerprint([clock, state.charter, state.charterLadder]);
+      case "rankings":
+        return sheetFingerprint([clock, this.rankingCategory, state.rankings, state.playerId]);
+      case "logistics":
+        return sheetFingerprint([clock, state.standingOrders, state.systems.map((system) => [system.id, system.owner, system.ally])]);
+      case "doctrine":
+        return sheetFingerprint([clock, state.doctrine]);
+      case "system": {
+        const mode = this.ctx.renderer.viewMode;
+        const id = propsOf<{ id: string }>(entry).id ?? state.selectedSystemId ?? (mode.type === "system" ? mode.systemId : "");
+        return sheetFingerprint([
+          clock, props, this.systemTab, mode.type, id, state.systems.find((system) => system.id === id),
+          state.ghosts.filter((fleet) => fleet.own), state.groundRecords.filter((record) => record.system === id),
+        ]);
+      }
+      case "planet": {
+        const { systemId } = propsOf<{ systemId: string }>(entry);
+        return sheetFingerprint([
+          clock, props, this.planetTab, state.systems.find((system) => system.id === systemId),
+          state.systems.map((system) => [system.id, system.owner, system.blockade, system.habitat_fed, system.bodies.map((body) => [body.id, body.population])]),
+          state.groundRecords.filter((record) => record.system === systemId),
+        ]);
+      }
+      case "build": {
+        const { systemId } = propsOf<{ systemId: string }>(entry);
+        return sheetFingerprint([clock, props, this.selectedBuild, state.galaxy?.build_options, state.systems.find((system) => system.id === systemId)]);
+      }
+      case "shipyard": {
+        const { systemId } = propsOf<{ systemId: string }>(entry);
+        return sheetFingerprint([
+          clock, props, this.selectedHull, this.pendingFit, state.galaxy?.build_options,
+          state.systems.find((system) => system.id === systemId), state.syndicate?.fits,
+        ]);
+      }
+      case "hub":
+        return sheetFingerprint([clock, state.ghosts.filter((fleet) => fleet.own && fleet.docked === "hub")]);
+      default:
+        return null;
+    }
   }
 }
 
