@@ -327,8 +327,7 @@ export class MobileMapInteraction {
     if (factor > 1 && renderer.atBattleZoomThreshold()) {
       const battleId = renderer.battlePick(midpoint.x, midpoint.y);
       const battle = battleId === null ? undefined : this.ctx.state.battles.find((entry) => entry.id === battleId);
-      const record = battleId === null ? undefined : this.ctx.state.battleRecords.find((entry) => entry.id === battleId);
-      if (battle && record?.outcome === null) {
+      if (battle) {
         renderer.enterBattleView(battle.id, battle.pos);
         this.hooks.openSheet({ id: "battle", props: { id: battle.id } });
         this.hooks.onSemanticChange("battle", battle.id);

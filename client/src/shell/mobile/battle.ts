@@ -70,7 +70,7 @@ export class MobileBattleTheater {
       return {
         title: "Battle",
         eyebrow: "Observed theater · awaiting light",
-        html: `<div class="m-empty">The battle marker has arrived; its first replay frame is still in transit.</div>`,
+        html: `<div class="m-empty"><b>Record still arriving — light-delay.</b><br>The battle marker has arrived; its first replay frame is still in transit.</div>`,
         detent: "full",
       };
     }
