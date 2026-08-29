@@ -314,12 +314,17 @@ class DeckShell implements Shell {
     }
     const routeKeys: Partial<Record<string, DeckRouteName>> = {
       m: "market", v: "fleets", r: "research", p: "officers",
-      u: "operations", y: "syndicate", c: "faction", l: "log", s: "system",
+      u: "operations", y: "syndicate", c: "faction", l: "log",
     };
     const route = routeKeys[key.toLowerCase()];
     if (route) {
       event.preventDefault();
       this.openRoute(route);
+      return;
+    }
+    if (key.toLowerCase() === "s") {
+      event.preventDefault();
+      this.openSelectedSystem();
       return;
     }
     const fleet = this.ctx.state.selectedShipId
@@ -349,8 +354,20 @@ class DeckShell implements Shell {
       this.map?.zoomOut();
     } else if (key === "?") {
       event.preventDefault();
-      this.setHelpOpen(true);
+      this.setHelpOpen(byId("deck-help").hasAttribute("hidden"));
     }
+  }
+
+  private openSelectedSystem(): void {
+    if (!this.ctx || !this.router) return;
+    const mode = this.ctx.renderer.viewMode;
+    const id = this.ctx.state.selectedSystemId ?? (mode.type === "system" ? mode.systemId : null);
+    const system = id ? this.ctx.state.galaxy?.systems.find((entry) => entry.id === id) : undefined;
+    if (!system) {
+      this.setStatus("<b>No system selected</b> · click a star, then press S.");
+      return;
+    }
+    this.router.go({ name: "system", params: { id: system.id, systemLabel: system.name } });
   }
 
   private escapeOneLayer(): boolean {

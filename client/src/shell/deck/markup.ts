@@ -59,21 +59,23 @@ export function mountDeckMarkup(root: HTMLElement): void {
           <div class="deck-help__card">
             <header><div><div class="deck-eyebrow">Command Deck</div><h1 id="deck-help-title">Shortcuts</h1></div><button type="button" data-deck-act="close-help" aria-label="Close shortcuts">✕</button></header>
             <div class="deck-help__grid">
-              <kbd>Scroll</kbd><span>Zoom and cross the galaxy/system handoff</span>
-              <kbd>Drag</kbd><span>Pan the galaxy map</span>
-              <kbd>+</kbd><span>Zoom in</span>
-              <kbd>−</kbd><span>Zoom out</span>
-              <kbd>⊡</kbd><span>Fit the galaxy</span>
-              <kbd>Esc</kbd><span>Back one layer</span>
+              <kbd>Left-click</kbd><span>Select a map object, or command the selected fleet</span>
+              <kbd>Shift-click</kbd><span>Attack a hostile target with the selected fleet</span>
+              <kbd>Right-click</kbd><span>Inspect without disturbing fleet selection</span>
+              <kbd>Double-click</kbd><span>Enter a star system or an ongoing battle</span>
+              <kbd>Ctrl / ⌘-click</kbd><span>Add or remove an owned fleet from the command group</span>
+              <kbd>Scroll · Drag</kbd><span>Zoom through semantic views · pan the galaxy</span>
+              <kbd>+ · − · ⊡</kbd><span>Zoom in · zoom out · fit the galaxy</span>
               <kbd>Enter</kbd><span>Confirm the pending fleet order</span>
               <kbd>J / G</kbd><span>Arm Jump / Guard for the selected fleet</span>
               <kbd>[ / ]</kbd><span>Cycle and center your fleets</span>
-              <kbd>Ctrl-click</kbd><span>Add or remove an owned fleet from the command group</span>
               <kbd>M V R P</kbd><span>Market · Fleets · Research · Officers</span>
               <kbd>U Y C L</kbd><span>Operations · Syndicate · Faction · Log</span>
-              <kbd>S</kbd><span>System workspace</span>
+              <kbd>S</kbd><span>Open the selected system's workspace</span>
+              <kbd>Esc</kbd><span>Cancel one layer: order · aim · scrub · overlay · workspace · selection</span>
+              <kbd>?</kbd><span>Open or close this shortcuts overlay</span>
             </div>
-            <p>Right-click inspects map objects without disturbing the selected fleet.</p>
+            <p>Shortcuts accelerate controls that remain visible in the Command Deck.</p>
           </div>
         </section>
       </div>
