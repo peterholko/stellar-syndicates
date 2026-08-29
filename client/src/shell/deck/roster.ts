@@ -114,16 +114,16 @@ export class DeckRosterRoutes {
       if (home && system) this.hooks.go({ name: "system", params: { id: home, systemLabel: system.name } });
     } else if (action === "research-add") {
       const id = button.dataset.programme;
-      const queue = researchQueueIds();
-      if (id && !queue.includes(id)) sendResearchQueue([...queue, id]);
+      const queue = deckResearchQueue();
+      if (id && !queue.includes(id)) this.sendResearchQueue([...queue, id]);
     } else if (action === "research-up" || action === "research-down" || action === "research-remove") {
-      const queue = researchQueueIds();
+      const queue = deckResearchQueue();
       const index = Number(button.dataset.index);
       if (Number.isFinite(index) && index >= 0 && index < queue.length) {
         if (action === "research-remove") queue.splice(index, 1);
         else if (action === "research-up" && index > 0) [queue[index - 1], queue[index]] = [queue[index], queue[index - 1]];
         else if (action === "research-down" && index < queue.length - 1) [queue[index + 1], queue[index]] = [queue[index], queue[index + 1]];
-        sendResearchQueue(queue);
+        this.sendResearchQueue(queue);
       }
     } else if (action === "research-academy") {
       const home = foundingHomeSystemId();
@@ -200,7 +200,7 @@ export class DeckRosterRoutes {
   private researchHtml(): string {
     const research = this.ctx.state.research;
     if (!research) return `<section class="deck-page"><header class="deck-page__lead"><span>Private programme boards</span><h2>Research unavailable</h2><p>Reconnect to restore the corporation's research picture.</p></header></section>`;
-    const queue = researchQueueIds();
+    const queue = deckResearchQueue();
     const active = research.active ? this.activeResearchHtml(research.active, research.rate, research.stalled, research.academies) : `<div class="deck-alert"><b>No active programme</b><span>Choose any available node. The front of the queue begins accruing immediately.</span></div>`;
     const activePinned = !!research.active;
     const queueHtml = queue.length ? queue.map((id, index) => {
@@ -253,6 +253,14 @@ export class DeckRosterRoutes {
     this.hooks.notice(selected.size > 1 ? `<b>${selected.size} fleets grouped</b> · choose one map destination for a batch move.` : "<b>Single-fleet command</b> · group another fleet to move together.");
   }
 
+  /** The server's SetResearchQueue payload is queue-ahead only while a
+   * programme is active. Keep the pinned row in the Deck readout, but do not
+   * echo it back onto the wire when the player edits the rows beneath it. */
+  private sendResearchQueue(rows: string[]): void {
+    const active = this.ctx.state.research?.active?.id;
+    sendResearchQueue(rows.filter((id) => id !== active));
+  }
+
   private rosterActivity(g: GhostView): string {
     if (this.ctx.state.commandSignals.some((entry) => entry.shipId === g.id)) return "Signal outbound";
     if (g.rescue_inbound) return "AAA rescue active";
@@ -261,6 +269,10 @@ export class DeckRosterRoutes {
     if (this.ctx.state.orders[g.id]) return "En route";
     return Math.hypot(g.vel.x, g.vel.y) < .5 ? "Holding station" : "Under way";
   }
+}
+
+function deckResearchQueue(): string[] {
+  return [...new Set(researchQueueIds())];
 }
 
 function dockedAt(systemId: string, fleet: GhostView): boolean {

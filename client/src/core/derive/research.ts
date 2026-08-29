@@ -11,24 +11,17 @@ export function bindResearchNet(source: () => Net | null): void {
 }
 
 
-// The ordered board readout includes the pinned active programme followed by
-// queue-ahead. De-duplicate defensively: older clients used to echo `active`
-// back into the server's queue-ahead list on every edit.
+// The full ordered queue the player controls = [active, ...queue-ahead]. Sending
+// it back as SetResearchQueue re-promotes the front to active (the sim's rule).
 export function researchQueueIds(): string[] {
   const r = state.research;
   if (!r) return [];
-  return [...new Set(r.active ? [r.active.id, ...r.queue] : r.queue)];
+  return r.active ? [r.active.id, ...r.queue] : [...r.queue];
 }
 
 export function sendResearchQueue(ids: string[]): void {
   const net = netSource();
-  if (!net) return;
-  // SetResearchQueue replaces only queue-ahead while an active programme is
-  // running; it does not re-promote or cancel that active clock. Never echo the
-  // pinned row into queue-ahead, or each edit duplicates it on the wire.
-  const active = state.research?.active?.id;
-  const queue = [...new Set(ids)].filter((id) => id !== active);
-  net.send({ type: "SetResearchQueue", queue });
+  if (net) net.send({ type: "SetResearchQueue", queue: ids });
 }
 
 
