@@ -8,6 +8,7 @@ import { installPressGuard } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext, Rect, Shell } from "../types";
 import { installDeckDebug } from "./debug";
+import { DeckEmpireRoutes } from "./empire";
 import { type SelectTarget } from "../../core/mapclick";
 import { DeckMapInteraction } from "./map";
 import { mountDeckMarkup } from "./markup";
@@ -27,6 +28,7 @@ class DeckShell implements Shell {
   private map: DeckMapInteraction | null = null;
   private toasts: DeckToasts | null = null;
   private strip: DeckCommandStrip | null = null;
+  private empire: DeckEmpireRoutes | null = null;
   private removeDebug: (() => void) | null = null;
   private chromeSignature = "";
   private zoomSignature = "";
@@ -55,6 +57,10 @@ class DeckShell implements Shell {
     this.strip = new DeckCommandStrip(byId("deck-command-strip"), ctx, {
       notice: (html) => this.setStatus(html),
     }, signal);
+    this.empire = new DeckEmpireRoutes(byId("deck-workspace-body"), ctx, {
+      go: (route) => this.router?.go(route),
+      notice: (html) => this.setStatus(html),
+    });
     this.removeDebug = installDeckDebug(ctx, (id) => this.router?.go({ name: "battle", params: { id, label: "Theater demo" } }));
     byId<HTMLFormElement>("deck-join-form").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -68,6 +74,7 @@ class DeckShell implements Shell {
     byId("deck-workspace").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
       if (!button) return;
+      if (this.empire?.handleAction(button, this.router?.current ?? null)) return;
       if (button.dataset.deckAct === "back") this.router?.back();
       else if (button.dataset.deckAct === "close") this.router?.close();
       else if (button.dataset.deckAct === "width") this.workspace?.toggleWidth();
@@ -132,6 +139,7 @@ class DeckShell implements Shell {
     this.strip?.render();
     this.renderChrome();
     this.renderZoom();
+    this.empire?.render(this.router?.current ?? null);
   }
 
   framePolicy() {
@@ -155,11 +163,13 @@ class DeckShell implements Shell {
     this.map?.teardown();
     this.toasts?.teardown();
     this.strip?.clear();
+    this.empire?.invalidate();
     this.router = null;
     this.workspace = null;
     this.map = null;
     this.toasts = null;
     this.strip = null;
+    this.empire = null;
     this.removeDebug = null;
     this.abort = null;
     this.root?.replaceChildren();
@@ -348,7 +358,7 @@ class DeckShell implements Shell {
     }
     this.activeCrumbs = this.router.breadcrumbs(route);
     this.workspace.show(route, this.activeCrumbs, stack.length > 1);
-    this.renderPlaceholder(route);
+    if (!this.empire?.render(route, true)) this.renderPlaceholder(route);
     this.renderActiveNav(route.name);
   }
 
