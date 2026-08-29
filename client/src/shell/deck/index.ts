@@ -49,11 +49,11 @@ class DeckShell implements Shell {
         }
       },
       openTarget: (target) => this.openMapTarget(target),
-      notice: () => { /* D1.5 promotes resolver readouts into the strip status line. */ },
+      notice: (html) => this.setStatus(html),
     }, signal);
     this.toasts = new DeckToasts(byId("deck-toast-lane"), (route) => this.router?.go(route), signal);
     this.strip = new DeckCommandStrip(byId("deck-command-strip"), ctx, {
-      notice: () => { /* D1.5 promotes command outcomes into the strip status line. */ },
+      notice: (html) => this.setStatus(html),
     }, signal);
     this.removeDebug = installDeckDebug(ctx, (id) => this.router?.go({ name: "battle", params: { id, label: "Theater demo" } }));
     byId<HTMLFormElement>("deck-join-form").addEventListener("submit", (event) => {
@@ -112,10 +112,19 @@ class DeckShell implements Shell {
       } else if (event.kind === "ProtocolMismatch") {
         console.warn(`protocol mismatch: server v${event.server}, client expects v${event.client}`);
       }
+      if (event.kind === "IntentChanged" && event.readout) {
+        this.setStatus(event.readout);
+      } else if (event.kind === "OrderConfirmed") {
+        const fleet = this.ctx?.state.ghosts.find((entry) => entry.id === event.shipId);
+        this.setStatus(`<b>Order confirmed</b> · ${escapeHtml(humanize(event.orderKind))}${fleet ? ` · ${escapeHtml(humanize(fleet.kind))}` : ""}`);
+      } else if (event.kind === "ServerError") {
+        this.setStatus(`<span class="deck-command-status__error"><b>Command refused</b> · ${escapeHtml(event.message)}</span>`);
+      }
       this.toastFor(event);
     }
     this.syncSessionVisibility();
     this.renderChrome(true);
+    this.strip?.render(true);
   }
 
   onViewTick(): void {
@@ -178,6 +187,10 @@ class DeckShell implements Shell {
 
   private openRoute(name: DeckRouteName): void {
     this.router?.go({ name });
+  }
+
+  private setStatus(html: string): void {
+    this.strip?.setStatus(html);
   }
 
   private keyDown(event: KeyboardEvent): void {
@@ -485,4 +498,10 @@ export const createShell = (): Shell => new DeckShell();
 
 function humanize(value: string): string {
   return value.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"]/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
+  })[character]!);
 }

@@ -19,6 +19,9 @@ const esc = (value: string): string => value.replace(
  * become PendingIntent previews and cannot transmit before confirmation. */
 export class DeckCommandStrip {
   private signature = "";
+  private statusHtml = "";
+  private statusVersion = 0;
+  private statusTimer: number | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -43,6 +46,7 @@ export class DeckCommandStrip {
       state.orders,
       state.raids,
       selected.map((fleet) => (state.pendingOrders.get(fleet.id) ?? []).map((order) => [order.id, order.kind])),
+      this.statusVersion,
     ]);
     if (!force && signature === this.signature) return;
     this.signature = signature;
@@ -53,14 +57,39 @@ export class DeckCommandStrip {
       : this.ctx.intent.intentAiming.guard
         ? { mode: "guard" as const, shipId: this.ctx.intent.intentAiming.guard }
         : null;
-    if (intent) this.root.innerHTML = this.intentHtml(intentSummary(intent));
-    else if (armed) this.root.innerHTML = this.armedHtml(armed.mode, armed.shipId);
-    else if (selected.length) this.root.innerHTML = this.selectionHtml(selected);
+    let modeHtml = "";
+    if (intent) modeHtml = this.intentHtml(intentSummary(intent));
+    else if (armed) modeHtml = this.armedHtml(armed.mode, armed.shipId);
+    else if (selected.length) modeHtml = this.selectionHtml(selected);
+    if (modeHtml) this.root.innerHTML = modeHtml + this.statusLineHtml();
     else this.root.replaceChildren();
     this.root.hidden = !this.root.childElementCount;
   }
 
+  /** Internal command copy is already presentation-safe HTML from core/intent.
+   * One generation owns the line, so an older expiry can never erase a newer
+   * outcome. CSS supplies the short tail fade before the 15-second removal. */
+  setStatus(html: string): void {
+    if (!html) return;
+    this.statusHtml = html;
+    this.statusVersion++;
+    if (this.statusTimer !== null) window.clearTimeout(this.statusTimer);
+    const generation = this.statusVersion;
+    this.statusTimer = window.setTimeout(() => {
+      if (generation !== this.statusVersion) return;
+      this.statusHtml = "";
+      this.statusTimer = null;
+      this.statusVersion++;
+      this.render(true);
+    }, 15_000);
+    this.render(true);
+  }
+
   clear(): void {
+    if (this.statusTimer !== null) window.clearTimeout(this.statusTimer);
+    this.statusTimer = null;
+    this.statusHtml = "";
+    this.statusVersion++;
     this.signature = "";
     this.root.replaceChildren();
     this.root.hidden = true;
@@ -122,6 +151,10 @@ export class DeckCommandStrip {
         `<button type="button" class="is-primary" data-deck-command="confirm">Confirm <kbd>Enter</kbd></button>` +
         `<button type="button" data-deck-command="cancel-intent">Cancel <kbd>Esc</kbd></button>` +
       `</div></div>`;
+  }
+
+  private statusLineHtml(): string {
+    return this.statusHtml ? `<div class="deck-command-status">${this.statusHtml}</div>` : "";
   }
 
   private armedHtml(mode: "jump" | "guard", shipId: string): string {
