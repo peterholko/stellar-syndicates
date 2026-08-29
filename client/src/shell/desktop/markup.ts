@@ -209,46 +209,18 @@ export const desktopMarkup = String.raw`
           </section>
         </div>
       </div>
-      <!-- §TCA → §market-ux: the WAREHOUSE tab — your stock at the hub and the ONE
-           place goods cross between it and your systems. Both channels live here,
-           chosen by the CARRIER toggle, because they are the same decision made two
-           ways: the Authority's scheduled hull (a fee, a timetable, someone else's
-           risk to fly) or one of your own freighters (free, immediate, yours to lose).
-           Your charter STANDING, which prices the Authority's half, is in Faction. -->
+      <!-- §market-ux: the WAREHOUSE tab shows stock held at the Hub, the player's
+           docked fleets, and any Authority shipments already in flight. Owned
+           freighters are loaded and commanded from their fleet panels. -->
       <div id="market-pane-warehouse" class="ux-stack" role="tabpanel" aria-labelledby="market-tab-warehouse" hidden>
-        <!-- §TCA: the WAREHOUSE — the only stock the Exchange trades against. Rows
-             are clickable: picking one loads it into the shipping composer below. -->
+        <!-- The WAREHOUSE is the only stock the Exchange trades against. -->
         <section class="ux-section">
-          <div class="ux-section__head"><img class="icon icon--sm" src="/art/ui_icons/panel/concept-warehouse.png" alt="" /><span>Warehouse inventory</span><small>click a good to ship it</small></div>
+          <div class="ux-section__head"><img class="icon icon--sm" src="/art/ui_icons/panel/concept-warehouse.png" alt="" /><span>Warehouse inventory</span></div>
           <div id="wh-table" class="mkt-orders"></div>
         </section>
         <section class="ux-section">
           <div class="ux-section__head"><img class="icon icon--sm" src="/art/ui_icons/panel/concept-manifest.png" alt="" /><span>Docked fleets</span></div>
           <div id="wh-berths"></div>
-        </section>
-
-        <section class="ux-section ux-section--primary">
-          <div class="ux-section__head"><img class="icon icon--sm" src="/art/ui_icons/panel/concept-freight-route.png" alt="" /><span>Book freight</span></div>
-          <div class="composer composer--flush">
-          <div class="composer__row"><label><img class="icon icon--sm" src="/art/ui_icons/panel/concept-authority-freighter.png" alt="" />Carrier</label>
-            <div class="seg" id="fr-carrier">
-              <button data-carrier="tca" class="is-active" title="The Terran Charter Authority's scheduled common carrier. Costs a fee (charged now and destroyed), rides a fixed timetable, and can carry goods BOTH ways. The freighter is a real, raidable hull — but it isn't yours to lose.">Authority freight</button>
-            </div>
-            <span class="dim" title="To haul personally, select a real cargo fleet at this hub, load it, and issue its route from the fleet panel.">Owned hulls are managed from their fleet panel.</span>
-          </div>
-          <div class="composer__row"><label><img class="icon icon--sm" src="/art/ui_icons/panel/concept-freight-route.png" alt="" />Direction</label>
-            <div class="seg" id="fr-dir"><button data-dir="outbound" class="is-active">Warehouse → system</button><button data-dir="inbound">System → warehouse</button></div>
-          </div>
-          <div class="composer__row"><label>System</label><select id="fr-system"></select></div>
-          <div class="composer__row"><label><img class="icon icon--sm" src="/art/ui_icons/panel/concept-manifest.png" alt="" />Goods</label><select id="fr-commodity"></select>
-            <label>Qty</label><input type="number" id="fr-qty" min="1" value="100" />
-            <button class="act" id="fr-add" title="Add or update this commodity in the mixed freight manifest."><img class="icon icon--sm" src="/art/ui_icons/panel/concept-manifest.png" alt="" />Add cargo</button></div>
-          <div id="fr-manifest" class="mkt-orders"></div>
-          <div class="composer__row" id="fr-sell-row"><label>On arrival</label><label class="lim" title="Sell the lot at the Global Market the moment it lands at the Market Hub, on that tick's quantity-aware curve."><input type="checkbox" id="fr-sell" /> sell on arrival</label></div>
-          <div class="composer__preview" id="fr-preview"></div>
-          <button class="act act--primary" id="fr-submit"><img class="icon icon--sm" src="/art/ui_icons/panel/concept-authority-freighter.png" alt="" />Book freight</button>
-          <div class="mhint" id="fr-feedback"></div>
-          </div>
         </section>
         <section class="ux-section">
           <div class="ux-section__head"><img class="icon icon--sm" src="/art/ui_icons/panel/concept-authority-freighter.png" alt="" /><span>Shipments in hand</span></div>

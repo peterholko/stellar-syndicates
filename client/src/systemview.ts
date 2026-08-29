@@ -864,7 +864,7 @@ export class SystemViewScene {
   /// rival / unclaimed) and the selection ring. `owner` comes from the caller's
   /// light-gated per-player view (state.systems) — identical fog to the galaxy
   /// map, so nothing hidden leaks here.
-  update(owner: PlayerId | null, playerId: PlayerId | null, nowMs: number): void {
+  update(owner: PlayerId | null, playerId: PlayerId | null, nowMs: number, home = false): void {
     const g = this.overlay;
     g.clear();
     if (!this.viewW) return;
@@ -874,8 +874,10 @@ export class SystemViewScene {
     const mine = owner !== null && owner === playerId;
     const rival = owner !== null && !mine;
     if (mine) {
+      // The home star gets one crisp ownership ring. A second concentric halo
+      // made the central star read like another orbit in the planetary view.
       g.circle(cx, cy, starR + 8).stroke({ width: 1.8, color: 0x4fc3ff, alpha: 0.95 });
-      g.circle(cx, cy, starR + 14).stroke({ width: 1, color: 0x4fc3ff, alpha: 0.3 });
+      if (!home) g.circle(cx, cy, starR + 14).stroke({ width: 1, color: 0x4fc3ff, alpha: 0.3 });
     } else if (rival) {
       const breath = 0.5 + 0.5 * Math.sin(nowMs / 1100);
       g.circle(cx, cy, starR + 8).stroke({ width: 2, color: 0xff7a6b, alpha: 0.95 });

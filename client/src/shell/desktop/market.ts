@@ -1,10 +1,10 @@
 import { hubDockedFleets, shipKindLabel } from "../../core/derive/fleet";
 import { agoLabel, fmt, fmtDur, rejectText, trend } from "../../core/derive/format";
 import { systemName } from "../../core/derive/geo";
-import { COMMODITIES, freightDraft, freightDraftEntries, marketAverageQuote, marketReservations, moduleRecipeValue, pruneMarketReservations, recentMarketOrders, recordRecentMarketOrder, reservedMarketCredits, reserveMarketOrder, settleMarketReservation, spendableMarketCredits, warehouseUnits } from "../../core/derive/market";
+import { COMMODITIES, marketAverageQuote, marketReservations, moduleRecipeValue, pruneMarketReservations, recentMarketOrders, recordRecentMarketOrder, reservedMarketCredits, reserveMarketOrder, settleMarketReservation, spendableMarketCredits, warehouseUnits } from "../../core/derive/market";
 import { projectedBand } from "../../core/derive/research";
 import { icon, type IconKey, label } from "../../icons";
-import { type Commodity, countClassLabel, type EntityId, fleetCargoManifest, fleetExactCount, freightFee, type ModuleKind, type ShipmentDir, type Side, type TradeEvent } from "../../protocol";
+import { type Commodity, countClassLabel, fleetCargoManifest, fleetExactCount, type ModuleKind, type Side, type TradeEvent } from "../../protocol";
 import { state } from "../../state";
 import { net } from "./index";
 import { $, badge, commodityIcon, esc, readout, renderDeferred, setHtml, spark, stat, statStrip, svgIcon } from "./mapchrome";
@@ -138,10 +138,8 @@ export let marketBuilt = false;
 
 // §market-ux: which Market tab is showing — survives close/reopen within the
 // session (M reopens on the last tab).
-// §market-ux: the old FREIGHT and SUPPLY tabs were one decision split across two
-// panes — both move goods between the Market Warehouse and a system. The desk
-// books Authority freight; actual owned hulls are loaded and commanded through
-// their fleet panels so the UI can never imply that a free hull was created.
+// §market-ux: owned freight is managed through fleet panels. The Warehouse pane
+// is a readout for Hub stock, docked fleets, and shipments already in hand.
 export type MarketTab = "exchange" | "warehouse" | "specialists" | "modules";
 
 export let marketTab: MarketTab = "exchange";
@@ -196,26 +194,6 @@ export function buildMarketPanel(): void {
       $("mod-feedback").textContent = `Selling a ${MODULE_LABEL[b.dataset.msell as ModuleKind]} to Sol — freighter away, clears on arrival.`;
     }
   });
-  // §market-ux: a warehouse row is the master list for the composer below it —
-  // clicking one loads that commodity and clamps the qty to what you actually
-  // hold, which is what the old Supply pane's preset buttons were really for.
-  $("wh-table").addEventListener("click", (e) => {
-    const r = (e.target as HTMLElement).closest("[data-wh-c]") as HTMLElement | null;
-    if (!r?.dataset.whC) return;
-    const c = r.dataset.whC as Commodity;
-    ($("fr-commodity") as HTMLSelectElement).value = c;
-    // Picking a stocked good is an OUTBOUND gesture ("send this out"), so snap the
-    // direction to match and offer the whole holding. An inbound draft names a
-    // different source, so never silently carry it across the direction change.
-    if (freightDir !== "outbound") freightDraft.clear();
-    freightDir = "outbound";
-    ($("fr-qty") as HTMLInputElement).value = String(Math.max(1, warehouseUnits(c)));
-    // Both halves: the composer reads the new pick, and the table re-marks which
-    // row is active. Without the second call the highlight lags until the next
-    // signature change (up to a second) — a visible stutter on a click.
-    renderWarehouse();
-    renderWarehouseDesk();
-  });
   // Berthed hulls have no galaxy-map glyph. The hub needs the same explicit
   // access that system fleet rows provide, or a manually parked convoy becomes
   // impossible to recover after the renderer correctly hides it at its berth.
@@ -266,57 +244,6 @@ export function buildMarketPanel(): void {
     renderComposer();
   });
   $("mk-qty").addEventListener("input", renderComposer);
-  // --- §TCA + §market-ux: the WAREHOUSE tab's shipping composer ---
-  const frCom = $("fr-commodity") as HTMLSelectElement;
-  frCom.innerHTML = COMMODITIES.map((c) => `<option value="${c}">${label(c)}</option>`).join("");
-  $("fr-dir").addEventListener("click", (e) => {
-    const b = (e.target as HTMLElement).closest("button") as HTMLElement | null;
-    if (!b?.dataset.dir) return;
-    const next = b.dataset.dir as ShipmentDir;
-    if (next !== freightDir) freightDraft.clear();
-    freightDir = next;
-    renderWarehouseDesk();
-  });
-  $("fr-system").addEventListener("change", () => {
-    freightDraft.clear();
-    renderWarehouseDesk();
-  });
-  ["fr-commodity", "fr-qty", "fr-sell"].forEach((id) => {
-    $(id).addEventListener("input", renderWarehouseDesk);
-    $(id).addEventListener("change", renderWarehouseDesk);
-  });
-  $("fr-add").addEventListener("click", () => {
-    const commodity = ($("fr-commodity") as HTMLSelectElement).value as Commodity;
-    const units = Math.max(1, Math.floor(Number(($("fr-qty") as HTMLInputElement).value) || 0));
-    freightDraft.set(commodity, units);
-    renderWarehouseDesk();
-  });
-  $("fr-manifest").addEventListener("click", (e) => {
-    const remove = (e.target as HTMLElement).closest("[data-fr-remove]") as HTMLElement | null;
-    if (!remove?.dataset.frRemove) return;
-    freightDraft.delete(remove.dataset.frRemove as Commodity);
-    renderWarehouseDesk();
-  });
-  $("fr-submit").addEventListener("click", () => {
-    if (!net) return;
-    const system = ($("fr-system") as HTMLSelectElement).value as EntityId;
-    if (!system) return;
-    const commodity = ($("fr-commodity") as HTMLSelectElement).value as Commodity;
-    const units = Math.max(1, Math.floor(Number(($("fr-qty") as HTMLInputElement).value) || 0));
-    const entries = freightDraftEntries();
-    if (!entries.length) entries.push({ commodity, units });
-    for (const entry of entries) {
-      if (freightDir === "outbound") {
-        net.send({ type: "BookFreightOut", system, commodity: entry.commodity, units: entry.units });
-      } else {
-        net.send({ type: "BookFreightIn", system, commodity: entry.commodity, units: entry.units, sell_on_arrival: ($("fr-sell") as HTMLInputElement).checked });
-      }
-    }
-    const cargo = entries.map((entry) => `${entry.units} ${label(entry.commodity)}`).join(" + ");
-    $("fr-feedback").textContent = `Mixed booking sent: ${cargo} ${freightDir === "outbound" ? "→" : "←"} ${systemName(system)}.`;
-    freightDraft.clear();
-    renderWarehouseDesk();
-  });
   $("mk-limit").addEventListener("input", renderComposer);
   $("mk-submit").addEventListener("click", () => {
     if (!net) return;
@@ -536,57 +463,19 @@ export function renderComposer(): void {
 }
 
 
-// --- §TCA: the Market Warehouse, freight desk, and shipment queue -------
-
-/// Which way the shipping composer is currently moving goods.
-export let freightDir: ShipmentDir = "outbound";
-
-/// The pending multi-commodity Authority booking. The wire keeps one shipment
-/// per line; the scheduled loader combines them into one physical mixed manifest
-/// while respecting the shared hull allowance.
-export function renderFreightDraft(): void {
-  const entries = freightDraftEntries();
-  $("fr-manifest").innerHTML = entries.length
-    ? entries.map((entry) =>
-        `<div class="ord">${commodityIcon(entry.commodity, "sm")} <b>${entry.units}</b> ${esc(label(entry.commodity))}` +
-        `<button class="o-rm" data-fr-remove="${entry.commodity}" title="Remove this commodity from the booking">Remove</button></div>`).join("")
-    : `<div class="mhint dim">Add several goods here; one Authority freighter carries the mixed manifest within its shared capacity.</div>`;
-}
-
-/// Fill a <select> with the player's owned freight destinations, preserving the
-/// current choice where possible.
-export function fillSystemSelect(sel: HTMLSelectElement, blankLabel: string | null): void {
-  const terms = state.freight?.terms ?? [];
-  // Same hazard the Supply pane's select documents: this runs from updateMarket
-  // on every view push (~10 Hz), and rebuilding a <select>'s options while its
-  // NATIVE dropdown is open wedges Chrome's popup — the tab appears frozen.
-  // Rebuild only when the roster actually changes, and never while the player
-  // has the select focused (the open-popup proxy); a skipped rebuild retries on
-  // the next update once they've picked.
-  const sig = terms.map((t) => `${t.system}:${systemName(t.system)}`).join(",");
-  if (sel.dataset.sig === sig || document.activeElement === sel) return;
-  sel.dataset.sig = sig;
-  const prev = sel.value;
-  sel.innerHTML =
-    (blankLabel ? `<option value="">${esc(blankLabel)}</option>` : "") +
-    terms.map((t) => `<option value="${t.system}">${esc(systemName(t.system))}</option>`).join("");
-  if (prev && terms.some((t) => String(t.system) === prev)) sel.value = prev;
-}
+// --- §TCA: the Market Warehouse and shipment queue ----------------------
 
 
-/// The warehouse table — commodity × units, the Exchange's only stock, and the
-/// master list for the shipping composer below it (click a row to load it).
+/// The warehouse table — commodity × units, the Exchange's only stock.
 export function renderWarehouse(): void {
   const rows = (state.wallet?.warehouse ?? [])
     .map((holding) => ({ ...holding, units: warehouseUnits(holding.commodity) }))
     .filter((holding) => holding.units > 0);
-  const picked = ($("fr-commodity") as HTMLSelectElement | null)?.value ?? "";
   $("wh-table").innerHTML = rows.length
     ? rows.map((w) =>
-        `<div class="ord${w.commodity === picked ? " is-active" : ""}" data-wh-c="${esc(w.commodity)}"` +
-        ` title="Ship ${esc(label(w.commodity))} out — loads this good into the composer below">` +
+        `<div class="ord">` +
         `${commodityIcon(w.commodity, "sm")} <b>${w.units}</b> ${esc(label(w.commodity))}</div>`).join("")
-    : `<div class="mhint dim">Empty. Buy on the Exchange, or bring goods in from a system with Authority freight below.</div>`;
+    : `<div class="mhint dim">Empty. Buy on the Exchange or unload a docked freighter here.</div>`;
 }
 
 
@@ -618,91 +507,6 @@ export function renderHubBerths(): void {
           `</div>`;
       }).join("")
     : `<div class="mhint dim">No fleets berthed at the hub.</div>`;
-}
-
-
-/// The Warehouse tab's shipping composer: the live cost, the EXACT departure, and
-/// the Authority ETA and fee from server-sent terms.
-export function renderWarehouseDesk(): void {
-  const f = state.freight;
-  if (!f) return;
-  renderFreightDraft();
-  fillSystemSelect($("fr-system") as HTMLSelectElement, null);
-  const dir = freightDir;
-  document.querySelectorAll<HTMLButtonElement>("#fr-dir button").forEach((b) => {
-    b.classList.toggle("is-active", b.dataset.dir === dir);
-    b.disabled = false;
-  });
-  // Sell-on-arrival is an Authority inbound option only — nothing else can land a
-  // lot at the Exchange without a hull of yours already being there.
-  ($("fr-sell-row") as HTMLElement).style.display = dir === "inbound" ? "flex" : "none";
-
-  const sysId = ($("fr-system") as HTMLSelectElement).value as EntityId;
-  const t = f.terms.find((x) => String(x.system) === String(sysId));
-  const c = ($("fr-commodity") as HTMLSelectElement).value as Commodity;
-  const qty = Math.max(1, Math.floor(Number(($("fr-qty") as HTMLInputElement).value) || 0));
-  const entries = freightDraftEntries();
-  if (!entries.length) entries.push({ commodity: c, units: qty });
-  const totalUnits = entries.reduce((sum, entry) => sum + entry.units, 0);
-  const submit = $("fr-submit") as HTMLButtonElement;
-  setHtml(submit, `${icon("authorityFreighter", "sm")} ${freightDraft.size > 0
-    ? `Book mixed manifest · ${entries.length} goods`
-    : "Book freight"}`);
-  if (!t) {
-    $("fr-preview").innerHTML = `<span class="dim">You hold no systems the Authority can serve.</span>`;
-    submit.disabled = true;
-    return;
-  }
-  submit.disabled = false;
-  // Every manifest line is escrowed independently. Surface every short line
-  // before the click so one accepted good cannot conceal another's soft reject.
-  const destination = state.systems.find((system) => String(system.id) === String(sysId));
-  const systemStock = destination?.stockpile ?? [];
-  const available = (commodity: Commodity): number => dir === "outbound"
-    ? warehouseUnits(commodity)
-    : Math.floor(systemStock.find((slot) => slot.commodity === commodity)?.units ?? 0);
-  const shortages = entries
-    .filter((entry) => entry.units > available(entry.commodity))
-    .map((entry) => `${label(entry.commodity)} ${available(entry.commodity)}/${entry.units}`);
-  const short = shortages.length
-    ? ` · <span class="warn" title="Short lines soft-reject independently: nothing is charged or removed for a rejected line.">short: ${esc(shortages.join(", "))}</span>`
-    : "";
-  // Outbound freight still obeys the destination's shared storage cap. This is
-  // the SERVED picture at booking time, not a promise about arrival: production
-  // can consume more room while the freighter is in flight. The Authority keeps
-  // any excess aboard and returns it; surface that before the player pays.
-  const servedHeadroom = destination
-    ? Math.max(0, destination.storage_cap - destination.storage_used)
-    : 0;
-  const storageWarning = dir === "outbound" && destination && totalUnits > servedHeadroom
-    ? ` · <span class="warn" title="Based on the latest served stockpile report. Any cargo that still does not fit on arrival remains aboard and returns safely to your Market Warehouse.">only ${Math.floor(servedHeadroom)} storage free at destination</span>`
-    : "";
-
-  // §TCA Phase 2: the Authority charges base fee × the charter TARIFF — quote
-  // what will actually be debited, or a sanctioned corp commits against a
-  // number up to 3× too low (the audit's exact finding).
-  const tariff = state.charter?.tariff_mult ?? 1;
-  const fee = entries.reduce((sum, entry) => {
-    const price = state.market?.prices.find((point) => point.commodity === entry.commodity)?.price ?? 0;
-    return sum + freightFee(f, t, price, entry.units) * tariff;
-  }, 0);
-  const tariffNote = tariff > 1.0001 ? ` <span class="warn">(×${tariff.toFixed(2)} charter tariff)</span>` : "";
-  // Departures are exact: the timetable and the freighter's cruise are pure
-  // functions of config. Show the wait, not a raw sim-time.
-  const wait = Math.max(0, f.next_departure - (state.simTime ?? 0));
-  const flight = dir === "outbound" ? t.secs_out : t.secs_round;
-  const departures = Math.max(1, Math.ceil(totalUnits / t.cap));
-  const finalWait = wait + (departures - 1) * f.period;
-  const arrival = departures > 1
-    ? `arrivals ~<b>${fmtDur(wait + flight)}–${fmtDur(finalWait + flight)}</b>`
-    : `arrives ~<b>${fmtDur(wait + flight)}</b>`;
-  $("fr-preview").innerHTML =
-    `<span title="The fee is charged at booking and destroyed — it is never refunded, even if the lot is lost.">Fee <span class="accent">${fmt(fee)} Cr</span>${tariffNote}</span> · ` +
-    `departs in <b>${fmtDur(wait)}</b> · ${arrival}` +
-    ` · <span class="dim">${t.cap} total/departure · mixed cargo</span>` +
-    (departures > 1 ? ` · <span class="warn" title="Not a refusal — the mixed manifest is divided fairly across consecutive departures.">rides ${departures} departures</span>` : "") +
-    storageWarning +
-    short;
 }
 
 
@@ -808,7 +612,6 @@ export function updateMarket(): void {
   renderModulesPane();
   renderWarehouse();
   renderHubBerths();
-  renderWarehouseDesk();
   renderShipmentQueue();
 }
 
@@ -895,4 +698,3 @@ export function addTradeNews(t: TradeEvent): void {
   while (log.children.length > 6) log.removeChild(log.lastChild!);
   setTimeout(() => el.classList.add("fade"), 12000);
 }
-

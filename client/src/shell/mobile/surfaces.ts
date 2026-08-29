@@ -34,7 +34,6 @@ import { SheetStack } from "./sheets";
 import { sheetFingerprint } from "./signature";
 
 type MarketTab = "exchange" | "warehouse" | "specialists" | "modules";
-type FreightDirection = "outbound" | "inbound";
 
 interface SurfaceHooks {
   openSheet(entry: SheetEntry): void;
@@ -84,7 +83,6 @@ export class MobileSurfaces {
   private marketTab: MarketTab = "exchange";
   private marketCommodity: Commodity = "fuel";
   private marketSide: Side = "buy";
-  private freightDirection: FreightDirection = "outbound";
   private readonly dismissedDecisions = new Set<string>();
   private readonly engagementEstimates = new Map<string, EngagementEstimate>();
   private readonly estimateAttackerByTarget = new Map<string, string>();
@@ -288,15 +286,6 @@ export class MobileSurfaces {
         if (Number.isFinite(id)) this.ctx.send({ type: "CancelLimitOrder", order_id: id });
         break;
       }
-      case "freight-direction":
-        if (button.dataset.direction === "outbound" || button.dataset.direction === "inbound") {
-          this.freightDirection = button.dataset.direction;
-          this.sheets.refresh();
-        }
-        break;
-      case "freight-submit":
-        this.submitFreight();
-        break;
       case "hire-specialist":
         this.hireSpecialist(button.dataset.specialist);
         break;
@@ -484,7 +473,7 @@ export class MobileSurfaces {
       }
       case "market":
         return sheetFingerprint([
-          clock, this.marketTab, this.marketCommodity, this.marketSide, this.freightDirection,
+          clock, this.marketTab, this.marketCommodity, this.marketSide,
           state.market, state.wallet, state.freight, state.systems, state.ghosts.filter((fleet) => fleet.own && fleet.docked === "hub"),
           marketReservations, recentMarketOrders,
         ]);
@@ -629,27 +618,12 @@ export class MobileSurfaces {
     const ledger = holdings.length
       ? holdings.map((row) => `<span>${human(row.commodity)}<b>${row.units}</b></span>`).join("")
       : `<span class="m-muted">Warehouse empty</span>`;
-    const terms = this.ctx.state.freight?.terms ?? [];
-    const systems = terms.map((term) => {
-      const name = this.ctx.state.galaxy?.systems.find((system) => system.id === term.system)?.name ?? term.system;
-      return `<option value="${esc(term.system)}">${esc(name)} · ${fmt(term.secs_out)}s</option>`;
-    }).join("");
-    const commodities = COMMODITIES.map((commodity) => `<option value="${commodity}">${human(commodity)}</option>`).join("");
     const shipments = (this.ctx.state.freight?.shipments ?? []).map((shipment) =>
       `<div class="m-order"><b>${shipment.units} ${human(shipment.commodity)}</b><span>${shipment.direction} · ${shipment.aboard ? "aboard" : "queued"}</span></div>`,
     ).join("");
     const docked = this.ctx.state.ghosts.filter((fleet) => fleet.own && fleet.docked === "hub").map((fleet) => this.fleetRow(fleet)).join("");
     return `<section class="m-section"><h3>Market Warehouse</h3><div class="m-ledger">${ledger}</div></section>` +
-      `<section class="m-trade-card"><h3>Authority freight</h3><div class="m-segment">` +
-      `<button type="button" data-mobile-act="freight-direction" data-direction="outbound" aria-pressed="${this.freightDirection === "outbound"}">Hub → system</button>` +
-      `<button type="button" data-mobile-act="freight-direction" data-direction="inbound" aria-pressed="${this.freightDirection === "inbound"}">System → hub</button></div>` +
-      `<label>System<select id="m-freight-system">${systems}</select></label>` +
-      `<label>Commodity<select id="m-freight-commodity">${commodities}</select></label>` +
-      `<label>Units<input id="m-freight-qty" type="number" min="1" inputmode="numeric" value="1"></label>` +
-      (this.freightDirection === "inbound" ? `<label class="m-check"><input id="m-freight-sell" type="checkbox"> Sell on arrival</label>` : "") +
-      `<button type="button" class="m-primary" data-mobile-act="freight-submit" ${terms.length ? "" : "disabled"}>Book shipment</button>` +
-      `<details class="m-details m-help"><summary>Authority freight terms</summary><div><p>The fee is charged at booking and is not refunded if the physical, raidable freighter is lost. Lots beyond one departure's capacity ride later departures. Sell on arrival clears only after the cargo reaches the Hub.</p></div></details></section>` +
-      `<section class="m-section"><h3>Shipments</h3>${shipments || `<div class="m-muted">No Authority shipments booked.</div>`}</section>` +
+      `<section class="m-section"><h3>Shipments</h3>${shipments || `<div class="m-muted">No shipments in hand.</div>`}</section>` +
       (docked ? `<section class="m-section"><h3>Hub berths</h3><div class="m-list">${docked}</div></section>` : "");
   }
 
@@ -774,19 +748,6 @@ export class MobileSurfaces {
     });
     this.hooks.notice(`${human(this.marketSide)} order sent to the Market Hub.`);
     this.sheets.refresh();
-  }
-
-  private submitFreight(): void {
-    const system = element<HTMLSelectElement>("m-freight-system")?.value;
-    const commodity = element<HTMLSelectElement>("m-freight-commodity")?.value;
-    const units = Math.max(1, Math.floor(Number(element<HTMLInputElement>("m-freight-qty")?.value) || 0));
-    if (!system || !isCommodity(commodity)) return;
-    if (this.freightDirection === "outbound") {
-      this.ctx.send({ type: "BookFreightOut", system, commodity, units });
-    } else {
-      this.ctx.send({ type: "BookFreightIn", system, commodity, units, sell_on_arrival: !!element<HTMLInputElement>("m-freight-sell")?.checked });
-    }
-    this.hooks.notice("Authority freight booking dispatched.");
   }
 
   private hireSpecialist(specialist?: string): void {

@@ -3236,7 +3236,10 @@ export class Renderer {
       // System View is fogged identically and leaks nothing hidden.
       const sid = this.systemScene.currentId();
       const dyn = sid ? state.systems.find((s) => s.id === sid) : undefined;
-      this.systemScene.update(dyn?.owner ?? null, state.playerId, performance.now());
+      const fixed = sid ? this.galaxy?.systems.find((s) => s.id === sid) : undefined;
+      const home = !!fixed && !!state.commandCenter &&
+        Math.hypot(fixed.pos.x - state.commandCenter.x, fixed.pos.y - state.commandCenter.y) < 1;
+      this.systemScene.update(dyn?.owner ?? null, state.playerId, performance.now(), home);
     }
   }
 
