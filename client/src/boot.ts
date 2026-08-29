@@ -11,15 +11,13 @@ import { state } from "./state";
 // Portrait phones enter on width; an already-landscape touch phone enters on
 // its short height. Desktop windows do not become mobile merely for being low.
 const MOBILE_SHELL_QUERY = "(max-width: 767px), (max-height: 767px) and (pointer: coarse)";
-type ShellKind = "desktop" | "deck" | "mobile";
+type ShellKind = "deck" | "mobile";
 
-// Read once: the shell is a boot choice, not mutable navigation state. Deck and
-// legacy desktop are the two DESKTOP-KIND implementations; normal breakpoint
-// crossing still swaps either one to mobile. `?shell=mobile` is an explicit
-// force switch so shared-core changes can be smoked at any viewport.
+// Read once: the shell is a boot choice, not mutable navigation state. Deck is
+// the desktop shell; normal breakpoint crossing swaps it with mobile.
+// `?shell=mobile` remains an explicit force switch for shared-core smoke tests.
 const requestedShell = new URLSearchParams(window.location.search).get("shell");
 const forcedMobile = requestedShell === "mobile";
-const desktopKind: Exclude<ShellKind, "mobile"> = requestedShell === "deck" ? "deck" : "desktop";
 
 const appElement = document.getElementById("app");
 const shellElement = document.getElementById("shell-root");
@@ -75,7 +73,7 @@ async function selectShell(): Promise<void> {
   // same shell while rotated. The mobile shell owns the landscape gate; tearing
   // it down here would also discard sheets, gesture state, and loaded Pixi views.
   const retainMobileAcrossRotation = activeKind === "mobile" && phoneShortSide <= 767;
-  const kind: ShellKind = forcedMobile || shellMedia.matches || retainMobileAcrossRotation ? "mobile" : desktopKind;
+  const kind: ShellKind = forcedMobile || shellMedia.matches || retainMobileAcrossRotation ? "mobile" : "deck";
   if (kind === activeKind) return;
   net.setViewHz(kind === "mobile" ? 5 : 10);
   const generation = ++shellGeneration;
@@ -83,9 +81,7 @@ async function selectShell(): Promise<void> {
   try {
     const module = kind === "mobile"
       ? await import("./shell/mobile/index")
-      : kind === "deck"
-        ? await import("./shell/deck/index")
-        : await import("./shell/desktop/index");
+      : await import("./shell/deck/index");
     const next = module.createShell();
     if (generation !== shellGeneration) return;
 

@@ -22,8 +22,7 @@
   --panel-shadow: 0 10px 40px rgba(0,0,0,0.5);
   --btn-bg: #131a2c;
   --btn-bg-hover: #1b2740;
-  /* §deck: one type, spacing, and layer vocabulary for the rebuilt desktop
-     shell. The old desktop keeps its existing declarations until cutover. */
+  /* §deck: one type, spacing, and layer vocabulary for the desktop shell. */
   --fs-fine: 11px;
   --fs-body: 12.5px;
   --fs-em: 14px;
@@ -51,9 +50,6 @@
   --hud-safe-top: 66px;
   --detail-safe-top: calc(var(--hud-safe-top) + 44px);
   --left-detail-safe-top: calc(var(--hud-safe-top) + 44px);
-  /* Height of the active bottom-left Tutorial plus its outer gap. Live
-     command feedback uses this to sit above it instead of covering it. */
-  --founding-guide-clearance: 14px;
 }
 * { box-sizing: border-box; }
 html, body {
@@ -71,25 +67,3 @@ html, body {
 canvas { display: block; }
 #app > canvas,
 .bv-theater-holder canvas { touch-action: none; }
-#founding-guide,
-#standing-list,
-#checkin,
-#rail .rail__body,
-.svm-body,
-#ship-panel .sp-body,
-.sysrail,
-#market,
-.build-shell .bp-list,
-.build-shell .bp-detail,
-#planet-panel,
-#research-panel,
-#research-panel .rp-body,
-#operations-panel,
-#operations-panel .op-body,
-#syndicate-panel,
-#faction-panel,
-#battle-viewer,
-#ground-viewer {
-  touch-action: pan-y;
-  overscroll-behavior: contain;
-}

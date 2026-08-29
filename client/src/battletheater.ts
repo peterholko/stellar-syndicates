@@ -12,7 +12,7 @@
 //   * FIDELITY — keyframes ship at participant fidelity only; this canvas
 //     simply never opens for bucket viewers (they keep the column arena).
 //   * ISOLATION — the theater owns its own small Pixi Application inside the
-//     #battle-viewer overlay (the map's renderer is untouched), renders only
+//     shell-owned theater overlay (the map's renderer is untouched), renders only
 //     while the viewer is open, and pauses when the tab is hidden.
 //
 // Data reality (what the record actually carries, and what we derive):
