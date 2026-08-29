@@ -152,6 +152,9 @@ export class DeckFleetRoutes {
     } else if (command === "recall" && fleet.own) {
       this.ctx.send({ type: "RecallRaid", raider_id: fleet.id });
       this.hooks.notice("<b>Recall sent</b> · pursuit continues until the signal reaches the fleet.");
+    } else if (command === "withdraw" && fleet.own) {
+      this.ctx.send({ type: "Withdraw", fleet_id: fleet.id });
+      this.hooks.notice("<b>Withdraw order sent</b> · the engaged fleet attempts to break away when the signal arrives.");
     } else if (command === "transit" && fleet.own) {
       const mode = button.dataset.mode as TransitMode;
       if (mode === "full" || mode === "stealth") {
@@ -319,6 +322,7 @@ export class DeckFleetRoutes {
     const hasCourse = !!this.ctx.state.orders[g.id] || !!g.path?.length || Math.hypot(g.vel.x, g.vel.y) >= .5 || queue.some((order) => order.kind !== "hold");
     if (hasCourse && !g.docked) items.push(commandButton("fleet-hold", "Hold position", "Cancel the current course when this signal arrives.", "is-danger"));
     if (this.ctx.state.raids[g.id]) items.push(commandButton("fleet-recall", "Recall raid", "Break pursuit and return toward home.", "is-danger"));
+    if (this.ctx.state.battles.some((battle) => battle.participants.includes(g.id))) items.push(commandButton("fleet-withdraw", "Withdraw from battle", "Attempt to disengage on the next eligible combat round.", "is-danger"));
     if (!g.docked) {
       const requested = this.requestedTransit.get(g.id);
       items.push(`<div class="deck-command-block"><b>Transit</b><div class="deck-segment"><button type="button" data-deck-act="fleet-transit" data-mode="full" aria-pressed="${requested === "full"}">Full speed</button><button type="button" data-deck-act="fleet-transit" data-mode="stealth" aria-pressed="${requested === "stealth"}">Stealth</button></div><small>Stealth trades speed for a smaller detection signature.</small></div>`);
