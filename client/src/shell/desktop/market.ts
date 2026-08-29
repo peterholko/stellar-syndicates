@@ -5,6 +5,7 @@ import { COMMODITIES, marketAverageQuote, marketReservations, moduleRecipeValue,
 import { projectedBand } from "../../core/derive/research";
 import { icon, type IconKey, label } from "../../icons";
 import { type Commodity, countClassLabel, fleetCargoManifest, fleetExactCount, type ModuleKind, type Side, type TradeEvent } from "../../protocol";
+import { renderer } from "../../render";
 import { state } from "../../state";
 import { net } from "./index";
 import { $, badge, commodityIcon, esc, readout, renderDeferred, setHtml, spark, stat, statStrip, svgIcon } from "./mapchrome";
@@ -48,7 +49,7 @@ export function buildHubPanel(): void {
   if (hubPanelBuilt) return;
   hubPanelBuilt = true;
   $("hub-panel").addEventListener("click", (e) => {
-    const el = (e.target as HTMLElement).closest("[data-act],[data-hub-tab],[data-fleet]") as HTMLElement | null;
+    const el = (e.target as HTMLElement).closest("[data-act],[data-hub-tab],[data-fleet],[data-center-fleet]") as HTMLElement | null;
     if (!el) return;
     const requestedTab = el.dataset.hubTab as HubPanelTab | undefined;
     if (requestedTab && (["overview", "fleets"] as HubPanelTab[]).includes(requestedTab)) {
@@ -59,9 +60,14 @@ export function buildHubPanel(): void {
       closeHubPanel();
     } else if (el.dataset.act === "market") {
       openMarket();
+    } else if (el.dataset.centerFleet) {
+      const fleet = state.ghosts.find((g) => g.id === el.dataset.centerFleet && g.own && g.docked === "hub");
+      if (fleet) renderer.centerOnWorld(fleet.pos);
     } else if (el.dataset.fleet) {
       const fleet = el.dataset.fleet;
       if (!state.ghosts.some((g) => g.id === fleet && g.own && g.docked === "hub")) return;
+      const ghost = state.ghosts.find((g) => g.id === fleet);
+      if (ghost) renderer.centerOnWorld(ghost.pos);
       closeHubPanel();
       selectShip(fleet);
     }

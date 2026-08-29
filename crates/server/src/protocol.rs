@@ -47,6 +47,10 @@ pub enum ClientMsg {
         dest: Vec2,
     },
 
+    /// Cancel the fleet's current course and hold at its true position when
+    /// this ordinary light-delayed command arrives.
+    HoldFleet { ship_id: EntityId },
+
     /// Order a jump-capable fleet to spool and relocate. The sim validates the
     /// true fleet, fuel, range, and both gravity-well endpoints when this
     /// light-delayed command arrives.

@@ -21,6 +21,7 @@ use crate::ship::ShipKind;
 #[serde(rename_all = "snake_case")]
 pub enum OrderKind {
     Move,
+    Hold,
     Jump,
     /// §emplacements: a CONSTRUCT order — send a builder to a site and put a
     /// sensor there.
@@ -48,6 +49,7 @@ impl OrderKind {
     pub fn label(self) -> &'static str {
         match self {
             OrderKind::Move => "move",
+            OrderKind::Hold => "hold",
             OrderKind::Jump => "jump",
             OrderKind::Construct => "construct",
             OrderKind::Demolish => "demolish",

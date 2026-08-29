@@ -143,7 +143,8 @@ fn dispatch_chevron_targets(msg: &ClientMsg) -> Vec<DispatchChevronTarget> {
     use DispatchChevronTarget::{Fleet, MarketHub};
 
     match msg {
-        ClientMsg::HubLoad { fleet_id, .. }
+        ClientMsg::HoldFleet { ship_id: fleet_id }
+        | ClientMsg::HubLoad { fleet_id, .. }
         | ClientMsg::HubUnload { fleet_id }
         | ClientMsg::SystemLoad { fleet_id, .. }
         | ClientMsg::SystemUnload { fleet_id, .. }
@@ -798,6 +799,11 @@ impl GameLoop {
                             ship_id,
                             dest,
                         });
+                    }
+                }
+                ClientMsg::HoldFleet { ship_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::HoldFleet { player_id, ship_id });
                     }
                 }
                 ClientMsg::JumpShip { ship_id, dest } => {

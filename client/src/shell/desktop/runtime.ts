@@ -182,6 +182,10 @@ export function handleCoreEvents(events: CoreEvent[]): void {
         scheduleViewRefresh();
         break;
       case "OrderConfirmed":
+        if (event.orderKind === "hold") {
+          delete state.orders[event.shipId];
+          delete state.raids[event.shipId];
+        }
         addTransientReport(
           "✓",
           "good",

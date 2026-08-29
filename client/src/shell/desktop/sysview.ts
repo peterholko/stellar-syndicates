@@ -2,7 +2,7 @@ import { affinityLine } from "../../core/derive/captains";
 import { constructionStock, dockedFreighterStock, sendCrew } from "../../core/derive/fleet";
 import { doneAtLocal, fmt, fmtBuildDur } from "../../core/derive/format";
 import { pushSystemDynamic, viewedSystemId } from "../../core/derive/geo";
-import { bodyPoolUsage, type BuildOpt, buildOption, dispatchBuildKey, fitLegal, FITTING_POINTS, hullResearched, MODULE_SLOTS, moduleLedgerAt, type Pool, POOL_LABEL, POOL_OF, poolUsage, type PoolUse, SHIP_YARD, type ShipOpt, shipOption, shipyardBoost, slipsFor, type StructOpt, structOption, YARD_TITLE } from "../../core/derive/market";
+import { bodyPoolUsage, type BuildOpt, buildOption, dispatchBuildKey, fitLegal, FITTING_POINTS, hullResearched, MODULE_SLOTS, moduleLedgerAt, type Pool, POOL_LABEL, POOL_OF, poolUsage, type PoolUse, SHIP_YARD, shippableStock, type ShipOpt, shipOption, shipyardBoost, slipsFor, type StructOpt, structOption, YARD_TITLE } from "../../core/derive/market";
 import { SHIP_STATS, siegeProgress } from "../../core/derive/orders";
 import { badgeChip, icon, type IconKey, type IconSize, label } from "../../icons";
 import { type AssignmentView, type BodyView, type BuildState, type Commodity, type Deposit, type MigrationPolicy, type ModuleKind, type ShipKind, type SystemInfo, type SystemStateView } from "../../protocol";
@@ -111,7 +111,17 @@ export function buildSysviewManage(): void {
       updateSysviewManage();
       return;
     }
-    const el = (e.target as HTMLElement).closest("[data-body]") as HTMLElement | null;
+    const el = (e.target as HTMLElement).closest("[data-action],[data-body]") as HTMLElement | null;
+    if (el?.dataset.action === "ship-goods") {
+      const sid = viewedSystemId();
+      const dyn = sid ? state.systems.find((system) => system.id === sid) : undefined;
+      const manifest = shippableStock(dyn);
+      if (!sid || !net || !manifest.length || dyn?.blockade) return;
+      net.send({ type: "ShipProduction", system_id: sid });
+      readout().innerHTML = `<b>Authority pickup booked</b> · ${manifest.map((slot) => `${fmt(slot.units)} ${esc(label(slot.commodity))}`).join(", ")} → Market Warehouse. ` +
+        `<span class="dim">The pickup, transit, and sale remain physical and information-delayed.</span>`;
+      return;
+    }
     if (el?.dataset.body) openBodyPanelById(el.dataset.body);
   });
 }
@@ -221,7 +231,14 @@ export function updateSysviewManage(): void {
   const devs = bodies.length
       ? bodies.map((b) => {
         const pop = b.population > 0 ? ` <span class="dim">${fmtPopulation(b.population)}</span>` : "";
-        return `<div class="devs-row"><button class="dev act" data-body="${b.id}" title="Open ${esc(b.name)} — build, staff, ship from its panel">${esc(b.name)}</button>${pop} ${bodyProfileTags(b)} ${contribFor(b)}</div>`;
+        const deposits = b.deposits === null
+          ? `<span class="devs-deposits dim">geology unsurveyed</span>`
+          : b.deposits.length
+            ? `<span class="devs-deposits">${b.deposits.map((deposit) =>
+                `<span class="dev-deposit" title="${esc(label(deposit.resource))} · richness ${deposit.richness.toFixed(2)}/s">${commodityIcon(deposit.resource, "sm")} ${esc(label(deposit.resource))} <b>${deposit.richness.toFixed(2)}</b></span>`,
+              ).join("")}</span>`
+            : `<span class="devs-deposits dim">no deposits</span>`;
+        return `<div class="devs-row"><button class="dev act" data-body="${b.id}" title="Open ${esc(b.name)} — build and staff this world">${esc(b.name)}</button>${pop} ${bodyProfileTags(b)}${deposits}${contribFor(b)}</div>`;
       }).join("")
     : `<div class="mhint">No bodies rostered yet.</div>`;
   // §contestable-territory Part 1: a blockade STRANGLES logistics — outbound
@@ -257,12 +274,18 @@ export function updateSysviewManage(): void {
     ["production", "Production", "storage"],
     ["construction", "Build", "queue"],
   ];
+  const shipment = shippableStock(dyn);
+  const shipmentUnits = shipment.reduce((sum, slot) => sum + slot.units, 0);
+  const shipmentButton = `<section class="system-ship-goods"><button class="act act--primary" data-action="ship-goods" ${blockaded || !shipment.length ? "disabled" : ""} ` +
+    `title="${blockaded ? "Blockade prevents outbound pickup." : !shipment.length ? "No whole non-Fuel units are ready for pickup." : `Book one physical Authority pickup for ${shipment.map((slot) => `${slot.units} ${label(slot.commodity)}`).join(", ")}.`}">` +
+    `${icon("cargo", "sm")} ${shipment.length ? `Ship ${fmt(shipmentUnits)} goods to Market` : "No goods ready to ship"}</button>` +
+    `<span class="dim">Fuel remains the system reserve · pickup and sale are delayed</span></section>`;
   const active = systemManageTab === "overview"
     ? vitals + poolStrip + groundLine(dyn) + garrisonHost
     : systemManageTab === "worlds"
       ? devs
       : systemManageTab === "production"
-        ? storageBar + productionReadout(dyn) + converterBanner(dyn)
+        ? shipmentButton + storageBar + productionReadout(dyn) + converterBanner(dyn)
         : berthLine(sid) + queue;
   const alert = blockadeBanner ? `<div class="ux-alert ux-alert--danger">${blockadeBanner}</div>` : "";
   setHtml($("svm-body"), alert + uxTabBar(tabs, systemManageTab, "svm-tab") +

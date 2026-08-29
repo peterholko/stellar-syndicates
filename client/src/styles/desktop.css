@@ -636,12 +636,15 @@ span.icon { display: inline-flex; align-items: center; justify-content: center; 
 .sysrail__row .sysrail__chev { margin-left: auto; color: var(--dim); }
 .sysfleet { margin: 8px 0 10px; padding-top: 2px; }
 .sysfleet__row {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px;
-  width: 100%; padding: 6px 8px; color: var(--ink); background: transparent;
+  display: grid; grid-template-columns: minmax(0, 1fr) 28px; align-items: stretch; gap: 4px;
+  width: 100%; color: var(--ink); background: transparent;
   border: 0; border-bottom: 1px solid rgba(255,255,255,0.055); border-radius: 4px;
-  font: inherit; text-align: left; cursor: pointer;
+  font: inherit; text-align: left;
 }
 .sysfleet__row:hover { background: rgba(255,255,255,0.04); }
+.sysfleet__select { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px; color: inherit; background: transparent; border: 0; font: inherit; text-align: left; cursor: pointer; }
+.sysfleet__center { align-self: center; width: 26px; height: 26px; padding: 0; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--dim); cursor: pointer; }
+.sysfleet__center:hover, .sysfleet__center:focus-visible { color: var(--accent); border-color: var(--field-bd); outline: none; }
 .sysfleet__main { min-width: 0; }
 .sysfleet__name, .sysfleet__summary, .sysfleet__seen { display: block; }
 .sysfleet__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
@@ -651,7 +654,7 @@ span.icon { display: inline-flex; align-items: center; justify-content: center; 
 #tab-fleets .fleet-roster__summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 #tab-fleets .fleet-roster__group { margin-top: 11px; }
 #tab-fleets .fleet-roster__group:first-of-type { margin-top: 5px; }
-#tab-fleets .sysfleet__row { padding: 8px; }
+#tab-fleets .sysfleet__select { padding: 8px; }
 #tab-fleets .fleet-roster__activity { display: block; margin-top: 3px; color: var(--dim); font-size: 10px; }
 .sys-prod { display: grid; grid-template-columns: var(--icon-resource) 1fr auto auto; align-items: center; gap: 8px; padding: 2px 0; min-height: calc(var(--icon-resource) + 4px); }
 /* Structure / commodity NAME cell: never wrap a building name mid-word;
@@ -734,6 +737,12 @@ span.icon { display: inline-flex; align-items: center; justify-content: center; 
    the roster row shows what each body PRODUCES, not what's built on it. The
    icon override keeps the commodity art compact inline (roster + vitals). */
 .devs-row .dev-contrib { color: var(--positive); display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.devs-deposits { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px 10px; padding-left: 4px; }
+.dev-deposit { display: inline-flex; align-items: center; gap: 4px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.dev-deposit b { color: var(--accent); font-size: 10px; }
+.system-ship-goods { display: grid; grid-template-columns: minmax(0, auto) 1fr; align-items: center; gap: 8px; margin: 0 0 10px; padding: 8px; border: 1px solid var(--field-bd); border-radius: 6px; background: rgba(77,196,255,.045); }
+.system-ship-goods .act { width: auto !important; margin: 0 !important; }
+.system-ship-goods .dim { font-size: 10px; line-height: 1.3; }
 #svm-body .devs-row .dev-contrib .icon, #svm-body .stat dd .icon { width: var(--icon-sm); height: var(--icon-sm); font-size: calc(var(--icon-sm) - 2px); }
 .stat dd .icon { margin-right: 4px; }
 .body-profile-tags, .colony-role, .action-line, .pp-feature { display: flex; align-items: center; gap: var(--icon-gap); flex-wrap: wrap; }

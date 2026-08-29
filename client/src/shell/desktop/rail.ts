@@ -7,6 +7,7 @@ import { latestGroundRecordFor, siegeProgress } from "../../core/derive/orders";
 import { nodeBonusDesc, researchQueueIds, sendResearchQueue } from "../../core/derive/research";
 import { badgeChip, chip, icon, label } from "../../icons";
 import { type CaptainAttribute, type Commodity, countClassLabel, fleetCargoUnits, type FleetDoctrine, fleetExactCount, type GhostView, type LandingOddsView, type StandingEndpoint, type StandingOrder, type StandingTrigger, type SystemInfo, type SystemStateView } from "../../protocol";
+import { renderer } from "../../render";
 import { starConceptUrl, starTypeFor } from "../../stars";
 import { liveSimTime, state } from "../../state";
 import { toggleCheckin } from "./checkin";
@@ -112,8 +113,18 @@ export function buildRail(): void {
     }
   });
   $("tab-fleets").addEventListener("click", (e) => {
+    const center = (e.target as HTMLElement).closest<HTMLElement>("[data-center-fleet]");
+    if (center?.dataset.centerFleet) {
+      const fleet = state.ghosts.find((candidate) => candidate.id === center.dataset.centerFleet && candidate.own);
+      if (fleet) renderer.centerOnWorld(fleet.pos);
+      return;
+    }
     const row = (e.target as HTMLElement).closest<HTMLElement>("[data-fleet]");
-    if (row?.dataset.fleet) selectShip(row.dataset.fleet);
+    if (row?.dataset.fleet) {
+      const fleet = state.ghosts.find((candidate) => candidate.id === row.dataset.fleet && candidate.own);
+      if (fleet) renderer.centerOnWorld(fleet.pos);
+      selectShip(row.dataset.fleet);
+    }
   });
   // Top-navbar destinations (hub-wide, system-independent): Market + Syndicate +
   // Faction + Log.
@@ -378,12 +389,14 @@ export function fleetRosterRow(g: GhostView): string {
         : ownActivity(g);
   const flagship = g.kind === "titan" ? state.syndicate?.flagship_name?.trim() : null;
   const name = flagship || `${shipKindLabel(g.kind)} fleet`;
-  return `<button class="sysfleet__row" data-fleet="${esc(g.id)}" title="Select ${esc(name)}">` +
-    `<span class="sysfleet__main"><b class="sysfleet__name">${esc(name)}</b>` +
-    `<span class="sysfleet__summary">${esc(summary)}</span>` +
-    `<span class="fleet-roster__activity">${activity}</span></span>` +
-    `<span class="sysfleet__meta">${badge(dock ? "accent" : "neutral", dock ? "docked" : "undocked")}` +
-    `<span class="sysfleet__seen${g.age >= CONTACT_STALE_AGE_S ? " is-stale" : ""}">${g.age.toFixed(1)}s delay</span></span></button>`;
+  return `<div class="sysfleet__row">` +
+    `<button class="sysfleet__select" data-fleet="${esc(g.id)}" title="Select and center ${esc(name)}">` +
+      `<span class="sysfleet__main"><b class="sysfleet__name">${esc(name)}</b>` +
+      `<span class="sysfleet__summary">${esc(summary)}</span>` +
+      `<span class="fleet-roster__activity">${activity}</span></span>` +
+      `<span class="sysfleet__meta">${badge(dock ? "accent" : "neutral", dock ? "docked" : "undocked")}` +
+      `<span class="sysfleet__seen${g.age >= CONTACT_STALE_AGE_S ? " is-stale" : ""}">${g.age.toFixed(1)}s delay</span></span></button>` +
+    `<button class="sysfleet__center" data-center-fleet="${esc(g.id)}" title="Center map on served position" aria-label="Center map on ${esc(name)}">⌾</button></div>`;
 }
 
 

@@ -34,6 +34,14 @@ pub enum Command {
         dest: Vec2,
     },
 
+    /// Tell an owned fleet to cancel its current course and hold wherever the
+    /// command reaches it. This is deliberately a light-delayed order rather
+    /// than a client-side deletion of an already-travelling instruction.
+    HoldFleet {
+        player_id: PlayerId,
+        ship_id: EntityId,
+    },
+
     /// Spool and jump a dark fleet to a fixed realspace point.
     JumpShip {
         player_id: PlayerId,

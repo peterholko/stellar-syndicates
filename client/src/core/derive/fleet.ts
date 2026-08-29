@@ -38,6 +38,14 @@ export const HULL_MASS: Record<ShipKind, number> = {
   destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
   transport: 7000, freighter: 6000, builder: 2500,
 };
+// Mirrors ShipKind::max_speed. Command previews use the slowest hull in the
+// served composition and label the result as an estimate; the sim remains the
+// authority for drive transitions, wells, fuel, and future route changes.
+export const HULL_BASE_SPEED: Record<ShipKind, number> = {
+  convoy: 40, builder: 35, raider: 100, corvette: 65, colony: 33, scout: 115,
+  destroyer: 55, cruiser: 45, battleship: 36, dreadnought: 29, titan: 23,
+  transport: 30, freighter: 32,
+};
 const CARGO_MASS_PER_UNIT = 28;
 const CARGO_UNITS_PER_FREIGHTER = 250;
 
@@ -46,6 +54,9 @@ export const fleetHullMass = (g: GhostView): number => g.composition
   : HULL_MASS[g.kind];
 export const shipMass = (g: GhostView): number =>
   fleetHullMass(g) + (g.own ? fleetCargoUnits(g) * CARGO_MASS_PER_UNIT : 0);
+export const fleetBaseSpeed = (g: GhostView): number => g.composition?.length
+  ? Math.min(...g.composition.filter((stack) => stack.count > 0).map((stack) => HULL_BASE_SPEED[stack.kind]))
+  : HULL_BASE_SPEED[g.kind];
 export const fleetFuelCapacity = (g: GhostView): number => g.fuel_capacity ?? fleetHullMass(g) * FUEL_PER_HULL_MASS;
 
 const SHIP_KIND_LABEL: Record<ShipKind, string> = {

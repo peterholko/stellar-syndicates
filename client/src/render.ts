@@ -496,6 +496,7 @@ export class Renderer {
   private renderedFrames = 0;
   private cx = 0;
   private cy = 0;
+  private cameraTween: { fromX: number; fromY: number; toX: number; toY: number; started: number; duration: number } | null = null;
   /// The first served View for a login establishes the useful home-region
   /// camera once. Ordinary reconnects retain the player's pan/zoom; an explicit
   /// sign-out clears playerId and arms the next login again.
@@ -836,9 +837,11 @@ export class Renderer {
     if (before.x === after.x && before.y === after.y && before.w === after.w && before.h === after.h) return;
     if (this.userView && focus) {
       this.scale = this.clampScale(this.scale);
-      this.cx = after.x + after.w / 2 - focus.x * this.scale;
-      this.cy = after.y + after.h / 2 - focus.y * this.scale;
-      this.drawBackground();
+      this.beginCameraTween(
+        after.x + after.w / 2 - focus.x * this.scale,
+        after.y + after.h / 2 - focus.y * this.scale,
+        220,
+      );
     } else {
       this.recompute();
     }
@@ -869,6 +872,7 @@ export class Renderer {
   /// (zoom toward the cursor). All draws follow via the shared transform.
   zoomAt(screenX: number, screenY: number, factor: number): void {
     if (!this.galaxy || this.isSystemScrubbing()) return;
+    this.cameraTween = null;
     const before = this.screenToWorld(screenX, screenY);
     this.scale = this.clampScale(this.scale * factor);
     this.cx = screenX - before.x * this.scale;
@@ -884,6 +888,7 @@ export class Renderer {
   /// Pan by a screen-pixel delta (drag).
   panBy(dx: number, dy: number): void {
     if (this.isSystemScrubbing()) return;
+    this.cameraTween = null;
     this.cx += dx;
     this.cy += dy;
     this.userView = true;
@@ -892,8 +897,40 @@ export class Renderer {
   /// Reset to the fit-to-galaxy view (and let subsequent resizes re-fit again).
   resetView(): void {
     if (this.isSystemScrubbing()) return;
+    this.cameraTween = null;
     this.userView = false;
     this.recompute();
+  }
+
+  private beginCameraTween(toX: number, toY: number, duration = 320): void {
+    this.cameraTween = {
+      fromX: this.cx, fromY: this.cy, toX, toY,
+      started: performance.now(), duration,
+    };
+  }
+
+  /// Smoothly focus a served world position without changing zoom. Roster rows
+  /// use this rather than teleporting the map; any direct drag/zoom cancels it.
+  centerOnWorld(pos: Vec2, duration = 320): void {
+    if (this.mode.type !== "galaxy" || this.transition || this.isSystemScrubbing()) return;
+    const rect = this.cameraRect;
+    this.userView = true;
+    this.beginCameraTween(
+      rect.x + rect.w / 2 - pos.x * this.scale,
+      rect.y + rect.h / 2 - pos.y * this.scale,
+      duration,
+    );
+  }
+
+  private tickCameraTween(now: number): void {
+    const tween = this.cameraTween;
+    if (!tween) return;
+    const raw = Math.max(0, Math.min(1, (now - tween.started) / Math.max(1, tween.duration)));
+    const p = easeInOut(raw);
+    this.cx = tween.fromX + (tween.toX - tween.fromX) * p;
+    this.cy = tween.fromY + (tween.toY - tween.fromY) * p;
+    this.viewDirty = true;
+    if (raw >= 1) this.cameraTween = null;
   }
 
   // --- Semantic-zoom (galaxy ⇄ system) — presentation only ------------------
@@ -3153,6 +3190,7 @@ export class Renderer {
     // which scene(s) to draw this frame. Only one scene is "live" at rest; during
     // a transition BOTH draw so the crossfade reads.
     const { drawGalaxy, drawSystem } = this.tickTransition();
+    if (!this.transition && this.mode.type === "galaxy") this.tickCameraTween(performance.now());
 
     if (drawGalaxy) {
       // §perf: the static systems/anchors geometry is "dirty" only when the camera

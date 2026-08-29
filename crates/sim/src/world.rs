@@ -6518,10 +6518,12 @@ impl World {
                 // Disposable automation hulls retain their mission so a player
                 // can never redirect a free standing-order convoy into a free
                 // permanent ship.
-                if po.kind == crate::event::OrderKind::Move && !ship.disposable {
+                if matches!(po.kind, crate::event::OrderKind::Move | crate::event::OrderKind::Hold)
+                    && !ship.disposable
+                {
                     ship.mission = None;
                 }
-                if po.kind == crate::event::OrderKind::Guard {
+                if matches!(po.kind, crate::event::OrderKind::Guard | crate::event::OrderKind::Hold) {
                     // A deliberate reassignment supersedes any autonomous
                     // defensive sortie spawned by the previous patrol/guard.
                     ship.defense = None;
@@ -7015,6 +7017,24 @@ impl World {
                     *ship_id,
                     FleetOrder::MoveTo { dest: *dest },
                     crate::event::OrderKind::Move,
+                    events,
+                );
+            }
+            Command::HoldFleet { player_id, ship_id } => {
+                let Some(ship) = self.fleets.get(ship_id) else {
+                    return;
+                };
+                if ship.owner != *player_id {
+                    return;
+                }
+                // HOLD names no guessed destination. The true hull installs
+                // Idle only when this signal reaches it, so cancelling a course
+                // obeys exactly the same information delay as issuing one.
+                self.schedule_for_owner(
+                    *player_id,
+                    *ship_id,
+                    FleetOrder::Idle,
+                    crate::event::OrderKind::Hold,
                     events,
                 );
             }

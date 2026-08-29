@@ -67,6 +67,13 @@ export function buildShipPanel(): void {
     } else if (act === "guard" && state.selectedShipId) {
       const fleet = state.ghosts.find((g) => g.id === state.selectedShipId && g.own);
       if (fleet && guardCapable(fleet)) armGuardAiming(fleet);
+    } else if (act === "hold" && state.selectedShipId && net) {
+      const fleet = state.ghosts.find((g) => g.id === state.selectedShipId && g.own);
+      if (!fleet) return;
+      clearPendingIntent();
+      net.send({ type: "HoldFleet", ship_id: fleet.id });
+      readout().innerHTML = `<b>Hold order sent</b> · the fleet cancels its current course and stops at its true position when this signal reaches it. ` +
+        `<span class="dim">Until compliance light returns, the map continues to show the last known course.</span>`;
     } else if (act === "dock" && state.selectedShipId && net) {
       const fleet = state.ghosts.find((g) => g.id === state.selectedShipId && g.own);
       const dock = fleet ? nearestKnownDock(fleet) : null;
@@ -929,28 +936,35 @@ export function ownBody(g: GhostView): string {
   }
   payload.push(fuelSection(g));
   const commands = dockingSection(g) +
+    holdSection(g) +
     fuelRescueSection(g) +
     (guardCapable(g) ? shipZone("Escort", guardSection(g), "sp-zone--guard") : "") +
     (jumpCapable(g) ? shipZone("Jump drive", jumpSection(g), "sp-zone--jump") : "") +
     (g.kind === "builder" ? shipZone("Construct", emplaceSection(g), "sp-zone--construct") : "");
 
-  const tabs: readonly UxTabOption<ShipPanelTab>[] = [
-    ["orders", "Orders", "move"],
-    ["fleet", "Fleet", "fleet"],
-    ["officer", "Officer", "commandCenter"],
-  ];
   const orders = ordersZone(g) +
     (commands ? `<div class="sp-command-group"><div class="sp-command-group__title">Commands</div>${commands}</div>` :
       `<div class="sp-empty">No contextual commands available.</div>`);
   const fleet = shipZone("Fleet", payload.join("")) + standingPolicyZone(g) + managementZone(g);
-  const officer = captainSection(g) || `<div class="sp-empty">No officer assigned.</div>`;
-  const active = shipPanelTab === "orders" ? orders : shipPanelTab === "fleet" ? fleet : officer;
+  const officer = shipZone("Officer", captainSection(g) || `<div class="sp-empty">No officer assigned.</div>`);
 
-  // Activity is the one fact that matters in every task. Everything else lives
-  // in one of three stable surfaces rather than one ever-growing vertical sheet.
+  // This is deliberately one scrollable command page: current order, immediate
+  // verbs, formation state, and officer are visible without a tab hunt.
   return `<div class="sp-current"><span class="sp-current__label">Now</span><span class="sp-current__activity">${ownActivity(g)}</span></div>` +
-    jobProgress(g) + uxTabBar(tabs, shipPanelTab, "ship-tab") +
-    `<div class="sp-tab-body">${active}</div>`;
+    jobProgress(g) + `<div class="sp-page-stack">${orders}${fleet}${officer}</div>`;
+}
+
+
+export function holdSection(g: GhostView): string {
+  const queue = state.pendingOrders.get(g.id) ?? [];
+  const hasCourse = !!state.orders[g.id] || !!g.path?.length || Math.hypot(g.vel.x, g.vel.y) >= 0.5
+    || queue.some((order) => order.kind !== "hold");
+  if (!hasCourse || g.docked) return "";
+  return shipZone(
+    "Course",
+    `<div class="sp-line"><button class="act act--danger" data-act="hold" title="Send a light-delayed cancellation. The fleet stops at its true position when the command arrives; an outbound order cannot be erased from the command center.">${icon("move", "md")} Cancel course · hold</button></div>` +
+      `<div class="sp-line dim">Light-delayed — the last known route remains visible until the hold is observed.</div>`,
+  );
 }
 
 

@@ -969,6 +969,7 @@ export function formatId(id: PlayerId): string {
 export type ClientMsg =
   | { type: "Join"; name: string; view_hz?: 5 | 10 }
   | { type: "MoveShip"; ship_id: EntityId; dest: Vec2 }
+  | { type: "HoldFleet"; ship_id: EntityId }
   | { type: "JumpShip"; ship_id: EntityId; dest: Vec2 }
   /// §emplacements: the named Construction Ship builds a structure WHERE IT IS
   /// PARKED (fly it there first; no separate site point). The field is
@@ -1324,7 +1325,7 @@ export interface LossRange {
 }
 
 // §order-lifecycle: the flavor of a light-delayed order (mirrors sim OrderKind).
-export type OrderKind = "move" | "jump" | "construct" | "demolish" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey" | "guard";
+export type OrderKind = "move" | "hold" | "jump" | "construct" | "demolish" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey" | "guard";
 
 // §battles-take-time: an ongoing battle as this player perceives it, light-gated.
 // ONE battle entity = ONE map icon at `pos`; `participants` are the fleet ids

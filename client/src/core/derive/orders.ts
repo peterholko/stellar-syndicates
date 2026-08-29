@@ -13,8 +13,8 @@ import { renderer } from "../../render";
 import { liveSimTime, state, type PendingIntent } from "../../state";
 import { emplacementLabel, systemName } from "./geo";
 import { projectedBand } from "./research";
-import { shipKindLabel } from "./fleet";
-import { doneAtLocal } from "./format";
+import { estimatedFuelForLeg, fleetBaseSpeed, shipKindLabel, WARP_FACTOR } from "./fleet";
+import { doneAtLocal, fmt, fmtDur } from "./format";
 
 export const TCA_INCIDENT_LOSS_UI = 10;
 export const SURVEY_SECS_UI = 20;
@@ -92,9 +92,18 @@ export function intentSummary(intent: PendingIntent): string {
   const shipName = ship ? shipKindLabel(ship.kind) : "fleet";
   const signal = ship ? `${ship.age.toFixed(0)}s` : "?";
   const target = intentTargetLabel(intent);
+  const moveEstimate = ship && intent.dest ? (() => {
+    const distance = Math.hypot(intent.dest!.x - ship.pos.x, intent.dest!.y - ship.pos.y);
+    const flight = distance / Math.max(1, fleetBaseSpeed(ship) * WARP_FACTOR);
+    const eta = ship.age + flight;
+    const fuel = estimatedFuelForLeg(ship, intent.dest!);
+    const tank = ship.fuel == null ? "" : ` / ${fmt(ship.fuel)} aboard`;
+    const warning = ship.fuel != null && fuel > ship.fuel + 1e-6 ? " · FUEL SHORT" : "";
+    return `${fmt(distance)} su · ETA ~${fmtDur(eta)} (signal ${fmtDur(ship.age)} + flight ${fmtDur(flight)}) · fuel ~${fmt(fuel)}${tank}${warning}`;
+  })() : "";
   let summary = "";
   switch (intent.verb) {
-    case "move": summary = `Move ${shipName} → ${target} · signal ~${signal}`; break;
+    case "move": summary = `Move ${shipName} → ${target}${moveEstimate ? ` · ${moveEstimate}` : ` · signal ~${signal}`}`; break;
     case "jump": {
       const spool = state.galaxy?.jump_spool_s ?? 10;
       const point = intent.dest ? orderPoint(intent.dest) : "destination";
@@ -158,6 +167,7 @@ export function orderObject(p: PendingOrderView): string {
   const emplacement = p.target_id ? state.emplacements.find((e) => e.id === p.target_id) : undefined;
   switch (p.kind) {
     case "move": return `Move → ${p.dest ? orderPoint(p.dest) : "destination"}`;
+    case "hold": return "Cancel course → hold position";
     case "jump": return `Jump → ${p.dest ? orderPoint(p.dest) : "destination"}`;
     case "raid": return `Raid → ${target ? `rival ${shipKindLabel(target.kind)}` : "rival contact"}`;
     case "attack": return "Attack → rival contact";
