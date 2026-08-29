@@ -7,7 +7,8 @@ import { installPressGuard } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext, Rect, Shell } from "../types";
 import { installDeckDebug } from "./debug";
-import { DeckMapNavigation } from "./map";
+import { type SelectTarget } from "../../core/mapclick";
+import { DeckMapInteraction } from "./map";
 import { mountDeckMarkup } from "./markup";
 import { DECK_ROUTES, DeckRouter, type DeckCrumb, type DeckRoute, type DeckRouteName } from "./router";
 import { DeckCommandStrip } from "./strip";
@@ -22,7 +23,7 @@ class DeckShell implements Shell {
   private abort: AbortController | null = null;
   private router: DeckRouter | null = null;
   private workspace: DeckWorkspace | null = null;
-  private map: DeckMapNavigation | null = null;
+  private map: DeckMapInteraction | null = null;
   private toasts: DeckToasts | null = null;
   private strip: DeckCommandStrip | null = null;
   private removeDebug: (() => void) | null = null;
@@ -39,13 +40,15 @@ class DeckShell implements Shell {
     const signal = this.abort.signal;
     this.router = new DeckRouter((route, stack) => this.routeChanged(route, stack), signal);
     this.workspace = new DeckWorkspace(byId("deck-workspace"), ctx.renderer, signal);
-    this.map = new DeckMapNavigation(ctx, {
+    this.map = new DeckMapInteraction(ctx, {
       enteredSystem: (system) => this.router?.go({ name: "system", params: { id: system.id, systemLabel: system.name } }),
       returnedToGalaxy: () => {
         if (this.router?.current?.name === "system" || this.router?.current?.name === "world" || this.router?.current?.name === "build") {
           this.router.back();
         }
       },
+      openTarget: (target) => this.openMapTarget(target),
+      notice: () => { /* D1.5 promotes resolver readouts into the strip status line. */ },
     }, signal);
     this.toasts = new DeckToasts(byId("deck-toast-lane"), (route) => this.router?.go(route), signal);
     this.strip = new DeckCommandStrip(byId("deck-command-strip"));
@@ -183,6 +186,54 @@ class DeckShell implements Shell {
 
   private openRoute(name: DeckRouteName): void {
     this.router?.go({ name });
+  }
+
+  private openMapTarget(target: SelectTarget): void {
+    if (!this.ctx || !this.router) return;
+    const state = this.ctx.state;
+    switch (target.type) {
+      case "fleet": {
+        const fleet = state.ghosts.find((entry) => entry.id === target.id);
+        this.router.go({ name: "fleet", params: { id: target.id, fleetLabel: fleet ? humanize(fleet.kind) : "Fleet" } });
+        break;
+      }
+      case "system": {
+        const system = state.galaxy?.systems.find((entry) => entry.id === target.id);
+        this.router.go({ name: "system", params: { id: target.id, systemLabel: system?.name ?? "System" } });
+        break;
+      }
+      case "hub":
+        this.router.go({ name: "market" });
+        break;
+      case "ongoingBattle":
+        this.router.go({ name: "battle", params: { id: target.id, label: "Ongoing battle" } });
+        break;
+      case "aftermath":
+      case "capture":
+        this.router.go({ name: "log", params: { marker: String(target.id), label: "Battle report" } });
+        break;
+      case "systemBody": {
+        const systemId = this.ctx.renderer.viewMode.type === "system" ? this.ctx.renderer.viewMode.systemId : state.selectedSystemId ?? "";
+        this.router.go({
+          name: "world",
+          params: { systemId, bodyId: String(target.detail.id), worldLabel: target.detail.name ?? "World" },
+        });
+        break;
+      }
+      case "emplacement":
+        this.router.go({ name: "fleet", params: { id: target.id, fleetLabel: "Installation" } });
+        break;
+      case "jumpDeparture":
+        this.ctx.renderer.selectedJumpDepartureKey = target.key;
+        this.router.go({ name: "fleet", params: { id: target.key, fleetLabel: "Jump departure" } });
+        break;
+      case "anchor":
+        this.router.go({ name: "command" });
+        break;
+      case "clearSystemBody":
+        if (this.router.current?.name === "world") this.router.back();
+        break;
+    }
   }
 
   private routeChanged(route: DeckRoute | null, stack: readonly DeckRoute[]): void {

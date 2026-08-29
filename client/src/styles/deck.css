@@ -59,7 +59,7 @@
 .deck-help__grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-2) var(--space-3); align-items: center; }
 .deck-help__grid kbd { min-width: calc(var(--space-6) * 2); padding: var(--space-1) var(--space-2); border: 1px solid var(--field-bd); border-radius: var(--deck-radius); background: var(--field-bg); color: var(--accent); font: inherit; font-size: var(--fs-fine); text-align: center; }
 .deck-help__grid span { color: var(--dim); }
-.deck-hover { position: fixed; z-index: var(--z-hover); pointer-events: none; }
+.deck-hover { position: fixed; z-index: var(--z-hover); max-width: min(360px, calc(100vw - var(--space-4))); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); color: var(--ink); font-size: var(--fs-fine); pointer-events: none; }
 
 @media (max-width: 1450px) {
   #deck-corp-id { display: none; }
