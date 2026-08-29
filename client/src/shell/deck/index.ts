@@ -1,7 +1,7 @@
 import "../../styles/deck.css";
 
 import { guardCapable as guardCapableForKey, jumpCapable as jumpCapableForKey, shipKindLabel } from "../../core/derive/fleet";
-import { reservedMarketCredits, spendableMarketCredits } from "../../core/derive/market";
+import { bindMarketDerive, reservedMarketCredits, spendableMarketCredits } from "../../core/derive/market";
 import type { CoreEvent } from "../../core/events";
 import { formatId } from "../../protocol";
 import { installPressGuard } from "../dom";
@@ -60,7 +60,9 @@ class DeckShell implements Shell {
     this.empire = new DeckEmpireRoutes(byId("deck-workspace-body"), ctx, {
       go: (route) => this.router?.go(route),
       notice: (html) => this.setStatus(html),
+      toast: (title, message, tone, destination) => this.toasts?.push({ title, message, tone, destination }),
     });
+    bindMarketDerive(() => ctx.net, () => this.empire?.composedFit ?? []);
     this.removeDebug = installDeckDebug(ctx, (id) => this.router?.go({ name: "battle", params: { id, label: "Theater demo" } }));
     byId<HTMLFormElement>("deck-join-form").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -102,6 +104,7 @@ class DeckShell implements Shell {
   }
 
   onCore(events: CoreEvent[]): void {
+    this.empire?.onCore(events, this.router?.current ?? null);
     for (const event of events) {
       if (event.kind === "Welcomed") {
         this.syncSessionVisibility();
@@ -170,6 +173,7 @@ class DeckShell implements Shell {
     this.toasts = null;
     this.strip = null;
     this.empire = null;
+    bindMarketDerive(() => null, () => []);
     this.removeDebug = null;
     this.abort = null;
     this.root?.replaceChildren();

@@ -320,12 +320,12 @@ export function shipyardBoost(dyn: SystemStateView, body: BodyView): number {
 export function dispatchBuildKey(k: string, sid: string, bodyId?: number): void {
   const net = netSource();
   if (!net) return;
-  if (k === "convoy" || k === "raider" || k === "corvette" || k === "colony" || k === "scout") {
+  if (k in SHIP_YARD && k !== "transport") {
     // §modules Part B4: a warship build carries the composed FIT, clamped to this
     // hull's module slots (so a 2-module fit on a 1-slot scout sends just 1, not a
     // silent server reject). The ledger is debited server-side.
     const fit = pendingFitSource().filter((m) => (moduleLedgerAt(sid)[m] ?? 0) > 0).slice(0, MODULE_SLOTS[k] ?? 0);
-    net.send({ type: "BuildShip", system_id: sid, ship_kind: k, loadout: fit.length ? fit : undefined });
+    net.send({ type: "BuildShip", system_id: sid, ship_kind: k as import("../../protocol").ShipKind, loadout: fit.length ? fit : undefined });
   }
   // §modules Part B3: "module:<slug>" → manufacture into the system ledger.
   else if (k.startsWith("module:")) net.send({ type: "BuildModule", system_id: sid, module: k.slice(7) as ModuleKind });

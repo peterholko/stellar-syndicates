@@ -1,8 +1,27 @@
 import { constructionStock } from "../../core/derive/fleet";
 import { fmtBuildDur } from "../../core/derive/format";
-import { systemFlavor } from "../../core/derive/market";
+import {
+  bodyPoolUsage,
+  buildOption,
+  dispatchBuildKey,
+  fitLegal,
+  FITTING_POINTS,
+  MODULE_SLOTS,
+  moduleLedgerAt,
+  POOL_LABEL,
+  POOL_OF,
+  SHIP_YARD,
+  shipOption,
+  structOption,
+  systemFlavor,
+  YARD_TITLE,
+  type BuildOpt,
+  type Pool,
+} from "../../core/derive/market";
+import { SHIP_STATS } from "../../core/derive/orders";
+import type { CoreEvent } from "../../core/events";
 import { icon, label, type IconKey } from "../../icons";
-import type { AssignmentView, BodyView, Commodity, SystemInfo, SystemStateView } from "../../protocol";
+import type { AssignmentView, BodyView, Commodity, ModuleKind, ShipKind, SystemInfo, SystemStateView } from "../../protocol";
 import { liveSimTime } from "../../state";
 import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
@@ -14,13 +33,33 @@ export type DeckSystemTab = "overview" | "worlds" | "production";
 interface EmpireHooks {
   go(route: DeckRoute): void;
   notice(html: string): void;
+  toast(title: string, message: string, tone?: "quiet" | "good" | "warn" | "bad", destination?: DeckRoute): void;
 }
+
+type BuilderMode = "structures" | "ships";
+type BuildFeedback = { systemId: string; issuedAt: number; timelineLength: number; text: string; tone: "info" | "good" | "bad" };
+
+const SHIP_ORDER: ShipKind[] = ["scout", "corvette", "raider", "convoy", "colony", "destroyer", "cruiser", "battleship", "dreadnought", "titan"];
+const SHIP_KEYS = new Set<string>(SHIP_ORDER);
+const MODULES: { kind: ModuleKind; label: string; icon: IconKey; fit: number }[] = [
+  { kind: "mass_driver", label: "Mass Driver", icon: "moduleMassDriver", fit: 2 },
+  { kind: "torpedo_rack", label: "Torpedo Rack", icon: "moduleTorpedoRack", fit: 3 },
+  { kind: "point_defense_screen", label: "Point-Defense Screen", icon: "modulePointDefense", fit: 2 },
+  { kind: "reflective_plating", label: "Reflective Plating", icon: "moduleReflectivePlating", fit: 2 },
+  { kind: "whipple_armor", label: "Whipple Armor", icon: "moduleWhippleArmor", fit: 3 },
+];
 
 /** Routed empire management. This reads only the player's served SystemStateView:
  * public astronomy is always visible, survey findings require arrived survey
  * light, and owner-only production never receives a rival rendering path. */
 export class DeckEmpireRoutes {
   private systemTab: DeckSystemTab = "overview";
+  private builderMode: BuilderMode = "structures";
+  private selectedBuild = "";
+  private selectedHull: ShipKind | "" = "";
+  private shipQuantity = 1;
+  private pendingFit: ModuleKind[] = [];
+  private buildFeedback: BuildFeedback | null = null;
   private signature = "";
 
   constructor(
@@ -29,20 +68,29 @@ export class DeckEmpireRoutes {
     private readonly hooks: EmpireHooks,
   ) {}
 
+  get composedFit(): ModuleKind[] {
+    return this.pendingFit;
+  }
+
   render(route: DeckRoute | null, force = false): boolean {
-    if (route?.name !== "system") return false;
+    if (route?.name !== "system" && route?.name !== "build") return false;
     const context = this.systemContext(route);
     const signature = sheetFingerprint([
-      route, this.systemTab, Math.floor(liveSimTime()), context.system, context.dynamic,
+      route, this.systemTab, this.builderMode, this.selectedBuild, this.selectedHull,
+      this.shipQuantity, this.pendingFit, this.buildFeedback, Math.floor(liveSimTime()),
+      context.system, context.dynamic, this.ctx.state.timeline.length, this.ctx.state.syndicate?.fits,
     ]);
     if (!force && signature === this.signature) return true;
     if (renderDeferred(this.root.id, () => this.render(route, true))) return true;
     this.signature = signature;
-    setHtml(this.root, this.systemHtml(context.system, context.dynamic));
+    setHtml(this.root, route.name === "build"
+      ? this.buildHtml(route, context.system, context.dynamic)
+      : this.systemHtml(context.system, context.dynamic));
     return true;
   }
 
   handleAction(button: HTMLButtonElement, route: DeckRoute | null): boolean {
+    if (route?.name === "build") return this.handleBuildAction(button, route);
     if (route?.name !== "system") return false;
     const action = button.dataset.deckAct;
     const { system, dynamic } = this.systemContext(route);
@@ -107,6 +155,20 @@ export class DeckEmpireRoutes {
 
   invalidate(): void {
     this.signature = "";
+  }
+
+  onCore(events: readonly CoreEvent[], route: DeckRoute | null): void {
+    if (!this.buildFeedback || !events.some((event) => event.kind === "TimelineApplied")) return;
+    const rejected = this.ctx.state.timeline
+      .slice(this.buildFeedback.timelineLength)
+      .reverse()
+      .find((entry) => entry.at_time + 0.001 >= this.buildFeedback!.issuedAt
+        && entry.severity === "warn" && entry.text.startsWith("Can't build"));
+    if (!rejected) return;
+    this.buildFeedback = { ...this.buildFeedback, text: rejected.text, tone: "bad" };
+    this.signature = "";
+    this.hooks.toast("Build refused", rejected.text, "bad", route?.name === "build" ? route : undefined);
+    if (route?.name === "build") this.render(route, true);
   }
 
   private systemContext(route: DeckRoute): { system?: SystemInfo; dynamic?: SystemStateView } {
@@ -221,7 +283,213 @@ export class DeckEmpireRoutes {
       const duration = Math.max(0, job.complete_time - now);
       return `<div class="deck-queue-row"><span>${icon("queue", "sm")}<span><b>${esc(buildName(job.key))}</b><small>${esc(body?.name ?? "System yard")}</small></span></span><em>${duration > 0 ? fmtBuildDur(duration) : "completing"}</em></div>`;
     }).join("");
-    return `<section class="deck-section"><header><div><h3>Construction queue</h3><p>Completion times follow the live simulation clock.</p></div><b>${dynamic.builds.length}</b></header>${rows || `<div class="deck-empty-inline">Nothing under construction.</div>`}</section>`;
+    const feedback = this.buildFeedback?.systemId === dynamic.id
+      ? `<div class="deck-build-feedback is-${this.buildFeedback.tone}">${esc(this.buildFeedback.text)}</div>`
+      : "";
+    return `<section class="deck-section"><header><div><h3>Construction queue</h3><p>Completion times follow the live simulation clock.</p></div><b>${dynamic.builds.length}</b></header>${feedback}${rows || `<div class="deck-empty-inline">Nothing under construction.</div>`}</section>`;
+  }
+
+  private handleBuildAction(button: HTMLButtonElement, route: DeckRoute): boolean {
+    const { system, dynamic } = this.systemContext(route);
+    if (!system || !dynamic || dynamic.owner !== this.ctx.state.playerId) return false;
+    const action = button.dataset.deckAct;
+    if (action === "builder-mode") {
+      const mode = button.dataset.mode;
+      if (mode === "structures" || mode === "ships") this.builderMode = mode;
+    } else if (action === "builder-body") {
+      const body = dynamic.bodies.find((entry) => String(entry.id) === button.dataset.body);
+      if (body) this.hooks.go({ ...route, query: { ...(route.query ?? {}), body: String(body.id) } });
+      return true;
+    } else if (action === "builder-select") {
+      this.selectedBuild = button.dataset.key ?? "";
+    } else if (action === "builder-select-hull") {
+      const hull = button.dataset.hull as ShipKind | undefined;
+      if (hull && SHIP_KEYS.has(hull)) {
+        this.selectedHull = hull;
+        this.shipQuantity = 1;
+      }
+    } else if (action === "builder-quantity") {
+      this.shipQuantity = Math.max(1, Number(button.dataset.quantity) || 1);
+    } else if (action === "builder-fit") {
+      const module = button.dataset.module as ModuleKind | undefined;
+      if (module && MODULES.some((entry) => entry.kind === module)) {
+        const index = this.pendingFit.indexOf(module);
+        if (index >= 0) this.pendingFit.splice(index, 1);
+        else this.pendingFit.push(module);
+      }
+    } else if (action === "builder-fit-pick") {
+      const fit = (this.ctx.state.syndicate?.fits ?? []).find((entry) => entry.name === button.dataset.name);
+      if (fit && (!this.selectedHull || fit.kind === this.selectedHull)) this.pendingFit = [...fit.modules];
+    } else if (action === "builder-fit-delete") {
+      const name = button.dataset.name;
+      if (name) this.ctx.send({ type: "DeleteFit", name });
+    } else if (action === "builder-fit-save") {
+      if (!this.selectedHull) return true;
+      const input = this.root.querySelector<HTMLInputElement>("#deck-fit-name");
+      const name = input?.value.trim();
+      const fit = this.effectiveFit(dynamic.id, this.selectedHull);
+      if (name && fit.length && fitLegal(this.selectedHull, fit)) {
+        this.ctx.send({ type: "SaveFit", name, ship: this.selectedHull, loadout: fit });
+        this.hooks.notice(`<b>Doctrine fit sent</b> · ${esc(name)}.`);
+      }
+    } else if (action === "builder-forge") {
+      const module = button.dataset.module as ModuleKind | undefined;
+      if (module && MODULES.some((entry) => entry.kind === module)) this.dispatchBuild(`module:${module}`, dynamic.id);
+    } else if (action === "builder-queue") {
+      const body = this.builderBody(route, dynamic);
+      if (body && this.selectedBuild) this.dispatchBuild(this.selectedBuild, dynamic.id, body.id);
+    } else if (action === "builder-queue-ships") {
+      if (!this.selectedHull) return true;
+      const option = buildOption(this.selectedHull);
+      const state = option ? shipOption(option, dynamic) : null;
+      const fit = this.effectiveFit(dynamic.id, this.selectedHull);
+      const quantity = Math.min(this.shipQuantity, state?.maxAff ?? 0);
+      if (!state?.buildable || quantity < 1 || (fit.length > 0 && !fitLegal(this.selectedHull, fit))) return true;
+      for (let index = 0; index < quantity; index++) dispatchBuildKey(this.selectedHull, dynamic.id);
+      this.noteBuildDispatch(dynamic.id, `${quantity}× ${buildName(this.selectedHull)} sent to the yard.`);
+      this.shipQuantity = 1;
+    } else {
+      return false;
+    }
+    this.signature = "";
+    this.render(route, true);
+    return true;
+  }
+
+  private buildHtml(route: DeckRoute, system?: SystemInfo, dynamic?: SystemStateView): string {
+    if (!system || !dynamic) return emptyState("Build context unavailable", "Open an owned system before entering construction.");
+    if (dynamic.owner !== this.ctx.state.playerId) return emptyState("Construction is private", "You can inspect this system, but only its owner receives production and build controls.");
+    const body = this.builderBody(route, dynamic);
+    if (!body) return emptyState("No build site", "No served world is available in this system.");
+    const modeTabs = (["structures", "ships"] as BuilderMode[]).map((mode) => `<button type="button" data-deck-act="builder-mode" data-mode="${mode}" aria-selected="${this.builderMode === mode}">${mode === "structures" ? "Structures" : "Ships & Modules"}</button>`).join("");
+    const worlds = dynamic.bodies.map((entry) => `<button type="button" data-deck-act="builder-body" data-body="${entry.id}" aria-selected="${entry.id === body.id}">${esc(entry.name)}</button>`).join("");
+    const content = this.builderMode === "structures"
+      ? this.structureBuilder(dynamic, body)
+      : this.shipBuilder(dynamic, body);
+    return `<section class="deck-page deck-build"><header class="deck-page__lead"><span>Local construction · served inventory</span><h2>Build at ${esc(system.name)}</h2><p>Recipes may draw from the system stockpile and owned freighters docked here.</p></header><nav class="deck-tabs" aria-label="Build category">${modeTabs}</nav><div class="deck-builder-worlds"><span>Build site</span>${worlds}</div>${content}${this.queueHtml(dynamic)}</section>`;
+  }
+
+  private builderBody(route: DeckRoute, dynamic: SystemStateView): BodyView | undefined {
+    const requested = route.query?.body;
+    return dynamic.bodies.find((entry) => String(entry.id) === requested) ?? dynamic.bodies[0];
+  }
+
+  private structureBuilder(dynamic: SystemStateView, body: BodyView): string {
+    const pools = bodyPoolUsage(body, dynamic);
+    const options = (this.ctx.state.galaxy?.build_options ?? [])
+      .filter((entry) => !SHIP_KEYS.has(entry.key) && !entry.key.startsWith("module:") && !!POOL_OF[entry.key]) as BuildOpt[];
+    if (!options.some((entry) => entry.key === this.selectedBuild)) this.selectedBuild = options[0]?.key ?? "";
+    const poolBars = (["resource", "industrial", "infrastructure"] as Pool[]).map((pool) => {
+      const usage = pools[pool];
+      const pct = usage.total > 0 ? Math.min(100, usage.used / usage.total * 100) : 100;
+      return `<span class="deck-pool${usage.used >= usage.total ? " is-full" : ""}"><small>${POOL_LABEL[pool]}</small><b>${usage.used}/${usage.total}</b><i><span style="width:${pct.toFixed(1)}%"></span></i></span>`;
+    }).join("");
+    const groups = (["resource", "industrial", "infrastructure"] as Pool[]).map((pool) => {
+      const rows = options.filter((entry) => POOL_OF[entry.key] === pool).map((entry) => {
+        const state = structOption(entry, dynamic, body, pools);
+        return `<button type="button" class="deck-builder-row${entry.key === this.selectedBuild ? " is-selected" : ""}${state.buildable ? "" : " is-disabled"}" data-deck-act="builder-select" data-key="${esc(entry.key)}"><span>${icon(structureIcon(entry.key), "sm")}<span><b>${esc(entry.label)}</b><small>${state.tierUp ? `Tier ${state.currentTier} → ${state.targetTier}` : "New Tier I"}</small></span></span><em>${state.buildable ? fmtBuildDur(entry.build_secs * body.construction_time_mult) : esc(shortReason(state.reason))}</em></button>`;
+      }).join("");
+      return rows ? `<h3 class="deck-builder-group">${POOL_LABEL[pool]}</h3>${rows}` : "";
+    }).join("");
+    const selected = options.find((entry) => entry.key === this.selectedBuild);
+    const detail = selected ? this.structureDetail(dynamic, body, selected, pools) : emptyState("Choose a structure", "Inspect its recipe, slot and build time.");
+    return `<div class="deck-pools">${poolBars}</div><div class="deck-builder"><div class="deck-builder__list">${groups}</div><div class="deck-builder__detail">${detail}</div></div>`;
+  }
+
+  private structureDetail(dynamic: SystemStateView, body: BodyView, option: BuildOpt, pools: ReturnType<typeof bodyPoolUsage>): string {
+    const state = structOption(option, dynamic, body, pools);
+    const supply = constructionStock(dynamic).available;
+    const costs = option.costs.map((cost) => {
+      const commodity = cost.commodity as Commodity;
+      const have = supply.get(commodity) ?? 0;
+      return `<div class="deck-cost${have < cost.units ? " is-short" : ""}"><span>${commodityGlyph(commodity)} ${esc(label(commodity))}</span><b>${cost.units} <small>have ${fmt(have)}</small></b></div>`;
+    }).join("");
+    return `<article class="deck-build-detail"><header>${icon(structureIcon(option.key), "md")}<span><small>${POOL_LABEL[state.pool]} · ${state.foundsNew ? "new structure" : `upgrade to tier ${state.targetTier}`}</small><h3>${esc(option.label)}</h3></span></header><div class="deck-costs">${costs}</div><dl><div><dt>Build time</dt><dd>${fmtBuildDur(option.build_secs * body.construction_time_mult)}</dd></div><div><dt>Slot</dt><dd>${state.foundsNew ? `${POOL_LABEL[state.pool]} ${pools[state.pool].used} → ${pools[state.pool].used + 1}/${pools[state.pool].total}` : "Deepens in place"}</dd></div></dl>${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}<button type="button" class="is-primary" data-deck-act="builder-queue" ${state.buildable ? "" : "disabled"}>Queue build</button></article>`;
+  }
+
+  private shipBuilder(dynamic: SystemStateView, body: BodyView): string {
+    const options = SHIP_ORDER.map((kind) => buildOption(kind)).filter((entry): entry is BuildOpt => !!entry);
+    if (!this.selectedHull || !options.some((entry) => entry.key === this.selectedHull)) this.selectedHull = options[0]?.key as ShipKind ?? "";
+    const rows = options.map((entry) => {
+      const state = shipOption(entry, dynamic);
+      const stats = SHIP_STATS[entry.key];
+      return `<button type="button" class="deck-builder-row${entry.key === this.selectedHull ? " is-selected" : ""}${state.buildable ? "" : " is-disabled"}" data-deck-act="builder-select-hull" data-hull="${entry.key}"><span>${icon(shipIcon(entry.key), "sm")}<span><b>${esc(buildName(entry.key))}</b><small>${esc(stats?.role ?? "Fleet hull")}</small></span></span><em>${state.buildable ? `max ${state.maxAff}` : esc(shortReason(state.reason))}</em></button>`;
+    }).join("");
+    const selected = this.selectedHull ? options.find((entry) => entry.key === this.selectedHull) : undefined;
+    const detail = selected ? this.shipDetail(dynamic, body, selected) : emptyState("Choose a hull", "Inspect its recipe, capability and fitting budget.");
+    return `<div class="deck-builder"><div class="deck-builder__list"><h3 class="deck-builder-group">Hull catalogue</h3>${rows}</div><div class="deck-builder__detail">${detail}${this.moduleForge(dynamic)}</div></div>`;
+  }
+
+  private shipDetail(dynamic: SystemStateView, body: BodyView, option: BuildOpt): string {
+    const hull = option.key as ShipKind;
+    const state = shipOption(option, dynamic);
+    const stats = SHIP_STATS[hull];
+    const max = Math.max(1, state.maxAff);
+    const quantity = Math.min(Math.max(1, this.shipQuantity), max);
+    this.shipQuantity = quantity;
+    const supply = constructionStock(dynamic).available;
+    const costs = option.costs.map((cost) => {
+      const commodity = cost.commodity as Commodity;
+      const need = cost.units * quantity;
+      const have = supply.get(commodity) ?? 0;
+      return `<div class="deck-cost${have < need ? " is-short" : ""}"><span>${commodityGlyph(commodity)} ${esc(label(commodity))}</span><b>${need} <small>${quantity > 1 ? `${cost.units}×${quantity} · ` : ""}have ${fmt(have)}</small></b></div>`;
+    }).join("");
+    const quantities = [...new Set([1, 5, 10, max])].filter((value) => value <= max).map((value) => `<button type="button" data-deck-act="builder-quantity" data-quantity="${value}" aria-selected="${quantity === value}">${value === max && max > 10 ? `Max ${value}` : value}</button>`).join("");
+    const fit = this.fitPicker(dynamic, hull);
+    const fitOkay = fitLegal(hull, this.effectiveFit(dynamic.id, hull));
+    const canQueue = state.buildable && quantity <= state.maxAff && fitOkay;
+    const gate = SHIP_YARD[hull] ?? { yard: "shipyard", tier: 1 };
+    const siteTime = body.ship_build_time_mult ?? 1;
+    return `<article class="deck-build-detail"><header>${icon(shipIcon(hull), "md")}<span><small>${esc(YARD_TITLE[gate.yard] ?? label(gate.yard))} · Tier ${gate.tier}</small><h3>${esc(buildName(hull))}</h3></span></header><p>${esc(stats?.role ?? "Fleet hull")}</p><div class="deck-quantity"><span>Quantity</span>${quantities}</div><div class="deck-costs">${costs}</div><dl><div><dt>Build time</dt><dd>${fmtBuildDur(option.build_secs * siteTime)}</dd></div><div><dt>Site</dt><dd>${esc(body.name)} · ×${siteTime.toFixed(2)}</dd></div></dl>${stats ? `<div class="deck-hull-stats">${stat("Speed", fmt(stats.speed))}${stat("Hull", fmt(stats.hull))}${stat("Attack", fmt(stats.atk))}${stat("Defense", fmt(stats.def))}</div>` : ""}${fit}${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}${!fitOkay ? `<div class="deck-build-warning">The composed fit exceeds this hull's fitting budget or module slots.</div>` : ""}<button type="button" class="is-primary" data-deck-act="builder-queue-ships" ${canQueue ? "" : "disabled"}>Queue ${quantity} hull${quantity === 1 ? "" : "s"}</button></article>`;
+  }
+
+  private fitPicker(dynamic: SystemStateView, hull: ShipKind): string {
+    const ledger = moduleLedgerAt(dynamic.id);
+    this.pendingFit = this.pendingFit.filter((module) => (ledger[module] ?? 0) > 0);
+    const slots = MODULE_SLOTS[hull] ?? 0;
+    if (!slots) return `<section class="deck-fit"><h4>Fitting</h4><span class="deck-muted">This hull has no module slots.</span></section>`;
+    const available = MODULES.filter((entry) => (ledger[entry.kind] ?? 0) > 0);
+    const chips = available.map((entry) => `<button type="button" data-deck-act="builder-fit" data-module="${entry.kind}" aria-pressed="${this.pendingFit.includes(entry.kind)}">${icon(entry.icon, "sm")} ${esc(entry.label)} · ${ledger[entry.kind]}</button>`).join("");
+    const effective = this.effectiveFit(dynamic.id, hull);
+    const used = effective.reduce((sum, module) => sum + (MODULES.find((entry) => entry.kind === module)?.fit ?? 0), 0);
+    const total = FITTING_POINTS[hull] ?? 0;
+    const pct = total > 0 ? Math.min(100, used / total * 100) : 0;
+    const saved = (this.ctx.state.syndicate?.fits ?? []).filter((entry) => entry.kind === hull).map((entry) => `<span class="deck-saved-fit"><button type="button" data-deck-act="builder-fit-pick" data-name="${esc(entry.name)}">${esc(entry.name)}</button><button type="button" data-deck-act="builder-fit-delete" data-name="${esc(entry.name)}" aria-label="Delete ${esc(entry.name)}">×</button></span>`).join("");
+    return `<section class="deck-fit"><h4>Fit next build · ${effective.length}/${slots} slots</h4><div class="deck-fit-bar${used > total ? " is-over" : ""}"><span style="width:${pct.toFixed(1)}%"></span><b>${used}/${total} pts</b></div><div class="deck-fit-chips">${chips || `<span class="deck-muted">No modules in this system ledger.</span>`}</div>${this.ctx.state.syndicate ? `<div class="deck-saved-fits">${saved || `<span class="deck-muted">No saved fits for this hull.</span>`}</div><div class="deck-inline-form"><input id="deck-fit-name" maxlength="24" placeholder="Doctrine fit name"><button type="button" data-deck-act="builder-fit-save" ${effective.length && fitLegal(hull, effective) ? "" : "disabled"}>Save fit</button></div>` : ""}</section>`;
+  }
+
+  private moduleForge(dynamic: SystemStateView): string {
+    const hasForge = (dynamic.structures.armaments_complex ?? 0) > 0;
+    const supply = constructionStock(dynamic).available;
+    const ledger = moduleLedgerAt(dynamic.id);
+    const rows = MODULES.map((entry) => {
+      const recipe = buildOption(`module:${entry.kind}`);
+      const affordable = !!recipe && recipe.costs.every((cost) => (supply.get(cost.commodity as Commodity) ?? 0) >= cost.units);
+      const cost = recipe?.costs.map((part) => `${part.units} ${label(part.commodity)}`).join(" · ") ?? "Recipe unavailable";
+      return `<div class="deck-forge-row"><span>${icon(entry.icon, "sm")}<span><b>${esc(entry.label)}</b><small>Ledger ${ledger[entry.kind] ?? 0} · ${esc(cost)}</small></span></span><button type="button" data-deck-act="builder-forge" data-module="${entry.kind}" ${hasForge && affordable ? "" : "disabled"}>Forge</button></div>`;
+    }).join("");
+    return `<section class="deck-module-forge"><h4>Module forge</h4>${hasForge ? "" : `<p class="deck-muted">Build an Armaments Complex to manufacture modules here.</p>`}${rows}</section>`;
+  }
+
+  private effectiveFit(systemId: string, hull: ShipKind): ModuleKind[] {
+    const ledger = moduleLedgerAt(systemId);
+    return this.pendingFit.filter((module) => (ledger[module] ?? 0) > 0).slice(0, MODULE_SLOTS[hull] ?? 0);
+  }
+
+  private dispatchBuild(key: string, systemId: string, bodyId?: number): void {
+    dispatchBuildKey(key, systemId, bodyId);
+    this.noteBuildDispatch(systemId, `${buildName(key)} sent to local administration.`);
+  }
+
+  private noteBuildDispatch(systemId: string, text: string): void {
+    this.buildFeedback = {
+      systemId,
+      issuedAt: this.ctx.state.simTime,
+      timelineLength: this.ctx.state.timeline.length,
+      text,
+      tone: "info",
+    };
+    this.hooks.notice(`<b>Build order sent</b> · ${esc(text)}`);
   }
 
   private opportunityHtml(dynamic?: SystemStateView): string {
@@ -261,6 +529,29 @@ function stat(name: string, value: string, warn = false): string {
 
 function buildName(key: string): string {
   return label(key === "convoy" ? "freighter" : key === "raider" ? "interceptor" : key);
+}
+
+function structureIcon(key: string): IconKey {
+  const icons: Record<string, IconKey> = {
+    shipyard: "shipyard", sensor_array: "sensor", defense_platform: "defense",
+    habitat: "habitat", fuel_refinery: "refinery", orbital_warehouse: "orbital_warehouse",
+    mining_complex: "extractor", volatile_harvester: "extractor", bioharvester: "extractor",
+    academy: "intel", armaments_complex: "moduleMassDriver",
+  };
+  return icons[key] ?? "build";
+}
+
+function shipIcon(key: string): IconKey {
+  const icons: Record<string, IconKey> = {
+    scout: "scout", corvette: "corvette", raider: "raider", convoy: "convoy", colony: "colony",
+  };
+  return icons[key] ?? "fleet";
+}
+
+function shortReason(reason: string): string {
+  if (!reason) return "Unavailable";
+  const cut = reason.indexOf(" — ");
+  return cut > 0 ? reason.slice(0, cut) : reason;
 }
 
 function fmt(value: number): string {
