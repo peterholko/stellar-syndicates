@@ -514,7 +514,7 @@ class DeckShell implements Shell {
     this.zoomSignature = text;
     const level = byId("deck-zoom-level");
     level.textContent = text;
-    level.title = mode === "galaxy" ? `${zoom.toFixed(2)}× galaxy magnification relative to fit` : `${text.toLowerCase()} semantic view`;
+    level.setAttribute("aria-label", mode === "galaxy" ? `${zoom.toFixed(2)}× galaxy magnification relative to fit` : `${text.toLowerCase()} semantic view`);
   }
 
   private toastFor(event: CoreEvent): void {

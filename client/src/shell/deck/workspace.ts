@@ -22,7 +22,7 @@ export class DeckWorkspace {
     this.root.setAttribute("aria-hidden", "false");
     this.title.textContent = DECK_ROUTES[route.name].title;
     this.back.disabled = false;
-    this.back.title = hasParent ? "Back to previous workspace" : "Back to the galaxy map";
+    this.back.setAttribute("aria-label", hasParent ? "Back to previous workspace" : "Back to the galaxy map");
     this.renderBreadcrumbs(crumbs);
     this.syncWidthButton();
     this.publishCameraRect();
@@ -103,7 +103,6 @@ export class DeckWorkspace {
     const wide = this.root.dataset.width === "wide";
     this.width.textContent = wide ? "↤" : "↔";
     this.width.setAttribute("aria-label", wide ? "Use standard workspace width" : "Use wide workspace width");
-    this.width.title = wide ? "Standard width" : "Wide workspace";
   }
 
   private get back(): HTMLButtonElement { return this.root.querySelector("[data-deck-act=back]") as HTMLButtonElement; }
