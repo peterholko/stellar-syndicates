@@ -81,7 +81,8 @@ export class DeckPolicyRoutes {
   private amount = 100;
   private floor = 50;
   private sellOnArrival = true;
-  private feedback = "";
+  private logisticsFeedback = "";
+  private doctrineFeedback = "";
   private signature = "";
 
   constructor(
@@ -96,7 +97,7 @@ export class DeckPolicyRoutes {
     const state = this.ctx.state;
     const signature = sheetFingerprint([
       route, this.source, this.destination, this.commodity, this.triggerKind,
-      this.amount, this.floor, this.sellOnArrival, this.feedback,
+      this.amount, this.floor, this.sellOnArrival, this.logisticsFeedback, this.doctrineFeedback,
       state.standingOrders, state.doctrine,
       state.systems.map((system) => [system.id, system.owner, system.ally]),
     ]);
@@ -114,7 +115,7 @@ export class DeckPolicyRoutes {
       const id = Number(button.dataset.order);
       if (!Number.isFinite(id)) return true;
       this.ctx.send({ type: "ClearStandingOrder", order_id: id });
-      this.feedback = `Removal sent for standing order #${id}.`;
+      this.logisticsFeedback = `Removal sent for standing order #${id}.`;
       this.hooks.notice(`<b>Standing order removal sent</b> · #${id}.`);
     } else if (route.name === "logistics" && action === "standing-add") {
       this.addStandingOrder();
@@ -134,7 +135,7 @@ export class DeckPolicyRoutes {
       const doctrine = { ...this.ctx.state.doctrine } as FleetDoctrine;
       (doctrine as unknown as Record<string, string>)[field] = target.value;
       this.ctx.send({ type: "SetFleetDoctrine", doctrine });
-      this.feedback = `${DOCTRINE_FIELDS.find((candidate) => candidate.key === field)?.title ?? "Doctrine"} update sent.`;
+      this.doctrineFeedback = `${DOCTRINE_FIELDS.find((candidate) => candidate.key === field)?.title ?? "Doctrine"} update sent.`;
       this.hooks.notice(`<b>Doctrine update sent</b> · direct orders still take precedence.`);
     } else if (route.name === "logistics") {
       if (field === "standing-source") this.source = target.value;
@@ -173,7 +174,7 @@ export class DeckPolicyRoutes {
       : this.triggerKind === "percent_surplus" ? "Surplus percent"
         : "Destination target";
     return `<section class="deck-page deck-logistics"><header class="deck-page__lead"><span>autonomous physical logistics</span><h2>Standing supply</h2><p>Rules run on the server while you are away, but each dispatch still needs an idle cargo fleet and travels through raidable space.</p></header>`
-      + `${this.feedback ? `<div class="deck-policy-feedback">${esc(this.feedback)}</div>` : ""}`
+      + `${this.logisticsFeedback ? `<div class="deck-policy-feedback">${esc(this.logisticsFeedback)}</div>` : ""}`
       + `<section class="deck-section"><header><div><h3>Active rules</h3><p>Every route below is based on the corporation's served systems and alliances.</p></div><b>${this.ctx.state.standingOrders.length}</b></header><div class="deck-standing-list">${rows || `<div class="deck-empty-inline">No standing orders yet.</div>`}</div></section>`
       + `<section class="deck-section deck-standing-builder"><header><div><h3>New rule</h3><p>Choose a source condition and a physical destination.</p></div>${icon("freightRoute", "md")}</header>`
       + `<div class="deck-standing-route"><label>Source<select data-policy-input="standing-source">${sourceOptions}</select></label><span>→</span><label>Destination<select data-policy-input="standing-destination">${destinationOptions}</select></label></div>`
@@ -193,7 +194,7 @@ export class DeckPolicyRoutes {
       const options = field.options.map(([value, name]) => option(value, name, value === current)).join("");
       return `<label class="deck-doctrine-field"><span><b>${esc(field.title)}</b><small>${esc(field.copy)}</small></span><select data-policy-input="${field.key}">${options}</select></label>`;
     }).join("");
-    return `<section class="deck-page deck-doctrine"><header class="deck-page__lead"><span>corporate standing policy</span><h2>Fleet doctrine</h2><p>Doctrine governs autonomous combat and logistics decisions. A direct fleet order always takes precedence.</p></header>${this.feedback ? `<div class="deck-policy-feedback">${esc(this.feedback)}</div>` : ""}<section class="deck-section"><header><div><h3>Default behavior</h3><p>Each selection sends the complete policy, preserving the other three decisions.</p></div>${icon("doctrine", "md")}</header><div class="deck-doctrine-grid">${fields}</div></section></section>`;
+    return `<section class="deck-page deck-doctrine"><header class="deck-page__lead"><span>corporate standing policy</span><h2>Fleet doctrine</h2><p>Doctrine governs autonomous combat and logistics decisions. A direct fleet order always takes precedence.</p></header>${this.doctrineFeedback ? `<div class="deck-policy-feedback">${esc(this.doctrineFeedback)}</div>` : ""}<section class="deck-section"><header><div><h3>Default behavior</h3><p>Each selection sends the complete policy, preserving the other three decisions.</p></div>${icon("doctrine", "md")}</header><div class="deck-doctrine-grid">${fields}</div></section></section>`;
   }
 
   private addStandingOrder(): void {
@@ -218,7 +219,7 @@ export class DeckPolicyRoutes {
       sell_on_arrival: this.destination === "hub" && this.sellOnArrival,
     };
     this.ctx.send({ type: "SetStandingOrder", order });
-    this.feedback = `Standing ${label(this.commodity)} route sent: ${endpointLabel(order.source)} → ${endpointLabel(order.dest)}.`;
+    this.logisticsFeedback = `Standing ${label(this.commodity)} route sent: ${endpointLabel(order.source)} → ${endpointLabel(order.dest)}.`;
     this.hooks.notice(`<b>Standing order sent</b> · ${esc(label(this.commodity))} · ${esc(triggerLabel(trigger))}.`);
   }
 
