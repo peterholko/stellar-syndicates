@@ -202,9 +202,19 @@ export function confirmPendingIntent(): void {
   switch (intent.verb) {
     case "move":
       if (!intent.dest) break;
-      net.send({ type: "MoveShip", ship_id: ship.id, dest: intent.dest });
-      state.orders[ship.id] = intent.dest;
-      readoutHtml = moveOrderReadout(ship, intent.dest);
+      {
+        const ships = (intent.shipIds?.length ? intent.shipIds : [ship.id])
+          .map((id) => state.ghosts.find((ghost) => ghost.id === id && ghost.own))
+          .filter((ghost): ghost is GhostView => !!ghost);
+        for (const member of ships) {
+          net.send({ type: "MoveShip", ship_id: member.id, dest: intent.dest });
+          state.orders[member.id] = intent.dest;
+        }
+        readoutHtml = ships.length > 1
+          ? `<b>${ships.length} move orders sent</b> · each fleet receives its own signal and confirms on its own returning light. ` +
+            `<span class="dim">Destination ${Math.round(intent.dest.x).toLocaleString()} · ${Math.round(intent.dest.y).toLocaleString()}.</span>`
+          : moveOrderReadout(ship, intent.dest);
+      }
       break;
     case "jump":
       if (!intent.dest) break;

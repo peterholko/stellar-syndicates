@@ -283,6 +283,7 @@ export const desktopMarkup = String.raw`
         <div class="row"><img class="cicon" src="/art/ui_icons/svg/concept-command-center-hq.svg" width="13" height="13" alt="" /> command center · <img class="cicon" src="/art/ui_icons/svg/concept-sensor-range.svg" width="13" height="13" alt="" /> sensor range</div>
         <div class="row"><span class="dim">colonize (send a colony ship) → produce → ship to hub (raidable) → sell</span></div>
         <div class="row"><span class="dim">click a system = open it · raider + click rival = raid · R = recall · Δt = staleness</span></div>
+        <div class="row"><span class="dim">Ctrl/⌘ + click fleets = command group · [ / ] = cycle fleets</span></div>
         <div class="row"><span class="dim">scroll = zoom · drag = pan · ⊡ = fit · arrows/+/− also work</span></div>
         <div class="row"><span class="dim">rail: S = system · O = logistics · F = doctrine · Esc = close</span></div>
         <div class="row"><span class="dim">top bar: M = market · L = check-in log</span></div>

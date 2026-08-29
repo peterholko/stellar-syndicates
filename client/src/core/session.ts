@@ -87,6 +87,12 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       st.anchors = msg.anchors;
       st.systems = msg.systems;
       st.ghosts = msg.ghosts;
+      const ownFleetIds = new Set(msg.ghosts.filter((ghost) => ghost.own).map((ghost) => ghost.id));
+      for (const id of st.selectedShipIds) if (!ownFleetIds.has(id)) st.selectedShipIds.delete(id);
+      if (st.selectedShipId && !msg.ghosts.some((ghost) => ghost.id === st.selectedShipId)) {
+        st.selectedShipId = st.selectedShipIds.values().next().value ?? null;
+        st.selectedOrderId = null;
+      }
       st.captains = msg.captains ?? [];
       st.captainCapacity = msg.captain_capacity ?? 1;
       const departures = new Map(

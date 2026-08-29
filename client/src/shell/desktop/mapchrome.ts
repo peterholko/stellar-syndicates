@@ -20,7 +20,7 @@ import { openHubPanel, toggleMarket } from "./market";
 import { toggleOperations } from "./operations";
 import { openRail, toggleRail } from "./rail";
 import { FIELD_TITLE, toggleResearch } from "./research";
-import { addTransientReport, deselectShip, fmtCountdown, selectEmplacement, selectJumpDeparture, selectShip, updateShipPanel } from "./ship";
+import { addTransientReport, cycleOwnFleet, deselectShip, fmtCountdown, selectEmplacement, selectJumpDeparture, selectShip, toggleShipSelection, updateShipPanel } from "./ship";
 import { toggleSyndicate } from "./syndicate";
 import { closeBuildPanel, closePlanetPanel, enterSystem, exitSystem, hideSystemUi, openPlanetPanel, showSystemUi } from "./sysview";
 import { activateWorkspacePage, activeWorkspacePage, workspaceBack } from "./workspace";
@@ -547,11 +547,23 @@ export function handleSystemClick(sx: number, sy: number): void {
 
 // The map CLICK action runs only on a tap (see installInteraction's click-vs-
 // drag gate). Shift and mobile long-press share the explicit ATTACK modifier.
-export function handleMapClick(sx: number, sy: number, shift = false, long = false): void {
+export function handleMapClick(sx: number, sy: number, shift = false, long = false, multi = false): void {
   renderer.selectedBattleMarkerId = null;
-  applyMapClickResult(resolveMapClick(sx, sy, { shift, long }, {
+  const result = resolveMapClick(sx, sy, { shift, long }, {
     state, renderer, jumpAiming: intentAiming.jump, guardAiming: intentAiming.guard, emplaceArmed: null,
-  }));
+  });
+  if (multi && result.kind === "select" && result.target.type === "fleet") {
+    const fleetId = result.target.id;
+    const fleet = state.ghosts.find((ghost) => ghost.id === fleetId && ghost.own);
+    if (fleet) {
+      toggleShipSelection(fleet.id);
+      return;
+    }
+  }
+  if (result.kind === "intent" && result.intent.verb === "move" && state.selectedShipIds.size > 1) {
+    result.intent.shipIds = [...state.selectedShipIds].filter((id) => state.ghosts.some((ghost) => ghost.id === id && ghost.own));
+  }
+  applyMapClickResult(result);
 }
 
 
@@ -604,7 +616,7 @@ export function installInteraction(): void {
     // Shift+tap on the galaxy map is the ATTACK modifier (destroy vs raid).
     if (!panning && !renderer.isSystemScrubbing()) {
       if (renderer.viewMode.type === "system") handleSystemClick(e.clientX, e.clientY);
-      else if (renderer.viewMode.type === "galaxy") handleMapClick(e.clientX, e.clientY, e.shiftKey);
+      else if (renderer.viewMode.type === "galaxy") handleMapClick(e.clientX, e.clientY, e.shiftKey, false, e.ctrlKey || e.metaKey);
     }
     panning = false;
   };
@@ -687,7 +699,7 @@ export function installInteraction(): void {
   // Keyboard: Enter/Esc commit or cancel a map-order preview; J arms a selected
   // jump-capable fleet; R recalls the selected raider; M opens the market.
   window.addEventListener("keydown", (e) => {
-    if (e.target instanceof HTMLInputElement) return; // don't hijack the qty field
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
     const selShip = state.selectedShipId ? state.ghosts.find((x) => x.id === state.selectedShipId) : undefined;
     if (e.key === "Enter" && state.pendingIntent) {
       e.preventDefault();
@@ -726,6 +738,12 @@ export function installInteraction(): void {
       toggleSyndicate(); // §syndicates: alliance panel
     } else if (e.key === "c" || e.key === "C") {
       toggleFaction(); // §TCA: your charter with the Authority
+    } else if (e.key === "[") {
+      e.preventDefault();
+      cycleOwnFleet(-1);
+    } else if (e.key === "]") {
+      e.preventDefault();
+      cycleOwnFleet(1);
     } else if (e.key === "Escape") {
       // A prospective order is the topmost map interaction: cancel it without
       // also closing the selection/panels beneath it.

@@ -839,10 +839,9 @@ export interface GhostView {
   /// loitering somewhere it does not control, which is what keeps a blockading
   /// or invading fleet on the galaxy map).
   ///
-  /// The galaxy map does NOT draw berthed hulls: a docked ship belongs to the
-  /// system view, not the star chart. Nothing is concealed by this — the same
-  /// ghosts are grouped into per-system berth counts, so the information moves
-  /// from "overlapping sprites" to "a number you can read".
+  /// The galaxy map replaces overlapping berthed hull sprites with compact,
+  /// clickable berth pips around the dock. The fleet remains selectable from
+  /// both the map and the system/Hub roster without pretending it is under way.
   docked?: string | null;
   /// §course-change: what the drives were doing when the light left. The regime
   /// is DERIVED from this rather than sent beside it — a cruising drive names

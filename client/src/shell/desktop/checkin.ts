@@ -71,7 +71,7 @@ export let currentInbox: InboxItem[] = [];
 // silently on the first View (the join payload isn't news); systems WE own are
 // suppressed (claiming reveals by holding, not by a report).
 // Deep-link actions (close the inbox, focus the relevant panel/target).
-export function inboxFocusSystem(id: string): void { state.selectedShipId = null; state.selectedOrderId = null; state.selectedSystemId = id; closeCheckin(); openRail("system"); }
+export function inboxFocusSystem(id: string): void { state.selectedShipId = null; state.selectedShipIds.clear(); state.selectedOrderId = null; state.selectedSystemId = id; closeCheckin(); openRail("system"); }
 
 export function inboxFocusFleet(id: string): void { closeCheckin(); selectShip(id); }
 

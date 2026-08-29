@@ -17,7 +17,7 @@ import { $, badge, bar, commodityIcon, CONTACT_STALE_AGE_S, esc, readout, render
 import { closeMarket, openMarket, toggleMarket } from "./market";
 import { closeOperations, toggleOperations } from "./operations";
 import { closeResearch, toggleResearch } from "./research";
-import { fmtCountdown, ownActivity, selectShip, updateOfficersPanel, uxTabBar, type UxTabOption } from "./ship";
+import { fmtCountdown, ownActivity, selectShip, toggleShipSelection, updateOfficersPanel, uxTabBar, type UxTabOption } from "./ship";
 import { closeSyndicate, toggleSyndicate } from "./syndicate";
 import { buildLabel, colonyOpportunityBlock, depositRow, enterSystem, romanTier } from "./sysview";
 import { activateWorkspacePage, deactivateWorkspacePage, setWorkspaceTitle, workspacePageIsActive } from "./workspace";
@@ -113,6 +113,12 @@ export function buildRail(): void {
     }
   });
   $("tab-fleets").addEventListener("click", (e) => {
+    const multi = (e.target as HTMLElement).closest<HTMLElement>("[data-multi-fleet]");
+    if (multi?.dataset.multiFleet) {
+      toggleShipSelection(multi.dataset.multiFleet);
+      updateFleetsPanel();
+      return;
+    }
     const center = (e.target as HTMLElement).closest<HTMLElement>("[data-center-fleet]");
     if (center?.dataset.centerFleet) {
       const fleet = state.ghosts.find((candidate) => candidate.id === center.dataset.centerFleet && candidate.own);
@@ -389,6 +395,7 @@ export function fleetRosterRow(g: GhostView): string {
         : ownActivity(g);
   const flagship = g.kind === "titan" ? state.syndicate?.flagship_name?.trim() : null;
   const name = flagship || `${shipKindLabel(g.kind)} fleet`;
+  const grouped = state.selectedShipIds.has(g.id);
   return `<div class="sysfleet__row">` +
     `<button class="sysfleet__select" data-fleet="${esc(g.id)}" title="Select and center ${esc(name)}">` +
       `<span class="sysfleet__main"><b class="sysfleet__name">${esc(name)}</b>` +
@@ -396,6 +403,7 @@ export function fleetRosterRow(g: GhostView): string {
       `<span class="fleet-roster__activity">${activity}</span></span>` +
       `<span class="sysfleet__meta">${badge(dock ? "accent" : "neutral", dock ? "docked" : "undocked")}` +
       `<span class="sysfleet__seen${g.age >= CONTACT_STALE_AGE_S ? " is-stale" : ""}">${g.age.toFixed(1)}s delay</span></span></button>` +
+    `<button class="sysfleet__group${grouped ? " is-on" : ""}" data-multi-fleet="${esc(g.id)}" title="${grouped ? "Remove from" : "Add to"} command group" aria-label="${grouped ? "Remove" : "Add"} ${esc(name)} ${grouped ? "from" : "to"} command group">${grouped ? "✓" : "+"}</button>` +
     `<button class="sysfleet__center" data-center-fleet="${esc(g.id)}" title="Center map on served position" aria-label="Center map on ${esc(name)}">⌾</button></div>`;
 }
 
@@ -407,7 +415,7 @@ export function updateFleetsPanel(): void {
   const fleets = state.ghosts
     .filter((ghost) => ghost.own)
     .sort((a, b) => shipKindLabel(a.kind).localeCompare(shipKindLabel(b.kind)) || a.id.localeCompare(b.id));
-  const sig = JSON.stringify([fleets, state.battles, state.commandSignals, state.orders, state.raids]);
+  const sig = JSON.stringify([fleets, state.battles, state.commandSignals, state.orders, state.raids, [...state.selectedShipIds].sort()]);
   if (sig === lastFleetRosterSig && root.innerHTML) return;
   lastFleetRosterSig = sig;
   const undocked = fleets.filter((fleet) => !fleet.docked);
@@ -417,7 +425,7 @@ export function updateFleetsPanel(): void {
     : "";
   setHtml(root,
     `<div class="panel-title"><div><div class="eyebrow">corporation-wide roster</div><h2>${svgIcon("concept-fleet", "md")} Fleets</h2></div></div>` +
-    `<div class="fleet-roster__summary"><span class="dim">Every owned formation in your served picture.</span><b>${fleets.length}</b></div>` +
+    `<div class="fleet-roster__summary"><span class="dim">${state.selectedShipIds.size > 1 ? `${state.selectedShipIds.size} grouped · choose a map destination for a batch move` : "Use + or Ctrl/⌘-click map markers to group fleets · [ / ] cycles"}</span><b>${fleets.length}</b></div>` +
     (fleets.length
       ? group("Undocked", undocked) + group("Docked", docked)
       : `<div class="sp-empty">No fleet reports available.</div>`),

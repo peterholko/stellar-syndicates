@@ -88,6 +88,9 @@ export type OrderVerb = "move" | "jump" | "raid" | "attack" | "guard" | "blockad
 /// always removes both its confirm affordance and its map preview together.
 export interface PendingIntent {
   shipId: string;
+  /// Optional desktop batch. The primary ship still anchors the fog-safe
+  /// preview; confirmation transmits one ordinary order per served fleet.
+  shipIds?: string[];
   verb: OrderVerb;
   dest?: Vec2;
   targetId?: string;
@@ -197,6 +200,9 @@ export interface ViewState {
   awaySet: boolean;
   // Interaction.
   selectedShipId: string | null;
+  /// Client-only command grouping; every member remains an independent fleet
+  /// with its own signal, delivery, and response light.
+  selectedShipIds: Set<string>;
   /// Currently selected star system (for the claim / ship-production panel).
   selectedSystemId: string | null;
   /// The selected deep-space sensor. Shares the right-dock panel with ships.
@@ -274,6 +280,7 @@ export function initialState(): ViewState {
     awaySince: 0,
     awaySet: false,
     selectedShipId: null,
+    selectedShipIds: new Set(),
     selectedSystemId: null,
     selectedEmplacementId: null,
     raids: {},

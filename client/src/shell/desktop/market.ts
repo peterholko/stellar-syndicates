@@ -10,7 +10,7 @@ import { state } from "../../state";
 import { net } from "./index";
 import { $, badge, commodityIcon, esc, readout, renderDeferred, setHtml, spark, stat, statStrip, svgIcon } from "./mapchrome";
 import { fleetRosterRow } from "./rail";
-import { selectShip, uxTabBar, type UxTabOption } from "./ship";
+import { selectShip, toggleShipSelection, uxTabBar, type UxTabOption } from "./ship";
 import { MODULE_ALL, MODULE_BUY_MULT, MODULE_LABEL, MODULE_SELL_MULT, MODULE_TIP, moduleIcon } from "./sysview";
 import { activateWorkspacePage, deactivateWorkspacePage, workspacePageIsActive } from "./workspace";
 
@@ -49,7 +49,7 @@ export function buildHubPanel(): void {
   if (hubPanelBuilt) return;
   hubPanelBuilt = true;
   $("hub-panel").addEventListener("click", (e) => {
-    const el = (e.target as HTMLElement).closest("[data-act],[data-hub-tab],[data-fleet],[data-center-fleet]") as HTMLElement | null;
+    const el = (e.target as HTMLElement).closest("[data-act],[data-hub-tab],[data-fleet],[data-center-fleet],[data-multi-fleet]") as HTMLElement | null;
     if (!el) return;
     const requestedTab = el.dataset.hubTab as HubPanelTab | undefined;
     if (requestedTab && (["overview", "fleets"] as HubPanelTab[]).includes(requestedTab)) {
@@ -60,6 +60,10 @@ export function buildHubPanel(): void {
       closeHubPanel();
     } else if (el.dataset.act === "market") {
       openMarket();
+    } else if (el.dataset.multiFleet) {
+      toggleShipSelection(el.dataset.multiFleet);
+      lastHubPanelSig = "";
+      updateHubPanel();
     } else if (el.dataset.centerFleet) {
       const fleet = state.ghosts.find((g) => g.id === el.dataset.centerFleet && g.own && g.docked === "hub");
       if (fleet) renderer.centerOnWorld(fleet.pos);
@@ -85,6 +89,7 @@ export function updateHubPanel(): void {
       g.id, g.kind, g.count_class, g.composition, g.cargo, g.cargo_manifest,
       Math.floor(g.age),
     ]),
+    [...state.selectedShipIds].sort(),
   ]);
   if (sig === lastHubPanelSig && panel.innerHTML) return;
   lastHubPanelSig = sig;

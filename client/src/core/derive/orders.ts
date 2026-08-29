@@ -90,6 +90,8 @@ export function intentTargetLabel(intent: PendingIntent): string {
 export function intentSummary(intent: PendingIntent): string {
   const ship = state.ghosts.find((g) => g.id === intent.shipId && g.own);
   const shipName = ship ? shipKindLabel(ship.kind) : "fleet";
+  const batchCount = intent.shipIds?.length ?? 1;
+  const formation = batchCount > 1 ? `${batchCount} fleets` : shipName;
   const signal = ship ? `${ship.age.toFixed(0)}s` : "?";
   const target = intentTargetLabel(intent);
   const moveEstimate = ship && intent.dest ? (() => {
@@ -103,7 +105,7 @@ export function intentSummary(intent: PendingIntent): string {
   })() : "";
   let summary = "";
   switch (intent.verb) {
-    case "move": summary = `Move ${shipName} → ${target}${moveEstimate ? ` · ${moveEstimate}` : ` · signal ~${signal}`}`; break;
+    case "move": summary = `Move ${formation} → ${target}${moveEstimate ? ` · primary: ${moveEstimate}` : ` · signal ~${signal}`}`; break;
     case "jump": {
       const spool = state.galaxy?.jump_spool_s ?? 10;
       const point = intent.dest ? orderPoint(intent.dest) : "destination";

@@ -2,12 +2,12 @@ import { captainTitle, captainXpFloor, fleetCommandLoad, officerFleetName } from
 import { AAA_SERVICE_FEE, aaaEstimate, coLocatedOwnFleet, dockedAtSystem, dockLoadStock, estimatedFuelForLeg, fleetCargoCapacity, fleetFuelCapacity, FUEL_PER_MASS_DISTANCE, guardCapable, hauls, jumpCapable, shipKindLabel, shipMass, shipRoleLore, WARP_FACTOR } from "../../core/derive/fleet";
 import { fmt, fmtDur } from "../../core/derive/format";
 import { emplacementLabel, foundingHomeSystemId, HYPERLIMIT_SU, nearestKnownDock, systemName } from "../../core/derive/geo";
-import { kitAffordable, kitCostLabel, ownedHaulDestinations } from "../../core/derive/market";
+import { fitLegal, kitAffordable, kitCostLabel, MODULE_SLOTS, moduleLedgerAt, ownedHaulDestinations } from "../../core/derive/market";
 import { clearJumpDepartureSelection, intentSummary, jumpDepartureSelection, orderEtaRange, orderObject, orderPoint } from "../../core/derive/orders";
 import { armGuardAiming, armJumpAiming, clearGuardAiming, clearJumpAiming, clearPendingIntent, confirmPendingIntent, intentAiming } from "../../core/intent";
 import { jumpDepartureKey } from "../../core/session";
 import { badgeChip, chip, icon, type IconKey, label } from "../../icons";
-import { type CaptainAttribute, type CaptainRosterView, type Commodity, countClassLabel, type EngagementPosture, type EntityId, fleetCargoManifest, fleetCargoUnits, formatId, type GhostView, type ManifestEntryView, type ShipKind, type Vec2 } from "../../protocol";
+import { type CaptainAttribute, type CaptainRosterView, type Commodity, countClassLabel, type EngagementPosture, type EntityId, fleetCargoManifest, fleetCargoUnits, formatId, type GhostView, type ManifestEntryView, type ModuleKind, type ShipKind, type TransitMode, type Vec2 } from "../../protocol";
 import { renderer } from "../../render";
 import { liveSimTime, state } from "../../state";
 import { captainPortrait } from "../art";
@@ -15,7 +15,7 @@ import { confirmAuthorityHostility } from "./faction";
 import { net } from "./index";
 import { $, badge, bar, commodityIcon, CONTACT_STALE_AGE_S, esc, readout, renderDeferred, setHtml, stat, statStrip, svgIcon } from "./mapchrome";
 import { openRail } from "./rail";
-import { activateWorkspacePage, deactivateWorkspacePage } from "./workspace";
+import { activateWorkspacePage, deactivateWorkspacePage, workspacePageIsActive } from "./workspace";
 
 
 // --- Ship details panel — a FOG-AWARE master→detail card for the SELECTED ship.
@@ -31,6 +31,11 @@ export let shipPanelBuilt = false;
 export const expandedShipPolicies = new Set<string>();
 
 export const expandedShipManagement = new Set<string>();
+
+// SetFleetTransit predates a served transit field on GhostView. Remember only
+// choices made in this desktop session: that gives the buttons useful feedback
+// without inventing a current mode after a reload.
+const requestedTransitModes = new Map<string, TransitMode>();
 
 export type ShipPanelTab = "orders" | "fleet" | "officer";
 
@@ -74,6 +79,27 @@ export function buildShipPanel(): void {
       net.send({ type: "HoldFleet", ship_id: fleet.id });
       readout().innerHTML = `<b>Hold order sent</b> · the fleet cancels its current course and stops at its true position when this signal reaches it. ` +
         `<span class="dim">Until compliance light returns, the map continues to show the last known course.</span>`;
+    } else if (act === "transit" && state.selectedShipId && net) {
+      const mode = (b as HTMLElement).dataset.mode as TransitMode | undefined;
+      if (!mode) return;
+      net.send({ type: "SetFleetTransit", fleet_id: state.selectedShipId, mode });
+      requestedTransitModes.set(state.selectedShipId, mode);
+      readout().innerHTML = `<b>${mode === "full" ? "Full-speed" : "Stealth"} transit requested</b> · standing throttle submitted. ` +
+        `<span class="dim">Its effect becomes visible when the fleet's next report reaches command.</span>`;
+      updateShipPanel();
+    } else if (act === "refit" && state.selectedShipId && net) {
+      const row = (b as HTMLElement).closest<HTMLElement>("[data-refit-row]");
+      const ship = row?.dataset.ship as ShipKind | undefined;
+      if (!row || !ship) return;
+      const from = parseModuleList(row.dataset.from);
+      const target = row.querySelector(".refit-target") as HTMLSelectElement | null;
+      const to = parseModuleList(target?.value);
+      const max = Math.max(1, Number(target?.selectedOptions[0]?.dataset.max) || 1);
+      const n = Math.min(max, Math.max(1, Math.floor(Number((row.querySelector(".refit-count") as HTMLInputElement | null)?.value) || 1)));
+      if (!fitLegal(ship, to) || sameFit(from, to)) return;
+      net.send({ type: "RefitShips", fleet_id: state.selectedShipId, ship, from, to, n });
+      readout().innerHTML = `<b>Refit queued</b> · ${n}× ${esc(shipKindLabel(ship))} · ${esc(fitName(from))} → ${esc(fitName(to))}. ` +
+        `<span class="dim">The foundry removes those hulls from the formation until work completes.</span>`;
     } else if (act === "dock" && state.selectedShipId && net) {
       const fleet = state.ghosts.find((g) => g.id === state.selectedShipId && g.own);
       const dock = fleet ? nearestKnownDock(fleet) : null;
@@ -214,6 +240,16 @@ export function buildShipPanel(): void {
     }
   });
   $("ship-panel").addEventListener("change", (e) => {
+    const refit = (e.target as HTMLElement).closest(".refit-target") as HTMLSelectElement | null;
+    if (refit) {
+      const count = refit.closest("[data-refit-row]")?.querySelector(".refit-count") as HTMLInputElement | null;
+      const max = Math.max(1, Number(refit.selectedOptions[0]?.dataset.max) || 1);
+      if (count) {
+        count.max = String(max);
+        count.value = String(Math.min(max, Math.max(1, Math.floor(Number(count.value) || 1))));
+      }
+      return;
+    }
     const select = (e.target as HTMLElement).closest(".lg-haul-system") as HTMLSelectElement | null;
     if (!select || !state.selectedShipId) return;
     haulDestinationByFleet.set(state.selectedShipId, select.value as EntityId);
@@ -223,7 +259,7 @@ export function buildShipPanel(): void {
   });
 }
 
-export function selectShip(id: string): void {
+export function selectShip(id: string, preserveGroup = false): void {
   clearJumpDepartureSelection();
   clearGuardAiming(true);
   if (state.selectedShipId !== id) {
@@ -233,10 +269,54 @@ export function selectShip(id: string): void {
     shipPanelTab = "orders";
   }
   state.selectedShipId = id;
+  if (!preserveGroup) state.selectedShipIds.clear();
+  if (state.ghosts.some((ghost) => ghost.id === id && ghost.own)) state.selectedShipIds.add(id);
   state.selectedEmplacementId = null; // …nor a ship and a structure
+  renderer.stateVersion++;
   activateWorkspacePage("ship-panel");
   buildShipPanel();
   updateShipPanel();
+}
+
+export function toggleShipSelection(id: string): void {
+  const fleet = state.ghosts.find((ghost) => ghost.id === id && ghost.own);
+  if (!fleet) return;
+  clearPendingIntent();
+  if (state.selectedShipIds.has(id)) {
+    state.selectedShipIds.delete(id);
+    if (state.selectedShipId === id) {
+      state.selectedShipId = state.selectedShipIds.values().next().value ?? null;
+      state.selectedOrderId = null;
+      shipPanelTab = "orders";
+    }
+    if (state.selectedShipId && workspacePageIsActive("ship-panel")) {
+      updateShipPanel();
+    } else if (!state.selectedShipId && workspacePageIsActive("ship-panel")) {
+      deactivateWorkspacePage("ship-panel");
+    }
+  } else {
+    state.selectedShipIds.add(id);
+    if (!state.selectedShipId) state.selectedShipId = id;
+  }
+  renderer.stateVersion++;
+  updateFleetsSelectionReadout();
+}
+
+function updateFleetsSelectionReadout(): void {
+  const count = state.selectedShipIds.size;
+  readout().innerHTML = count > 1
+    ? `<b>${count} fleets grouped</b> · click a map destination to preview one move order for every fleet. <span class="dim">Each command travels and confirms independently.</span>`
+    : count === 1 ? `<b>Fleet selected</b> · Ctrl/⌘-click another owned marker or use + in the Fleet roster to group it.` : `<span class="dim">Fleet group cleared.</span>`;
+}
+
+export function cycleOwnFleet(direction: -1 | 1): void {
+  const fleets = state.ghosts.filter((ghost) => ghost.own).sort((a, b) => a.id.localeCompare(b.id));
+  if (!fleets.length) return;
+  const current = fleets.findIndex((fleet) => fleet.id === state.selectedShipId);
+  const index = current < 0 ? 0 : (current + direction + fleets.length) % fleets.length;
+  const fleet = fleets[index];
+  selectShip(fleet.id);
+  renderer.centerOnWorld(fleet.pos);
 }
 
 // §emplacements: select a standing structure — same right-dock panel as a
@@ -248,6 +328,7 @@ export function selectEmplacement(id: string): void {
   state.selectedOrderId = null;
   state.selectedEmplacementId = id;
   state.selectedShipId = null;
+  state.selectedShipIds.clear();
   activateWorkspacePage("ship-panel");
   buildShipPanel();
   updateShipPanel();
@@ -268,6 +349,7 @@ export function deselectShip(closePage = true): void {
   clearGuardAiming(true);
   state.selectedOrderId = null;
   state.selectedShipId = null;
+  state.selectedShipIds.clear();
   state.selectedEmplacementId = null;
   clearJumpDepartureSelection();
   if (closePage) deactivateWorkspacePage("ship-panel");
@@ -909,11 +991,123 @@ export function managementZone(g: GhostView): string {
 }
 
 
+const REFIT_MODULES: ModuleKind[] = [
+  "mass_driver", "torpedo_rack", "point_defense_screen", "reflective_plating", "whipple_armor",
+];
+
+const parseModuleList = (value: string | undefined): ModuleKind[] => value
+  ? value.split(",").filter((module): module is ModuleKind => REFIT_MODULES.includes(module as ModuleKind))
+  : [];
+const fitKey = (modules: ModuleKind[]): string => [...modules].sort().join(",");
+const sameFit = (a: ModuleKind[], b: ModuleKind[]): boolean => fitKey(a) === fitKey(b);
+const fitName = (modules: ModuleKind[]): string => modules.length
+  ? modules.map((module) => label(module)).join(" + ")
+  : "Stock";
+
+function ledgerCoversDelta(from: ModuleKind[], to: ModuleKind[], ledger: Record<string, number>): boolean {
+  const before = moduleCounts(from);
+  const after = moduleCounts(to);
+  return REFIT_MODULES.every((module) =>
+    Math.max(0, (after.get(module) ?? 0) - (before.get(module) ?? 0)) <= (ledger[module] ?? 0));
+}
+
+function moduleCounts(modules: ModuleKind[]): Map<ModuleKind, number> {
+  const result = new Map<ModuleKind, number>();
+  for (const module of modules) result.set(module, (result.get(module) ?? 0) + 1);
+  return result;
+}
+
+function maxRefitCount(from: ModuleKind[], to: ModuleKind[], ledger: Record<string, number>, available: number): number {
+  const before = moduleCounts(from);
+  const after = moduleCounts(to);
+  let max = available;
+  for (const module of REFIT_MODULES) {
+    const added = Math.max(0, (after.get(module) ?? 0) - (before.get(module) ?? 0));
+    if (added > 0) max = Math.min(max, Math.floor((ledger[module] ?? 0) / added));
+  }
+  return Math.max(0, max);
+}
+
+function refitTargets(kind: ShipKind, from: ModuleKind[], ledger: Record<string, number>): ModuleKind[][] {
+  const candidates: ModuleKind[][] = [[]];
+  for (const module of REFIT_MODULES) candidates.push([module]);
+  for (let i = 0; i < REFIT_MODULES.length; i++) {
+    for (let j = i; j < REFIT_MODULES.length; j++) candidates.push([REFIT_MODULES[i], REFIT_MODULES[j]]);
+  }
+  for (const fit of state.syndicate?.fits ?? []) {
+    if (fit.kind === kind) candidates.push([...fit.modules]);
+  }
+  const unique = new Map<string, ModuleKind[]>();
+  for (const candidate of candidates) {
+    if (fitLegal(kind, candidate) && !sameFit(from, candidate) && ledgerCoversDelta(from, candidate, ledger)) {
+      unique.set(fitKey(candidate), candidate);
+    }
+  }
+  return [...unique.values()];
+}
+
+export function refitSection(g: GhostView): string {
+  const capable = (g.composition ?? []).some((stack) => stack.count > 0 && (MODULE_SLOTS[stack.kind] ?? 0) > 0);
+  if (!capable) return "";
+  const dock = g.docked && g.docked !== "hub" ? state.systems.find((system) => system.id === g.docked) : undefined;
+  const foundry = !!dock && (dock.owner === state.playerId || dock.ally) && (dock.structures.ordnance_foundry ?? 0) > 0;
+  if (!foundry) {
+    return `<div class="sp-sec">${icon("moduleWhippleArmor", "sm")} Refit</div>` +
+      `<div class="sp-line dim">Dock this fleet at an owned or allied system with an Ordnance Foundry.</div>`;
+  }
+  const ledger = moduleLedgerAt(dock!.id);
+  const stacks: { kind: ShipKind; modules: ModuleKind[]; n: number }[] = [];
+  for (const composition of g.composition ?? []) {
+    if ((MODULE_SLOTS[composition.kind] ?? 0) <= 0 || composition.count <= 0) continue;
+    const fitted = (g.loadouts ?? []).filter((stack) => stack.kind === composition.kind);
+    const stock = Math.max(0, composition.count - fitted.reduce((sum, stack) => sum + stack.n, 0));
+    if (stock) stacks.push({ kind: composition.kind, modules: [], n: stock });
+    for (const stack of fitted) if (stack.n > 0) stacks.push({ kind: stack.kind, modules: stack.modules, n: stack.n });
+  }
+  const busy = Math.hypot(g.vel.x, g.vel.y) >= 0.5 || !!g.path?.length || (state.pendingOrders.get(g.id)?.length ?? 0) > 0;
+  const rows = stacks.map((stack) => {
+    const targets = refitTargets(stack.kind, stack.modules, ledger);
+    const options = targets.map((target) => {
+      const max = maxRefitCount(stack.modules, target, ledger, stack.n);
+      return `<option value="${esc(fitKey(target))}" data-max="${max}">${esc(fitName(target))} · up to ${max}</option>`;
+    }).join("");
+    const initialMax = targets.length ? maxRefitCount(stack.modules, targets[0], ledger, stack.n) : 1;
+    return `<div class="refit-row" data-refit-row data-ship="${stack.kind}" data-from="${esc(fitKey(stack.modules))}">` +
+      `<div class="refit-source"><b>${stack.n}× ${esc(shipKindLabel(stack.kind))}</b><span>${esc(fitName(stack.modules))}</span></div>` +
+      (options
+        ? `<select class="refit-target" aria-label="Target fit">${options}</select><input class="refit-count" type="number" min="1" max="${initialMax}" value="1" aria-label="Hull count" />` +
+          `<button class="act" data-act="refit" ${busy ? "disabled" : ""}>Refit</button>`
+        : `<span class="dim">No stocked legal change</span>`) + `</div>`;
+  }).join("");
+  const stock = REFIT_MODULES.filter((module) => (ledger[module] ?? 0) > 0)
+    .map((module) => `${label(module)} ${ledger[module]}`).join(" · ") || "ledger empty";
+  return `<div class="sp-sec">${icon("moduleWhippleArmor", "sm")} Refit · ${esc(systemName(dock!.id))}</div>` +
+    `<div class="sp-line dim">Foundry ledger: ${esc(stock)}</div>${rows || `<div class="sp-line dim">No fitted hulls available.</div>`}` +
+    (busy ? `<div class="sp-line warn">Fleet must be idle with no command in flight.</div>` : "");
+}
+
+
+export function transitSection(g: GhostView): string {
+  if (!g.own || g.docked) return "";
+  const requested = requestedTransitModes.get(g.id);
+  return shipZone(
+    "Transit",
+    `<div class="sp-line sp-transit"><button class="act${requested === "full" ? " is-on" : ""}" data-act="transit" data-mode="full">Full speed</button>` +
+      `<button class="act${requested === "stealth" ? " is-on" : ""}" data-act="transit" data-mode="stealth">Stealth</button></div>` +
+      `<div class="sp-line dim">Full is fastest and louder; Stealth is quieter at roughly half speed.${requested ? " Highlight shows this session's latest request." : " Choose a standing throttle."}</div>`,
+  );
+}
+
+
 // OWN ship: NOW first, then orders, payload, and contextual verbs. The jump
 // drive is deliberately exposed here because it is an explicit two-step map
 // command, not a standing policy toggle.
 export function ownBody(g: GhostView): string {
-  const payload: string[] = [compositionSection(g)];
+  const grouped = state.selectedShipIds.size > 1 && state.selectedShipIds.has(g.id)
+    ? `<div class="sp-line sp-group-context"><b>${state.selectedShipIds.size}-fleet command group</b><span class="dim">Map moves apply to every grouped fleet; all other controls apply only to this fleet.</span></div>`
+    : "";
+  const payload: string[] = [grouped, compositionSection(g)];
+  payload.push(refitSection(g));
   if (hauls(g)) {
     const manifest = fleetCargoManifest(g);
     const used = fleetCargoUnits(g);
@@ -935,7 +1129,8 @@ export function ownBody(g: GhostView): string {
     payload.push(logisticsSection(g));
   }
   payload.push(fuelSection(g));
-  const commands = dockingSection(g) +
+  const commands = transitSection(g) +
+    dockingSection(g) +
     holdSection(g) +
     fuelRescueSection(g) +
     (guardCapable(g) ? shipZone("Escort", guardSection(g), "sp-zone--guard") : "") +
@@ -1159,8 +1354,11 @@ export function updateShipPanel(): void {
   // quantity owns focus, but freeze the native option list while the select
   // itself is open; mutating an open list makes browsers reset it to item one.
   const ae = document.activeElement;
-  if (ae instanceof HTMLElement && root.contains(ae) && (ae.classList.contains("lg-com") || ae.classList.contains("lg-qty"))) {
-    if (g?.own) syncDockLoadControls(root, g);
+  if (ae instanceof HTMLElement && root.contains(ae) && (
+    ae.classList.contains("lg-com") || ae.classList.contains("lg-qty")
+    || ae.classList.contains("refit-target") || ae.classList.contains("refit-count")
+  )) {
+    if (g?.own && (ae.classList.contains("lg-com") || ae.classList.contains("lg-qty"))) syncDockLoadControls(root, g);
     return;
   }
   if (!g) {

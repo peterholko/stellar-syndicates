@@ -519,6 +519,7 @@ export class Renderer {
   jumpAimingShipId: string | null = null;
   private lastStateVersion = -1;
   private lastSelShip: string | null = null;
+  private lastMultiSel = "";
   private lastSelSystem: string | null = null;
   private lastSelEmplacement: string | null = null;
   private lastSelMarker: number | null = null;
@@ -2686,7 +2687,7 @@ export class Renderer {
         g.circle(p.x, p.y, 5).fill({ color: 0x071522, alpha: 0.96 });
         g.circle(p.x, p.y, 5).stroke({ width: 1.5, color: COL_OWN, alpha: 0.92 });
         g.circle(p.x, p.y, 1.5).fill({ color: COL_OWN, alpha: 0.95 });
-        if (state.selectedShipId === fleet.id) {
+        if (state.selectedShipId === fleet.id || state.selectedShipIds.has(fleet.id)) {
           g.circle(p.x, p.y, 8).stroke({ width: 1.5, color: 0xffffff, alpha: 0.9 });
         }
       }
@@ -2987,7 +2988,7 @@ export class Renderer {
 
     // Selection ring.
     sp.ring.clear();
-    if (state.selectedShipId === ghost.id) {
+    if (state.selectedShipId === ghost.id || state.selectedShipIds.has(ghost.id)) {
       sp.ring.circle(0, 0, presumedJump ? 18 : 13).stroke({ width: 1.5, color: 0xffffff, alpha: 0.8 });
     }
 
@@ -3073,7 +3074,7 @@ export class Renderer {
 
     // Label: threat warning for raiders, cargo manifest for convoys (shown only
     // when known — i.e. within sensor range), staleness everywhere it matters.
-    const sel = state.selectedShipId === ghost.id;
+    const sel = state.selectedShipId === ghost.id || state.selectedShipIds.has(ghost.id);
     // Honest staleness, shown finer-grained when fresh (near the command center).
     const stale = `Δ${displayAge.toFixed(displayAge < 10 ? 1 : 0)}s`;
     let txt = "";
@@ -3202,9 +3203,11 @@ export class Renderer {
       const emplacementDirty = this.viewDirty
         || stateDirty
         || state.selectedEmplacementId !== this.lastSelEmplacement;
+      const multiSel = [...state.selectedShipIds].sort().join(",");
       const geomDirty = this.viewDirty
         || stateDirty
         || state.selectedShipId !== this.lastSelShip
+        || multiSel !== this.lastMultiSel
         || state.selectedSystemId !== this.lastSelSystem
         || this.selectedBattleMarkerId !== this.lastSelMarker;
       if (this.viewDirty) {
@@ -3318,6 +3321,7 @@ export class Renderer {
       // frame can decide whether a rebuild is needed.
       this.lastStateVersion = this.stateVersion;
       this.lastSelShip = state.selectedShipId;
+      this.lastMultiSel = multiSel;
       this.lastSelSystem = state.selectedSystemId;
       this.lastSelEmplacement = state.selectedEmplacementId;
       this.lastSelMarker = this.selectedBattleMarkerId;
