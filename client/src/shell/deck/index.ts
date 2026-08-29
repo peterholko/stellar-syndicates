@@ -131,7 +131,12 @@ class DeckShell implements Shell {
   }
 
   framePolicy() {
-    return { maxFps: 0, renderGalaxy: true };
+    // Only opaque Deck overlays may rest the galaxy ticker. Workspace and
+    // chrome always leave it live; future theaters join this single predicate.
+    const join = document.getElementById("deck-join");
+    const help = document.getElementById("deck-help");
+    const coveringOverlay = (join !== null && !join.hidden) || (help !== null && !help.hidden);
+    return { maxFps: 0, renderGalaxy: !coveringOverlay };
   }
 
   cameraRect(): Rect {

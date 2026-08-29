@@ -54,12 +54,15 @@ export class DeckWorkspace {
   }
 
   publishCameraRect(): void {
-    this.renderer.setCameraRect(this.cameraRect());
+    const rect = this.cameraRect();
+    document.documentElement.style.setProperty("--deck-workspace-inset", `${Math.max(0, window.innerWidth - rect.w)}px`);
+    this.renderer.setCameraRect(rect);
   }
 
   teardown(): void {
     this.route = null;
     this.root.setAttribute("aria-hidden", "true");
+    document.documentElement.style.removeProperty("--deck-workspace-inset");
     this.renderer.setCameraRect({ x: 0, y: 0, w: window.innerWidth, h: window.innerHeight });
   }
 
