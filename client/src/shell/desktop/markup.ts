@@ -10,20 +10,32 @@ export const desktopMarkup = String.raw`
       <div class="item"><span class="k">Equity</span><span class="v" id="hud-equity">—</span></div>
       <div class="spacer"></div>
       <nav class="hud-nav" aria-label="Hub destinations">
-        <button id="nav-market" class="hud-btn" type="button" title="Hub Exchange (M)"><img class="cicon" src="/art/ui_icons/svg/concept-market-exchange.svg" width="14" height="14" alt="" />Market</button>
-        <button id="nav-fleets" class="hud-btn" type="button" title="All fleets — docked and under way (V)"><img class="cicon" src="/art/ui_icons/svg/concept-fleet.svg" width="14" height="14" alt="" />Fleets</button>
-        <button id="nav-research" class="hud-btn" type="button" title="Research — programme boards (R)">🔬 Research</button>
-        <button id="nav-officers" class="hud-btn" type="button" title="Officers — Captain roster (P)">★ Officers</button>
-        <button id="nav-operations" class="hud-btn" type="button" title="Operations — contracts and strategic objectives (U)">◎ Operations</button>
-        <button id="nav-syndicate" class="hud-btn" type="button" title="Syndicate — alliances (Y)">🤝 Syndicate</button>
-        <button id="nav-faction" class="hud-btn" type="button" title="Faction — your charter with the Terran Charter Authority (C)">⚖ Faction</button>
-        <button id="nav-log" class="hud-btn" type="button" title="Check-in log (L)">⌖ Log</button>
+        <button id="nav-market" class="hud-btn" type="button" title="Hub Exchange (M)"><img class="cicon" src="/art/ui_icons/svg/concept-market-exchange.svg" width="14" height="14" alt="" />Market<span class="nav-badge" id="nav-badge-market" hidden></span></button>
+        <button id="nav-fleets" class="hud-btn" type="button" title="All fleets — docked and under way (V)"><img class="cicon" src="/art/ui_icons/svg/concept-fleet.svg" width="14" height="14" alt="" />Fleets<span class="nav-badge" id="nav-badge-fleets" hidden></span></button>
+        <button id="nav-research" class="hud-btn" type="button" title="Research — programme boards (R)">🔬 Research<span class="nav-badge" id="nav-badge-research" hidden></span></button>
+        <button id="nav-officers" class="hud-btn" type="button" title="Officers — Captain roster (P)">★ Officers<span class="nav-badge" id="nav-badge-officers" hidden></span></button>
+        <button id="nav-operations" class="hud-btn" type="button" title="Operations — contracts and strategic objectives (U)">◎ Operations<span class="nav-badge" id="nav-badge-operations" hidden></span></button>
+        <button id="nav-syndicate" class="hud-btn" type="button" title="Syndicate — alliances (Y)">🤝 Syndicate<span class="nav-badge" id="nav-badge-syndicate" hidden></span></button>
+        <button id="nav-faction" class="hud-btn" type="button" title="Faction — your charter with the Terran Charter Authority (C)">⚖ Faction<span class="nav-badge" id="nav-badge-faction" hidden></span></button>
+        <button id="nav-log" class="hud-btn" type="button" title="Check-in log (L)">⌖ Log<span class="nav-badge" id="nav-badge-log" hidden></span></button>
       </nav>
       <div class="item"><span class="k">Link</span><span class="v" id="hud-link">connecting…</span></div>
     </div>
 
     <div id="reports-log"></div>
     <div id="map-hover" role="tooltip"></div>
+
+    <!-- Every primary desktop destination is moved into this single physical
+         workspace at mount. Feature modules keep ownership of their page body;
+         this shell owns placement, mutual exclusion, Back, and Close. -->
+    <aside id="desktop-workspace" aria-hidden="true" aria-label="Command workspace">
+      <div class="workspace-bar">
+        <button id="workspace-back" type="button" title="Back to previous page" aria-label="Back">←</button>
+        <span id="workspace-title">Command workspace</span>
+        <button id="workspace-close" type="button" title="Close workspace (Esc)" aria-label="Close">✕</button>
+      </div>
+      <div id="workspace-pages"></div>
+    </aside>
 
     <!-- System View breadcrumb (semantic-zoom LOD) — GALAXY › SYSTEM, clickable to
          return. Shown only inside the System View; the map is otherwise untouched. -->

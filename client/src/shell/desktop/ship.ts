@@ -14,13 +14,14 @@ import { captainPortrait } from "../art";
 import { confirmAuthorityHostility } from "./faction";
 import { net } from "./index";
 import { $, badge, bar, commodityIcon, CONTACT_STALE_AGE_S, esc, readout, renderDeferred, setHtml, stat, statStrip, svgIcon } from "./mapchrome";
-import { closeRail, openRail } from "./rail";
+import { openRail } from "./rail";
+import { activateWorkspacePage, deactivateWorkspacePage } from "./workspace";
 
 
 // --- Ship details panel — a FOG-AWARE master→detail card for the SELECTED ship.
-// It shares the right-dock slot with the rail (mutually exclusive: selecting a ship
-// closes the rail and clears any system selection; opening the rail deselects the
-// ship). Re-renders each View so the information AGE keeps ticking. Strictly a UI
+// It is one page in the desktop command workspace. The workspace owns placement
+// and back-navigation, so selecting a fleet no longer destroys the system context
+// beneath it. Re-renders each View so the information AGE keeps ticking. Strictly a UI
 // layer over GhostView — it shows ONLY what the per-player view already reveals, so
 // a rival's cargo/route/internal state never leaks. ------------------------------
 export let shipPanelBuilt = false;
@@ -225,10 +226,8 @@ export function selectShip(id: string): void {
     shipPanelTab = "orders";
   }
   state.selectedShipId = id;
-  state.selectedSystemId = null; // a ship and a system are never both selected
   state.selectedEmplacementId = null; // …nor a ship and a structure
-  closeRail(); // the ship panel and rail share the right-dock slot
-  $("ship-panel").classList.add("is-open");
+  activateWorkspacePage("ship-panel");
   buildShipPanel();
   updateShipPanel();
 }
@@ -242,25 +241,21 @@ export function selectEmplacement(id: string): void {
   state.selectedOrderId = null;
   state.selectedEmplacementId = id;
   state.selectedShipId = null;
-  state.selectedSystemId = null;
-  closeRail();
-  $("ship-panel").classList.add("is-open");
+  activateWorkspacePage("ship-panel");
   buildShipPanel();
   updateShipPanel();
 }
 
 export function selectJumpDeparture(key: string): void {
-  deselectShip();
+  deselectShip(false);
   jumpDepartureSelection.key = key;
   renderer.selectedJumpDepartureKey = key;
-  state.selectedSystemId = null;
-  closeRail();
-  $("ship-panel").classList.add("is-open");
+  activateWorkspacePage("ship-panel");
   buildShipPanel();
   updateShipPanel();
 }
 
-export function deselectShip(): void {
+export function deselectShip(closePage = true): void {
   clearPendingIntent();
   clearJumpAiming(true);
   clearGuardAiming(true);
@@ -268,7 +263,7 @@ export function deselectShip(): void {
   state.selectedShipId = null;
   state.selectedEmplacementId = null;
   clearJumpDepartureSelection();
-  $("ship-panel").classList.remove("is-open");
+  if (closePage) deactivateWorkspacePage("ship-panel");
 }
 
 

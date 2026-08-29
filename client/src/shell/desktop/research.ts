@@ -3,6 +3,7 @@ import { researchQueueIds } from "../../core/derive/research";
 import { type AcademyRow, type ProgrammeView } from "../../protocol";
 import { state } from "../../state";
 import { $, esc, researchIcon } from "./mapchrome";
+import { activateWorkspacePage, deactivateWorkspacePage, workspacePageIsActive } from "./workspace";
 
 
 // --- §research R6: the Programme Boards panel (top-navbar destination) ----------
@@ -30,19 +31,17 @@ export let lastResearchSig = "";
 
 
 export function openResearch(): void {
-  $("research-panel").classList.add("is-open");
-  $("nav-research").classList.add("is-active");
+  activateWorkspacePage("research-panel");
   lastResearchSig = "";
   updateResearchPanel();
 }
 
 export function closeResearch(): void {
-  $("research-panel").classList.remove("is-open");
-  $("nav-research").classList.remove("is-active");
+  deactivateWorkspacePage("research-panel");
 }
 
 export function toggleResearch(): void {
-  if ($("research-panel").classList.contains("is-open")) closeResearch();
+  if (workspacePageIsActive("research-panel")) closeResearch();
   else openResearch();
 }
 
@@ -157,4 +156,3 @@ export function updateResearchPanel(): void {
   }
   bodyEl.innerHTML = body;
 }
-

@@ -11,22 +11,21 @@ import { $, badge, commodityIcon, esc, readout, renderDeferred, setHtml, spark, 
 import { fleetRosterRow } from "./rail";
 import { selectShip, uxTabBar, type UxTabOption } from "./ship";
 import { MODULE_ALL, MODULE_BUY_MULT, MODULE_LABEL, MODULE_SELL_MULT, MODULE_TIP, moduleIcon } from "./sysview";
+import { activateWorkspacePage, deactivateWorkspacePage, workspacePageIsActive } from "./workspace";
 
 
 // --- Hub Exchange overlay (top-navbar destination; independent of selection) ---
 export function openMarket(): void {
-  $("market").classList.add("is-open");
-  $("nav-market").classList.add("is-active");
+  activateWorkspacePage("market");
   setMarketTab(marketTab); // §market-ux: reopen on the last tab (also updates)
 }
 
 export function closeMarket(): void {
-  $("market").classList.remove("is-open");
-  $("nav-market").classList.remove("is-active");
+  deactivateWorkspacePage("market");
 }
 
 export function toggleMarket(): void {
-  if ($("market").classList.contains("is-open")) closeMarket();
+  if (workspacePageIsActive("market")) closeMarket();
   else openMarket();
 }
 
@@ -110,14 +109,14 @@ export function updateHubPanel(): void {
 
 export function openHubPanel(): void {
   buildHubPanel();
-  $("hub-panel").classList.add("is-open");
+  activateWorkspacePage("hub-panel");
   lastHubPanelSig = "";
   updateHubPanel();
   readout().innerHTML = `<b>Wormhole Hub</b> selected — Exchange, warehouse, and freight desk. <span class="dim">Press <b>M</b> or use the panel.</span>`;
 }
 
 export function closeHubPanel(): void {
-  $("hub-panel").classList.remove("is-open");
+  deactivateWorkspacePage("hub-panel");
 }
 
 

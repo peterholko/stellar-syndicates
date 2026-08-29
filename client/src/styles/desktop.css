@@ -813,6 +813,14 @@ span.icon { display: inline-flex; align-items: center; justify-content: center; 
 .hud-btn:hover { border-color: var(--accent); color: var(--accent); }
 .hud-btn.is-active { background: var(--accent); color: #04121d; font-weight: 700; border-color: var(--accent); }
 .hud-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hud-btn .nav-badge {
+  min-width: 16px; height: 16px; padding: 0 4px; margin-left: 1px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px; background: var(--negative); color: #fff;
+  font-size: 9px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums;
+}
+.hud-btn .nav-badge[hidden] { display: none; }
+.hud-btn.is-active .nav-badge { background: #071522; color: var(--accent); }
 
 /* ---- map zoom controls (left edge, clear of the right rail) ---- */
 #zoom-controls {
@@ -1410,3 +1418,63 @@ body.is-system-view.is-build-panel-open #sysview-manage { display: none !importa
 @media (max-height: 560px) {
   body.is-system-view #planet-panel { max-height: calc(100dvh - var(--left-detail-safe-top) - 14px); }
 }
+
+/* ---- Command workspace -------------------------------------------------
+   Primary desktop destinations are pages, never independent windows. The page
+   keeps its existing internal layout, while this frame alone owns placement,
+   z-order, Back, Close, and the map camera inset. */
+#desktop-workspace {
+  position: fixed; top: var(--hud-safe-top); right: 14px; bottom: 14px;
+  width: min(520px, calc(100vw - 28px)); display: none; flex-direction: column;
+  overflow: hidden; z-index: 20; color: var(--ink); background: var(--panel-bg);
+  border: 1px solid var(--border); border-radius: 9px; box-shadow: var(--panel-shadow);
+  backdrop-filter: blur(8px);
+}
+#desktop-workspace.is-open { display: flex; }
+.workspace-bar {
+  min-height: 34px; display: grid; grid-template-columns: 72px minmax(0, 1fr) 28px;
+  align-items: center; gap: 8px; padding: 5px 8px; flex: none;
+  border-bottom: 1px solid var(--border); background: rgba(8,12,22,.82);
+}
+.workspace-bar button {
+  height: 24px; cursor: pointer; border: 1px solid transparent; border-radius: 5px;
+  background: transparent; color: var(--dim); font: inherit; font-size: 11px;
+}
+.workspace-bar button:hover:not(:disabled), .workspace-bar button:focus-visible {
+  color: var(--accent); border-color: var(--field-bd); outline: none;
+}
+#workspace-back { visibility: hidden; text-align: left; }
+#workspace-back.is-visible { visibility: visible; }
+#workspace-back:disabled { cursor: default; }
+#workspace-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; color: var(--dim); font-size: 10px; font-weight: 700; letter-spacing: .7px; text-transform: uppercase; }
+#workspace-close { font-size: 13px; }
+#workspace-pages { position: relative; min-height: 0; flex: 1; overflow: hidden; }
+
+/* Specificity intentionally beats every legacy placement idiom. */
+#desktop-workspace #workspace-pages > [id] {
+  position: relative !important; inset: auto !important; top: auto !important;
+  right: auto !important; bottom: auto !important; left: auto !important;
+  transform: none !important; width: 100% !important; height: 100% !important;
+  max-width: none !important; max-height: none !important; margin: 0 !important;
+  border: 0 !important; border-radius: 0 !important; box-shadow: none !important;
+  background: transparent !important; z-index: auto !important;
+}
+#desktop-workspace #workspace-pages > #market,
+#desktop-workspace #workspace-pages > #checkin { overflow-y: auto; }
+#desktop-workspace #workspace-pages > #research-panel,
+#desktop-workspace #workspace-pages > #operations-panel,
+#desktop-workspace #workspace-pages > #syndicate-panel,
+#desktop-workspace #workspace-pages > #faction-panel,
+#desktop-workspace #workspace-pages > #hub-panel,
+#desktop-workspace #workspace-pages > #battle-panel,
+#desktop-workspace #workspace-pages > #rail,
+#desktop-workspace #workspace-pages > #ship-panel { min-height: 0; }
+
+/* The workspace frame supplies the universal close control. Page-specific
+   headers retain identity and actions but no longer add a competing X. */
+#desktop-workspace #rail-close,
+#desktop-workspace #market-close,
+#desktop-workspace .sp-close,
+#desktop-workspace .pp-close,
+#desktop-workspace .rp-close,
+#desktop-workspace .op-close { display: none !important; }

@@ -2,6 +2,7 @@ import { fmtEta } from "../../core/derive/format";
 import { operationSystemName } from "../../core/derive/geo";
 import { liveSimTime, state } from "../../state";
 import { $, esc } from "./mapchrome";
+import { activateWorkspacePage, deactivateWorkspacePage, workspacePageIsActive } from "./workspace";
 
 
 // --- §syndicates: the alliance panel (top-navbar destination) ------------------
@@ -13,19 +14,17 @@ import { $, esc } from "./mapchrome";
 export let lastSyndicateSig = "";
 
 export function openSyndicate(): void {
-  $("syndicate-panel").classList.add("is-open");
-  $("nav-syndicate").classList.add("is-active");
+  activateWorkspacePage("syndicate-panel");
   lastSyndicateSig = ""; // force a fresh render on open
   updateSyndicatePanel();
 }
 
 export function closeSyndicate(): void {
-  $("syndicate-panel").classList.remove("is-open");
-  $("nav-syndicate").classList.remove("is-active");
+  deactivateWorkspacePage("syndicate-panel");
 }
 
 export function toggleSyndicate(): void {
-  if ($("syndicate-panel").classList.contains("is-open")) closeSyndicate();
+  if (workspacePageIsActive("syndicate-panel")) closeSyndicate();
   else openSyndicate();
 }
 
@@ -90,4 +89,3 @@ export function updateSyndicatePanel(): void {
   body += `<div class="sy-note">War activates only after the declaration reaches the target and its notice window expires. Treaty cancellation and syndicate departure have the same no-surprise separation protection.</div></div>`;
   el.innerHTML = `<div class="pp-head"><b>SYNDICATE</b><button class="pp-close" data-sy="close" title="Close">✕</button></div><div class="pp-body">${body}</div>`;
 }
-

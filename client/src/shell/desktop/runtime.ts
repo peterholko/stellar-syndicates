@@ -6,17 +6,18 @@ import { label } from "../../icons";
 import { renderer } from "../../render";
 import { state } from "../../state";
 import { __init_battle_2931, __init_battle_2936, openOngoingBattleId, refreshOpenBattleViewer, refreshOpenGroundViewer, updateOngoingBattlePanel } from "./battle";
-import { buildCheckinPanel, openCheckin, updateCheckinPanel } from "./checkin";
+import { buildCheckinPanel, computeInbox, updateCheckinPanel } from "./checkin";
 import { updateFactionPanel } from "./faction";
 import { __init_founding_7165, __init_founding_7356, updateFoundingGuide } from "./founding";
 import { __init_mapchrome_142, __init_mapchrome_149, __init_mapchrome_150, __init_mapchrome_314, __init_mapchrome_315, __init_mapchrome_52, __init_mapchrome_53, __init_mapchrome_54, __init_mapchrome_55, __init_mapchrome_56, __init_mapchrome_7576, __init_mapchrome_7592, __init_mapchrome_7598, __init_mapchrome_7599, __init_mapchrome_88, __init_mapchrome_91, __init_mapchrome_92, $, addReport, desktopCameraRect, esc, hud, installInteraction, joinBtn, joinErr, joinScreen, nameInput, onDesktopRenderFrame, readout, setHud, showEngagementEstimate } from "./mapchrome";
-import { addTradeNews, buildMarketPanel, updateHubPanel, updateMarket } from "./market";
+import { addTradeNews, buildMarketPanel, marketTab, setMarketTab, updateHubPanel, updateMarket } from "./market";
 import { updateOperationsPanel } from "./operations";
 import { buildDoctrinePanel, buildRail, buildStandingPanel, buildSystemTab, railTab, setRailTab, updateDoctrinePanel, updateFleetsPanel, updateRankingsPanel, updateStandingPanel, updateSystemTab } from "./rail";
 import { updateResearchPanel } from "./research";
 import { addTransientReport, buildIntentBar, notifyNewBattles, renderIntentBar, updateOfficersPanel, updateShipPanel } from "./ship";
 import { updateSyndicatePanel } from "./syndicate";
 import { pendingFit, updateSysviewDynamic } from "./sysview";
+import { initDesktopWorkspace, setWorkspaceTitle, type WorkspacePageId } from "./workspace";
 import { net } from "./index";
 
 
@@ -83,6 +84,46 @@ export function applyViewRefresh(): void {
   // The Market is a navbar overlay now — refresh it when open.
   if ($("market").classList.contains("is-open")) updateMarket();
   updateCheckinPanel(); // the check-in modal; guards itself, refreshes ages
+  updateNavBadges();
+}
+
+
+function setNavBadge(name: string, count: number): void {
+  const el = $(`nav-badge-${name}`);
+  el.hidden = count <= 0;
+  el.textContent = count > 99 ? "99+" : String(count);
+}
+
+export function updateNavBadges(): void {
+  if (state.playerId === null) return;
+  setNavBadge("market", (state.wallet?.orders.length ?? 0) + (state.freight?.shipments.length ?? 0));
+  const ownBattleIds = new Set(state.battles.flatMap((battle) => battle.participants));
+  setNavBadge("fleets", state.ghosts.filter((fleet) => fleet.own && (fleet.stalled || fleet.rescue_inbound || ownBattleIds.has(fleet.id))).length);
+  setNavBadge("research", state.research?.stalled || (state.research && !state.research.active && state.research.queue.length === 0) ? 1 : 0);
+  setNavBadge("officers", state.captains.filter((captain) => !captain.assigned_fleet || (captain.report?.unspent ?? 0) > 0).length);
+  setNavBadge("operations", state.operations.filter((operation) => operation.state === "offered" || (operation.state === "active" && !operation.joined)).length);
+  setNavBadge("syndicate", state.syndicateInvites.length);
+  setNavBadge("faction", (state.charter && state.charter.status !== "good_standing" ? 1 : 0) + (state.diplomacy?.incoming.length ?? 0));
+  setNavBadge("log", computeInbox().length);
+}
+
+
+function refreshWorkspacePage(page: WorkspacePageId): void {
+  switch (page) {
+    case "rail":
+      setWorkspaceTitle(railTab === "system" ? "System" : railTab[0].toUpperCase() + railTab.slice(1));
+      setRailTab(railTab);
+      break;
+    case "ship-panel": updateShipPanel(); break;
+    case "hub-panel": updateHubPanel(); break;
+    case "battle-panel": if (openOngoingBattleId !== null) updateOngoingBattlePanel(); break;
+    case "market": setMarketTab(marketTab); break;
+    case "research-panel": updateResearchPanel(); break;
+    case "operations-panel": updateOperationsPanel(); break;
+    case "syndicate-panel": updateSyndicatePanel(); break;
+    case "faction-panel": updateFactionPanel(); break;
+    case "checkin": updateCheckinPanel(); break;
+  }
 }
 
 
@@ -114,7 +155,7 @@ export function handleCoreEvents(events: CoreEvent[]): void {
         updateDoctrinePanel();
         setRailTab("system");
         buildCheckinPanel();
-        openCheckin();
+        updateNavBadges();
         if (!interactionInstalled) {
           installInteraction();
           interactionInstalled = true;
@@ -234,6 +275,7 @@ export let desktopMounted = false;
 export function mountDesktop(): void {
   if (desktopMounted) return;
   desktopMounted = true;
+  initDesktopWorkspace(refreshWorkspacePage);
   __init_mapchrome_52();
   __init_mapchrome_53();
   __init_mapchrome_54();

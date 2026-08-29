@@ -11,9 +11,10 @@ import { renderer } from "../../render";
 import { liveSimTime, state } from "../../state";
 import { net } from "./index";
 import { $, badge, esc, renderDeferred, setHtml, svgIcon } from "./mapchrome";
-import { closeRail, openRail } from "./rail";
+import { openRail } from "./rail";
 import { fmtCountdown, LIFECYCLE_MIN_S } from "./ship";
 import { closePlanetPanel, closeSysviewManage, moduleIcon, showBreadcrumb } from "./sysview";
+import { activateWorkspacePage, closeDesktopWorkspace, deactivateWorkspacePage } from "./workspace";
 
 
 // --- §battle-aftermath: the battle-results panel + marker interaction --------
@@ -53,13 +54,13 @@ export function buildBattlePanel(): void {
       if (openOngoingBattleId) battleForceHW.delete(openOngoingBattleId); // §perf: drop the loss tally
       openOngoingBattleId = null;
       renderer.selectedBattleMarkerId = null; // §aftermath-select: drop the ring
-      $("battle-panel").classList.remove("is-open");
+      deactivateWorkspacePage("battle-panel");
     } else if (el.dataset.act === "dismiss") {
       const id = Number(el.dataset.id);
       state.battleDismissed.add(id);
       if (renderer.selectedBattleMarkerId === id) renderer.selectedBattleMarkerId = null;
       saveBattleMarks();
-      $("battle-panel").classList.remove("is-open");
+      deactivateWorkspacePage("battle-panel");
     } else if (el.dataset.act === "withdraw" && net) {
       // §one-battle-one-icon: Withdraw an OWN engaged fleet straight from the
       // battle panel (its map marker is suppressed — no hidden sprite to hunt).
@@ -68,7 +69,6 @@ export function buildBattlePanel(): void {
     } else if (el.dataset.act === "doctrine") {
       if (openOngoingBattleId) battleForceHW.delete(openOngoingBattleId); // §perf: drop the loss tally
       openOngoingBattleId = null;
-      $("battle-panel").classList.remove("is-open");
       openRail("doctrine");
     } else if (el.dataset.act === "viewbattle" && el.dataset.record) {
       openBattleViewer(el.dataset.record);
@@ -122,7 +122,7 @@ export function openBattlePanel(id: number): void {
     })() +
     `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log.">${icon("aftermath", "sm")} Dismiss marker</button>`;
   $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
-  $("battle-panel").classList.add("is-open");
+  activateWorkspacePage("battle-panel");
 }
 
 
@@ -137,8 +137,8 @@ export function openOngoingBattlePanel(id: string): void {
   buildBattlePanel();
   openOngoingBattleId = id;
   lastOngoingBattleSig = ""; // force a fresh paint on open
+  activateWorkspacePage("battle-panel");
   updateOngoingBattlePanel();
-  $("battle-panel").classList.add("is-open");
 }
 
 // §live-battle-panel running-loss tracking. Purely a HIGH-WATER of the viewer's
@@ -202,7 +202,7 @@ export function updateOngoingBattlePanel(): void {
     // the aftermath marker + report carry the outcome. Drop its loss tracking.
     battleForceHW.delete(id);
     openOngoingBattleId = null;
-    panel.classList.remove("is-open");
+    deactivateWorkspacePage("battle-panel");
     return;
   }
   const now = liveSimTime();
@@ -723,9 +723,8 @@ export function enterBattleViewer(id: string): void {
   $("breadcrumb").classList.add("is-battle");
   closePlanetPanel();
   closeSysviewManage();
-  closeRail();
+  closeDesktopWorkspace();
   openOngoingBattleId = null;
-  $("battle-panel").classList.remove("is-open");
   openBattleViewer(id, { semantic: true });
 }
 
@@ -1200,4 +1199,3 @@ export function theaterDemoLive(intervalMs = 1800): void {
     }
   }, intervalMs);
 }
-

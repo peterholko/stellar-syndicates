@@ -16,9 +16,10 @@ import { $, badge, bar, commodityIcon, CONTACT_STALE_AGE_S, esc, readout, render
 import { closeMarket, openMarket, toggleMarket } from "./market";
 import { closeOperations, toggleOperations } from "./operations";
 import { closeResearch, toggleResearch } from "./research";
-import { deselectShip, fmtCountdown, ownActivity, selectShip, updateOfficersPanel, uxTabBar, type UxTabOption } from "./ship";
+import { fmtCountdown, ownActivity, selectShip, updateOfficersPanel, uxTabBar, type UxTabOption } from "./ship";
 import { closeSyndicate, toggleSyndicate } from "./syndicate";
 import { buildLabel, colonyOpportunityBlock, depositRow, enterSystem, romanTier } from "./sysview";
+import { activateWorkspacePage, deactivateWorkspacePage, setWorkspaceTitle, workspacePageIsActive } from "./workspace";
 
 
 // --- Workspace rail: one right-docked column hosting System/Market/Logistics/
@@ -52,22 +53,22 @@ export function setRailTab(tab: RailTab): void {
   else if (tab === "rankings") updateRankingsPanel();
   $("nav-fleets").classList.toggle("is-active", tab === "fleets");
   $("nav-officers").classList.toggle("is-active", tab === "officers");
+  if (workspacePageIsActive("rail")) setWorkspaceTitle(tab === "system" ? "System" : tab[0].toUpperCase() + tab.slice(1));
 }
 
 export function openRail(tab: RailTab): void {
-  deselectShip(); // the rail and the ship panel share the right-dock slot
-  $("rail").classList.add("is-open");
+  activateWorkspacePage("rail");
   setRailTab(tab);
 }
 
 export function closeRail(): void {
-  $("rail").classList.remove("is-open");
+  deactivateWorkspacePage("rail");
   $("nav-fleets").classList.remove("is-active");
   $("nav-officers").classList.remove("is-active");
 }
 
 export function toggleRail(tab: RailTab): void {
-  const open = $("rail").classList.contains("is-open");
+  const open = workspacePageIsActive("rail");
   if (open && railTab === tab) closeRail();
   else openRail(tab);
 }
@@ -1003,4 +1004,3 @@ export function berthLine(systemId: string): string {
     (others > 0 ? ` ${chip(others, "other hull", "other hulls", "warn")}` : "") +
     `</div>`;
 }
-

@@ -3,6 +3,7 @@ import { TCA_INCIDENT_LOSS_UI } from "../../core/derive/orders";
 import { projectedBand } from "../../core/derive/research";
 import { state } from "../../state";
 import { $, badge, esc } from "./mapchrome";
+import { activateWorkspacePage, deactivateWorkspacePage, workspacePageIsActive } from "./workspace";
 
 
 
@@ -15,19 +16,17 @@ import { $, badge, esc } from "./mapchrome";
 export let lastFactionSig = "";
 
 export function openFaction(): void {
-  $("faction-panel").classList.add("is-open");
-  $("nav-faction").classList.add("is-active");
+  activateWorkspacePage("faction-panel");
   lastFactionSig = ""; // force a fresh render on open
   updateFactionPanel();
 }
 
 export function closeFaction(): void {
-  $("faction-panel").classList.remove("is-open");
-  $("nav-faction").classList.remove("is-active");
+  deactivateWorkspacePage("faction-panel");
 }
 
 export function toggleFaction(): void {
-  if ($("faction-panel").classList.contains("is-open")) closeFaction();
+  if (workspacePageIsActive("faction-panel")) closeFaction();
   else openFaction();
 }
 
@@ -119,4 +118,3 @@ export function confirmAuthorityHostility(what: string): boolean {
       `Projected charter status: ${band}.\n\nProceed?`,
   );
 }
-

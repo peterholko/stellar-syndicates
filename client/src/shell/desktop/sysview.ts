@@ -11,9 +11,10 @@ import { liveSimTime, state } from "../../state";
 import { type SystemBodyDetail } from "../../systemview";
 import { net } from "./index";
 import { $, badge, bar, COLONY_ROLE_ICON, commodityIcon, ENVIRONMENT_ICON, esc, FEATURE_ICON, fmtPopulation, GEOLOGY_ICON, readout, renderDeferred, setHtml, stat, statStrip, svgIcon } from "./mapchrome";
-import { berthLine, closeRail, groundLine, openRail, updateStandingPanel } from "./rail";
+import { berthLine, groundLine, openRail, updateStandingPanel } from "./rail";
 import { ROMAN } from "./research";
 import { fmtCountdown, uxTabBar, type UxTabOption } from "./ship";
+import { closeDesktopWorkspace } from "./workspace";
 
 
 // --- System View (semantic-zoom LOD) — ENTER/EXIT + planet details -----------
@@ -34,7 +35,7 @@ export function showSystemUi(sys: SystemInfo): void {
   state.selectedSystemId = sys.id; // keep the galaxy selection in sync (rail shows it)
   showBreadcrumb(sys.name);
   closePlanetPanel();
-  closeRail(); // the management column takes the right dock inside the view
+  closeDesktopWorkspace(); // the management column takes the right dock inside the view
   // §management-home: feed the scene's structure markers + open the management
   // column (owned systems only — both no-op into scenery for rival/unclaimed).
   pushSystemDynamic(sys.id);
@@ -1466,4 +1467,3 @@ export function renderShipPanel(): void {
     `<div class="bp-queued">${queuedNote}</div></div>`;
   panelShellHtml(el, "build ship", `Build at ${body.name}`, chip, list, detail, foot);
 }
-

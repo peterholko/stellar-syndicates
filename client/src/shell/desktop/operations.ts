@@ -1,6 +1,7 @@
 import { fmtEta, operationCopy, operationHullArt, operationIcon, operationReward, operationTitle } from "../../core/derive/format";
 import { liveSimTime, state } from "../../state";
 import { $, esc } from "./mapchrome";
+import { activateWorkspacePage, deactivateWorkspacePage, workspacePageIsActive } from "./workspace";
 
 
 // --- Operations: one board for contracts, objectives, and shared projects ---
@@ -18,19 +19,17 @@ export const MIDGAME_COPY: Record<import("../../protocol").MidgameStage, [string
 
 
 export function openOperations(): void {
-  $("operations-panel").classList.add("is-open");
-  $("nav-operations").classList.add("is-active");
+  activateWorkspacePage("operations-panel");
   lastOperationsSig = "";
   updateOperationsPanel();
 }
 
 export function closeOperations(): void {
-  $("operations-panel").classList.remove("is-open");
-  $("nav-operations").classList.remove("is-active");
+  deactivateWorkspacePage("operations-panel");
 }
 
 export function toggleOperations(): void {
-  if ($("operations-panel").classList.contains("is-open")) closeOperations();
+  if (workspacePageIsActive("operations-panel")) closeOperations();
   else openOperations();
 }
 
@@ -81,4 +80,3 @@ export function updateOperationsPanel(): void {
     `<div class="op-chapter"><b>${esc(stage)}</b><small>${esc(copy)}</small></div>` +
     group("Active", active) + group("Available", available) + group("History", history) + `</div>`;
 }
-

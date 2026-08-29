@@ -13,16 +13,17 @@ import { renderer } from "../../render";
 import { type LinkStatus, liveSimTime, state } from "../../state";
 import type { Rect } from "../types";
 import { bindLandingDelegate, buildBattlePanel, closeBattleViewer, enterBattleViewer, openBattlePanel, openBattleViewer, openGroundViewer, openOngoingBattlePanel, theaterDemo, theaterDemoLive } from "./battle";
-import { closeCheckin, toggleCheckin } from "./checkin";
-import { closeFaction, toggleFaction } from "./faction";
+import { toggleCheckin } from "./checkin";
+import { toggleFaction } from "./faction";
 import { net } from "./index";
-import { closeHubPanel, closeMarket, openHubPanel, toggleMarket } from "./market";
-import { closeOperations, toggleOperations } from "./operations";
-import { closeRail, openRail, toggleRail } from "./rail";
-import { closeResearch, FIELD_TITLE, toggleResearch } from "./research";
+import { openHubPanel, toggleMarket } from "./market";
+import { toggleOperations } from "./operations";
+import { openRail, toggleRail } from "./rail";
+import { FIELD_TITLE, toggleResearch } from "./research";
 import { addTransientReport, deselectShip, fmtCountdown, selectEmplacement, selectJumpDeparture, selectShip, updateShipPanel } from "./ship";
-import { closeSyndicate, toggleSyndicate } from "./syndicate";
+import { toggleSyndicate } from "./syndicate";
 import { closeBuildPanel, closePlanetPanel, enterSystem, exitSystem, hideSystemUi, openPlanetPanel, showSystemUi } from "./sysview";
+import { activateWorkspacePage, activeWorkspacePage, workspaceBack } from "./workspace";
 
 
 // --- DOM handles -----------------------------------------------------------
@@ -83,12 +84,9 @@ window.visualViewport?.addEventListener("scroll", syncHudSafeTop);
 }
 
 
-export const RIGHT_DOCK_IDS = ["rail", "ship-panel", "sysview-manage"] as const;
+export const RIGHT_DOCK_IDS = ["desktop-workspace", "sysview-manage"] as const;
 
-export const FOCUS_OVERLAY_IDS = [
-  "battle-panel", "hub-panel", "syndicate-panel", "operations-panel",
-  "faction-panel", "research-panel", "market", "checkin",
-] as const;
+export const FOCUS_OVERLAY_IDS = [] as const;
 
 export const LAYOUT_WATCH_IDS = [
   ...RIGHT_DOCK_IDS, ...FOCUS_OVERLAY_IDS,
@@ -468,7 +466,7 @@ export function openCapturePanel(id: number): void {
     `<div class="sp-line" title="The besieged stockpile changed hands; developments transferred at half tiers."><b>${plunderStr}</b></div>` +
     `<button class="act" data-act="dismiss" data-id="${r.id}" title="Remove the map marker — the report stays in your log.">${icon("aftermath", "sm")} Dismiss marker</button>`;
   $("battle-panel").innerHTML = head + `<div class="pp-body">${body}</div>`;
-  $("battle-panel").classList.add("is-open");
+  activateWorkspacePage("battle-panel");
 }
 
 
@@ -750,26 +748,10 @@ export function installInteraction(): void {
         closePlanetPanel();
       } else if (renderer.viewMode.type === "system") {
         exitSystem();
-      } else if ($("checkin").style.display !== "none") {
-        closeCheckin();
-      } else if ($("market").classList.contains("is-open")) {
-        closeMarket();
-      } else if ($("research-panel").classList.contains("is-open")) {
-        closeResearch();
-      } else if ($("operations-panel").classList.contains("is-open")) {
-        closeOperations();
-      } else if ($("syndicate-panel").classList.contains("is-open")) {
-        closeSyndicate();
-      } else if ($("faction-panel").classList.contains("is-open")) {
-        closeFaction();
-      } else if ($("hub-panel").classList.contains("is-open")) {
-        closeHubPanel();
-      } else if ($("battle-panel").classList.contains("is-open")) {
-        $("battle-panel").classList.remove("is-open");
-      } else if ($("rail").classList.contains("is-open")) {
-        closeRail();
-      } else if ($("ship-panel").classList.contains("is-open")) {
-        deselectShip();
+      } else if (activeWorkspacePage()) {
+        // One Escape = one workspace step. It never collapses the whole deck or
+        // clears the map selection underneath the page being dismissed.
+        workspaceBack();
       } else {
         // Nothing open: Escape is intentionally a no-op. It never clears an
         // unrelated selection as collateral damage.

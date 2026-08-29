@@ -11,22 +11,21 @@ import { net } from "./index";
 import { $, esc, openCapturePanel, renderDeferred, setHtml, statusIcon } from "./mapchrome";
 import { openRail } from "./rail";
 import { fmtCountdown, selectShip } from "./ship";
+import { activateWorkspacePage, deactivateWorkspacePage, workspacePageIsActive } from "./workspace";
 
 
 // --- Check-in modal (top-navbar destination; the welcome-back digest) ----------
 export function openCheckin(): void {
-  $("checkin").style.display = "block";
-  $("nav-log").classList.add("is-active");
+  activateWorkspacePage("checkin");
   updateCheckinPanel();
 }
 
 export function closeCheckin(): void {
-  $("checkin").style.display = "none";
-  $("nav-log").classList.remove("is-active");
+  deactivateWorkspacePage("checkin");
 }
 
 export function toggleCheckin(): void {
-  if ($("checkin").style.display === "none") openCheckin();
+  if (!workspacePageIsActive("checkin")) openCheckin();
   else closeCheckin();
 }
 
@@ -434,4 +433,3 @@ export function updateCheckinPanel(): void {
   $("checkin-log-head").textContent = `Log${away.length ? ` (${away.length} new)` : ""}`;
   setHtml($("checkin-timeline"), awayHtml + earlierHtml);
 }
-
