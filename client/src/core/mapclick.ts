@@ -1,4 +1,4 @@
-import { formatId, type EmplacementView, type GhostView, type SystemInfo } from "../protocol";
+import { formatId, type EmplacementView, type GhostView, type SystemInfo, type Vec2 } from "../protocol";
 import type { Renderer } from "../render";
 import { JUMP_DEPARTURE_TTL_S, liveSimTime, type PendingIntent, type ViewState } from "../state";
 import type { SystemBodyDetail } from "../systemview";
@@ -210,9 +210,9 @@ export function resolveMapClick(
   };
   const cands: Candidate[] = [];
 
-  const engagedIds = new Set<string>();
+  const engagedIds = new Map<string, Vec2>();
   for (const battle of state.battles) {
-    for (const participant of battle.participants) engagedIds.add(participant);
+    for (const participant of battle.participants) engagedIds.set(participant, battle.pos);
   }
 
   const selected = state.selectedShipId
@@ -224,10 +224,12 @@ export function resolveMapClick(
     && !!selected!.composition?.some((stack) => stack.kind === "raider");
 
   for (const ghost of state.ghosts) {
-    if (engagedIds.has(ghost.id) || ghost.docked) continue;
-    const point = renderer.worldToScreen(ghost.pos);
+    const battlePos = engagedIds.get(ghost.id);
+    const point = battlePos
+      ? renderer.worldToScreen(battlePos)
+      : renderer.fleetScreenPosition(ghost);
     const distance = Math.hypot(point.x - sx, point.y - sy);
-    const radius = Math.max(24, renderer.fleetHitRadius(ghost));
+    const radius = ghost.docked ? 11 : Math.max(24, renderer.fleetHitRadius(ghost));
     if (distance >= radius) continue;
     if (ghost.own) {
       cands.push({
@@ -235,7 +237,7 @@ export function resolveMapClick(
         sortD: distance,
         label: shipKindLabel(ghost.kind),
         target: { type: "fleet", id: ghost.id },
-        readout: `<b>${esc(shipKindLabel(ghost.kind))}</b> selected — details in the panel. ` +
+        readout: `<b>${esc(shipKindLabel(ghost.kind))}</b> selected${ghost.docked ? " at its berth" : battlePos ? " in battle" : ""} — details in the panel. ` +
           `Click empty space to move it · click a <span style="color:#ff7a6b">rival</span> to raid · press <b>R</b> to recall.`,
       });
     } else {
@@ -253,6 +255,21 @@ export function resolveMapClick(
         target: { type: "fleet", id: ghost.id },
         readout: `<b>${esc(contact)}</b> selected — its light-delayed details are in the panel.`,
         enemy: ghost,
+      });
+    }
+  }
+
+  const battleAtClick = renderer.battlePick(sx, sy);
+  if (battleAtClick !== null) {
+    const battle = state.battles.find((candidate) => candidate.id === battleAtClick);
+    if (battle) {
+      const point = renderer.worldToScreen(battle.pos);
+      cands.push({
+        key: `battle:${battle.id}`,
+        sortD: Math.hypot(point.x - sx, point.y - sy),
+        label: "ongoing battle",
+        target: { type: "ongoingBattle", id: battle.id },
+        readout: `<b>Battle in progress</b> — open the arrived combat picture.`,
       });
     }
   }
@@ -328,6 +345,21 @@ export function resolveMapClick(
     const index = same ? (previous!.index + 1) % cands.length : 0;
     clickCycle = { sx, sy, keys, index };
     const chosen = cands[index];
+    // A selected fleet turns a star into a named movement target. This is the
+    // core map gesture: clicking the destination means "go there", including
+    // colony ships whose exact claim point sits under the star's hit circle.
+    // Blockade and survey clicks were resolved above and keep their own verbs.
+    if (chosen.target.type === "system" && haveOwn) {
+      const systemId = chosen.target.id;
+      const system = state.galaxy?.systems.find((candidate) => candidate.id === systemId);
+      if (system) {
+        return {
+          kind: "intent",
+          intent: { shipId: selected!.id, verb: "move", targetId: system.id, dest: system.pos },
+          readout: `Move <b>${esc(shipKindLabel(selected!.kind))}</b> to <b>${esc(system.name)}</b>.`,
+        };
+      }
+    }
     if (chosen.enemy && (mods.shift || mods.long) && haveStrike) {
       return {
         kind: "intent",

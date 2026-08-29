@@ -23,6 +23,7 @@ export const desktopMarkup = String.raw`
     </div>
 
     <div id="reports-log"></div>
+    <div id="map-hover" role="tooltip"></div>
 
     <!-- System View breadcrumb (semantic-zoom LOD) — GALAXY › SYSTEM, clickable to
          return. Shown only inside the System View; the map is otherwise untouched. -->

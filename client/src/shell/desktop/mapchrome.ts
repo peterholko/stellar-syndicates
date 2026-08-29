@@ -13,7 +13,7 @@ import { renderer } from "../../render";
 import { type LinkStatus, liveSimTime, state } from "../../state";
 import type { Rect } from "../types";
 import { bindLandingDelegate, buildBattlePanel, closeBattleViewer, enterBattleViewer, openBattlePanel, openBattleViewer, openGroundViewer, openOngoingBattlePanel, theaterDemo, theaterDemoLive } from "./battle";
-import { toggleCheckin } from "./checkin";
+import { closeCheckin, toggleCheckin } from "./checkin";
 import { closeFaction, toggleFaction } from "./faction";
 import { net } from "./index";
 import { closeHubPanel, closeMarket, openHubPanel, toggleMarket } from "./market";
@@ -230,6 +230,62 @@ export function updateZoomLevel(): void {
 
 
 export const readout = () => $("readout");
+
+
+function updateMapHover(clientX: number, clientY: number): void {
+  const tip = $("map-hover");
+  if (renderer.viewMode.type !== "galaxy") {
+    tip.classList.remove("is-open");
+    renderer.canvas.style.cursor = "default";
+    return;
+  }
+
+  let copy = "";
+  let best = Infinity;
+  const engaged = new Map<string, { x: number; y: number }>();
+  for (const battle of state.battles) for (const id of battle.participants) engaged.set(id, battle.pos);
+  for (const ghost of state.ghosts) {
+    const battlePos = engaged.get(ghost.id);
+    const p = battlePos ? renderer.worldToScreen(battlePos) : renderer.fleetScreenPosition(ghost);
+    const d = Math.hypot(p.x - clientX, p.y - clientY);
+    const radius = ghost.docked ? 11 : Math.max(18, renderer.fleetHitRadius(ghost));
+    if (d >= radius || d >= best) continue;
+    best = d;
+    copy = ghost.own
+      ? `${shipKindLabel(ghost.kind)} · ${ghost.docked ? "select berth" : battlePos ? "select engaged fleet" : "select fleet"}`
+      : `${shipKindLabel(ghost.kind)} contact · select for delayed intelligence`;
+  }
+  if (state.galaxy) {
+    for (const system of state.galaxy.systems) {
+      const p = renderer.worldToScreen(system.pos);
+      const d = Math.hypot(p.x - clientX, p.y - clientY);
+      if (d >= Math.max(15, renderer.systemHitRadius(system)) || d >= best) continue;
+      best = d;
+      const selected = state.selectedShipId
+        ? state.ghosts.find((ghost) => ghost.id === state.selectedShipId && ghost.own)
+        : undefined;
+      copy = selected ? `Move ${shipKindLabel(selected.kind)} to ${system.name}` : `Inspect ${system.name}`;
+    }
+    const hub = renderer.worldToScreen(state.galaxy.hub);
+    const d = Math.hypot(hub.x - clientX, hub.y - clientY);
+    if (d < Math.max(24, renderer.hubHitRadius()) && d < best) copy = "Open Wormhole Hub";
+  }
+  const battle = renderer.battlePick(clientX, clientY);
+  if (battle !== null && !copy) copy = "Open ongoing battle";
+
+  if (!copy) {
+    tip.classList.remove("is-open");
+    renderer.canvas.style.cursor = state.selectedShipId ? "crosshair" : "grab";
+    return;
+  }
+  tip.textContent = copy;
+  tip.classList.add("is-open");
+  const left = Math.min(window.innerWidth - Math.max(180, tip.offsetWidth) - 8, clientX + 14);
+  const top = Math.min(window.innerHeight - tip.offsetHeight - 8, clientY + 16);
+  tip.style.left = `${Math.max(8, left)}px`;
+  tip.style.top = `${Math.max(8, top)}px`;
+  renderer.canvas.style.cursor = "pointer";
+}
 
 
 // --- UI kit (Stellar-Charters-inspired) — string-template helpers every panel
@@ -510,9 +566,11 @@ export function installInteraction(): void {
   canvas.addEventListener("pointermove", (e) => {
     const r = canvas.getBoundingClientRect();
     renderer.cursorWorld = renderer.screenToWorld(e.clientX - r.left, e.clientY - r.top);
+    updateMapHover(e.clientX, e.clientY);
   });
   canvas.addEventListener("pointerleave", () => {
     renderer.cursorWorld = null;
+    $("map-hover").classList.remove("is-open");
   });
   const DRAG_THRESHOLD = 5; // px of motion that turns a press into a pan
   let down = false, panning = false;
@@ -692,15 +750,29 @@ export function installInteraction(): void {
         closePlanetPanel();
       } else if (renderer.viewMode.type === "system") {
         exitSystem();
-      } else {
+      } else if ($("checkin").style.display !== "none") {
+        closeCheckin();
+      } else if ($("market").classList.contains("is-open")) {
         closeMarket();
+      } else if ($("research-panel").classList.contains("is-open")) {
         closeResearch();
+      } else if ($("operations-panel").classList.contains("is-open")) {
         closeOperations();
+      } else if ($("syndicate-panel").classList.contains("is-open")) {
         closeSyndicate();
+      } else if ($("faction-panel").classList.contains("is-open")) {
         closeFaction();
-        closeRail();
+      } else if ($("hub-panel").classList.contains("is-open")) {
         closeHubPanel();
+      } else if ($("battle-panel").classList.contains("is-open")) {
+        $("battle-panel").classList.remove("is-open");
+      } else if ($("rail").classList.contains("is-open")) {
+        closeRail();
+      } else if ($("ship-panel").classList.contains("is-open")) {
         deselectShip();
+      } else {
+        // Nothing open: Escape is intentionally a no-op. It never clears an
+        // unrelated selection as collateral damage.
       }
     } else if (e.key === "+" || e.key === "=") {
       renderer.zoomByFactor(1.3);

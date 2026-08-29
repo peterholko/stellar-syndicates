@@ -108,12 +108,20 @@
   border-left: 2px solid var(--accent);
   border-radius: 6px;
   font-size: 12px; line-height: 1.5;
-  z-index: 5;
+  z-index: 22;
   backdrop-filter: blur(4px);
 }
 #readout:empty { display: none !important; }
 #readout b { color: var(--accent); font-weight: 700; }
 #readout .dim { color: var(--dim); }
+
+#map-hover {
+  position: fixed; display: none; pointer-events: none; z-index: 24;
+  max-width: 280px; padding: 5px 8px; border: 1px solid rgba(79,195,255,.36);
+  border-radius: 5px; background: rgba(7,12,22,.96); color: var(--ink);
+  box-shadow: var(--panel-shadow); font-size: 11px; line-height: 1.35;
+}
+#map-hover.is-open { display: block; }
 
 /* Deliberate map-order confirmation — fixed beside the readout so the
    player can keep comparing the current and prospective routes. */
@@ -1385,10 +1393,8 @@ span.rf-ic--lg { font-size: 36px; } span.rf-ic--xl { font-size: 46px; }
    The founding guide is the persistent bottom-left objective. It remains
    visible above every map workspace while active; only the player's own
    minimize button collapses it. */
-body.is-system-view #readout,
 body.is-system-view #legend,
 body.is-right-dock-open #legend,
-body.is-focus-overlay-open #readout,
 body.is-focus-overlay-open #legend { display: none !important; }
 body.is-system-view #planet-panel {
   max-height: min(70vh, calc(100dvh - var(--left-detail-safe-top) - 14px));

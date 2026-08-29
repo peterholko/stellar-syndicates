@@ -370,6 +370,11 @@ export class Renderer {
   private routesGfx = new Graphics();
   private operationGfx = new Graphics();
   private systemsLayer = new Container();
+  // Docked fleets remain part of the command picture. They use compact berth
+  // pips rather than full hull art so systems stay legible without making a
+  // berthed formation impossible to select from the map.
+  private berthGfx = new Graphics();
+  private berthScreenByFleet = new Map<string, { x: number; y: number }>();
   private anchorsLayer = new Container();
   private orderLayer = new Container();
   // §perf: persistent Graphics/Text reused across frames (clear()+redraw instead
@@ -544,6 +549,7 @@ export class Renderer {
       this.emplacementLayer, // ...and what you built on them sits just above
       this.bodyLayer, // celestial body sprites, under the data cues that decorate them
       this.systemsLayer,
+      this.berthGfx,
       this.anchorsLayer,
       this.operationGfx, // known contract/objective sites, under routes and fleets
       this.routesGfx, // visible convoy routes, under ghosts
@@ -2602,6 +2608,54 @@ export class Renderer {
     return this.shipHitRadius(ghost.kind) * (marker ? marker.mult : 1);
   }
 
+  /// Screen position used by desktop picking/hover. Docked hulls are represented
+  /// by fixed-size berth pips around their dock; every other fleet uses its served
+  /// position. The cache is rebuilt from the same served View as the drawing.
+  fleetScreenPosition(ghost: GhostView): { x: number; y: number } {
+    return this.berthScreenByFleet.get(ghost.id) ?? this.worldToScreen(ghost.pos);
+  }
+
+  private drawBerthPips(state: ViewState, engaged: Map<string, Vec2>): void {
+    const g = this.berthGfx;
+    g.clear();
+    this.berthScreenByFleet.clear();
+    if (!state.galaxy) return;
+
+    const groups = new Map<string, GhostView[]>();
+    for (const ghost of state.ghosts) {
+      if (!ghost.own || !ghost.docked || engaged.has(ghost.id)) continue;
+      const group = groups.get(ghost.docked) ?? [];
+      group.push(ghost);
+      groups.set(ghost.docked, group);
+    }
+
+    for (const [dock, fleets] of groups) {
+      const dockWorld = dock === "hub"
+        ? state.galaxy.hub
+        : state.galaxy.systems.find((system) => dock === system.id || dock === `E${system.id}`)?.pos;
+      if (!dockWorld) continue;
+      const center = this.worldToScreen(dockWorld);
+      fleets.sort((a, b) => a.id.localeCompare(b.id));
+      for (let index = 0; index < fleets.length; index++) {
+        const fleet = fleets[index];
+        const ring = Math.floor(index / 8);
+        const slot = index % 8;
+        const slots = Math.min(8, fleets.length - ring * 8);
+        const angle = -Math.PI / 2 + slot * Math.PI * 2 / Math.max(1, slots);
+        const radius = 21 + ring * 13;
+        const p = { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius };
+        this.berthScreenByFleet.set(fleet.id, p);
+        g.moveTo(center.x, center.y).lineTo(p.x, p.y).stroke({ width: 1, color: COL_OWN, alpha: 0.18 });
+        g.circle(p.x, p.y, 5).fill({ color: 0x071522, alpha: 0.96 });
+        g.circle(p.x, p.y, 5).stroke({ width: 1.5, color: COL_OWN, alpha: 0.92 });
+        g.circle(p.x, p.y, 1.5).fill({ color: COL_OWN, alpha: 0.95 });
+        if (state.selectedShipId === fleet.id) {
+          g.circle(p.x, p.y, 8).stroke({ width: 1.5, color: 0xffffff, alpha: 0.9 });
+        }
+      }
+    }
+  }
+
   /// §emplacements: MIRRORS `emplace::site_check` IN THE SIM.
   ///
   /// The map must preview exactly the rule the server will enforce, or a site
@@ -3160,6 +3214,7 @@ export class Renderer {
       for (const b of state.battles) {
         for (const p of b.participants) engaged.set(p, b.pos);
       }
+      this.drawBerthPips(state, engaged);
       // §dock: BERTHED hulls are not drawn on the star chart. A docked ship
       // belongs to the system view — drawing it here is what buried systems
       // under stacks of overlapping sprites and forced the hit-radius caps

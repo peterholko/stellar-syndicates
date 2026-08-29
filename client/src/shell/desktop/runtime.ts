@@ -176,6 +176,7 @@ export function handleCoreEvents(events: CoreEvent[]): void {
         break;
       case "ServerError":
         readout().innerHTML = `<span style="color:var(--warn)">Server refused: ${esc(event.message)}</span>`;
+        addTransientReport("!", "bad", `<b>Order refused</b> — ${esc(event.message)}`);
         break;
     }
   }

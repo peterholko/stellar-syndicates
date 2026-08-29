@@ -66,6 +66,9 @@ export function clearJumpDepartureSelection(): void {
 
 
 export function intentTargetLabel(intent: PendingIntent): string {
+  if (intent.verb === "move" && intent.targetId) {
+    return state.galaxy?.systems.find((system) => system.id === intent.targetId)?.name ?? "target system";
+  }
   if (intent.verb === "raid" || intent.verb === "attack" || intent.verb === "guard") {
     const target = state.ghosts.find((g) => g.id === intent.targetId);
     if (intent.verb === "guard") {
