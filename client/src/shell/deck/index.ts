@@ -214,6 +214,14 @@ class DeckShell implements Shell {
       event.preventDefault();
       this.ctx.intent.armGuardAiming(fleet);
       this.strip?.render(true);
+    } else if (key === "[") {
+      event.preventDefault();
+      this.map?.cycleFleet(-1);
+      this.strip?.render(true);
+    } else if (key === "]") {
+      event.preventDefault();
+      this.map?.cycleFleet(1);
+      this.strip?.render(true);
     } else if (key === "+" || key === "=") {
       event.preventDefault();
       this.map?.zoomIn();

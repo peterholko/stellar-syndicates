@@ -53,6 +53,8 @@
 .deck-fleet-chip__delay { color: var(--warn); font-size: var(--fs-fine); white-space: nowrap; }
 .deck-fleet-chip button { min-height: 0; padding: var(--space-1); border: 0; background: transparent; }
 .deck-command-strip__verbs { display: flex; gap: var(--space-1); overflow-x: auto; }
+.deck-command-strip__batch { color: var(--dim); font-size: var(--fs-fine); }
+.deck-command-strip__batch b { color: var(--accent); }
 .deck-command-verb { flex: 0 0 auto; display: grid; gap: var(--space-1); }
 .deck-command-verb button { display: grid; min-width: calc(var(--space-6) * 3); padding: var(--space-1) var(--space-2); text-align: left; }
 .deck-command-verb button small { color: var(--dim); font-size: var(--fs-fine); }

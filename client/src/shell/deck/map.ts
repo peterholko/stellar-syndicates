@@ -125,7 +125,7 @@ export class DeckMapInteraction {
     this.panning = false;
     try { this.ctx.renderer.canvas.releasePointerCapture(event.pointerId); } catch { /* optional */ }
     if (!wasPanning && !this.ctx.renderer.isSystemScrubbing()) {
-      this.activate(event.clientX, event.clientY, event.shiftKey, false);
+      this.activate(event.clientX, event.clientY, event.shiftKey, false, event.ctrlKey || event.metaKey);
     }
   }
 
@@ -172,7 +172,7 @@ export class DeckMapInteraction {
   private inspect(event: MouseEvent): void {
     event.preventDefault();
     if (this.ctx.renderer.viewMode.type !== "galaxy" || this.ctx.renderer.isSystemScrubbing()) return;
-    this.activate(event.clientX, event.clientY, event.shiftKey, true);
+    this.activate(event.clientX, event.clientY, event.shiftKey, true, false);
   }
 
   private doubleClick(event: MouseEvent): void {
@@ -203,7 +203,19 @@ export class DeckMapInteraction {
     this.hooks.enteredSystem(system);
   }
 
-  private activate(x: number, y: number, shift: boolean, inspect: boolean): void {
+  cycleFleet(direction: -1 | 1): void {
+    const fleets = this.ctx.state.ghosts
+      .filter((fleet) => fleet.own)
+      .sort((a, b) => a.id.localeCompare(b.id));
+    if (!fleets.length) return;
+    const current = fleets.findIndex((fleet) => fleet.id === this.ctx.state.selectedShipId);
+    const index = current < 0 ? 0 : (current + direction + fleets.length) % fleets.length;
+    const fleet = fleets[index];
+    this.selectFleet(fleet.id);
+    this.ctx.renderer.centerOnWorld(fleet.pos);
+  }
+
+  private activate(x: number, y: number, shift: boolean, inspect: boolean, multi: boolean): void {
     const renderer = this.ctx.renderer;
     renderer.selectedBattleMarkerId = null;
     const clickCtx = {
@@ -218,10 +230,10 @@ export class DeckMapInteraction {
       : renderer.viewMode.type === "galaxy"
         ? resolveMapClick(x, y, { shift, long: false, inspect }, clickCtx)
         : { kind: "none" } as const;
-    this.applyResult(result, inspect);
+    this.applyResult(result, inspect, multi);
   }
 
-  private applyResult(result: MapClickResult, inspect: boolean): void {
+  private applyResult(result: MapClickResult, inspect: boolean, multi: boolean): void {
     if (result.kind === "reject") {
       if (result.clearAiming === "jump") this.ctx.intent.clearJumpAiming(true);
       else if (result.clearAiming === "guard") this.ctx.intent.clearGuardAiming(true);
@@ -231,11 +243,29 @@ export class DeckMapInteraction {
     if (result.kind === "intent") {
       if (result.clearAiming === "jump") this.ctx.intent.clearJumpAiming(true);
       else if (result.clearAiming === "guard") this.ctx.intent.clearGuardAiming(true);
+      if (result.intent.verb === "move" && this.ctx.state.selectedShipIds.size > 1) {
+        result.intent.shipIds = [...this.ctx.state.selectedShipIds]
+          .filter((id) => this.ctx.state.ghosts.some((fleet) => fleet.id === id && fleet.own));
+      }
       this.ctx.intent.beginPendingIntent(result.intent);
       if (result.readout) this.hooks.notice(result.readout);
       return;
     }
     if (result.kind !== "select") return;
+    if (!inspect && multi && result.target.type === "fleet") {
+      const fleetId = result.target.id;
+      const fleet = this.ctx.state.ghosts.find((entry) => entry.id === fleetId && entry.own);
+      if (fleet) {
+        this.toggleFleet(fleet.id);
+        const count = this.ctx.state.selectedShipIds.size;
+        this.hooks.notice(count > 1
+          ? `<b>${count} fleets grouped</b> · map moves apply to every fleet; other verbs apply to the primary chip.`
+          : count === 1
+            ? `<b>Fleet selected</b> · Ctrl/⌘-click another owned marker to add it.`
+            : `<span class="dim">Fleet group cleared.</span>`);
+        return;
+      }
+    }
     if (!inspect && result.target.type === "fleet") this.selectFleet(result.target.id);
     else if (!inspect && result.target.type === "system") {
       this.ctx.state.selectedSystemId = result.target.id;
@@ -267,6 +297,24 @@ export class DeckMapInteraction {
     state.selectedSystemId = null;
     state.selectedEmplacementId = null;
     this.ctx.renderer.selectedJumpDepartureKey = null;
+    this.ctx.renderer.stateVersion++;
+  }
+
+  private toggleFleet(id: string): void {
+    const state = this.ctx.state;
+    if (state.selectedShipIds.has(id)) {
+      state.selectedShipIds.delete(id);
+      if (state.selectedShipId === id) {
+        state.selectedShipId = state.selectedShipIds.values().next().value ?? null;
+        state.selectedOrderId = null;
+      }
+    } else {
+      state.selectedShipIds.add(id);
+      if (!state.selectedShipId || !state.ghosts.some((fleet) => fleet.id === state.selectedShipId && fleet.own)) {
+        state.selectedShipId = id;
+      }
+    }
+    this.ctx.intent.clearPendingIntent(true);
     this.ctx.renderer.stateVersion++;
   }
 

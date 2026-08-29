@@ -67,6 +67,8 @@ export function mountDeckMarkup(root: HTMLElement): void {
               <kbd>Esc</kbd><span>Back one layer</span>
               <kbd>Enter</kbd><span>Confirm the pending fleet order</span>
               <kbd>J / G</kbd><span>Arm Jump / Guard for the selected fleet</span>
+              <kbd>[ / ]</kbd><span>Cycle and center your fleets</span>
+              <kbd>Ctrl-click</kbd><span>Add or remove an owned fleet from the command group</span>
               <kbd>M V R P</kbd><span>Market · Fleets · Research · Officers</span>
               <kbd>U Y C L</kbd><span>Operations · Syndicate · Faction · Log</span>
               <kbd>S</kbd><span>System workspace</span>

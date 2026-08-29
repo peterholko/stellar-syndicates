@@ -144,6 +144,9 @@ export class DeckCommandStrip {
     const verbs = primary?.own ? this.verbHtml(primary) : `<div class="deck-command-strip__foreign">Rival contact · inspection only</div>`;
     return `<div class="deck-command-strip__frame deck-command-strip__frame--selection">` +
       `<div class="deck-command-strip__chips">${chips}</div>` +
+      (fleets.length > 1
+        ? `<div class="deck-command-strip__batch"><b>${fleets.length}-fleet command group</b> · map moves apply to every fleet; other controls apply to the primary chip.</div>`
+        : "") +
       `<div class="deck-command-strip__verbs">${verbs}</div>` +
       `</div>`;
   }
