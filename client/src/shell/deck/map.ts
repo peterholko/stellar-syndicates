@@ -225,6 +225,14 @@ export class DeckMapInteraction {
     this.ctx.renderer.centerOnWorld(fleet.pos);
   }
 
+  focusFleet(id: string): void {
+    const fleet = this.ctx.state.ghosts.find((entry) => entry.id === id);
+    if (!fleet) return;
+    this.selectFleet(id);
+    this.ctx.renderer.centerOnWorld(fleet.pos);
+    this.hooks.openTarget({ type: "fleet", id });
+  }
+
   private activate(x: number, y: number, shift: boolean, inspect: boolean, multi: boolean): void {
     const renderer = this.ctx.renderer;
     renderer.selectedBattleMarkerId = null;

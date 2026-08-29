@@ -14,6 +14,7 @@ import { DeckMapInteraction } from "./map";
 import { mountDeckMarkup } from "./markup";
 import { DECK_ROUTES, DeckRouter, type DeckCrumb, type DeckRoute, type DeckRouteName } from "./router";
 import { DeckCommandStrip } from "./strip";
+import { DeckCommandRoutes } from "./command";
 import { DeckToasts } from "./toasts";
 import { DeckWorkspace } from "./workspace";
 
@@ -29,6 +30,7 @@ class DeckShell implements Shell {
   private toasts: DeckToasts | null = null;
   private strip: DeckCommandStrip | null = null;
   private empire: DeckEmpireRoutes | null = null;
+  private command: DeckCommandRoutes | null = null;
   private removeDebug: (() => void) | null = null;
   private chromeSignature = "";
   private zoomSignature = "";
@@ -62,6 +64,11 @@ class DeckShell implements Shell {
       notice: (html) => this.setStatus(html),
       toast: (title, message, tone, destination) => this.toasts?.push({ title, message, tone, destination }),
     });
+    this.command = new DeckCommandRoutes(byId("deck-workspace-body"), byId("deck-founding"), ctx, {
+      go: (route) => this.router?.go(route),
+      focusFleet: (id) => this.map?.focusFleet(id),
+      notice: (html) => this.setStatus(html),
+    });
     bindMarketDerive(() => ctx.net, () => this.empire?.composedFit ?? []);
     this.removeDebug = installDeckDebug(ctx, (id) => this.router?.go({ name: "battle", params: { id, label: "Theater demo" } }));
     byId<HTMLFormElement>("deck-join-form").addEventListener("submit", (event) => {
@@ -76,6 +83,7 @@ class DeckShell implements Shell {
     byId("deck-workspace").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
       if (!button) return;
+      if (this.command?.handleWorkspaceAction(button, this.router?.current ?? null)) return;
       if (this.empire?.handleAction(button, this.router?.current ?? null)) return;
       if (button.dataset.deckAct === "back") this.router?.back();
       else if (button.dataset.deckAct === "close") this.router?.close();
@@ -85,6 +93,10 @@ class DeckShell implements Shell {
         if (crumb?.route) this.router?.go(crumb.route);
         else if (crumb) this.router?.close();
       }
+    }, { signal });
+    byId("deck-founding").addEventListener("click", (event) => {
+      const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
+      if (button) this.command?.handleFoundingAction(button);
     }, { signal });
     byId("deck-zoom").addEventListener("click", (event) => {
       const action = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]")?.dataset.deckAct;
@@ -144,6 +156,7 @@ class DeckShell implements Shell {
     this.renderChrome();
     this.renderZoom();
     this.empire?.render(this.router?.current ?? null);
+    this.command?.render(this.router?.current ?? null);
   }
 
   framePolicy() {
@@ -168,12 +181,14 @@ class DeckShell implements Shell {
     this.toasts?.teardown();
     this.strip?.clear();
     this.empire?.invalidate();
+    this.command?.teardown();
     this.router = null;
     this.workspace = null;
     this.map = null;
     this.toasts = null;
     this.strip = null;
     this.empire = null;
+    this.command = null;
     bindMarketDerive(() => null, () => []);
     this.removeDebug = null;
     this.abort = null;
@@ -377,7 +392,9 @@ class DeckShell implements Shell {
     }
     this.activeCrumbs = this.router.breadcrumbs(route);
     this.workspace.show(route, this.activeCrumbs, stack.length > 1);
-    if (!this.empire?.render(route, true)) this.renderPlaceholder(route);
+    const commandHandled = this.command?.render(route, true) ?? false;
+    const empireHandled = this.empire?.render(route, true) ?? false;
+    if (!commandHandled && !empireHandled) this.renderPlaceholder(route);
     this.renderActiveNav(route.name);
   }
 

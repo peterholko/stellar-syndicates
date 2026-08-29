@@ -60,6 +60,7 @@ export class DeckEmpireRoutes {
   private shipQuantity = 1;
   private pendingFit: ModuleKind[] = [];
   private buildFeedback: BuildFeedback | null = null;
+  private lastBuildPreset = "";
   private signature = "";
 
   constructor(
@@ -412,6 +413,12 @@ export class DeckEmpireRoutes {
     if (!system || !dynamic) return emptyState("Build context unavailable", "Open an owned system before entering construction.");
     if (dynamic.owner !== this.ctx.state.playerId) return emptyState("Construction is private", "You can inspect this system, but only its owner receives production and build controls.");
     if (route.query?.mode === "ships" || route.query?.mode === "structures") this.builderMode = route.query.mode;
+    const preset = `${dynamic.id}:${route.query?.body ?? ""}:${route.query?.mode ?? ""}:${route.query?.select ?? ""}`;
+    if (route.query?.select && preset !== this.lastBuildPreset) {
+      if (SHIP_KEYS.has(route.query.select)) this.selectedHull = route.query.select as ShipKind;
+      else this.selectedBuild = route.query.select;
+      this.lastBuildPreset = preset;
+    }
     const body = this.builderBody(route, dynamic);
     if (!body) return emptyState("No build site", "No served world is available in this system.");
     const modeTabs = (["structures", "ships"] as BuilderMode[]).map((mode) => `<button type="button" data-deck-act="builder-mode" data-mode="${mode}" aria-selected="${this.builderMode === mode}">${mode === "structures" ? "Structures" : "Ships & Modules"}</button>`).join("");
