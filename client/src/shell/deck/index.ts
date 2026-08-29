@@ -18,6 +18,8 @@ import { DeckCommandRoutes } from "./command";
 import { deckTradeNotice, DeckMarketRoutes } from "./market";
 import { DeckPolicyRoutes } from "./policy";
 import { DeckFleetRoutes } from "./fleet";
+import { bindResearchNet } from "../../core/derive/research";
+import { DeckRosterRoutes } from "./roster";
 import { DeckToasts } from "./toasts";
 import { DeckWorkspace } from "./workspace";
 
@@ -37,6 +39,7 @@ class DeckShell implements Shell {
   private market: DeckMarketRoutes | null = null;
   private policy: DeckPolicyRoutes | null = null;
   private fleet: DeckFleetRoutes | null = null;
+  private roster: DeckRosterRoutes | null = null;
   private removeDebug: (() => void) | null = null;
   private chromeSignature = "";
   private zoomSignature = "";
@@ -86,7 +89,12 @@ class DeckShell implements Shell {
       go: (route) => this.router?.go(route),
       notice: (html) => this.setStatus(html),
     });
+    this.roster = new DeckRosterRoutes(byId("deck-workspace-body"), ctx, {
+      go: (route) => this.router?.go(route),
+      notice: (html) => this.setStatus(html),
+    });
     bindFleetNet(() => ctx.net);
+    bindResearchNet(() => ctx.net);
     bindMarketDerive(() => ctx.net, () => this.empire?.composedFit ?? []);
     this.removeDebug = installDeckDebug(ctx, (id) => this.router?.go({ name: "battle", params: { id, label: "Theater demo" } }));
     byId<HTMLFormElement>("deck-join-form").addEventListener("submit", (event) => {
@@ -101,6 +109,7 @@ class DeckShell implements Shell {
     byId("deck-workspace").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
       if (!button) return;
+      if (this.roster?.handleAction(button, this.router?.current ?? null)) return;
       if (this.fleet?.handleAction(button, this.router?.current ?? null)) return;
       if (this.command?.handleWorkspaceAction(button, this.router?.current ?? null)) return;
       if (this.empire?.handleAction(button, this.router?.current ?? null)) return;
@@ -197,6 +206,7 @@ class DeckShell implements Shell {
     this.market?.render(this.router?.current ?? null);
     this.policy?.render(this.router?.current ?? null);
     this.fleet?.render(this.router?.current ?? null);
+    this.roster?.render(this.router?.current ?? null);
   }
 
   framePolicy() {
@@ -225,6 +235,7 @@ class DeckShell implements Shell {
     this.market?.invalidate();
     this.policy?.invalidate();
     this.fleet?.invalidate();
+    this.roster?.invalidate();
     this.router = null;
     this.workspace = null;
     this.map = null;
@@ -235,7 +246,9 @@ class DeckShell implements Shell {
     this.market = null;
     this.policy = null;
     this.fleet = null;
+    this.roster = null;
     bindFleetNet(() => null);
+    bindResearchNet(() => null);
     bindMarketDerive(() => null, () => []);
     this.removeDebug = null;
     this.abort = null;
@@ -444,7 +457,8 @@ class DeckShell implements Shell {
     const marketHandled = this.market?.render(route, true) ?? false;
     const policyHandled = this.policy?.render(route, true) ?? false;
     const fleetHandled = this.fleet?.render(route, true) ?? false;
-    if (!commandHandled && !empireHandled && !marketHandled && !policyHandled && !fleetHandled) this.renderPlaceholder(route);
+    const rosterHandled = this.roster?.render(route, true) ?? false;
+    if (!commandHandled && !empireHandled && !marketHandled && !policyHandled && !fleetHandled && !rosterHandled) this.renderPlaceholder(route);
     this.renderActiveNav(route.name);
   }
 
