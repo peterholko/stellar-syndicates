@@ -425,6 +425,11 @@ export class Renderer {
   private rivalJumpArrivalSeen = new Map<string, number>();
   private signalsLayer = new Container();
   private signalsGfx = new Graphics();
+  // Desktop Deck-only awareness chrome. It is default-off so the shared
+  // renderer remains pixel-identical for mobile and the legacy shell.
+  private deckSaliencyGfx = new Graphics();
+  private deckSaliencyEnabled = false;
+  private deckWorldPing: { pos: Vec2; startedMs: number } | null = null;
   private interceptLabels = new Map<string, Text>();
   private ghosts = new Map<string, GhostSprite>();
   private servedGhostFrames = new Map<string, { pos: Vec2; simTime: number; pinned: boolean }>();
@@ -562,6 +567,7 @@ export class Renderer {
       this.ghostsLayer,
       this.rivalJumpArrivalGfx, // warning chevrons must remain legible over the arrival
       this.signalsLayer,
+      this.deckSaliencyGfx, // opt-in labels/home/ping/reticle above map effects
     );
     this.aftermathLayer.addChild(this.aftermathGfx, this.jumpDepartureGfx);
     // §perf: pooled persistent graphics for the order + anchor + command-center
@@ -618,6 +624,23 @@ export class Renderer {
   /// Read-only acceptance hook exposed through `__ss.renderer`.
   renderPolicyDebug(): { maxFps: number; paused: boolean; renderedFrames: number } {
     return { maxFps: this.renderMaxFps, paused: this.renderPaused, renderedFrames: this.renderedFrames };
+  }
+
+  /** Opt-in map awareness for the rebuilt desktop Deck. Default-off is the
+   * compatibility guarantee: mobile and the legacy shell keep their established
+   * pixels unless they explicitly request this layer. */
+  setDeckSaliency(enabled: boolean): void {
+    if (this.deckSaliencyEnabled === enabled) return;
+    this.deckSaliencyEnabled = enabled;
+    this.deckWorldPing = null;
+    this.deckSaliencyGfx.clear();
+    this.stateVersion++;
+  }
+
+  /** Transient world-anchored focus ring used by decision-inbox Focus actions. */
+  pingWorld(pos: Vec2): void {
+    if (!this.deckSaliencyEnabled) return;
+    this.deckWorldPing = { pos: { ...pos }, startedMs: performance.now() };
   }
 
   /// Load the celestial + ship sprite textures. Each resolves independently; the
@@ -1399,8 +1422,9 @@ export class Renderer {
       const t = e.label;
       t.text = txt;
       t.style.fill = col;
+      t.style.fontSize = this.deckSaliencyEnabled && mine ? 9 : 8;
       t.position.set(s.x + glow + 2 + extra, s.y); // +extra: rides the grown rim at deep zoom
-      t.alpha = mine ? 0.95 : ally ? 0.9 : rival ? 0.88 : selected ? 0.8 : 0.5;
+      t.alpha = mine ? (this.deckSaliencyEnabled ? 1 : 0.95) : ally ? 0.9 : rival ? 0.88 : selected ? 0.8 : 0.5;
 
       // §contestable-territory Part 1: a BLOCKADE marker — a slow-pulsing red
       // dashed ring around a besieged system + a "⛔ BLOCKADE" tag. Participant-
@@ -3113,7 +3137,8 @@ export class Renderer {
       const cargo = ghost.kind === "convoy" && manifest.length
         ? `${manifest.slice(0, 2).map((stack) => `${label(stack.commodity)} ×${stack.units}`).join(" · ")}${manifest.length > 2 ? ` · +${manifest.length - 2}` : ""}  `
         : "";
-      txt = `${cargo}${stale}`;
+      const ownLabel = this.deckSaliencyEnabled ? `${label(ghost.kind).toUpperCase()}  ` : "";
+      txt = `${ownLabel}${cargo}${stale}`;
       col = COL_OWN;
       lalpha = sel ? 0.95 : 0.7;
     } else if (ghost.kind === "convoy") {
@@ -3317,6 +3342,7 @@ export class Renderer {
       this.drawCaptures(state);
       this.drawJumpDepartures(state);
       this.drawSignals(state, screenById, dt);
+      this.drawDeckSaliency(state, screenById, engaged);
       // §perf: record what this frame's geometry was drawn against, so the next
       // frame can decide whether a rebuild is needed.
       this.lastStateVersion = this.stateVersion;
@@ -3337,6 +3363,81 @@ export class Renderer {
       const home = !!fixed && !!state.commandCenter &&
         Math.hypot(fixed.pos.x - state.commandCenter.x, fixed.pos.y - state.commandCenter.y) < 1;
       this.systemScene.update(dyn?.owner ?? null, state.playerId, performance.now(), home);
+    }
+  }
+
+  /** Desktop Deck awareness layer: minimum own labels are handled at their
+   * pooled Text nodes above; this topmost geometry supplies the home badge,
+   * selected-target reticle, and a transient inbox focus ping. */
+  private drawDeckSaliency(
+    state: ViewState,
+    screenById: Map<string, { x: number; y: number }>,
+    engaged: Map<string, Vec2>,
+  ): void {
+    const g = this.deckSaliencyGfx;
+    g.clear();
+    if (!this.deckSaliencyEnabled || !state.galaxy) return;
+
+    const bracket = (x: number, y: number, radius: number, color: number, alpha = 0.95): void => {
+      const r = Math.max(10, radius);
+      const arm = Math.min(8, r * 0.45);
+      g.moveTo(x - r + arm, y - r).lineTo(x - r, y - r).lineTo(x - r, y - r + arm);
+      g.moveTo(x + r - arm, y - r).lineTo(x + r, y - r).lineTo(x + r, y - r + arm);
+      g.moveTo(x - r + arm, y + r).lineTo(x - r, y + r).lineTo(x - r, y + r - arm);
+      g.moveTo(x + r - arm, y + r).lineTo(x + r, y + r).lineTo(x + r, y + r - arm);
+      g.stroke({ width: 1.5, color, alpha });
+    };
+
+    // The command seat is the home system in today's galaxy. Its fixed-screen
+    // diamond stays readable at every zoom without changing the star itself.
+    if (state.commandCenter) {
+      const home = this.worldToScreen(state.commandCenter);
+      const homeSystem = state.galaxy.systems.find((system) => Math.hypot(system.pos.x - state.commandCenter!.x, system.pos.y - state.commandCenter!.y) < 1);
+      const extra = homeSystem ? (this.starDiameters(homeSystem).rendered - this.starDiameters(homeSystem).base) / 2 : 0;
+      const bx = home.x - 19;
+      const by = home.y - 18 - extra;
+      g.poly([bx, by - 5, bx + 5, by, bx, by + 5, bx - 5, by])
+        .fill({ color: 0x05070d, alpha: 0.9 })
+        .stroke({ width: 1.4, color: COL_ANCHOR_OWN, alpha: 1 });
+      g.circle(bx, by, 1.6).fill({ color: COL_ANCHOR_OWN, alpha: 1 });
+    }
+
+    const selectedFleetIds = new Set(state.selectedShipIds);
+    if (state.selectedShipId) selectedFleetIds.add(state.selectedShipId);
+    for (const id of selectedFleetIds) {
+      const fleet = state.ghosts.find((ghost) => ghost.id === id);
+      if (!fleet) continue;
+      const battlePos = engaged.get(id);
+      const point = battlePos ? this.worldToScreen(battlePos) : screenById.get(id) ?? this.fleetScreenPosition(fleet);
+      bracket(point.x, point.y, this.fleetHitRadius(fleet) + 7, id === state.selectedShipId ? 0xffffff : COL_OWN);
+    }
+
+    if (state.selectedSystemId) {
+      const system = state.galaxy.systems.find((candidate) => candidate.id === state.selectedSystemId);
+      if (system) {
+        const point = this.worldToScreen(system.pos);
+        bracket(point.x, point.y, this.systemHitRadius(system) + 8, 0xffffff);
+      }
+    }
+    if (state.selectedEmplacementId) {
+      const emplacement = state.emplacements.find((candidate) => candidate.id === state.selectedEmplacementId);
+      if (emplacement) {
+        const point = this.worldToScreen(emplacement.pos);
+        bracket(point.x, point.y, this.emplacementHitRadius() + 7, 0xffffff);
+      }
+    }
+
+    const ping = this.deckWorldPing;
+    if (ping) {
+      const elapsed = (performance.now() - ping.startedMs) / 1200;
+      if (elapsed >= 1) {
+        this.deckWorldPing = null;
+      } else {
+        const point = this.worldToScreen(ping.pos);
+        const eased = elapsed * elapsed * (3 - 2 * elapsed);
+        g.circle(point.x, point.y, 12 + eased * 34).stroke({ width: 2, color: COL_REPORT, alpha: (1 - elapsed) * 0.9 });
+        g.circle(point.x, point.y, 8 + eased * 18).stroke({ width: 1, color: 0xffffff, alpha: (1 - elapsed) * 0.55 });
+      }
     }
   }
 

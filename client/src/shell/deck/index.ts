@@ -52,6 +52,7 @@ class DeckShell implements Shell {
     this.ctx = ctx;
     this.abort = new AbortController();
     mountDeckMarkup(root);
+    ctx.renderer.setDeckSaliency(true);
     installPressGuard();
     const signal = this.abort.signal;
     this.router = new DeckRouter((route, stack) => this.routeChanged(route, stack), signal);
@@ -236,6 +237,7 @@ class DeckShell implements Shell {
 
   teardown(): void {
     this.abort?.abort();
+    this.ctx?.renderer.setDeckSaliency(false);
     this.removeDebug?.();
     this.router?.teardown();
     this.workspace?.teardown();
@@ -619,7 +621,7 @@ class DeckShell implements Shell {
     if (!system) return;
     this.ctx.state.selectedSystemId = id;
     this.ctx.renderer.centerOnWorld(system.pos);
-    (this.ctx.renderer as typeof this.ctx.renderer & { pingWorld?: (pos: { x: number; y: number }) => void }).pingWorld?.(system.pos);
+    this.ctx.renderer.pingWorld(system.pos);
     this.ctx.renderer.stateVersion++;
     this.router?.go({ name: "system", params: { id, systemLabel: system.name } });
   }
@@ -629,7 +631,7 @@ class DeckShell implements Shell {
     const fleet = this.ctx.state.ghosts.find((entry) => entry.id === id);
     if (!fleet) return;
     this.map?.focusFleet(id);
-    (this.ctx.renderer as typeof this.ctx.renderer & { pingWorld?: (pos: { x: number; y: number }) => void }).pingWorld?.(fleet.pos);
+    this.ctx.renderer.pingWorld(fleet.pos);
   }
 }
 
