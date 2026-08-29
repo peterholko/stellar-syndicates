@@ -1,5 +1,6 @@
 import "../../styles/deck.css";
 
+import { guardCapable as guardCapableForKey, jumpCapable as jumpCapableForKey } from "../../core/derive/fleet";
 import { reservedMarketCredits, spendableMarketCredits } from "../../core/derive/market";
 import type { CoreEvent } from "../../core/events";
 import { formatId } from "../../protocol";
@@ -51,7 +52,9 @@ class DeckShell implements Shell {
       notice: () => { /* D1.5 promotes resolver readouts into the strip status line. */ },
     }, signal);
     this.toasts = new DeckToasts(byId("deck-toast-lane"), (route) => this.router?.go(route), signal);
-    this.strip = new DeckCommandStrip(byId("deck-command-strip"));
+    this.strip = new DeckCommandStrip(byId("deck-command-strip"), ctx, {
+      notice: () => { /* D1.5 promotes command outcomes into the strip status line. */ },
+    }, signal);
     this.removeDebug = installDeckDebug(ctx, (id) => this.router?.go({ name: "battle", params: { id, label: "Theater demo" } }));
     byId<HTMLFormElement>("deck-join-form").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -84,19 +87,7 @@ class DeckShell implements Shell {
       const action = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]")?.dataset.deckAct;
       if (action === "close-help") this.setHelpOpen(false);
     }, { signal });
-    window.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape") return;
-      if (!byId("deck-help").hidden) {
-        event.preventDefault();
-        this.setHelpOpen(false);
-      } else if (ctx.renderer.isSystemScrubbing()) {
-        event.preventDefault();
-        ctx.renderer.cancelSystemScrub();
-      } else if (this.router?.current) {
-        event.preventDefault();
-        this.router.back();
-      }
-    }, { signal });
+    window.addEventListener("keydown", (event) => this.keyDown(event), { signal });
     this.syncSessionVisibility();
     this.renderChrome(true);
     if (ctx.state.playerId !== null) this.openRoute("command");
@@ -129,6 +120,7 @@ class DeckShell implements Shell {
 
   onViewTick(): void {
     this.map?.tick();
+    this.strip?.render();
     this.renderChrome();
     this.renderZoom();
   }
@@ -186,6 +178,91 @@ class DeckShell implements Shell {
 
   private openRoute(name: DeckRouteName): void {
     this.router?.go({ name });
+  }
+
+  private keyDown(event: KeyboardEvent): void {
+    if (!this.ctx || this.editableTarget(event.target)) return;
+    const key = event.key;
+    if (key === "Enter" && this.ctx.state.pendingIntent) {
+      event.preventDefault();
+      this.ctx.intent.confirmPendingIntent();
+      this.strip?.render(true);
+      return;
+    }
+    if (key === "Escape") {
+      if (this.escapeOneLayer()) event.preventDefault();
+      return;
+    }
+    const routeKeys: Partial<Record<string, DeckRouteName>> = {
+      m: "market", v: "fleets", r: "research", p: "officers",
+      u: "operations", y: "syndicate", c: "faction", l: "log", s: "system",
+    };
+    const route = routeKeys[key.toLowerCase()];
+    if (route) {
+      event.preventDefault();
+      this.openRoute(route);
+      return;
+    }
+    const fleet = this.ctx.state.selectedShipId
+      ? this.ctx.state.ghosts.find((entry) => entry.id === this.ctx!.state.selectedShipId && entry.own)
+      : undefined;
+    if (key.toLowerCase() === "j" && fleet && jumpCapableForKey(fleet)) {
+      event.preventDefault();
+      this.ctx.intent.armJumpAiming(fleet);
+      this.strip?.render(true);
+    } else if (key.toLowerCase() === "g" && fleet && guardCapableForKey(fleet)) {
+      event.preventDefault();
+      this.ctx.intent.armGuardAiming(fleet);
+      this.strip?.render(true);
+    } else if (key === "+" || key === "=") {
+      event.preventDefault();
+      this.map?.zoomIn();
+    } else if (key === "-" || key === "_") {
+      event.preventDefault();
+      this.map?.zoomOut();
+    } else if (key === "?") {
+      event.preventDefault();
+      this.setHelpOpen(true);
+    }
+  }
+
+  private escapeOneLayer(): boolean {
+    if (!this.ctx) return false;
+    if (this.ctx.state.pendingIntent) {
+      this.ctx.intent.clearPendingIntent();
+    } else if (this.ctx.intent.intentAiming.jump) {
+      this.ctx.intent.clearJumpAiming();
+    } else if (this.ctx.intent.intentAiming.guard) {
+      this.ctx.intent.clearGuardAiming();
+    } else if (this.ctx.renderer.isSystemScrubbing()) {
+      this.ctx.renderer.cancelSystemScrub();
+    } else if (!byId("deck-help").hidden) {
+      this.setHelpOpen(false);
+    } else if (this.ctx.renderer.viewMode.type === "battle") {
+      this.ctx.renderer.exitBattleView();
+      if (this.router?.current) this.router.back();
+    } else if (this.router?.current) {
+      this.router.back();
+    } else if (this.ctx.state.selectedShipId || this.ctx.state.selectedShipIds.size) {
+      this.ctx.intent.clearPendingIntent(true);
+      this.ctx.intent.clearJumpAiming(true);
+      this.ctx.intent.clearGuardAiming(true);
+      this.ctx.state.selectedShipId = null;
+      this.ctx.state.selectedShipIds.clear();
+      this.ctx.state.selectedOrderId = null;
+      this.ctx.renderer.stateVersion++;
+    } else {
+      return false;
+    }
+    this.strip?.render(true);
+    return true;
+  }
+
+  private editableTarget(target: EventTarget | null): boolean {
+    return target instanceof HTMLInputElement
+      || target instanceof HTMLSelectElement
+      || target instanceof HTMLTextAreaElement
+      || (target instanceof HTMLElement && target.isContentEditable);
   }
 
   private openMapTarget(target: SelectTarget): void {

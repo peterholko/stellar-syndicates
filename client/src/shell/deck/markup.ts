@@ -65,8 +65,13 @@ export function mountDeckMarkup(root: HTMLElement): void {
               <kbd>−</kbd><span>Zoom out</span>
               <kbd>⊡</kbd><span>Fit the galaxy</span>
               <kbd>Esc</kbd><span>Back one layer</span>
+              <kbd>Enter</kbd><span>Confirm the pending fleet order</span>
+              <kbd>J / G</kbd><span>Arm Jump / Guard for the selected fleet</span>
+              <kbd>M V R P</kbd><span>Market · Fleets · Research · Officers</span>
+              <kbd>U Y C L</kbd><span>Operations · Syndicate · Faction · Log</span>
+              <kbd>S</kbd><span>System workspace</span>
             </div>
-            <p>Fleet commands and their accelerators arrive with the D1 command grammar.</p>
+            <p>Right-click inspects map objects without disturbing the selected fleet.</p>
           </div>
         </section>
       </div>
