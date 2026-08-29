@@ -23,7 +23,7 @@ import { orderEtaRange, orderObject, orderPoint, TCA_INCIDENT_LOSS_UI } from "..
 import { projectedBand } from "../../core/derive/research";
 import type { CoreEvent } from "../../core/events";
 import { jumpDepartureKey } from "../../core/session";
-import { icon, label, type IconKey } from "../../icons";
+import { icon, label } from "../../icons";
 import {
   fleetCargoManifest,
   fleetCargoUnits,
@@ -405,7 +405,7 @@ export class DeckFleetRoutes {
     const manifest = fleetCargoManifest(g);
     const used = fleetCargoUnits(g);
     const capacity = fleetCargoCapacity(g);
-    return `<div class="deck-subhead"><b>${icon("cargo", "sm")} Cargo</b><span>${fmt(used)} / ${fmt(capacity)} units</span></div><div class="deck-fleet-cargo">${manifest.length ? manifest.map((entry) => `<span>${icon(entry.commodity as IconKey, "sm")}<b>${fmt(entry.units)}</b> ${esc(label(entry.commodity))}</span>`).join("") : `<span class="deck-muted">Empty hold</span>`}</div>`;
+    return `<div class="deck-subhead"><b>${icon("cargo", "sm")} Cargo</b><span>${fmt(used)} / ${fmt(capacity)} units</span></div><div class="deck-fleet-cargo">${manifest.length ? manifest.map((entry) => `<span>${commodityIcon(entry.commodity)}<b>${fmt(entry.units)}</b> ${esc(label(entry.commodity))}</span>`).join("") : `<span class="deck-muted">Empty hold</span>`}</div>`;
   }
 
   private logisticsHtml(g: GhostView): string {
@@ -464,12 +464,12 @@ export class DeckFleetRoutes {
   private rivalPayload(g: GhostView): string {
     if (g.kind === "convoy") {
       const manifest = fleetCargoManifest(g);
-      return `<div class="deck-subhead"><b>Convention broadcast</b><span>${g.route?.length ? `${g.route.length} route legs` : "route unavailable"}</span></div><div class="deck-fleet-cargo">${manifest.length ? manifest.map((entry) => `<span>${icon(entry.commodity as IconKey, "sm")}<b>${fmt(entry.units)}</b> ${esc(label(entry.commodity))}</span>`).join("") : `<span class="deck-muted">Cargo unknown outside sensor coverage.</span>`}</div>`;
+      return `<div class="deck-subhead"><b>Convention broadcast</b><span>${g.route?.length ? `${g.route.length} route legs` : "route unavailable"}</span></div><div class="deck-fleet-cargo">${manifest.length ? manifest.map((entry) => `<span>${commodityIcon(entry.commodity)}<b>${fmt(entry.units)}</b> ${esc(label(entry.commodity))}</span>`).join("") : `<span class="deck-muted">Cargo unknown outside sensor coverage.</span>`}</div>`;
     }
     if (g.kind === "freighter") {
       const mine = (g.manifest ?? []).filter((entry) => entry.mine);
       const theirs = (g.manifest ?? []).filter((entry) => !entry.mine);
-      const rows = [...mine, ...theirs].map((entry: ManifestEntryView) => `<span>${icon(entry.commodity as IconKey, "sm")}<b>${fmt(entry.units)}</b> ${esc(label(entry.commodity))} <small>${entry.direction === "outbound" ? "→ system" : "→ hub"}</small></span>`).join("");
+      const rows = [...mine, ...theirs].map((entry: ManifestEntryView) => `<span>${commodityIcon(entry.commodity)}<b>${fmt(entry.units)}</b> ${esc(label(entry.commodity))} <small>${entry.direction === "outbound" ? "→ system" : "→ hub"}</small></span>`).join("");
       return `<div class="deck-subhead"><b>Authority manifest</b><span>${g.revealed ? "sensor-resolved" : "your lots only"}</span></div><div class="deck-fleet-cargo">${rows || `<span class="deck-muted">Other lots unknown.</span>`}</div><div class="deck-alert"><b>Authority sanctuary</b><span>Attack is possible, but cited and priced through standing.</span></div>`;
     }
     return `<div class="deck-alert"><b>${g.kind === "scout" ? "Silent scout" : "Dark combat contact"}</b><span>Visible only because this report was detected inside sensor range.${g.signature == null ? "" : ` Signature ${g.signature.toFixed(2)}×.`}</span></div>`;
@@ -709,6 +709,10 @@ function commandButton(action: string, title: string, copy: string, modifier = "
 
 function stat(name: string, value: string, tone = ""): string {
   return `<dl class="deck-stat${tone ? ` is-${tone}` : ""}"><dt>${esc(name)}</dt><dd>${esc(value)}</dd></dl>`;
+}
+
+function commodityIcon(commodity: Commodity): string {
+  return `<img class="icon icon--resource" src="/art/ui_icons/resource/${commodity}.png" alt="">`;
 }
 
 function shortEta(seconds: number): string {

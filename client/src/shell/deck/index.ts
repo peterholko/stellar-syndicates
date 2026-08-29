@@ -427,10 +427,10 @@ class DeckShell implements Shell {
       this.ctx.intent.clearJumpAiming();
     } else if (this.ctx.intent.intentAiming.guard) {
       this.ctx.intent.clearGuardAiming();
-    } else if (this.theaters?.closeTop()) {
-      // Focused replay/landing overlays own Esc before workspace navigation.
     } else if (this.ctx.renderer.isSystemScrubbing()) {
       this.ctx.renderer.cancelSystemScrub();
+    } else if (this.theaters?.closeTop()) {
+      // Focused replay/landing overlays own Esc before workspace navigation.
     } else if (!byId("deck-help").hidden) {
       this.setHelpOpen(false);
     } else if (this.ctx.renderer.viewMode.type === "battle") {
