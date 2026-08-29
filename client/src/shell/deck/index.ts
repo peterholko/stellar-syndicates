@@ -18,6 +18,7 @@ import { DeckCommandRoutes } from "./command";
 import { deckTradeNotice, DeckMarketRoutes } from "./market";
 import { DeckPolicyRoutes } from "./policy";
 import { DeckFleetRoutes } from "./fleet";
+import { DeckLogRoutes } from "./log";
 import { bindResearchNet } from "../../core/derive/research";
 import { DeckRosterRoutes } from "./roster";
 import { DeckToasts } from "./toasts";
@@ -39,6 +40,7 @@ class DeckShell implements Shell {
   private market: DeckMarketRoutes | null = null;
   private policy: DeckPolicyRoutes | null = null;
   private fleet: DeckFleetRoutes | null = null;
+  private log: DeckLogRoutes | null = null;
   private roster: DeckRosterRoutes | null = null;
   private removeDebug: (() => void) | null = null;
   private chromeSignature = "";
@@ -73,10 +75,17 @@ class DeckShell implements Shell {
       notice: (html) => this.setStatus(html),
       toast: (title, message, tone, destination) => this.toasts?.push({ title, message, tone, destination }),
     });
+    this.log = new DeckLogRoutes(byId("deck-workspace-body"), ctx, {
+      go: (route) => this.router?.go(route),
+      focusSystem: (id) => this.focusInboxSystem(id),
+      focusFleet: (id) => this.focusInboxFleet(id),
+    });
     this.command = new DeckCommandRoutes(byId("deck-workspace-body"), byId("deck-founding"), ctx, {
       go: (route) => this.router?.go(route),
       focusFleet: (id) => this.map?.focusFleet(id),
       notice: (html) => this.setStatus(html),
+      inbox: () => this.log?.items() ?? [],
+      runInboxPrimary: (key) => this.log?.runPrimary(key),
     });
     this.market = new DeckMarketRoutes(byId("deck-workspace-body"), ctx, {
       go: (route) => this.router?.go(route),
@@ -111,6 +120,7 @@ class DeckShell implements Shell {
       if (!button) return;
       if (this.roster?.handleAction(button, this.router?.current ?? null)) return;
       if (this.fleet?.handleAction(button, this.router?.current ?? null)) return;
+      if (this.log?.handleAction(button, this.router?.current ?? null)) return;
       if (this.command?.handleWorkspaceAction(button, this.router?.current ?? null)) return;
       if (this.empire?.handleAction(button, this.router?.current ?? null)) return;
       if (this.market?.handleAction(button, this.router?.current ?? null)) return;
@@ -163,6 +173,7 @@ class DeckShell implements Shell {
   onCore(events: CoreEvent[]): void {
     this.empire?.onCore(events, this.router?.current ?? null);
     this.market?.onCore(events, this.router?.current ?? null);
+    this.log?.onCore(events, this.router?.current ?? null);
     for (const event of events) {
       const fleetAbsorbed = this.fleet?.onCoreEvent(event, this.router?.current ?? null) ?? false;
       if (event.kind === "Welcomed") {
@@ -207,6 +218,7 @@ class DeckShell implements Shell {
     this.policy?.render(this.router?.current ?? null);
     this.fleet?.render(this.router?.current ?? null);
     this.roster?.render(this.router?.current ?? null);
+    this.log?.render(this.router?.current ?? null);
   }
 
   framePolicy() {
@@ -236,6 +248,7 @@ class DeckShell implements Shell {
     this.policy?.invalidate();
     this.fleet?.invalidate();
     this.roster?.invalidate();
+    this.log?.invalidate();
     this.router = null;
     this.workspace = null;
     this.map = null;
@@ -247,6 +260,7 @@ class DeckShell implements Shell {
     this.policy = null;
     this.fleet = null;
     this.roster = null;
+    this.log = null;
     bindFleetNet(() => null);
     bindResearchNet(() => null);
     bindMarketDerive(() => null, () => []);
@@ -458,7 +472,8 @@ class DeckShell implements Shell {
     const policyHandled = this.policy?.render(route, true) ?? false;
     const fleetHandled = this.fleet?.render(route, true) ?? false;
     const rosterHandled = this.roster?.render(route, true) ?? false;
-    if (!commandHandled && !empireHandled && !marketHandled && !policyHandled && !fleetHandled && !rosterHandled) this.renderPlaceholder(route);
+    const logHandled = this.log?.render(route, true) ?? false;
+    if (!commandHandled && !empireHandled && !marketHandled && !policyHandled && !fleetHandled && !rosterHandled && !logHandled) this.renderPlaceholder(route);
     this.renderActiveNav(route.name);
   }
 
@@ -594,8 +609,27 @@ class DeckShell implements Shell {
       operations: state.operations.filter((operation) => operation.state === "offered" || (operation.state === "active" && !operation.joined)).length,
       syndicate: state.syndicateInvites.length,
       faction: (state.charter && state.charter.status !== "good_standing" ? 1 : 0) + (state.diplomacy?.incoming.length ?? 0),
-      log: logDecisions,
+      log: this.log?.badgeCount(this.router?.current ?? null) ?? logDecisions,
     };
+  }
+
+  private focusInboxSystem(id: string): void {
+    if (!this.ctx) return;
+    const system = this.ctx.state.galaxy?.systems.find((entry) => entry.id === id);
+    if (!system) return;
+    this.ctx.state.selectedSystemId = id;
+    this.ctx.renderer.centerOnWorld(system.pos);
+    (this.ctx.renderer as typeof this.ctx.renderer & { pingWorld?: (pos: { x: number; y: number }) => void }).pingWorld?.(system.pos);
+    this.ctx.renderer.stateVersion++;
+    this.router?.go({ name: "system", params: { id, systemLabel: system.name } });
+  }
+
+  private focusInboxFleet(id: string): void {
+    if (!this.ctx) return;
+    const fleet = this.ctx.state.ghosts.find((entry) => entry.id === id);
+    if (!fleet) return;
+    this.map?.focusFleet(id);
+    (this.ctx.renderer as typeof this.ctx.renderer & { pingWorld?: (pos: { x: number; y: number }) => void }).pingWorld?.(fleet.pos);
   }
 }
 

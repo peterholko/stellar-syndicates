@@ -1,11 +1,12 @@
 import { fmtDur } from "../../core/derive/format";
 import { foundingHomeSystemId } from "../../core/derive/geo";
 import { nextDecisionLabel } from "../../core/derive/orders";
-import { icon, label, type IconKey } from "../../icons";
+import { icon, label } from "../../icons";
 import type { BodyView, FoundingStage, FoundingView, GhostView, SystemInfo, SystemStateView } from "../../protocol";
 import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext } from "../types";
+import type { DeckInboxItem } from "./log";
 import type { DeckRoute } from "./router";
 
 const FOUNDING_MINIMIZED_KEY = "stellar-syndicates:founding-guide-minimized";
@@ -20,6 +21,8 @@ interface CommandHooks {
   go(route: DeckRoute): void;
   focusFleet(id: string): void;
   notice(html: string): void;
+  inbox(): DeckInboxItem[];
+  runInboxPrimary(key: string): void;
 }
 
 interface FoundingContent {
@@ -29,26 +32,14 @@ interface FoundingContent {
   label: string;
 }
 
-interface CommandDecision {
-  key: string;
-  weight: number;
-  tone: "bad" | "warn" | "info" | "good";
-  icon: IconKey;
-  title: string;
-  copy: string;
-  route?: DeckRoute;
-  systemId?: string;
-  fleetId?: string;
-}
-
 /** Command is the routed home for the served picture. The short digest is a
- * pure presentation of data already delivered to this client; D5 expands the
- * same slot with the complete decision-inbox vocabulary. */
+ * pure presentation of data already delivered to this client, using the same
+ * complete decision-inbox vocabulary as Log. */
 export class DeckCommandRoutes {
   private minimized = false;
   private signature = "";
   private foundingSignature = "";
-  private decisions: CommandDecision[] = [];
+  private decisions: DeckInboxItem[] = [];
 
   constructor(
     private readonly workspaceRoot: HTMLElement,
@@ -70,7 +61,7 @@ export class DeckCommandRoutes {
     if (!force && signature === this.signature) return true;
     if (renderDeferred(this.workspaceRoot.id, () => this.render(route, true))) return true;
     this.signature = signature;
-    this.decisions = this.commandDecisions().slice(0, 4);
+    this.decisions = this.hooks.inbox().slice(0, 4);
     setHtml(this.workspaceRoot, this.commandHtml());
     return true;
   }
@@ -92,9 +83,8 @@ export class DeckCommandRoutes {
     if (button.dataset.deckAct !== "command-decision") return false;
     const decision = this.decisions[Number(button.dataset.index)];
     if (!decision) return true;
-    if (decision.fleetId) this.hooks.focusFleet(decision.fleetId);
-    else if (decision.systemId) this.focusSystem(decision.systemId);
-    if (decision.route) this.hooks.go(decision.route);
+    this.hooks.runInboxPrimary(decision.key);
+    this.signature = "";
     return true;
   }
 
@@ -158,35 +148,13 @@ export class DeckCommandRoutes {
       ? `<article class="deck-command-progress"><header><span>Founding programme</span><b>${step}/12</b></header><div><i style="width:${(step / 12 * 100).toFixed(1)}%"></i></div><p>${founding.stage === "complete" ? "Founding complete. Ordinary expansion and trade clocks now apply." : this.foundingContent(founding).title}</p></article>`
       : "";
     const decisions = this.decisions.length
-      ? this.decisions.map((decision, index) => `<article class="deck-decision is-${decision.tone}"><span>${icon(decision.icon, "md")}</span><div><b>${esc(decision.title)}</b><p>${esc(decision.copy)}</p></div>${decision.route || decision.systemId || decision.fleetId ? `<button type="button" data-deck-act="command-decision" data-index="${index}">Focus</button>` : ""}</article>`).join("")
+      ? this.decisions.map((decision, index) => `<article class="deck-decision is-${decision.tone === "negative" ? "bad" : decision.tone}"><span>${icon(decision.icon, "md")}</span><div><b>${esc(decision.headline)}</b><p>${esc(decision.stakes ?? "Served information needs your attention.")}</p></div>${decision.actions.length ? `<button type="button" data-deck-act="command-decision" data-index="${index}">${esc((decision.actions.find((action) => action.primary) ?? decision.actions[0]).label)}</button>` : ""}</article>`).join("")
       : `<div class="deck-command-clear">${icon("success", "md")}<span><b>Command picture clear</b><small>${esc(nextDecisionLabel())}</small></span></div>`;
     const operations = this.ctx.state.operations.filter((entry) => entry.state === "active" || entry.state === "offered").slice(0, 3);
     const objectives = operations.length
       ? operations.map((entry) => `<button type="button" class="deck-objective" data-deck-act="command-operations"><span><b>${esc(operationTitle(entry))}</b><small>${esc(label(entry.state))} · ${entry.progress}/${entry.goal}</small></span><em>${entry.expires_at > this.ctx.state.simTime ? fmtDur(entry.expires_at - this.ctx.state.simTime) : "closing"}</em></button>`).join("")
       : `<div class="deck-empty-inline">No active or offered operations.</div>`;
     return `<section class="deck-page deck-command-home"><header class="deck-page__lead"><span>Served command picture</span><h2>${esc(this.ctx.state.name || "Corporation")}</h2><p>${esc(label(this.ctx.state.midgameStage))} · ${esc(nextDecisionLabel())}</p></header>${foundingCard}<section class="deck-section"><header><div><h3>Decision digest</h3><p>The four highest-pressure facts already visible in your delayed picture.</p></div><b>${this.decisions.length}</b></header><div class="deck-decision-list">${decisions}</div></section><section class="deck-section"><header><div><h3>Fleet policy</h3><p>Automate physical supply routes and set the corporation's default autonomous behavior.</p></div></header><div class="deck-policy-links"><button type="button" data-deck-act="command-logistics">${icon("freightRoute", "sm")} Standing logistics</button><button type="button" data-deck-act="command-doctrine">${icon("doctrine", "sm")} Fleet doctrine</button></div></section><section class="deck-section"><header><div><h3>Objectives</h3><p>Contracts and strategic work visible to the corporation.</p></div></header>${objectives}<button type="button" class="deck-section-link" data-deck-act="command-operations">Open Operations</button></section></section>`;
-  }
-
-  private commandDecisions(): CommandDecision[] {
-    const out: CommandDecision[] = [];
-    const push = (entry: CommandDecision) => out.push(entry);
-    for (const battle of this.ctx.state.battles) {
-      if (!battle.own) continue;
-      const fleet = this.ctx.state.ghosts.find((entry) => entry.own && battle.participants.includes(entry.id));
-      push({ key: `battle:${battle.id}`, weight: 100, tone: "bad", icon: "battle", title: "Your fleet is engaged", copy: "A battle is underway. Open it before issuing unrelated commands.", route: { name: "battle", params: { id: battle.id, label: "Ongoing battle" } }, fleetId: fleet?.id });
-    }
-    for (const system of this.ctx.state.systems.filter((entry) => entry.owner === this.ctx.state.playerId)) {
-      const name = systemName(this.ctx, system.id);
-      const route: DeckRoute = { name: "system", params: { id: system.id, systemLabel: name } };
-      if (system.blockade) push({ key: `blockade:${system.id}`, weight: 90, tone: "bad", icon: "blockade", title: `${name} is blockaded`, copy: "Shipping is interdicted. Break the blockade before logistics can resume.", route, systemId: system.id });
-      if (system.storage_cap > 0 && system.storage_used >= system.storage_cap) push({ key: `storage:${system.id}`, weight: 70, tone: "warn", icon: "storage", title: `${name} storage is full`, copy: "Production idles at capacity. Ship goods or build storage.", route, systemId: system.id });
-      if (system.population > 0 && !system.habitat_fed) push({ key: `food:${system.id}`, weight: 65, tone: "warn", icon: "unfed", title: `${name} is ${label(system.food_state)}`, copy: "Supply is constraining workforce and migration.", route, systemId: system.id });
-      if (system.slots_total > 0 && system.slots_used === 0 && !system.builds.length) push({ key: `idle:${system.id}`, weight: 42, tone: "info", icon: "build", title: `${name} has no development`, copy: `${system.slots_total} world slots are idle. Give this holding a role.`, route, systemId: system.id });
-    }
-    const latestWarn = [...this.ctx.state.timeline].reverse().find((entry) => entry.severity === "bad" || entry.severity === "warn");
-    if (latestWarn) push({ key: `timeline:${latestWarn.at_time}`, weight: 35, tone: latestWarn.severity === "bad" ? "bad" : "warn", icon: "warning", title: "Recent command report", copy: latestWarn.text, route: { name: "log" } });
-    out.sort((a, b) => b.weight - a.weight || a.key.localeCompare(b.key));
-    return out;
   }
 
   private foundingContent(founding: FoundingView): FoundingContent {
@@ -323,10 +291,6 @@ function bestMineBody(system: SystemStateView): BodyView | undefined {
 
 function operationTitle(operation: { kind: { kind: string } }): string {
   return label(operation.kind.kind);
-}
-
-function systemName(ctx: CoreContext, id: string): string {
-  return ctx.state.galaxy?.systems.find((entry) => entry.id === id)?.name ?? id;
 }
 
 function esc(value: string): string {
