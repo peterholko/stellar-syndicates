@@ -7,7 +7,7 @@ import { installPressGuard } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext, Rect, Shell } from "../types";
 import { mountDeckMarkup } from "./markup";
-import { DECK_ROUTES, DeckRouter, type DeckRouteName } from "./router";
+import { DECK_ROUTES, DeckRouter, type DeckCrumb, type DeckRoute, type DeckRouteName } from "./router";
 import { DeckCommandStrip } from "./strip";
 import { DeckToasts } from "./toasts";
 import { DeckWorkspace } from "./workspace";
@@ -23,6 +23,7 @@ class DeckShell implements Shell {
   private toasts: DeckToasts | null = null;
   private strip: DeckCommandStrip | null = null;
   private chromeSignature = "";
+  private activeCrumbs: readonly DeckCrumb[] = [];
 
   async mount(root: HTMLElement, ctx: CoreContext): Promise<void> {
     this.root = root;
@@ -30,11 +31,11 @@ class DeckShell implements Shell {
     this.abort = new AbortController();
     mountDeckMarkup(root);
     installPressGuard();
-    this.router = new DeckRouter();
-    this.workspace = new DeckWorkspace(byId("deck-workspace"));
+    const signal = this.abort.signal;
+    this.router = new DeckRouter((route, stack) => this.routeChanged(route, stack), signal);
+    this.workspace = new DeckWorkspace(byId("deck-workspace"), ctx.renderer, signal);
     this.toasts = new DeckToasts(byId("deck-toast-lane"));
     this.strip = new DeckCommandStrip(byId("deck-command-strip"));
-    const signal = this.abort.signal;
     byId<HTMLFormElement>("deck-join-form").addEventListener("submit", (event) => {
       event.preventDefault();
       this.join();
@@ -43,6 +44,17 @@ class DeckShell implements Shell {
       const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act=route]");
       const route = button?.dataset.route as DeckRouteName | undefined;
       if (route && route in DECK_ROUTES) this.openRoute(route);
+    }, { signal });
+    byId("deck-workspace").addEventListener("click", (event) => {
+      const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
+      if (!button) return;
+      if (button.dataset.deckAct === "back") this.router?.back();
+      else if (button.dataset.deckAct === "close") this.router?.close();
+      else if (button.dataset.deckAct === "width") this.workspace?.toggleWidth();
+      else if (button.dataset.deckAct === "breadcrumb") {
+        const crumb = this.activeCrumbs[Number(button.dataset.crumbIndex)];
+        if (crumb) this.router?.go(crumb.route);
+      }
     }, { signal });
     this.syncSessionVisibility();
     this.renderChrome(true);
@@ -88,6 +100,7 @@ class DeckShell implements Shell {
   teardown(): void {
     this.abort?.abort();
     this.router?.teardown();
+    this.workspace?.teardown();
     this.toasts?.teardown();
     this.strip?.clear();
     this.router = null;
@@ -99,6 +112,7 @@ class DeckShell implements Shell {
     this.root = null;
     this.ctx = null;
     this.chromeSignature = "";
+    this.activeCrumbs = [];
   }
 
   private join(): void {
@@ -117,14 +131,41 @@ class DeckShell implements Shell {
   }
 
   private openRoute(name: DeckRouteName): void {
-    if (!this.router || !this.workspace) return;
-    const route = { name };
-    this.router.go(route);
-    this.workspace.show(route);
-    byId("deck-workspace-title").textContent = DECK_ROUTES[name].title;
-    byId("deck-workspace-body").innerHTML = `<div class="deck-placeholder"><span>Route scaffold</span><b>${DECK_ROUTES[name].title}</b><p>Operational content lands in its scheduled Deck phase.</p></div>`;
+    this.router?.go({ name });
+  }
+
+  private routeChanged(route: DeckRoute | null, stack: readonly DeckRoute[]): void {
+    if (!route || !this.workspace || !this.router) {
+      this.activeCrumbs = [];
+      this.workspace?.close();
+      this.renderActiveNav(null);
+      return;
+    }
+    this.activeCrumbs = this.router.breadcrumbs(route);
+    this.workspace.show(route, this.activeCrumbs, stack.length > 1);
+    this.renderPlaceholder(route);
+    this.renderActiveNav(route.name);
+  }
+
+  private renderPlaceholder(route: DeckRoute): void {
+    const body = byId("deck-workspace-body");
+    body.replaceChildren();
+    const placeholder = document.createElement("div");
+    placeholder.className = "deck-placeholder";
+    const eyebrow = document.createElement("span");
+    eyebrow.textContent = "Route scaffold";
+    const title = document.createElement("b");
+    title.textContent = DECK_ROUTES[route.name].title;
+    const copy = document.createElement("p");
+    copy.textContent = "Operational content lands in its scheduled Deck phase.";
+    placeholder.append(eyebrow, title, copy);
+    body.append(placeholder);
+  }
+
+  private renderActiveNav(name: DeckRouteName | null): void {
     for (const button of byId("deck-nav").querySelectorAll<HTMLButtonElement>("[data-route]")) {
-      button.setAttribute("aria-current", button.dataset.route === name ? "page" : "false");
+      if (button.dataset.route === name) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
     }
   }
 
