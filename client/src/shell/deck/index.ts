@@ -21,6 +21,7 @@ import { DeckFleetRoutes } from "./fleet";
 import { DeckLogRoutes } from "./log";
 import { bindResearchNet } from "../../core/derive/research";
 import { DeckRosterRoutes } from "./roster";
+import { DeckStrategicRoutes } from "./strategic";
 import { DeckToasts } from "./toasts";
 import { DeckWorkspace } from "./workspace";
 
@@ -42,6 +43,7 @@ class DeckShell implements Shell {
   private fleet: DeckFleetRoutes | null = null;
   private log: DeckLogRoutes | null = null;
   private roster: DeckRosterRoutes | null = null;
+  private strategic: DeckStrategicRoutes | null = null;
   private removeDebug: (() => void) | null = null;
   private chromeSignature = "";
   private zoomSignature = "";
@@ -103,6 +105,12 @@ class DeckShell implements Shell {
       go: (route) => this.router?.go(route),
       notice: (html) => this.setStatus(html),
     });
+    this.strategic = new DeckStrategicRoutes(byId("deck-workspace-body"), ctx, {
+      go: (route) => this.router?.go(route),
+      back: () => this.router?.back(),
+      notice: (html) => this.setStatus(html),
+      openBattleViewer: () => this.setStatus("<b>Battle recording ready</b> · opening the theater…"),
+    });
     bindFleetNet(() => ctx.net);
     bindResearchNet(() => ctx.net);
     bindMarketDerive(() => ctx.net, () => this.empire?.composedFit ?? []);
@@ -120,6 +128,7 @@ class DeckShell implements Shell {
       const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
       if (!button) return;
       if (this.roster?.handleAction(button, this.router?.current ?? null)) return;
+      if (this.strategic?.handleAction(button, this.router?.current ?? null)) return;
       if (this.fleet?.handleAction(button, this.router?.current ?? null)) return;
       if (this.log?.handleAction(button, this.router?.current ?? null)) return;
       if (this.command?.handleWorkspaceAction(button, this.router?.current ?? null)) return;
@@ -144,6 +153,7 @@ class DeckShell implements Shell {
         if (event.type === "change" && target instanceof HTMLInputElement && target.type !== "checkbox") return;
         if (this.fleet?.handleInput(target, this.router?.current ?? null)) return;
         if (this.market?.handleInput(target, this.router?.current ?? null)) return;
+        if (target instanceof HTMLInputElement && this.strategic?.handleInput(target, this.router?.current ?? null)) return;
         this.policy?.handleInput(target, this.router?.current ?? null);
       }
     };
@@ -220,6 +230,7 @@ class DeckShell implements Shell {
     this.fleet?.render(this.router?.current ?? null);
     this.roster?.render(this.router?.current ?? null);
     this.log?.render(this.router?.current ?? null);
+    this.strategic?.render(this.router?.current ?? null);
   }
 
   framePolicy() {
@@ -251,6 +262,7 @@ class DeckShell implements Shell {
     this.fleet?.invalidate();
     this.roster?.invalidate();
     this.log?.invalidate();
+    this.strategic?.invalidate();
     this.router = null;
     this.workspace = null;
     this.map = null;
@@ -263,6 +275,7 @@ class DeckShell implements Shell {
     this.fleet = null;
     this.roster = null;
     this.log = null;
+    this.strategic = null;
     bindFleetNet(() => null);
     bindResearchNet(() => null);
     bindMarketDerive(() => null, () => []);
@@ -430,8 +443,10 @@ class DeckShell implements Shell {
         this.router.go({ name: "battle", params: { id: target.id, label: "Ongoing battle" } });
         break;
       case "aftermath":
+        this.router.go({ name: "battle", params: { id: String(target.id), report: "battle", label: "Battle report" } });
+        break;
       case "capture":
-        this.router.go({ name: "log", params: { marker: String(target.id), label: "Battle report" } });
+        this.router.go({ name: "battle", params: { id: String(target.id), report: "capture", label: "Capture report" } });
         break;
       case "systemBody": {
         const systemId = this.ctx.renderer.viewMode.type === "system" ? this.ctx.renderer.viewMode.systemId : state.selectedSystemId ?? "";
@@ -492,7 +507,8 @@ class DeckShell implements Shell {
     const fleetHandled = this.fleet?.render(route, true) ?? false;
     const rosterHandled = this.roster?.render(route, true) ?? false;
     const logHandled = this.log?.render(route, true) ?? false;
-    if (!commandHandled && !empireHandled && !marketHandled && !policyHandled && !fleetHandled && !rosterHandled && !logHandled) this.renderPlaceholder(route);
+    const strategicHandled = this.strategic?.render(route, true) ?? false;
+    if (!commandHandled && !empireHandled && !marketHandled && !policyHandled && !fleetHandled && !rosterHandled && !logHandled && !strategicHandled) this.renderPlaceholder(route);
     this.renderActiveNav(route.name);
   }
 

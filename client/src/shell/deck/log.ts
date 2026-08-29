@@ -252,7 +252,7 @@ export class DeckLogRoutes {
         headline: report.captor ? `You CAPTURED ${locName(report.pos)}` : `You LOST ${locName(report.pos)}`,
         stakes: report.captor ? "Territory taken — plunder seized." : "Rival marines landed at full siege and took the system.",
         age: report.learned_at,
-        actions: [{ label: "Open report", primary: true, run: () => this.hooks.go({ name: "log", params: { marker: String(report.id), label: "Capture report" } }) }, dismiss(key)] });
+        actions: [{ label: "Open report", primary: true, run: () => this.hooks.go({ name: "battle", params: { id: String(report.id), report: "capture", label: "Capture report" } }) }, dismiss(key)] });
     }
 
     for (const system of owned) {
