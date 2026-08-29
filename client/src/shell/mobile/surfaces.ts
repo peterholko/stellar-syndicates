@@ -31,7 +31,7 @@ import { renderDeferred, setHtml } from "../dom";
 import type { CoreContext } from "../types";
 import type { SheetEntry, SheetView } from "./sheets";
 import { SheetStack } from "./sheets";
-import { sheetFingerprint } from "./signature";
+import { sheetFingerprint } from "../signature";
 
 type MarketTab = "exchange" | "warehouse" | "specialists" | "modules";
 

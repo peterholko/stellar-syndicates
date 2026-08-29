@@ -10,7 +10,7 @@ import { liveSimTime } from "../../state";
 import type { CoreContext } from "../types";
 import type { SheetEntry, SheetView } from "./sheets";
 import { SheetStack } from "./sheets";
-import { sheetFingerprint } from "./signature";
+import { sheetFingerprint } from "../signature";
 
 const esc = (value: string): string => value.replace(
   /[&<>\"]/g,

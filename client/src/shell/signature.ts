@@ -20,9 +20,9 @@ const LIVE_NUMBER_FIELDS = new Set([
   "valuation",
 ]);
 
-/** Preserve discrete served state while the caller's whole-second heartbeat
+/** Preserve discrete served state while a shell's whole-second heartbeat
  * refreshes values that advance every View. Route geometry never belongs in an
- * HTML-sheet fingerprint; velocity is reduced to the status boundary it draws. */
+ * HTML-surface fingerprint; velocity is reduced to the status boundary it draws. */
 export function sheetFingerprint(slice: unknown): string {
   return JSON.stringify(slice, (key, value: unknown) => {
     if (key === "path" || key === "route" || key === "pos") return undefined;

@@ -106,7 +106,7 @@ export function setHtml(el: HTMLElement, html: string): void {
 /// Attributes that give a node a STABLE IDENTITY across rebuilds, so it is reused
 /// even when the list around it reorders (production lines re-sort as workers move).
 /// Order matters only for determinism — the first present wins.
-export const NODE_KEY_ATTRS = ["id", "data-crew", "data-build", "data-body", "data-action", "data-act", "data-mtab", "data-tab", "data-rid", "data-sy"];
+export const NODE_KEY_ATTRS = ["id", "data-deck-act", "data-crew", "data-build", "data-body", "data-action", "data-act", "data-mtab", "data-tab", "data-rid", "data-sy"];
 
 export function nodeKey(e: Element): string | null {
   for (const a of NODE_KEY_ATTRS) {

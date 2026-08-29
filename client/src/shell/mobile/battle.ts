@@ -19,7 +19,7 @@ import { liveSimTime } from "../../state";
 import type { CoreContext } from "../types";
 import type { SheetEntry, SheetView } from "./sheets";
 import { SheetStack } from "./sheets";
-import { sheetFingerprint } from "./signature";
+import { sheetFingerprint } from "../signature";
 
 const ROUND_SECS = 0.55;
 const FAMILY_COLOR: Record<SalvoFamily, string> = {

@@ -22,6 +22,30 @@
   --panel-shadow: 0 10px 40px rgba(0,0,0,0.5);
   --btn-bg: #131a2c;
   --btn-bg-hover: #1b2740;
+  /* §deck: one type, spacing, and layer vocabulary for the rebuilt desktop
+     shell. The old desktop keeps its existing declarations until cutover. */
+  --fs-fine: 11px;
+  --fs-body: 12.5px;
+  --fs-em: 14px;
+  --fs-title: 16px;
+  --fs-page: 20px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --z-map: 0;
+  --z-chrome: 10;
+  --z-workspace: 20;
+  --z-command: 30;
+  --z-overlay: 40;
+  --z-toast: 50;
+  --z-hover: 60;
+  --deck-topbar-height: 40px;
+  --deck-workspace-standard: 460px;
+  --deck-workspace-wide: 1240px;
+  --deck-control-height: 32px;
+  --deck-radius: 6px;
   /* Measured from the wrapping HUD by main.ts. All fixed map chrome starts
      from the same edge instead of independently guessing its height. */
   --hud-safe-top: 66px;

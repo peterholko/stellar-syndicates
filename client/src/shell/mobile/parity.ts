@@ -43,7 +43,7 @@ import { captainPortrait } from "../art";
 import type { CoreContext } from "../types";
 import type { SheetEntry, SheetView } from "./sheets";
 import { SheetStack } from "./sheets";
-import { sheetFingerprint } from "./signature";
+import { sheetFingerprint } from "../signature";
 
 interface ParityHooks {
   openSheet(entry: SheetEntry): void;
