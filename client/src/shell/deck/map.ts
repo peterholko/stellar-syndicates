@@ -8,6 +8,7 @@ const SYSTEM_SCRUB_STEP = 0.18;
 
 interface DeckMapHooks {
   enteredSystem(system: SystemInfo): void;
+  enteredBattle(id: string): void;
   returnedToGalaxy(): void;
   openTarget(target: SelectTarget): void;
   notice(html: string): void;
@@ -163,8 +164,7 @@ export class DeckMapInteraction {
     if (event.deltaY < 0 && battleId !== null && renderer.atBattleZoomThreshold()) {
       const battle = this.ctx.state.battles.find((entry) => entry.id === battleId);
       if (battle) {
-        renderer.enterBattleView(battle.id, battle.pos);
-        this.hooks.openTarget({ type: "ongoingBattle", id: battle.id });
+        this.hooks.enteredBattle(battle.id);
         return;
       }
     }
@@ -191,10 +191,7 @@ export class DeckMapInteraction {
     const battleId = renderer.battlePick(event.clientX, event.clientY);
     if (battleId !== null) {
       const battle = this.ctx.state.battles.find((entry) => entry.id === battleId);
-      if (battle) {
-        renderer.enterBattleView(battle.id, battle.pos);
-        this.hooks.openTarget({ type: "ongoingBattle", id: battle.id });
-      }
+      if (battle) this.hooks.enteredBattle(battle.id);
       return;
     }
     const system = this.systemUnderPoint(event.clientX, event.clientY);

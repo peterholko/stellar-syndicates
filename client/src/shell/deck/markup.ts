@@ -78,6 +78,14 @@ export function mountDeckMarkup(root: HTMLElement): void {
             <p>Shortcuts accelerate controls that remain visible in the Command Deck.</p>
           </div>
         </section>
+        <section id="deck-battle-theater" class="deck-overlay deck-theater-overlay" aria-label="Battle theater" hidden>
+          <div class="deck-theater-backdrop" data-deck-theater-dismiss></div>
+          <article id="deck-battle-theater-card" class="deck-theater-card deck-theater-card--battle"></article>
+        </section>
+        <section id="deck-ground-theater" class="deck-overlay deck-theater-overlay" aria-label="Ground theater" hidden>
+          <div class="deck-theater-backdrop" data-deck-theater-dismiss></div>
+          <article id="deck-ground-theater-card" class="deck-theater-card deck-theater-card--ground"></article>
+        </section>
       </div>
     </div>`;
 }

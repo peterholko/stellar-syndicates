@@ -3,12 +3,14 @@ import type { CoreContext } from "../types";
 
 type DebugWindow = Window & typeof globalThis & { __ss?: Record<string, unknown> };
 
-/** Keep the browser acceptance rig shell-agnostic. D0 installs the same state,
- * renderer, net, and deterministic theater fixtures that the legacy desktop
- * exposed; D3 will render these records in the Deck-owned viewer. */
+/** Keep the browser acceptance rig shell-agnostic. It exposes the same state,
+ * renderer, net, and deterministic theater fixtures through the Deck-owned
+ * overlays, including a semantic live-battle doorway. */
 export function installDeckDebug(
   ctx: CoreContext,
   openBattle: (id: string) => void,
+  openGround: (id: string) => void,
+  enterBattle: (id: string) => void,
 ): () => void {
   const target = window as DebugWindow;
   const previous = target.__ss ?? {};
@@ -52,6 +54,28 @@ export function installDeckDebug(
     }, Math.max(100, intervalMs));
     return full;
   };
+  const theaterDemoSemantic = (): BattleRecordView => {
+    if (liveTimer !== null) window.clearInterval(liveTimer);
+    liveTimer = null;
+    const full = buildTheaterDemo(false, false);
+    const record: BattleRecordView = {
+      ...full,
+      rounds: full.rounds.slice(0, 3),
+      light_frontier_tick: full.rounds[2]?.tick ?? 0,
+      outcome: null,
+    };
+    install(record);
+    ctx.state.battles = ctx.state.battles.filter((entry) => entry.id !== record.id).concat({
+      id: record.id,
+      pos: record.pos,
+      age: 0,
+      started_at: record.started_at,
+      own: true,
+      participants: [],
+    });
+    enterBattle(record.id);
+    return record;
+  };
 
   const installed = {
     ...previous,
@@ -60,6 +84,9 @@ export function installDeckDebug(
     net: ctx.net,
     theaterDemo,
     theaterDemoLive,
+    theaterDemoSemantic,
+    openBattleViewer: openBattle,
+    openGroundViewer: openGround,
   };
   target.__ss = installed;
   return () => {

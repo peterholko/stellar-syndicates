@@ -18,7 +18,7 @@ import {
   type BuildOpt,
   type Pool,
 } from "../../core/derive/market";
-import { SHIP_STATS } from "../../core/derive/orders";
+import { latestGroundRecordFor, SHIP_STATS } from "../../core/derive/orders";
 import type { CoreEvent } from "../../core/events";
 import { icon, label, type IconKey } from "../../icons";
 import type { AssignmentView, BodyView, Commodity, ModuleKind, ShipKind, SystemInfo, SystemStateView } from "../../protocol";
@@ -32,6 +32,7 @@ export type DeckSystemTab = "overview" | "worlds" | "production";
 
 interface EmpireHooks {
   go(route: DeckRoute): void;
+  openGroundViewer(id: string): void;
   notice(html: string): void;
   toast(title: string, message: string, tone?: "quiet" | "good" | "warn" | "bad", destination?: DeckRoute): void;
 }
@@ -99,6 +100,10 @@ export class DeckEmpireRoutes {
     const action = button.dataset.deckAct;
     const { system, dynamic } = this.systemContext(route);
     if (!system) return false;
+    if (action === "watch-ground" && button.dataset.ground) {
+      this.hooks.openGroundViewer(button.dataset.ground);
+      return true;
+    }
     if (action === "system-tab") {
       const tab = button.dataset.tab;
       if (tab === "build") {
@@ -217,7 +222,7 @@ export class DeckEmpireRoutes {
     if (!mine || !dynamic) {
       return `<div class="deck-stat-grid">${publicStats.join("")}</div>` +
         `<section class="deck-section"><h3>Known picture</h3><p class="deck-muted">${dynamic?.owner ? "Ownership light has arrived. Economic and workforce reports remain private to that corporation." : "No corporate claim has reached command."}</p></section>` +
-        this.opportunityHtml(dynamic);
+        this.groundActivityHtml(dynamic) + this.opportunityHtml(dynamic);
     }
     const workforce = dynamic.workforce;
     const ownerStats = [
@@ -228,7 +233,15 @@ export class DeckEmpireRoutes {
       stat("Storage", `${fmt(dynamic.storage_used)}/${fmt(dynamic.storage_cap)}`, dynamic.storage_cap > 0 && dynamic.storage_used >= dynamic.storage_cap),
       stat("Construction", String(dynamic.builds.length)),
     ];
-    return `<div class="deck-stat-grid">${ownerStats.join("")}</div>${this.opportunityHtml(dynamic)}${this.queueHtml(dynamic)}`;
+    return `<div class="deck-stat-grid">${ownerStats.join("")}</div>${this.groundActivityHtml(dynamic)}${this.opportunityHtml(dynamic)}${this.queueHtml(dynamic)}`;
+  }
+
+  private groundActivityHtml(dynamic: SystemStateView | undefined): string {
+    if (!dynamic) return "";
+    const record = latestGroundRecordFor(dynamic.id);
+    if (!record) return "";
+    const state = record.outcome === null ? "Landing in progress" : record.outcome === "taken" ? "Ground taken" : "Landing repulsed";
+    return `<section class="deck-section deck-ground-activity"><header><div><h3>${esc(state)}</h3><p>${record.outcome === null ? "Follow each round as its light reaches command." : "The arrived ground record can be replayed round by round."}</p></div><b>${record.rounds.length}</b></header><button type="button" class="is-primary" data-deck-act="watch-ground" data-ground="${esc(record.id)}">${record.outcome === null ? "Follow landing · delayed" : "View landing replay"}</button></section>`;
   }
 
   private systemWorlds(_system: SystemInfo, dynamic: SystemStateView | undefined, mine: boolean): string {

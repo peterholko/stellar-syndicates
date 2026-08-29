@@ -22,6 +22,7 @@ import { DeckLogRoutes } from "./log";
 import { bindResearchNet } from "../../core/derive/research";
 import { DeckRosterRoutes } from "./roster";
 import { DeckStrategicRoutes } from "./strategic";
+import { DeckTheaters } from "./theaters";
 import { DeckToasts } from "./toasts";
 import { DeckWorkspace } from "./workspace";
 
@@ -44,6 +45,7 @@ class DeckShell implements Shell {
   private log: DeckLogRoutes | null = null;
   private roster: DeckRosterRoutes | null = null;
   private strategic: DeckStrategicRoutes | null = null;
+  private theaters: DeckTheaters | null = null;
   private removeDebug: (() => void) | null = null;
   private chromeSignature = "";
   private zoomSignature = "";
@@ -61,6 +63,7 @@ class DeckShell implements Shell {
     this.workspace = new DeckWorkspace(byId("deck-workspace"), ctx.renderer, signal);
     this.map = new DeckMapInteraction(ctx, {
       enteredSystem: (system) => this.router?.go({ name: "system", params: { id: system.id, systemLabel: system.name } }),
+      enteredBattle: (id) => this.theaters?.enterBattle(id),
       returnedToGalaxy: () => {
         if (this.router?.current?.name === "system" || this.router?.current?.name === "world" || this.router?.current?.name === "build") {
           this.router.back();
@@ -75,6 +78,7 @@ class DeckShell implements Shell {
     }, signal);
     this.empire = new DeckEmpireRoutes(byId("deck-workspace-body"), ctx, {
       go: (route) => this.router?.go(route),
+      openGroundViewer: (id) => this.theaters?.openGround(id),
       notice: (html) => this.setStatus(html),
       toast: (title, message, tone, destination) => this.toasts?.push({ title, message, tone, destination }),
     });
@@ -109,12 +113,30 @@ class DeckShell implements Shell {
       go: (route) => this.router?.go(route),
       back: () => this.router?.back(),
       notice: (html) => this.setStatus(html),
-      openBattleViewer: () => this.setStatus("<b>Battle recording ready</b> · opening the theater…"),
+      openBattleViewer: (id) => this.theaters?.openBattle(id),
     });
+    this.theaters = new DeckTheaters(
+      byId("deck-battle-theater"),
+      byId("deck-battle-theater-card"),
+      byId("deck-ground-theater"),
+      byId("deck-ground-theater-card"),
+      ctx,
+      {
+        go: (route) => this.router?.go(route),
+        openDoctrine: () => this.router?.go({ name: "doctrine" }),
+        notice: (html) => this.setStatus(html),
+      },
+      signal,
+    );
     bindFleetNet(() => ctx.net);
     bindResearchNet(() => ctx.net);
     bindMarketDerive(() => ctx.net, () => this.empire?.composedFit ?? []);
-    this.removeDebug = installDeckDebug(ctx, (id) => this.router?.go({ name: "battle", params: { id, label: "Theater demo" } }));
+    this.removeDebug = installDeckDebug(
+      ctx,
+      (id) => this.theaters?.openBattle(id),
+      (id) => this.theaters?.openGround(id),
+      (id) => this.theaters?.enterBattle(id),
+    );
     byId<HTMLFormElement>("deck-join-form").addEventListener("submit", (event) => {
       event.preventDefault();
       this.join();
@@ -231,14 +253,15 @@ class DeckShell implements Shell {
     this.roster?.render(this.router?.current ?? null);
     this.log?.render(this.router?.current ?? null);
     this.strategic?.render(this.router?.current ?? null);
+    this.theaters?.onViewTick();
   }
 
   framePolicy() {
     // Only opaque Deck overlays may rest the galaxy ticker. Workspace and
-    // chrome always leave it live; future theaters join this single predicate.
+    // chrome leave it live; focused theaters and session overlays pause it.
     const join = document.getElementById("deck-join");
     const help = document.getElementById("deck-help");
-    const coveringOverlay = (join !== null && !join.hidden) || (help !== null && !help.hidden);
+    const coveringOverlay = (join !== null && !join.hidden) || (help !== null && !help.hidden) || (this.theaters?.isOpen ?? false);
     return { maxFps: 0, renderGalaxy: !coveringOverlay };
   }
 
@@ -263,6 +286,7 @@ class DeckShell implements Shell {
     this.roster?.invalidate();
     this.log?.invalidate();
     this.strategic?.invalidate();
+    this.theaters?.teardown();
     this.router = null;
     this.workspace = null;
     this.map = null;
@@ -276,6 +300,7 @@ class DeckShell implements Shell {
     this.roster = null;
     this.log = null;
     this.strategic = null;
+    this.theaters = null;
     bindFleetNet(() => null);
     bindResearchNet(() => null);
     bindMarketDerive(() => null, () => []);
@@ -391,6 +416,8 @@ class DeckShell implements Shell {
       this.ctx.intent.clearJumpAiming();
     } else if (this.ctx.intent.intentAiming.guard) {
       this.ctx.intent.clearGuardAiming();
+    } else if (this.theaters?.closeTop()) {
+      // Focused replay/landing overlays own Esc before workspace navigation.
     } else if (this.ctx.renderer.isSystemScrubbing()) {
       this.ctx.renderer.cancelSystemScrub();
     } else if (!byId("deck-help").hidden) {
