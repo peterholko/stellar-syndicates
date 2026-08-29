@@ -15,6 +15,7 @@ import { mountDeckMarkup } from "./markup";
 import { DECK_ROUTES, DeckRouter, type DeckCrumb, type DeckRoute, type DeckRouteName } from "./router";
 import { DeckCommandStrip } from "./strip";
 import { DeckCommandRoutes } from "./command";
+import { DeckMarketRoutes } from "./market";
 import { DeckToasts } from "./toasts";
 import { DeckWorkspace } from "./workspace";
 
@@ -31,6 +32,7 @@ class DeckShell implements Shell {
   private strip: DeckCommandStrip | null = null;
   private empire: DeckEmpireRoutes | null = null;
   private command: DeckCommandRoutes | null = null;
+  private market: DeckMarketRoutes | null = null;
   private removeDebug: (() => void) | null = null;
   private chromeSignature = "";
   private zoomSignature = "";
@@ -69,6 +71,10 @@ class DeckShell implements Shell {
       focusFleet: (id) => this.map?.focusFleet(id),
       notice: (html) => this.setStatus(html),
     });
+    this.market = new DeckMarketRoutes(byId("deck-workspace-body"), ctx, {
+      go: (route) => this.router?.go(route),
+      notice: (html) => this.setStatus(html),
+    });
     bindMarketDerive(() => ctx.net, () => this.empire?.composedFit ?? []);
     this.removeDebug = installDeckDebug(ctx, (id) => this.router?.go({ name: "battle", params: { id, label: "Theater demo" } }));
     byId<HTMLFormElement>("deck-join-form").addEventListener("submit", (event) => {
@@ -85,6 +91,7 @@ class DeckShell implements Shell {
       if (!button) return;
       if (this.command?.handleWorkspaceAction(button, this.router?.current ?? null)) return;
       if (this.empire?.handleAction(button, this.router?.current ?? null)) return;
+      if (this.market?.handleAction(button, this.router?.current ?? null)) return;
       if (button.dataset.deckAct === "back") this.router?.back();
       else if (button.dataset.deckAct === "close") this.router?.close();
       else if (button.dataset.deckAct === "width") this.workspace?.toggleWidth();
@@ -94,6 +101,14 @@ class DeckShell implements Shell {
         else if (crumb) this.router?.close();
       }
     }, { signal });
+    const marketInput = (event: Event) => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement) {
+        this.market?.handleInput(target, this.router?.current ?? null);
+      }
+    };
+    byId("deck-workspace").addEventListener("input", marketInput, { signal });
+    byId("deck-workspace").addEventListener("change", marketInput, { signal });
     byId("deck-founding").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
       if (button) this.command?.handleFoundingAction(button);
@@ -118,6 +133,7 @@ class DeckShell implements Shell {
 
   onCore(events: CoreEvent[]): void {
     this.empire?.onCore(events, this.router?.current ?? null);
+    this.market?.onCore(events, this.router?.current ?? null);
     for (const event of events) {
       if (event.kind === "Welcomed") {
         this.syncSessionVisibility();
@@ -157,6 +173,7 @@ class DeckShell implements Shell {
     this.renderZoom();
     this.empire?.render(this.router?.current ?? null);
     this.command?.render(this.router?.current ?? null);
+    this.market?.render(this.router?.current ?? null);
   }
 
   framePolicy() {
@@ -182,6 +199,7 @@ class DeckShell implements Shell {
     this.strip?.clear();
     this.empire?.invalidate();
     this.command?.teardown();
+    this.market?.invalidate();
     this.router = null;
     this.workspace = null;
     this.map = null;
@@ -189,6 +207,7 @@ class DeckShell implements Shell {
     this.strip = null;
     this.empire = null;
     this.command = null;
+    this.market = null;
     bindMarketDerive(() => null, () => []);
     this.removeDebug = null;
     this.abort = null;
@@ -394,7 +413,8 @@ class DeckShell implements Shell {
     this.workspace.show(route, this.activeCrumbs, stack.length > 1);
     const commandHandled = this.command?.render(route, true) ?? false;
     const empireHandled = this.empire?.render(route, true) ?? false;
-    if (!commandHandled && !empireHandled) this.renderPlaceholder(route);
+    const marketHandled = this.market?.render(route, true) ?? false;
+    if (!commandHandled && !empireHandled && !marketHandled) this.renderPlaceholder(route);
     this.renderActiveNav(route.name);
   }
 
