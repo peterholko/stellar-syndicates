@@ -1,5 +1,5 @@
 import { hubDockedFleets, shipKindLabel } from "../../core/derive/fleet";
-import { agoLabel, fmt, fmtDur, trend } from "../../core/derive/format";
+import { agoLabel, fmt, fmtDur, rejectText, trend } from "../../core/derive/format";
 import { systemName } from "../../core/derive/geo";
 import {
   COMMODITIES,
@@ -17,6 +17,7 @@ import {
   spendableMarketCredits,
   warehouseUnits,
 } from "../../core/derive/market";
+import { projectedBand } from "../../core/derive/research";
 import type { CoreEvent } from "../../core/events";
 import { icon, label, type IconKey } from "../../icons";
 import {
@@ -29,14 +30,22 @@ import {
   type ModuleKind,
   type ShipmentDir,
   type Side,
+  type TradeEvent,
 } from "../../protocol";
-import { liveSimTime } from "../../state";
+import { liveSimTime, state } from "../../state";
 import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext } from "../types";
 import type { DeckRoute } from "./router";
 
 export type DeckMarketTab = "exchange" | "warehouse" | "specialists" | "modules";
+
+export interface DeckTradeNotice {
+  title: string;
+  message: string;
+  tone: "quiet" | "good" | "warn" | "bad";
+  destination: DeckRoute;
+}
 
 interface MarketHooks {
   go(route: DeckRoute): void;
@@ -196,6 +205,8 @@ export class DeckMarketRoutes {
       // local reservation and only then promote an execution into Recent Orders.
       settleMarketReservation(event.trade);
       recordRecentMarketOrder(event.trade);
+      const notice = deckTradeNotice(event.trade);
+      this.feedback = notice.message;
       changed = true;
     }
     if (!changed) return;
@@ -438,6 +449,133 @@ export class DeckMarketRoutes {
   private homeSystemId(): EntityId | undefined {
     return this.homeSystem()?.id;
   }
+}
+
+/** Translate the arriving economy event—not the command-time estimate—into one
+ * shared Deck receipt. Its route makes transient news recoverable as a click
+ * into the relevant Market account surface. */
+export function deckTradeNotice(trade: TradeEvent): DeckTradeNotice {
+  const exchange = { name: "market", query: { tab: "exchange" } } as DeckRoute;
+  const warehouse = { name: "market", query: { tab: "warehouse" } } as DeckRoute;
+  let title = "Market receipt";
+  let message = "Market account updated.";
+  let tone: DeckTradeNotice["tone"] = "quiet";
+  let destination = exchange;
+  switch (trade.event) {
+    case "Bought":
+      title = "Purchase settled";
+      message = `Bought ${trade.units} ${label(trade.commodity)} @ ${trade.unit_price.toFixed(2)} Cr/u — held in your Market Warehouse.${trade.penalty ? ` Charter penalty ${fmt(trade.penalty)} Cr.` : ""}`;
+      tone = "good";
+      break;
+    case "Delivered":
+      title = "Delivery arrived";
+      message = trade.system
+        ? `+${trade.units} ${label(trade.commodity)} stocked at ${systemName(trade.system)}.`
+        : `+${trade.units} ${label(trade.commodity)} entered your Market Warehouse.`;
+      tone = "good";
+      destination = warehouse;
+      break;
+    case "StockDispatched":
+      title = "Supply freighter away";
+      message = `${trade.units} ${label(trade.commodity)} → ${systemName(trade.system)} · raidable.`;
+      destination = warehouse;
+      break;
+    case "SellDispatched":
+      title = "Sell freighter away";
+      message = `${trade.units} ${label(trade.commodity)} crossing to the Market Hub.`;
+      destination = warehouse;
+      break;
+    case "Sold":
+      title = "Sale settled";
+      message = `Sold ${trade.units} ${label(trade.commodity)} @ ${trade.unit_price.toFixed(2)} Cr/u.${trade.penalty ? ` Charter penalty ${fmt(trade.penalty)} Cr.` : ""}`;
+      tone = "good";
+      break;
+    case "LimitPlaced":
+      title = "Limit order resting";
+      message = `${label(trade.side)} ${trade.units} ${label(trade.commodity)} @ ${trade.limit_price.toFixed(2)} Cr/u.`;
+      break;
+    case "LimitFilled":
+      title = "Limit order filled";
+      message = `${label(trade.side)} ${trade.units} ${label(trade.commodity)} @ ${trade.unit_price.toFixed(2)} Cr/u in the batch.${trade.penalty ? ` Charter penalty ${fmt(trade.penalty)} Cr.` : ""}`;
+      tone = "good";
+      break;
+    case "LimitCancelled":
+      title = "Limit order cancelled";
+      message = `${label(trade.side)} ${trade.units} ${label(trade.commodity)} @ ${trade.limit_price.toFixed(2)} Cr/u · escrow returned.`;
+      break;
+    case "AutoDispatched":
+      title = `Standing order #${trade.rule_id}`;
+      message = `${trade.units} ${label(trade.commodity)} shipped automatically · raidable.`;
+      destination = warehouse;
+      break;
+    case "SupplyDiverted": {
+      const action = trade.action === "lost" ? "lost; cargo dropped"
+        : trade.action === "returned_home" ? "rerouted home · raidable"
+          : "rerouted to sell at the Hub · raidable";
+      title = "Supply diverted";
+      message = `${systemName(trade.system)} is no longer held: ${trade.units} ${label(trade.commodity)} ${action}.`;
+      tone = trade.action === "lost" ? "bad" : "warn";
+      destination = warehouse;
+      break;
+    }
+    case "StorageOverflow":
+      title = "Destination storage full";
+      message = `${trade.units} ${label(trade.commodity)} could not unload at ${systemName(trade.system)} and continues to the Hub.`;
+      tone = "warn";
+      destination = warehouse;
+      break;
+    case "Rejected":
+      title = "Order rejected";
+      message = rejectText(trade);
+      tone = "warn";
+      destination = trade.system ? warehouse : exchange;
+      break;
+    case "FreightBooked":
+      title = "Authority freight booked";
+      message = `${trade.units} ${label(trade.commodity)} ${trade.direction === "outbound" ? "→" : "←"} ${systemName(trade.system)} · ${fmt(trade.fee)} Cr · departs in ${fmtDur(Math.max(0, trade.depart_at - state.simTime))}.`;
+      tone = "good";
+      destination = warehouse;
+      break;
+    case "FreightMoved": {
+      const cargo = `${trade.units} ${label(trade.commodity)}`;
+      const place = systemName(trade.system);
+      const remaining = trade.remaining ?? 0;
+      title = "Authority freight update";
+      message = trade.stage === "departed" ? `Freighter away with ${cargo} · ${place}.`
+        : trade.stage === "collected_for_pickup" ? `Freighter collected ${cargo} at ${place}.`
+          : trade.stage === "delivered_to_system" && remaining > 0 ? `${cargo} delivered to ${place}; ${remaining} remains aboard because storage is full.`
+            : trade.stage === "delivered_to_system" ? `${cargo} delivered to ${place}.`
+              : trade.stage === "arrived_at_warehouse" ? `${cargo} from ${place} landed in your Market Warehouse.`
+                : trade.stage === "returned_undeliverable" ? `${cargo} could not unload at ${place}; returned to your warehouse.`
+                  : trade.stage === "forfeited_on_capture" ? `${cargo} awaiting pickup at ${place} was forfeited when the system fell.`
+                    : `${cargo} was destroyed with its Authority freighter near ${place}.`;
+      tone = trade.stage === "forfeited_on_capture" || trade.stage === "lost_with_freighter" ? "bad"
+        : trade.stage === "returned_undeliverable" || remaining > 0 ? "warn" : "good";
+      destination = warehouse;
+      break;
+    }
+    case "CharterReinstated": {
+      const from = projectedBand(state.charter ? state.charter.standing - trade.before : 0);
+      const to = projectedBand(state.charter ? state.charter.standing - trade.after : 0);
+      title = "Authority standing restored";
+      message = `Paid ${fmt(trade.cost)} Cr for ${trade.points.toFixed(0)} standing (${trade.before.toFixed(0)} → ${trade.after.toFixed(0)}).${to !== from ? ` Restored to ${to}.` : ""}`;
+      tone = "good";
+      break;
+    }
+    case "Loaded":
+      title = "Cargo loaded";
+      message = `${trade.units} ${label(trade.commodity)} loaded at ${trade.system ? systemName(trade.system) : "the Hub"}.`;
+      tone = "good";
+      destination = warehouse;
+      break;
+    case "Unloaded":
+      title = "Cargo unloaded";
+      message = `${trade.units} ${label(trade.commodity)} unloaded at ${trade.system ? systemName(trade.system) : "the Hub"}.`;
+      tone = "good";
+      destination = warehouse;
+      break;
+  }
+  return { title, message, tone, destination };
 }
 
 function isMarketTab(value?: string): value is DeckMarketTab {

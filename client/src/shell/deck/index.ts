@@ -15,7 +15,7 @@ import { mountDeckMarkup } from "./markup";
 import { DECK_ROUTES, DeckRouter, type DeckCrumb, type DeckRoute, type DeckRouteName } from "./router";
 import { DeckCommandStrip } from "./strip";
 import { DeckCommandRoutes } from "./command";
-import { DeckMarketRoutes } from "./market";
+import { deckTradeNotice, DeckMarketRoutes } from "./market";
 import { DeckPolicyRoutes } from "./policy";
 import { DeckToasts } from "./toasts";
 import { DeckWorkspace } from "./workspace";
@@ -503,12 +503,7 @@ class DeckShell implements Shell {
         durationMs: 15_000,
       });
     } else if (event.kind === "TradeSettled") {
-      this.toasts.push({
-        title: "Market update",
-        message: humanize(event.trade.event),
-        tone: event.trade.event === "Rejected" || event.trade.event === "StorageOverflow" ? "warn" : "quiet",
-        destination: { name: "market" },
-      });
+      this.toasts.push(deckTradeNotice(event.trade));
     } else if (event.kind === "ServerError") {
       this.toasts.push({ title: "Command refused", message: event.message, tone: "bad", destination: { name: "log" } });
     }
