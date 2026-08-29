@@ -32,7 +32,7 @@ export interface DeckRouteMeta {
 
 export interface DeckCrumb {
   label: string;
-  route: DeckRoute;
+  route: DeckRoute | null;
 }
 
 export const DECK_ROUTES: Record<DeckRouteName, DeckRouteMeta> = {
@@ -123,7 +123,7 @@ export class DeckRouter {
       const systemId = route.params?.systemId ?? route.params?.id ?? "system";
       const systemLabel = route.params?.systemLabel ?? route.params?.systemName ?? "System";
       const systemRoute: DeckRoute = { name: "system", params: { id: systemId, systemLabel } };
-      const crumbs: DeckCrumb[] = [command, { label: systemLabel, route: systemRoute }];
+      const crumbs: DeckCrumb[] = [{ label: "Galaxy", route: null }, { label: systemLabel, route: systemRoute }];
       if (route.name === "world") {
         crumbs.push({ label: route.params?.worldLabel ?? route.params?.bodyId ?? "World", route });
       } else if (route.name === "build") {

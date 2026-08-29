@@ -23,6 +23,8 @@ export class DeckMapInteraction {
   private lastX = 0;
   private lastY = 0;
   private readonly previousTouchAction: string;
+  private dynamicTick = -1;
+  private dynamicSystemId = "";
 
   constructor(
     private readonly ctx: CoreContext,
@@ -48,6 +50,14 @@ export class DeckMapInteraction {
   }
 
   tick(): void {
+    if (this.ctx.renderer.viewMode.type === "system") {
+      const systemId = this.ctx.renderer.viewMode.systemId;
+      if (this.ctx.state.tick !== this.dynamicTick || systemId !== this.dynamicSystemId) {
+        this.dynamicTick = this.ctx.state.tick;
+        this.dynamicSystemId = systemId;
+        this.pushSystemDynamic(systemId);
+      }
+    }
     const endpoint = this.ctx.renderer.consumeSystemScrubEndpoint();
     if (endpoint?.type === "system") {
       const system = this.systemById(endpoint.systemId);

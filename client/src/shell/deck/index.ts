@@ -82,7 +82,8 @@ class DeckShell implements Shell {
       else if (button.dataset.deckAct === "width") this.workspace?.toggleWidth();
       else if (button.dataset.deckAct === "breadcrumb") {
         const crumb = this.activeCrumbs[Number(button.dataset.crumbIndex)];
-        if (crumb) this.router?.go(crumb.route);
+        if (crumb?.route) this.router?.go(crumb.route);
+        else if (crumb) this.router?.close();
       }
     }, { signal });
     byId("deck-zoom").addEventListener("click", (event) => {
@@ -326,6 +327,7 @@ class DeckShell implements Shell {
         break;
       case "systemBody": {
         const systemId = this.ctx.renderer.viewMode.type === "system" ? this.ctx.renderer.viewMode.systemId : state.selectedSystemId ?? "";
+        this.ctx.renderer.pulseSystemBody(String(target.detail.id));
         this.router.go({
           name: "world",
           params: { systemId, bodyId: String(target.detail.id), worldLabel: target.detail.name ?? "World" },
@@ -359,6 +361,19 @@ class DeckShell implements Shell {
       this.workspace?.close();
       this.renderActiveNav(null);
       return;
+    }
+    if (semanticRoute && this.ctx) {
+      const systemId = route.params?.systemId ?? route.params?.id;
+      const dynamic = this.ctx.state.systems.find((entry) => entry.id === systemId);
+      if (systemId) {
+        this.ctx.state.selectedSystemId = systemId;
+        this.ctx.renderer.setSystemDynamic(
+          dynamic?.bodies ?? [],
+          (dynamic?.builds ?? []).map((build) => ({ key: build.key, body_id: build.body_id })),
+          dynamic?.habitat_fed ?? true,
+        );
+      }
+      if (route.name === "world" && route.params?.bodyId) this.ctx.renderer.pulseSystemBody(route.params.bodyId);
     }
     this.activeCrumbs = this.router.breadcrumbs(route);
     this.workspace.show(route, this.activeCrumbs, stack.length > 1);
