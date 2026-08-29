@@ -213,6 +213,8 @@
 .deck-service-row small { color: var(--dim); font-size: var(--fs-fine); }
 .deck-service-row > div { display: flex; gap: var(--space-1); }
 .deck-policy-feedback { padding: var(--space-2); border-left: var(--space-1) solid var(--accent); background: var(--field-bg); color: var(--dim); }
+.deck-policy-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+.deck-policy-links button { display: flex; align-items: center; justify-content: center; gap: var(--space-2); }
 .deck-standing-list { display: grid; gap: var(--space-1); }
 .deck-standing-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
 .deck-standing-row > span { display: flex; min-width: 0; align-items: center; gap: var(--space-2); }
