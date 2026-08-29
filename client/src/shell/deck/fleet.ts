@@ -17,15 +17,17 @@ import {
   WARP_FACTOR,
 } from "../../core/derive/fleet";
 import { fmt, fmtEta } from "../../core/derive/format";
-import { nearestKnownDock, systemName } from "../../core/derive/geo";
+import { emplacementLabel, nearestKnownDock, systemName } from "../../core/derive/geo";
 import { fitLegal, kitAffordable, kitCostLabel, MODULE_SLOTS, moduleLedgerAt, ownedHaulDestinations } from "../../core/derive/market";
 import { orderEtaRange, orderObject, orderPoint } from "../../core/derive/orders";
 import type { CoreEvent } from "../../core/events";
+import { jumpDepartureKey } from "../../core/session";
 import { icon, label, type IconKey } from "../../icons";
 import {
   fleetCargoManifest,
   fleetCargoUnits,
   fleetExactCount,
+  formatId,
   type Commodity,
   type EngagementEstimate,
   type EngagementPosture,
@@ -92,6 +94,7 @@ export class DeckFleetRoutes {
       this.ctx.state.orders[id], this.ctx.state.raids[id], this.ctx.state.commandSignals,
       this.ctx.state.selectedShipIds, this.ctx.state.wallet, this.ctx.state.market,
       this.ctx.state.systems, this.ctx.state.captains, this.ctx.state.syndicate?.flagship_name,
+      this.ctx.state.emplacements, this.ctx.state.jumpDepartures,
       this.requestedTransit.get(id), this.posture.get(id), this.confirms.get(id),
       this.loadCommodity.get(id), this.loadQuantity.get(id), this.haulDestination.get(id),
       [...this.estimates.values()].filter((entry) => entry.target === id || entry.attacker === id),
@@ -99,6 +102,16 @@ export class DeckFleetRoutes {
     if (!force && signature === this.signature) return true;
     if (renderDeferred(this.root.id, () => this.render(route, true))) return true;
     this.signature = signature;
+    if (route.params?.object === "emplacement" || (!fleet && this.ctx.state.emplacements.some((entry) => entry.id === id))) {
+      const emplacement = this.ctx.state.emplacements.find((entry) => entry.id === id);
+      setHtml(this.root, emplacement ? this.emplacementReadoutHtml(emplacement) : this.expiredSpecialHtml("Installation report expired"));
+      return true;
+    }
+    if (route.params?.object === "jump-departure" || (!fleet && this.ctx.state.jumpDepartures.some((entry) => jumpDepartureKey(entry) === id))) {
+      const departure = this.ctx.state.jumpDepartures.find((entry) => jumpDepartureKey(entry) === id);
+      setHtml(this.root, departure ? this.jumpDepartureHtml(id, departure) : this.expiredSpecialHtml("Jump departure report expired"));
+      return true;
+    }
     if (!fleet) {
       setHtml(this.root, this.contactLostHtml());
       return true;
@@ -110,6 +123,14 @@ export class DeckFleetRoutes {
 
   handleAction(button: HTMLButtonElement, route: DeckRoute | null): boolean {
     if (route?.name !== "fleet") return false;
+    if (button.dataset.deckAct === "fleet-special-center") {
+      const id = route.params?.id ?? "";
+      const position = route.params?.object === "emplacement"
+        ? this.ctx.state.emplacements.find((entry) => entry.id === id)?.pos
+        : this.ctx.state.jumpDepartures.find((entry) => jumpDepartureKey(entry) === id)?.pos;
+      if (position) this.ctx.renderer.centerOnWorld(position);
+      return true;
+    }
     const fleet = this.ctx.state.ghosts.find((entry) => entry.id === route.params?.id);
     if (!fleet) return true;
     const action = button.dataset.deckAct;
@@ -571,6 +592,31 @@ export class DeckFleetRoutes {
 
   private contactLostHtml(): string {
     return `<section class="deck-page"><header class="deck-page__lead"><span>Contact</span><h2>Contact lost</h2><p>The fleet or transient report is no longer present in the served picture.</p></header></section>`;
+  }
+
+  private emplacementReadoutHtml(emplacement: (typeof this.ctx.state.emplacements)[number]): string {
+    this.ctx.state.selectedShipId = null;
+    this.ctx.state.selectedShipIds.clear();
+    this.ctx.state.selectedEmplacementId = emplacement.id;
+    this.ctx.renderer.selectedJumpDepartureKey = null;
+    const mine = emplacement.own !== false;
+    return `<section class="deck-page deck-installation"><header class="deck-page__lead"><span>${mine ? "Your structure" : "Rival structure"} · served map object</span><h2>${icon("sensor", "md")} ${esc(emplacementLabel(emplacement.kind))}</h2><p>${mine ? "Stationary sensor emplacement." : "Detected inside your sensor coverage; no private internal state is exposed."}</p></header><div class="deck-stat-grid"><dl class="deck-stat"><dt>Position</dt><dd>${fmt(emplacement.pos.x)} · ${fmt(emplacement.pos.y)}</dd></dl><dl class="deck-stat"><dt>Sensor radius</dt><dd>${fmt(emplacement.sensor_range)} su</dd></dl><dl class="deck-stat"><dt>Status</dt><dd>${mine ? "Standing" : "Hostile"}</dd></dl></div><section class="deck-section"><header><div><h3>Open-space picket</h3><p>Watches every detectable object inside its served radius.</p></div><button type="button" data-deck-act="fleet-special-center">Center map</button></header>${mine ? `<div class="deck-alert"><b>Owned installation</b><span>Its sensor picture and delayed reporting are already included in command.</span></div>` : `<div class="deck-alert deck-alert--bad"><b>Demolition path</b><span>Select an armed fleet, then click this installation on the map. The fleet must reach it and hold station through the job.</span></div>`}</section></section>`;
+  }
+
+  private jumpDepartureHtml(key: string, departure: (typeof this.ctx.state.jumpDepartures)[number]): string {
+    this.ctx.state.selectedShipId = null;
+    this.ctx.state.selectedShipIds.clear();
+    this.ctx.state.selectedEmplacementId = null;
+    this.ctx.renderer.selectedJumpDepartureKey = key;
+    const now = liveSimTime();
+    const mine = departure.owner === this.ctx.state.playerId;
+    const owner = departure.owner_name?.trim() || (mine ? this.ctx.state.name : `Corporation ${formatId(departure.owner)}`);
+    const delay = Math.max(0, departure.learned_at - departure.departed_at);
+    return `<section class="deck-page deck-jump-report"><header class="deck-page__lead"><span>Jump departure · delayed light</span><h2>${icon("jump", "md")} ${esc(shipKindLabel(departure.kind))} fleet</h2><p>A historical departure report, not a live position claim. No destination is disclosed.</p></header><div class="deck-stat-grid"><dl class="deck-stat"><dt>Corporation</dt><dd>${esc(owner)}</dd></dl><dl class="deck-stat"><dt>Jumped</dt><dd>${esc(shortEta(Math.max(0, now - departure.departed_at)))} ago</dd></dl><dl class="deck-stat"><dt>Report delay</dt><dd>${delay.toFixed(1)}s</dd></dl><dl class="deck-stat"><dt>Origin</dt><dd>${fmt(departure.pos.x)} · ${fmt(departure.pos.y)}</dd></dl></div><section class="deck-section"><header><div><h3>Observed event</h3><p>${esc(owner)}'s ${esc(shipKindLabel(departure.kind))} fleet jumped away from this point.</p></div><button type="button" data-deck-act="fleet-special-center">Center map</button></header><div class="deck-alert"><b>Transient clue</b><span>The split chevrons fade from the local event ledger. Their expiry removes this readout too.</span></div></section></section>`;
+  }
+
+  private expiredSpecialHtml(title: string): string {
+    return `<section class="deck-page"><header class="deck-page__lead"><span>Transient map report</span><h2>${esc(title)}</h2><p>This clue is no longer present in the served map picture. Back returns to the fleet roster.</p></header></section>`;
   }
 }
 

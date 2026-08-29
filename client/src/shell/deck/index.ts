@@ -410,11 +410,11 @@ class DeckShell implements Shell {
         break;
       }
       case "emplacement":
-        this.router.go({ name: "fleet", params: { id: target.id, fleetLabel: "Installation" } });
+        this.router.go({ name: "fleet", params: { id: target.id, object: "emplacement", fleetLabel: "Installation" } });
         break;
       case "jumpDeparture":
         this.ctx.renderer.selectedJumpDepartureKey = target.key;
-        this.router.go({ name: "fleet", params: { id: target.key, fleetLabel: "Jump departure" } });
+        this.router.go({ name: "fleet", params: { id: target.key, object: "jump-departure", fleetLabel: "Jump departure" } });
         break;
       case "anchor":
         this.router.go({ name: "command" });

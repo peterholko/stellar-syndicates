@@ -292,6 +292,11 @@ export class DeckMapInteraction {
       this.clearFleetSelection();
       this.ctx.state.selectedEmplacementId = result.target.id;
       this.ctx.renderer.stateVersion++;
+    } else if (!inspect && result.target.type === "jumpDeparture") {
+      this.clearFleetSelection();
+      this.ctx.state.selectedEmplacementId = null;
+      this.ctx.renderer.selectedJumpDepartureKey = result.target.key;
+      this.ctx.renderer.stateVersion++;
     } else if (!inspect && (result.target.type === "aftermath" || result.target.type === "capture")) {
       this.ctx.renderer.selectedBattleMarkerId = result.target.id;
     }
