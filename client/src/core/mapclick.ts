@@ -60,16 +60,17 @@ export function resolveSystemClick(sx: number, sy: number, ctx: MapClickCtx): Ma
 export function resolveMapClick(
   sx: number,
   sy: number,
-  mods: { shift: boolean; long: boolean },
+  mods: { shift: boolean; long: boolean; inspect?: boolean },
   ctx: MapClickCtx,
 ): MapClickResult {
   const state = ctx.state;
   const renderer = ctx.renderer;
+  const inspect = mods.inspect ?? false;
 
   // Jump aiming owns the next map click, including clicks over systems. The
   // preview is anchored to the SERVED ghost and public well geometry only;
   // truth is deliberately left to the sim when the order arrives.
-  if (ctx.jumpAiming && state.galaxy) {
+  if (!inspect && ctx.jumpAiming && state.galaxy) {
     const ship = state.ghosts.find((ghost) => ghost.id === ctx.jumpAiming && ghost.own);
     if (!ship || !jumpCapable(ship)) {
       return {
@@ -114,7 +115,7 @@ export function resolveMapClick(
   // Explicit escort targeting owns the next map click. Only another OWN,
   // presently served fleet is a legal charge; the sim re-checks ownership
   // when the light-delayed order reaches the Interceptor.
-  if (ctx.guardAiming) {
+  if (!inspect && ctx.guardAiming) {
     const interceptor = state.ghosts.find(
       (ghost) => ghost.id === ctx.guardAiming && guardCapable(ghost),
     );
@@ -149,7 +150,7 @@ export function resolveMapClick(
 
   // §contestable-territory Part 1: BLOCKADE PREVIEW. With one of your RAIDER
   // fleets selected, clicking a rival-owned system proposes a blockade there.
-  {
+  if (!inspect) {
     const selF = state.selectedShipId
       ? state.ghosts.find((ghost) => ghost.id === state.selectedShipId)
       : undefined;
@@ -207,6 +208,7 @@ export function resolveMapClick(
     target: SelectTarget;
     readout: string;
     enemy?: GhostView;
+    ownFleet?: boolean;
   };
   const cands: Candidate[] = [];
 
@@ -237,6 +239,7 @@ export function resolveMapClick(
         sortD: distance,
         label: shipKindLabel(ghost.kind),
         target: { type: "fleet", id: ghost.id },
+        ownFleet: true,
         readout: `<b>${esc(shipKindLabel(ghost.kind))}</b> selected${ghost.docked ? " at its berth" : battlePos ? " in battle" : ""} — details in the panel. ` +
           `Click empty space to move it · click a <span style="color:#ff7a6b">rival</span> to raid · press <b>R</b> to recall.`,
       });
@@ -336,7 +339,10 @@ export function resolveMapClick(
   }
 
   if (cands.length) {
-    cands.sort((a, b) => a.sortD - b.sortD);
+    // A fleet pip (including a berth pip) is a more precise hit than the
+    // enlarged star affordance beneath it. Keep co-location cycling for the
+    // remaining stack, but make the player's own hull the first result.
+    cands.sort((a, b) => Number(!a.ownFleet) - Number(!b.ownFleet) || a.sortD - b.sortD);
     const keys = cands.map((candidate) => candidate.key).join(",");
     const previous = clickCycle;
     const same = previous !== null
@@ -349,7 +355,7 @@ export function resolveMapClick(
     // core map gesture: clicking the destination means "go there", including
     // colony ships whose exact claim point sits under the star's hit circle.
     // Blockade and survey clicks were resolved above and keep their own verbs.
-    if (chosen.target.type === "system" && haveOwn) {
+    if (!inspect && chosen.target.type === "system" && haveOwn) {
       const systemId = chosen.target.id;
       const system = state.galaxy?.systems.find((candidate) => candidate.id === systemId);
       if (system) {
@@ -360,7 +366,7 @@ export function resolveMapClick(
         };
       }
     }
-    if (chosen.enemy && (mods.shift || mods.long) && haveStrike) {
+    if (!inspect && chosen.enemy && (mods.shift || mods.long) && haveStrike) {
       return {
         kind: "intent",
         intent: {
@@ -371,7 +377,7 @@ export function resolveMapClick(
         },
       };
     }
-    if (chosen.enemy && cands.length === 1 && haveRaider) {
+    if (!inspect && chosen.enemy && cands.length === 1 && haveRaider) {
       return {
         kind: "intent",
         intent: {
@@ -382,7 +388,7 @@ export function resolveMapClick(
         },
       };
     }
-    if (chosen.target.type === "emplacement") {
+    if (!inspect && chosen.target.type === "emplacement") {
       const emplacementId = chosen.target.id;
       const striker = armedSelection(state);
       const emplacement = state.emplacements.find((candidate) => candidate.id === emplacementId);
@@ -441,6 +447,13 @@ export function resolveMapClick(
   if (state.galaxy) {
     const hub = renderer.worldToScreen(state.galaxy.hub);
     if (Math.hypot(hub.x - sx, hub.y - sy) < Math.max(24, renderer.hubHitRadius())) {
+      if (!inspect && haveOwn) {
+        return {
+          kind: "intent",
+          intent: { shipId: selected!.id, verb: "move", dest: state.galaxy.hub },
+          readout: `Move <b>${esc(shipKindLabel(selected!.kind))}</b> to the <b>Market Hub</b>.`,
+        };
+      }
       return { kind: "select", target: { type: "hub" } };
     }
   }
@@ -454,7 +467,7 @@ export function resolveMapClick(
   const capture = renderer.capturePick(sx, sy);
   if (capture !== null) return { kind: "select", target: { type: "capture", id: capture } };
 
-  if (haveOwn) {
+  if (!inspect && haveOwn) {
     return {
       kind: "intent",
       intent: { shipId: selected!.id, verb: "move", dest: renderer.screenToWorld(sx, sy) },

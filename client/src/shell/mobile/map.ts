@@ -359,7 +359,7 @@ export class MobileMapInteraction {
     const result = renderer.viewMode.type === "system"
       ? resolveSystemClick(x, y, clickCtx)
       : renderer.viewMode.type === "galaxy"
-        ? resolveMapClick(x, y, { shift: false, long }, clickCtx)
+        ? resolveMapClick(x, y, { shift: false, long, inspect: false }, clickCtx)
         : { kind: "none" } as const;
     this.applyResult(result);
   }
