@@ -17,16 +17,16 @@
 
 use std::time::Duration;
 
-use axum::extract::ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
+use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::{mpsc, watch};
-use tokio::time::{interval, timeout, MissedTickBehavior};
+use tokio::time::{MissedTickBehavior, interval, timeout};
 use tracing::{debug, warn};
 
-use crate::protocol::{player_id_from_name, ClientMsg, ServerMsg};
+use crate::protocol::{ClientMsg, ServerMsg, player_id_from_name};
 use crate::session::{GameHandle, GameInput, OUTBOUND_CAPACITY};
 
 /// How often the server pings an otherwise-idle connection.
@@ -37,6 +37,17 @@ const PING_INTERVAL: Duration = Duration::from_secs(20);
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 /// Longest a corporation name may be (defends against oversized join frames).
 const MAX_NAME_LEN: usize = 64;
+/// Private close code: a newer login now owns this corporation's sole session.
+/// The browser treats it as terminal instead of entering its reconnect loop.
+const SESSION_REPLACED_CLOSE_CODE: u16 = 4001;
+
+fn view_divisor(view_hz: Option<u8>) -> u64 {
+    match view_hz {
+        Some(5) => 2,
+        // Missing or unsupported requests retain the established 10 Hz stream.
+        _ => 1,
+    }
+}
 
 /// axum handler: upgrade the HTTP request to a WebSocket.
 pub async fn ws_handler(
@@ -49,10 +60,7 @@ pub async fn ws_handler(
 /// Serialize one `ServerMsg` and write it to the socket. `Ok(())` means the
 /// connection is still healthy (a serialization failure is logged and skipped,
 /// not fatal); `Err(())` means the socket send failed and the writer must stop.
-async fn write_msg(
-    ws_tx: &mut SplitSink<WebSocket, Message>,
-    msg: &ServerMsg,
-) -> Result<(), ()> {
+async fn write_msg(ws_tx: &mut SplitSink<WebSocket, Message>, msg: &ServerMsg) -> Result<(), ()> {
     let json = match serde_json::to_string(msg) {
         Ok(j) => j,
         Err(e) => {
@@ -76,6 +84,11 @@ async fn handle_socket(socket: WebSocket, handle: GameHandle) {
     // recovers skips straight to the current world instead of draining a backlog
     // of stale frames. Seeded empty until the first broadcast.
     let (view_tx, mut view_rx) = watch::channel::<Option<ServerMsg>>(None);
+    // A new login for this corporation closes this socket deliberately. A
+    // watch signal reaches both halves of the split socket without putting
+    // session policy into either I/O loop.
+    let (replace_tx, mut reader_replace_rx) = watch::channel(false);
+    let mut writer_replace_rx = reader_replace_rx.clone();
 
     // Writer task: forward the latest View + queued discrete messages, and emit
     // keepalive pings.
@@ -104,6 +117,17 @@ async fn handle_socket(socket: WebSocket, handle: GameHandle) {
                     }
                     None => break, // outbound sender dropped: connection closing
                 },
+                changed = writer_replace_rx.changed() => match changed {
+                    Ok(()) if *writer_replace_rx.borrow_and_update() => {
+                        let _ = ws_tx.send(Message::Close(Some(CloseFrame {
+                            code: SESSION_REPLACED_CLOSE_CODE,
+                            reason: Utf8Bytes::from_static("session replaced by a newer login"),
+                        }))).await;
+                        break;
+                    }
+                    Ok(()) => {}
+                    Err(_) => break,
+                },
                 _ = ping.tick() => {
                     if ws_tx.send(Message::Ping(Vec::new().into())).await.is_err() {
                         break;
@@ -118,7 +142,15 @@ async fn handle_socket(socket: WebSocket, handle: GameHandle) {
 
     loop {
         // Idle timeout detects half-open connections.
-        let frame = match timeout(READ_TIMEOUT, ws_rx.next()).await {
+        let incoming = tokio::select! {
+            changed = reader_replace_rx.changed() => match changed {
+                Ok(()) if *reader_replace_rx.borrow_and_update() => break,
+                Ok(()) => continue,
+                Err(_) => break,
+            },
+            incoming = timeout(READ_TIMEOUT, ws_rx.next()) => incoming,
+        };
+        let frame = match incoming {
             Ok(Some(Ok(m))) => m,
             Ok(Some(Err(e))) => {
                 debug!(conn_id, error = %e, "websocket recv error");
@@ -132,52 +164,55 @@ async fn handle_socket(socket: WebSocket, handle: GameHandle) {
         };
 
         match frame {
-            Message::Text(text) => {
-                match serde_json::from_str::<ClientMsg>(text.as_str()) {
-                    Ok(ClientMsg::Join { name }) => {
-                        if joined {
-                            debug!(conn_id, "duplicate join ignored");
-                            continue;
-                        }
-                        let trimmed = name.trim();
-                        if trimmed.is_empty() {
-                            let _ = out_tx.try_send(ServerMsg::Error {
-                                message: "name must not be empty".into(),
-                            });
-                            continue;
-                        }
-                        if trimmed.chars().count() > MAX_NAME_LEN {
-                            let _ = out_tx.try_send(ServerMsg::Error {
-                                message: format!("name too long (max {MAX_NAME_LEN} characters)"),
-                            });
-                            continue;
-                        }
-                        let player_id = player_id_from_name(trimmed);
-                        joined = true;
-                        handle.send(GameInput::Connect {
-                            conn_id,
-                            player_id,
-                            name: trimmed.to_string(),
-                            outbound: out_tx.clone(),
-                            view_tx: view_tx.clone(),
-                        });
+            Message::Text(text) => match serde_json::from_str::<ClientMsg>(text.as_str()) {
+                Ok(ClientMsg::Join { name, view_hz }) => {
+                    if joined {
+                        debug!(conn_id, "duplicate join ignored");
+                        continue;
                     }
-                    Ok(other) => {
-                        if joined {
-                            handle.send(GameInput::Intent { conn_id, msg: other });
-                        } else {
-                            let _ = out_tx.try_send(ServerMsg::Error {
-                                message: "send a Join message first".into(),
-                            });
-                        }
-                    }
-                    Err(e) => {
+                    let trimmed = name.trim();
+                    if trimmed.is_empty() {
                         let _ = out_tx.try_send(ServerMsg::Error {
-                            message: format!("malformed message: {e}"),
+                            message: "name must not be empty".into(),
+                        });
+                        continue;
+                    }
+                    if trimmed.chars().count() > MAX_NAME_LEN {
+                        let _ = out_tx.try_send(ServerMsg::Error {
+                            message: format!("name too long (max {MAX_NAME_LEN} characters)"),
+                        });
+                        continue;
+                    }
+                    let player_id = player_id_from_name(trimmed);
+                    joined = true;
+                    handle.send(GameInput::Connect {
+                        conn_id,
+                        player_id,
+                        name: trimmed.to_string(),
+                        outbound: out_tx.clone(),
+                        view_tx: view_tx.clone(),
+                        replace_tx: replace_tx.clone(),
+                        view_divisor: view_divisor(view_hz),
+                    });
+                }
+                Ok(other) => {
+                    if joined {
+                        handle.send(GameInput::Intent {
+                            conn_id,
+                            msg: other,
+                        });
+                    } else {
+                        let _ = out_tx.try_send(ServerMsg::Error {
+                            message: "send a Join message first".into(),
                         });
                     }
                 }
-            }
+                Err(e) => {
+                    let _ = out_tx.try_send(ServerMsg::Error {
+                        message: format!("malformed message: {e}"),
+                    });
+                }
+            },
             Message::Close(_) => break,
             // A pong (reply to our keepalive ping) simply resets the read
             // deadline by virtue of arriving; nothing else to do. axum answers

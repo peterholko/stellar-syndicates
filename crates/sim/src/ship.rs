@@ -1,13 +1,14 @@
 //! Ships: the mobile entities of the galaxy.
 //!
-//! Two types embody the §7 convoy-vs-raider dial — not a special rule, just
-//! different acceleration / top-speed. Convoys are slow and heavy; raiders are
-//! fast and light and can run a convoy down. (The lane mass-reduction effect of
-//! §7/§10 lands in a later milestone.)
+//! Civilian and military hulls differ in formation speed, mass, cargo, sensors,
+//! and combat role. Those ordinary properties create the convoy/escort/raider
+//! tradeoffs; there is no special chase rule.
 //!
-//! Every ship moves under flip-and-burn and acts on a standing **order**; the
-//! world advances each ship once per tick. There is no real-time piloting — the
-//! async-native, lightspeed-bound design demands standing orders, not micro.
+//! Every fleet acts on a standing **order** and the world advances it once per
+//! tick. Movement is constant-speed within the active drive regime: thrusters
+//! steer, while warp locks the course and must drop before a meaningful turn.
+//! There is no real-time piloting — the async-native, lightspeed-bound design
+//! demands standing orders, not micro.
 
 use std::collections::BTreeMap;
 
@@ -21,7 +22,7 @@ use crate::movement::advance_toward;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ShipKind {
-    /// Slow, heavy hauler — the largest ship in the game (§7). Carries trade.
+    /// Slow, heavy, player-owned hauler. Carries trade.
     Convoy,
     /// Fast, light interceptor. Cuts chords across open space to run convoys
     /// down.
@@ -35,7 +36,7 @@ pub enum ShipKind {
     /// BROADCASTS under the Convention: a declared escort DETERS (a dark
     /// defender would just be a raider with extra steps).
     Corvette,
-    /// The SETTLEMENT ship (§ships part 3): the HEAVIEST hull flying — slow,
+    /// The SETTLEMENT ship (§ships part 3): a heavy civilian hull — slow and
     /// expensive to fuel — with no cargo bay (it IS the cargo: colonists +
     /// infrastructure). Claiming is now PHYSICAL: send it to an unclaimed
     /// system; on arrival ownership transfers and the ship is CONSUMED (it
@@ -44,11 +45,11 @@ pub enum ShipKind {
     /// raidable, escortable). Destroyed in transit = colonists lost.
     Colony,
     /// The ACTIVE-INTEL ship (§scout): the lightest hull in the game — fastest
-    /// to accelerate, cheapest to fuel — with NO cargo capacity and negligible
+    /// base cruise speed, cheapest to fuel — with NO cargo capacity and negligible
     /// combat strength (in any engagement it is simply destroyed; its defense is
-    /// speed and darkness, not armor). Runs DARK like a raider, projects an
-    /// oversized sensor bubble (`sensor_mult`), and near rival systems captures
-    /// timestamped intel snapshots of their fortifications.
+    /// speed and darkness, not armor). Runs DARK like a raider, amplifies a
+    /// Raider-bearing fleet's sensor bubble (`sensor_mult`), and near rival
+    /// systems captures timestamped intel snapshots of their fortifications.
     Scout,
     // --- §ladder: the WARSHIP LADDER (research-gated; appended after Scout so
     // every BTreeMap iteration order + snapshot stays stable). Capitals buy
@@ -83,7 +84,7 @@ pub enum ShipKind {
     /// from barracks, not slipways.
     Transport,
     /// §emplacements: the CONSTRUCTION SHIP — the working hull that puts
-    /// hyperspace buoys and deep space sensors where they stand. Emplacements
+    /// deep space sensors where they stand. Emplacements
     /// are not conjured at a yard and teleported out; a builder is ordered to
     /// the site, holds there for the assembly, and is FREED when it finishes —
     /// it is the crane, not the kit, so one hull serves a whole programme and
@@ -95,7 +96,7 @@ pub enum ShipKind {
     /// client — an insidious wrong-value bug, not an error.
     Builder,
     /// THE AUTHORITY FREIGHTER (§TCA): the scheduled common-carrier hull the
-    /// TERRAN CHARTER AUTHORITY runs between the Charterhouse and the colonies.
+    /// TERRAN CHARTER AUTHORITY runs between the Market Hub and the colonies.
     /// Owned ONLY by the [`crate::ids::PlayerId::TCA`] sentinel — NOT buildable by
     /// any corporation ([`Self::is_buildable`] is false), so it sits outside the
     /// warship ladder entirely. Broadcasts like a convoy (a declared common
@@ -107,34 +108,31 @@ pub enum ShipKind {
     Freighter,
 }
 
-/// Mass added per unit of cargo carried. A fully-loaded convoy is meaningfully
-/// heavier than an empty one, so it accelerates noticeably worse (a = F/m) — your
-/// richest shipments are also the most sluggish. Tunable.
+/// Mass added per unit of cargo carried. Under the constant-speed movement model
+/// cargo does NOT slow a fleet; the extra mass raises fuel burn over a given
+/// distance, so richer shipments are more expensive to move. Tunable.
 pub const CARGO_MASS_PER_UNIT: f64 = 28.0;
 
 /// §TCA Part 5: whole cargo UNITS one Convoy hull can lift. A fleet's capacity is
 /// this × the convoys aboard, so the "capacity scales with the number of convoys"
 /// rule finally has a number. Tunable, playtest placeholder.
 ///
-/// NOTE: this bounds the MANUAL load commands (`HubLoad` / `SystemLoad`) only.
-/// The auto-spawned trade convoys (`ShipProduction`, standing orders) predate any
-/// capacity rule and are deliberately left alone — retrofitting the cap there
-/// would silently change existing economy behaviour, which is not this phase's job.
+/// This also bounds standing logistics: automation selects a real idle cargo
+/// fleet at the source and caps its lot to the fleet's aggregate hold.
 pub const CARGO_UNITS_PER_CONVOY: u32 = 250;
 
 impl ShipKind {
-    /// Hull (empty) MASS, m₀. Trade convoys are ORDERS OF MAGNITUDE more massive
-    /// than raiders (here ~22×), which is what makes them ponderous — the
-    /// acceleration asymmetry emerges from this, not from hand-set accel consts.
-    /// The scout is the LIGHTEST hull (mass drives both acceleration and the
-    /// fuel-∝-mass trip cost, so light = fast AND cheap to run).
+    /// Hull (empty) MASS, m₀. Mass sets hull durability/tactical size and feeds
+    /// the fuel-capacity and fuel-cost calculations. Cruise speed is a separate
+    /// per-kind value in [`Self::max_speed`]; the constant-speed model has no
+    /// acceleration relationship to infer from mass.
     pub fn hull_mass(self) -> f64 {
         match self {
             ShipKind::Convoy => 4500.0,
             ShipKind::Builder => 2500.0, // a crane and its shops — working mass, no bulk hold
             ShipKind::Raider => 200.0,
             ShipKind::Corvette => 800.0,
-            ShipKind::Colony => 6000.0, // heaviest CIVILIAN hull — fuel-∝-mass bites
+            ShipKind::Colony => 6000.0, // heavy civilian hull — fuel-∝-mass bites
             ShipKind::Scout => 80.0,
             // §ladder: anchored to the Corvette (800) — 2.5× / 5× / 10× / 20× /
             // 40×. Mass drives fuel cost, so the capital fuel burn emerges here.
@@ -149,29 +147,25 @@ impl ShipKind {
         }
     }
 
-    /// CONSTANT cruise speed (sim units / s), GDD §14.1 — there is no
-    /// acceleration; a ship travels at exactly this speed (the fleet moves at its
-    /// slowest member's, [`Fleet::max_speed`]). All stay well below `c` (= 300)
-    /// so relativity is respected — nothing outruns its own light. Ordering
-    /// preserves the old relative feel (scout > raider > corvette > convoy >
-    /// colony).
+    /// Base CONSTANT cruise speed (sim units / s), GDD §14.1 — there is no
+    /// acceleration; a fleet uses its slowest member's value
+    /// ([`Fleet::max_speed`]), then the active drive regime applies its factor.
+    /// The light-speed relationship is enforced centrally by
+    /// [`crate::config::SimConfig`], so no duplicated `c` value belongs here.
+    /// Ordering preserves the old relative feel (scout > raider > corvette >
+    /// convoy > colony).
     ///
-    /// CALIBRATION (migration-gentle): magnitudes are set so a representative
-    /// galaxy-crossing trip (~8000 su, the 4-player galaxy radius) takes about as
-    /// long as the old flip-and-burn did — whose accel ramp meant its AVERAGE
-    /// speed was well under the max cap. Convoy anchors it: old convoy (a=1.5,
-    /// cap 48) crossed 8000 su in ≈199 s; constant 40 gives 8000/40 = 200 s. The
-    /// other kinds keep the old max-speed RATIOS off that anchor, so raider/
-    /// convoy chase dynamics and pacing hold (raider 8000 su: old ≈78 s, new 80 s;
-    /// colony old ≈233 s, new 242 s). Tunable.
+    /// These values are playtest tunables; their relative ordering is the design.
+    /// Warp multiplication belongs to [`crate::transit`], and the config tests
+    /// guard the light-to-hull speed ratio whenever this table changes.
     pub fn max_speed(self) -> f64 {
         match self {
             ShipKind::Convoy => 40.0,
             ShipKind::Builder => 35.0, // ponderous — it is a worksite, not a courier
             ShipKind::Raider => 100.0,
             ShipKind::Corvette => 65.0, // keeps station with convoys, can't chase raiders
-            ShipKind::Colony => 33.0, // slowest civilian — the long, visible voyage
-            ShipKind::Scout => 115.0, // the fastest thing flying — still < c/2
+            ShipKind::Colony => 33.0,   // slowest civilian — the long, visible voyage
+            ShipKind::Scout => 115.0,   // the fastest thing flying — still < c/2
             // §ladder: each rung slower than the last (0.85 / 0.70 / 0.55 /
             // 0.45 / 0.35 × the Corvette's 65) — a capital ARRIVES, it never
             // chases. All far below c = 300.
@@ -186,19 +180,18 @@ impl ShipKind {
     }
 
     /// Whether this kind BROADCASTS under the Convention (visible galaxy-wide,
-    /// light-delayed). Convoys do; raiders and scouts run DARK — visible only
-    /// inside a rival's sensor coverage. One source of truth for the View's
-    /// gating (a broadcasting spy would be useless).
+    /// light-delayed). Corporate Convoys may run silent; the Authority's
+    /// Freighter always transmits. One source of truth for the View's gating.
     pub fn broadcasts(self) -> bool {
-        // Convoys (trade), corvettes (a DECLARED escort deters), and colony
-        // ships (a declared civilian settlement vessel — expansion is
-        // telegraphed) broadcast; raiders and scouts run dark. §ladder: every
+        // Corvettes (a DECLARED escort deters) and colony ships (a declared
+        // civilian settlement vessel — expansion is telegraphed) broadcast;
+        // corporate Convoys, Raiders and Scouts run dark. §ladder: every
         // CAPITAL broadcasts — a ship of the line is a declared presence
-        // (deterrence is its job; sneaking is the Raider's).
+        // (deterrence is its job; sneaking is the Raider's). The Authority's
+        // common-carrier Freighter is deliberately public everywhere.
         matches!(
             self,
-            ShipKind::Convoy
-                | ShipKind::Corvette
+            ShipKind::Corvette
                 | ShipKind::Colony
                 | ShipKind::Destroyer
                 | ShipKind::Cruiser
@@ -208,17 +201,29 @@ impl ShipKind {
                 // §ground: a troop convoy is a declared civilian-escort formation
                 // — an invasion cannot be a surprise.
                 | ShipKind::Transport
+                | ShipKind::Builder
                 | ShipKind::Freighter
         )
     }
 
-    /// Multiplier on `config.sensor_range` for the sensor bubble THIS ship
-    /// projects into its owner's coverage union. The scout's whole point:
-    /// `SCOUT_SENSOR_MULT` × the standard bubble — mobile vision that out-sees
-    /// any other ship. Tunable.
+    /// Whether this hull projects a mobile sensor bubble. Raiders carry the
+    /// standard picket suite; Convoys carry a short-range traffic/threat set.
+    pub fn projects_sensor(self) -> bool {
+        matches!(self, ShipKind::Raider | ShipKind::Convoy)
+    }
+
+    /// Jump drives are carried only by the two dark reconnaissance/strike hulls.
+    pub fn has_jump_drive(self) -> bool {
+        matches!(self, ShipKind::Raider | ShipKind::Scout)
+    }
+
+    /// Multiplier on `config.sensor_range` when this hull accompanies a mobile
+    /// sensor source. A Scout makes a Raider picket out-see an ordinary Raider;
+    /// `projects_sensor` still decides whether the fleet emits a bubble at all.
     pub fn sensor_mult(self) -> f64 {
         match self {
             ShipKind::Scout => SCOUT_SENSOR_MULT,
+            ShipKind::Convoy => CONVOY_SENSOR_MULT,
             _ => 1.0,
         }
     }
@@ -255,12 +260,12 @@ impl ShipKind {
     /// Defensive weight when this kind is ATTACKED (or screening a defender).
     pub fn defense_weight(self) -> f64 {
         match self {
-            ShipKind::Builder => 1.0,  // a soft worksite that needs escorting
+            ShipKind::Builder => 1.0, // a soft worksite that needs escorting
             ShipKind::Raider => 2.0,
             ShipKind::Corvette => 4.0, // the armored screen — built to be attacked
             ShipKind::Convoy => 1.0,
             ShipKind::Colony => 1.0, // a fat civilian hull — escort it
-            ShipKind::Scout => 0.0, // no armor at all
+            ShipKind::Scout => 0.0,  // no armor at all
             // §ladder: capitals are defense-heavier than they are gun-heavy —
             // presence means being HARD TO REMOVE. Hull derives from this.
             ShipKind::Destroyer => 2.6,
@@ -373,7 +378,7 @@ pub fn fitting_points(kind: ShipKind) -> u32 {
 pub fn hull_affinity(kind: ShipKind, family: crate::module::Family) -> f64 {
     use crate::module::Family;
     match (kind, family) {
-        (ShipKind::Raider, Family::Torpedo) => 1.25,      // the torpedo boat
+        (ShipKind::Raider, Family::Torpedo) => 1.25, // the torpedo boat
         (ShipKind::Corvette, Family::Interception) => 1.25, // the screen
         // §ladder: each capital is good at a KIND of fighting. The Titan is
         // broadly good (×1.10 to every weapon family), best at nothing — the
@@ -560,10 +565,10 @@ impl CountClass {
 /// never a corporation's cost.
 pub fn upkeep_per_sec(kind: ShipKind) -> f64 {
     match kind {
-        ShipKind::Builder => 0.04,   // a full work crew rides along
-        ShipKind::Scout => 0.01,     // a couple of crew and a very good sensor
-        ShipKind::Convoy => 0.03,    // civilian hauler: big hull, small crew
-        ShipKind::Colony => 0.06,    // the colonists aboard eat too
+        ShipKind::Builder => 0.04, // a full work crew rides along
+        ShipKind::Scout => 0.01,   // a couple of crew and a very good sensor
+        ShipKind::Convoy => 0.03,  // civilian hauler: big hull, small crew
+        ShipKind::Colony => 0.06,  // the colonists aboard eat too
         // §ground: a trooper is a barracks under way — marines eat well.
         ShipKind::Transport => 0.35,
         ShipKind::Raider => 0.06,
@@ -605,14 +610,16 @@ pub fn marine_capacity(kind: ShipKind) -> u32 {
     }
 }
 
-/// §dock: WHERE a fleet is berthed. The Charterhouse is not a system (it has no
+/// §dock: WHERE a fleet is berthed. The Market Hub is not a system (it has no
 /// id — it is a fixed point in the galaxy), so a plain `Option<EntityId>` can't
 /// name it without conflating "berthed at the hub" with "not berthed at all".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DockSite {
-    /// The Terran Charterhouse at the wormhole hub — the galaxy's busiest dock,
-    /// and the one place every corporation's traffic converges.
+    /// The Terran Market Hub at the wormhole hub — the galaxy's busiest dock,
+    /// and the one place every corporation's traffic converges. Hub berths are
+    /// deliberately unmetered: qualifying fleets do not reserve or exhaust
+    /// slots there.
     Hub,
     /// A star system this fleet's owner (or an ally) holds.
     System(EntityId),
@@ -624,10 +631,9 @@ pub enum DockSite {
 /// with cargo but not repaired, and nothing anywhere said why.
 ///
 /// Sized as a docking APPROACH rather than a contact: it is generous enough that
-/// a player who parked "at" a system is docked, which matters more now that
-/// docking is a state they can see. Nothing under way can trip it — the
-/// predicate requires an Idle fleet — so a ship merely passing near a world is
-/// never captured by it. Tunable.
+/// a player who parked "at" a system or the Market Hub is docked. Nothing under
+/// way can trip it — the predicate requires an Idle fleet — so a ship merely
+/// passing near a facility is never captured by it. Tunable.
 pub const DOCK_RADIUS: f64 = 260.0;
 
 /// Radius (sim units) within which an arriving COLONY SHIP settles an
@@ -646,6 +652,10 @@ pub const CORVETTE_PROTECT_RADIUS: f64 = 1300.0;
 /// entire reason to exist: 1.5 × 2200 = 3300 su — out-seeing a tier-1 Sensor
 /// Array). Tunable.
 pub const SCOUT_SENSOR_MULT: f64 = 1.5;
+
+/// A Convoy sees one quarter as far as a command center or Raider picket:
+/// 0.25 × the current 80,000-su base = 20,000 su. Tunable.
+pub const CONVOY_SENSOR_MULT: f64 = 0.25;
 
 /// Range (sim units) at which a SCOUT passing a RIVAL-owned system captures an
 /// intel snapshot of its fortifications (§scout part 2). ≈ the Defense
@@ -693,8 +703,17 @@ impl TransitMode {
 pub enum FleetOrder {
     /// At rest, no goal.
     Idle,
-    /// Flip-and-burn to a fixed point, then go [`FleetOrder::Idle`].
-    MoveTo { dest: Vec2 },
+    /// Travel to a fixed point under the drive state machine, then go
+    /// [`FleetOrder::Idle`].
+    MoveTo {
+        dest: Vec2,
+    },
+    /// Hold position while the world validates and manages the 10-second spool.
+    Jump {
+        dest: Vec2,
+        #[serde(default)]
+        spool_started: Option<f64>,
+    },
     /// Cycle forever through a list of waypoints, dwelling briefly at each.
     /// (M2 demo behaviour so the shared world is visibly alive; real
     /// player-issued orders arrive in M4/M5.)
@@ -709,7 +728,15 @@ pub enum FleetOrder {
     /// raid fails). Pursuit steering lives in [`crate::movement::pursue_step`]
     /// (proportional steer-and-correct) and is driven by the world (it needs the
     /// target's state).
-    Intercept { target: EntityId },
+    Intercept {
+        target: EntityId,
+    },
+    /// Shadow a named friendly fleet and defend it using the Interceptor's own
+    /// local sensor picture. The world owns the moving formation point and any
+    /// defensive sortie; unlike Intercept, reaching the target opens no combat.
+    Guard {
+        target: EntityId,
+    },
     /// BLOCKADE a rival system (§contestable-territory Part 1): fly to the
     /// system and take STATION on it, strangling its logistics. `station` is the
     /// target system's position (static, captured at issue time) so the
@@ -740,13 +767,18 @@ pub enum FleetOrder {
         #[serde(default)]
         started: Option<f64>,
     },
-    Blockade { system: EntityId, station: Vec2 },
+    Blockade {
+        system: EntityId,
+        station: Vec2,
+    },
     /// ATTACK a rival fleet to DESTROY it (§offensive-orders Part 1): the targeted
     /// destroy verb. Pursues exactly like [`FleetOrder::Intercept`], but on contact
     /// it opens a FULL-DURATION engagement (`raid = false`) regardless of the
     /// target's kind — so a convoy is destroyed (its cargo lost with it), not
     /// raided. RAID (`Intercept` on a convoy) steals; ATTACK destroys.
-    Attack { target: EntityId },
+    Attack {
+        target: EntityId,
+    },
     /// SURVEY a system's geology (§explore Part 2 — the scout's second job): fly
     /// to within `SURVEY_RANGE` of the star and DWELL `SURVEY_SECS`, all-or-nothing
     /// (leaving range or entering an engagement aborts with no partial credit —
@@ -763,11 +795,10 @@ pub enum FleetOrder {
     },
 }
 
-/// What a trade convoy does when it reaches its destination (§9). A buy spawns a
-/// delivery convoy (hub → home) that deposits cargo on arrival; a sell spawns a
-/// convoy (home → hub) that sells the cargo at the price-on-arrival; a standing
-/// logistics order (§15) can also spawn a convoy that deposits cargo into another
-/// system's stockpile.
+/// What a physical cargo fleet does when it reaches its destination (§9).
+/// Ordinary market settlement itself moves no hull. Player loading, legacy
+/// one-way deliveries, and standing logistics can attach one of these missions;
+/// a standing order always assigns a real player fleet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TradeMission {
@@ -776,14 +807,18 @@ pub enum TradeMission {
     /// Deposit the cargo into the destination system's stockpile on arrival (a
     /// system→system supply convoy; §15). Cargo is lost if the destination is no
     /// longer owned by the convoy's owner when it arrives (no gifting rivals).
-    DeliverToSystem { system: EntityId },
-    /// §TCA Part 5: HAUL TO THE CHARTERHOUSE — a PLAYER-owned convoy carrying its
+    DeliverToSystem {
+        system: EntityId,
+    },
+    /// §TCA Part 5: HAUL TO THE MARKET HUB — a PLAYER-owned convoy carrying its
     /// own cargo to the hub, where it deposits into the owner's warehouse and
-    /// (optionally) sells the lot at that tick's standing price. Unlike the legacy
+    /// (optionally) sells the lot at that tick's quantity-aware execution price. Unlike the legacy
     /// `SellAtHub`, the fleet SURVIVES: it is the player's hull, so it goes Idle at
-    /// the Charterhouse ready for its next job. This is the player-owned half of
+    /// the Market Hub ready for its next job. This is the player-owned half of
     /// the two logistics channels; TCA freight is the other.
-    DeliverToWarehouse { sell_on_arrival: bool },
+    DeliverToWarehouse {
+        sell_on_arrival: bool,
+    },
 }
 
 /// A patrolling raider's AUTONOMOUS defensive sortie (§5.1, Pillar 1): it has
@@ -795,6 +830,10 @@ pub enum TradeMission {
 pub struct DefenseEngagement {
     pub target: EntityId,
     pub patrol: Vec<Vec2>,
+    /// A direct Guard order to resume after this defensive sortie. `None`
+    /// preserves the older patrol-picket lifecycle and old snapshots.
+    #[serde(default)]
+    pub guard: Option<EntityId>,
 }
 
 /// §roster — ONE INDIVIDUAL HULL. Fleets are ROSTERS now, not histograms: every
@@ -822,7 +861,12 @@ pub struct Ship {
 impl Ship {
     /// A fresh, undamaged hull.
     pub fn new(id: u32, kind: ShipKind, loadout: crate::module::Loadout) -> Self {
-        Ship { id, kind, loadout, hp: kind.hull_mass() }
+        Ship {
+            id,
+            kind,
+            loadout,
+            hp: kind.hull_mass(),
+        }
     }
     /// Full hull — the tactical engine's `max_hp` for this kind.
     pub fn max_hp(&self) -> f64 {
@@ -848,20 +892,18 @@ pub enum DriveState {
     /// Spinning a drive up. Still on thruster speed until it catches.
     Spooling {
         /// What it is spinning up INTO.
-        to: crate::lane::Regime,
+        to: crate::transit::Regime,
         /// Seconds left.
         left: f64,
     },
     /// Under way at `Regime` speed, locked on its current course.
-    Cruising(crate::lane::Regime),
+    Cruising(crate::transit::Regime),
     /// Shutting down to thrusters. Still moving, still unable to steer.
-    /// `from` is the drive being shut down — a HYPERSPACE drive winding down is
-    /// still wound into the lane medium, so its shutdown is the last thing the
-    /// lane transmits for it (§coupled); a warp drive's drop stirs nothing.
-    /// serde default = Warp so pre-`from` snapshots load harmlessly.
+    /// `from` preserves the exact transition duration; serde defaults it to Warp
+    /// so pre-`from` snapshots load harmlessly.
     Dropping {
-        #[serde(default = "crate::lane::Regime::warp")]
-        from: crate::lane::Regime,
+        #[serde(default = "crate::transit::Regime::warp")]
+        from: crate::transit::Regime,
         left: f64,
     },
 }
@@ -873,39 +915,29 @@ impl DriveState {
         matches!(self, DriveState::Thrusters)
     }
 
-    /// §coupled: is this drive STIRRING THE LANE MEDIUM — i.e. is the hull IN
-    /// THE LANE? It is from the moment its hyperspace drive CATCHES until that
-    /// drive is fully out: Cruising, and the wind-down that follows.
-    ///
-    /// SPIN-UP IS THE APPROACH, NOT THE RIDE (design ruling). A spooling hull
-    /// has reached the lane and is lighting its drive, but it has not joined
-    /// the flow — the drive has not bitten, which is exactly why `regime()`
-    /// still has it crawling at thruster speed. The wind-down is the mirror
-    /// case and NOT symmetric on purpose: there the drive HAS bitten and is
-    /// still wound in, so the lane carries the shutdown as the last word about
-    /// a departing hull.
-    ///
-    /// So the lane's first word about a hull is the moment it joins the flow,
-    /// and its last is that hull's drive going dark. Read identically for the
-    /// owner's own reports and for a tripwire's read of a rival's wake. A warp
-    /// drive touches no lane in any state.
-    pub fn stirs_the_lane(self) -> bool {
-        matches!(
-            self,
-            DriveState::Cruising(crate::lane::Regime::Hyperspace)
-                | DriveState::Dropping { from: crate::lane::Regime::Hyperspace, .. }
-        )
-    }
-
     /// The regime this state moves at. Transitions run at thruster speed: a
     /// drive that has not caught yet is not carrying you, and one that is
     /// shutting down has already let go.
-    pub fn regime(self) -> crate::lane::Regime {
+    pub fn regime(self) -> crate::transit::Regime {
         match self {
             DriveState::Cruising(r) => r,
-            _ => crate::lane::Regime::Thrusters,
+            _ => crate::transit::Regime::Thrusters,
         }
     }
+}
+
+/// The committed leg of an Intercept/Attack pursuit. Targets may turn, but a
+/// warp drive cannot: the world holds this analytic lead point steady until the
+/// bounded replan time, then pays the ordinary drop/turn/spool cost if needed.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PursuitPlan {
+    pub target: EntityId,
+    /// Last discontinuous relocation seen when this leg was priced. A changed
+    /// stamp invalidates the commitment immediately.
+    #[serde(default)]
+    pub target_jump: Option<f64>,
+    pub aim: Vec2,
+    pub replan_at: f64,
 }
 
 /// A FLEET: the map/sim unit (GDD §13.1). One or more ships of mixed kinds
@@ -942,11 +974,26 @@ pub struct Fleet {
     pub pos: Vec2,
     pub vel: Vec2,
     pub order: FleetOrder,
+    /// Stable warp leg for a moving-target order. `None` for every other order;
+    /// serde default preserves pre-planner snapshots.
+    #[serde(default)]
+    pub pursuit_plan: Option<PursuitPlan>,
+    /// True-time stamp of the last discontinuous relocation. The view samples
+    /// this in commit 3; no player-facing surface reads it directly.
+    #[serde(default)]
+    pub last_jump: Option<f64>,
     /// Cargo carried (convoys only; raiders carry none). Broadcast withholds
     /// this — it is revealed by sensor range, not by the Convention. Capacity
     /// scales with the number of convoys aboard; existing single-convoy rules
     /// are the N=1 case, unchanged.
     pub cargo: Option<Cargo>,
+    /// Additional commodity stacks in this fleet's hold. `cargo` remains the
+    /// primary stack so pre-manifest snapshots deserialize unchanged; all live
+    /// cargo logic goes through the manifest helpers below and treats the two
+    /// fields as one hold. New stacks use this map once the primary commodity
+    /// differs, allowing a Convoy to carry a mixed founding/supply package.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub cargo_extra: BTreeMap<crate::cargo::Commodity, u32>,
     /// If set, this is a trade convoy fleet that resolves on arrival (§9).
     pub mission: Option<TradeMission>,
     /// If set, this fleet is on an AUTONOMOUS defensive intercept (it broke off
@@ -966,38 +1013,16 @@ pub struct Fleet {
     /// fleets are fully manned, which is what they were).
     #[serde(default)]
     pub marines_spent: u32,
-    /// §hyperspace: is the WARP DRIVE lit?
+    /// Is the WARP DRIVE lit? Warp works anywhere outside a gravity well and is
+    /// a state a fleet is in rather than a separate map layer.
     ///
-    /// Warp is the middle of the three drives — thrusters, warp, hyperspace —
-    /// and the only one that works anywhere: it is an overlay on the same
-    /// coordinates, so this is a state a fleet is in rather than a place it went.
-    /// The HYPERSPACE drive is not a flag here because it is not a free choice:
-    /// it only bites near a lane, so whether it is engaged is a fact about where
-    /// the fleet is, read back through `Regime`.
-    ///
-    /// Warp off is the pre-hyperspace game exactly: slow, and quiet — since
+    /// Warp off is slow and quiet — since
     /// signature already scales with speed (§6.3), going dark and going slow are
     /// the same act. serde default = false, so pre-feature fleets load on
     /// thrusters.
     #[serde(default)]
     pub warp: bool,
-    /// §hyperspace: the ROUTE this fleet is flying, as remaining waypoints.
-    ///
-    /// A lane is a curve, so riding one means following its centerline rather
-    /// than flying a straight line and hoping to clip the ribbon at a useful
-    /// angle. Planned once at order time from the lane network, then consumed
-    /// point by point — so the path a fleet flies is the path the player was
-    /// shown, and it does not silently re-plan mid-flight on information the
-    /// player never had.
-    ///
-    /// Each step carries the ROAD it belongs to, so speed is a property of what
-    /// the fleet is doing rather than of where it happens to be standing.
-    ///
-    /// Empty = fly straight to the order's destination, which is both the
-    /// fallback when no lane saves time and how every pre-feature fleet loads.
-    #[serde(default)]
-    pub route: Vec<crate::lane::Leg>,
-    /// §hyperspace: FUEL IN THE TANKS. Carried, not drawn.
+    /// FUEL IN THE TANKS. Carried, not drawn.
     ///
     /// This used to live in system stockpiles, and a moving fleet reached back
     /// to whichever of its owner's systems could pay — from any distance, every
@@ -1023,12 +1048,12 @@ pub struct Fleet {
     /// through, not an instantaneous re-aim.
     #[serde(default)]
     pub drive_state: DriveState,
-    /// §hyperspace: which layer this fleet is moving through, as of the last
+    /// Which cruise regime this fleet was moving through, as of the last
     /// tick it moved. Recorded rather than re-derived so the badge the map shows
     /// is the regime the fleet was actually flown at.
     #[serde(default)]
-    pub regime: crate::lane::Regime,
-    /// §hyperspace: this fleet has run dry and is holding. A latch, so the
+    pub regime: crate::transit::Regime,
+    /// This fleet has run dry and is holding. A latch, so the
     /// owner-only notice fires once per stall rather than thirty times a second.
     /// Cleared the tick it is refuelled.
     #[serde(default)]
@@ -1043,6 +1068,11 @@ pub struct Fleet {
     /// and, via the retarded velocity, the fleet's detection signature.
     #[serde(default)]
     pub transit: TransitMode,
+    /// The one scripted founding privateer is a visibly limping Raider. Keeping
+    /// the marker on the fleet confines the speed handicap to that encounter;
+    /// ordinary pirates and every player Raider retain the normal hull table.
+    #[serde(default)]
+    pub founding_privateer: bool,
     /// §economy Part 4: SPECIALIST PASSENGERS aboard (kind → headcount) —
     /// people, not cargo, but they ride the SAME two-tier fog rule: the
     /// broadcast never includes them, a sensor-revealed manifest does. Berths
@@ -1109,9 +1139,10 @@ pub struct Fleet {
     /// default `false` so every old snapshot loads with today's behaviour.
     #[serde(default)]
     pub engage_freight: bool,
-    /// §TCA Part 5: this hull was AUTO-SPAWNED for one trade run (a standing-order
-    /// dispatch, a production shipment, a purchase delivery) and is CONSUMED when
-    /// it arrives — exactly as every auto trade convoy always has been. A hull the
+    /// §TCA Part 5: this hull was AUTO-SPAWNED for one special one-way delivery and
+    /// is CONSUMED when it arrives. Standing orders and ordinary commodity
+    /// shipments no longer set this flag: they use a real player hull or Authority
+    /// freight. A hull the
     /// player actually owns and loaded is not disposable: it survives its delivery
     /// and goes Idle, ready for the next job. Without this, repointing the hub
     /// endpoint at the surviving `DeliverToWarehouse` mission would quietly turn
@@ -1154,19 +1185,22 @@ impl Fleet {
             pos,
             vel: Vec2::ZERO,
             order,
+            pursuit_plan: None,
+            last_jump: None,
             cargo,
+            cargo_extra: BTreeMap::new(),
             mission: None,
             defense: None,
             notified_held: false,
             marines_spent: 0,
             warp: false,
             fuel: hull_mass * crate::fuel::FUEL_PER_HULL_MASS,
-            regime: crate::lane::Regime::Thrusters,
+            regime: crate::transit::Regime::Thrusters,
             drive_state: DriveState::default(),
-            route: Vec::new(),
             stalled: false,
             damage: BTreeMap::new(),
             transit: TransitMode::Full,
+            founding_privateer: false,
             passengers: BTreeMap::new(),
             modules: BTreeMap::new(),
             posture: crate::doctrine::EngagementPosture::Passive,
@@ -1192,7 +1226,12 @@ impl Fleet {
         for s in &self.ships {
             *self.composition.entry(s.kind).or_insert(0) += 1;
             if !s.loadout.is_empty() {
-                *self.loadouts.entry(s.kind).or_default().entry(s.stack_key()).or_insert(0) += 1;
+                *self
+                    .loadouts
+                    .entry(s.kind)
+                    .or_default()
+                    .entry(s.stack_key())
+                    .or_insert(0) += 1;
             }
         }
     }
@@ -1242,11 +1281,16 @@ impl Fleet {
     /// escort keeps its fits — the pre-roster `detach_loadouts` behaviour) and
     /// then by id. Returns the actual hulls, damage and all.
     pub fn detach_ships(&mut self, kind: ShipKind, n: u32) -> Vec<Ship> {
-        let mut idx: Vec<usize> = (0..self.ships.len()).filter(|i| self.ships[*i].kind == kind).collect();
+        let mut idx: Vec<usize> = (0..self.ships.len())
+            .filter(|i| self.ships[*i].kind == kind)
+            .collect();
         // Fitted first, then by id — deterministic.
         idx.sort_by(|a, b| {
             let (x, y) = (&self.ships[*a], &self.ships[*b]);
-            x.loadout.is_empty().cmp(&y.loadout.is_empty()).then(x.id.cmp(&y.id))
+            x.loadout
+                .is_empty()
+                .cmp(&y.loadout.is_empty())
+                .then(x.id.cmp(&y.id))
         });
         idx.truncate(n as usize);
         idx.sort_unstable();
@@ -1266,10 +1310,15 @@ impl Fleet {
     /// completed refit does to hulls that never left, and the natural way to
     /// express "this wing flies fitted" in setup. Returns how many were changed.
     pub fn set_fitted(&mut self, kind: ShipKind, loadout: &crate::module::Loadout, n: u32) -> u32 {
-        let mut idx: Vec<usize> = (0..self.ships.len()).filter(|i| self.ships[*i].kind == kind).collect();
+        let mut idx: Vec<usize> = (0..self.ships.len())
+            .filter(|i| self.ships[*i].kind == kind)
+            .collect();
         idx.sort_by(|a, b| {
             let (x, y) = (&self.ships[*a], &self.ships[*b]);
-            y.loadout.is_empty().cmp(&x.loadout.is_empty()).then(x.id.cmp(&y.id))
+            y.loadout
+                .is_empty()
+                .cmp(&x.loadout.is_empty())
+                .then(x.id.cmp(&y.id))
         });
         idx.truncate(n as usize);
         let changed = idx.len() as u32;
@@ -1329,7 +1378,10 @@ impl Fleet {
 
     /// Fitted ships of `kind` (Σ its loadout stacks); the rest are unfitted.
     pub fn fitted_count(&self, kind: ShipKind) -> u32 {
-        self.loadouts.get(&kind).map(|m| m.values().sum()).unwrap_or(0)
+        self.loadouts
+            .get(&kind)
+            .map(|m| m.values().sum())
+            .unwrap_or(0)
     }
 
     // §roster: `fold_loadouts` / `detach_loadouts` are RETIRED. They moved fits
@@ -1348,14 +1400,22 @@ impl Fleet {
     /// Returning the hulls — rather than a count — is what lets a caller that
     /// intends to give them BACK (the refit queue) preserve their health. A
     /// caller that is destroying them just drops the Vec.
-    pub fn take_stack(&mut self, kind: ShipKind, loadout: &crate::module::Loadout, n: u32) -> Vec<Ship> {
+    pub fn take_stack(
+        &mut self,
+        kind: ShipKind,
+        loadout: &crate::module::Loadout,
+        n: u32,
+    ) -> Vec<Ship> {
         let key = loadout.key();
         let mut idx: Vec<usize> = (0..self.ships.len())
             .filter(|i| self.ships[*i].kind == kind && self.ships[*i].stack_key() == key)
             .collect();
         idx.sort_by(|a, b| {
             let (x, y) = (&self.ships[*a], &self.ships[*b]);
-            y.deficit().partial_cmp(&x.deficit()).unwrap_or(std::cmp::Ordering::Equal).then(x.id.cmp(&y.id))
+            y.deficit()
+                .partial_cmp(&x.deficit())
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(x.id.cmp(&y.id))
         });
         idx.truncate(n as usize);
         if idx.is_empty() {
@@ -1373,7 +1433,12 @@ impl Fleet {
 
     /// Remove `n` ships from the `(kind, loadout)` stack, discarding them.
     /// Returns how many went (the loss-accounting path).
-    pub fn remove_stack(&mut self, kind: ShipKind, loadout: &crate::module::Loadout, n: u32) -> u32 {
+    pub fn remove_stack(
+        &mut self,
+        kind: ShipKind,
+        loadout: &crate::module::Loadout,
+        n: u32,
+    ) -> u32 {
         self.take_stack(kind, loadout, n).len() as u32
     }
 
@@ -1414,10 +1479,15 @@ impl Fleet {
     /// pre-roster behaviour, where `normalize_loadouts` trimmed the fitted
     /// partition last), then by id — deterministic. Returns how many went.
     pub fn remove(&mut self, kind: ShipKind, n: u32) -> u32 {
-        let mut idx: Vec<usize> = (0..self.ships.len()).filter(|i| self.ships[*i].kind == kind).collect();
+        let mut idx: Vec<usize> = (0..self.ships.len())
+            .filter(|i| self.ships[*i].kind == kind)
+            .collect();
         idx.sort_by(|a, b| {
             let (x, y) = (&self.ships[*a], &self.ships[*b]);
-            y.loadout.is_empty().cmp(&x.loadout.is_empty()).then(x.id.cmp(&y.id))
+            y.loadout
+                .is_empty()
+                .cmp(&x.loadout.is_empty())
+                .then(x.id.cmp(&y.id))
         });
         idx.truncate(n as usize);
         let take = idx.len() as u32;
@@ -1456,26 +1526,50 @@ impl Fleet {
     }
 
     /// A fleet BROADCASTS (Convention, visible galaxy-wide) if ANY member kind
-    /// broadcasts — you cannot hide a freighter by parking a raider beside it.
-    /// A fleet of only raiders and/or scouts runs DARK.
+    /// broadcasts. A corporate Convoy remains dark; the Authority's Freighter
+    /// remains public even in a mixed formation.
     pub fn broadcasts(&self) -> bool {
         self.composition.keys().any(|k| k.broadcasts())
+    }
+
+    /// A mobile sensor source exists when the formation carries a Raider or a
+    /// Convoy. Their actual ranges remain distinct through `sensor_mult`.
+    pub fn projects_sensor(&self) -> bool {
+        self.composition.keys().any(|k| k.projects_sensor())
+    }
+
+    /// A mixed formation jumps only when every hull carries a drive.
+    pub fn can_jump(&self) -> bool {
+        !self.composition.is_empty() && self.composition.keys().all(|k| k.has_jump_drive())
     }
 
     /// §explore: is this fleet ACTIVELY SURVEYING (in the dwell window)? Drives
     /// the loudness multiplier through the one shared signature path — true only
     /// while the dwell clock runs, never during the approach.
     pub fn surveying(&self) -> bool {
-        matches!(self.order, FleetOrder::Survey { dwell_since: Some(_), .. })
+        matches!(
+            self.order,
+            FleetOrder::Survey {
+                dwell_since: Some(_),
+                ..
+            }
+        )
     }
 
-    /// The best sensor bubble this fleet projects into its owner's coverage —
-    /// the MAX `sensor_mult` among its members (a scout aboard extends vision).
+    /// The range multiplier of a mobile sensor fleet. A Raider carries the full
+    /// bubble and can be boosted by a Scout; a Convoy alone always uses its
+    /// short-range traffic suite (a Scout alone remains no sensor source).
     pub fn sensor_mult(&self) -> f64 {
-        self.composition
-            .keys()
-            .map(|k| k.sensor_mult())
-            .fold(1.0_f64, f64::max)
+        if self.contains(ShipKind::Raider) {
+            self.composition
+                .keys()
+                .map(|k| k.sensor_mult())
+                .fold(1.0_f64, f64::max)
+        } else if self.contains(ShipKind::Convoy) {
+            CONVOY_SENSOR_MULT
+        } else {
+            0.0
+        }
     }
 
     /// Total EMPTY-HULL mass = Σ hull_mass(kind) × count.
@@ -1493,9 +1587,112 @@ impl Fleet {
         self.count(ShipKind::Convoy) * CARGO_UNITS_PER_CONVOY
     }
 
+    /// Every non-empty commodity stack aboard, in deterministic commodity
+    /// order. The legacy primary stack is folded into the map so old saves and
+    /// new mixed manifests have one read surface.
+    pub fn cargo_stacks(&self) -> Vec<Cargo> {
+        let mut manifest = self.cargo_extra.clone();
+        if let Some(cargo) = self.cargo
+            && cargo.units > 0
+        {
+            *manifest.entry(cargo.commodity).or_insert(0) += cargo.units;
+        }
+        manifest
+            .into_iter()
+            .filter(|(_, units)| *units > 0)
+            .map(|(commodity, units)| Cargo { commodity, units })
+            .collect()
+    }
+
+    /// Total occupied hold space across every commodity.
+    pub fn cargo_units(&self) -> u32 {
+        self.cargo.map_or(0, |cargo| cargo.units) + self.cargo_extra.values().copied().sum::<u32>()
+    }
+
+    pub fn cargo_amount(&self, commodity: crate::cargo::Commodity) -> u32 {
+        self.cargo
+            .filter(|cargo| cargo.commodity == commodity)
+            .map_or(0, |cargo| cargo.units)
+            + self.cargo_extra.get(&commodity).copied().unwrap_or(0)
+    }
+
+    pub fn cargo_is_empty(&self) -> bool {
+        self.cargo_units() == 0
+    }
+
+    /// Add a whole stack to the shared hold. The caller owns capacity checks;
+    /// this function owns representation and merges like commodities.
+    pub fn add_cargo(&mut self, commodity: crate::cargo::Commodity, units: u32) {
+        if units == 0 {
+            return;
+        }
+        match self.cargo.as_mut() {
+            Some(primary) if primary.commodity == commodity => primary.units += units,
+            Some(_) => *self.cargo_extra.entry(commodity).or_insert(0) += units,
+            None => {
+                let extra = self.cargo_extra.remove(&commodity).unwrap_or(0);
+                self.cargo = Some(Cargo {
+                    commodity,
+                    units: units + extra,
+                });
+            }
+        }
+    }
+
+    /// Remove up to `units` of one commodity and return the amount removed.
+    pub fn remove_cargo(&mut self, commodity: crate::cargo::Commodity, units: u32) -> u32 {
+        if units == 0 {
+            return 0;
+        }
+        let mut removed = 0;
+        if self.cargo.is_some_and(|cargo| cargo.commodity == commodity) {
+            let primary = self.cargo.as_mut().unwrap();
+            removed = units.min(primary.units);
+            primary.units -= removed;
+            if primary.units == 0 {
+                self.cargo = None;
+            }
+        } else if let Some(extra) = self.cargo_extra.get_mut(&commodity) {
+            removed = units.min(*extra);
+            *extra -= removed;
+            if *extra == 0 {
+                self.cargo_extra.remove(&commodity);
+            }
+        }
+        self.promote_cargo_primary();
+        removed
+    }
+
+    /// Empty the whole hold and return its prior manifest.
+    pub fn take_cargo(&mut self) -> Vec<Cargo> {
+        let manifest = self.cargo_stacks();
+        self.cargo = None;
+        self.cargo_extra.clear();
+        manifest
+    }
+
+    /// Replace the whole hold with these stacks (zero entries ignored).
+    pub fn set_cargo_stacks(&mut self, stacks: impl IntoIterator<Item = Cargo>) {
+        self.cargo = None;
+        self.cargo_extra.clear();
+        for stack in stacks {
+            self.add_cargo(stack.commodity, stack.units);
+        }
+    }
+
+    fn promote_cargo_primary(&mut self) {
+        self.cargo_extra.retain(|_, units| *units > 0);
+        if self.cargo.is_none()
+            && let Some((&commodity, &units)) = self.cargo_extra.first_key_value()
+        {
+            self.cargo_extra.remove(&commodity);
+            self.cargo = Some(Cargo { commodity, units });
+        }
+    }
+
     /// Cargo mass carried by the fleet (§7).
     pub fn cargo_mass(&self) -> f64 {
-        self.cargo.map(|c| c.units as f64 * CARGO_MASS_PER_UNIT).unwrap_or(0.0)
+        self.cargo_units() as f64 * CARGO_MASS_PER_UNIT
     }
 
     /// Total mass = Σ hull + cargo (§7). Drives fuel-∝-distance×mass exactly as
@@ -1522,8 +1719,8 @@ impl Fleet {
         taken
     }
 
-    /// How far this fleet can still go at `factor` (1 normal, H open, H×LANE on
-    /// an aligned lane). Distance, not time — what a range ring is drawn from.
+    /// How far this fleet can still go at `factor` (1 on thrusters,
+    /// `WARP_FACTOR` in warp). Distance, not time — what a range ring draws.
     pub fn range_at(&self, factor: f64) -> f64 {
         let per_second = crate::fuel::fuel_tick(self.mass(), self.transit_speed(), 1.0);
         if per_second <= 1e-12 {
@@ -1551,10 +1748,16 @@ impl Fleet {
     /// colony's pace, telegraphing itself by physics. Cargo does NOT slow a fleet
     /// (constant-speed model, §14.1) — it costs FUEL (mass), not time.
     pub fn max_speed(&self) -> f64 {
-        self.composition
+        let hull_speed = self
+            .composition
             .keys()
             .map(|k| k.max_speed())
-            .fold(f64::INFINITY, f64::min)
+            .fold(f64::INFINITY, f64::min);
+        if self.founding_privateer {
+            hull_speed * crate::founding::PRIVATEER_SPEED_MULT
+        } else {
+            hull_speed
+        }
     }
 
     /// Total offensive weight = Σ attack_weight(kind) × count.
@@ -1592,125 +1795,119 @@ impl Fleet {
     /// Advance this fleet one timestep at simulation time `time`. Moves at the
     /// FORMATION constant speed (slowest member sets the pace), scaled by the
     /// transit throttle (§Part 4 — Full/Stealth).
-    pub fn advance(&mut self, time: f64, dt: f64, env: &crate::lane::TransitEnv<'_>) {
-        // §hyperspace: the regime is resolved per tick from WHERE the fleet is
-        // and what its drive is doing — normal, warp, or an aligned
-        // lane. Heading comes from current velocity, so a fleet already running
-        // down a lane keeps its benefit; one at rest has no alignment and starts
-        // at warp speed until it is under way.
-        let heading = if self.vel.length_sq() > 1e-9 { self.vel } else { Vec2::ZERO };
-        // §hyperspace: the WARP DRIVE lights automatically for a fleet under way
-        // and clear of a gravity well. Nobody toggles a drive per trip — the
-        // default is that you use it, and shutting it OFF is the tactical act
-        // (slow and quiet, since signature already scales with speed). Without
-        // this a fleet would fly a route planned at warp speeds on thrusters,
-        // taking the long way round a lane's bow for nothing.
-        //
-        // The HYPERSPACE drive needs no flag: lane-tagged route legs engage it,
-        // and an in-ribbon arrival keeps that existing coupling while idle.
-        let under_way = !matches!(self.order, FleetOrder::Idle);
-        // A fleet that ARRIVES inside a ribbon with its hyperspace drive already
-        // engaged holds that coupling while idle. Dropping it merely because the
-        // current order finished made the ship's command latency jump while the
-        // player was choosing its next order. This does not light a drive for an
-        // idle ship that was already on thrusters, and gravity wells still force
-        // every drive down.
-        let holding_lane = matches!(
-            self.drive_state,
-            DriveState::Cruising(crate::lane::Regime::Hyperspace)
-        ) && !under_way
-            && !env.in_well(self.pos)
-            && env.lanes.on_lane(self.pos);
-        let drive = self.warp || ((under_way || holding_lane) && !env.in_well(self.pos));
+    pub fn advance(&mut self, time: f64, dt: f64, env: &crate::transit::TransitEnv<'_>) {
+        let heading = if self.vel.length_sq() > 1e-9 {
+            self.vel
+        } else {
+            Vec2::ZERO
+        };
+        let under_way = !matches!(self.order, FleetOrder::Idle | FleetOrder::Jump { .. });
+        let drive = self.warp || (under_way && !env.in_well(self.pos));
         // §course-change: DRIVE THE STATE MACHINE, then read speed off it.
         //
         // A fleet cannot steer above thrusters. To change course it drops all
         // the way out, turns, and re-enters — and each transition takes time.
         // That is what makes a reversal cost something, and it replaces the old
         // bounded-turn-rate model, which decided the same question by geometry
-        // and lost: past the alignment gate a hull's speed fell tenfold and its
-        // turning circle with it, so a Titan could come about inside a ribbon it
-        // was supposedly far too big to turn in.
-        let want = self.route.first().and_then(|l| l.lane).filter(|_| drive).map_or(
-            if holding_lane {
-                crate::lane::Regime::Hyperspace
-            } else if drive && !env.in_well(self.pos) {
-                crate::lane::Regime::Warp
-            } else {
-                crate::lane::Regime::Thrusters
-            },
-            |_| crate::lane::Regime::Hyperspace,
-        );
+        // and lost: threshold crossings changed both speed and turn geometry.
+        let want = if drive && !env.in_well(self.pos) {
+            crate::transit::Regime::Warp
+        } else {
+            crate::transit::Regime::Thrusters
+        };
         // How far the course it WANTS is from the course it is ON.
-        let aim = self.route.first().map_or_else(
-            || match self.order {
-                FleetOrder::MoveTo { dest } => dest - self.pos,
-                FleetOrder::Construct { site, .. } | FleetOrder::Demolish { site, .. } => site - self.pos,
-                _ => Vec2::ZERO,
-            },
-            |l| l.to - self.pos,
-        );
+        let aim = match self.order {
+            FleetOrder::MoveTo { dest } => dest - self.pos,
+            FleetOrder::Jump { .. } => Vec2::ZERO,
+            FleetOrder::Construct { site, .. } | FleetOrder::Demolish { site, .. } => {
+                site - self.pos
+            }
+            FleetOrder::Blockade { station, .. } | FleetOrder::Survey { station, .. } => {
+                station - self.pos
+            }
+            FleetOrder::Patrol {
+                ref waypoints,
+                index,
+                ..
+            } if !waypoints.is_empty() => waypoints[index % waypoints.len()] - self.pos,
+            _ => Vec2::ZERO,
+        };
         let off_course = if heading.length_sq() > 1e-9 && aim.length_sq() > 1e-9 {
-            heading.normalized().dot(aim.normalized()).clamp(-1.0, 1.0).acos()
+            heading
+                .normalized()
+                .dot(aim.normalized())
+                .clamp(-1.0, 1.0)
+                .acos()
         } else {
             0.0
         };
         self.drive_state = match self.drive_state {
             // At rest on thrusters: start spinning up if there is anything to
             // spin up into.
-            DriveState::Thrusters if want != crate::lane::Regime::Thrusters => {
-                DriveState::Spooling { to: want, left: crate::lane::spool_seconds(want) }
+            DriveState::Thrusters if want != crate::transit::Regime::Thrusters => {
+                DriveState::Spooling {
+                    to: want,
+                    left: crate::transit::spool_seconds(want),
+                }
             }
             DriveState::Thrusters => DriveState::Thrusters,
             // Mid spin-up: finish, or abandon it if the fleet no longer wants it.
             // Changed its mind mid spin-up: start the new one from scratch, or
             // fall back to thrusters if it no longer wants a drive at all.
             DriveState::Spooling { to, .. } if to != want => {
-                if want == crate::lane::Regime::Thrusters {
+                if want == crate::transit::Regime::Thrusters {
                     DriveState::Thrusters
                 } else {
-                    DriveState::Spooling { to: want, left: crate::lane::spool_seconds(want) }
+                    DriveState::Spooling {
+                        to: want,
+                        left: crate::transit::spool_seconds(want),
+                    }
                 }
             }
             DriveState::Spooling { to, left } => {
                 let left = left - dt;
-                if left <= 0.0 { DriveState::Cruising(to) } else { DriveState::Spooling { to, left } }
+                if left <= 0.0 {
+                    DriveState::Cruising(to)
+                } else {
+                    DriveState::Spooling { to, left }
+                }
             }
             // Cruising: any change of regime means SHUTTING DOWN first.
-            DriveState::Cruising(r) if r != want => {
-                DriveState::Dropping { from: r, left: crate::lane::drop_seconds(r) }
-            }
+            DriveState::Cruising(r) if r != want => DriveState::Dropping {
+                from: r,
+                left: crate::transit::drop_seconds(r),
+            },
             // ...and so does any change of COURSE. In warp nothing is steering,
             // so wanting to go somewhere other than where you are pointed is not
             // something you can act on — you drop out, come about on thrusters,
-            // and light it again. A fleet on a LANE is exempt: there the road is
-            // steering, and a road bending is not the ship changing its mind.
-            DriveState::Cruising(crate::lane::Regime::Warp)
-                if off_course > crate::lane::COURSE_LOCK_RAD =>
+            // and light it again.
+            DriveState::Cruising(crate::transit::Regime::Warp)
+                if off_course > crate::transit::COURSE_LOCK_RAD =>
             {
-                DriveState::Dropping { from: crate::lane::Regime::Warp, left: crate::lane::drop_seconds(crate::lane::Regime::Warp) }
+                DriveState::Dropping {
+                    from: crate::transit::Regime::Warp,
+                    left: crate::transit::drop_seconds(crate::transit::Regime::Warp),
+                }
             }
             DriveState::Cruising(r) => DriveState::Cruising(r),
             DriveState::Dropping { from, left } => {
                 let left = left - dt;
-                if left <= 0.0 { DriveState::Thrusters } else { DriveState::Dropping { from, left } }
+                if left <= 0.0 {
+                    DriveState::Thrusters
+                } else {
+                    DriveState::Dropping { from, left }
+                }
             }
         };
         self.regime = self.drive_state.regime();
         let factor = match self.regime {
-            crate::lane::Regime::Hyperspace => crate::lane::WARP_FACTOR * crate::lane::LANE_MULT,
-            crate::lane::Regime::Warp => crate::lane::WARP_FACTOR,
-            crate::lane::Regime::Thrusters => 1.0,
+            crate::transit::Regime::Warp => crate::transit::WARP_FACTOR,
+            crate::transit::Regime::Thrusters => 1.0,
         };
         let speed = self.transit_speed() * factor;
-        // WHO IS STEERING. On thrusters, the fleet. On a lane, the LANE — a road
-        // bending is not the ship changing course, it is the ship being carried
-        // along one, so a fleet riding a ribbon follows it freely. Everywhere
-        // else the course is locked: in warp there is nothing to follow and no
-        // authority to turn with, so the fleet flies the line it committed to
-        // when it lit the drive.
-        let steered = self.drive_state.can_steer()
-            || matches!(self.drive_state, DriveState::Cruising(crate::lane::Regime::Hyperspace));
+        // WHO IS STEERING. On thrusters, the fleet. In warp the course is locked,
+        // so the fleet flies the line it committed to when it lit the drive.
+        let steered = self.drive_state.can_steer();
         let radius = if steered { 0.0 } else { f64::INFINITY };
 
         match &mut self.order {
@@ -1718,44 +1915,16 @@ impl Fleet {
                 // Holds station. (Already at rest.)
                 self.vel = Vec2::ZERO;
             }
+            FleetOrder::Jump { .. } => {
+                self.vel = Vec2::ZERO;
+            }
             FleetOrder::MoveTo { dest } => {
-                // Steer to the next waypoint of the planned route, or straight at
-                // the destination when there is none.
-                let target = self.route.first().map_or(*dest, |l| l.to);
-                let carried = self.vel;
-                let step = crate::movement::advance_turning(self.pos, self.vel, target, speed, dt, radius);
+                let step =
+                    crate::movement::advance_turning(self.pos, self.vel, *dest, speed, dt, radius);
                 self.pos = step.pos;
                 self.vel = step.vel;
                 if step.arrived {
-                    if self.route.is_empty() {
-                        self.order = FleetOrder::Idle;
-                    } else {
-                        self.route.remove(0);
-                        // Retiring the LAST waypoint is arriving: the route always
-                        // ends at the destination, so there is nothing further to
-                        // steer to and the fleet is where it was sent.
-                        if self.route.is_empty() {
-                            self.order = FleetOrder::Idle;
-                        } else if carried.length_sq() > 1e-9 {
-                            // CARRY THE HEADING THROUGH an intermediate waypoint.
-                            //
-                            // Arrival zeroes velocity, which is right at a
-                            // destination and wrong at a corner: heading is what
-                            // `factor` reads to decide a fleet is riding a lane,
-                            // so a fleet that reaches a waypoint at rest is a
-                            // fleet that has just left the lane. It then re-aligns
-                            // over the next leg, reaches the following waypoint,
-                            // and drops out again — paying warp speed
-                            // for most of a route it planned to fly at ten times
-                            // that. Routed trips came out SLOWER than the straight
-                            // line they were meant to beat.
-                            //
-                            // It is also what let a fleet reverse inside a ribbon:
-                            // a waypoint handed it a blank heading, and a blank
-                            // heading may set off in any direction at all.
-                            self.vel = carried.normalized() * speed;
-                        }
-                    }
+                    self.order = FleetOrder::Idle;
                 }
             }
             FleetOrder::Construct { site, .. } | FleetOrder::Demolish { site, .. } => {
@@ -1763,7 +1932,8 @@ impl Fleet {
                 // demolition resolver runs the clock; going Idle would abandon
                 // the job.
                 let site = *site;
-                let step = crate::movement::advance_turning(self.pos, self.vel, site, speed, dt, radius);
+                let step =
+                    crate::movement::advance_turning(self.pos, self.vel, site, speed, dt, radius);
                 self.pos = step.pos;
                 self.vel = step.vel;
             }
@@ -1772,14 +1942,18 @@ impl Fleet {
                 // world reads on-station presence as an active blockade; going
                 // Idle would drop it). Once arrived, advance_toward returns the
                 // station point at zero velocity, so it simply holds each tick.
-                let step = crate::movement::advance_turning(self.pos, self.vel, *station, speed, dt, radius);
+                let step = crate::movement::advance_turning(
+                    self.pos, self.vel, *station, speed, dt, radius,
+                );
                 self.pos = step.pos;
                 self.vel = step.vel;
             }
             FleetOrder::Survey { station, .. } => {
                 // §explore: fly to the star and HOLD (the world's survey resolver
                 // runs the dwell clock + completion; going Idle would drop it).
-                let step = crate::movement::advance_turning(self.pos, self.vel, *station, speed, dt, radius);
+                let step = crate::movement::advance_turning(
+                    self.pos, self.vel, *station, speed, dt, radius,
+                );
                 self.pos = step.pos;
                 self.vel = step.vel;
             }
@@ -1810,17 +1984,10 @@ impl Fleet {
             // machinery as any other order, so a chase lights warp exactly like
             // its prey. Contact is the world's call (resolve_raids), so arrival
             // never ends the order: retire the leg and hold for the next aim.
-            FleetOrder::Intercept { .. } | FleetOrder::Attack { .. } => {
-                if let Some(target) = self.route.first().map(|l| l.to) {
-                    let step = crate::movement::advance_turning(self.pos, self.vel, target, speed, dt, radius);
-                    self.pos = step.pos;
-                    self.vel = step.vel;
-                    if step.arrived {
-                        self.route.remove(0);
-                    }
-                } else {
-                    self.vel = Vec2::ZERO;
-                }
+            FleetOrder::Intercept { .. } | FleetOrder::Attack { .. } | FleetOrder::Guard { .. } => {
+                // The world owns true target state and performs this step using
+                // the same drive machinery with a temporary fixed aim.
+                self.vel = Vec2::ZERO;
             }
         }
     }
@@ -1834,7 +2001,14 @@ mod tests {
     use crate::math::Vec2;
 
     fn fleet(comp: &[(ShipKind, u32)], cargo: Option<Cargo>) -> Fleet {
-        let mut f = Fleet::single(EntityId(1), PlayerId(1), ShipKind::Scout, Vec2::ZERO, FleetOrder::Idle, cargo);
+        let mut f = Fleet::single(
+            EntityId(1),
+            PlayerId(1),
+            ShipKind::Scout,
+            Vec2::ZERO,
+            FleetOrder::Idle,
+            cargo,
+        );
         // §roster: drop the placeholder hull `single` seeded, then crew for real.
         f.ships.clear();
         f.next_ship_id = 0;
@@ -1849,9 +2023,16 @@ mod tests {
     fn fleet_of_one_matches_the_old_single_ship_exactly() {
         // A convoy fleet-of-one moves at the convoy's constant speed (§14.1) —
         // cargo affects fuel (mass), not speed.
-        let cargo = Some(Cargo { commodity: Commodity::MetallicOre, units: 100 });
+        let cargo = Some(Cargo {
+            commodity: Commodity::MetallicOre,
+            units: 100,
+        });
         let f = fleet(&[(ShipKind::Convoy, 1)], cargo);
-        assert_eq!(f.max_speed(), ShipKind::Convoy.max_speed(), "fleet-of-one speed == its kind's speed");
+        assert_eq!(
+            f.max_speed(),
+            ShipKind::Convoy.max_speed(),
+            "fleet-of-one speed == its kind's speed"
+        );
         assert_eq!(f.flagship_kind(), ShipKind::Convoy);
         assert_eq!(f.total_count(), 1);
     }
@@ -1860,30 +2041,48 @@ mod tests {
     fn formation_speed_is_set_by_the_slowest_member() {
         // A hammer (raider) carrying a colony ship lumbers at the COLONY's pace.
         let f = fleet(&[(ShipKind::Raider, 3), (ShipKind::Colony, 1)], None);
-        assert_eq!(f.max_speed(), ShipKind::Colony.max_speed(), "slowest member sets the formation speed");
+        assert_eq!(
+            f.max_speed(),
+            ShipKind::Colony.max_speed(),
+            "slowest member sets the formation speed"
+        );
         // Raider alone is far faster — proving the formation penalty.
         let raider = fleet(&[(ShipKind::Raider, 1)], None);
-        assert!(raider.max_speed() > f.max_speed(), "an unencumbered raider is faster");
+        assert!(
+            raider.max_speed() > f.max_speed(),
+            "an unencumbered raider is faster"
+        );
     }
 
     #[test]
     fn mass_and_fuel_sum_over_the_whole_convoy_count() {
-        let cargo = Some(Cargo { commodity: Commodity::MetallicOre, units: 50 });
+        let cargo = Some(Cargo {
+            commodity: Commodity::MetallicOre,
+            units: 50,
+        });
         let f = fleet(&[(ShipKind::Convoy, 3)], cargo);
         let expected = 3.0 * ShipKind::Convoy.hull_mass() + 50.0 * CARGO_MASS_PER_UNIT;
-        assert!((f.mass() - expected).abs() < 1e-9, "mass = Σ hull×count + cargo");
+        assert!(
+            (f.mass() - expected).abs() < 1e-9,
+            "mass = Σ hull×count + cargo"
+        );
         // Fuel ∝ distance × total mass, so a 3-convoy fleet burns 3× a 1-convoy
         // fleet's hull share over the same leg (cargo held equal).
         let one = fleet(&[(ShipKind::Convoy, 1)], None);
         let three = fleet(&[(ShipKind::Convoy, 3)], None);
         let d = 1000.0;
-        assert!((crate::fuel::fuel_cost(d, three.mass()) - 3.0 * crate::fuel::fuel_cost(d, one.mass())).abs() < 1e-6);
+        assert!(
+            (crate::fuel::fuel_cost(d, three.mass()) - 3.0 * crate::fuel::fuel_cost(d, one.mass()))
+                .abs()
+                < 1e-6
+        );
     }
 
     #[test]
     fn broadcasts_if_any_member_broadcasts() {
-        // You cannot hide a freighter by parking a raider beside it.
-        assert!(fleet(&[(ShipKind::Raider, 2), (ShipKind::Convoy, 1)], None).broadcasts());
+        // Corporate logistics may run silent; the Authority carrier may not.
+        assert!(!fleet(&[(ShipKind::Raider, 2), (ShipKind::Convoy, 1)], None).broadcasts());
+        assert!(fleet(&[(ShipKind::Raider, 2), (ShipKind::Freighter, 1)], None).broadcasts());
         assert!(fleet(&[(ShipKind::Corvette, 1)], None).broadcasts());
         // Raiders and/or scouts only → dark.
         assert!(!fleet(&[(ShipKind::Raider, 3)], None).broadcasts());
@@ -1891,11 +2090,50 @@ mod tests {
     }
 
     #[test]
+    fn corporate_convoys_are_dark_without_becoming_jump_ships() {
+        assert!(!ShipKind::Convoy.broadcasts());
+        assert!(!ShipKind::Convoy.has_jump_drive());
+        assert!(ShipKind::Freighter.broadcasts());
+        assert!(!ShipKind::Freighter.has_jump_drive());
+        assert!(ShipKind::Raider.has_jump_drive() && !ShipKind::Raider.broadcasts());
+        assert!(ShipKind::Scout.has_jump_drive() && !ShipKind::Scout.broadcasts());
+    }
+
+    #[test]
+    fn raiders_and_convoys_project_distinct_mobile_sensors() {
+        let raider = fleet(&[(ShipKind::Raider, 1)], None);
+        assert!(raider.projects_sensor());
+        assert_eq!(raider.sensor_mult(), 1.0);
+
+        let convoy = fleet(&[(ShipKind::Convoy, 2)], None);
+        assert!(convoy.projects_sensor());
+        assert_eq!(convoy.sensor_mult(), CONVOY_SENSOR_MULT);
+
+        let escort = fleet(&[(ShipKind::Raider, 1), (ShipKind::Convoy, 2)], None);
+        assert!(escort.projects_sensor());
+        assert_eq!(escort.sensor_mult(), 1.0);
+
+        assert!(!fleet(&[(ShipKind::Scout, 1)], None).projects_sensor());
+    }
+
+    #[test]
     fn flagship_follows_precedence_colony_convoy_corvette_raider_scout() {
-        assert_eq!(fleet(&[(ShipKind::Convoy, 1), (ShipKind::Colony, 1)], None).flagship_kind(), ShipKind::Colony);
-        assert_eq!(fleet(&[(ShipKind::Convoy, 1), (ShipKind::Corvette, 2)], None).flagship_kind(), ShipKind::Convoy);
-        assert_eq!(fleet(&[(ShipKind::Raider, 5), (ShipKind::Scout, 1)], None).flagship_kind(), ShipKind::Raider);
-        assert_eq!(fleet(&[(ShipKind::Scout, 2)], None).flagship_kind(), ShipKind::Scout);
+        assert_eq!(
+            fleet(&[(ShipKind::Convoy, 1), (ShipKind::Colony, 1)], None).flagship_kind(),
+            ShipKind::Colony
+        );
+        assert_eq!(
+            fleet(&[(ShipKind::Convoy, 1), (ShipKind::Corvette, 2)], None).flagship_kind(),
+            ShipKind::Convoy
+        );
+        assert_eq!(
+            fleet(&[(ShipKind::Raider, 5), (ShipKind::Scout, 1)], None).flagship_kind(),
+            ShipKind::Raider
+        );
+        assert_eq!(
+            fleet(&[(ShipKind::Scout, 2)], None).flagship_kind(),
+            ShipKind::Scout
+        );
     }
 
     #[test]
@@ -1925,7 +2163,10 @@ mod tests {
                 CountClass::SixteenToThirty => (16, 30),
                 CountClass::ThirtyOnePlus => (31, u32::MAX),
             };
-            assert!(n >= lo_hi.0 && n <= lo_hi.1, "count must lie inside its own bucket");
+            assert!(
+                n >= lo_hi.0 && n <= lo_hi.1,
+                "count must lie inside its own bucket"
+            );
         }
     }
 
@@ -1935,13 +2176,26 @@ mod tests {
         // Full speed → the detection anchor (signature 1.0).
         f.vel = Vec2::new(f.max_speed(), 0.0);
         let full_sig = f.signature();
-        assert!((full_sig - 1.0).abs() < 1e-9, "a lone raider at full speed is the 1.0 anchor");
-        assert_eq!(f.transit_speed(), f.max_speed(), "Full transit = formation speed");
+        assert!(
+            (full_sig - 1.0).abs() < 1e-9,
+            "a lone raider at full speed is the 1.0 anchor"
+        );
+        assert_eq!(
+            f.transit_speed(),
+            f.max_speed(),
+            "Full transit = formation speed"
+        );
         // Stealth halves the move speed and, at that speed, quiets the signature.
         f.transit = TransitMode::Stealth;
-        assert!((f.transit_speed() - f.max_speed() * 0.5).abs() < 1e-9, "Stealth creeps at STEALTH_FRACTION");
+        assert!(
+            (f.transit_speed() - f.max_speed() * 0.5).abs() < 1e-9,
+            "Stealth creeps at STEALTH_FRACTION"
+        );
         f.vel = Vec2::new(f.transit_speed(), 0.0);
-        assert!(f.signature() < full_sig, "creeping is quieter than flank speed");
+        assert!(
+            f.signature() < full_sig,
+            "creeping is quieter than flank speed"
+        );
     }
 
     #[test]
@@ -1960,7 +2214,9 @@ mod tests {
         f.loadouts.get(&k).map(|m| m.values().sum()).unwrap_or(0)
     }
     fn invariant_holds(f: &Fleet) -> bool {
-        f.loadouts.iter().all(|(k, m)| m.values().sum::<u32>() <= f.count(*k))
+        f.loadouts
+            .iter()
+            .all(|(k, m)| m.values().sum::<u32>() <= f.count(*k))
     }
 
     #[test]
@@ -1984,14 +2240,22 @@ mod tests {
         // their fits with them, and the source is left with only unfitted ships.
         let taken = f.detach_ships(ShipKind::Raider, 2);
         assert_eq!(taken.len(), 2);
-        assert_eq!(taken.iter().filter(|s| !s.loadout.is_empty()).count(), 2, "escorts keep their fits");
+        assert_eq!(
+            taken.iter().filter(|s| !s.loadout.is_empty()).count(),
+            2,
+            "escorts keep their fits"
+        );
         assert_eq!(f.count(ShipKind::Raider), 1);
         assert_eq!(total_fitted(&f, ShipKind::Raider), 0);
         assert!(invariant_holds(&f));
 
         // Absorb another fleet's hulls (merge/relief): their fits come along.
         let mut g = fleet(&[(ShipKind::Raider, 2)], None);
-        g.set_fitted(ShipKind::Raider, &Loadout::new(vec![ModuleKind::WhippleArmor]), 2);
+        g.set_fitted(
+            ShipKind::Raider,
+            &Loadout::new(vec![ModuleKind::WhippleArmor]),
+            2,
+        );
         f.absorb_ships(std::mem::take(&mut g.ships));
         assert_eq!(f.count(ShipKind::Raider), 3);
         assert_eq!(total_fitted(&f, ShipKind::Raider), 2);
@@ -2011,7 +2275,10 @@ mod tests {
             for s in &f.ships {
                 *comp.entry(s.kind).or_insert(0) += 1;
                 if !s.loadout.is_empty() {
-                    *lo.entry(s.kind).or_default().entry(s.stack_key()).or_insert(0) += 1;
+                    *lo.entry(s.kind)
+                        .or_default()
+                        .entry(s.stack_key())
+                        .or_insert(0) += 1;
                 }
             }
             comp == f.composition && lo == f.loadouts
@@ -2056,7 +2323,11 @@ mod tests {
         // …and absorbing it back preserves the hp under a re-issued id.
         let mut g = fleet(&[(ShipKind::Raider, 1)], None);
         g.absorb_ships(taken);
-        assert_eq!(g.ships.iter().filter(|s| s.hp == 50.0).count(), 1, "exactly one hull is still hurt");
+        assert_eq!(
+            g.ships.iter().filter(|s| s.hp == 50.0).count(),
+            1,
+            "exactly one hull is still hurt"
+        );
         assert_eq!(g.count(ShipKind::Raider), 4);
     }
 
@@ -2072,7 +2343,11 @@ mod tests {
         assert!(!invariant_holds(&f));
         f.normalize_loadouts();
         assert!(invariant_holds(&f), "normalize restores Σ ≤ composition");
-        assert_eq!(total_fitted(&f, ShipKind::Raider), 0, "the hulls were never actually fitted");
+        assert_eq!(
+            total_fitted(&f, ShipKind::Raider),
+            0,
+            "the hulls were never actually fitted"
+        );
     }
 
     #[test]
@@ -2082,7 +2357,10 @@ mod tests {
         let mut v: serde_json::Value = serde_json::to_value(&f).unwrap();
         v.as_object_mut().unwrap().remove("loadouts");
         let f2: Fleet = serde_json::from_value(v).unwrap();
-        assert!(f2.loadouts.is_empty(), "no field → all-unfitted, zero migration");
+        assert!(
+            f2.loadouts.is_empty(),
+            "no field → all-unfitted, zero migration"
+        );
         assert_eq!(f2.count(ShipKind::Raider), 3);
     }
 }
@@ -2098,16 +2376,22 @@ mod drive_wire {
         let j = |d: DriveState| serde_json::to_string(&d).unwrap();
         assert_eq!(j(DriveState::Thrusters), "\"thrusters\"");
         assert_eq!(
-            j(DriveState::Cruising(crate::lane::Regime::Hyperspace)),
-            "{\"cruising\":\"hyperspace\"}"
+            j(DriveState::Cruising(crate::transit::Regime::Warp)),
+            "{\"cruising\":\"warp\"}"
         );
         assert_eq!(
-            j(DriveState::Spooling { to: crate::lane::Regime::Warp, left: 1.5 }),
+            j(DriveState::Spooling {
+                to: crate::transit::Regime::Warp,
+                left: 1.5
+            }),
             "{\"spooling\":{\"to\":\"warp\",\"left\":1.5}}"
         );
         assert_eq!(
-            j(DriveState::Dropping { from: crate::lane::Regime::Hyperspace, left: 3.0 }),
-            "{\"dropping\":{\"from\":\"hyperspace\",\"left\":3.0}}"
+            j(DriveState::Dropping {
+                from: crate::transit::Regime::Warp,
+                left: 1.0
+            }),
+            "{\"dropping\":{\"from\":\"warp\",\"left\":1.0}}"
         );
     }
 }

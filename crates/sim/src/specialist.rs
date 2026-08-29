@@ -64,10 +64,19 @@ impl SpecialistKind {
         matches!(
             (self, structure),
             (SpecialistKind::Geologist, K::MiningComplex)
-                | (SpecialistKind::PetrochemicalEngineer, K::VolatileHarvester | K::FuelRefinery | K::ChemicalWorks)
+                | (
+                    SpecialistKind::PetrochemicalEngineer,
+                    K::VolatileHarvester | K::FuelRefinery | K::ChemicalWorks
+                )
                 | (SpecialistKind::Xenobiologist, K::Bioharvester | K::Agroplex)
-                | (SpecialistKind::IndustrialEngineer, K::Smelter | K::ElectronicsFabricator | K::MachineWorks | K::ArmamentsComplex)
-                | (SpecialistKind::NavalArchitect, K::Shipyard | K::ArmamentsComplex)
+                | (
+                    SpecialistKind::IndustrialEngineer,
+                    K::Smelter | K::ElectronicsFabricator | K::MachineWorks | K::ArmamentsComplex
+                )
+                | (
+                    SpecialistKind::NavalArchitect,
+                    K::Shipyard | K::ArmamentsComplex
+                )
         )
     }
 }
@@ -85,8 +94,10 @@ pub const ACADEMY_TRAIN_TICKS: u64 = 40 * crate::config::TICK_HZ as u64;
 
 /// What one Academy training course consumes from the local stockpile.
 /// Tunable.
-pub const ACADEMY_TRAIN_COSTS: &[(crate::cargo::Commodity, f64)] =
-    &[(crate::cargo::Commodity::Provisions, 20.0), (crate::cargo::Commodity::Electronics, 10.0)];
+pub const ACADEMY_TRAIN_COSTS: &[(crate::cargo::Commodity, f64)] = &[
+    (crate::cargo::Commodity::Provisions, 20.0),
+    (crate::cargo::Commodity::Electronics, 10.0),
+];
 
 // --- TRANSPORT --------------------------------------------------------------------
 
@@ -122,7 +133,10 @@ mod tests {
     fn every_producing_structure_has_at_least_one_affine_profession() {
         // Every converter + extraction structure + the Shipyard boost can be
         // specialist-boosted — no dead line in the affinity table.
-        let mut producing: Vec<StructureKind> = crate::production::CONVERTERS.iter().map(|c| c.structure).collect();
+        let mut producing: Vec<StructureKind> = crate::production::CONVERTERS
+            .iter()
+            .map(|c| c.structure)
+            .collect();
         producing.extend([
             StructureKind::MiningComplex,
             StructureKind::VolatileHarvester,

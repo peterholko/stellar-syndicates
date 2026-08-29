@@ -48,6 +48,13 @@ export type PlanetKind =
   | "lava"
   | "barren";
 
+export interface CameraRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 // The established System View star size. Galaxy-map bloom must meet this
 // existing visible diameter; the planetary scene itself is not resized.
 const SYSTEM_STAR_VISIBLE_UNITS = 0.17;
@@ -182,6 +189,19 @@ function radiusForKind(kind: PlanetKind, rng: () => number): number {
   return 0.02 + rng() * 0.016;
 }
 
+// Public body size has a visible silhouette. The ranges still overlap, so art
+// reads naturally rather than as five rigid icon sizes, but a Huge world is an
+// unmistakably different discovery from a Tiny moon.
+function bodySizeVisual(size: BodyView["size"]): number {
+  switch (size) {
+    case "tiny": return 0.70;
+    case "small": return 0.85;
+    case "large": return 1.18;
+    case "huge": return 1.35;
+    default: return 1;
+  }
+}
+
 // ---- The generator -----------------------------------------------------------
 //
 // Deterministic from the public system id + the VIEWER'S KNOWN geology
@@ -208,7 +228,7 @@ export function buildVisualSystem(sys: SystemInfo, bodies: BodyView[]): VisualSy
       name: b.name,
       kind,
       orbitRadius: Math.min(0.96, base + (rng() - 0.5) * 0.03),
-      radius: radiusForKind(kind, rng),
+      radius: radiusForKind(kind, rng) * bodySizeVisual(b.size),
       angle: rng() * Math.PI * 2,
       moons: [],
       deposits: b.deposits ?? [],
@@ -227,7 +247,7 @@ export function buildVisualSystem(sys: SystemInfo, bodies: BodyView[]): VisualSy
       id: String(b.id),
       name: b.name,
       orbitRadius: 0.028 + rng() * 0.02 + parent.moons.length * 0.014,
-      radius: 0.006 + rng() * 0.004,
+      radius: (0.006 + rng() * 0.004) * bodySizeVisual(b.size),
       angle: rng() * Math.PI * 2,
       deposits: b.deposits ?? [],
       structures: b.structures,
@@ -362,6 +382,7 @@ export class SystemViewScene {
   private pulse: { sx: number; sy: number; r: number; until: number } | null = null;
   private viewW = 0;
   private viewH = 0;
+  private cameraRect: CameraRect = { x: 0, y: 0, w: 0, h: 0 };
   private sceneScale = 1;
   private starLayout: Vec2 = { x: 0, y: 0 };
 
@@ -416,7 +437,7 @@ export class SystemViewScene {
     this.lastStarTex = starTex;
     this.selected = null;
     this.buildStatic(vis, starTex);
-    this.layout(this.viewW, this.viewH);
+    this.layout(this.viewW, this.viewH, this.cameraRect);
   }
 
   currentId(): string | null {
@@ -628,14 +649,18 @@ export class SystemViewScene {
   /// label positions. Called on setSystem and on resize (camera is a fixed fit —
   /// there is no intra-system pan/zoom; zoom-out is an EXIT gesture, handled by
   /// the caller). Static graphics don't change — only the worldRoot transform.
-  layout(viewW: number, viewH: number): void {
+  layout(viewW: number, viewH: number, cameraRect: CameraRect = { x: 0, y: 0, w: viewW, h: viewH }): void {
     this.viewW = viewW;
     this.viewH = viewH;
     if (!viewW || !viewH) return;
-    const cx = viewW / 2;
-    const cy = viewH / 2;
+    const usable = cameraRect.w > 0 && cameraRect.h > 0
+      ? cameraRect
+      : { x: 0, y: 0, w: viewW, h: viewH };
+    this.cameraRect = { ...usable };
+    const cx = usable.x + usable.w / 2;
+    const cy = usable.y + usable.h / 2;
     this.starLayout = { x: cx, y: cy };
-    this.sceneScale = Math.min(viewW, viewH) * 0.42;
+    this.sceneScale = Math.min(usable.w, usable.h) * 0.42;
     this.worldRoot.position.set(cx, cy);
     this.worldRoot.scale.set(this.sceneScale);
 
@@ -651,7 +676,7 @@ export class SystemViewScene {
     // Backdrop vignette (subtle LOD separation from the galaxy).
     this.vignette.clear();
     this.vignette.rect(0, 0, viewW, viewH).fill({ color: 0x05070d, alpha: 0.35 });
-    this.vignette.circle(cx, cy, Math.min(viewW, viewH) * 0.5).fill({ color: 0x0a1120, alpha: 0.35 });
+    this.vignette.circle(cx, cy, Math.min(usable.w, usable.h) * 0.5).fill({ color: 0x0a1120, alpha: 0.35 });
 
     // Rebuild screen-space hit targets + labels from the cached schematic.
     this.bodies = [];
@@ -839,18 +864,20 @@ export class SystemViewScene {
   /// rival / unclaimed) and the selection ring. `owner` comes from the caller's
   /// light-gated per-player view (state.systems) — identical fog to the galaxy
   /// map, so nothing hidden leaks here.
-  update(owner: PlayerId | null, playerId: PlayerId | null, nowMs: number): void {
+  update(owner: PlayerId | null, playerId: PlayerId | null, nowMs: number, home = false): void {
     const g = this.overlay;
     g.clear();
     if (!this.viewW) return;
-    const cx = this.viewW / 2;
-    const cy = this.viewH / 2;
+    const cx = this.starLayout.x;
+    const cy = this.starLayout.y;
     const starR = 0.085 * this.sceneScale;
     const mine = owner !== null && owner === playerId;
     const rival = owner !== null && !mine;
     if (mine) {
+      // The home star gets one crisp ownership ring. A second concentric halo
+      // made the central star read like another orbit in the planetary view.
       g.circle(cx, cy, starR + 8).stroke({ width: 1.8, color: 0x4fc3ff, alpha: 0.95 });
-      g.circle(cx, cy, starR + 14).stroke({ width: 1, color: 0x4fc3ff, alpha: 0.3 });
+      if (!home) g.circle(cx, cy, starR + 14).stroke({ width: 1, color: 0x4fc3ff, alpha: 0.3 });
     } else if (rival) {
       const breath = 0.5 + 0.5 * Math.sin(nowMs / 1100);
       g.circle(cx, cy, starR + 8).stroke({ width: 2, color: 0xff7a6b, alpha: 0.95 });

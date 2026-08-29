@@ -15,14 +15,16 @@
 
 import type { GroundNote, GroundRecordView, GroundRoundView } from "./protocol";
 
-const W = 900;
-const H = 380;
+const DEFAULT_W = 900;
+const DEFAULT_H = 380;
 
-/// Where the sky ends and the ground begins.
-const HORIZON = 150;
-/// The garrison holds the right, the landing comes in on the left.
-const LZ_X = 200;
-const LINE_X = 700;
+let W = DEFAULT_W;
+let H = DEFAULT_H;
+
+export interface GroundTheaterViewport {
+  width: number;
+  height: number;
+}
 
 let canvas: HTMLCanvasElement | null = null;
 let ctx: CanvasRenderingContext2D | null = null;
@@ -47,17 +49,23 @@ export function groundTheaterAvailable(): boolean {
 }
 
 /// Mount the theater into `el` and bind it to a record.
-export function groundTheaterAttach(el: HTMLElement, r: GroundRecordView): void {
+export function groundTheaterAttach(el: HTMLElement, r: GroundRecordView, viewport?: GroundTheaterViewport): void {
   if (!canvas) {
     canvas = document.createElement("canvas");
-    canvas.width = W;
-    canvas.height = H;
     canvas.className = "gt-canvas";
     canvas.style.width = "100%";
-    canvas.style.height = "auto";
     canvas.style.display = "block";
     ctx = canvas.getContext("2d");
   }
+  const nextW = Math.max(280, Math.round(viewport?.width ?? DEFAULT_W));
+  const nextH = Math.max(300, Math.round(viewport?.height ?? DEFAULT_H));
+  if (W !== nextW || H !== nextH || canvas.width !== nextW || canvas.height !== nextH) {
+    W = nextW;
+    H = nextH;
+    canvas.width = W;
+    canvas.height = H;
+  }
+  canvas.style.height = viewport ? "100%" : "auto";
   if (canvas.parentElement !== el) {
     el.innerHTML = "";
     el.appendChild(canvas);
@@ -103,6 +111,7 @@ export function groundTheaterDebug(): Record<string, unknown> | null {
     suppression: s.supp,
     engagedFrac: s.engagedFrac,
     notes: s.notes,
+    viewport: `${W}x${H}`,
   };
 }
 
@@ -148,15 +157,22 @@ function draw(): void {
   const accent = css("--accent", "#6cf");
   const bad = css("--negative", "#e56");
   const dim = css("--dim", "#8a93a6");
+  const portrait = W < 620;
+  // Desktop keeps the original 900x380 composition. Portrait gets a deeper
+  // battlefield and narrower troop blocks so neither the masses nor the
+  // strength history are miniaturised into an unreadable landscape postcard.
+  const horizon = portrait ? Math.min(160, H * 0.36) : H * (150 / DEFAULT_H);
+  const lzX = portrait ? W * 0.24 : W * (200 / DEFAULT_W);
+  const lineX = portrait ? W * 0.76 : W * (700 / DEFAULT_W);
 
   g.clearRect(0, 0, W, H);
 
   // --- SKY: dark, with the blockade's fire coming down through it -------------
-  const sky = g.createLinearGradient(0, 0, 0, HORIZON);
+  const sky = g.createLinearGradient(0, 0, 0, horizon);
   sky.addColorStop(0, "#070b14");
   sky.addColorStop(1, "#121a2b");
   g.fillStyle = sky;
-  g.fillRect(0, 0, W, HORIZON);
+  g.fillRect(0, 0, W, horizon);
 
   // ORBITAL BOMBARDMENT — streaks falling on the garrison line, in proportion to
   // suppression. When a blockade breaks, this visibly stops, and the defenders'
@@ -167,8 +183,9 @@ function draw(): void {
     g.lineWidth = 2;
     for (let i = 0; i < n; i++) {
       const speed = 90 + scatter(i, 3) * 140;
-      const p = (clock * speed + scatter(i, 1) * 400) % (HORIZON + 60);
-      const x = LINE_X - 150 + scatter(i, 2) * 260;
+      const p = (clock * speed + scatter(i, 1) * 400) % (horizon + 60);
+      const spread = portrait ? W * 0.32 : 260;
+      const x = lineX - spread * 0.58 + scatter(i, 2) * spread;
       const alpha = 0.25 + 0.5 * s.supp;
       g.strokeStyle = `rgba(255, 190, 120, ${alpha})`;
       g.beginPath();
@@ -177,24 +194,25 @@ function draw(): void {
       g.stroke();
     }
     // Impact glow on the line itself.
-    const glow = g.createRadialGradient(LINE_X, HORIZON, 4, LINE_X, HORIZON, 190);
+    const glowR = portrait ? W * 0.34 : 190;
+    const glow = g.createRadialGradient(lineX, horizon, 4, lineX, horizon, glowR);
     glow.addColorStop(0, `rgba(255, 170, 90, ${0.10 + 0.26 * s.supp})`);
     glow.addColorStop(1, "rgba(255, 170, 90, 0)");
     g.fillStyle = glow;
-    g.fillRect(LINE_X - 200, HORIZON - 90, 400, 180);
+    g.fillRect(lineX - glowR, horizon - 90, glowR * 2, 180);
   }
 
   // --- GROUND -----------------------------------------------------------------
-  const ground = g.createLinearGradient(0, HORIZON, 0, H);
+  const ground = g.createLinearGradient(0, horizon, 0, H);
   ground.addColorStop(0, "#1a1410");
   ground.addColorStop(1, "#0d0b09");
   g.fillStyle = ground;
-  g.fillRect(0, HORIZON, W, H - HORIZON);
+  g.fillRect(0, horizon, W, H - horizon);
   g.strokeStyle = "rgba(255,255,255,0.10)";
   g.lineWidth = 1;
   g.beginPath();
-  g.moveTo(0, HORIZON);
-  g.lineTo(W, HORIZON);
+  g.moveTo(0, horizon);
+  g.lineTo(W, horizon);
   g.stroke();
 
   // --- THE TWO MASSES ---------------------------------------------------------
@@ -202,9 +220,9 @@ function draw(): void {
   // a headcount, so nothing here can imply a number the record didn't carry.
   // Sized so a FULL-STRENGTH block still clears the graph strip below — the two
   // must never overlap, or the fight's shape gets drawn through its own troops.
-  const DOTS = 60;
-  const COLS = 12;
-  const ROW_H = 12;
+  const DOTS = portrait ? 48 : 60;
+  const COLS = portrait ? 6 : 12;
+  const ROW_H = portrait ? 10 : 12;
   const troops = (
     xc: number, frac0: number, color: string, alpha: number, salt: number, dug: boolean,
   ) => {
@@ -215,8 +233,8 @@ function draw(): void {
       const row = Math.floor(i / COLS);
       const jx = (scatter(i, salt) - 0.5) * 7;
       const jy = (scatter(i, salt + 7) - 0.5) * 5;
-      const x = xc + (col - (COLS - 1) / 2) * 12 + jx;
-      const y = HORIZON + 42 + row * ROW_H + jy;
+      const x = xc + (col - (COLS - 1) / 2) * (portrait ? 10 : 12) + jx;
+      const y = horizon + 42 + row * ROW_H + jy;
       g.globalAlpha = alpha;
       g.beginPath();
       g.arc(x, y, dug ? 3.1 : 3.6, 0, Math.PI * 2);
@@ -229,35 +247,35 @@ function draw(): void {
   // the ENGAGED fraction drawn solid on top (they are shooting). The gap between
   // the two IS the suppression — you can see the line thin out as the guns work
   // and fill straight back in when they stop.
-  troops(LINE_X, s.dFrac, bad, 0.22, 11, true);
-  troops(LINE_X, s.engagedFrac, bad, 1, 11, true);
+  troops(lineX, s.dFrac, bad, 0.22, 11, true);
+  troops(lineX, s.engagedFrac, bad, 1, 11, true);
   // MARINES: everyone who is still on their feet is in the fight.
-  troops(LZ_X, s.mFrac, accent, 1, 29, false);
+  troops(lzX, s.mFrac, accent, 1, 29, false);
 
   // --- LABELS -----------------------------------------------------------------
   g.font = "600 13px ui-sans-serif, system-ui, sans-serif";
   g.textAlign = "center";
   g.fillStyle = accent;
   const mLabel = s.marines !== null ? `LANDING FORCE · ${s.marines}` : "LANDING FORCE";
-  g.fillText(mLabel, LZ_X, HORIZON + 28);
+  g.fillText(mLabel, lzX, horizon + 28, W * 0.45);
   g.fillStyle = bad;
   const dLabel = s.defenders !== null ? `GARRISON · ${s.defenders}` : "GARRISON";
-  g.fillText(dLabel, LINE_X, HORIZON + 28);
+  g.fillText(dLabel, lineX, horizon + 28, W * 0.45);
 
   // The suppression readout, where the eye already is.
   if (s.supp > 0.02) {
     g.fillStyle = "rgba(255,190,120,0.95)";
     g.font = "600 12px ui-sans-serif, system-ui, sans-serif";
-    g.fillText(`${Math.round(s.supp * 100)}% PINNED IN COVER`, LINE_X, HORIZON - 14);
+    g.fillText(`${Math.round(s.supp * 100)}% PINNED IN COVER`, lineX, horizon - 14, W * 0.48);
   }
 
   // --- THE STRENGTH GRAPH -----------------------------------------------------
   // The fight's whole shape on one strip: both sides over time, with the pinned
   // band shaded. This is where "it turned here" is actually readable.
-  const gx = 40;
-  const gy = H - 68;
-  const gw = W - 80;
-  const gh = 48;
+  const gx = portrait ? 18 : W * (40 / DEFAULT_W);
+  const gh = portrait ? Math.min(66, H * 0.17) : H * (48 / DEFAULT_H);
+  const gy = H - gh - 20;
+  const gw = W - gx * 2;
   g.strokeStyle = "rgba(255,255,255,0.10)";
   g.strokeRect(gx, gy, gw, gh);
   const n = rec.rounds.length;
@@ -317,7 +335,7 @@ function draw(): void {
   g.textAlign = "left";
   g.font = "600 12px ui-sans-serif, system-ui, sans-serif";
   g.fillStyle = dim;
-  g.fillText(noteCaption(s.notes, rec, live), gx, gy - 12);
+  g.fillText(noteCaption(s.notes, rec, live), gx, gy - 12, gw);
 
   if (rec.outcome && round >= rec.rounds.length - 1) {
     g.textAlign = "center";

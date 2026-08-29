@@ -1,92 +1,34 @@
 //! §emplacements: STRUCTURES YOU PLACE IN OPEN SPACE, rather than in a system's
 //! build slots.
 //!
-//! Communications and sensing solve opposite halves of getting information
-//! home. Every comm structure lights nearby lane wire for signals to enter,
-//! ride, and leave; sensors make the observation start closer to the target.
-//!
-//! All are sited by the player on the galaxy map, all are owned, and all can
-//! be taken away — which is the point. It is what turns the lane network from
-//! geography you were handed into infrastructure you build, defend, and cut.
+//! Deep-space sensors are player-built pickets: they shorten the observation
+//! leg without modifying the straight warp-light report home.
 
 use serde::{Deserialize, Serialize};
 
-use crate::math::Vec2;
 use crate::PlayerId;
+use crate::math::Vec2;
 
 /// What an emplacement is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EmplacementKind {
-    /// The long-throw, expensive hyperspace communications relay. The free
-    /// starter buoy is an ordinary instance; home itself is not a relay.
-    /// Buildable only on a lane; see [`EmplacementKind::needs_a_lane`].
-    HyperspaceBuoy,
-    /// The short-throw, inexpensive hyperspace communications relay. It has the
-    /// same signal function as a buoy; only size, cost, and build time differ.
-    HyperspaceRepeater,
     /// A stationary sensor picket. Watches like a ship's sensors would and sends
-    /// what it sees home at warp — so it shortens the *observation* leg rather
-    /// than the transmission, which is the half a buoy cannot help with.
+    /// what it sees home at warp — so it shortens the *observation* leg without
+    /// modifying the transmission medium.
     DeepSpaceSensor,
-    /// §coupled: a listening post PARKED IN A LANE. A hull riding a lane is
-    /// coupled to the medium, and coupling works both ways — the sensor hears
-    /// the wake of rival traffic on its lane and reports home at lane speed, so
-    /// a lane raider can no longer arrive ahead of the news of it PAST one of
-    /// these. The counter-play is built in: drop to warp and go the slow, quiet
-    /// way around, off the wire.
-    HyperspaceSensor,
 }
 
 impl EmplacementKind {
-    pub const ALL: [EmplacementKind; 4] = [
-        EmplacementKind::HyperspaceBuoy,
-        EmplacementKind::HyperspaceRepeater,
-        EmplacementKind::DeepSpaceSensor,
-        EmplacementKind::HyperspaceSensor,
-    ];
+    pub const ALL: [EmplacementKind; 1] = [EmplacementKind::DeepSpaceSensor];
 
     pub fn label(self) -> &'static str {
-        match self {
-            EmplacementKind::HyperspaceBuoy => "Hyperspace Buoy",
-            EmplacementKind::HyperspaceRepeater => "Hyperspace Repeater",
-            EmplacementKind::DeepSpaceSensor => "Deep Space Sensor",
-            EmplacementKind::HyperspaceSensor => "Hyperspace Sensor",
-        }
+        "Deep Space Sensor"
     }
 
-    /// Hyperspace communications and tripwires live on a lane. A deep-space
-    /// sensor watches open space and may be put anywhere — the frontier is
-    /// exactly where it earns its keep.
-    pub fn needs_a_lane(self) -> bool {
-        matches!(
-            self,
-            EmplacementKind::HyperspaceBuoy
-                | EmplacementKind::HyperspaceRepeater
-                | EmplacementKind::HyperspaceSensor
-        )
-    }
-
-    /// The bubble a deep space sensor projects. Zero for communications sites,
-    /// which carry signals but do not watch.
+    /// The bubble a deep space sensor projects.
     pub fn sensor_range(self) -> f64 {
-        match self {
-            EmplacementKind::HyperspaceBuoy => 0.0,
-            EmplacementKind::HyperspaceRepeater => 0.0,
-            EmplacementKind::DeepSpaceSensor => DEEP_SPACE_SENSOR_RANGE,
-            // A lane listener hears the MEDIUM, not open space.
-            EmplacementKind::HyperspaceSensor => 0.0,
-        }
-    }
-
-    /// Arc distance this structure's communication coverage reaches along the
-    /// lane graph. Sensors are not relays.
-    pub const fn throw(self) -> f64 {
-        match self {
-            EmplacementKind::HyperspaceBuoy => 80_000.0,
-            EmplacementKind::HyperspaceRepeater => 40_000.0,
-            EmplacementKind::DeepSpaceSensor | EmplacementKind::HyperspaceSensor => 0.0,
-        }
+        DEEP_SPACE_SENSOR_RANGE
     }
 }
 
@@ -110,48 +52,31 @@ pub struct Emplacement {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SiteError {
-    /// A lane-bound emplacement has to sit in a lane.
-    NotOnALane,
     /// Something of yours is already here.
     TooClose,
 }
-
-/// §coupled: how far along its lane a hyperspace sensor HEARS, in arc length,
-/// either way. A wake is noise, not a directed transmission — it attenuates —
-/// so one post covers a corridor, not the whole route, and siting the approach
-/// lanes stays a real decision.
-pub const LANE_LISTEN_RANGE: f64 = 120_000.0;
-
-/// How far a comm structure can hear the coded carrier in one of its owner's
-/// coupled drives. Kept separate from sensor earshot as the wake tier's primary
-/// playtest knob even though both begin at the same range.
-pub const COMM_WAKE_EARSHOT: f64 = 120_000.0;
 
 /// How close a builder must hold to its site for the work to run — a worksite,
 /// not a rendezvous, so it is tight.
 pub const CONSTRUCT_RADIUS: f64 = 600.0;
 
 /// §emplacements: seconds a combatant must hold station on a RIVAL structure to
-/// tear it down. Shorter than even the 25s repeater build — wrecking is easier
-/// than raising — but long enough that the victim's picket, or the news itself,
+/// tear it down. Wrecking is easier than raising, but the hold is long enough
+/// that the victim's picket, or the news itself,
 /// has a chance to matter. The same `CONSTRUCT_RADIUS` bounds the work.
 pub const DEMOLISH_SECONDS: f64 = 20.0;
 
-/// How close two emplacements may be. Stops a player stacking a dozen relay
-/// sites on one spot, which would be free redundancy rather than a network.
+/// How close two emplacements may be. Stops a player stacking a dozen sensors
+/// on one spot for free redundancy.
 pub const MIN_SPACING: f64 = 12_000.0;
 
 /// Is `pos` a legal site for `kind`, given the network and what is already out
 /// there? Pure, so the client can ask the same question the server will answer.
 pub fn site_check(
-    kind: EmplacementKind,
+    _kind: EmplacementKind,
     pos: Vec2,
-    lanes: &crate::lane::LaneNetwork,
     existing: &[Emplacement],
 ) -> Result<(), SiteError> {
-    if kind.needs_a_lane() && lanes.relay_at(pos).on.is_empty() {
-        return Err(SiteError::NotOnALane);
-    }
     if existing.iter().any(|e| e.pos.distance(pos) < MIN_SPACING) {
         return Err(SiteError::TooClose);
     }
@@ -161,74 +86,36 @@ pub fn site_check(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lane::{generate, LaneAnchor};
-
-    fn net() -> (crate::lane::LaneNetwork, Vec<Vec2>) {
-        let radius = 400_000.0;
-        let mut rng = crate::rng::Rng::new(1);
-        let anchors: Vec<LaneAnchor> = (0..32)
-            .map(|_| {
-                let t = rng.range(0.12 * 0.12, 0.96 * 0.96);
-                LaneAnchor {
-                    pos: Vec2::from_polar(rng.range(0.0, std::f64::consts::TAU), radius * t.sqrt()),
-                }
-            })
-            .collect();
-        let homes: Vec<Vec2> = (0..4)
-            .map(|i| Vec2::from_polar(std::f64::consts::TAU * f64::from(i) / 4.0, radius * 0.62))
-            .collect();
-        let n = generate(1, Vec2::ZERO, &anchors, &homes, radius);
-        (n, homes)
-    }
-
-    /// A BUOY HAS TO BE ON A LANE. It relays ALONG one, so open space is not a
-    /// site — and the rule is checked here, where the client can ask it too, so
-    /// the map can refuse the click rather than the server refusing the order.
-    #[test]
-    fn hyperspace_comms_only_go_on_a_lane() {
-        let (lanes, _) = net();
-        let on_lane = lanes.lanes[0].at(lanes.lanes[0].length() * 0.5);
-        assert_eq!(site_check(EmplacementKind::HyperspaceBuoy, on_lane, &lanes, &[]), Ok(()));
-        assert_eq!(site_check(EmplacementKind::HyperspaceRepeater, on_lane, &lanes, &[]), Ok(()));
-
-        // Far outside the galaxy, where no ribbon reaches.
-        let nowhere = Vec2::new(2_000_000.0, 0.0);
-        assert_eq!(
-            site_check(EmplacementKind::HyperspaceBuoy, nowhere, &lanes, &[]),
-            Err(SiteError::NotOnALane),
-        );
-        assert_eq!(
-            site_check(EmplacementKind::HyperspaceRepeater, nowhere, &lanes, &[]),
-            Err(SiteError::NotOnALane),
-        );
-    }
 
     /// A SENSOR GOES ANYWHERE. The frontier is exactly where a picket earns its
-    /// keep, so requiring a lane would forbid the only siting that matters.
+    /// keep, so open-space siting is the point of the structure.
     #[test]
     fn a_deep_space_sensor_goes_anywhere() {
-        let (lanes, _) = net();
         let nowhere = Vec2::new(2_000_000.0, 0.0);
-        assert_eq!(site_check(EmplacementKind::DeepSpaceSensor, nowhere, &lanes, &[]), Ok(()));
+        assert_eq!(
+            site_check(EmplacementKind::DeepSpaceSensor, nowhere, &[]),
+            Ok(())
+        );
     }
 
     /// Not on top of each other: stacking would be free redundancy, not a network.
     #[test]
     fn emplacements_keep_their_distance() {
-        let (lanes, _) = net();
-        let p = lanes.lanes[0].at(lanes.lanes[0].length() * 0.5);
+        let p = Vec2::new(10_000.0, 0.0);
         let existing = vec![Emplacement {
             id: crate::EntityId(1),
             owner: crate::PlayerId(1),
-            kind: EmplacementKind::HyperspaceBuoy,
+            kind: EmplacementKind::DeepSpaceSensor,
             pos: p,
         }];
         assert_eq!(
-            site_check(EmplacementKind::HyperspaceBuoy, p, &lanes, &existing),
+            site_check(EmplacementKind::DeepSpaceSensor, p, &existing),
             Err(SiteError::TooClose),
         );
-        // A step further along the same lane is fine.
-        let far = lanes.lanes[0].at(lanes.lanes[0].length() * 0.5 + MIN_SPACING * 2.0);
-        assert_eq!(site_check(EmplacementKind::HyperspaceBuoy, far, &lanes, &existing), Ok(()));
+        let far = p + Vec2::new(MIN_SPACING * 2.0, 0.0);
+        assert_eq!(
+            site_check(EmplacementKind::DeepSpaceSensor, far, &existing),
+            Ok(())
+        );
     }
 }

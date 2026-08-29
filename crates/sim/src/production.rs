@@ -76,13 +76,56 @@ pub struct Converter {
 /// when bulk raws are IMPORTED, which is exactly what makes a supplied forge
 /// world an engine (and its supply line a target). Tunable.
 pub const CONVERTERS: [Converter; 7] = [
-    Converter { structure: StructureKind::Smelter, output: Commodity::Alloys, rate: 1.0, inputs: &[(Commodity::MetallicOre, 1.5), (Commodity::Fuel, 0.3)] },
-    Converter { structure: StructureKind::ElectronicsFabricator, output: Commodity::Electronics, rate: 0.5, inputs: &[(Commodity::RareElements, 0.8), (Commodity::Silicates, 0.8)] },
-    Converter { structure: StructureKind::ChemicalWorks, output: Commodity::Polymers, rate: 0.8, inputs: &[(Commodity::Volatiles, 1.0), (Commodity::Biomass, 0.8)] },
-    Converter { structure: StructureKind::FuelRefinery, output: Commodity::Fuel, rate: 0.8, inputs: &[(Commodity::Volatiles, 1.0)] },
-    Converter { structure: StructureKind::Agroplex, output: Commodity::Provisions, rate: 1.2, inputs: &[(Commodity::Biomass, 1.0)] },
-    Converter { structure: StructureKind::MachineWorks, output: Commodity::Machinery, rate: 0.3, inputs: &[(Commodity::Alloys, 1.2), (Commodity::Electronics, 0.6), (Commodity::Fuel, 0.4)] },
-    Converter { structure: StructureKind::ArmamentsComplex, output: Commodity::Armaments, rate: 0.35, inputs: &[(Commodity::Alloys, 1.0), (Commodity::Electronics, 0.5), (Commodity::Polymers, 0.5)] },
+    Converter {
+        structure: StructureKind::Smelter,
+        output: Commodity::Alloys,
+        rate: 1.0,
+        inputs: &[(Commodity::MetallicOre, 1.5), (Commodity::Fuel, 0.3)],
+    },
+    Converter {
+        structure: StructureKind::ElectronicsFabricator,
+        output: Commodity::Electronics,
+        rate: 0.5,
+        inputs: &[(Commodity::RareElements, 0.8), (Commodity::Silicates, 0.8)],
+    },
+    Converter {
+        structure: StructureKind::ChemicalWorks,
+        output: Commodity::Polymers,
+        rate: 0.8,
+        inputs: &[(Commodity::Volatiles, 1.0), (Commodity::Biomass, 0.8)],
+    },
+    Converter {
+        structure: StructureKind::FuelRefinery,
+        output: Commodity::Fuel,
+        rate: 0.8,
+        inputs: &[(Commodity::Volatiles, 1.0)],
+    },
+    Converter {
+        structure: StructureKind::Agroplex,
+        output: Commodity::Provisions,
+        rate: 1.2,
+        inputs: &[(Commodity::Biomass, 1.0)],
+    },
+    Converter {
+        structure: StructureKind::MachineWorks,
+        output: Commodity::Machinery,
+        rate: 0.3,
+        inputs: &[
+            (Commodity::Alloys, 1.2),
+            (Commodity::Electronics, 0.6),
+            (Commodity::Fuel, 0.4),
+        ],
+    },
+    Converter {
+        structure: StructureKind::ArmamentsComplex,
+        output: Commodity::Armaments,
+        rate: 0.35,
+        inputs: &[
+            (Commodity::Alloys, 1.0),
+            (Commodity::Electronics, 0.5),
+            (Commodity::Polymers, 0.5),
+        ],
+    },
 ];
 
 /// The conversion a structure kind runs, if it is a converter.
@@ -117,7 +160,10 @@ pub struct Assignment {
 impl Assignment {
     /// A plain posting of `workers` generic crews (the common test/bootstrap case).
     pub fn crew(workers: u32) -> Assignment {
-        Assignment { workers, ..Default::default() }
+        Assignment {
+            workers,
+            ..Default::default()
+        }
     }
 }
 
@@ -173,7 +219,11 @@ pub fn food_factor(kind: StructureKind, state: crate::colony::FoodState) -> f64 
         | StructureKind::MiningComplex
         | StructureKind::Agroplex => eff.max(EXTRACTION_FOOD_FLOOR),
         StructureKind::MachineWorks | StructureKind::ArmamentsComplex => {
-            if state <= F::Critical { 0.0 } else { eff }
+            if state <= F::Critical {
+                0.0
+            } else {
+                eff
+            }
         }
         _ => eff,
     }
@@ -194,11 +244,17 @@ mod tests {
     #[test]
     fn every_raw_has_exactly_one_extraction_structure() {
         for c in Commodity::RAW {
-            assert!(extraction_structure(c).is_some(), "{c:?} must be extractable");
+            assert!(
+                extraction_structure(c).is_some(),
+                "{c:?} must be extractable"
+            );
         }
         for c in Commodity::ALL {
             if !Commodity::RAW.contains(&c) {
-                assert!(extraction_structure(c).is_none(), "{c:?} must NOT be extractable");
+                assert!(
+                    extraction_structure(c).is_none(),
+                    "{c:?} must NOT be extractable"
+                );
             }
         }
     }
@@ -223,7 +279,12 @@ mod tests {
             for b in &CONVERTERS[i + 1..] {
                 assert_ne!(a.structure, b.structure);
             }
-            assert!(!matches!(a.structure, StructureKind::MiningComplex | StructureKind::VolatileHarvester | StructureKind::Bioharvester));
+            assert!(!matches!(
+                a.structure,
+                StructureKind::MiningComplex
+                    | StructureKind::VolatileHarvester
+                    | StructureKind::Bioharvester
+            ));
         }
     }
 
@@ -232,19 +293,30 @@ mod tests {
         assert_eq!(tier_throughput(0), 0.0);
         assert_eq!(tier_throughput(1), 1.0);
         // The two research-prize tiers exist and keep climbing.
-        assert!(tier_throughput(5) > tier_throughput(4), "tier V out-produces IV");
-        assert!(tier_throughput(6) > tier_throughput(5), "tier VI out-produces V");
+        assert!(
+            tier_throughput(5) > tier_throughput(4),
+            "tier V out-produces IV"
+        );
+        assert!(
+            tier_throughput(6) > tier_throughput(5),
+            "tier VI out-produces V"
+        );
         // Each step's MARGINAL gain grows — one deep tier (concentration) stays
         // ahead of spreading the same investment across shallow ones
         // (duplication), all the way to the top of the extended ladder.
         for t in 1..6u32 {
             assert!(
-                tier_throughput(t + 1) > 2.0 * tier_throughput(t) - tier_throughput(t.saturating_sub(1)),
+                tier_throughput(t + 1)
+                    > 2.0 * tier_throughput(t) - tier_throughput(t.saturating_sub(1)),
                 "the ladder accelerates at tier {t}→{}",
                 t + 1
             );
         }
-        assert_eq!(tier_throughput(99), 11.5, "clamped past the (now longer) table");
+        assert_eq!(
+            tier_throughput(99),
+            11.5,
+            "clamped past the (now longer) table"
+        );
     }
 
     #[test]
@@ -252,13 +324,20 @@ mod tests {
         use crate::colony::FoodState::*;
         // Primary sector floors at 0.5, even bone-dry.
         assert_eq!(food_factor(StructureKind::Bioharvester, NoProvisions), 0.5);
-        assert_eq!(food_factor(StructureKind::Agroplex, NoProvisions), 0.5, "the food industry must be able to cook its way back");
+        assert_eq!(
+            food_factor(StructureKind::Agroplex, NoProvisions),
+            0.5,
+            "the food industry must be able to cook its way back"
+        );
         assert_eq!(food_factor(StructureKind::MiningComplex, WellSupplied), 1.0);
         // Ordinary converters track efficiency and die at zero.
         assert_eq!(food_factor(StructureKind::Smelter, Rationing), 0.85);
         assert_eq!(food_factor(StructureKind::Smelter, NoProvisions), 0.0);
         // Advanced industry stops at Critical already.
         assert_eq!(food_factor(StructureKind::MachineWorks, Critical), 0.0);
-        assert_eq!(food_factor(StructureKind::ArmamentsComplex, Rationing), 0.85);
+        assert_eq!(
+            food_factor(StructureKind::ArmamentsComplex, Rationing),
+            0.85
+        );
     }
 }

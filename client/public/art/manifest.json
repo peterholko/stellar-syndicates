@@ -136,6 +136,11 @@
           "png": "ship_sprites/raider_attack_ship.png"
         },
         {
+          "slug": "privateer-raider-ship",
+          "title": "Privateer Raider Ship",
+          "png": "ship_sprites/privateer_raider_ship.png"
+        },
+        {
           "slug": "fleet-freighter-wing",
           "title": "Freighter Wing Formation",
           "png": "ship_sprites/fleet_freighter_wing.png"

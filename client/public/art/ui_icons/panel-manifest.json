@@ -1,0 +1,236 @@
+{
+  "name": "Stellar Syndicates Panel Icons",
+  "grid": "64x64",
+  "background": "transparent",
+  "style": "transparent raster hard-surface sci-fi objects with restrained signal colors",
+  "icons": [
+    {
+      "slug": "resource-biomass",
+      "title": "Biomass",
+      "category": "resource",
+      "png": "panel/resource-biomass.png"
+    },
+    {
+      "slug": "concept-stockpile",
+      "title": "Stockpile",
+      "category": "concept",
+      "png": "panel/concept-stockpile.png"
+    },
+    {
+      "slug": "concept-warehouse",
+      "title": "Market Warehouse",
+      "category": "concept",
+      "png": "panel/concept-warehouse.png"
+    },
+    {
+      "slug": "concept-manifest",
+      "title": "Cargo Manifest",
+      "category": "concept",
+      "png": "panel/concept-manifest.png"
+    },
+    {
+      "slug": "concept-freight-route",
+      "title": "Freight Route",
+      "category": "concept",
+      "png": "panel/concept-freight-route.png"
+    },
+    {
+      "slug": "concept-authority-freighter",
+      "title": "Authority Freighter",
+      "category": "concept",
+      "png": "panel/concept-authority-freighter.png"
+    },
+    {
+      "slug": "planet-habitable",
+      "title": "Habitable World",
+      "category": "planet",
+      "png": "panel/planet-habitable.png"
+    },
+    {
+      "slug": "planet-hostile",
+      "title": "Hostile World",
+      "category": "planet",
+      "png": "panel/planet-hostile.png"
+    },
+    {
+      "slug": "planet-uninhabitable",
+      "title": "Uninhabitable World",
+      "category": "planet",
+      "png": "panel/planet-uninhabitable.png"
+    },
+    {
+      "slug": "geology-poor",
+      "title": "Poor Minerals",
+      "category": "geology",
+      "png": "panel/geology-poor.png"
+    },
+    {
+      "slug": "geology-rich",
+      "title": "Rich Minerals",
+      "category": "geology",
+      "png": "panel/geology-rich.png"
+    },
+    {
+      "slug": "geology-ultra-rich",
+      "title": "Ultra Rich Minerals",
+      "category": "geology",
+      "png": "panel/geology-ultra-rich.png"
+    },
+    {
+      "slug": "feature-fertile",
+      "title": "Fertile Biosphere",
+      "category": "feature",
+      "png": "panel/feature-fertile.png"
+    },
+    {
+      "slug": "feature-low-gravity",
+      "title": "Low Gravity",
+      "category": "feature",
+      "png": "panel/feature-low-gravity.png"
+    },
+    {
+      "slug": "feature-precursor",
+      "title": "Precursor Site",
+      "category": "feature",
+      "png": "panel/feature-precursor.png"
+    },
+    {
+      "slug": "role-agriculture",
+      "title": "Agricultural Exporter",
+      "category": "role",
+      "png": "panel/role-agriculture.png"
+    },
+    {
+      "slug": "role-mining",
+      "title": "Mining Center",
+      "category": "role",
+      "png": "panel/role-mining.png"
+    },
+    {
+      "slug": "role-fuel-production",
+      "title": "Fuel Complex",
+      "category": "role",
+      "png": "panel/role-fuel-production.png"
+    },
+    {
+      "slug": "role-electronics",
+      "title": "Electronics Center",
+      "category": "role",
+      "png": "panel/role-electronics.png"
+    },
+    {
+      "slug": "role-shipbuilding",
+      "title": "Shipbuilding Center",
+      "category": "role",
+      "png": "panel/role-shipbuilding.png"
+    },
+    {
+      "slug": "role-population-center",
+      "title": "Population Center",
+      "category": "role",
+      "png": "panel/role-population-center.png"
+    },
+    {
+      "slug": "role-strategic-outpost",
+      "title": "Strategic Outpost",
+      "category": "role",
+      "png": "panel/role-strategic-outpost.png"
+    },
+    {
+      "slug": "action-jump",
+      "title": "Jump",
+      "category": "action",
+      "png": "panel/action-jump.png"
+    },
+    {
+      "slug": "action-dock",
+      "title": "Dock",
+      "category": "action",
+      "png": "panel/action-dock.png"
+    },
+    {
+      "slug": "action-undock",
+      "title": "Undock",
+      "category": "action",
+      "png": "panel/action-undock.png"
+    },
+    {
+      "slug": "action-unload-cargo",
+      "title": "Unload Cargo",
+      "category": "action",
+      "png": "panel/action-unload-cargo.png"
+    },
+    {
+      "slug": "action-escort",
+      "title": "Escort",
+      "category": "action",
+      "png": "panel/action-escort.png"
+    },
+    {
+      "slug": "status-population",
+      "title": "Population",
+      "category": "status",
+      "png": "panel/status-population.png"
+    },
+    {
+      "slug": "status-workforce",
+      "title": "Workforce",
+      "category": "status",
+      "png": "panel/status-workforce.png"
+    },
+    {
+      "slug": "status-food-supply",
+      "title": "Food Supply",
+      "category": "status",
+      "png": "panel/status-food-supply.png"
+    },
+    {
+      "slug": "status-upkeep",
+      "title": "Upkeep",
+      "category": "status",
+      "png": "panel/status-upkeep.png"
+    },
+    {
+      "slug": "status-development-slots",
+      "title": "Development Slots",
+      "category": "status",
+      "png": "panel/status-development-slots.png"
+    },
+    {
+      "slug": "status-construction-queue",
+      "title": "Construction Queue",
+      "category": "status",
+      "png": "panel/status-construction-queue.png"
+    },
+    {
+      "slug": "module-mass-driver",
+      "title": "Mass Driver",
+      "category": "module",
+      "png": "panel/module-mass-driver.png"
+    },
+    {
+      "slug": "module-torpedo-rack",
+      "title": "Torpedo Rack",
+      "category": "module",
+      "png": "panel/module-torpedo-rack.png"
+    },
+    {
+      "slug": "module-point-defense",
+      "title": "Point Defense",
+      "category": "module",
+      "png": "panel/module-point-defense.png"
+    },
+    {
+      "slug": "module-reflective-plating",
+      "title": "Reflective Plating",
+      "category": "module",
+      "png": "panel/module-reflective-plating.png"
+    },
+    {
+      "slug": "module-whipple-armor",
+      "title": "Whipple Armor",
+      "category": "module",
+      "png": "panel/module-whipple-armor.png"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "id": "/",
+  "name": "Stellar Syndicates",
+  "short_name": "Syndicates",
+  "description": "Command a corporation across a light-delayed multiplayer galaxy.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#05070d",
+  "theme_color": "#05070d",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/art/pwa/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/art/pwa/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/art/pwa/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

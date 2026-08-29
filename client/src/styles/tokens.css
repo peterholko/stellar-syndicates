@@ -1,0 +1,71 @@
+:root {
+  color-scheme: dark;
+  --bg: #05070d;
+  --panel: #0d1322;
+  --ink: #c9d6e8;
+  --dim: #6b7a90;
+  --accent: #4fc3ff;
+  --warn: #ffb454;
+  /* Semantic tone tokens (lifted from previously-hardcoded colors) so the
+     whole panel system themes from one place — tone-as-class, color-via-var. */
+  --positive: #5fd08a;
+  --negative: #ff6b6b;
+  --rival: #ff7a6b;
+  --info: #7fd4ff;
+  --accent-2: #c99bff;   /* violet stripe (logistics/system) */
+  --accent-3: #ff9e6b;   /* amber stripe (doctrine) */
+  --fg-stale: #5a6578;   /* dimmer than --dim — for light-delayed values */
+  --border: #1c2740;
+  --field-bg: #060a14;
+  --field-bd: #243049;
+  --panel-bg: rgba(8, 12, 22, 0.94);
+  --panel-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  --btn-bg: #131a2c;
+  --btn-bg-hover: #1b2740;
+  /* Measured from the wrapping HUD by main.ts. All fixed map chrome starts
+     from the same edge instead of independently guessing its height. */
+  --hud-safe-top: 66px;
+  --detail-safe-top: calc(var(--hud-safe-top) + 44px);
+  --left-detail-safe-top: calc(var(--hud-safe-top) + 44px);
+  /* Height of the active bottom-left Tutorial plus its outer gap. Live
+     command feedback uses this to sit above it instead of covering it. */
+  --founding-guide-clearance: 14px;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  overflow: hidden;
+}
+@media (pointer: coarse) {
+  input, select, textarea { font-size: 16px !important; }
+}
+#app { position: fixed; inset: 0; }
+canvas { display: block; }
+#app > canvas,
+.bv-theater-holder canvas { touch-action: none; }
+#founding-guide,
+#standing-list,
+#checkin,
+#rail .rail__body,
+.svm-body,
+#ship-panel .sp-body,
+.sysrail,
+#market,
+.build-shell .bp-list,
+.build-shell .bp-detail,
+#planet-panel,
+#research-panel,
+#research-panel .rp-body,
+#operations-panel,
+#operations-panel .op-body,
+#syndicate-panel,
+#faction-panel,
+#battle-viewer,
+#ground-viewer {
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+}

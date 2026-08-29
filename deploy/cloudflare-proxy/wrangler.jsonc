@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "stellar-syndicates-gateway",
+  "account_id": "514db0d52efacfc2b7d0c685d7b57cf6",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "stellar-syndicates.surviveperilous.com",
+      "custom_domain": true
+    }
+  ],
+  "vpc_networks": [
+    {
+      "binding": "ORIGIN",
+      "tunnel_id": "1cec1f7d-fbbf-4b76-b83e-1f44d62131ae",
+      "remote": true
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

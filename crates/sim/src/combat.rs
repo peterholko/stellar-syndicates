@@ -40,7 +40,8 @@ pub type LoadoutMap = std::collections::BTreeMap<ShipKind, std::collections::BTr
 /// accumulated absorption (armored stacks that took less genuinely die less). A
 /// nested map with STRING inner keys, so it round-trips through JSON (a tuple
 /// `(kind, loadout)` map key would not).
-pub type StackPoolMap = std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, f64>>;
+pub type StackPoolMap =
+    std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, f64>>;
 
 /// A TYPED damage 3-vector (§modules Part B) — the wire/report shape for
 /// damage broken out by weapon family. The tactical engine deals per-hit typed
@@ -158,7 +159,12 @@ impl Forces {
             .filter(|(_, d)| **d != 0.0)
             .map(|(k, d)| ((*k, Loadout::default()), *d))
             .collect();
-        Forces { stacks, damage, platform_tiers: 0, platform_pool: 0.0 }
+        Forces {
+            stacks,
+            damage,
+            platform_tiers: 0,
+            platform_pool: 0.0,
+        }
     }
 
     /// Fold defense-platform tiers into this side (defense of place).
@@ -182,8 +188,12 @@ impl Forces {
     /// heuristic (pirate AI, garrison sizing). Loadout-agnostic (a fitted ship
     /// is still one ship of its kind).
     pub fn strength(&self) -> f64 {
-        self.stacks.iter().map(|((k, _), n)| k.combat_weight() * *n as f64).sum::<f64>()
-            + self.platform_tiers as f64 * (PLATFORM_TIER_ATTACK + PLATFORM_TIER_HULL / HULL_PER_DEFENSE)
+        self.stacks
+            .iter()
+            .map(|((k, _), n)| k.combat_weight() * *n as f64)
+            .sum::<f64>()
+            + self.platform_tiers as f64
+                * (PLATFORM_TIER_ATTACK + PLATFORM_TIER_HULL / HULL_PER_DEFENSE)
     }
 }
 
@@ -271,7 +281,10 @@ pub struct SideRecord {
 #[serde(rename_all = "snake_case")]
 pub enum RoundNote {
     /// Reinforcements joined `side` (0 = attackers, 1 = defenders) with `comp`.
-    Joined { side: u8, comp: BTreeMap<ShipKind, u32> },
+    Joined {
+        side: u8,
+        comp: BTreeMap<ShipKind, u32>,
+    },
     /// `side` fell below its doctrine retreat threshold and is withdrawing.
     RetreatTripped { side: u8 },
     /// A player Withdraw order reached a fleet on `side` mid-battle.
@@ -500,13 +513,24 @@ impl BattleRecord {
         self.pending.deaths.clear();
         self.pending.dealt = [0.0, 0.0];
         self.pending.last_flush_tick = tick;
-        self.rounds.push(RoundRecord { tick, counts, dealt, kills, notes, frame });
+        self.rounds.push(RoundRecord {
+            tick,
+            counts,
+            dealt,
+            kills,
+            notes,
+            frame,
+        });
     }
 
     fn pending_has_content(&self) -> bool {
         !self.pending.notes.is_empty()
             || self.pending.dealt != [0.0, 0.0]
-            || self.pending.kills.iter().any(|m| m.values().any(|n| *n > 0))
+            || self
+                .pending
+                .kills
+                .iter()
+                .any(|m| m.values().any(|n| *n > 0))
     }
 
     /// Finalize: flush any tail round, then stamp the ending tick + outcome. A
@@ -522,7 +546,10 @@ impl BattleRecord {
             self.flush_round(tick, final_counts);
         }
         self.ended_tick = Some(tick);
-        self.outcome = Some(BattleOutcomeSummary { outcome, total_losses });
+        self.outcome = Some(BattleOutcomeSummary {
+            outcome,
+            total_losses,
+        });
     }
 
     /// Sim seconds since this record ended (`0` while still running).
@@ -597,11 +624,28 @@ mod tests {
     /// A finished record for pruning tests: one corp per side, ended at `tick`.
     fn finished_record(id: EntityId, corp: PlayerId, tick: u64) -> BattleRecord {
         let sides = [
-            SideRecord { corp, initial: BTreeMap::new(), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
-            SideRecord { corp: PlayerId(9_999), initial: BTreeMap::new(), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord {
+                corp,
+                initial: BTreeMap::new(),
+                initial_loadouts: Default::default(),
+                posture: EngagementPolicy::default(),
+                platform_tiers: 0,
+            },
+            SideRecord {
+                corp: PlayerId(9_999),
+                initial: BTreeMap::new(),
+                initial_loadouts: Default::default(),
+                posture: EngagementPolicy::default(),
+                platform_tiers: 0,
+            },
         ];
         let mut r = BattleRecord::open(id, Vec2::ZERO, None, false, tick, 45.0, sides);
-        r.finalize(tick, RaidOutcome::BothSurvive, [BTreeMap::new(), BTreeMap::new()], [BTreeMap::new(), BTreeMap::new()]);
+        r.finalize(
+            tick,
+            RaidOutcome::BothSurvive,
+            [BTreeMap::new(), BTreeMap::new()],
+            [BTreeMap::new(), BTreeMap::new()],
+        );
         r
     }
 
@@ -627,52 +671,143 @@ mod tests {
     #[test]
     fn accumulate_flushes_on_cadence_and_records_dealt_and_kills() {
         let sides = [
-            SideRecord { corp: PlayerId(1), initial: comp(&[(ShipKind::Raider, 5)]), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
-            SideRecord { corp: PlayerId(2), initial: comp(&[(ShipKind::Raider, 5)]), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord {
+                corp: PlayerId(1),
+                initial: comp(&[(ShipKind::Raider, 5)]),
+                initial_loadouts: Default::default(),
+                posture: EngagementPolicy::default(),
+                platform_tiers: 0,
+            },
+            SideRecord {
+                corp: PlayerId(2),
+                initial: comp(&[(ShipKind::Raider, 5)]),
+                initial_loadouts: Default::default(),
+                posture: EngagementPolicy::default(),
+                platform_tiers: 0,
+            },
         ];
         // round_every for a 20 s battle = floor(20*30/40) = 15 ticks.
         let mut r = BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 20.0, sides);
         // Fourteen quiet ticks: no flush yet (under the cadence, no beat).
         for t in 1..=14 {
-            r.accumulate(1.0, 0.5, &Losses::default(), &losses(&[(ShipKind::Raider, 0)]));
-            r.flush_if_due(t, [comp(&[(ShipKind::Raider, 5)]), comp(&[(ShipKind::Raider, 5)])]);
+            r.accumulate(
+                1.0,
+                0.5,
+                &Losses::default(),
+                &losses(&[(ShipKind::Raider, 0)]),
+            );
+            r.flush_if_due(
+                t,
+                [
+                    comp(&[(ShipKind::Raider, 5)]),
+                    comp(&[(ShipKind::Raider, 5)]),
+                ],
+            );
         }
         assert!(r.rounds.is_empty(), "no flush before the cadence elapses");
         // Tick 15 hits the cadence and one enemy raider died: a round flushes.
-        r.accumulate(1.0, 0.5, &Losses::default(), &losses(&[(ShipKind::Raider, 1)]));
-        r.flush_if_due(15, [comp(&[(ShipKind::Raider, 5)]), comp(&[(ShipKind::Raider, 4)])]);
-        assert_eq!(r.rounds.len(), 1, "the cadence tick flushes exactly one round");
+        r.accumulate(
+            1.0,
+            0.5,
+            &Losses::default(),
+            &losses(&[(ShipKind::Raider, 1)]),
+        );
+        r.flush_if_due(
+            15,
+            [
+                comp(&[(ShipKind::Raider, 5)]),
+                comp(&[(ShipKind::Raider, 4)]),
+            ],
+        );
+        assert_eq!(
+            r.rounds.len(),
+            1,
+            "the cadence tick flushes exactly one round"
+        );
         let round = &r.rounds[0];
         assert_eq!(round.tick, 15);
-        assert!((round.dealt[0] - 15.0).abs() < 1e-9, "accumulated attacker damage");
-        assert!((round.dealt[1] - 7.5).abs() < 1e-9, "accumulated defender damage");
-        assert_eq!(round.kills[1].get(&ShipKind::Raider).copied(), Some(1), "defender's loss recorded");
-        assert_eq!(round.counts[1].get(&ShipKind::Raider).copied(), Some(4), "survivors snapshotted");
+        assert!(
+            (round.dealt[0] - 15.0).abs() < 1e-9,
+            "accumulated attacker damage"
+        );
+        assert!(
+            (round.dealt[1] - 7.5).abs() < 1e-9,
+            "accumulated defender damage"
+        );
+        assert_eq!(
+            round.kills[1].get(&ShipKind::Raider).copied(),
+            Some(1),
+            "defender's loss recorded"
+        );
+        assert_eq!(
+            round.counts[1].get(&ShipKind::Raider).copied(),
+            Some(4),
+            "survivors snapshotted"
+        );
     }
 
     #[test]
     fn a_beat_forces_a_flush_off_cadence() {
         let sides = [
-            SideRecord { corp: PlayerId(1), initial: BTreeMap::new(), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
-            SideRecord { corp: PlayerId(2), initial: BTreeMap::new(), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord {
+                corp: PlayerId(1),
+                initial: BTreeMap::new(),
+                initial_loadouts: Default::default(),
+                posture: EngagementPolicy::default(),
+                platform_tiers: 0,
+            },
+            SideRecord {
+                corp: PlayerId(2),
+                initial: BTreeMap::new(),
+                initial_loadouts: Default::default(),
+                posture: EngagementPolicy::default(),
+                platform_tiers: 0,
+            },
         ];
         let mut r = BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 2700.0, sides);
         // A single early tick with a beat — nowhere near the (huge) cadence.
-        r.note(RoundNote::Joined { side: 1, comp: comp(&[(ShipKind::Corvette, 3)]) });
+        r.note(RoundNote::Joined {
+            side: 1,
+            comp: comp(&[(ShipKind::Corvette, 3)]),
+        });
         r.accumulate(2.0, 0.0, &Losses::default(), &Losses::default());
         r.flush_if_due(3, [BTreeMap::new(), comp(&[(ShipKind::Corvette, 3)])]);
-        assert_eq!(r.rounds.len(), 1, "the join beat forced a flush off-cadence");
-        assert!(matches!(r.rounds[0].notes[0], RoundNote::Joined { side: 1, .. }));
+        assert_eq!(
+            r.rounds.len(),
+            1,
+            "the join beat forced a flush off-cadence"
+        );
+        assert!(matches!(
+            r.rounds[0].notes[0],
+            RoundNote::Joined { side: 1, .. }
+        ));
     }
 
     #[test]
     fn finalize_flushes_the_tail_and_stamps_the_outcome() {
         let sides = [
-            SideRecord { corp: PlayerId(1), initial: comp(&[(ShipKind::Raider, 3)]), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
-            SideRecord { corp: PlayerId(2), initial: comp(&[(ShipKind::Raider, 2)]), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord {
+                corp: PlayerId(1),
+                initial: comp(&[(ShipKind::Raider, 3)]),
+                initial_loadouts: Default::default(),
+                posture: EngagementPolicy::default(),
+                platform_tiers: 0,
+            },
+            SideRecord {
+                corp: PlayerId(2),
+                initial: comp(&[(ShipKind::Raider, 2)]),
+                initial_loadouts: Default::default(),
+                posture: EngagementPolicy::default(),
+                platform_tiers: 0,
+            },
         ];
         let mut r = BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 2700.0, sides);
-        r.accumulate(5.0, 1.0, &Losses::default(), &losses(&[(ShipKind::Raider, 2)]));
+        r.accumulate(
+            5.0,
+            1.0,
+            &Losses::default(),
+            &losses(&[(ShipKind::Raider, 2)]),
+        );
         assert!(r.rounds.is_empty(), "no cadence flush yet");
         r.finalize(
             7,
@@ -699,7 +834,11 @@ mod tests {
             recs.insert(id, finished_record(id, corp, i * 10)); // all old vs `now`
         }
         prune_records(&mut recs, now);
-        assert_eq!(recs.len(), RECORD_PER_CORP_FLOOR, "old records prune to the per-corp floor");
+        assert_eq!(
+            recs.len(),
+            RECORD_PER_CORP_FLOOR,
+            "old records prune to the per-corp floor"
+        );
         // The survivors are the newest 25 (ended ticks 50..290), oldest 5 dropped.
         assert!(!recs.contains_key(&EntityId(1)), "the oldest record pruned");
         assert!(recs.contains_key(&EntityId(30)), "the newest record kept");
@@ -717,40 +856,99 @@ mod tests {
             recs.insert(id, finished_record(id, corp, i)); // ended tick = i (recent vs now=0)
         }
         prune_records(&mut recs, 0.0);
-        assert_eq!(recs.len(), MAX_BATTLE_RECORDS, "hard cap trims to the ceiling");
-        assert!(!recs.contains_key(&EntityId(1)), "the oldest was evicted by the cap");
-        assert!(recs.contains_key(&EntityId(MAX_BATTLE_RECORDS as u64 + extra)), "the newest survived");
+        assert_eq!(
+            recs.len(),
+            MAX_BATTLE_RECORDS,
+            "hard cap trims to the ceiling"
+        );
+        assert!(
+            !recs.contains_key(&EntityId(1)),
+            "the oldest was evicted by the cap"
+        );
+        assert!(
+            recs.contains_key(&EntityId(MAX_BATTLE_RECORDS as u64 + extra)),
+            "the newest survived"
+        );
     }
 
     #[test]
     fn running_battles_are_never_pruned() {
         let mut recs: BTreeMap<EntityId, BattleRecord> = BTreeMap::new();
         let sides = [
-            SideRecord { corp: PlayerId(1), initial: BTreeMap::new(), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
-            SideRecord { corp: PlayerId(2), initial: BTreeMap::new(), initial_loadouts: Default::default(), posture: EngagementPolicy::default(), platform_tiers: 0 },
+            SideRecord {
+                corp: PlayerId(1),
+                initial: BTreeMap::new(),
+                initial_loadouts: Default::default(),
+                posture: EngagementPolicy::default(),
+                platform_tiers: 0,
+            },
+            SideRecord {
+                corp: PlayerId(2),
+                initial: BTreeMap::new(),
+                initial_loadouts: Default::default(),
+                posture: EngagementPolicy::default(),
+                platform_tiers: 0,
+            },
         ];
         // A still-running record (no ended_tick), plus 30 ancient finished ones
         // for a DIFFERENT corp so the floor can't protect the runner incidentally.
-        recs.insert(EntityId(1), BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 45.0, sides));
+        recs.insert(
+            EntityId(1),
+            BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 45.0, sides),
+        );
         for i in 0..30u64 {
             let id = EntityId(1000 + i);
             recs.insert(id, finished_record(id, PlayerId(42), i));
         }
         prune_records(&mut recs, 10_000_000.0);
-        assert!(recs.contains_key(&EntityId(1)), "a running battle is always kept");
+        assert!(
+            recs.contains_key(&EntityId(1)),
+            "a running battle is always kept"
+        );
     }
 
     #[test]
     fn record_serde_round_trips_including_pending() {
         // A record mid-battle (pending accumulation live) round-trips exactly.
         let sides = [
-            SideRecord { corp: PlayerId(1), initial: comp(&[(ShipKind::Raider, 4)]), initial_loadouts: Default::default(), posture: EngagementPolicy::EngageAny, platform_tiers: 0 },
-            SideRecord { corp: PlayerId(2), initial: comp(&[(ShipKind::Corvette, 3)]), initial_loadouts: Default::default(), posture: EngagementPolicy::Avoid, platform_tiers: 2 },
+            SideRecord {
+                corp: PlayerId(1),
+                initial: comp(&[(ShipKind::Raider, 4)]),
+                initial_loadouts: Default::default(),
+                posture: EngagementPolicy::EngageAny,
+                platform_tiers: 0,
+            },
+            SideRecord {
+                corp: PlayerId(2),
+                initial: comp(&[(ShipKind::Corvette, 3)]),
+                initial_loadouts: Default::default(),
+                posture: EngagementPolicy::Avoid,
+                platform_tiers: 2,
+            },
         ];
-        let mut r = BattleRecord::open(EntityId(0xE000_0000_0000_0001), Vec2::new(1.0, -2.0), Some(EntityId(5)), false, 3, 2700.0, sides);
-        r.accumulate(3.25, 0.75, &losses(&[(ShipKind::Raider, 1)]), &Losses::default());
+        let mut r = BattleRecord::open(
+            EntityId(0xE000_0000_0000_0001),
+            Vec2::new(1.0, -2.0),
+            Some(EntityId(5)),
+            false,
+            3,
+            2700.0,
+            sides,
+        );
+        r.accumulate(
+            3.25,
+            0.75,
+            &losses(&[(ShipKind::Raider, 1)]),
+            &Losses::default(),
+        );
         r.note(RoundNote::PlatformDestroyed);
-        r.flush_if_due(4, [comp(&[(ShipKind::Raider, 3)]), comp(&[(ShipKind::Corvette, 3)])]);
+        r.flush_if_due(
+            4,
+            [
+                comp(&[(ShipKind::Raider, 3)]),
+                comp(&[(ShipKind::Corvette, 3)]),
+            ],
+        );
         r.accumulate(1.0, 0.0, &Losses::default(), &Losses::default()); // live pending
         let json = serde_json::to_string(&r).unwrap();
         let r2: BattleRecord = serde_json::from_str(&json).unwrap();
@@ -771,9 +969,15 @@ mod tests {
         // linearly; the fitting budget (2+2=4 ≤ Raider's 4) is the brake.
         let one = Loadout::new(vec![ModuleKind::MassDriver]);
         let two = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::MassDriver]);
-        assert!(two.validate(ShipKind::Raider), "double-driver fits the Raider budget exactly");
+        assert!(
+            two.validate(ShipKind::Raider),
+            "double-driver fits the Raider budget exactly"
+        );
         assert_eq!(one.offense().0, DamageType::Driver);
-        assert!((two.offense().1 - 2.0 * one.offense().1).abs() < 1e-9, "the second copy doubles the output");
+        assert!(
+            (two.offense().1 - 2.0 * one.offense().1).abs() < 1e-9,
+            "the second copy doubles the output"
+        );
         // A double TORPEDO rack is budget-illegal on every subcapital (6 > 5)…
         let tt = Loadout::new(vec![ModuleKind::TorpedoRack, ModuleKind::TorpedoRack]);
         assert!(!tt.validate(ShipKind::Raider) && !tt.validate(ShipKind::Corvette));
@@ -796,10 +1000,19 @@ mod tests {
             ModuleKind::MassDriver,
         ]);
         assert_eq!(big.len(), 6);
-        assert!(big.validate(ShipKind::Titan), "a full 6-module Titan fit is legal");
-        assert!(!big.validate(ShipKind::Dreadnought), "5 slots — one fewer combination");
+        assert!(
+            big.validate(ShipKind::Titan),
+            "a full 6-module Titan fit is legal"
+        );
+        assert!(
+            !big.validate(ShipKind::Dreadnought),
+            "5 slots — one fewer combination"
+        );
         // A 1-count Titan buckets sanely (no new CountClass needed).
-        assert_eq!(crate::ship::CountClass::from_count(1), crate::ship::CountClass::One);
+        assert_eq!(
+            crate::ship::CountClass::from_count(1),
+            crate::ship::CountClass::One
+        );
     }
 
     #[test]
@@ -810,23 +1023,55 @@ mod tests {
         // everything else is 1.0 (incl. Beam everywhere on the original hulls
         // and Protection on every Stage-A hull).
         assert_eq!(hull_affinity(ShipKind::Raider, Family::Torpedo), 1.25);
-        assert_eq!(hull_affinity(ShipKind::Corvette, Family::Interception), 1.25);
-        assert_eq!(hull_affinity(ShipKind::Corvette, Family::Torpedo), 1.0, "right family, wrong kind");
-        assert_eq!(hull_affinity(ShipKind::Raider, Family::Driver), 1.0, "right kind, wrong family");
+        assert_eq!(
+            hull_affinity(ShipKind::Corvette, Family::Interception),
+            1.25
+        );
+        assert_eq!(
+            hull_affinity(ShipKind::Corvette, Family::Torpedo),
+            1.0,
+            "right family, wrong kind"
+        );
+        assert_eq!(
+            hull_affinity(ShipKind::Raider, Family::Driver),
+            1.0,
+            "right kind, wrong family"
+        );
         assert_eq!(hull_affinity(ShipKind::Raider, Family::Interception), 1.0);
-        for k in [ShipKind::Convoy, ShipKind::Raider, ShipKind::Corvette, ShipKind::Colony, ShipKind::Scout] {
-            assert_eq!(hull_affinity(k, Family::Beam), 1.0, "beam affinity 1.0 on the original hulls");
+        for k in [
+            ShipKind::Convoy,
+            ShipKind::Raider,
+            ShipKind::Corvette,
+            ShipKind::Colony,
+            ShipKind::Scout,
+        ] {
+            assert_eq!(
+                hull_affinity(k, Family::Beam),
+                1.0,
+                "beam affinity 1.0 on the original hulls"
+            );
             assert_eq!(hull_affinity(k, Family::Protection), 1.0);
         }
         // §ladder: each capital's ONE affinity (the Titan's broad weapon spread).
         assert_eq!(hull_affinity(ShipKind::Destroyer, Family::Beam), 1.20);
         assert_eq!(hull_affinity(ShipKind::Cruiser, Family::Protection), 1.20);
         assert_eq!(hull_affinity(ShipKind::Battleship, Family::Driver), 1.20);
-        assert_eq!(hull_affinity(ShipKind::Dreadnought, Family::Interception), 1.30);
+        assert_eq!(
+            hull_affinity(ShipKind::Dreadnought, Family::Interception),
+            1.30
+        );
         for f in [Family::Beam, Family::Driver, Family::Torpedo] {
             assert_eq!(hull_affinity(ShipKind::Titan, f), 1.10, "broadly good");
         }
-        assert_eq!(hull_affinity(ShipKind::Titan, Family::Interception), 1.0, "best at nothing");
-        assert_eq!(hull_affinity(ShipKind::Destroyer, Family::Torpedo), 1.0, "one affinity per capital");
+        assert_eq!(
+            hull_affinity(ShipKind::Titan, Family::Interception),
+            1.0,
+            "best at nothing"
+        );
+        assert_eq!(
+            hull_affinity(ShipKind::Destroyer, Family::Torpedo),
+            1.0,
+            "one affinity per capital"
+        );
     }
 }

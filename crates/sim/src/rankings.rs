@@ -45,7 +45,7 @@ pub fn hull_sum(losses: &BTreeMap<ShipKind, u32>) -> f64 {
 pub struct RankingStats {
     /// TRADE THROUGHPUT — cargo units a corp's convoys successfully HAULED and
     /// delivered (home, an owned/ally system, or carried to the hub and sold).
-    /// §TCA: an instant Charterhouse sale settles against the warehouse and moves
+    /// §TCA: an instant Market Hub sale settles against the warehouse and moves
     /// nothing, so it earns NO throughput — only goods that actually crossed space
     /// count here.
     #[serde(default)]
@@ -380,6 +380,9 @@ mod tests {
         m.insert(ShipKind::Raider, 2);
         m.insert(ShipKind::Convoy, 1);
         // 2 raiders (20 each) + 1 convoy (10) = 50.
-        assert_eq!(hull_sum(&m), 2.0 * ShipKind::Raider.hull() + ShipKind::Convoy.hull());
+        assert_eq!(
+            hull_sum(&m),
+            2.0 * ShipKind::Raider.hull() + ShipKind::Convoy.hull()
+        );
     }
 }

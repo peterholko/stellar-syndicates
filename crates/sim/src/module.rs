@@ -224,7 +224,11 @@ impl Loadout {
 
     /// The wire/map key — slugs joined by `+`, or `""` for an unfitted ship.
     pub fn key(&self) -> String {
-        self.0.iter().map(|m| m.slug()).collect::<Vec<_>>().join("+")
+        self.0
+            .iter()
+            .map(|m| m.slug())
+            .collect::<Vec<_>>()
+            .join("+")
     }
 
     /// Parse a key back to a canonical loadout. Unknown slugs are dropped (a
@@ -245,9 +249,15 @@ impl Loadout {
     pub fn offense(&self) -> (DamageType, f64) {
         let count = |k: ModuleKind| self.0.iter().filter(|m| **m == k).count() as f64;
         if self.0.contains(&ModuleKind::TorpedoRack) {
-            (DamageType::Torpedo, TORP_MULT * count(ModuleKind::TorpedoRack))
+            (
+                DamageType::Torpedo,
+                TORP_MULT * count(ModuleKind::TorpedoRack),
+            )
         } else if self.0.contains(&ModuleKind::MassDriver) {
-            (DamageType::Driver, DRIVER_MULT * count(ModuleKind::MassDriver))
+            (
+                DamageType::Driver,
+                DRIVER_MULT * count(ModuleKind::MassDriver),
+            )
         } else if self.0.contains(&ModuleKind::PointDefenseScreen) {
             // PD's beam does NOT stack — extra screens add interception
             // presence, not gunnery (the weapon side is the trade-off).
@@ -298,14 +308,20 @@ mod tests {
         // §fitting relationship 1: Torp(3) + Whipple(3) = 6 > the Corvette's 5.
         let lo = Loadout::new(vec![ModuleKind::TorpedoRack, ModuleKind::WhippleArmor]);
         assert_eq!(lo.fitting_cost(), 6);
-        assert!(!lo.validate(crate::ship::ShipKind::Corvette), "torpedo Corvette can't also armor up");
+        assert!(
+            !lo.validate(crate::ship::ShipKind::Corvette),
+            "torpedo Corvette can't also armor up"
+        );
     }
 
     #[test]
     fn driver_whipple_corvette_is_the_classic_brawler() {
         // §fitting relationship 2: Driver(2) + Whipple(3) = 5 fits EXACTLY.
         let lo = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]);
-        assert_eq!(lo.fitting_cost(), crate::ship::fitting_points(crate::ship::ShipKind::Corvette));
+        assert_eq!(
+            lo.fitting_cost(),
+            crate::ship::fitting_points(crate::ship::ShipKind::Corvette)
+        );
         assert!(lo.validate(crate::ship::ShipKind::Corvette));
     }
 
@@ -330,7 +346,10 @@ mod tests {
         // Slots bind even when the budget would allow: the Scout has 1 slot.
         let two_cheap = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::ReflectivePlating]);
         assert!(two_cheap.fitting_cost() <= crate::ship::fitting_points(ShipKind::Corvette));
-        assert!(!two_cheap.validate(ShipKind::Scout), "2 modules > the Scout's 1 slot");
+        assert!(
+            !two_cheap.validate(ShipKind::Scout),
+            "2 modules > the Scout's 1 slot"
+        );
         assert!(Loadout::new(vec![ModuleKind::MassDriver]).validate(ShipKind::Scout));
         // Logistics hulls carry nothing (0 slots) regardless of budget.
         assert!(!Loadout::new(vec![ModuleKind::MassDriver]).validate(ShipKind::Convoy));
@@ -346,19 +365,38 @@ mod tests {
         assert_eq!(a, b, "order-insensitive canonical form");
         assert_eq!(a.key(), "mass_driver+whipple_armor");
         assert_eq!(Loadout::from_key(&a.key()), a, "key round-trips");
-        assert_eq!(Loadout::from_key(""), Loadout::default(), "empty key = unfitted");
+        assert_eq!(
+            Loadout::from_key(""),
+            Loadout::default(),
+            "empty key = unfitted"
+        );
         assert!(Loadout::default().is_empty());
     }
 
     #[test]
     fn offense_type_is_the_weapon_module() {
         assert_eq!(Loadout::default().offense(), (DamageType::Beam, 1.0));
-        assert_eq!(Loadout::new(vec![ModuleKind::MassDriver]).offense(), (DamageType::Driver, DRIVER_MULT));
-        assert_eq!(Loadout::new(vec![ModuleKind::TorpedoRack]).offense(), (DamageType::Torpedo, TORP_MULT));
-        assert_eq!(Loadout::new(vec![ModuleKind::PointDefenseScreen]).offense(), (DamageType::Beam, PD_ATTACK));
+        assert_eq!(
+            Loadout::new(vec![ModuleKind::MassDriver]).offense(),
+            (DamageType::Driver, DRIVER_MULT)
+        );
+        assert_eq!(
+            Loadout::new(vec![ModuleKind::TorpedoRack]).offense(),
+            (DamageType::Torpedo, TORP_MULT)
+        );
+        assert_eq!(
+            Loadout::new(vec![ModuleKind::PointDefenseScreen]).offense(),
+            (DamageType::Beam, PD_ATTACK)
+        );
         // Armor alone doesn't change offense; a weapon + armor keeps the weapon.
-        assert_eq!(Loadout::new(vec![ModuleKind::ReflectivePlating]).offense(), (DamageType::Beam, 1.0));
-        assert_eq!(Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]).offense(), (DamageType::Driver, DRIVER_MULT));
+        assert_eq!(
+            Loadout::new(vec![ModuleKind::ReflectivePlating]).offense(),
+            (DamageType::Beam, 1.0)
+        );
+        assert_eq!(
+            Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]).offense(),
+            (DamageType::Driver, DRIVER_MULT)
+        );
     }
 
     #[test]

@@ -199,11 +199,19 @@ impl GroundAssault {
         // side happens to be winning.
         let roll_a = 1.0 + self.rng.next_f64().mul_add(2.0, -1.0) * GROUND_VARIANCE;
         let roll_d = 1.0 + self.rng.next_f64().mul_add(2.0, -1.0) * GROUND_VARIANCE;
-        let marine_losses = (engaged * self.lethality * dt * roll_d).max(0.0).min(self.marines);
-        let defender_losses = (self.marines * self.lethality * dt * roll_a).max(0.0).min(self.defenders);
+        let marine_losses = (engaged * self.lethality * dt * roll_d)
+            .max(0.0)
+            .min(self.marines);
+        let defender_losses = (self.marines * self.lethality * dt * roll_a)
+            .max(0.0)
+            .min(self.defenders);
         self.marines -= marine_losses;
         self.defenders -= defender_losses;
-        GroundStep { marine_losses, defender_losses, suppression: s }
+        GroundStep {
+            marine_losses,
+            defender_losses,
+            suppression: s,
+        }
     }
 
     /// Whether the fight is over, and how. Checked after every step.
@@ -310,7 +318,9 @@ pub struct GroundRecord {
 impl GroundRecord {
     /// Open a record for a landing whose sides are known.
     pub fn open(a: &GroundAssault, suppression_at_drop: f64, battle_target_secs: f64) -> Self {
-        let expected = (GROUND_ASSAULT_MULT * battle_target_secs.max(1.0) * crate::config::TICK_HZ as f64).max(1.0);
+        let expected =
+            (GROUND_ASSAULT_MULT * battle_target_secs.max(1.0) * crate::config::TICK_HZ as f64)
+                .max(1.0);
         GroundRecord {
             id: a.id,
             system: a.system,
@@ -336,7 +346,10 @@ impl GroundRecord {
         self.pending.defender_losses += step.defender_losses;
         self.pending.suppression += step.suppression;
         self.pending.ticks += 1;
-        if tick.saturating_sub(self.started_tick).is_multiple_of(self.round_every) {
+        if tick
+            .saturating_sub(self.started_tick)
+            .is_multiple_of(self.round_every)
+        {
             self.flush(tick, a);
         }
     }
@@ -353,7 +366,11 @@ impl GroundRecord {
 
     fn flush(&mut self, tick: u64, a: &GroundAssault) {
         let p = std::mem::take(&mut self.pending);
-        let suppression = if p.ticks > 0 { p.suppression / p.ticks as f64 } else { self.suppression_at_drop };
+        let suppression = if p.ticks > 0 {
+            p.suppression / p.ticks as f64
+        } else {
+            self.suppression_at_drop
+        };
         let (marines, defenders) = (a.marines_u32(), a.defenders_u32());
         // The beats, derived from the series rather than reported by the engine.
         let mut notes = Vec::new();
@@ -392,7 +409,10 @@ impl GroundRecord {
 /// Prune resolved landings on the same terms as battle records: recent ones
 /// stay, each corp keeps a floor of its latest, and the total is hard-capped.
 /// Running landings are never dropped.
-pub fn prune_ground_records(records: &mut std::collections::BTreeMap<EntityId, GroundRecord>, now: f64) {
+pub fn prune_ground_records(
+    records: &mut std::collections::BTreeMap<EntityId, GroundRecord>,
+    now: f64,
+) {
     use std::collections::{BTreeMap, BTreeSet};
     let mut by_corp: BTreeMap<PlayerId, Vec<(u64, EntityId)>> = BTreeMap::new();
     for (id, r) in records.iter() {
@@ -468,11 +488,21 @@ pub fn project_landing(
     k: u32,
 ) -> LandingOdds {
     if marines == 0 {
-        return LandingOdds { win: 0.0, expected_marine_losses: 0.0, expected_secs: 0.0, win_if_guns_leave: 0.0 };
+        return LandingOdds {
+            win: 0.0,
+            expected_marine_losses: 0.0,
+            expected_secs: 0.0,
+            win_if_guns_leave: 0.0,
+        };
     }
     if tiers == 0 {
         // Undefended ground is taken by anyone who lands on it, guns or no guns.
-        return LandingOdds { win: 1.0, expected_marine_losses: 0.0, expected_secs: 0.0, win_if_guns_leave: 1.0 };
+        return LandingOdds {
+            win: 1.0,
+            expected_marine_losses: 0.0,
+            expected_secs: 0.0,
+            win_if_guns_leave: 1.0,
+        };
     }
     let k = k.max(1);
     let mut wins = 0u32;
@@ -506,8 +536,17 @@ pub fn project_landing(
 /// One headless landing. Returns (took the ground, marines lost, seconds).
 fn rollout(marines: u32, tiers: u32, suppression: f64, target: f64, seed: u64) -> (bool, f64, f64) {
     let mut a = GroundAssault::open(
-        EntityId(seed), seed, EntityId(0), Vec2::new(0.0, 0.0),
-        PlayerId(0), PlayerId(1), EntityId(0), marines, tiers, 0, target,
+        EntityId(seed),
+        seed,
+        EntityId(0),
+        Vec2::new(0.0, 0.0),
+        PlayerId(0),
+        PlayerId(1),
+        EntityId(0),
+        marines,
+        tiers,
+        0,
+        target,
     );
     let dt = 0.1;
     let mut t = 0.0;
@@ -517,7 +556,11 @@ fn rollout(marines: u32, tiers: u32, suppression: f64, target: f64, seed: u64) -
         a.step(suppression, dt);
         t += dt;
         if let Some(o) = a.resolved() {
-            return (o == GroundOutcome::Taken, marines as f64 - a.marines.max(0.0), t);
+            return (
+                o == GroundOutcome::Taken,
+                marines as f64 - a.marines.max(0.0),
+                t,
+            );
         }
     }
     (false, marines as f64, t)
@@ -566,7 +609,11 @@ mod tests {
         let mut a = assault(100, 3, 0xABCD);
         let mut b = assault(100, 3, 0xABCD);
         for _ in 0..200 {
-            assert_eq!(a.step(0.2, 0.1), b.step(0.2, 0.1), "same seed, same tick, same casualties");
+            assert_eq!(
+                a.step(0.2, 0.1),
+                b.step(0.2, 0.1),
+                "same seed, same tick, same casualties"
+            );
         }
         assert_eq!(a.marines, b.marines);
         assert_eq!(a.defenders, b.defenders);
@@ -588,9 +635,17 @@ mod tests {
     fn decisive_odds_are_not_a_lottery() {
         for seed in 0..40u64 {
             let mut strong = assault(300, 2, seed); // 300 v 50
-            assert_eq!(run(&mut strong, 0.0).0, GroundOutcome::Taken, "seed {seed}: 6:1 must take the ground");
+            assert_eq!(
+                run(&mut strong, 0.0).0,
+                GroundOutcome::Taken,
+                "seed {seed}: 6:1 must take the ground"
+            );
             let mut weak = assault(20, 4, seed); // 20 v 100
-            assert_eq!(run(&mut weak, 0.0).0, GroundOutcome::Repulsed, "seed {seed}: 1:5 must be destroyed");
+            assert_eq!(
+                run(&mut weak, 0.0).0,
+                GroundOutcome::Repulsed,
+                "seed {seed}: 1:5 must be destroyed"
+            );
         }
     }
 
@@ -625,13 +680,20 @@ mod tests {
         let full = break_even_marines(4.0, 0.0);
         let half = break_even_marines(4.0, 0.5);
         assert_eq!(full, 100.0);
-        assert!((half - 70.71).abs() < 0.01, "half-suppressed breaks even at ~71, got {half}");
+        assert!(
+            (half - 70.71).abs() < 0.01,
+            "half-suppressed breaks even at ~71, got {half}"
+        );
         // And a landing sized for the SUPPRESSED garrison must actually beat it.
         let mut a = assault(half.ceil() as u32 + 25, 4, 7);
         assert_eq!(run(&mut a, 0.5).0, GroundOutcome::Taken);
         // The same landing against an UNSUPPRESSED garrison is destroyed.
         let mut b = assault(half.ceil() as u32 + 25, 4, 7);
-        assert_eq!(run(&mut b, 0.0).0, GroundOutcome::Repulsed, "without the guns, the same force is not enough");
+        assert_eq!(
+            run(&mut b, 0.0).0,
+            GroundOutcome::Repulsed,
+            "without the guns, the same force is not enough"
+        );
     }
 
     /// THE POINT OF THE WHOLE MODULE: a landing that is winning while the guns
@@ -651,7 +713,10 @@ mod tests {
         for _ in 0..10 {
             mid.step(0.5, 0.1);
         }
-        assert!(mid.resolved().is_none(), "the fight is still live when relief could arrive");
+        assert!(
+            mid.resolved().is_none(),
+            "the fight is still live when relief could arrive"
+        );
 
         let mut kept = mid.clone();
         let mut relieved = mid;
@@ -683,7 +748,10 @@ mod tests {
         // whatever lead the dice hand out, so a nominally even fight tips and
         // ends early. Duration is EMERGENT — the band is wide because the
         // constant is not tuned to hit a number.
-        assert!((20.0..=70.0).contains(&avg), "an even landing should run on the order of the 45 s target, averaged {avg:.1}");
+        assert!(
+            (20.0..=70.0).contains(&avg),
+            "an even landing should run on the order of the 45 s target, averaged {avg:.1}"
+        );
     }
 
     /// §ground G4: THE ESTIMATE MUST TRACK THE ENGINE. It runs the real thing,
@@ -697,7 +765,11 @@ mod tests {
             let odds = project_landing(marines, tiers, supp, target, 0xBEEF, 64);
             let mut wins = 0;
             for seed in 0..64u64 {
-                let mut a = assault(marines, tiers, 0xBEEF ^ seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+                let mut a = assault(
+                    marines,
+                    tiers,
+                    0xBEEF ^ seed.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+                );
                 if run(&mut a, supp).0 == GroundOutcome::Taken {
                     wins += 1;
                 }
@@ -706,14 +778,28 @@ mod tests {
         };
         // Decisive both ways: the estimate and the engine agree completely.
         let (e, r) = check(400, 2, 0.0);
-        assert_eq!((e, r), (1.0, 1.0), "a 8:1 landing is certain, and the estimate says so");
+        assert_eq!(
+            (e, r),
+            (1.0, 1.0),
+            "a 8:1 landing is certain, and the estimate says so"
+        );
         let (e, r) = check(15, 6, 0.0);
-        assert_eq!((e, r), (0.0, 0.0), "a hopeless landing is hopeless, and the estimate says so");
+        assert_eq!(
+            (e, r),
+            (0.0, 0.0),
+            "a hopeless landing is hopeless, and the estimate says so"
+        );
         // Marginal: the estimate must land near the truth, not merely on the
         // right side of it.
         let (e, r) = check(100, 4, 0.0);
-        assert!((e - r).abs() < 0.22, "a break-even landing: estimate {e:.2} vs engine {r:.2}");
-        assert!((0.25..=0.75).contains(&e), "and it should read as genuinely uncertain, got {e:.2}");
+        assert!(
+            (e - r).abs() < 0.22,
+            "a break-even landing: estimate {e:.2} vs engine {r:.2}"
+        );
+        assert!(
+            (0.25..=0.75).contains(&e),
+            "and it should read as genuinely uncertain, got {e:.2}"
+        );
     }
 
     /// The counterfactual is the point of the estimator, not a nicety: a landing
@@ -725,17 +811,27 @@ mod tests {
         // Sized to win comfortably under heavy suppression, and to be hopeless
         // without it — exactly the situation a player must be warned about.
         let odds = project_landing(80, 6, 0.85, 45.0, 7, LANDING_ROLLOUTS);
-        assert!(odds.win > 0.9, "with the guns on station this landing is a good bet ({:.2})", odds.win);
+        assert!(
+            odds.win > 0.9,
+            "with the guns on station this landing is a good bet ({:.2})",
+            odds.win
+        );
         assert!(
             odds.win_if_guns_leave < 0.1,
             "and a disaster without them ({:.2}) — the gap IS the warning",
             odds.win_if_guns_leave,
         );
-        assert!(odds.expected_secs > 0.0, "and the guns must stay for a knowable length of time");
+        assert!(
+            odds.expected_secs > 0.0,
+            "and the guns must stay for a knowable length of time"
+        );
 
         // A landing that does NOT depend on the bombardment says that too.
         let solid = project_landing(400, 2, 0.5, 45.0, 7, LANDING_ROLLOUTS);
-        assert!(solid.win > 0.95 && solid.win_if_guns_leave > 0.95, "an overwhelming landing needs no guns");
+        assert!(
+            solid.win > 0.95 && solid.win_if_guns_leave > 0.95,
+            "an overwhelming landing needs no guns"
+        );
     }
 
     /// Same question, same answer — two clients must never be quoted different
