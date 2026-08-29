@@ -19,7 +19,8 @@ import {
 import { fmt, fmtEta } from "../../core/derive/format";
 import { emplacementLabel, nearestKnownDock, systemName } from "../../core/derive/geo";
 import { fitLegal, kitAffordable, kitCostLabel, MODULE_SLOTS, moduleLedgerAt, ownedHaulDestinations } from "../../core/derive/market";
-import { orderEtaRange, orderObject, orderPoint } from "../../core/derive/orders";
+import { orderEtaRange, orderObject, orderPoint, TCA_INCIDENT_LOSS_UI } from "../../core/derive/orders";
+import { projectedBand } from "../../core/derive/research";
 import type { CoreEvent } from "../../core/events";
 import { jumpDepartureKey } from "../../core/session";
 import { icon, label, type IconKey } from "../../icons";
@@ -351,7 +352,7 @@ export class DeckFleetRoutes {
 
   private flagshipHtml(g: GhostView): string {
     const current = this.ctx.state.syndicate?.flagship_name?.trim() ?? "";
-    if (this.confirms.get(g.id) === "flagship") return `<div class="deck-inline-confirm"><b>Christen flagship</b><input data-fleet-flagship-name maxlength="32" value="${escAttr(current)}" placeholder="Flagship name"><div><button type="button" data-deck-act="fleet-flagship-save" class="is-primary">Save</button><button type="button" data-deck-act="fleet-confirm-cancel">Cancel</button></div></div>`;
+    if (this.confirms.get(g.id) === "flagship") return `<div class="deck-inline-confirm" role="group" aria-label="Christen flagship"><b>Christen flagship</b><input data-fleet-flagship-name data-deck-enter="fleet-flagship-save" maxlength="32" value="${escAttr(current)}" placeholder="Flagship name"><div><button type="button" data-deck-act="fleet-flagship-save" class="is-primary">Save</button><button type="button" data-deck-act="fleet-confirm-cancel">Cancel</button></div></div>`;
     return `<div class="deck-fleet-flagship"><span>Flagship <b>${esc(current || "unnamed")}</b></span><button type="button" data-deck-act="fleet-flagship">${current ? "Rename" : "Name"}</button></div>`;
   }
 
@@ -501,13 +502,13 @@ export class DeckFleetRoutes {
     if (this.confirms.get(g.id) !== kind) return "";
     if (kind === "fuel") {
       const quote = aaaEstimate(g);
-      return `<div class="deck-inline-confirm"><b>Dispatch physical rescue tender?</b><span>Charge ~${fmt(quote.cost)} Cr now. The callout is non-refundable if the tender is lost.</span><div><button type="button" class="is-primary" data-deck-act="fleet-fuel-confirm">Dispatch</button><button type="button" data-deck-act="fleet-confirm-cancel">Cancel</button></div></div>`;
+      return `<div class="deck-inline-confirm" role="group" aria-label="Confirm rescue dispatch"><b>Dispatch physical rescue tender?</b><span>Charge ~${fmt(quote.cost)} Cr now. The callout is non-refundable if the tender is lost.</span><div><button type="button" class="is-primary" data-deck-act="fleet-fuel-confirm">Dispatch</button><button type="button" data-deck-act="fleet-confirm-cancel">Cancel</button></div></div>`;
     }
-    if (kind === "authority") return `<div class="deck-inline-confirm"><b>Engage Authority freight?</b><span>Each intercepted Authority hull can trigger citations and higher market costs.</span><div><button type="button" class="is-danger" data-deck-act="fleet-authority-confirm">Enable</button><button type="button" data-deck-act="fleet-confirm-cancel">Cancel</button></div></div>`;
+    if (kind === "authority") return `<div class="deck-inline-confirm" role="group" aria-label="Confirm Authority freight engagement"><b>Engage Authority freight?</b><span>Each intercepted Authority hull can trigger citations and higher market costs. Projected charter status: ${esc(projectedBand(TCA_INCIDENT_LOSS_UI))}.</span><div><button type="button" class="is-danger" data-deck-act="fleet-authority-confirm">Enable</button><button type="button" data-deck-act="fleet-confirm-cancel">Cancel</button></div></div>`;
     const destination = kind === "haul-hub" ? this.ctx.state.galaxy?.hub : ownedHaulDestinations().find((entry) => entry.id === this.haulDestination.get(g.id))?.id;
     const pos = typeof destination === "string" ? this.ctx.state.galaxy?.systems.find((entry) => entry.id === destination)?.pos : destination;
     const needed = pos ? estimatedFuelForLeg(g, pos) : 0;
-    return `<div class="deck-inline-confirm"><b>Fuel estimate is short</b><span>Latest tank ${fmt(g.fuel ?? 0)} · estimated leg ${fmt(needed)} Fuel. The fleet may run dry and hold.</span><div><button type="button" class="is-danger" data-deck-act="fleet-${kind}-confirm">Depart anyway</button><button type="button" data-deck-act="fleet-confirm-cancel">Cancel</button></div></div>`;
+    return `<div class="deck-inline-confirm" role="group" aria-label="Confirm under-fueled departure"><b>Fuel estimate is short</b><span>Latest tank ${fmt(g.fuel ?? 0)} · estimated leg ${fmt(needed)} Fuel. The fleet may run dry and hold.</span><div><button type="button" class="is-danger" data-deck-act="fleet-${kind}-confirm">Depart anyway</button><button type="button" data-deck-act="fleet-confirm-cancel">Cancel</button></div></div>`;
   }
 
   private jobHtml(g: GhostView): string {

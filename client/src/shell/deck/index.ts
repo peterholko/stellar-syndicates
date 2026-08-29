@@ -181,6 +181,17 @@ class DeckShell implements Shell {
     };
     byId("deck-workspace").addEventListener("input", workspaceInput, { signal });
     byId("deck-workspace").addEventListener("change", workspaceInput, { signal });
+    byId("deck-workspace").addEventListener("keydown", (event) => {
+      const input = event.target;
+      if (event.key !== "Enter" || !(input instanceof HTMLInputElement)) return;
+      const action = input.dataset.deckEnter;
+      if (!action) return;
+      const scope = input.closest<HTMLElement>(".deck-inline-confirm, .deck-inline-form") ?? byId("deck-workspace");
+      const submit = scope.querySelector<HTMLButtonElement>(`[data-deck-act="${action}"]`);
+      if (!submit || submit.disabled) return;
+      event.preventDefault();
+      submit.click();
+    }, { signal });
     byId("deck-founding").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
       if (button) this.command?.handleFoundingAction(button);
