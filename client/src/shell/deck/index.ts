@@ -1,6 +1,6 @@
 import "../../styles/deck.css";
 
-import { guardCapable as guardCapableForKey, jumpCapable as jumpCapableForKey, shipKindLabel } from "../../core/derive/fleet";
+import { bindFleetNet, guardCapable as guardCapableForKey, jumpCapable as jumpCapableForKey, shipKindLabel } from "../../core/derive/fleet";
 import { bindMarketDerive, reservedMarketCredits, spendableMarketCredits } from "../../core/derive/market";
 import type { CoreEvent } from "../../core/events";
 import { formatId } from "../../protocol";
@@ -17,6 +17,7 @@ import { DeckCommandStrip } from "./strip";
 import { DeckCommandRoutes } from "./command";
 import { deckTradeNotice, DeckMarketRoutes } from "./market";
 import { DeckPolicyRoutes } from "./policy";
+import { DeckFleetRoutes } from "./fleet";
 import { DeckToasts } from "./toasts";
 import { DeckWorkspace } from "./workspace";
 
@@ -35,6 +36,7 @@ class DeckShell implements Shell {
   private command: DeckCommandRoutes | null = null;
   private market: DeckMarketRoutes | null = null;
   private policy: DeckPolicyRoutes | null = null;
+  private fleet: DeckFleetRoutes | null = null;
   private removeDebug: (() => void) | null = null;
   private chromeSignature = "";
   private zoomSignature = "";
@@ -80,6 +82,11 @@ class DeckShell implements Shell {
     this.policy = new DeckPolicyRoutes(byId("deck-workspace-body"), ctx, {
       notice: (html) => this.setStatus(html),
     });
+    this.fleet = new DeckFleetRoutes(byId("deck-workspace-body"), ctx, {
+      go: (route) => this.router?.go(route),
+      notice: (html) => this.setStatus(html),
+    });
+    bindFleetNet(() => ctx.net);
     bindMarketDerive(() => ctx.net, () => this.empire?.composedFit ?? []);
     this.removeDebug = installDeckDebug(ctx, (id) => this.router?.go({ name: "battle", params: { id, label: "Theater demo" } }));
     byId<HTMLFormElement>("deck-join-form").addEventListener("submit", (event) => {
@@ -94,6 +101,7 @@ class DeckShell implements Shell {
     byId("deck-workspace").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
       if (!button) return;
+      if (this.fleet?.handleAction(button, this.router?.current ?? null)) return;
       if (this.command?.handleWorkspaceAction(button, this.router?.current ?? null)) return;
       if (this.empire?.handleAction(button, this.router?.current ?? null)) return;
       if (this.market?.handleAction(button, this.router?.current ?? null)) return;
@@ -114,6 +122,7 @@ class DeckShell implements Shell {
         // control through one event only so a doctrine selection sends once.
         if (event.type === "input" && (target instanceof HTMLSelectElement || target.type === "checkbox")) return;
         if (event.type === "change" && target instanceof HTMLInputElement && target.type !== "checkbox") return;
+        if (this.fleet?.handleInput(target, this.router?.current ?? null)) return;
         if (this.market?.handleInput(target, this.router?.current ?? null)) return;
         this.policy?.handleInput(target, this.router?.current ?? null);
       }
@@ -146,6 +155,7 @@ class DeckShell implements Shell {
     this.empire?.onCore(events, this.router?.current ?? null);
     this.market?.onCore(events, this.router?.current ?? null);
     for (const event of events) {
+      const fleetAbsorbed = this.fleet?.onCoreEvent(event, this.router?.current ?? null) ?? false;
       if (event.kind === "Welcomed") {
         this.syncSessionVisibility();
         this.openRoute("command");
@@ -170,7 +180,7 @@ class DeckShell implements Shell {
       } else if (event.kind === "ServerError") {
         this.setStatus(`<span class="deck-command-status__error"><b>Command refused</b> · ${escapeHtml(event.message)}</span>`);
       }
-      this.toastFor(event);
+      if (!fleetAbsorbed) this.toastFor(event);
     }
     this.syncSessionVisibility();
     this.renderChrome(true);
@@ -186,6 +196,7 @@ class DeckShell implements Shell {
     this.command?.render(this.router?.current ?? null);
     this.market?.render(this.router?.current ?? null);
     this.policy?.render(this.router?.current ?? null);
+    this.fleet?.render(this.router?.current ?? null);
   }
 
   framePolicy() {
@@ -213,6 +224,7 @@ class DeckShell implements Shell {
     this.command?.teardown();
     this.market?.invalidate();
     this.policy?.invalidate();
+    this.fleet?.invalidate();
     this.router = null;
     this.workspace = null;
     this.map = null;
@@ -222,6 +234,8 @@ class DeckShell implements Shell {
     this.command = null;
     this.market = null;
     this.policy = null;
+    this.fleet = null;
+    bindFleetNet(() => null);
     bindMarketDerive(() => null, () => []);
     this.removeDebug = null;
     this.abort = null;
@@ -429,7 +443,8 @@ class DeckShell implements Shell {
     const empireHandled = this.empire?.render(route, true) ?? false;
     const marketHandled = this.market?.render(route, true) ?? false;
     const policyHandled = this.policy?.render(route, true) ?? false;
-    if (!commandHandled && !empireHandled && !marketHandled && !policyHandled) this.renderPlaceholder(route);
+    const fleetHandled = this.fleet?.render(route, true) ?? false;
+    if (!commandHandled && !empireHandled && !marketHandled && !policyHandled && !fleetHandled) this.renderPlaceholder(route);
     this.renderActiveNav(route.name);
   }
 
