@@ -212,6 +212,22 @@
 .deck-service-row > span > span { display: grid; min-width: 0; gap: var(--space-1); }
 .deck-service-row small { color: var(--dim); font-size: var(--fs-fine); }
 .deck-service-row > div { display: flex; gap: var(--space-1); }
+.deck-policy-feedback { padding: var(--space-2); border-left: var(--space-1) solid var(--accent); background: var(--field-bg); color: var(--dim); }
+.deck-standing-list { display: grid; gap: var(--space-1); }
+.deck-standing-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
+.deck-standing-row > span { display: flex; min-width: 0; align-items: center; gap: var(--space-2); }
+.deck-standing-row > span > span { display: grid; min-width: 0; gap: var(--space-1); }
+.deck-standing-row small, .deck-standing-row em { color: var(--dim); font-size: var(--fs-fine); font-style: normal; }
+.deck-standing-row.is-paused { border-color: var(--warn); }
+.deck-standing-route { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: end; gap: var(--space-2); }
+.deck-standing-route > span { min-height: var(--deck-control-height); display: grid; place-items: center; color: var(--accent); }
+.deck-standing-route label, .deck-doctrine-field { display: grid; min-width: 0; gap: var(--space-1); color: var(--dim); font-size: var(--fs-fine); }
+.deck-standing-route select, .deck-doctrine-field select { width: 100%; min-width: 0; min-height: var(--deck-control-height); padding-inline: var(--space-2); border: 1px solid var(--field-bd); border-radius: var(--deck-radius); background: var(--field-bg); color: var(--ink); font: inherit; }
+.deck-doctrine-grid { display: grid; gap: var(--space-2); }
+.deck-doctrine-field { grid-template-columns: minmax(0, 1fr) minmax(calc(var(--space-6) * 4), .9fr); align-items: center; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
+.deck-doctrine-field > span { display: grid; gap: var(--space-1); }
+.deck-doctrine-field b { color: var(--ink); font-size: var(--fs-body); }
+.deck-doctrine-field small { line-height: 1.35; }
 @media (max-width: 1250px) {
   .deck-market-layout { grid-template-columns: 1fr; }
   .deck-market__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
