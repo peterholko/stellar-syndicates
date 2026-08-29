@@ -67,6 +67,7 @@ export function clearJumpDepartureSelection(): void {
 
 export function intentTargetLabel(intent: PendingIntent): string {
   if (intent.verb === "move" && intent.targetId) {
+    if (intent.targetId === "hub") return "Market Hub";
     return state.galaxy?.systems.find((system) => system.id === intent.targetId)?.name ?? "target system";
   }
   if (intent.verb === "raid" || intent.verb === "attack" || intent.verb === "guard") {

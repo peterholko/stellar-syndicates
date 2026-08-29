@@ -1,6 +1,6 @@
 import "../../styles/deck.css";
 
-import { guardCapable as guardCapableForKey, jumpCapable as jumpCapableForKey } from "../../core/derive/fleet";
+import { guardCapable as guardCapableForKey, jumpCapable as jumpCapableForKey, shipKindLabel } from "../../core/derive/fleet";
 import { reservedMarketCredits, spendableMarketCredits } from "../../core/derive/market";
 import type { CoreEvent } from "../../core/events";
 import { formatId } from "../../protocol";
@@ -116,7 +116,7 @@ class DeckShell implements Shell {
         this.setStatus(event.readout);
       } else if (event.kind === "OrderConfirmed") {
         const fleet = this.ctx?.state.ghosts.find((entry) => entry.id === event.shipId);
-        this.setStatus(`<b>Order confirmed</b> · ${escapeHtml(humanize(event.orderKind))}${fleet ? ` · ${escapeHtml(humanize(fleet.kind))}` : ""}`);
+        this.setStatus(`<b>Order confirmed</b> · ${escapeHtml(humanize(event.orderKind))}${fleet ? ` · ${escapeHtml(shipKindLabel(fleet.kind))}` : ""}`);
       } else if (event.kind === "ServerError") {
         this.setStatus(`<span class="deck-command-status__error"><b>Command refused</b> · ${escapeHtml(event.message)}</span>`);
       }
@@ -292,7 +292,7 @@ class DeckShell implements Shell {
     switch (target.type) {
       case "fleet": {
         const fleet = state.ghosts.find((entry) => entry.id === target.id);
-        this.router.go({ name: "fleet", params: { id: target.id, fleetLabel: fleet ? humanize(fleet.kind) : "Fleet" } });
+        this.router.go({ name: "fleet", params: { id: target.id, fleetLabel: fleet ? shipKindLabel(fleet.kind) : "Fleet" } });
         break;
       }
       case "system": {

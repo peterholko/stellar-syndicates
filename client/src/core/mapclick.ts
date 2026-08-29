@@ -450,7 +450,7 @@ export function resolveMapClick(
       if (!inspect && haveOwn) {
         return {
           kind: "intent",
-          intent: { shipId: selected!.id, verb: "move", dest: state.galaxy.hub },
+          intent: { shipId: selected!.id, verb: "move", targetId: "hub", dest: state.galaxy.hub },
           readout: `Move <b>${esc(shipKindLabel(selected!.kind))}</b> to the <b>Market Hub</b>.`,
         };
       }
