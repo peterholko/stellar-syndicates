@@ -35,7 +35,13 @@ export function mountDeckMarkup(root: HTMLElement): void {
       <section id="deck-command-strip" class="deck-command-strip" aria-live="polite"></section>
       <section id="deck-toast-lane" class="deck-toast-lane" aria-live="polite"></section>
       <aside id="deck-founding" class="deck-founding" hidden></aside>
-      <div id="deck-zoom" class="deck-zoom"></div>
+      <div id="deck-zoom" class="deck-zoom" aria-label="Map zoom">
+        <span id="deck-zoom-level" class="deck-zoom__level">1.0×</span>
+        <button type="button" data-deck-act="zoom-in" aria-label="Zoom in">+</button>
+        <button type="button" data-deck-act="zoom-fit" aria-label="Fit galaxy">⊡</button>
+        <button type="button" data-deck-act="zoom-out" aria-label="Zoom out">−</button>
+        <button type="button" data-deck-act="help" aria-label="Keyboard shortcuts">?</button>
+      </div>
       <div id="deck-hover" class="deck-hover" hidden></div>
       <div id="deck-overlays" class="deck-overlays">
         <section id="deck-join" class="deck-overlay deck-join" aria-labelledby="deck-join-title">
@@ -48,6 +54,20 @@ export function mountDeckMarkup(root: HTMLElement): void {
             <button id="deck-join-button" type="submit">Enter Command Deck</button>
             <div id="deck-join-error" class="deck-inline-error" role="alert"></div>
           </form>
+        </section>
+        <section id="deck-help" class="deck-overlay deck-help" aria-labelledby="deck-help-title" hidden>
+          <div class="deck-help__card">
+            <header><div><div class="deck-eyebrow">Command Deck</div><h1 id="deck-help-title">Shortcuts</h1></div><button type="button" data-deck-act="close-help" aria-label="Close shortcuts">✕</button></header>
+            <div class="deck-help__grid">
+              <kbd>Scroll</kbd><span>Zoom and cross the galaxy/system handoff</span>
+              <kbd>Drag</kbd><span>Pan the galaxy map</span>
+              <kbd>+</kbd><span>Zoom in</span>
+              <kbd>−</kbd><span>Zoom out</span>
+              <kbd>⊡</kbd><span>Fit the galaxy</span>
+              <kbd>Esc</kbd><span>Back one layer</span>
+            </div>
+            <p>Fleet commands and their accelerators arrive with the D1 command grammar.</p>
+          </div>
         </section>
       </div>
     </div>`;

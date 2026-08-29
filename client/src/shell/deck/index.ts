@@ -6,6 +6,8 @@ import { formatId } from "../../protocol";
 import { installPressGuard } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext, Rect, Shell } from "../types";
+import { installDeckDebug } from "./debug";
+import { DeckMapNavigation } from "./map";
 import { mountDeckMarkup } from "./markup";
 import { DECK_ROUTES, DeckRouter, type DeckCrumb, type DeckRoute, type DeckRouteName } from "./router";
 import { DeckCommandStrip } from "./strip";
@@ -20,9 +22,12 @@ class DeckShell implements Shell {
   private abort: AbortController | null = null;
   private router: DeckRouter | null = null;
   private workspace: DeckWorkspace | null = null;
+  private map: DeckMapNavigation | null = null;
   private toasts: DeckToasts | null = null;
   private strip: DeckCommandStrip | null = null;
+  private removeDebug: (() => void) | null = null;
   private chromeSignature = "";
+  private zoomSignature = "";
   private activeCrumbs: readonly DeckCrumb[] = [];
 
   async mount(root: HTMLElement, ctx: CoreContext): Promise<void> {
@@ -34,8 +39,17 @@ class DeckShell implements Shell {
     const signal = this.abort.signal;
     this.router = new DeckRouter((route, stack) => this.routeChanged(route, stack), signal);
     this.workspace = new DeckWorkspace(byId("deck-workspace"), ctx.renderer, signal);
-    this.toasts = new DeckToasts(byId("deck-toast-lane"));
+    this.map = new DeckMapNavigation(ctx, {
+      enteredSystem: (system) => this.router?.go({ name: "system", params: { id: system.id, systemLabel: system.name } }),
+      returnedToGalaxy: () => {
+        if (this.router?.current?.name === "system" || this.router?.current?.name === "world" || this.router?.current?.name === "build") {
+          this.router.back();
+        }
+      },
+    }, signal);
+    this.toasts = new DeckToasts(byId("deck-toast-lane"), (route) => this.router?.go(route), signal);
     this.strip = new DeckCommandStrip(byId("deck-command-strip"));
+    this.removeDebug = installDeckDebug(ctx, (id) => this.router?.go({ name: "battle", params: { id, label: "Theater demo" } }));
     byId<HTMLFormElement>("deck-join-form").addEventListener("submit", (event) => {
       event.preventDefault();
       this.join();
@@ -54,6 +68,30 @@ class DeckShell implements Shell {
       else if (button.dataset.deckAct === "breadcrumb") {
         const crumb = this.activeCrumbs[Number(button.dataset.crumbIndex)];
         if (crumb) this.router?.go(crumb.route);
+      }
+    }, { signal });
+    byId("deck-zoom").addEventListener("click", (event) => {
+      const action = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]")?.dataset.deckAct;
+      if (action === "zoom-in") this.map?.zoomIn();
+      else if (action === "zoom-out") this.map?.zoomOut();
+      else if (action === "zoom-fit") this.map?.fit();
+      else if (action === "help") this.setHelpOpen(true);
+    }, { signal });
+    byId("deck-overlays").addEventListener("click", (event) => {
+      const action = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]")?.dataset.deckAct;
+      if (action === "close-help") this.setHelpOpen(false);
+    }, { signal });
+    window.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      if (!byId("deck-help").hidden) {
+        event.preventDefault();
+        this.setHelpOpen(false);
+      } else if (ctx.renderer.isSystemScrubbing()) {
+        event.preventDefault();
+        ctx.renderer.cancelSystemScrub();
+      } else if (this.router?.current) {
+        event.preventDefault();
+        this.router.back();
       }
     }, { signal });
     this.syncSessionVisibility();
@@ -80,13 +118,16 @@ class DeckShell implements Shell {
       } else if (event.kind === "ProtocolMismatch") {
         console.warn(`protocol mismatch: server v${event.server}, client expects v${event.client}`);
       }
+      this.toastFor(event);
     }
     this.syncSessionVisibility();
     this.renderChrome(true);
   }
 
   onViewTick(): void {
+    this.map?.tick();
     this.renderChrome();
+    this.renderZoom();
   }
 
   framePolicy() {
@@ -99,19 +140,24 @@ class DeckShell implements Shell {
 
   teardown(): void {
     this.abort?.abort();
+    this.removeDebug?.();
     this.router?.teardown();
     this.workspace?.teardown();
+    this.map?.teardown();
     this.toasts?.teardown();
     this.strip?.clear();
     this.router = null;
     this.workspace = null;
+    this.map = null;
     this.toasts = null;
     this.strip = null;
+    this.removeDebug = null;
     this.abort = null;
     this.root?.replaceChildren();
     this.root = null;
     this.ctx = null;
     this.chromeSignature = "";
+    this.zoomSignature = "";
     this.activeCrumbs = [];
   }
 
@@ -135,6 +181,11 @@ class DeckShell implements Shell {
   }
 
   private routeChanged(route: DeckRoute | null, stack: readonly DeckRoute[]): void {
+    const semanticRoute = route?.name === "system" || route?.name === "world" || route?.name === "build";
+    if (!semanticRoute && this.ctx?.renderer.viewMode.type === "system" && !this.ctx.renderer.isSystemScrubbing()) {
+      this.ctx.renderer.exitSystemView();
+      this.ctx.renderer.setSystemDynamic([], [], true);
+    }
     if (!route || !this.workspace || !this.router) {
       this.activeCrumbs = [];
       this.workspace?.close();
@@ -166,6 +217,65 @@ class DeckShell implements Shell {
     for (const button of byId("deck-nav").querySelectorAll<HTMLButtonElement>("[data-route]")) {
       if (button.dataset.route === name) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
+    }
+  }
+
+  private setHelpOpen(open: boolean): void {
+    byId("deck-help").hidden = !open;
+  }
+
+  private renderZoom(): void {
+    if (!this.ctx) return;
+    const mode = this.ctx.renderer.viewMode.type;
+    const zoom = this.ctx.renderer.zoomFactor();
+    const text = mode === "system" ? "SYSTEM" : mode === "battle" ? "BATTLE" : zoom < 10 ? `${zoom.toFixed(1)}×` : `${Math.round(zoom)}×`;
+    if (text === this.zoomSignature) return;
+    this.zoomSignature = text;
+    const level = byId("deck-zoom-level");
+    level.textContent = text;
+    level.title = mode === "galaxy" ? `${zoom.toFixed(2)}× galaxy magnification relative to fit` : `${text.toLowerCase()} semantic view`;
+  }
+
+  private toastFor(event: CoreEvent): void {
+    if (!this.toasts) return;
+    if (event.kind === "OrderConfirmed") {
+      this.toasts.push({
+        title: "Order confirmed",
+        message: humanize(event.orderKind),
+        tone: "good",
+        destination: { name: "fleet", params: { id: event.shipId } },
+      });
+    } else if (event.kind === "ReportArrived") {
+      this.toasts.push({
+        title: "Combat report arrived",
+        message: `${humanize(event.report.outcome)} · delayed ${Math.round(event.report.age)}s`,
+        tone: event.report.outcome === "target_destroyed" && event.report.you === "attacker" ? "good" : "warn",
+        destination: { name: "log" },
+      });
+    } else if (event.kind === "BattleConcluded") {
+      this.toasts.push({
+        title: "Battle concluded",
+        message: humanize(event.outcome),
+        tone: event.outcome === "target_destroyed" ? "good" : "warn",
+        destination: { name: "battle", params: { id: event.recordId } },
+      });
+    } else if (event.kind === "EstimateReady") {
+      const win = event.estimate.win_pct == null ? "Projection ready" : `${Math.round(event.estimate.win_pct)}% projected win chance`;
+      this.toasts.push({
+        title: "Engagement estimate",
+        message: win,
+        destination: { name: "fleet", params: { id: event.estimate.target } },
+        durationMs: 15_000,
+      });
+    } else if (event.kind === "TradeSettled") {
+      this.toasts.push({
+        title: "Market update",
+        message: humanize(event.trade.event),
+        tone: event.trade.event === "Rejected" || event.trade.event === "StorageOverflow" ? "warn" : "quiet",
+        destination: { name: "market" },
+      });
+    } else if (event.kind === "ServerError") {
+      this.toasts.push({ title: "Command refused", message: event.message, tone: "bad", destination: { name: "log" } });
     }
   }
 
@@ -231,3 +341,7 @@ class DeckShell implements Shell {
 }
 
 export const createShell = (): Shell => new DeckShell();
+
+function humanize(value: string): string {
+  return value.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase());
+}
