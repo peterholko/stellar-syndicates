@@ -38,7 +38,8 @@
   --z-workspace: 20;
   --z-command: 30;
   --z-overlay: 40;
-  --z-toast: 50;
+  /* Toasts sit above workspaces but below opaque help/theater overlays. */
+  --z-toast: var(--z-command);
   --z-hover: 60;
   --deck-topbar-height: 40px;
   --deck-workspace-standard: 460px;
