@@ -141,7 +141,9 @@ export class DeckRouter {
     if (route.name === "logistics" || route.name === "doctrine") {
       return [command, { label: "Fleets", route: { name: "fleets" } }, { label: DECK_ROUTES[route.name].title, route }];
     }
-    return [command, { label: route.params?.label ?? DECK_ROUTES[route.name].title, route }];
+    // Global destinations already name themselves in the workspace title;
+    // unlike fleet/system drill-downs they have no useful parent crumb.
+    return [{ label: route.params?.label ?? DECK_ROUTES[route.name].title, route }];
   }
 
   teardown(): void {

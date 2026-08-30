@@ -102,6 +102,7 @@ export class DeckWorkspace {
 
   private renderBreadcrumbs(crumbs: readonly DeckCrumb[]): void {
     this.breadcrumb.replaceChildren();
+    if (crumbs.length <= 1) return;
     crumbs.forEach((crumb, index) => {
       if (index) {
         const separator = document.createElement("span");
