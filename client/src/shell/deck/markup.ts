@@ -20,8 +20,15 @@ export function mountDeckMarkup(root: HTMLElement): void {
           ${navButton("syndicate", "Syndicate")}
           ${navButton("faction", "Faction")}
           ${navButton("log", "Log")}
+          <button id="deck-nav-more" class="deck-nav__more" type="button" data-deck-act="nav-more" aria-expanded="false" aria-controls="deck-nav-overflow">More ···</button>
         </nav>
       </header>
+      <div id="deck-nav-overflow" class="deck-nav-overflow" role="menu" hidden>
+        ${overflowButton("operations", "Operations")}
+        ${overflowButton("syndicate", "Syndicate")}
+        ${overflowButton("faction", "Faction")}
+        ${overflowButton("log", "Log")}
+      </div>
       <aside id="deck-workspace" class="deck-workspace" aria-hidden="true">
         <header class="deck-workspace__header">
           <button type="button" data-deck-act="back" aria-label="Back">←</button>
@@ -94,4 +101,8 @@ export function mountDeckMarkup(root: HTMLElement): void {
 
 function navButton(route: string, text: string): string {
   return `<button type="button" data-deck-act="route" data-route="${route}">${text}<span id="deck-badge-${route}" class="deck-nav__badge" hidden></span></button>`;
+}
+
+function overflowButton(route: string, text: string): string {
+  return `<button type="button" role="menuitem" data-deck-act="route" data-route="${route}">${text}</button>`;
 }

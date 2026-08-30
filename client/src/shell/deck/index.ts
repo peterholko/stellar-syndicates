@@ -151,10 +151,28 @@ class DeckShell implements Shell {
       this.join();
     }, { signal });
     byId("deck-nav").addEventListener("click", (event) => {
-      const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act=route]");
+      const action = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
+      if (action?.dataset.deckAct === "nav-more") {
+        this.setNavOverflow(byId("deck-nav-overflow").hasAttribute("hidden"));
+        return;
+      }
+      const button = action?.closest<HTMLButtonElement>("[data-deck-act=route]");
       const route = button?.dataset.route as DeckRouteName | undefined;
       if (route && route in DECK_ROUTES) this.openRoute(route);
     }, { signal });
+    byId("deck-nav-overflow").addEventListener("click", (event) => {
+      const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act=route]");
+      const route = button?.dataset.route as DeckRouteName | undefined;
+      if (!route || !(route in DECK_ROUTES)) return;
+      this.setNavOverflow(false);
+      this.openRoute(route);
+    }, { signal });
+    window.addEventListener("pointerdown", (event) => {
+      const target = event.target;
+      if (!(target instanceof Node) || byId("deck-nav").contains(target) || byId("deck-nav-overflow").contains(target)) return;
+      this.setNavOverflow(false);
+    }, { signal });
+    window.addEventListener("resize", () => this.setNavOverflow(false), { signal });
     byId("deck-workspace").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
       if (!button) return;
@@ -351,6 +369,7 @@ class DeckShell implements Shell {
   }
 
   private openRoute(name: DeckRouteName): void {
+    this.setNavOverflow(false);
     this.router?.go({ name });
   }
 
@@ -440,6 +459,8 @@ class DeckShell implements Shell {
       this.ctx.intent.clearJumpAiming();
     } else if (this.ctx.intent.intentAiming.guard) {
       this.ctx.intent.clearGuardAiming();
+    } else if (!byId("deck-nav-overflow").hidden) {
+      this.setNavOverflow(false);
     } else if (this.ctx.renderer.isSystemScrubbing()) {
       this.ctx.renderer.cancelSystemScrub();
     } else if (this.theaters?.closeTop()) {
@@ -588,7 +609,7 @@ class DeckShell implements Shell {
   }
 
   private renderActiveNav(name: DeckRouteName | null): void {
-    for (const button of byId("deck-nav").querySelectorAll<HTMLButtonElement>("[data-route]")) {
+    for (const button of document.querySelectorAll<HTMLButtonElement>("#deck-nav [data-route], #deck-nav-overflow [data-route]")) {
       if (button.dataset.route === name) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
@@ -596,6 +617,11 @@ class DeckShell implements Shell {
 
   private setHelpOpen(open: boolean): void {
     byId("deck-help").hidden = !open;
+  }
+
+  private setNavOverflow(open: boolean): void {
+    byId("deck-nav-overflow").hidden = !open;
+    byId("deck-nav-more").setAttribute("aria-expanded", String(open));
   }
 
   private renderZoom(): void {

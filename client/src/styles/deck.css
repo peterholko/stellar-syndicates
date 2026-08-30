@@ -15,6 +15,11 @@
 .deck-nav::-webkit-scrollbar { display: none; }
 .deck-nav button { position: relative; flex: 0 0 auto; padding-inline: var(--space-2); font-size: var(--fs-fine); }
 .deck-nav button[aria-current="page"] { border-color: var(--accent); color: var(--accent); }
+.deck-nav__more { display: none; }
+.deck-nav-overflow { position: fixed; z-index: var(--z-command); top: calc(var(--deck-topbar-height) + var(--space-1)); right: var(--space-3); min-width: calc(var(--space-6) * 6); padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); pointer-events: auto; }
+.deck-nav-overflow:not([hidden]) { display: grid; gap: var(--space-1); }
+.deck-nav-overflow button { width: 100%; padding-inline: var(--space-2); text-align: left; }
+.deck-nav-overflow button[aria-current="page"] { border-color: var(--accent); color: var(--accent); }
 .deck-nav__badge { position: absolute; top: calc(var(--space-1) * -1); right: calc(var(--space-1) * -1); min-width: var(--space-4); padding-inline: var(--space-1); border-radius: var(--space-3); background: var(--negative); color: var(--bg); font-size: var(--fs-fine); font-weight: 800; text-align: center; }
 .deck-workspace { position: fixed; z-index: var(--z-workspace); top: var(--deck-topbar-height); right: 0; bottom: 0; width: min(var(--deck-workspace-standard), calc(100vw - var(--space-6) - var(--space-1))); display: grid; grid-template-rows: auto minmax(0, 1fr); border-left: 1px solid var(--border); background: var(--panel-bg); box-shadow: var(--panel-shadow); pointer-events: auto; }
 .deck-workspace[aria-hidden="true"] { display: none; }
@@ -591,4 +596,9 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 
 @media (max-width: 1150px) {
   .deck-stats > span:nth-child(2) { display: none; }
+  .deck-nav > [data-route="operations"],
+  .deck-nav > [data-route="syndicate"],
+  .deck-nav > [data-route="faction"],
+  .deck-nav > [data-route="log"] { display: none; }
+  .deck-nav__more { display: block; }
 }
