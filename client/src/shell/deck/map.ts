@@ -23,6 +23,7 @@ export class DeckMapInteraction {
   private startY = 0;
   private lastX = 0;
   private lastY = 0;
+  private ctrlClickContextMenu: { x: number; y: number; until: number } | null = null;
   private readonly previousTouchAction: string;
   private dynamicTick = -1;
   private dynamicSystemId = "";
@@ -108,6 +109,9 @@ export class DeckMapInteraction {
 
   private pointerDown(event: PointerEvent): void {
     if (event.button !== 0) return;
+    this.ctrlClickContextMenu = event.ctrlKey
+      ? { x: event.clientX, y: event.clientY, until: performance.now() + 1_000 }
+      : null;
     this.down = true;
     this.panning = false;
     this.startX = this.lastX = event.clientX;
@@ -143,6 +147,7 @@ export class DeckMapInteraction {
   private pointerCancel(): void {
     this.down = false;
     this.panning = false;
+    this.ctrlClickContextMenu = null;
   }
 
   private wheel(event: WheelEvent): void {
@@ -181,6 +186,15 @@ export class DeckMapInteraction {
 
   private inspect(event: MouseEvent): void {
     event.preventDefault();
+    const paired = this.ctrlClickContextMenu;
+    if (event.ctrlKey && paired && performance.now() <= paired.until
+      && Math.hypot(event.clientX - paired.x, event.clientY - paired.y) <= DRAG_THRESHOLD_PX) {
+      // macOS follows Ctrl+LMB with a contextmenu event. Pointerup already
+      // toggled the command group, so the paired event is not a second intent.
+      this.ctrlClickContextMenu = null;
+      return;
+    }
+    this.ctrlClickContextMenu = null;
     if (this.ctx.renderer.viewMode.type !== "galaxy" || this.ctx.renderer.isSystemScrubbing()) return;
     this.activate(event.clientX, event.clientY, event.shiftKey, true, false);
   }
