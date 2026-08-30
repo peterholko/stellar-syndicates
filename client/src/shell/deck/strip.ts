@@ -220,17 +220,26 @@ export class DeckCommandStrip {
       this.verb("jump", "Jump", this.ctx.state.galaxy ? `${Math.round(this.ctx.state.galaxy.jump_range).toLocaleString()} su` : "Range unavailable", jumpReason),
       this.verb("guard", "Guard", "Choose fleet", guardReason),
       this.verb("hold", "Hold", "Cancel course", holdReason),
-      this.verb("transit", "Transit Full", "Standing mode", "", ` data-mode="full"`),
-      this.verb("transit", "Transit Stealth", "Standing mode", "", ` data-mode="stealth"`),
+      this.transitVerb(),
       this.verb("recall", "Recall", "Break off", recallReason),
     ].join("");
   }
 
   private verb(action: string, label: string, hint: string, reason = "", extra = ""): string {
-    return `<span class="deck-command-verb">` +
-      `<button type="button" data-deck-command="${action}"${extra}${reason ? " disabled" : ""}>${esc(label)}<small>${esc(hint)}</small></button>` +
-      (reason ? `<em>${esc(reason)}</em>` : "") +
+    const detail = reason || hint;
+    return `<span class="deck-command-verb${reason ? " is-disabled" : ""}">` +
+      `<button type="button" data-deck-command="${action}"${extra}${reason ? " disabled" : ""} aria-label="${esc(label)}. ${esc(detail)}">${esc(label)}</button>` +
+      `<em>${esc(detail)}</em>` +
       `</span>`;
+  }
+
+  private transitVerb(): string {
+    return `<span class="deck-command-verb deck-command-verb--transit">` +
+      `<span class="deck-command-transit" role="group" aria-label="Transit mode">` +
+        `<span>Transit</span>` +
+        `<button type="button" data-deck-command="transit" data-mode="full" aria-label="Set full-speed transit">Full</button>` +
+        `<button type="button" data-deck-command="transit" data-mode="stealth" aria-label="Set stealth transit">Stealth</button>` +
+      `</span><em>Choose the fleet's standing transit mode.</em></span>`;
   }
 
   private hasCourse(fleet: GhostView): boolean {
