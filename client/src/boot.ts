@@ -123,6 +123,10 @@ function frame(now: number): void {
   if (interval === 0 || lastPresentedFrameMs === 0 || now - lastPresentedFrameMs >= interval - 1) {
     lastPresentedFrameMs = now;
     updateSignals();
+    // renderGalaxy is the authoritative opaque-overlay gate: when false the
+    // map update is skipped here and Renderer.setRenderPolicy stops Pixi's
+    // ticker. canvas[data-render-paused] mirrors that boolean; renderFps is a
+    // separate cadence diagnostic.
     if (policy.renderGalaxy) renderer.update(state);
     activeShell?.onViewTick();
   }
