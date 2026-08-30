@@ -361,6 +361,7 @@ class DeckShell implements Shell {
       if (this.escapeOneLayer()) event.preventDefault();
       return;
     }
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
     const routeKeys: Partial<Record<string, DeckRouteName>> = {
       m: "market", v: "fleets", r: "research", p: "officers",
       u: "operations", y: "syndicate", c: "faction", l: "log",
