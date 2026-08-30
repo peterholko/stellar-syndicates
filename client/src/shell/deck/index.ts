@@ -73,6 +73,7 @@ class DeckShell implements Shell {
       },
       openTarget: (target) => this.openMapTarget(target),
       notice: (html) => this.setStatus(html),
+      clearNotice: () => this.strip?.clearStatus(),
     }, signal);
     this.toasts = new DeckToasts(byId("deck-toast-lane"), (route) => this.router?.go(route), signal);
     this.strip = new DeckCommandStrip(byId("deck-command-strip"), ctx, {

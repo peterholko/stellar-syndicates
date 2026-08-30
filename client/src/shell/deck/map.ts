@@ -12,6 +12,7 @@ interface DeckMapHooks {
   returnedToGalaxy(): void;
   openTarget(target: SelectTarget): void;
   notice(html: string): void;
+  clearNotice(): void;
 }
 
 /** The Deck's map grammar lives on the shared resolver: a short left press may
@@ -214,9 +215,9 @@ export class DeckMapInteraction {
     // star command that first click may have previewed: double-click means
     // semantic entry, never a hidden move/blockade/survey on the way in.
     const pending = this.ctx.state.pendingIntent;
-    if (pending?.targetId === system.id
-      && (pending.verb === "move" || pending.verb === "blockade" || pending.verb === "survey")) {
+    if (pending?.targetId === system.id) {
       this.ctx.intent.clearPendingIntent(true);
+      this.hooks.clearNotice();
     }
     this.pushSystemDynamic(system.id);
     const dynamic = this.ctx.state.systems.find((entry) => entry.id === system.id);

@@ -85,6 +85,14 @@ export class DeckCommandStrip {
     this.render(true);
   }
 
+  clearStatus(): void {
+    if (this.statusTimer !== null) window.clearTimeout(this.statusTimer);
+    this.statusTimer = null;
+    this.statusHtml = "";
+    this.statusVersion++;
+    this.render(true);
+  }
+
   clear(): void {
     if (this.statusTimer !== null) window.clearTimeout(this.statusTimer);
     this.statusTimer = null;
