@@ -315,8 +315,10 @@ export function shipyardBoost(dyn: SystemStateView, body: BodyView): number {
 
 // §step1 build sink, shared by every build UI (the System View management
 // column, its contextual body offers, and the rail's remaining paths):
-// ships → BuildShip; developments → DevelopSystem. Same system-level commands
-// as always — no UI adds a new gameplay verb.
+// Every SHIP_YARD hull except the ground-only transport → BuildShip;
+// developments → DevelopSystem. This sink is shared by Deck AND mobile, so
+// capital hulls must stay on the ship command path in both shells. Same
+// system-level commands as always — no UI adds a new gameplay verb.
 export function dispatchBuildKey(k: string, sid: string, bodyId?: number): void {
   const net = netSource();
   if (!net) return;
