@@ -2,6 +2,7 @@ import { guardCapable, jumpCapable, shipKindLabel } from "../../core/derive/flee
 import { gravityWellAt, nearestKnownDock } from "../../core/derive/geo";
 import { intentSummary } from "../../core/derive/orders";
 import type { GhostView, TransitMode } from "../../protocol";
+import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext } from "../types";
 
@@ -49,8 +50,6 @@ export class DeckCommandStrip {
       this.statusVersion,
     ]);
     if (!force && signature === this.signature) return;
-    this.signature = signature;
-
     const intent = state.pendingIntent;
     const armed = this.ctx.intent.intentAiming.jump
       ? { mode: "jump" as const, shipId: this.ctx.intent.intentAiming.jump }
@@ -61,8 +60,9 @@ export class DeckCommandStrip {
     if (intent) modeHtml = this.intentHtml(intentSummary(intent));
     else if (armed) modeHtml = this.armedHtml(armed.mode, armed.shipId);
     else if (selected.length) modeHtml = this.selectionHtml(selected);
-    if (modeHtml) this.root.innerHTML = modeHtml + this.statusLineHtml();
-    else this.root.replaceChildren();
+    if (renderDeferred(this.root.id, () => this.render(true))) return;
+    this.signature = signature;
+    setHtml(this.root, modeHtml ? modeHtml + this.statusLineHtml() : "");
     this.root.hidden = !this.root.childElementCount;
   }
 
