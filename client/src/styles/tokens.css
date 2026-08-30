@@ -46,6 +46,7 @@
   --deck-workspace-wide: 1240px;
   --deck-control-height: 32px;
   --deck-radius: 6px;
+  --deck-focus-ring: 2px;
   /* Measured from the wrapping HUD by main.ts. All fixed map chrome starts
      from the same edge instead of independently guessing its height. */
   --hud-safe-top: 66px;
