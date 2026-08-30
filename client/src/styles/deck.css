@@ -29,7 +29,7 @@
 .deck-breadcrumb button:hover { background: transparent; color: var(--accent); }
 .deck-breadcrumb [aria-current="page"] { color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
 .deck-breadcrumb__separator { color: var(--border); }
-.deck-workspace__body { min-height: 0; padding: var(--space-3); overflow: auto; }
+.deck-workspace__body { min-height: 0; padding: var(--space-3); overflow: auto; container-type: inline-size; }
 .deck-placeholder { display: grid; gap: var(--space-2); padding-block: var(--space-6); color: var(--dim); }
 .deck-placeholder b { color: var(--ink); font-size: var(--fs-page); }
 .deck-placeholder p { margin: 0; }
@@ -329,22 +329,24 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 .deck-research-node em { color: var(--dim); font-size: var(--fs-fine); font-style: normal; }
 .deck-research-node button { justify-self: start; padding-inline: var(--space-2); color: var(--warn); }
 .deck-research-gate { display: grid; gap: var(--space-1); color: var(--dim); font-size: var(--fs-fine); }
-@media (max-width: 1250px) {
-  .deck-market-layout { grid-template-columns: 1fr; }
-  .deck-market__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .deck-fleet__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .deck-research-boards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (max-width: 900px) {
+@container (max-width: 900px) {
   .deck-market-board__head { display: none; }
   .deck-market-row { grid-template-columns: minmax(0, 1fr) minmax(calc(var(--space-6) * 2), .6fr); }
   .deck-market-row > small { display: none; }
   .deck-form-grid--freight { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 1050px) {
+@container (max-width: 1050px) {
   .deck-builder { grid-template-columns: 1fr; }
   .deck-builder__list { border-right: 0; border-bottom: 1px solid var(--border); }
   .deck-officer-grid, .deck-research-boards { grid-template-columns: 1fr; }
+}
+@container (min-width: 1050.01px) and (max-width: 1250px) {
+  .deck-research-boards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container (max-width: 1250px) {
+  .deck-market-layout { grid-template-columns: 1fr; }
+  .deck-market__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .deck-fleet__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .deck-bottom-band { position: fixed; z-index: var(--z-command); left: var(--space-3); right: calc(var(--deck-workspace-inset, 0px) + var(--space-3)); bottom: var(--space-3); height: 0; pointer-events: none; }
 .deck-command-strip { position: absolute; left: 50%; bottom: var(--deck-strip-bottom, 0px); width: min(720px, calc(100% - var(--space-6))); transform: translateX(-50%); pointer-events: auto; }
