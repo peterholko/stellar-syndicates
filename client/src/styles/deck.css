@@ -35,7 +35,7 @@
 .deck-breadcrumb button:hover { background: transparent; color: var(--accent); }
 .deck-breadcrumb [aria-current="page"] { color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
 .deck-breadcrumb__separator { color: var(--border); }
-.deck-workspace__body { min-height: 0; padding: var(--space-3); overflow: auto; container-type: inline-size; }
+.deck-workspace__body { min-height: 0; padding: var(--space-3); overflow: auto; overscroll-behavior: contain; container-type: inline-size; }
 .deck-placeholder { display: grid; gap: var(--space-2); padding-block: var(--space-6); color: var(--dim); }
 .deck-placeholder b { color: var(--ink); font-size: var(--fs-page); }
 .deck-placeholder p { margin: 0; }

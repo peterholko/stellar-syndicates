@@ -64,7 +64,10 @@ export class DeckToasts {
   private dismiss(item: HTMLElement): void {
     if (!item.isConnected || item.classList.contains("is-leaving")) return;
     item.classList.add("is-leaving");
-    window.setTimeout(() => this.remove(item), FADE_MS);
+    const active = this.timers.get(item);
+    if (active !== undefined) window.clearTimeout(active);
+    const fade = window.setTimeout(() => this.remove(item), FADE_MS);
+    this.timers.set(item, fade);
   }
 
   private remove(item: HTMLElement): void {
