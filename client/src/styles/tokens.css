@@ -14,6 +14,8 @@
   --info: #7fd4ff;
   --accent-2: #c99bff;   /* violet stripe (logistics/system) */
   --accent-3: #ff9e6b;   /* amber stripe (doctrine) */
+  --ground: #9a7b53;
+  --battle-highlight: #ffd98a;
   --fg-stale: #5a6578;   /* dimmer than --dim — for light-delayed values */
   --border: #1c2740;
   --field-bg: #060a14;
@@ -47,11 +49,6 @@
   --deck-control-height: 32px;
   --deck-radius: 6px;
   --deck-focus-ring: 2px;
-  /* Measured from the wrapping HUD by main.ts. All fixed map chrome starts
-     from the same edge instead of independently guessing its height. */
-  --hud-safe-top: 66px;
-  --detail-safe-top: calc(var(--hud-safe-top) + 44px);
-  --left-detail-safe-top: calc(var(--hud-safe-top) + 44px);
 }
 * { box-sizing: border-box; }
 html, body {
