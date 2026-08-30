@@ -20,6 +20,7 @@ import { DeckPolicyRoutes } from "./policy";
 import { DeckFleetRoutes } from "./fleet";
 import { DeckLogRoutes } from "./log";
 import { bindResearchNet } from "../../core/derive/research";
+import { DeckBottomBand } from "./bottom-band";
 import { DeckRosterRoutes } from "./roster";
 import { DeckStrategicRoutes } from "./strategic";
 import { DeckTheaters } from "./theaters";
@@ -46,6 +47,7 @@ class DeckShell implements Shell {
   private roster: DeckRosterRoutes | null = null;
   private strategic: DeckStrategicRoutes | null = null;
   private theaters: DeckTheaters | null = null;
+  private bottomBand: DeckBottomBand | null = null;
   private removeDebug: (() => void) | null = null;
   private chromeSignature = "";
   private zoomSignature = "";
@@ -76,6 +78,13 @@ class DeckShell implements Shell {
     this.strip = new DeckCommandStrip(byId("deck-command-strip"), ctx, {
       notice: (html) => this.setStatus(html),
     }, signal);
+    this.bottomBand = new DeckBottomBand(
+      byId("deck-bottom-band"),
+      byId("deck-command-strip"),
+      byId("deck-founding"),
+      byId("deck-zoom"),
+      signal,
+    );
     this.empire = new DeckEmpireRoutes(byId("deck-workspace-body"), ctx, {
       go: (route) => this.router?.go(route),
       openGroundViewer: (id) => this.theaters?.openGround(id),
@@ -282,6 +291,7 @@ class DeckShell implements Shell {
 
   teardown(): void {
     this.abort?.abort();
+    this.bottomBand?.teardown();
     this.ctx?.renderer.setDeckSaliency(false);
     this.removeDebug?.();
     this.router?.teardown();
@@ -312,6 +322,7 @@ class DeckShell implements Shell {
     this.log = null;
     this.strategic = null;
     this.theaters = null;
+    this.bottomBand = null;
     bindFleetNet(() => null);
     bindResearchNet(() => null);
     bindMarketDerive(() => null, () => []);

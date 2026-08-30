@@ -32,15 +32,17 @@ export function mountDeckMarkup(root: HTMLElement): void {
         </header>
         <div id="deck-workspace-body" class="deck-workspace__body"></div>
       </aside>
-      <section id="deck-command-strip" class="deck-command-strip" aria-live="polite"></section>
       <section id="deck-toast-lane" class="deck-toast-lane" aria-live="polite"></section>
-      <aside id="deck-founding" class="deck-founding" hidden></aside>
-      <div id="deck-zoom" class="deck-zoom" aria-label="Map zoom">
-        <span id="deck-zoom-level" class="deck-zoom__level">1.0×</span>
-        <button type="button" data-deck-act="zoom-in" aria-label="Zoom in">+</button>
-        <button type="button" data-deck-act="zoom-fit" aria-label="Fit galaxy">⊡</button>
-        <button type="button" data-deck-act="zoom-out" aria-label="Zoom out">−</button>
-        <button type="button" data-deck-act="help" aria-label="Keyboard shortcuts">?</button>
+      <div id="deck-bottom-band" class="deck-bottom-band">
+        <section id="deck-command-strip" class="deck-command-strip" aria-live="polite"></section>
+        <aside id="deck-founding" class="deck-founding" hidden></aside>
+        <div id="deck-zoom" class="deck-zoom" aria-label="Map zoom">
+          <span id="deck-zoom-level" class="deck-zoom__level">1.0×</span>
+          <button type="button" data-deck-act="zoom-in" aria-label="Zoom in">+</button>
+          <button type="button" data-deck-act="zoom-fit" aria-label="Fit galaxy">⊡</button>
+          <button type="button" data-deck-act="zoom-out" aria-label="Zoom out">−</button>
+          <button type="button" data-deck-act="help" aria-label="Keyboard shortcuts">?</button>
+        </div>
       </div>
       <div id="deck-hover" class="deck-hover" hidden></div>
       <div id="deck-overlays" class="deck-overlays">
