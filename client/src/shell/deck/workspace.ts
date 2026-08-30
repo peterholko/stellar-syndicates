@@ -46,16 +46,42 @@ export class DeckWorkspace {
   }
 
   cameraRect(): Rect {
-    if (!this.route || this.root.getAttribute("aria-hidden") === "true") {
-      return { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
-    }
-    const workspaceLeft = this.root.getBoundingClientRect().left;
-    return { x: 0, y: 0, w: Math.max(1, workspaceLeft), h: window.innerHeight };
+    const topbar = document.getElementById("deck-topbar");
+    const top = topbar && !topbar.hidden ? topbar.getBoundingClientRect().bottom : 0;
+    const strip = document.getElementById("deck-command-strip");
+    const founding = document.getElementById("deck-founding");
+    const zoom = document.getElementById("deck-zoom");
+    const bottomChromeVisible = this.visible(strip) || this.visible(founding);
+    const bottom = bottomChromeVisible
+      ? Math.min(
+          window.innerHeight,
+          ...[strip, founding, zoom].filter((node) => this.visible(node)).map((node) => node!.getBoundingClientRect().top),
+        )
+      : window.innerHeight;
+    const workspaceLeft = !this.route || this.root.getAttribute("aria-hidden") === "true"
+      ? window.innerWidth
+      : this.root.getBoundingClientRect().left;
+    return { x: 0, y: top, w: Math.max(1, workspaceLeft), h: Math.max(1, bottom - top) };
   }
 
-  publishCameraRect(): void {
+  publishCameraRect(coalesceVertical = false): void {
     const rect = this.cameraRect();
     document.documentElement.style.setProperty("--deck-workspace-inset", `${Math.max(0, window.innerWidth - rect.w)}px`);
+    if (coalesceVertical) {
+      const current = this.renderer.cameraRect;
+      const verticalChange = Math.max(
+        Math.abs(rect.y - current.y),
+        Math.abs(rect.y + rect.h - current.y - current.h),
+      );
+      const horizontalChange = Math.max(
+        Math.abs(rect.x - current.x),
+        Math.abs(rect.x + rect.w - current.x - current.w),
+      );
+      // Selection/status churn may slightly resize the bottom band. Preserve
+      // the stable camera until a material 15%-of-viewport inset change; large
+      // Founding/strip stacks still publish immediately.
+      if (verticalChange < window.innerHeight * .15 && horizontalChange < .5) return;
+    }
     this.renderer.setCameraRect(rect);
   }
 
@@ -103,6 +129,10 @@ export class DeckWorkspace {
     const wide = this.root.dataset.width === "wide";
     this.width.textContent = wide ? "↤" : "↔";
     this.width.setAttribute("aria-label", wide ? "Use standard workspace width" : "Use wide workspace width");
+  }
+
+  private visible(node: HTMLElement | null): node is HTMLElement {
+    return node !== null && !node.hidden && node.offsetWidth > 0 && node.offsetHeight > 0;
   }
 
   private get back(): HTMLButtonElement { return this.root.querySelector("[data-deck-act=back]") as HTMLButtonElement; }

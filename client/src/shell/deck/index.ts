@@ -84,6 +84,7 @@ class DeckShell implements Shell {
       byId("deck-command-strip"),
       byId("deck-founding"),
       byId("deck-zoom"),
+      () => this.workspace?.publishCameraRect(true),
       signal,
     );
     this.empire = new DeckEmpireRoutes(byId("deck-workspace-body"), ctx, {

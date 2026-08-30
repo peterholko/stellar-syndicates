@@ -6,6 +6,7 @@ const px = (value: string): number => Number.parseFloat(value) || 0;
  * widths zoom takes a second row above Founding, never a z-index gamble. */
 export class DeckBottomBand {
   private frame: number | null = null;
+  private layoutSignature = "";
   private readonly observer: ResizeObserver;
 
   constructor(
@@ -13,6 +14,7 @@ export class DeckBottomBand {
     private readonly strip: HTMLElement,
     private readonly founding: HTMLElement,
     private readonly zoom: HTMLElement,
+    private readonly onLayout: () => void,
     signal: AbortSignal,
   ) {
     this.observer = new ResizeObserver(() => this.schedule());
@@ -63,12 +65,18 @@ export class DeckBottomBand {
     this.root.style.setProperty("--deck-strip-bottom", `${stripBottom}px`);
     this.root.style.setProperty("--deck-zoom-bottom", `${zoomBottom}px`);
     this.root.style.setProperty("--deck-bottom-band-height", `${occupiedHeight}px`);
+    const signature = [width, stripWidth, stripHeight, foundingWidth, foundingHeight, zoomWidth, zoomHeight, stripBottom, zoomBottom].join(":");
+    if (signature !== this.layoutSignature) {
+      this.layoutSignature = signature;
+      this.onLayout();
+    }
   }
 
   teardown(): void {
     this.observer.disconnect();
     if (this.frame !== null) cancelAnimationFrame(this.frame);
     this.frame = null;
+    this.layoutSignature = "";
     this.root.style.removeProperty("--deck-strip-bottom");
     this.root.style.removeProperty("--deck-zoom-bottom");
     this.root.style.removeProperty("--deck-bottom-band-height");
