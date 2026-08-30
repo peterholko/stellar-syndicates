@@ -281,8 +281,7 @@ class DeckShell implements Shell {
     // chrome leave it live; focused theaters and session overlays pause it.
     const join = document.getElementById("deck-join");
     const help = document.getElementById("deck-help");
-    const coveringOverlay = (join !== null && !join.hidden) || (help !== null && !help.hidden) || (this.theaters?.isOpen ?? false);
-    return { maxFps: 0, renderGalaxy: !coveringOverlay };
+    return { maxFps: 0, renderGalaxy: !this.overlayOpen(join, help) };
   }
 
   cameraRect(): Rect {
@@ -362,7 +361,8 @@ class DeckShell implements Shell {
   private keyDown(event: KeyboardEvent): void {
     if (!this.ctx || this.editableTarget(event.target)) return;
     const key = event.key;
-    if (key === "Enter" && this.ctx.state.pendingIntent) {
+    const overlayOpen = this.overlayOpen();
+    if (key === "Enter" && this.ctx.state.pendingIntent && !overlayOpen) {
       event.preventDefault();
       this.ctx.intent.confirmPendingIntent();
       this.strip?.render(true);
@@ -372,6 +372,7 @@ class DeckShell implements Shell {
       if (this.escapeOneLayer()) event.preventDefault();
       return;
     }
+    if (overlayOpen) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const routeKeys: Partial<Record<string, DeckRouteName>> = {
       m: "market", v: "fleets", r: "research", p: "officers",
@@ -470,6 +471,15 @@ class DeckShell implements Shell {
       || target instanceof HTMLSelectElement
       || target instanceof HTMLTextAreaElement
       || (target instanceof HTMLElement && target.isContentEditable);
+  }
+
+  private overlayOpen(
+    join = document.getElementById("deck-join"),
+    help = document.getElementById("deck-help"),
+  ): boolean {
+    return (join !== null && !join.hidden)
+      || (help !== null && !help.hidden)
+      || (this.theaters?.isOpen ?? false);
   }
 
   private openMapTarget(target: SelectTarget): void {
