@@ -5,6 +5,7 @@ import type { CoreContext } from "../types";
 
 const DRAG_THRESHOLD_PX = 5;
 const SYSTEM_SCRUB_STEP = 0.18;
+const CTRL_CLICK_CONTEXTMENU_MS = 5_000;
 
 interface DeckMapHooks {
   enteredSystem(system: SystemInfo): void;
@@ -111,7 +112,7 @@ export class DeckMapInteraction {
   private pointerDown(event: PointerEvent): void {
     if (event.button !== 0) return;
     this.ctrlClickContextMenu = event.ctrlKey
-      ? { x: event.clientX, y: event.clientY, until: performance.now() + 1_000 }
+      ? { x: event.clientX, y: event.clientY, until: performance.now() + CTRL_CLICK_CONTEXTMENU_MS }
       : null;
     this.down = true;
     this.panning = false;
@@ -188,10 +189,12 @@ export class DeckMapInteraction {
   private inspect(event: MouseEvent): void {
     event.preventDefault();
     const paired = this.ctrlClickContextMenu;
-    if (event.ctrlKey && paired && performance.now() <= paired.until
+    if (paired && performance.now() <= paired.until
       && Math.hypot(event.clientX - paired.x, event.clientY - paired.y) <= DRAG_THRESHOLD_PX) {
       // macOS follows Ctrl+LMB with a contextmenu event. Pointerup already
       // toggled the command group, so the paired event is not a second intent.
+      // Some engines omit ctrlKey from that synthetic contextmenu; the recorded
+      // Ctrl pointerdown plus its short time/distance window is the authority.
       this.ctrlClickContextMenu = null;
       return;
     }
