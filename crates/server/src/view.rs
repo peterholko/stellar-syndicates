@@ -242,6 +242,10 @@ pub struct PositionHistory {
     horizon: f64,
     /// Sensor detection radius each of a player's assets projects (config).
     sensor_range: f64,
+    /// Static public terrain copied from the world at loop start. The history
+    /// stays world-agnostic while evaluating every retarded sample against the
+    /// exact same nebula geometry as true-space doctrine.
+    nebulas: Vec<sim::NebulaRegion>,
     /// Mutable serving state is viewer-local, never part of the shared track.
     /// `RefCell` preserves the read-only view API while allowing a view to move
     /// only its own light frontier forward.
@@ -356,6 +360,7 @@ impl PositionHistory {
             tracks: HashMap::new(),
             horizon: max_delay * 1.25 + 1.0,
             sensor_range: world.config.sensor_range,
+            nebulas: world.nebulas.clone(),
             frontiers: RefCell::new(FrontierCache::default()),
         }
     }
@@ -657,8 +662,13 @@ impl PositionHistory {
         now: f64,
         arrays: &[(Vec2, f64)],
     ) -> Vec<(Vec2, f64)> {
-        let mut coverage: Vec<(Vec2, f64)> = vec![(cc, self.sensor_range)];
-        coverage.extend_from_slice(arrays);
+        let mut coverage: Vec<(Vec2, f64)> = vec![(
+            cc,
+            self.sensor_range * sim::nebula::sensor_factor_at(&self.nebulas, cc),
+        )];
+        coverage.extend(arrays.iter().map(|(pos, radius)| {
+            (*pos, *radius * sim::nebula::sensor_factor_at(&self.nebulas, *pos))
+        }));
         let mut frontiers = self.frontiers.borrow_mut();
         let cursors = &mut frontiers.cursors;
         for (id, track) in &self.tracks {
@@ -680,7 +690,12 @@ impl PositionHistory {
                 } else {
                     s.pos
                 };
-                coverage.push((coverage_pos, self.sensor_range * track.sensor_mult));
+                coverage.push((
+                    coverage_pos,
+                    self.sensor_range
+                        * track.sensor_mult
+                        * sim::nebula::sensor_factor_at(&self.nebulas, coverage_pos),
+                ));
             }
         }
         coverage
@@ -775,8 +790,13 @@ impl PositionHistory {
         // Coverage as (center, radius) sources: the command center + own Raider
         // ghosts at the global range, plus any standing array bubbles (each with
         // its OWN radius — a developed array outsees a ship).
-        let mut coverage: Vec<(Vec2, f64)> = vec![(cc, self.sensor_range)];
-        coverage.extend_from_slice(arrays);
+        let mut coverage: Vec<(Vec2, f64)> = vec![(
+            cc,
+            self.sensor_range * sim::nebula::sensor_factor_at(&self.nebulas, cc),
+        )];
+        coverage.extend(arrays.iter().map(|(pos, radius)| {
+            (*pos, *radius * sim::nebula::sensor_factor_at(&self.nebulas, *pos))
+        }));
         let mut frontiers = self.frontiers.borrow_mut();
         let cursors = &mut frontiers.cursors;
         for (id, track) in &self.tracks {
@@ -811,7 +831,12 @@ impl PositionHistory {
                 } else {
                     sample.pos
                 };
-                coverage.push((coverage_pos, self.sensor_range * track.sensor_mult));
+                coverage.push((
+                    coverage_pos,
+                    self.sensor_range
+                        * track.sensor_mult
+                        * sim::nebula::sensor_factor_at(&self.nebulas, coverage_pos),
+                ));
             }
             // For a destroyed DARK fleet (raiders/scouts only), decide visibility
             // in the ghost's OWN retarded frame (the world as the arriving light
@@ -918,6 +943,7 @@ impl PositionHistory {
                 };
                 sim::detection::signature(p.composition, p.sample.vel.length(), p.max_speed)
                     * veil
+                    * sim::nebula::signature_factor_at(&self.nebulas, p.sample.pos)
                     * survey
             };
             let in_coverage = within_coverage(&coverage, p.sample.pos);
@@ -1169,6 +1195,7 @@ impl PositionHistory {
                 manifest: Vec::new(),
                 revealed: detected,
                 engage_freight: None,
+                transit: None,
             });
         }
         // Deterministic ordering by id.
@@ -1225,13 +1252,19 @@ impl PositionHistory {
         arrays: &[(Vec2, f64)],
     ) -> bool {
         // The command center is a fixed sensor asset.
-        if ghost_pos.distance(cc) <= self.sensor_range {
+        let target = sim::nebula::signature_factor_at(&self.nebulas, ghost_pos);
+        if ghost_pos.distance(cc)
+            <= self.sensor_range * sim::nebula::sensor_factor_at(&self.nebulas, cc) * target
+        {
             return true;
         }
         // Standing sensor arrays are fixed assets too (near-permanent
         // infrastructure — treated as present in any retarded frame; a
         // deliberate simplification vs. tracking per-array build times).
-        if arrays.iter().any(|(p, r)| ghost_pos.distance(*p) <= *r) {
+        if arrays.iter().any(|(p, r)| {
+            ghost_pos.distance(*p)
+                <= *r * sim::nebula::sensor_factor_at(&self.nebulas, *p) * target
+        }) {
             return true;
         }
         for track in self.tracks.values() {
@@ -1245,7 +1278,11 @@ impl PositionHistory {
                 continue;
             }
             if let Some(s) = sample_at(&track.samples, t_r)
-                && s.pos.distance(ghost_pos) <= self.sensor_range * track.sensor_mult
+                && s.pos.distance(ghost_pos)
+                    <= self.sensor_range
+                        * track.sensor_mult
+                        * sim::nebula::sensor_factor_at(&self.nebulas, s.pos)
+                        * target
             {
                 return true;
             }
@@ -2776,6 +2813,7 @@ mod tests {
             tracks,
             horizon: 1e9,
             sensor_range: 1e12,
+            nebulas: Vec::new(),
             frontiers: RefCell::new(FrontierCache::default()),
         }
     }
@@ -2863,6 +2901,7 @@ mod tests {
             tracks: tracks.into_iter().collect(),
             horizon: 1e9,
             sensor_range,
+            nebulas: Vec::new(),
             frontiers: RefCell::new(FrontierCache::default()),
         }
     }
@@ -5076,6 +5115,7 @@ mod tests {
             tracks,
             horizon: 1e9,
             sensor_range: 950.0,
+            nebulas: Vec::new(),
             frontiers: RefCell::new(FrontierCache::default()),
         };
         let seen = hist.view_for(VIEWER, cc, df(300.0), 6.0);
@@ -5147,6 +5187,42 @@ mod tests {
             let sim_sees = sim::detection::detected(sig, &[(Vec2::ZERO, 1000.0)], pos);
             assert_eq!(view_sees, sim_sees, "View and sim agree at dist {dist}");
         }
+    }
+
+    #[test]
+    fn nebula_signature_and_sensor_edges_govern_the_served_contact() {
+        let region = |kind, center| sim::NebulaRegion {
+            id: 1,
+            kind,
+            name: String::new(),
+            center,
+            radius_x: 120.0,
+            radius_y: 120.0,
+            rotation: 0.0,
+            seed: 0,
+        };
+        let full = ShipKind::Raider.max_speed();
+
+        // A full-speed single Raider at 500 is visible to a 1,000-su source,
+        // but the dust cloud's ×0.35 target signature hides it.
+        let dust_pos = Vec2::new(500.0, 0.0);
+        let mut dust = history_of(
+            vec![dark_track(RIVAL, dust_pos, full, &[(ShipKind::Raider, 1)])],
+            1000.0,
+        );
+        assert!(!dust.view_for(VIEWER, Vec2::ZERO, df(300.0), 90.0).is_empty());
+        dust.nebulas = vec![region(sim::NebulaKind::DustCloud, dust_pos)];
+        assert!(dust.view_for(VIEWER, Vec2::ZERO, df(300.0), 90.0).is_empty());
+
+        // The same target at 700 is visible normally, but an ion cloud around
+        // the command center shrinks that source to 550 su.
+        let ion_pos = Vec2::new(700.0, 0.0);
+        let mut ion = history_of(
+            vec![dark_track(RIVAL, ion_pos, full, &[(ShipKind::Raider, 1)])],
+            1000.0,
+        );
+        ion.nebulas = vec![region(sim::NebulaKind::IonNebula, Vec2::ZERO)];
+        assert!(ion.view_for(VIEWER, Vec2::ZERO, df(300.0), 90.0).is_empty());
     }
 
     /// §node Deep Scan LEAK CHECK: the viewer's Deep-Scan region upgrades an
@@ -6208,25 +6284,27 @@ mod tests {
                 platform_tiers: 0,
             },
         ];
-        let mut r = sim::BattleRecord::open(id, pos, None, false, 0, 20.0, sides);
-        // Round at tick 15 with a reinforcement join (attacker side).
+        let mut r = sim::BattleRecord::open(id, pos, None, false, 0, sides);
+        // Step round at tick 15 with a reinforcement join (attacker side).
         r.accumulate(2.0, 1.0, &sim::Losses::default(), &sim::Losses::default());
         r.note(sim::RoundNote::Joined {
             side: 0,
             comp: kinds(&[(ShipKind::Raider, 1)]),
         });
-        r.flush_if_due(
+        r.flush_step(
             15,
+            sim::combat::Keyframe::default(),
             [
                 kinds(&[(ShipKind::Raider, 3)]),
                 kinds(&[(ShipKind::Corvette, 2)]),
             ],
         );
-        // Round at tick 30 with a defender retreat beat.
+        // Step round at tick 30 with a defender retreat beat.
         r.accumulate(2.0, 0.5, &sim::Losses::default(), &sim::Losses::default());
         r.note(sim::RoundNote::RetreatTripped { side: 1 });
-        r.flush_if_due(
+        r.flush_step(
             30,
+            sim::combat::Keyframe::default(),
             [
                 kinds(&[(ShipKind::Raider, 3)]),
                 kinds(&[(ShipKind::Corvette, 1)]),

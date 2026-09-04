@@ -14,6 +14,7 @@ import {
 } from "../../core/derive/market";
 import { fleetCargoCapacity, guardCapable, jumpCapable, shipKindLabel, shipRoleLore } from "../../core/derive/fleet";
 import { foundingHomeSystemId } from "../../core/derive/geo";
+import { jumpRangeAt } from "../../core/derive/nebula";
 import {
   countClassLabel,
   fleetCargoManifest,
@@ -492,6 +493,8 @@ export class MobileSurfaces {
   }
 
   private shipControls(fleet: GhostView): string {
+    const unloadQueued = (this.ctx.state.pendingOrders.get(fleet.id) ?? [])
+      .some((order) => !order.lost && order.kind === "unload");
     const jump = jumpCapable(fleet)
       ? `<button type="button" data-mobile-act="fleet-jump" data-id="${esc(fleet.id)}">Jump</button>` : "";
     const guard = guardCapable(fleet)
@@ -499,13 +502,13 @@ export class MobileSurfaces {
     const recall = this.ctx.state.raids[fleet.id]
       ? `<button type="button" data-mobile-act="fleet-recall" data-id="${esc(fleet.id)}">Recall</button>` : "";
     const unload = fleet.docked && fleetCargoUnits(fleet) > 0
-      ? `<button type="button" data-mobile-act="fleet-unload" data-id="${esc(fleet.id)}">Unload</button>` : "";
+      ? `<button type="button" data-mobile-act="fleet-unload" data-id="${esc(fleet.id)}"${unloadQueued ? " disabled" : ""}>${unloadQueued ? "Unload queued" : "Unload"}</button>` : "";
     const rescue = fleet.stalled && !fleet.rescue_inbound
       ? `<button type="button" data-mobile-act="fleet-rescue" data-id="${esc(fleet.id)}">Call AAA Rescue</button>` : "";
-    const range = this.ctx.state.galaxy?.jump_range;
+    const range = jumpRangeAt(this.ctx.state.galaxy, fleet.pos);
     const commandHelp = `<details class="m-details m-help"><summary>Command rules</summary><div>` +
       `<p>A movement order automatically undocks a berthed fleet. Full speed is fastest but makes dark hulls easier to detect; Stealth is quieter and takes about twice as long.</p>` +
-      (jump ? `<p>Jump destinations must be within ${fmt(range ?? 0)} su of the served sighting, with both ends clear of gravity wells. The true fleet is checked when the delayed order arrives.</p>` : "") +
+      (jump ? `<p>Jump destinations must be within ${fmt(range)} su of the served sighting, with both ends clear of gravity wells. The true fleet is checked when the delayed order arrives.</p>` : "") +
       (guard ? `<p>A Guard assignment is light-delayed. Once it arrives, defensive reactions happen locally without another command-center round trip.</p>` : "") +
       `</div></details>`;
     return `<section class="m-section"><h3>Command</h3><div class="m-action-grid">` +

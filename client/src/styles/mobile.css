@@ -557,7 +557,7 @@ button.m-primary, .m-action-grid button.m-primary, .m-decision button.m-primary,
   background: rgba(255, 255, 255, .025);
 }
 .m-feature-card { border-color: rgba(79, 195, 255, .25); background: rgba(79, 195, 255, .055); }
-.m-feature-card small, .m-card header small, .m-build-detail > small { color: var(--accent); font-size: 10px; letter-spacing: .06em; }
+.m-feature-card small, .m-card header small, .m-build-detail header small { color: var(--accent); font-size: 10px; letter-spacing: .06em; }
 .m-feature-card b, .m-card > b { font-size: 13px; }
 .m-feature-card span, .m-card > span { color: var(--dim); font-size: 11px; line-height: 1.4; }
 .m-card header { display: flex; justify-content: space-between; gap: 8px; }
@@ -649,12 +649,18 @@ button.m-primary, .m-action-grid button.m-primary, .m-decision button.m-primary,
   text-align: left;
 }
 .m-world-row > span, .m-build-row > span { min-width: 0; display: grid; gap: 3px; }
+.m-build-row > .m-build-row__identity { display: flex; align-items: center; gap: 8px; }
+.m-build-row__identity > span { min-width: 0; display: grid; gap: 3px; }
+.m-build-row .m-structure-icon { width: 44px; height: 44px; flex: 0 0 44px; object-fit: contain; }
 .m-world-row b, .m-build-row b { font-size: 13px; }
 .m-world-row small, .m-build-row small { color: var(--dim); font-size: 11px; }
 .m-world-row em, .m-build-row em { max-width: 45%; color: var(--warn); font-size: 11px; font-style: normal; line-height: 1.3; text-align: right; }
 .m-build-row.is-active { margin-inline: -4px; width: calc(100% + 8px); padding-inline: 12px; border-radius: 8px; background: rgba(79,195,255,.09); }
 .m-build-list { max-height: 260px; margin: 10px 0; overflow-y: auto; border: 1px solid var(--field-bd); border-radius: 10px; }
 .m-build-detail { margin-top: 10px; }
+.m-build-detail > header { display: flex; align-items: center; gap: 9px; }
+.m-build-detail > header > span { display: grid; gap: 3px; }
+.m-build-detail > header .m-structure-icon { width: 64px; height: 64px; flex: 0 0 64px; object-fit: contain; }
 .m-build-detail h3 { margin: 0; color: var(--ink); font-size: 14px; }
 .m-build-detail > label { display: grid; gap: 4px; color: var(--dim); font-size: 10px; }
 .m-ledger--pools { margin-bottom: 8px; }

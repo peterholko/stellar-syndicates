@@ -21,7 +21,6 @@ import type { SheetEntry, SheetView } from "./sheets";
 import { SheetStack } from "./sheets";
 import { sheetFingerprint } from "../signature";
 
-const ROUND_SECS = 0.55;
 const FAMILY_COLOR: Record<SalvoFamily, string> = {
   beam: "var(--accent)",
   driver: "#e8a13a",
@@ -181,7 +180,13 @@ export class MobileBattleTheater {
         changed = true;
       }
     } else if (this.playing && frontier >= 0) {
-      this.fraction += dt * this.speed / ROUND_SECS;
+      // Replay pacing = the record's own tick spacing (rounds are 1:1 with
+      // engine steps), so 1× IS the battle at true speed.
+      if (this.round < frontier) {
+        const hz = this.ctx.state.tickHz || 30;
+        const window = Math.max(0.2, (record.rounds[this.round + 1].tick - record.rounds[this.round].tick) / hz);
+        this.fraction += dt * this.speed / window;
+      }
       while (this.fraction >= 1 && this.round < frontier) {
         this.round++;
         this.fraction--;

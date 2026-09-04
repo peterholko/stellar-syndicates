@@ -186,9 +186,10 @@ pub struct IntelSnapshot {
 }
 
 /// An order in flight: a player's command that has left their command center
-/// but not yet reached the ship (the outbound light-travel time of §6). Carries
-/// the order to install once the light arrives (a move, a raid commit, or a
-/// recall-as-return-home).
+/// but not yet reached the fleet (the outbound light-travel time of §6). It may
+/// install a standing [`FleetOrder`] or execute a one-shot dockside / fleet-local
+/// command. Both ride this one queue so no fleet button can mutate remote truth
+/// before its signal arrives.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingOrderLoss {
     /// Legacy field name retained by the wire; this now identifies the fleet
@@ -207,7 +208,15 @@ struct PendingOrder {
     /// Sim time at which the order's light reaches the ship (= `delivered_at`).
     apply_time: f64,
     ship_id: EntityId,
-    new_order: FleetOrder,
+    /// Standing order installed on arrival. Old snapshots always carry this
+    /// field; `Option` reads their object value as `Some` without migration.
+    #[serde(default)]
+    new_order: Option<FleetOrder>,
+    /// One-shot fleet command executed on arrival. This is absent from old
+    /// snapshots and mutually exclusive with `new_order` in newly scheduled
+    /// entries.
+    #[serde(default)]
+    command: Option<Command>,
     /// Owner (for the owner-only lifecycle indicator). serde default for old snaps.
     #[serde(default = "default_player")]
     owner: PlayerId,
@@ -284,6 +293,52 @@ fn pending_order_subject(
     }
 }
 
+/// Player-known subject for a one-shot fleet command. The action itself is
+/// frozen in the pending entry; this narrow copy exists only so the Orders UI
+/// can name its destination without consulting mutable truth later.
+fn pending_command_subject(
+    command: &Command,
+) -> (
+    Option<Vec2>,
+    Option<EntityId>,
+    Option<crate::emplace::EmplacementKind>,
+) {
+    let target = match command {
+        Command::SystemLoad { system, .. }
+        | Command::SystemUnload { system, .. }
+        | Command::HaulToSystem { system, .. } => Some(*system),
+        Command::MergeFleets { from, .. } => Some(*from),
+        _ => None,
+    };
+    (None, target, None)
+}
+
+/// The owner-visible payload of a fleet configuration signal. Only the small
+/// choice needed to explain and reconcile the pending control crosses the wire;
+/// the full executable command remains private sim state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PendingConfigurationView {
+    Transit { mode: crate::ship::TransitMode },
+    Posture { posture: crate::doctrine::EngagementPosture },
+    EngageFreight { on: bool },
+}
+
+fn pending_command_configuration(command: &Command) -> Option<PendingConfigurationView> {
+    match command {
+        Command::SetFleetTransit { mode, .. } => {
+            Some(PendingConfigurationView::Transit { mode: *mode })
+        }
+        Command::SetFleetPosture { posture, .. } => {
+            Some(PendingConfigurationView::Posture { posture: *posture })
+        }
+        Command::SetEngageFreight { on, .. } => {
+            Some(PendingConfigurationView::EngageFreight { on: *on })
+        }
+        _ => None,
+    }
+}
+
 /// A delivered order awaiting player-visible compliance evidence. Entries
 /// retire only when the served map reaches `delivered_at`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,6 +357,8 @@ struct PendingEcho {
     target: Option<EntityId>,
     #[serde(default)]
     emplacement: Option<crate::emplace::EmplacementKind>,
+    #[serde(default)]
+    configuration: Option<PendingConfigurationView>,
 }
 
 /// A light-gate summary of an ongoing BATTLE for the server's View
@@ -334,6 +391,7 @@ pub struct PendingCommandView {
     pub dest: Option<Vec2>,
     pub target: Option<EntityId>,
     pub emplacement: Option<crate::emplace::EmplacementKind>,
+    pub configuration: Option<PendingConfigurationView>,
     pub loss: Option<PendingCommandLossView>,
 }
 
@@ -586,6 +644,30 @@ fn resume_defense(defense: DefenseEngagement) -> FleetOrder {
         .unwrap_or_else(|| resume_patrol(defense.patrol))
 }
 
+/// Strengthen an existing matching seam (preferred) or add one affinity-sited
+/// deposit. Used only during deterministic nebula generation/fixup.
+fn reinforce_nebula_deposit(
+    system: &mut StarSystem,
+    resource: crate::cargo::Commodity,
+    floor: f64,
+) {
+    if let Some(deposit) = system
+        .bodies
+        .iter_mut()
+        .flat_map(|body| &mut body.deposits)
+        .find(|deposit| deposit.resource == resource)
+    {
+        deposit.richness = (deposit.richness * 1.35).max(floor);
+        return;
+    }
+    system.add_test_deposit(crate::galaxy::Deposit {
+        resource,
+        richness: floor,
+        reserves: None,
+        accessibility: 0.72,
+    });
+}
+
 /// Ground-truth galaxy state. Deterministic given `config.seed` and the
 /// command sequence applied via [`World::step`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -599,6 +681,11 @@ pub struct World {
     pub hub: Vec2,
     /// Procedurally-placed star systems (static geography).
     pub systems: Vec<StarSystem>,
+    /// Public deep-space terrain. Static, deterministic geography; effects are
+    /// evaluated against true positions in the sim and the same served
+    /// positions in the view filter.
+    #[serde(default)]
+    pub nebulas: Vec<crate::nebula::NebulaRegion>,
     /// Pre-generated home-anchor slots; assigned to players on join.
     pub home_slots: Vec<HomeSlot>,
     /// All corporations, keyed by id. `BTreeMap` keeps iteration deterministic.
@@ -984,6 +1071,7 @@ impl World {
             time: 0.0,
             hub: Vec2::ZERO,
             systems,
+            nebulas: Vec::new(),
             home_slots,
             players: BTreeMap::new(),
             fleets: BTreeMap::new(),
@@ -1038,6 +1126,9 @@ impl World {
         // teaches expansion as a choice between self-sufficiency and supplied
         // industry, rather than asking a new player to infer value from noise.
         world.seed_nearby_planetary_opportunities();
+        // §nebulas: public terrain comes from its own keyed stream and then
+        // leaves survey-hidden economic fingerprints on systems at its fringe.
+        world.seed_nebulas();
         // §pirates: seed hidden enclaves AFTER all systems exist (so the frontier
         // RNG stream is untouched — determinism), on their OWN seeded stream.
         world.seed_enclaves();
@@ -1051,6 +1142,83 @@ impl World {
         // enclaves) — deterministic, never perturbs the frontier/home streams.
         world.seed_traits();
         world
+    }
+
+    /// Generate public nebula terrain once, then express its ECONOMIC identity
+    /// through the ordinary surveyable planet/deposit model. Molecular and
+    /// supernova regions strengthen one nearby specialist site; dust suppresses
+    /// the natural yield of every non-home system it covers; precursor space
+    /// guarantees one ruins opportunity. Nothing creates a parallel resource.
+    fn seed_nebulas(&mut self) {
+        if !self.nebulas.is_empty() {
+            return;
+        }
+        let homes: Vec<EntityId> = self.home_slots.iter().filter_map(|slot| slot.system).collect();
+        let points: Vec<(EntityId, Vec2)> = self
+            .systems
+            .iter()
+            .map(|system| (system.id, system.pos))
+            .collect();
+        self.nebulas = crate::nebula::generate_nebulas(
+            self.config.seed,
+            self.config.galaxy_radius,
+            &points,
+            &homes,
+        );
+        let regions = self.nebulas.clone();
+        let home_set: std::collections::BTreeSet<_> = homes.into_iter().collect();
+
+        let nearest_in = |kind: crate::nebula::NebulaKind,
+                          systems: &[StarSystem]|
+         -> Option<EntityId> {
+            let region = regions.iter().find(|region| region.kind == kind)?;
+            systems
+                .iter()
+                .filter(|system| !home_set.contains(&system.id) && region.contains(system.pos))
+                .min_by(|a, b| {
+                    a.pos
+                        .distance(region.center)
+                        .partial_cmp(&b.pos.distance(region.center))
+                        .expect("finite nebula distance")
+                        .then_with(|| a.id.cmp(&b.id))
+                })
+                .map(|system| system.id)
+        };
+
+        let molecular = nearest_in(crate::nebula::NebulaKind::MolecularCloud, &self.systems);
+        let remnant = nearest_in(crate::nebula::NebulaKind::SupernovaRemnant, &self.systems);
+        let precursor = nearest_in(crate::nebula::NebulaKind::PrecursorCloud, &self.systems);
+        let dust = regions
+            .iter()
+            .find(|region| region.kind == crate::nebula::NebulaKind::DustCloud)
+            .cloned();
+
+        for system in &mut self.systems {
+            if Some(system.id) == molecular {
+                reinforce_nebula_deposit(system, crate::cargo::Commodity::Volatiles, 0.70);
+            }
+            if Some(system.id) == remnant {
+                reinforce_nebula_deposit(system, crate::cargo::Commodity::RareElements, 0.62);
+            }
+            if dust.as_ref().is_some_and(|region| {
+                !home_set.contains(&system.id) && region.contains(system.pos)
+            }) {
+                for deposit in system.bodies.iter_mut().flat_map(|body| &mut body.deposits) {
+                    deposit.richness *= 0.70;
+                }
+            }
+            if Some(system.id) == precursor && !system.bodies.is_empty() {
+                let index = system
+                    .bodies
+                    .iter()
+                    .position(|body| body.profile.special.is_none())
+                    .unwrap_or(0);
+                system.bodies[index].profile.special =
+                    Some(crate::body::BodySpecial::PrecursorRuins);
+            }
+            let deposits: Vec<_> = system.all_deposits().cloned().collect();
+            system.claim_cost = crate::galaxy::claim_cost_for(&deposits);
+        }
     }
 
     fn seed_nearby_planetary_opportunities(&mut self) {
@@ -1438,6 +1606,13 @@ impl World {
         for sys in self.systems.iter_mut() {
             sys.migrate_to_bodies();
         }
+        // A pre-nebula snapshot has an empty serde-default field. Generate the
+        // same seed-derived terrain once after bodies exist; a current snapshot
+        // is untouched, so resource fingerprints cannot be applied twice.
+        if self.nebulas.is_empty() {
+            self.seed_nebulas();
+            self.compute_band_thresholds();
+        }
         // §migration: reservations are derived from the physical passenger
         // manifests. Rebuild them instead of trusting a cached snapshot value:
         // this heals pre-feature saves (all zero), interrupted writes, and an
@@ -1727,6 +1902,10 @@ impl World {
                 dest: po.dest,
                 target: po.target,
                 emplacement: po.emplacement,
+                configuration: po
+                    .command
+                    .as_ref()
+                    .and_then(pending_command_configuration),
                 loss: po.loss.as_ref().map(|loss| PendingCommandLossView {
                     relay: loss.relay,
                     at: loss.at,
@@ -1746,6 +1925,7 @@ impl World {
                 dest: e.dest,
                 target: e.target,
                 emplacement: e.emplacement,
+                configuration: e.configuration,
                 loss: None,
             });
         }
@@ -1883,29 +2063,22 @@ impl World {
                 platform_tiers: ptiers,
             },
         ];
-        let rec = crate::combat::BattleRecord::open(
-            eid,
-            pos,
-            system,
-            raid,
-            self.tick,
-            self.config.battle_target_secs,
-            sides,
-        );
+        let rec = crate::combat::BattleRecord::open(eid, pos, system, raid, self.tick, sides);
         self.battle_records.insert(eid, rec);
         crate::combat::prune_records(&mut self.battle_records, self.time);
     }
 
-    /// Annotate the record with a beat (forces a flush on the next round tick).
+    /// Annotate the record with a beat (rides the next engine step's round).
     fn record_note(&mut self, eid: EntityId, note: crate::combat::RoundNote) {
         if let Some(rec) = self.battle_records.get_mut(&eid) {
             rec.note(note);
         }
     }
 
-    /// Feed one attrition tick to the record: the damage each side dealt, the
-    /// ships each side lost, and the survivor counts (used only when a round
-    /// actually flushes).
+    /// Feed one attrition tick to the record. On ticks where the tactical
+    /// engine stepped (`frame` present) the whole accumulated window flushes as
+    /// one round — rounds are 1:1 with engine steps; off-step ticks only
+    /// accumulate.
     #[allow(clippy::too_many_arguments)]
     fn record_round(
         &mut self,
@@ -1921,9 +2094,8 @@ impl World {
         if let Some(rec) = self.battle_records.get_mut(&eid) {
             rec.accumulate(dealt_a, dealt_b, la, lb);
             if let Some(f) = frame {
-                rec.keyframe(f);
+                rec.flush_step(tick, f, counts);
             }
-            rec.flush_if_due(tick, counts);
         }
     }
 
@@ -2893,6 +3065,7 @@ impl World {
                 // in-region — the SAME signature both pickets and the View read.
                 signature: s.signature()
                     * self.veil_factor(s.owner, s.pos)
+                    * self.nebula_signature_factor(s.pos)
                     * if s.surveying() {
                         crate::explore::SURVEY_SIGNATURE_FACTOR
                     } else {
@@ -2974,6 +3147,13 @@ impl World {
             )];
             if let Some(a) = arrays.get(&owner) {
                 sources.extend_from_slice(a);
+            }
+            sources[0].1 *= self.nebula_sensor_factor(ppos);
+            if let Some(a) = arrays.get(&owner) {
+                for source in &mut sources[1..] {
+                    source.1 *= self.nebula_sensor_factor(source.0);
+                }
+                debug_assert_eq!(sources.len(), a.len() + 1);
             }
             crate::detection::detected(sig, &sources, target)
         };
@@ -3396,9 +3576,13 @@ impl World {
         let visible = |ppos: Vec2, bubble: f64, s: &Snap| -> bool {
             let seen_pos = s.pos - s.vel * crate::transit::delay(ppos, s.pos, c);
             if s.broadcasts {
-                ppos.distance(seen_pos) <= bubble
+                ppos.distance(seen_pos) <= bubble * self.nebula_sensor_factor(ppos)
             } else {
-                crate::detection::detected(s.signature, &[(ppos, bubble)], seen_pos)
+                crate::detection::detected(
+                    s.signature * self.nebula_signature_factor(seen_pos),
+                    &[(ppos, bubble * self.nebula_sensor_factor(ppos))],
+                    seen_pos,
+                )
             }
         };
         // Local combatant force ratio over the fleet's OWN bubble (friendly incl.
@@ -3924,6 +4108,20 @@ impl World {
             .collect();
         contacts.extend(freight_contacts);
 
+        // One physical melee gets one engagement id. Resolve contacts against a
+        // civilian target first so an escort counter-intercept joins the ambush
+        // it is answering instead of opening a mirrored escort-vs-raider battle.
+        // The remaining id order stays deterministic.
+        contacts.sort_by_key(|(aid, tid, _)| {
+            let civilian_target = self.fleets.get(tid).is_some_and(|target| {
+                matches!(
+                    target.flagship_kind(),
+                    ShipKind::Convoy | ShipKind::Colony | ShipKind::Freighter
+                )
+            });
+            (!civilian_target, *aid, *tid)
+        });
+
         for (aid, tid, is_attack) in contacts {
             let a_owner_c = self.fleets.get(&aid).map(|f| f.owner);
             let Some(a_owner_c) = a_owner_c else { continue };
@@ -3933,8 +4131,8 @@ impl World {
             // fleets that each committed to attack the OTHER — e.g. a WeaponsFree
             // hunter and a picket) which would otherwise spawn two engagements (two
             // battle icons) at the same spot. Just keep it live (and let an ATTACK
-            // escalate a raid). Distinct from a patrol attacking a hostile that is
-            // itself raiding a convoy — there the two never share an engagement.
+            // escalate a raid). The next branch handles a guard answering an ambush,
+            // where only the guard and the hostile initially share an engagement.
             let together = self
                 .engagements
                 .iter()
@@ -3951,26 +4149,29 @@ impl World {
                 e.touched = true;
                 continue;
             }
-            // Otherwise join an existing battle ONLY when the SIDES align: this
-            // attacker is on the attacking side (same owner) and the target is
-            // already this battle's defender — reinforcement of the attack.
+            // Otherwise join an existing battle when the SIDES align. This is
+            // symmetric: another attacker can reinforce against a defender, and
+            // an escort counter-intercepting the battle's attacker reinforces the
+            // defending side. Do not append here; the reinforcement pass below
+            // performs the one bookkeeping path (Joined beat + start accounting).
             let existing = self
                 .engagements
                 .iter()
-                .find(|(_, e)| e.a_owner == a_owner_c && e.defenders.contains(&tid))
-                .map(|(id, _)| *id);
-            if let Some(eid) = existing {
+                .find_map(|(id, e)| {
+                    if e.a_owner == a_owner_c && e.defenders.contains(&tid) {
+                        Some((*id, false))
+                    } else if e.d_owner == a_owner_c && e.attackers.contains(&tid) {
+                        Some((*id, true))
+                    } else {
+                        None
+                    }
+                });
+            if let Some((eid, counter_intercept)) = existing {
                 let e = self.engagements.get_mut(&eid).unwrap();
-                if !e.attackers.contains(&aid) {
-                    e.attackers.push(aid);
-                }
-                if !e.defenders.contains(&tid) {
-                    e.defenders.push(tid);
-                }
-                // An ATTACK order joining an in-progress RAID ESCALATES it to a full
-                // battle (destroy) — the aggressor's explicit intent wins, so the
-                // convoy is fought to the death rather than the raid's cargo-grab.
-                if is_attack {
+                // Defending the raid's victim means the raider must fight the
+                // escort; an explicit ATTACK also escalates. Another ordinary
+                // raider joining the attacking side remains a cargo raid.
+                if counter_intercept || is_attack {
                     e.raid = false;
                 }
                 e.touched = true;
@@ -4092,6 +4293,14 @@ impl World {
                     let e = &self.engagements[eid];
                     !e.attackers.contains(fid)
                         && !e.defenders.contains(fid)
+                        // A fleet belongs to exactly one physical battle. In
+                        // particular, the escort that answered a convoy ambush
+                        // must not also be recruited by a second nearby marker.
+                        && !self.engagements.iter().any(|(other_id, other)| {
+                            other_id != eid
+                                && (other.attackers.contains(fid)
+                                    || other.defenders.contains(fid))
+                        })
                         && f.is_combatant()
                         // NOT a fleet that is MOVING somewhere: a withdrawn fleet
                         // (fleeing home) or a reinforcement still EN ROUTE is not
@@ -4634,9 +4843,10 @@ impl World {
             let hard_stop = elapsed >= crate::combat::MAX_BATTLE_MULT * target + 60.0;
             let defender_withdraws = tac.withdrawing[1];
 
-            // §battle-records: push this tick's beats, then feed the round — the
-            // pending beats force a flush, so beats + this tick's damage/kills +
-            // the post-tick survivor counts all land on one recorded round.
+            // §battle-records: push this tick's beats, then feed the round. On
+            // a step tick they flush together with the step's keyframe; on an
+            // off-step tick they ride until the next step (≤ one step away) or
+            // the finalize tail — every recorded event round has positions.
             if platform_destroyed {
                 self.record_note(*eid, crate::combat::RoundNote::PlatformDestroyed);
             }
@@ -5717,6 +5927,26 @@ impl World {
         }
     }
 
+    /// Static-terrain contribution to a DARK target's detection signature.
+    /// Kept separate from owner-specific Veil so the server can apply the same
+    /// public geometry to retarded samples without consulting current truth.
+    pub fn nebula_signature_factor(&self, pos: Vec2) -> f64 {
+        crate::nebula::signature_factor_at(&self.nebulas, pos)
+    }
+
+    /// Static-terrain contribution to a sensor source's effective radius.
+    pub fn nebula_sensor_factor(&self, pos: Vec2) -> f64 {
+        crate::nebula::sensor_factor_at(&self.nebulas, pos)
+    }
+
+    /// Effective maximum range for a jump beginning at `origin`. Precursor
+    /// terrain shapes the spool at the hull; being only at the destination does
+    /// not grant the extension.
+    pub fn jump_range_at(&self, origin: Vec2) -> f64 {
+        crate::transit::JUMP_RANGE
+            * crate::nebula::jump_range_factor_at(&self.nebulas, origin)
+    }
+
     /// §node Deep Scan: does `viewer` hold an active pulsar/binary node whose region
     /// covers `pos`? If so, the viewer resolves EXACT composition on any fleet
     /// ALREADY visible there (bucket→exact) — gated in the server View, so it's an
@@ -5865,7 +6095,7 @@ impl World {
             Some(JumpFailReason::OriginInGravityWell)
         } else if self.in_gravity_well(dest) {
             Some(JumpFailReason::TargetInGravityWell)
-        } else if fleet.pos.distance(dest) > crate::transit::JUMP_RANGE + 1e-9 {
+        } else if fleet.pos.distance(dest) > self.jump_range_at(fleet.pos) + 1e-9 {
             Some(JumpFailReason::OutOfRange)
         } else {
             None
@@ -6508,27 +6738,151 @@ impl World {
                 let po = self.pending_orders.remove(i);
                 // A vanished fleet (destroyed before delivery) simply drops the
                 // order — no application, no echo, no phantom lifecycle.
-                let Some(ship) = self.fleets.get_mut(&po.ship_id) else {
+                if !self.fleets.contains_key(&po.ship_id) {
                     continue;
-                };
-                // A manual course change takes a player-owned logistics hull
-                // out of its previous delivery mission. Without this, the
-                // Initiate Docking move could reach the Hub, go Idle, and then
-                // resolve an old DeliverToSystem mission at the wrong place.
-                // Disposable automation hulls retain their mission so a player
-                // can never redirect a free standing-order convoy into a free
-                // permanent ship.
-                if matches!(po.kind, crate::event::OrderKind::Move | crate::event::OrderKind::Hold)
-                    && !ship.disposable
-                {
-                    ship.mission = None;
                 }
-                if matches!(po.kind, crate::event::OrderKind::Guard | crate::event::OrderKind::Hold) {
-                    // A deliberate reassignment supersedes any autonomous
-                    // defensive sortie spawned by the previous patrol/guard.
-                    ship.defense = None;
+                let configuration = po
+                    .command
+                    .as_ref()
+                    .and_then(pending_command_configuration);
+                let event_start = events.len();
+                let merge_source_was_present = po.command.as_ref().is_none_or(|command| {
+                    !matches!(command, Command::MergeFleets { from, .. } if !self.fleets.contains_key(from))
+                });
+                if let Some(command) = &po.command {
+                    // The remote instruction has reached its receiver. Re-run
+                    // every dock/ownership/capacity check against NOW, then
+                    // execute once without passing through the scheduler again.
+                    self.apply_now(command, events);
+                } else if let Some(new_order) = po.new_order {
+                    let ship = self
+                        .fleets
+                        .get_mut(&po.ship_id)
+                        .expect("presence checked above");
+                    // A manual course change takes a player-owned logistics hull
+                    // out of its previous delivery mission. Without this, the
+                    // Initiate Docking move could reach the Hub, go Idle, and then
+                    // resolve an old DeliverToSystem mission at the wrong place.
+                    // Disposable automation hulls retain their mission so a player
+                    // can never redirect a free standing-order convoy into a free
+                    // permanent ship.
+                    if matches!(
+                        po.kind,
+                        crate::event::OrderKind::Move | crate::event::OrderKind::Hold
+                    ) && !ship.disposable
+                    {
+                        ship.mission = None;
+                    }
+                    if matches!(
+                        po.kind,
+                        crate::event::OrderKind::Guard | crate::event::OrderKind::Hold
+                    ) {
+                        // A deliberate reassignment supersedes any autonomous
+                        // defensive sortie spawned by the previous patrol/guard.
+                        ship.defense = None;
+                    }
+                    ship.order = new_order;
+                } else {
+                    continue;
                 }
-                ship.order = po.new_order;
+                let took_effect = po.command.as_ref().is_none_or(|command| match command {
+                    Command::SetEngageFreight { fleet_id, on, .. } => self
+                        .fleets
+                        .get(fleet_id)
+                        .is_some_and(|fleet| fleet.engage_freight == *on),
+                    Command::SetFleetTransit { fleet_id, mode, .. } => self
+                        .fleets
+                        .get(fleet_id)
+                        .is_some_and(|fleet| fleet.transit == *mode),
+                    Command::SetFleetPosture {
+                        fleet_id, posture, ..
+                    } => self
+                        .fleets
+                        .get(fleet_id)
+                        .is_some_and(|fleet| fleet.posture == *posture),
+                    Command::RefitShips { player_id, .. } => events[event_start..].iter().any(
+                        |event| {
+                            matches!(
+                                &event.payload,
+                                EventPayload::BuildStarted { owner, .. } if *owner == *player_id
+                            )
+                        },
+                    ),
+                    Command::MergeFleets { into, from, .. } => {
+                        merge_source_was_present
+                            && self.fleets.contains_key(into)
+                            && !self.fleets.contains_key(from)
+                    }
+                    Command::SplitFleet { player_id, .. } => events[event_start..].iter().any(
+                        |event| {
+                            matches!(
+                                &event.payload,
+                                EventPayload::ShipSpawned { owner, .. } if *owner == *player_id
+                            )
+                        },
+                    ),
+                    Command::AssignCaptain {
+                        player_id,
+                        captain_id,
+                        fleet_id,
+                    } => self
+                        .players
+                        .get(player_id)
+                        .and_then(|corp| corp.captains.get(captain_id))
+                        .is_some_and(|captain| captain.assigned_fleet == Some(*fleet_id)),
+                    Command::ReserveCaptain {
+                        player_id,
+                        captain_id,
+                    } => self
+                        .players
+                        .get(player_id)
+                        .and_then(|corp| corp.captains.get(captain_id))
+                        .is_some_and(|captain| captain.assigned_fleet.is_none()),
+                    Command::AssignOperationFleet {
+                        player_id,
+                        operation_id,
+                        fleet_id,
+                    }
+                    | Command::RecoverOperation {
+                        player_id,
+                        operation_id,
+                        fleet_id,
+                    } => self
+                        .operations
+                        .get(operation_id)
+                        .and_then(|operation| operation.assigned_fleets.get(player_id))
+                        .is_some_and(|assigned| *assigned == *fleet_id),
+                    _ => true,
+                });
+                if !took_effect {
+                    events.push(Event::new(
+                        now,
+                        EventPayload::OrderRejected {
+                            owner: po.owner,
+                            fleet: po.ship_id,
+                            target: po.target,
+                            reason: crate::event::OrderRejectReason::DeliveryConditionsChanged,
+                        },
+                    ));
+                }
+                // A delivered one-shot is not the same thing as an accepted
+                // one. If its receiver-side validation emitted a refusal, do
+                // not fabricate an echo that would later read as "received".
+                // The refusal itself remains the sole player-visible outcome.
+                let refused = events[event_start..].iter().any(|event| {
+                    matches!(
+                        &event.payload,
+                        EventPayload::OrderRejected { owner, fleet, .. }
+                            if *owner == po.owner && *fleet == po.ship_id
+                    ) || matches!(
+                        &event.payload,
+                        EventPayload::Trade(crate::event::TradeEvent::Rejected { player, .. })
+                            if *player == po.owner
+                    )
+                });
+                if refused {
+                    continue;
+                }
                 events.push(Event::new(
                     now,
                     EventPayload::OrderApplied {
@@ -6580,6 +6934,7 @@ impl World {
                         dest: po.dest,
                         target: po.target,
                         emplacement: po.emplacement,
+                        configuration,
                     });
                     events.push(Event::new(
                         now,
@@ -6604,7 +6959,114 @@ impl World {
             .retain(|echo| self.fleets.contains_key(&echo.fleet));
     }
 
+    /// Commands whose authoritative receiver is a fleet. Corporate policy,
+    /// market settlement, and system administration remain local to their
+    /// respective desks; every mutation on this list must first reach the named
+    /// fleet through the ordinary command-signal queue.
+    fn delayed_fleet_command_target(
+        &self,
+        cmd: &Command,
+    ) -> Option<(PlayerId, EntityId, crate::event::OrderKind)> {
+        use crate::event::OrderKind;
+
+        match cmd {
+            Command::HubLoad {
+                player_id,
+                fleet_id,
+                ..
+            }
+            | Command::SystemLoad {
+                player_id,
+                fleet_id,
+                ..
+            } => Some((*player_id, *fleet_id, OrderKind::Load)),
+            Command::HubUnload {
+                player_id,
+                fleet_id,
+            }
+            | Command::SystemUnload {
+                player_id,
+                fleet_id,
+                ..
+            } => Some((*player_id, *fleet_id, OrderKind::Unload)),
+            Command::HaulToMarketHub {
+                player_id,
+                fleet_id,
+                ..
+            }
+            | Command::HaulToSystem {
+                player_id,
+                fleet_id,
+                ..
+            } => Some((*player_id, *fleet_id, OrderKind::Haul)),
+            Command::SetEngageFreight {
+                player_id,
+                fleet_id,
+                ..
+            }
+            | Command::SetFleetTransit {
+                player_id,
+                fleet_id,
+                ..
+            }
+            | Command::SetFleetPosture {
+                player_id,
+                fleet_id,
+                ..
+            } => Some((*player_id, *fleet_id, OrderKind::Configure)),
+            Command::RefitShips {
+                player_id,
+                fleet_id,
+                ..
+            } => Some((*player_id, *fleet_id, OrderKind::Refit)),
+            Command::MergeFleets {
+                player_id, into, ..
+            } => Some((*player_id, *into, OrderKind::Reorganize)),
+            Command::SplitFleet {
+                player_id,
+                fleet_id,
+                ..
+            } => Some((*player_id, *fleet_id, OrderKind::Reorganize)),
+            Command::AssignCaptain {
+                player_id,
+                fleet_id,
+                ..
+            }
+            | Command::AssignOperationFleet {
+                player_id,
+                fleet_id,
+                ..
+            }
+            | Command::RecoverOperation {
+                player_id,
+                fleet_id,
+                ..
+            } => Some((*player_id, *fleet_id, OrderKind::Assign)),
+            Command::ReserveCaptain {
+                player_id,
+                captain_id,
+            } => self
+                .players
+                .get(player_id)
+                .and_then(|corp| corp.captains.get(captain_id))
+                .and_then(|captain| captain.assigned_fleet)
+                .map(|fleet| (*player_id, fleet, OrderKind::Assign)),
+            _ => None,
+        }
+    }
+
     fn apply(&mut self, cmd: &Command, events: &mut Vec<Event>) {
+        if let Some((owner, fleet, kind)) = self.delayed_fleet_command_target(cmd) {
+            self.schedule_command_for_owner(owner, fleet, cmd.clone(), kind, events);
+            return;
+        }
+        self.apply_now(cmd, events);
+    }
+
+    /// Apply a command at the receiver. External fleet commands reach this only
+    /// through `deliver_due_orders`; calling it directly there avoids scheduling
+    /// the same signal again.
+    fn apply_now(&mut self, cmd: &Command, events: &mut Vec<Event>) {
         match cmd {
             Command::AddPlayer { id, name } => {
                 // Idempotent: a reconnecting player keeps their corporation.
@@ -7507,9 +7969,8 @@ impl World {
                 fleet_id,
                 sell_on_arrival,
             } => {
-                // A player's own loaded hull, sent to the Market Hub. Not
-                // light-delayed: it is a logistics assignment made at the dock,
-                // like loading itself — the RUN is what's raidable.
+                // The delayed instruction has reached the loaded hull; install
+                // the physical, raidable run from its state at delivery time.
                 let hub = self.hub;
                 if let Some(f) = self.fleets.get_mut(fleet_id)
                     && f.owner == *player_id
@@ -8790,12 +9251,9 @@ impl World {
                 fleet_id,
                 posture,
             } => {
-                // Instant local administration on the player's own fleet — a
-                // standing per-fleet policy, like the sibling SetFleetTransit and
-                // the corp SetFleetDoctrine. The ACTION it authorizes (WeaponsFree
-                // auto-commit) is taken on the fleet's own local detection; the
-                // owner learns of any engagement light-delayed. Soft-reject if not
-                // owned.
+                // The delayed setting has reached the fleet. The ACTION it
+                // authorizes (WeaponsFree auto-commit) is then taken on local
+                // detection; the owner learns of engagements light-delayed.
                 if let Some(f) = self.fleets.get_mut(fleet_id)
                     && f.owner == *player_id
                 {
@@ -10901,6 +11359,7 @@ impl World {
             .map(|(id, s)| {
                 let sig = s.signature()
                     * self.veil_factor(s.owner, s.pos)
+                    * self.nebula_signature_factor(s.pos)
                     * if s.surveying() {
                         crate::explore::SURVEY_SIGNATURE_FACTOR
                     } else {
@@ -10922,12 +11381,16 @@ impl World {
             // Coverage sources: command center + this corp's Raider bubbles
             // (× SensorRange) + Sensor Arrays (already × SensorRadius).
             let range = sensor * self.research_mod(obs, crate::research::ModKey::SensorRange);
-            let mut sources: Vec<(Vec2, f64)> = vec![(self.players[&obs].command_center, range)];
+            let cc = self.players[&obs].command_center;
+            let mut sources: Vec<(Vec2, f64)> =
+                vec![(cc, range * self.nebula_sensor_factor(cc))];
             sources.extend(snap
                 .iter()
                 .filter(|(_, o, _, _, sensor_source)| *o == obs && *sensor_source)
-                .map(|(_, _, pos, _, _)| (*pos, range)));
-            sources.extend(self.array_sensor_sources(obs));
+                .map(|(_, _, pos, _, _)| (*pos, range * self.nebula_sensor_factor(*pos))));
+            sources.extend(self.array_sensor_sources(obs).into_iter().map(|(pos, radius)| {
+                (pos, radius * self.nebula_sensor_factor(pos))
+            }));
             for (fid, fowner, fpos, sig, _) in &snap {
                 // A rival = neither self nor a syndicate ally (pirates included).
                 if *fowner == obs || allies.contains(fowner) {
@@ -15286,6 +15749,56 @@ impl World {
         kind: crate::event::OrderKind,
         events: &mut Vec<Event>,
     ) {
+        let subject = pending_order_subject(&new_order);
+        self.schedule_payload_for_owner(
+            player_id,
+            ship_id,
+            Some(new_order),
+            None,
+            kind,
+            subject,
+            events,
+        );
+    }
+
+    /// Queue a one-shot command addressed to a fleet. Loading, unloading,
+    /// formation management, and fleet-local settings use exactly the same
+    /// meeting solve and lifecycle as movement; only the delivered payload
+    /// differs.
+    fn schedule_command_for_owner(
+        &mut self,
+        player_id: PlayerId,
+        ship_id: EntityId,
+        command: Command,
+        kind: crate::event::OrderKind,
+        events: &mut Vec<Event>,
+    ) {
+        let subject = pending_command_subject(&command);
+        self.schedule_payload_for_owner(
+            player_id,
+            ship_id,
+            None,
+            Some(command),
+            kind,
+            subject,
+            events,
+        );
+    }
+
+    fn schedule_payload_for_owner(
+        &mut self,
+        player_id: PlayerId,
+        ship_id: EntityId,
+        new_order: Option<FleetOrder>,
+        command: Option<Command>,
+        kind: crate::event::OrderKind,
+        (dest, target, emplacement): (
+            Option<Vec2>,
+            Option<EntityId>,
+            Option<crate::emplace::EmplacementKind>,
+        ),
+        events: &mut Vec<Event>,
+    ) {
         let Some(ship) = self.fleets.get(&ship_id) else {
             return;
         };
@@ -15315,12 +15828,12 @@ impl World {
         let echo_at = delivered_at + crate::transit::delay(delivery_point, cc, c) * echo_relay;
         self.next_command_id += 1;
         let id = self.next_command_id;
-        let (dest, target, emplacement) = pending_order_subject(&new_order);
         self.pending_orders.push(PendingOrder {
             id,
             apply_time: delivered_at,
             ship_id,
             new_order,
+            command,
             owner: player_id,
             echo_at,
             issued_at: self.time,
@@ -18554,13 +19067,13 @@ mod tests {
         );
 
         // LOADING works there...
-        w.step(&[Command::SystemLoad {
+        issue_and_deliver(&mut w, Command::SystemLoad {
             player_id: id,
             fleet_id: fid,
             system: sys,
             commodity: Commodity::Alloys,
             units: 10,
-        }]);
+        });
         assert!(
             w.fleets[&fid].cargo.is_some(),
             "a berthed hull can be loaded at this distance"
@@ -19170,6 +19683,27 @@ mod tests {
             w.step(&[]);
         }
         panic!("timed out waiting for: {what}");
+    }
+
+    /// Issue one fleet-addressed command and collect events through its actual
+    /// delivery tick. Most mechanics tests care about the result rather than
+    /// exercising the delay itself; the dedicated delay regressions do not use
+    /// this helper.
+    fn issue_and_deliver(w: &mut World, command: Command) -> Vec<Event> {
+        let mut events = w.step(&[command]);
+        let Some(order_id) = events.iter().find_map(|event| match event.payload {
+            EventPayload::OrderScheduled { id, .. } => Some(id),
+            _ => None,
+        }) else {
+            return events;
+        };
+        for _ in 0..20_000 {
+            if !w.pending_orders.iter().any(|order| order.id == order_id) {
+                return events;
+            }
+            events.extend(w.step(&[]));
+        }
+        panic!("timed out waiting for fleet command {order_id} to arrive");
     }
 
     /// Units of `c` in a system's stockpile, rounded down to whole units.
@@ -26272,8 +26806,8 @@ mod tests {
     }
 
     #[test]
-    fn records_downsample_to_the_cadence() {
-        let mut w = test_world(); // battle_target_secs = 20 → round_every = 15 ticks
+    fn records_are_one_round_per_engine_step() {
+        let mut w = test_world(); // battle_target_secs = 20 → 15-tick steps
         let (atk, def) = (PlayerId(1), PlayerId(2));
         w.step(&[
             Command::AddPlayer {
@@ -26287,25 +26821,72 @@ mod tests {
         ]);
         let eid = run_recorded_battle(&mut w, atk, def);
         let rec = &w.battle_records[&eid];
-        let re = crate::combat::BattleRecord::round_every_for(w.config.battle_target_secs, false);
-        assert_eq!(re, 15, "cadence math for the test preset");
+        let cadence = crate::tactical::tac_step_ticks(w.config.battle_target_secs);
+        assert_eq!(cadence, 15, "the test preset steps at the fast cadence");
         assert!(
             rec.rounds.len() >= 3,
             "a real battle records several rounds"
         );
-        // Flushes are at MOST one cadence apart (beats only ever flush sooner).
-        for pair in rec.rounds.windows(2) {
+        // The replay IS the engine's battle: every round except a possible
+        // finalize tail carries its step's keyframe, and consecutive rounds
+        // are never further apart than one engine step.
+        let n = rec.rounds.len();
+        for (i, rd) in rec.rounds.iter().enumerate() {
             assert!(
-                pair[1].tick - pair[0].tick <= re,
-                "no gap wider than the cadence"
+                rd.frame.is_some() || i == n - 1,
+                "round {i} of {n} lost its keyframe"
             );
         }
-        // The tail never runs longer than a cadence past the last flush.
+        for pair in rec.rounds.windows(2) {
+            let gap = pair[1].tick - pair[0].tick;
+            assert!(
+                gap >= 1 && gap <= cadence,
+                "rounds are step-spaced (gap {gap})"
+            );
+        }
+        // The tail never runs longer than a step past the last flush.
         let ended = rec.ended_tick.unwrap();
         assert!(
-            ended - rec.rounds.last().unwrap().tick <= re,
-            "the final round is within one cadence of the end"
+            ended - rec.rounds.last().unwrap().tick <= cadence,
+            "the final round is within one step of the end"
         );
+    }
+
+    #[test]
+    fn raid_records_carry_a_keyframe_on_every_round() {
+        // Regression: the old recorder down-sampled raids to a cadence of its
+        // own (shorter than the engine step at playtest timescales), so about
+        // every fourth round flushed WITHOUT a keyframe and the theater
+        // blanked the battlefield. Rounds are 1:1 with engine steps now — a
+        // raid replay is gap-free.
+        let mut w = test_world();
+        let (atk, def) = (PlayerId(1), PlayerId(2));
+        let (raider, convoy) = raid_setup(
+            &mut w,
+            atk,
+            def,
+            Vec2::new(120.0, 0.0),
+            Vec2::new(420.0, 0.0),
+        );
+        w.step(&[Command::CommitRaid {
+            player_id: atk,
+            raider_id: raider,
+            target_id: convoy,
+        }]);
+        run_until_raid(&mut w, 60, |_| vec![]).expect("the raid resolves");
+        let rec = w
+            .battle_records
+            .values()
+            .find(|r| r.raid)
+            .expect("the raid was recorded");
+        assert!(rec.rounds.len() >= 3, "a real raid records several rounds");
+        let n = rec.rounds.len();
+        for (i, rd) in rec.rounds.iter().enumerate() {
+            assert!(
+                rd.frame.is_some() || i == n - 1,
+                "raid round {i} of {n} lost its keyframe"
+            );
+        }
     }
 
     #[test]
@@ -27996,8 +28577,9 @@ mod tests {
         );
     }
 
-    /// Part 2: SetFleetPosture is instant owner-only admin (soft-reject on a rival's
-    /// fleet), and both the posture and an in-flight Attack order survive serde.
+    /// Part 2: SetFleetPosture is owner-only and light-delayed (soft-reject on a
+    /// rival's fleet), and both the posture and an in-flight Attack order survive
+    /// serde.
     #[test]
     fn posture_command_and_attack_order_persist() {
         let mut w = test_world();
@@ -28040,12 +28622,12 @@ mod tests {
             EngagementPosture::Passive,
             "can't set a rival's posture"
         );
-        // Own fleet: instant.
-        w.step(&[Command::SetFleetPosture {
+        // Own fleet: the setting changes when its command arrives.
+        issue_and_deliver(&mut w, Command::SetFleetPosture {
             player_id: atk,
             fleet_id: hunter,
             posture: EngagementPosture::WeaponsFree,
-        }]);
+        });
         assert_eq!(w.fleets[&hunter].posture, EngagementPosture::WeaponsFree);
         // Put an Attack order in flight, then round-trip the whole world.
         w.fleets.get_mut(&hunter).unwrap().order = FleetOrder::Attack { target: rival };
@@ -28181,6 +28763,84 @@ mod tests {
         let e = w.engagements.values().next().unwrap();
         assert!(e.attackers.contains(&a) || e.defenders.contains(&a));
         assert!(e.attackers.contains(&b) || e.defenders.contains(&b));
+    }
+
+    /// §one-battle-one-icon: a pirate attacking a Freighter while its named
+    /// Interceptor guard counter-intercepts is one two-sided engagement with
+    /// three participants, not two pairwise engagements at the same location.
+    #[test]
+    fn guarded_freighter_ambush_forms_one_three_fleet_battle() {
+        let mut w = test_world();
+        let owner = PlayerId(1);
+        w.step(&[Command::AddPlayer {
+            id: owner,
+            name: "Freight Corp".into(),
+        }]);
+        let pos = w.players[&owner].command_center + Vec2::new(0.0, 3_000.0);
+        let freighter = squad(
+            &mut w,
+            owner,
+            pos,
+            ShipKind::Convoy,
+            1,
+            FleetOrder::Idle,
+        );
+        // Allocate the Interceptor before the pirate: without civilian-first
+        // contact ordering its counter-intercept is processed first and the old
+        // pairwise logic opens the duplicate marker deterministically.
+        let interceptor = squad(
+            &mut w,
+            owner,
+            pos + Vec2::new(70.0, 0.0),
+            ShipKind::Raider,
+            1,
+            FleetOrder::Idle,
+        );
+        let pirate = squad(
+            &mut w,
+            PlayerId::PIRATE,
+            pos + Vec2::new(40.0, 0.0),
+            ShipKind::Raider,
+            1,
+            FleetOrder::Intercept { target: freighter },
+        );
+        w.fleets
+            .retain(|id, _| *id == freighter || *id == interceptor || *id == pirate);
+        w.fleets.get_mut(&interceptor).unwrap().order =
+            FleetOrder::Intercept { target: pirate };
+        w.fleets.get_mut(&interceptor).unwrap().defense = Some(DefenseEngagement {
+            target: pirate,
+            patrol: Vec::new(),
+            guard: Some(freighter),
+        });
+
+        assert!(run_until(&mut w, 2, |world| !world.engagements.is_empty()));
+        assert_eq!(
+            w.engagements.len(),
+            1,
+            "the guarded ambush is one battle and therefore one galaxy-map icon"
+        );
+        let engagement = w.engagements.values().next().unwrap();
+        let participants: std::collections::BTreeSet<_> = engagement
+            .attackers
+            .iter()
+            .chain(&engagement.defenders)
+            .copied()
+            .collect();
+        assert_eq!(
+            participants,
+            [freighter, interceptor, pirate].into_iter().collect(),
+            "the single battle contains the Freighter, its Interceptor, and the pirate"
+        );
+        assert!(
+            !engagement.raid,
+            "armed escort intervention escalates the raid"
+        );
+        assert_eq!(
+            w.active_battles().len(),
+            1,
+            "the served map has one marker"
+        );
     }
 
     /// Part 1 verb (join path): an ATTACK order that joins an in-progress RAID on
@@ -31058,20 +31718,20 @@ mod tests {
             f.mission = None;
         }
 
-        w.step(&[Command::SystemLoad {
+        issue_and_deliver(&mut w, Command::SystemLoad {
             player_id: id,
             fleet_id: convoy,
             system: colony,
             commodity: Alloys,
             units: 150,
-        }]);
-        w.step(&[Command::SystemLoad {
+        });
+        issue_and_deliver(&mut w, Command::SystemLoad {
             player_id: id,
             fleet_id: convoy,
             system: colony,
             commodity: Fuel,
             units: 80,
-        }]);
+        });
         assert_eq!(
             w.fleets[&convoy].cargo_amount(Alloys),
             150,
@@ -31199,6 +31859,71 @@ mod tests {
         );
     }
 
+    /// A dockside unload is still a command to a remote fleet: neither its hold
+    /// nor the warehouse changes before the outbound signal reaches the berth.
+    #[test]
+    fn hub_unload_waits_for_the_fleets_information_delay() {
+        use crate::cargo::Commodity::Alloys;
+        let mut w = test_world();
+        let owner = PlayerId(7_703);
+        w.step(&[Command::AddPlayer {
+            id: owner,
+            name: "Delayed Dockworkers".into(),
+        }]);
+        clear_warehouse(&mut w, owner);
+        w.players.get_mut(&owner).unwrap().command_center =
+            w.hub + Vec2::new(40_000.0, 0.0);
+        let freighter = find_ship(&mut w, owner, ShipKind::Convoy);
+        {
+            let fleet = w.fleets.get_mut(&freighter).unwrap();
+            fleet.pos = w.hub;
+            fleet.vel = Vec2::ZERO;
+            fleet.order = FleetOrder::Idle;
+            fleet.mission = None;
+            fleet.take_cargo();
+            fleet.add_cargo(Alloys, 65);
+        }
+
+        let warehouse_before = wh(&w, owner, Alloys);
+        let issued = w.step(&[Command::HubUnload {
+            player_id: owner,
+            fleet_id: freighter,
+        }]);
+        let pending = w
+            .pending_commands(owner)
+            .into_iter()
+            .find(|order| order.fleet == freighter)
+            .expect("the unload enters the ordinary fleet-order queue");
+        assert_eq!(pending.kind, crate::event::OrderKind::Unload);
+        assert!(pending.delivered_at > w.time);
+        assert!(issued.iter().any(|event| matches!(
+            event.payload,
+            EventPayload::OrderScheduled { fleet, .. } if fleet == freighter
+        )));
+        assert_eq!(w.fleets[&freighter].cargo_amount(Alloys), 65);
+        assert_eq!(wh(&w, owner, Alloys), warehouse_before);
+
+        while w.time + DT < pending.delivered_at {
+            w.step(&[]);
+        }
+        assert_eq!(
+            w.fleets[&freighter].cargo_amount(Alloys),
+            65,
+            "cargo remains aboard for the whole outbound delay"
+        );
+        assert_eq!(wh(&w, owner, Alloys), warehouse_before);
+
+        while w
+            .pending_orders
+            .iter()
+            .any(|order| order.id == pending.id)
+        {
+            w.step(&[]);
+        }
+        assert!(w.fleets[&freighter].cargo_is_empty());
+        assert_eq!(wh(&w, owner, Alloys), warehouse_before + 65);
+    }
+
     /// Hub load/unload moves goods across the warehouse boundary without selling.
     #[test]
     fn hub_load_and_unload_cross_the_warehouse_boundary() {
@@ -31219,27 +31944,27 @@ mod tests {
             f.take_cargo();
             f.mission = None; // drop the opening delivery run (§step1)
         }
-        w.step(&[Command::HubLoad {
+        issue_and_deliver(&mut w, Command::HubLoad {
             player_id: id,
             fleet_id: convoy,
             commodity: Fuel,
             units: 80,
-        }]);
-        w.step(&[Command::HubLoad {
+        });
+        issue_and_deliver(&mut w, Command::HubLoad {
             player_id: id,
             fleet_id: convoy,
             commodity: Alloys,
             units: 40,
-        }]);
+        });
         assert_eq!(wh(&w, id, Fuel), 40);
         assert_eq!(wh(&w, id, Alloys), 30);
         assert_eq!(w.fleets[&convoy].cargo_amount(Fuel), 80);
         assert_eq!(w.fleets[&convoy].cargo_amount(Alloys), 40);
         assert_eq!(w.fleets[&convoy].cargo_units(), 120);
-        w.step(&[Command::HubUnload {
+        issue_and_deliver(&mut w, Command::HubUnload {
             player_id: id,
             fleet_id: convoy,
-        }]);
+        });
         assert_eq!(
             wh(&w, id, Fuel),
             120,
@@ -31274,25 +31999,35 @@ mod tests {
             fleet.take_cargo();
             fleet.mission = None;
         }
-        w.step(&[
+        issue_and_deliver(
+            &mut w,
             Command::HubLoad {
                 player_id: owner,
                 fleet_id: freighter,
                 commodity: Alloys,
                 units: 50,
             },
+        );
+        issue_and_deliver(
+            &mut w,
             Command::HubLoad {
                 player_id: owner,
                 fleet_id: freighter,
                 commodity: Fuel,
                 units: 30,
             },
-        ]);
+        );
         w.step(&[Command::HaulToSystem {
             player_id: owner,
             fleet_id: freighter,
             system: destination,
         }]);
+        step_until(&mut w, 20_000, "the return-haul order to arrive", |world| {
+            world.fleets[&freighter].mission
+                == Some(TradeMission::DeliverToSystem {
+                    system: destination,
+                })
+        });
         assert_eq!(
             w.fleets[&freighter].mission,
             Some(TradeMission::DeliverToSystem {
@@ -31442,10 +32177,10 @@ mod tests {
             fleet.order = FleetOrder::Idle;
         }
         assert_eq!(w.dock_of(convoy), Some(DockSite::Hub));
-        w.step(&[Command::HubUnload {
+        issue_and_deliver(&mut w, Command::HubUnload {
             player_id: owner,
             fleet_id: convoy,
-        }]);
+        });
         assert_eq!(wh(&w, owner, Alloys), warehouse_before + 65);
         assert!(w.fleets[&convoy].cargo_is_empty());
         assert_eq!(w.dock_of(convoy), Some(DockSite::Hub));
@@ -31483,6 +32218,9 @@ mod tests {
             id,
             name: "Acme".into(),
         }]);
+        // This test isolates dockside validation, not signal travel. Co-locate
+        // the command center so the addressed fleet receives each probe now.
+        w.players.get_mut(&id).unwrap().command_center = w.hub;
         seed_warehouse(&mut w, id, &[(Fuel, 500), (Alloys, 500)]);
         let convoy = find_ship(&mut w, id, ShipKind::Convoy);
         let raider = find_ship(&mut w, id, ShipKind::Raider);
@@ -31501,12 +32239,12 @@ mod tests {
                 dest: Vec2::new(9000.0, 0.0),
             };
         }
-        let ev = w.step(&[Command::HubLoad {
+        let ev = issue_and_deliver(&mut w, Command::HubLoad {
             player_id: id,
             fleet_id: convoy,
             commodity: Fuel,
             units: 10,
-        }]);
+        });
         assert!(matches!(
             reason_of(&ev),
             Some(TradeRejectReason::FleetUnavailable)
@@ -31518,12 +32256,12 @@ mod tests {
             f.order = FleetOrder::Idle;
             f.pos = w.hub + Vec2::new(crate::ship::DOCK_RADIUS * 3.0, 0.0);
         }
-        let ev = w.step(&[Command::HubLoad {
+        let ev = issue_and_deliver(&mut w, Command::HubLoad {
             player_id: id,
             fleet_id: convoy,
             commodity: Fuel,
             units: 10,
-        }]);
+        });
         assert!(matches!(
             reason_of(&ev),
             Some(TradeRejectReason::OutOfLogisticsRange)
@@ -31535,12 +32273,12 @@ mod tests {
             f.pos = w.hub;
             f.order = FleetOrder::Idle;
         }
-        let ev = w.step(&[Command::HubLoad {
+        let ev = issue_and_deliver(&mut w, Command::HubLoad {
             player_id: id,
             fleet_id: raider,
             commodity: Fuel,
             units: 10,
-        }]);
+        });
         assert!(matches!(
             reason_of(&ev),
             Some(TradeRejectReason::NoCargoRoom { capacity: 0 })
@@ -31553,30 +32291,30 @@ mod tests {
             f.cargo = None;
         }
         let cap = w.fleets[&convoy].cargo_capacity();
-        let ev = w.step(&[Command::HubLoad {
+        let ev = issue_and_deliver(&mut w, Command::HubLoad {
             player_id: id,
             fleet_id: convoy,
             commodity: Fuel,
             units: cap + 1,
-        }]);
+        });
         assert!(
             matches!(reason_of(&ev), Some(TradeRejectReason::NoCargoRoom { capacity }) if capacity == cap)
         );
 
         // A second commodity shares the same hold and debits only its own stock.
-        w.step(&[Command::HubLoad {
+        issue_and_deliver(&mut w, Command::HubLoad {
             player_id: id,
             fleet_id: convoy,
             commodity: Fuel,
             units: 10,
-        }]);
+        });
         let warehouse_before = (wh(&w, id, Fuel), wh(&w, id, Alloys));
-        let ev = w.step(&[Command::HubLoad {
+        let ev = issue_and_deliver(&mut w, Command::HubLoad {
             player_id: id,
             fleet_id: convoy,
             commodity: Alloys,
             units: 10,
-        }]);
+        });
         assert!(reason_of(&ev).is_none(), "mixed cargo is a legal load");
         assert_eq!(
             (wh(&w, id, Fuel), wh(&w, id, Alloys)),
@@ -32480,12 +33218,12 @@ mod tests {
         }
         // …and the WAREHOUSE is still reachable: a revoked outlaw fetches its goods.
         set_standing(&mut w, id, crate::tca::TCA_REVOKED_AT);
-        w.step(&[Command::HubLoad {
+        issue_and_deliver(&mut w, Command::HubLoad {
             player_id: id,
             fleet_id: convoy,
             commodity: Alloys,
             units: 100,
-        }]);
+        });
         assert_eq!(
             w.fleets[&convoy].cargo.map(|c| c.units),
             Some(100),
@@ -33125,11 +33863,11 @@ mod tests {
                     station,
                 };
             }
-            w.step(&[Command::SetEngageFreight {
+            issue_and_deliver(&mut w, Command::SetEngageFreight {
                 player_id: blk_owner,
                 fleet_id: blk,
                 on: engage,
-            }]);
+            });
             assert_eq!(w.fleets[&blk].engage_freight, engage, "the toggle sticks");
             // An Authority freighter arrives on station.
             let freighter =
@@ -34548,11 +35286,11 @@ mod tests {
             .get_mut(&0)
             .unwrap()
             .stationed_system = Some(home);
-        w.step(&[Command::AssignCaptain {
+        issue_and_deliver(&mut w, Command::AssignCaptain {
             player_id: owner,
             captain_id: 0,
             fleet_id: fleet,
-        }]);
+        });
         assert_eq!(w.players[&owner].captains[&0].assigned_fleet, None);
 
         w.players
@@ -34562,16 +35300,16 @@ mod tests {
             .get_mut(&0)
             .unwrap()
             .stationed_system = Some(forward);
-        w.step(&[Command::AssignCaptain {
+        issue_and_deliver(&mut w, Command::AssignCaptain {
             player_id: owner,
             captain_id: 0,
             fleet_id: fleet,
-        }]);
+        });
         assert_eq!(w.players[&owner].captains[&0].assigned_fleet, Some(fleet));
-        w.step(&[Command::ReserveCaptain {
+        issue_and_deliver(&mut w, Command::ReserveCaptain {
             player_id: owner,
             captain_id: 0,
-        }]);
+        });
         assert_eq!(w.players[&owner].captains[&0].stationed_system, Some(forward));
     }
 

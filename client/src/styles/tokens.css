@@ -3,7 +3,7 @@
   --bg: #05070d;
   --panel: #0d1322;
   --ink: #c9d6e8;
-  --dim: #6b7a90;
+  --dim: #8493a8;
   --accent: #4fc3ff;
   --warn: #ffb454;
   /* Semantic tone tokens (lifted from previously-hardcoded colors) so the
@@ -16,7 +16,7 @@
   --accent-3: #ff9e6b;   /* amber stripe (doctrine) */
   --ground: #9a7b53;
   --battle-highlight: #ffd98a;
-  --fg-stale: #5a6578;   /* dimmer than --dim — for light-delayed values */
+  --fg-stale: #68778d;   /* dimmer than --dim — for light-delayed values */
   --border: #1c2740;
   --field-bg: #060a14;
   --field-bd: #243049;
@@ -25,8 +25,8 @@
   --btn-bg: #131a2c;
   --btn-bg-hover: #1b2740;
   /* §deck: one type, spacing, and layer vocabulary for the desktop shell. */
-  --fs-fine: 11px;
-  --fs-body: 12.5px;
+  --fs-fine: 12px;
+  --fs-body: 13px;
   --fs-em: 14px;
   --fs-title: 16px;
   --fs-page: 20px;
@@ -45,6 +45,7 @@
   --z-hover: 60;
   --deck-topbar-height: 40px;
   --deck-workspace-standard: 460px;
+  --deck-workspace-system: 552px; /* 20% wider than the standard workspace. */
   --deck-workspace-wide: 1240px;
   --deck-control-height: 32px;
   --deck-radius: 6px;

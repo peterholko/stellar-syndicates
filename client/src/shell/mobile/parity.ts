@@ -18,6 +18,7 @@ import {
   type Pool,
 } from "../../core/derive/market";
 import { fmtEta, operationCopy, operationReward, operationTitle } from "../../core/derive/format";
+import { icon, structureIcon } from "../../icons";
 import type {
   BodyView,
   CaptainAttribute,
@@ -739,7 +740,7 @@ export class MobileParitySurfaces {
     if (this.selectedBuild && !options.some((candidate) => candidate.key === this.selectedBuild)) this.selectedBuild = "";
     const rows = options.map((candidate) => {
       const state = structOption(candidate, dynamic, body, pools);
-      return `<button type="button" class="m-build-row${candidate.key === this.selectedBuild ? " is-active" : ""}" data-mobile-act="build-select" data-key="${esc(candidate.key)}"><span><b>${esc(candidate.label)}</b><small>${POOL_LABEL[state.pool]} · ${state.tierUp ? `Tier ${state.currentTier} → ${state.targetTier}` : "new Tier I"}</small></span><em>${state.buildable ? fmtEta(candidate.build_secs * body.construction_time_mult) : esc(state.reason || "unavailable")}</em></button>`;
+      return `<button type="button" class="m-build-row${candidate.key === this.selectedBuild ? " is-active" : ""}" data-mobile-act="build-select" data-key="${esc(candidate.key)}"><span class="m-build-row__identity">${icon(structureIcon(candidate.key), "sm", undefined, "m-structure-icon")}<span><b>${esc(candidate.label)}</b><small>${POOL_LABEL[state.pool]} · ${state.tierUp ? `Tier ${state.currentTier} → ${state.targetTier}` : "new Tier I"}</small></span></span><em>${state.buildable ? fmtEta(candidate.build_secs * body.construction_time_mult) : esc(state.reason || "unavailable")}</em></button>`;
     }).join("");
     const selected = options.find((candidate) => candidate.key === this.selectedBuild);
     const detail = selected ? this.structureDetail(systemId, dynamic, body, selected, pools) : `<div class="m-empty">Choose a structure to inspect its recipe and queue it.</div>`;
@@ -750,7 +751,7 @@ export class MobileParitySurfaces {
     const state = structOption(build, dynamic, body, pools);
     const supply = constructionStock(dynamic).available;
     const costs = build.costs.map((cost) => `<div class="m-order"><b>${human(cost.commodity)}</b><span>need ${cost.units} · have ${fmt(supply.get(cost.commodity as Commodity) ?? 0)}</span></div>`).join("");
-    return `<article class="m-build-detail"><small>${POOL_LABEL[state.pool]} · ${state.tierUp ? `upgrade to Tier ${state.targetTier}` : "new structure"}</small><h3>${esc(build.label)}</h3><div>${costs}</div><p>${fmtEta(build.build_secs * body.construction_time_mult)} on this world.${state.foundsNew ? ` Claims one ${POOL_LABEL[state.pool].toLowerCase()} slot.` : " Deepens in place without another slot."}</p>${state.reason ? `<div class="m-warning">${esc(state.reason)}</div>` : ""}<button type="button" class="m-primary" data-mobile-act="build-queue" data-system="${esc(systemId)}" data-body="${body.id}" data-key="${esc(build.key)}" ${state.buildable ? "" : "disabled"}>Queue build</button></article>`;
+    return `<article class="m-build-detail"><header>${icon(structureIcon(build.key), "md", undefined, "m-structure-icon")}<span><small>${POOL_LABEL[state.pool]} · ${state.tierUp ? `upgrade to Tier ${state.targetTier}` : "new structure"}</small><h3>${esc(build.label)}</h3></span></header><div>${costs}</div><p>${fmtEta(build.build_secs * body.construction_time_mult)} on this world.${state.foundsNew ? ` Claims one ${POOL_LABEL[state.pool].toLowerCase()} slot.` : " Deepens in place without another slot."}</p>${state.reason ? `<div class="m-warning">${esc(state.reason)}</div>` : ""}<button type="button" class="m-primary" data-mobile-act="build-queue" data-system="${esc(systemId)}" data-body="${body.id}" data-key="${esc(build.key)}" ${state.buildable ? "" : "disabled"}>Queue build</button></article>`;
   }
 
   private queueStructure(button: HTMLElement): void {

@@ -40,7 +40,7 @@ export class DeckWorkspace {
     if (!this.route) return;
     const next: DeckWidth = this.root.dataset.width === "wide" ? "standard" : "wide";
     this.root.dataset.width = next;
-    try { localStorage.setItem(WIDTH_KEY + this.route.name, next); } catch { /* storage is optional */ }
+    try { localStorage.setItem(WIDTH_KEY + this.widthPreferenceKey(this.route), next); } catch { /* storage is optional */ }
     this.syncWidthButton();
     this.publishCameraRect();
   }
@@ -93,11 +93,18 @@ export class DeckWorkspace {
   }
 
   private storedWidth(route: DeckRoute): DeckWidth {
+    if (route.name === "market" && route.query?.inspect === "map") return "standard";
     try {
-      const stored = localStorage.getItem(WIDTH_KEY + route.name);
+      const stored = localStorage.getItem(WIDTH_KEY + this.widthPreferenceKey(route));
       if (stored === "standard" || stored === "wide") return stored;
     } catch { /* storage is optional */ }
     return DECK_ROUTES[route.name].width;
+  }
+
+  /** Build is a System tab, so direct Build links share the System workspace
+   * width rather than maintaining a divergent per-route preference. */
+  private widthPreferenceKey(route: DeckRoute): string {
+    return route.name === "build" ? "system" : route.name;
   }
 
   private renderBreadcrumbs(crumbs: readonly DeckCrumb[]): void {

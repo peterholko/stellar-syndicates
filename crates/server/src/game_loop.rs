@@ -21,7 +21,8 @@ use sim::{Command, DT, PlayerId, TICK_HZ, World};
 
 use crate::persistence::{PersistJob, PersistenceHandle, to_json};
 use crate::protocol::{
-    BuildOptionView, ClientMsg, GalaxyInfo, InvSlot, MarketView, OrderView, PriceView, ServerMsg,
+    BuildOptionView, ClientMsg, GalaxyInfo, InvSlot, MarketView, NebulaInfo, OrderView, PriceView,
+    ServerMsg,
     StockSlot, SystemInfo, WalletView,
 };
 use crate::reports::ReportScheduler;
@@ -127,41 +128,19 @@ fn has_fixed_response_course(kind: sim::event::OrderKind) -> bool {
     )
 }
 
-/// Remote instructions which do not use `schedule_for_owner` still need the
-/// same outbound map grammar. The scheduled movement/combat family is omitted
-/// deliberately: its `OrderScheduled` event emits the lifecycle-linked
-/// `CommandSignal` after validation. Everything listed here either addresses a
-/// fleet directly or addresses the fixed Market Hub. A chevron proves dispatch,
-/// not acceptance; any refusal returns through the ordinary served/event path.
+/// Commands addressed to the fixed Market Hub do not own a fleet-order
+/// lifecycle, but still need the outbound map grammar. Every fleet-targeted
+/// command is omitted: the sim queues it and its accepted `OrderScheduled`
+/// event emits the lifecycle-linked `CommandSignal` instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DispatchChevronTarget {
-    Fleet(sim::EntityId),
     MarketHub,
 }
 
 fn dispatch_chevron_targets(msg: &ClientMsg) -> Vec<DispatchChevronTarget> {
-    use DispatchChevronTarget::{Fleet, MarketHub};
+    use DispatchChevronTarget::MarketHub;
 
     match msg {
-        ClientMsg::HoldFleet { ship_id: fleet_id }
-        | ClientMsg::HubLoad { fleet_id, .. }
-        | ClientMsg::HubUnload { fleet_id }
-        | ClientMsg::SystemLoad { fleet_id, .. }
-        | ClientMsg::SystemUnload { fleet_id, .. }
-        | ClientMsg::HaulToMarketHub { fleet_id, .. }
-        | ClientMsg::HaulToSystem { fleet_id, .. }
-        | ClientMsg::SetEngageFreight { fleet_id, .. }
-        | ClientMsg::RefitShips { fleet_id, .. }
-        | ClientMsg::SetFleetTransit { fleet_id, .. }
-        | ClientMsg::SplitFleet { fleet_id, .. }
-        | ClientMsg::SetFleetPosture { fleet_id, .. }
-        | ClientMsg::AssignCaptain { fleet_id, .. }
-        | ClientMsg::AssignOperationFleet { fleet_id, .. }
-        | ClientMsg::RecoverOperation { fleet_id, .. } => vec![Fleet(*fleet_id)],
-        ClientMsg::MergeFleets { into, from } if into != from => {
-            vec![Fleet(*into), Fleet(*from)]
-        }
-        ClientMsg::MergeFleets { into, .. } => vec![Fleet(*into)],
         ClientMsg::MarketBuy { .. }
         | ClientMsg::MarketSell { .. }
         | ClientMsg::BookFreightOut { .. }
@@ -207,6 +186,7 @@ fn pending_order_views(
                 dest: pending.dest,
                 target_id: pending.target,
                 emplacement: pending.emplacement,
+                configuration: pending.configuration,
                 intent_path: observed.intent_path.clone(),
                 lost: disclosed_loss.is_some(),
                 loss_relay: disclosed_loss.map(|loss| loss.relay),
@@ -554,11 +534,8 @@ impl GameLoop {
         );
     }
 
-    /// Emit the same violet outbound chevron for remote instructions which do
-    /// not own a pending fleet-order lifecycle. Geometry is still epistemically
-    /// honest: a fleet endpoint comes from the player's served sighting, while
-    /// the Market Hub is public fixed geography. No authoritative fleet position
-    /// enters this feedback.
+    /// Emit the violet outbound chevron for fixed-Hub instructions which do not
+    /// own a pending fleet-order lifecycle.
     fn emit_dispatch_chevron(
         &mut self,
         player_id: PlayerId,
@@ -570,30 +547,13 @@ impl GameLoop {
         };
         let cc = corp.command_center;
         let c = self.world.config.c;
-        let (fleet_id, target_pos, travel_time) = match target {
-            DispatchChevronTarget::MarketHub => {
-                let pos = self.world.hub;
-                (None, pos, sim::transit::delay(cc, pos, c))
-            }
-            DispatchChevronTarget::Fleet(fleet_id) => {
-                // Do not ask truth whether the hull still exists: suppressing a
-                // dispatch would disclose an unseen loss. If the player's
-                // picture has no such sighting there is simply nowhere honest
-                // to draw the chevron.
-                let Some(sighting) = self
-                    .history
-                    .observed_sighting(fleet_id, cc, c, depart_time)
-                else {
-                    return;
-                };
-                let signal = command_signal_plan(c, cc, sighting.pos, sighting.vel);
-                (Some(fleet_id), signal.meeting_point, signal.travel_time)
-            }
-        };
+        let DispatchChevronTarget::MarketHub = target;
+        let target_pos = self.world.hub;
+        let travel_time = sim::transit::delay(cc, target_pos, c);
         self.sessions.send_to_player(
             player_id,
             ServerMsg::CommandChevron {
-                fleet_id,
+                fleet_id: None,
                 target_pos,
                 depart_time,
                 arrive_time: depart_time + travel_time,
@@ -687,6 +647,7 @@ impl GameLoop {
                         galaxy: GalaxyInfo {
                             hub: self.world.hub,
                             radius: self.world.config.galaxy_radius,
+                            nebulas: nebula_infos(&self.world),
                             c: self.world.config.c,
                             jump_range: sim::transit::JUMP_RANGE,
                             jump_spool_s: sim::transit::JUMP_SPOOL_S,
@@ -777,10 +738,9 @@ impl GameLoop {
                 }
             }
             GameInput::Intent { conn_id, msg } => match {
-                // One choke point for the remote-order visual. Scheduled
-                // movement/combat commands emit their lifecycle-linked signal
-                // after the sim accepts them; this fills the otherwise-silent
-                // fleet-administration and Market Hub paths.
+                // One choke point for fixed-Hub command feedback. Every command
+                // addressed to a fleet now emits its lifecycle-linked signal
+                // only after the sim accepts it into the delayed order queue.
                 if let Some(player_id) = self.sessions.player_of(conn_id) {
                     for target in dispatch_chevron_targets(&msg) {
                         self.emit_dispatch_chevron(player_id, target, self.world.time);
@@ -1985,6 +1945,7 @@ impl GameLoop {
             for g in ghosts.iter_mut() {
                 if g.own {
                     g.posture = self.world.fleets.get(&g.id).map(|f| f.posture);
+                    g.transit = self.world.fleets.get(&g.id).map(|f| f.transit);
                     // §TCA: owner-only blockade policy — does this fleet engage
                     // Authority freight arriving at the system it strangles?
                     // §TCA: the engage-freight choice is only MEANINGFUL for a
@@ -3045,6 +3006,25 @@ fn system_infos(world: &sim::World) -> Vec<SystemInfo> {
         .collect()
 }
 
+fn nebula_infos(world: &sim::World) -> Vec<NebulaInfo> {
+    world
+        .nebulas
+        .iter()
+        .map(|region| NebulaInfo {
+            id: region.id,
+            kind: region.kind,
+            name: region.name.clone(),
+            center: region.center,
+            radius_x: region.radius_x,
+            radius_y: region.radius_y,
+            rotation: region.rotation,
+            signature_mult: region.kind.signature_mult(),
+            sensor_mult: region.kind.sensor_mult(),
+            jump_range_mult: region.kind.jump_range_mult(),
+        })
+        .collect()
+}
+
 /// recipes and sent once in the Welcome galaxy. Whole-unit costs for the UI.
 fn build_options() -> Vec<BuildOptionView> {
     use sim::{BuildKind, ShipKind, StructureKind};
@@ -3403,25 +3383,28 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_chevrons_cover_unqueued_fleet_and_market_hub_orders() {
+    fn dispatch_chevrons_cover_only_unqueued_market_hub_orders() {
         let fleet = sim::EntityId(71);
         let other = sim::EntityId(72);
-        assert_eq!(
+        assert!(
             dispatch_chevron_targets(&ClientMsg::SetFleetPosture {
                 fleet_id: fleet,
                 posture: sim::EngagementPosture::Defensive,
-            }),
-            vec![DispatchChevronTarget::Fleet(fleet)],
+            })
+            .is_empty(),
+            "fleet settings use the sim's delayed order lifecycle",
         );
-        assert_eq!(
+        assert!(
             dispatch_chevron_targets(&ClientMsg::MergeFleets {
                 into: fleet,
                 from: other,
-            }),
-            vec![
-                DispatchChevronTarget::Fleet(fleet),
-                DispatchChevronTarget::Fleet(other),
-            ],
+            })
+            .is_empty(),
+            "fleet reorganization uses the sim's delayed order lifecycle",
+        );
+        assert!(
+            dispatch_chevron_targets(&ClientMsg::HubUnload { fleet_id: fleet }).is_empty(),
+            "unloading uses the sim's delayed order lifecycle",
         );
         assert_eq!(
             dispatch_chevron_targets(&ClientMsg::MarketBuy {

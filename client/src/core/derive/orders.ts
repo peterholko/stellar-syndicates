@@ -116,7 +116,7 @@ export function intentSummary(intent: PendingIntent): string {
     case "raid": summary = `RAID ${target} — intercept and steal cargo · signal ~${signal}`; break;
     case "attack": summary = `ATTACK ${target} — full battle, destroys it · signal ~${signal}`; break;
     case "guard": summary = `GUARD ${target} — shadow and defend · signal ~${signal}`; break;
-    case "blockade": summary = `BLOCKADE ${target} — strangle its logistics · signal ~${signal}`; break;
+    case "blockade": summary = `Blockade ${target} — disrupt its logistics · signal ~${signal}`; break;
     case "demolish": summary = `DEMOLISH ${target} — hold station until it falls · signal ~${signal}`; break;
     case "survey": summary = `SURVEY ${target} — active sensing, ~${SURVEY_SECS_UI}s on-site · signal ~${signal}`; break;
   }
@@ -184,6 +184,25 @@ export function orderObject(p: PendingOrderView): string {
     case "guard": return `Guard → ${target ? `your ${shipKindLabel(target.kind)} fleet` : "friendly fleet"}`;
     case "recall": return "Recall → home";
     case "withdraw": return "Withdraw → home";
+    case "load": return "Load cargo at dock";
+    case "unload": return "Unload cargo at dock";
+    case "haul": return p.target_id ? `Haul → ${systemName(p.target_id)}` : "Haul → Market Hub";
+    case "configure": {
+      const configuration = p.configuration;
+      if (configuration?.kind === "transit") {
+        return `Transit → ${configuration.mode === "full" ? "Full speed" : "Stealth"}`;
+      }
+      if (configuration?.kind === "posture") {
+        return `Posture → ${label(configuration.posture)}`;
+      }
+      if (configuration?.kind === "engage_freight") {
+        return `Authority freight → ${configuration.on ? "Engage" : "Ignore"}`;
+      }
+      return "Update fleet configuration";
+    }
+    case "refit": return "Refit formation";
+    case "reorganize": return p.target_id ? "Merge formations" : "Split formation";
+    case "assign": return "Assign fleet duty";
   }
 }
 

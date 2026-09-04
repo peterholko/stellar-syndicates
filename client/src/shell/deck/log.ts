@@ -1,11 +1,12 @@
 import { traitLine } from "../../core/derive/captains";
-import { agoLabel, arrivalLocal, fmtDur } from "../../core/derive/format";
+import { agoLabel, arrivalLocal, fmtDur, informationDelay, rejectText } from "../../core/derive/format";
 import { commandDelayTo, freshSurveyReports, locName, REPORT_RECENT_S, systemName } from "../../core/derive/geo";
 import { nextDecisionLabel, siegeProgress } from "../../core/derive/orders";
 import { nodeBonusDesc } from "../../core/derive/research";
 import type { CoreEvent } from "../../core/events";
 import { icon, label, type IconKey } from "../../icons";
-import { countClassLabel, type TimelineEntry, type Vec2 } from "../../protocol";
+import { countClassLabel, fleetCargoUnits, type FoundingStage, type TimelineEntry, type Vec2 } from "../../protocol";
+import { shipKindLabel } from "../../core/derive/fleet";
 import { liveSimTime } from "../../state";
 import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
@@ -15,16 +16,34 @@ import type { DeckRoute } from "./router";
 // The priority vocabulary is ported wholesale from the legacy decision inbox.
 // It is presentation over the served View only: no item consults sim truth.
 export const INBOX_W = {
+  founding: 120,
   siege: 100, battle: 92, hostile: 85, captureLost: 82, blockade: 80,
-  garrisonUnfed: 70, nodeUnfed: 68, enclave: 58, storageFull: 55, unfedHabitat: 50, idleStockpile: 48,
+  garrisonUnfed: 70, nodeUnfed: 68, enclave: 58, storageFull: 55, unfedHabitat: 50,
+  strandedFleet: 78, unsuppliedFleet: 72, lowFuel: 66, overdueResponse: 64, loadedFleet: 52,
   brokenOrder: 46, surveyReport: 45, nodeAwakening: 44, dryRefinery: 42, nodeOpportunity: 41, myGarrisonUnfed: 40,
+  operationOffer: 39, syndicateInvite: 38, idleFleet: 32,
   surveyOpportunity: 36, emptyQueue: 34,
-  captureWon: 28, battleReport: 26, noAutomation: 20,
+  idleStockpile: 30, captureWon: 28, battleReport: 26, noAutomation: 20,
 };
 
 const HOSTILE_CONCERN_MULT = 1.6;
 const IDLE_UNITS = 30;
 const MAX_HOSTILE_ITEMS = 4;
+const FOUNDING_DIRECTIVE: Record<FoundingStage, string> = {
+  build_shipyard: "Build Shipyard I",
+  build_mine: "Build and staff Mining Complex I",
+  build_convoy: "Build your first Freighter",
+  export_production: "Dispatch the opening export",
+  defeat_privateer: "Guard the Freighter",
+  complete_export: "Complete the guarded export",
+  build_academy: "Build and staff Academy I",
+  first_research: "Choose your first programme",
+  build_scout: "Build a Scout",
+  survey_candidates: "Survey both expansion prospects",
+  build_colony: "Build your first Colony Ship",
+  establish_colony: "Establish your second holding",
+  complete: "Founding complete",
+};
 
 export type DeckInboxTone = "negative" | "warn" | "info" | "neutral";
 
@@ -53,6 +72,7 @@ interface DeckLogHooks {
   go(route: DeckRoute): void;
   focusSystem(id: string): void;
   focusFleet(id: string): void;
+  runFounding(): void;
 }
 
 interface ArrivedReport {
@@ -174,8 +194,31 @@ export class DeckLogRoutes {
     });
     const focusSystem = (id: string): DeckInboxAction => ({ label: "Focus", primary: true, run: () => this.hooks.focusSystem(id) });
     const focusFleet = (id: string, labelText = "Inspect"): DeckInboxAction => ({ label: labelText, primary: true, run: () => this.hooks.focusFleet(id) });
-    const openLogistics = (): void => this.hooks.go({ name: "logistics" });
+    const openLogistics = (source?: string, destination?: string, commodity?: string): void => this.hooks.go({
+      name: "logistics",
+      query: { ...(source ? { source } : {}), ...(destination ? { destination } : {}), ...(commodity ? { commodity } : {}) },
+    });
+    const openProduction = (id: string): void => {
+      const system = galaxy.systems.find((entry) => entry.id === id);
+      this.hooks.go({ name: "system", params: { id, systemLabel: system?.name ?? "System" }, query: { tab: "production" } });
+    };
+    const openBuild = (id: string): void => {
+      const system = galaxy.systems.find((entry) => entry.id === id);
+      this.hooks.go({ name: "build", params: { systemId: id, systemLabel: system?.name ?? "System" } });
+    };
     const sysPos = (id: string): Vec2 | null => galaxy.systems.find((system) => system.id === id)?.pos ?? null;
+
+    if (state.founding && state.founding.stage !== "complete") {
+      push({
+        key: `founding:${state.founding.stage}`,
+        weight: INBOX_W.founding,
+        tone: "info",
+        icon: "build",
+        headline: `Founding directive · ${FOUNDING_DIRECTIVE[state.founding.stage]}`,
+        stakes: "This is the corporation's current guided objective. The same action appears in the Founding guide.",
+        actions: [{ label: "Continue", primary: true, run: () => this.hooks.runFounding() }],
+      });
+    }
 
     for (const system of owned) {
       if (!system.blockade) continue;
@@ -183,13 +226,13 @@ export class DeckLogRoutes {
       if (siege) {
         const key = `siege:${system.id}`;
         push({ key, weight: INBOX_W.siege, tone: "negative", icon: "siege",
-          headline: `${systemName(system.id)} — SIEGE in progress`,
-          stakes: siege.ripe ? "CRITICAL — rival marines landing now TAKE it." : `Falls in ${fmtDur(siege.left)} unless you break the blockade or rebuild a Defense Platform.`,
+          headline: `${systemName(system.id)} — siege in progress`,
+          stakes: siege.ripe ? "Rival marines can now take the system." : `Falls in ${fmtDur(siege.left)} unless you break the blockade or rebuild a Defense Platform.`,
           age: system.blockade.since, actions: [focusSystem(system.id), dismiss(key)] });
       } else {
         const key = `blockade:${system.id}`;
         push({ key, weight: INBOX_W.blockade, tone: "negative", icon: "blockade",
-          headline: `${systemName(system.id)} — under BLOCKADE`,
+          headline: `${systemName(system.id)} — under blockade`,
           stakes: "Freighters held in & out; production idles. Break it with relief, or build a Defense Platform tier.",
           age: system.blockade.since, actions: [focusSystem(system.id), dismiss(key)] });
       }
@@ -203,7 +246,7 @@ export class DeckLogRoutes {
       if (ownFleet) actions.push({ label: "Withdraw", danger: true, deliveryPos: battle.pos, run: () => this.ctx.send({ type: "Withdraw", fleet_id: ownFleet.id }) });
       actions.push(dismiss(key));
       push({ key, weight: INBOX_W.battle, tone: "negative", icon: "battle",
-        headline: `Your fleet is ENGAGED near ${locName(battle.pos)}`,
+        headline: `Your fleet is engaged near ${locName(battle.pos)}`,
         stakes: "A battle is underway — reinforce, or Withdraw to break off (light-delayed).",
         age: battle.started_at, actions });
     }
@@ -223,10 +266,10 @@ export class DeckLogRoutes {
       const speed = Math.hypot(fleet.vel.x, fleet.vel.y);
       const closing = speed > 1 && fleet.vel.x * (near.pos.x - fleet.pos.x) + fleet.vel.y * (near.pos.y - fleet.pos.y) > 0;
       const size = fleet.composition ? `${fleet.composition.reduce((sum, stack) => sum + stack.count, 0)}-ship` : `~${countClassLabel(fleet.count_class)}`;
-      const foe = fleet.pirate ? "PIRATE" : "Hostile";
+      const foe = fleet.pirate ? "Pirate" : "Hostile";
       const key = `hostile:${fleet.id}:${near.id}`;
       hostiles.push({ key, weight: INBOX_W.hostile + (fleet.pirate ? 3 : 0), tone: "warn", icon: "warning",
-        headline: `${foe} ${size} raider near ${systemName(near.id)}`,
+        headline: `${foe} ${size} Interceptor near ${systemName(near.id)}`,
         stakes: closing ? `Closing on ${systemName(near.id)} — ~${fmtDur(near.distance / speed)} out at its shown speed (a delayed sighting).` : `${Math.round(near.distance)} su out, holding — watch it (delayed sighting).`,
         age: fleet.age,
         confidence: fleet.composition ? undefined : "size estimate only — the contact is outside your sensor coverage",
@@ -240,7 +283,7 @@ export class DeckLogRoutes {
       const key = `enclave:${system.id}`;
       push({ key, weight: INBOX_W.enclave, tone: "warn", icon: "raider",
         headline: `Pirate enclave at ${systemName(system.id)} — tier ${tier}`,
-        stakes: "It raids careless trade nearby and grows if ignored. Station a raider fleet on it to destroy the base (yields its plunder).",
+        stakes: "It raids careless trade nearby and grows if ignored. Station an Interceptor fleet on it to destroy the base and seize its plunder.",
         age: system.intel?.observed_at, actions: [focusSystem(system.id), dismiss(key)] });
     }
 
@@ -249,7 +292,7 @@ export class DeckLogRoutes {
       const key = `capture:${report.id}`;
       push({ key, weight: report.captor ? INBOX_W.captureWon : INBOX_W.captureLost,
         tone: report.captor ? "info" : "negative", icon: report.captor ? "captured" : "lost",
-        headline: report.captor ? `You CAPTURED ${locName(report.pos)}` : `You LOST ${locName(report.pos)}`,
+        headline: report.captor ? `You captured ${locName(report.pos)}` : `You lost ${locName(report.pos)}`,
         stakes: report.captor ? "Territory taken — plunder seized." : "Rival marines landed at full siege and took the system.",
         age: report.learned_at,
         actions: [{ label: "Open report", primary: true, run: () => this.hooks.go({ name: "battle", params: { id: String(report.id), report: "capture", label: "Capture report" } }) }, dismiss(key)] });
@@ -259,62 +302,138 @@ export class DeckLogRoutes {
       if ((system.ally_garrison_ships ?? 0) > 0 && system.ally_garrison_fed === false) {
         const key = `garrison:${system.id}`;
         push({ key, weight: INBOX_W.garrisonUnfed, tone: "warn", icon: "garrison",
-          headline: `Ally garrison at ${systemName(system.id)} is UNFED`,
+          headline: `Ally garrison at ${systemName(system.id)} is unfed`,
           stakes: `${system.ally_garrison_ships} allied ship(s) here — their defense is SUSPENDED until you supply Provisions.`,
-          actions: [{ label: "Auto-supply", icon: "doctrine", primary: true, run: openLogistics }, focusSystem(system.id), dismiss(key)] });
+          actions: [{ label: "Set supply route", icon: "doctrine", primary: true, run: () => openLogistics(undefined, system.id, "provisions") }, focusSystem(system.id), dismiss(key)] });
       }
     }
     for (const fleet of state.ghosts) {
       if (!fleet.own || !fleet.garrison_host || fleet.garrison_fed !== false) continue;
       const key = `mygarr:${fleet.id}`;
       push({ key, weight: INBOX_W.myGarrisonUnfed, tone: "warn", icon: "garrison",
-        headline: `Your garrison at ${systemName(fleet.garrison_host)} is UNFED`,
+        headline: `Your garrison at ${systemName(fleet.garrison_host)} is unfed`,
         stakes: "The host is out of Provisions — this garrison isn't defending. Recall it, or wait for the host to resupply.",
         actions: [focusFleet(fleet.id), dismiss(key)] });
     }
 
+    const engagedFleetIds = new Set(state.battles.flatMap((battle) => battle.participants));
+    for (const fleet of state.ghosts) {
+      if (!fleet.own) continue;
+      const name = `${shipKindLabel(fleet.kind)} fleet`;
+      const fleetAction = focusFleet(fleet.id, "Open fleet");
+      if (fleet.stalled) {
+        const key = `stranded:${fleet.id}`;
+        push({ key, weight: INBOX_W.strandedFleet, tone: "negative", icon: "fuel",
+          headline: `${name} is out of fuel`,
+          stakes: "The fleet is holding. Refuel it at a berth or request Authority Astral Assistance from its fleet panel.",
+          age: fleet.age, actions: [fleetAction, dismiss(key)] });
+      } else if (fleet.supplied === false) {
+        const key = `unsupplied:${fleet.id}`;
+        push({ key, weight: INBOX_W.unsuppliedFleet, tone: "warn", icon: "provisions",
+          headline: `${name} is out of Provisions`,
+          stakes: "It keeps its current course and weapons, but cannot accept a new movement or offensive order until supplied.",
+          age: fleet.age, actions: [fleetAction, dismiss(key)] });
+      } else if (fleet.fuel != null && fleet.fuel_capacity && fleet.fuel / fleet.fuel_capacity < 0.2) {
+        const key = `fuel:${fleet.id}`;
+        push({ key, weight: INBOX_W.lowFuel, tone: "warn", icon: "fuel",
+          headline: `${name} has low fuel`,
+          stakes: `${Math.round(fleet.fuel)} of ${Math.round(fleet.fuel_capacity)} Fuel remains in the served report.`,
+          age: fleet.age, actions: [fleetAction, dismiss(key)] });
+      }
+
+      const overdue = (state.pendingOrders.get(fleet.id) ?? []).filter((order) => !order.lost && now > order.response_at);
+      if (overdue.length) {
+        const key = `overdue:${fleet.id}:${overdue[0].id}`;
+        push({ key, weight: INBOX_W.overdueResponse, tone: "warn", icon: "echo",
+          headline: `${name} response is overdue`,
+          stakes: `${overdue.length} order response${overdue.length === 1 ? " is" : "s are"} still unconfirmed. The estimate expired; only arrived fleet light can confirm delivery.`,
+          actions: [fleetAction, dismiss(key)] });
+      }
+
+      const cargo = fleetCargoUnits(fleet);
+      if (fleet.docked && cargo > 0) {
+        const key = `loaded:${fleet.id}:${fleet.docked}`;
+        push({ key, weight: INBOX_W.loadedFleet, tone: "info", icon: "cargo",
+          headline: `${name} is docked with ${cargo} cargo`,
+          stakes: fleet.docked === "hub" ? "Unload or sell its manifest at the Market Hub." : "Unload it, send it to market, or assign another haul from the fleet panel.",
+          age: fleet.age, actions: [fleetAction, dismiss(key)] });
+      }
+
+      const parked = !fleet.docked
+        && !fleet.guard_target
+        && !engagedFleetIds.has(fleet.id)
+        && !state.orders[fleet.id]
+        && !(fleet.path?.length)
+        && !(state.pendingOrders.get(fleet.id)?.length)
+        && Math.hypot(fleet.vel.x, fleet.vel.y) < 0.5;
+      if (parked) {
+        const key = `idlefleet:${fleet.id}`;
+        push({ key, weight: INBOX_W.idleFleet, tone: "neutral", icon: "fleet",
+          headline: `${name} is holding without an assignment`,
+          stakes: "It is undocked and has no served course, guard target, or command in flight.",
+          age: fleet.age, actions: [fleetAction, dismiss(key)] });
+      }
+    }
+
+    const offeredOperations = state.operations.filter((operation) => operation.state === "offered" || (operation.state === "active" && !operation.joined));
+    if (offeredOperations.length) {
+      const key = `operations:${offeredOperations.map((operation) => operation.id).join(",")}`;
+      push({ key, weight: INBOX_W.operationOffer, tone: "info", icon: "manifest",
+        headline: `${offeredOperations.length} operation${offeredOperations.length === 1 ? "" : "s"} available`,
+        stakes: "Review arrived contracts and strategic opportunities before they expire.",
+        actions: [{ label: "Open Operations", primary: true, run: () => this.hooks.go({ name: "operations" }) }, dismiss(key)] });
+    }
+    if (state.syndicateInvites.length) {
+      const key = `invites:${state.syndicateInvites.map((invite) => invite.id).join(",")}`;
+      push({ key, weight: INBOX_W.syndicateInvite, tone: "info", icon: "syndicate",
+        headline: `${state.syndicateInvites.length} syndicate invitation${state.syndicateInvites.length === 1 ? "" : "s"}`,
+        stakes: "An invitation is waiting for a decision.",
+        actions: [{ label: "Review invitation", primary: true, run: () => this.hooks.go({ name: "syndicate" }) }, dismiss(key)] });
+    }
+
     for (const system of owned) {
-      if (system.storage_cap > 0 && system.storage_used >= system.storage_cap) {
+      if (system.storage_cap > 0 && system.storage_used >= system.storage_cap * 0.85) {
         const key = `storage:${system.id}`;
+        const full = system.storage_used >= system.storage_cap;
         push({ key, weight: INBOX_W.storageFull, tone: "warn", icon: "storage",
-          headline: `${systemName(system.id)} — storage FULL (${system.storage_used}/${system.storage_cap})`,
-          stakes: "Production idles at the cap. Ship goods out, automate it, or build an Orbital Warehouse (nothing is lost).",
+          headline: `${systemName(system.id)} — storage ${full ? "full" : "nearly full"} (${system.storage_used}/${system.storage_cap})`,
+          stakes: full ? "Production idles at the cap. Ship goods out, automate it, or build an Orbital Warehouse (nothing is lost)." : "Capacity is running low. Plan a shipment or expand storage before production stops.",
           actions: [
-            { label: "Book pickup", icon: "cargo", run: () => this.ctx.send({ type: "ShipProduction", system_id: system.id }) },
-            { label: "Auto-supply", icon: "doctrine", run: openLogistics }, focusSystem(system.id), dismiss(key),
+            { label: "Open production", icon: "cargo", primary: true, run: () => openProduction(system.id) },
+            { label: "Automate export", icon: "doctrine", run: () => openLogistics(system.id, "hub") }, focusSystem(system.id), dismiss(key),
           ] });
       }
       if (system.population > 0 && !system.habitat_fed) {
         const key = `habitat:${system.id}`;
         push({ key, weight: INBOX_W.unfedHabitat, tone: "warn", icon: "habitat",
-          headline: `${systemName(system.id)} — food ${label(system.food_state ?? "rationing").toUpperCase()}`,
+          headline: `${systemName(system.id)} — food ${label(system.food_state ?? "rationing")}`,
           stakes: "Workforce slowed, growth paused. Ship Provisions here or set a standing order (nothing is lost, nobody dies).",
-          actions: [{ label: "Auto-supply", icon: "doctrine", primary: true, run: openLogistics }, focusSystem(system.id), dismiss(key)] });
+          actions: [{ label: "Set supply route", icon: "doctrine", primary: true, run: () => openLogistics(undefined, system.id, "provisions") }, focusSystem(system.id), dismiss(key)] });
       }
       if (system.node?.awakened && !system.node.fed) {
         const key = `node:${system.id}`;
         push({ key, weight: INBOX_W.nodeUnfed, tone: "warn", icon: "unfed",
-          headline: `${systemName(system.id)} — ${system.node.title} node UNFED`,
+          headline: `${systemName(system.id)} — ${system.node.title} node unfed`,
           stakes: `Its bonus is SUSPENDED. ${nodeBonusDesc(system.node.bonus)} Ship its upkeep here or automate it (nothing is lost).`,
-          actions: [{ label: "Auto-supply", icon: "doctrine", primary: true, run: openLogistics }, focusSystem(system.id), dismiss(key)] });
+          actions: [{ label: "Set supply route", icon: "doctrine", primary: true, run: () => openLogistics(undefined, system.id, "provisions") }, focusSystem(system.id), dismiss(key)] });
       }
       const volatiles = (system.stockpile ?? []).find((stack) => stack.commodity === "volatiles")?.units ?? 0;
       if (system.refinery_tier >= 1 && volatiles === 0) {
         const key = `refinery:${system.id}`;
         push({ key, weight: INBOX_W.dryRefinery, tone: "info", icon: "refinery",
           headline: `${systemName(system.id)} — Refinery idle`, stakes: "No Volatiles — Fuel production stopped. Haul some in or automate it.",
-          actions: [{ label: "Auto-supply", icon: "doctrine", primary: true, run: openLogistics }, focusSystem(system.id), dismiss(key)] });
+          actions: [{ label: "Set supply route", icon: "doctrine", primary: true, run: () => openLogistics(undefined, system.id, "volatiles") }, focusSystem(system.id), dismiss(key)] });
       }
       const total = (system.stockpile ?? []).reduce((sum, stack) => sum + stack.units, 0);
       const covered = active.some((order) => order.source.kind === "system" && order.source.id === system.id);
       if (total >= IDLE_UNITS && !covered && !(system.storage_cap > 0 && system.storage_used >= system.storage_cap)) {
         const key = `idle:${system.id}`;
         push({ key, weight: INBOX_W.idleStockpile, tone: "info", icon: "market",
-          headline: `${systemName(system.id)} — ${total} units idle`,
+          headline: `${systemName(system.id)} — ${total} stored units without a route`,
           stakes: "No standing order ships from here — automate it so it works while you're away.",
           actions: [
-            { label: "Auto-supply", icon: "doctrine", primary: true, run: openLogistics },
-            { label: "Book pickup", icon: "cargo", run: () => this.ctx.send({ type: "ShipProduction", system_id: system.id }) }, dismiss(key),
+            { label: "Automate export", icon: "doctrine", primary: true, run: () => openLogistics(system.id, "hub") },
+            { label: "Open production", icon: "cargo", run: () => openProduction(system.id) }, dismiss(key),
           ] });
       }
       if (system.slots_total > 0 && system.slots_used === 0 && system.builds.length === 0) {
@@ -322,7 +441,7 @@ export class DeckLogRoutes {
         push({ key, weight: INBOX_W.emptyQueue, tone: "info", icon: "build",
           headline: `${systemName(system.id)} — nothing built yet`,
           stakes: `${system.slots_total} development slot(s) free and idle — develop it (Mining Complex, Orbital Warehouse, Sensor…).`,
-          actions: [focusSystem(system.id), dismiss(key)] });
+          actions: [{ label: "Open Build", primary: true, run: () => openBuild(system.id) }, dismiss(key)] });
       }
     }
 
@@ -340,7 +459,7 @@ export class DeckLogRoutes {
       if (!system.node!.awakened || system.owner) continue;
       const key = `nodeopen:${system.id}`;
       push({ key, weight: INBOX_W.nodeOpportunity, tone: "info", icon: "claim",
-        headline: `${systemName(system.id)} — ${system.node!.title} node UNCLAIMED`,
+        headline: `${systemName(system.id)} — ${system.node!.title} node unclaimed`,
         stakes: `A capturable tactical prize. ${nodeBonusDesc(system.node!.bonus)} Send a colony ship — first arrival claims it.`,
         actions: [focusSystem(system.id), dismiss(key)] });
     }
@@ -351,7 +470,7 @@ export class DeckLogRoutes {
       const info = galaxy.systems.find((system) => system.id === systemId);
       if (!dynamic?.deposits || !info) continue;
       const summary = dynamic.deposits.map((deposit) => `${label(deposit.resource)} ~${deposit.richness.toFixed(1)}/s`).join(" · ");
-      const roles = (dynamic.opportunities ?? []).slice(0, 3).map((opportunity) => `${opportunity.tier === "jackpot" ? "JACKPOT " : ""}${opportunity.title}${opportunity.body_name ? ` — ${opportunity.body_name}` : ""} ×${opportunity.score.toFixed(2)}`);
+      const roles = (dynamic.opportunities ?? []).slice(0, 3).map((opportunity) => `${opportunity.tier === "jackpot" ? "Jackpot · " : ""}${opportunity.title}${opportunity.body_name ? ` — ${opportunity.body_name}` : ""} ×${opportunity.score.toFixed(2)}`);
       const garden = [...dynamic.bodies].sort((a, b) => b.habitat_capacity_mult - a.habitat_capacity_mult)[0];
       const minerals = [...dynamic.bodies].filter((body) => body.geology !== null).sort((a, b) => (b.mineral_extraction_mult ?? 1) - (a.mineral_extraction_mult ?? 1))[0];
       const discovered = roles.length ? roles.join(" · ") : [
@@ -360,7 +479,7 @@ export class DeckLogRoutes {
         dynamic.trait ? traitLine(dynamic.trait).title : "",
       ].filter(Boolean).join(" · ");
       push({ key, weight: INBOX_W.surveyReport, tone: "info", icon: "intel",
-        headline: `Survey report: ${systemName(systemId)} (${info.band.toUpperCase()} band)`, age: at,
+        headline: `Survey report: ${systemName(systemId)} (${label(info.band)} band)`, age: at,
         stakes: `${summary || "barren"}.${discovered ? ` ${discovered}.` : ""}${dynamic.owner === null ? " Unclaimed: send a colony ship if it's worth holding." : ""}`,
         actions: [focusSystem(systemId), dismiss(key)] });
     }
@@ -388,7 +507,7 @@ export class DeckLogRoutes {
       if (!refs.length) continue;
       const key = `order:${order.id}`;
       push({ key, weight: INBOX_W.brokenOrder, tone: "warn", icon: "doctrine",
-        headline: `Standing order #${order.id} targets a system you don't hold`, stakes: `Points at ${refs.join(" & ")} — update or clear it.`,
+        headline: `Logistics rule ${order.id} targets a system you don't hold`, stakes: `Points at ${refs.join(" & ")} — update or clear it.`,
         actions: [{ label: "Open logistics", primary: true, run: openLogistics }, dismiss(key)] });
     }
 
@@ -444,11 +563,17 @@ export class DeckLogRoutes {
   }
 
   private reportFor(event: CoreEvent): Omit<ArrivedReport, "key" | "at"> | null {
-    if (event.kind === "OrderConfirmed") return { tone: "good", text: `Order confirmed — ${human(event.orderKind)} response light arrived` };
-    if (event.kind === "ReportArrived") return { tone: event.report.outcome === "target_destroyed" && event.report.you === "attacker" ? "good" : "warn", text: `Combat report — ${human(event.report.outcome)} · delayed ${Math.round(event.report.age)}s` };
+    if (event.kind === "OrderConfirmed") return { tone: "good", text: `Order received — ${human(event.orderKind)} compliance light arrived` };
+    if (event.kind === "FleetDocked") return { tone: "good", text: `Fleet docked at ${event.berth === "hub" ? "the Market Hub" : systemName(event.berth)}` };
+    if (event.kind === "FleetArrived") return { tone: "good", text: "Fleet arrived at its commanded destination" };
+    if (event.kind === "BuildCompleted") return { tone: "good", text: `${human(event.buildKey)} completed at ${systemName(event.systemId)}` };
+    if (event.kind === "StructureStaffed") return { tone: "good", text: `${event.title} staffed at ${systemName(event.systemId)}` };
+    if (event.kind === "ResearchCompleted") return { tone: "good", text: `Research complete — ${event.programmeName}` };
+    if (event.kind === "CommandRejected") return { tone: "bad", text: event.message };
+    if (event.kind === "ReportArrived") return { tone: event.report.outcome === "target_destroyed" && event.report.you === "attacker" ? "good" : "warn", text: `Combat report — ${human(event.report.outcome)} · ${informationDelay(event.report.age)}` };
     if (event.kind === "BattleConcluded") return { tone: event.outcome === "target_destroyed" ? "good" : "warn", text: `Battle concluded — ${human(event.outcome)}` };
     if (event.kind === "EstimateReady") return { tone: "info", text: event.estimate.win_pct == null ? "Engagement projection ready" : `Engagement projection — ${Math.round(event.estimate.win_pct)}% win chance` };
-    if (event.kind === "TradeSettled") return { tone: event.trade.event === "Rejected" ? "bad" : "info", text: `${human(event.trade.event)} — ${"units" in event.trade ? event.trade.units : ""} ${"commodity" in event.trade ? label(event.trade.commodity) : ""}`.trim() };
+    if (event.kind === "TradeSettled") return { tone: event.trade.event === "Rejected" ? "bad" : "info", text: event.trade.event === "Rejected" ? rejectText(event.trade) : `${human(event.trade.event)} — ${"units" in event.trade ? event.trade.units : ""} ${"commodity" in event.trade ? label(event.trade.commodity) : ""}`.trim() };
     if (event.kind === "ServerError") return { tone: "bad", text: `Command refused — ${event.message}` };
     return null;
   }

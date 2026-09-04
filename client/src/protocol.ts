@@ -372,6 +372,9 @@ export interface BuildOption {
 export interface GalaxyInfo {
   hub: Vec2;
   radius: number;
+  /// Public deep-space terrain. The rotated ellipse is both the visual footprint
+  /// and the authoritative mechanics boundary.
+  nebulas: NebulaInfo[];
   c: number; // speed of light, sim units / s
   jump_range: number; // maximum point-to-point jump distance (su)
   jump_spool_s: number; // uninterrupted spool before instantaneous relocation
@@ -415,6 +418,26 @@ export interface GalaxyInfo {
   node_region_radius?: number;
   systems: SystemInfo[];
   build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
+}
+
+export type NebulaKind =
+  | "molecular_cloud"
+  | "ion_nebula"
+  | "dust_cloud"
+  | "supernova_remnant"
+  | "precursor_cloud";
+
+export interface NebulaInfo {
+  id: number;
+  kind: NebulaKind;
+  name: string;
+  center: Vec2;
+  radius_x: number;
+  radius_y: number;
+  rotation: number;
+  signature_mult: number;
+  sensor_mult: number;
+  jump_range_mult: number;
 }
 
 // §economy: the 12-commodity industrial web (5 raw · 5 processed · 2 advanced).
@@ -839,9 +862,9 @@ export interface GhostView {
   /// loitering somewhere it does not control, which is what keeps a blockading
   /// or invading fleet on the galaxy map).
   ///
-  /// The galaxy map replaces overlapping berthed hull sprites with compact,
-  /// clickable berth pips around the dock. The fleet remains selectable from
-  /// both the map and the system/Hub roster without pretending it is under way.
+  /// The galaxy map suppresses ordinary berthed hulls entirely. The fleet
+  /// remains selectable from the system/Hub and corporation-wide Fleets panels
+  /// without pretending it is under way; battles and blockades expose it again.
   docked?: string | null;
   /// §course-change: what the drives were doing when the light left. The regime
   /// is DERIVED from this rather than sent beside it — a cruising drive names
@@ -931,6 +954,8 @@ export interface GhostView {
   revealed?: boolean;
   /// §TCA: OWNER-ONLY — whether this blockading fleet engages Authority freight.
   engage_freight?: boolean | null;
+  /** Owner-only transit setting carried by this served fleet report. */
+  transit?: TransitMode | null;
 }
 
 // A fleet's transit throttle (§Part 4). `full` = formation speed (loud at flank);
@@ -1324,7 +1349,7 @@ export interface LossRange {
 }
 
 // §order-lifecycle: the flavor of a light-delayed order (mirrors sim OrderKind).
-export type OrderKind = "move" | "hold" | "jump" | "construct" | "demolish" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey" | "guard";
+export type OrderKind = "move" | "hold" | "jump" | "construct" | "demolish" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey" | "guard" | "load" | "unload" | "haul" | "configure" | "refit" | "reorganize" | "assign";
 
 // §battles-take-time: an ongoing battle as this player perceives it, light-gated.
 // ONE battle entity = ONE map icon at `pos`; `participants` are the fleet ids
@@ -1470,6 +1495,11 @@ export interface PendingOrderView {
   dest?: Vec2;
   target_id?: EntityId;
   emplacement?: "deep_space_sensor";
+  /** Exact configuration requested by this owner-issued signal. */
+  configuration?:
+    | { kind: "transit"; mode: TransitMode }
+    | { kind: "posture"; posture: EngagementPosture }
+    | { kind: "engage_freight"; on: boolean };
   /// Owner-only intended route from the served sighting to a fixed destination.
   /// Positions only: this line never claims the fleet advanced along it.
   intent_path?: Vec2[];

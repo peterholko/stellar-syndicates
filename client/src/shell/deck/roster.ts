@@ -1,12 +1,13 @@
 import { captainTitle, captainXpFloor, fleetCommandLoad, officerFleetName } from "../../core/derive/captains";
 import { fleetRosterDockName, shipKindLabel } from "../../core/derive/fleet";
-import { fmt, fmtEta } from "../../core/derive/format";
+import { fmt, fmtEta, informationDelay } from "../../core/derive/format";
 import { foundingHomeSystemId, systemName } from "../../core/derive/geo";
 import { researchQueueIds, sendResearchQueue } from "../../core/derive/research";
 import { icon, label } from "../../icons";
 import {
   fleetCargoUnits,
   fleetExactCount,
+  countClassLabel,
   type AcademyRow,
   type CaptainAttribute,
   type CaptainRosterView,
@@ -94,14 +95,23 @@ export class DeckRosterRoutes {
     } else if (action === "officer-assign") {
       const captain = Number(button.dataset.captain);
       const select = this.root.querySelector<HTMLSelectElement>(`[data-officer-fleet="${captain}"]`);
-      if (Number.isFinite(captain) && select?.value) this.ctx.send({ type: "AssignCaptain", captain_id: captain, fleet_id: select.value });
+      if (Number.isFinite(captain) && select?.value) {
+        this.ctx.send({ type: "AssignCaptain", captain_id: captain, fleet_id: select.value });
+        this.hooks.notice("<b>Assignment sent</b> · the officer transfers when the fleet receives it.");
+      }
     } else if (action === "officer-reserve") {
       const captain = Number(button.dataset.captain);
-      if (Number.isFinite(captain)) this.ctx.send({ type: "ReserveCaptain", captain_id: captain });
+      if (Number.isFinite(captain)) {
+        this.ctx.send({ type: "ReserveCaptain", captain_id: captain });
+        this.hooks.notice("<b>Reserve order sent</b> · awaiting the fleet's received report.");
+      }
     } else if (action === "officer-train") {
       const captain = Number(button.dataset.captain);
       const attribute = button.dataset.attribute as CaptainAttribute;
-      if (Number.isFinite(captain) && attribute) this.ctx.send({ type: "TrainCaptain", captain_id: captain, attribute });
+      if (Number.isFinite(captain) && attribute) {
+        this.ctx.send({ type: "TrainCaptain", captain_id: captain, attribute });
+        this.hooks.notice(`<b>Training ordered</b> · ${esc(label(attribute))}.`);
+      }
     } else if (action === "officer-fleet") {
       const fleet = this.ctx.state.ghosts.find((entry) => entry.id === button.dataset.fleet && entry.own);
       if (fleet) {
@@ -115,7 +125,10 @@ export class DeckRosterRoutes {
     } else if (action === "research-add") {
       const id = button.dataset.programme;
       const queue = deckResearchQueue();
-      if (id && !queue.includes(id)) this.sendResearchQueue([...queue, id]);
+      if (id && !queue.includes(id)) {
+        this.sendResearchQueue([...queue, id]);
+        this.hooks.notice("<b>Programme queued</b> · awaiting the next served research report.");
+      }
     } else if (action === "research-up" || action === "research-down" || action === "research-remove") {
       const queue = deckResearchQueue();
       const index = Number(button.dataset.index);
@@ -124,6 +137,7 @@ export class DeckRosterRoutes {
         else if (action === "research-up" && index > 0) [queue[index - 1], queue[index]] = [queue[index], queue[index - 1]];
         else if (action === "research-down" && index < queue.length - 1) [queue[index + 1], queue[index]] = [queue[index], queue[index + 1]];
         this.sendResearchQueue(queue);
+        this.hooks.notice("<b>Research queue updated</b> · awaiting the next served report.");
       }
     } else if (action === "research-academy") {
       const home = foundingHomeSystemId();
@@ -159,8 +173,8 @@ export class DeckRosterRoutes {
     const activity = dock ? `Docked · ${dock}` : battle ? "In battle" : guard ? `Guarding ${shipKindLabel(guard.kind)} fleet` : this.rosterActivity(g);
     const grouped = this.ctx.state.selectedShipIds.has(g.id);
     const name = g.kind === "titan" && this.ctx.state.syndicate?.flagship_name?.trim() || `${shipKindLabel(g.kind)} fleet`;
-    const summary = [exact === null ? `estimated ${label(g.count_class)} strength` : `${exact} ship${exact === 1 ? "" : "s"}`, composition, cargo ? `${fmt(cargo)} cargo` : ""].filter(Boolean).join(" · ");
-    return `<article class="deck-roster-row${grouped ? " is-grouped" : ""}"><button type="button" data-deck-act="roster-open" data-fleet="${escAttr(g.id)}"><span>${icon(g.kind === "convoy" ? "convoy" : "fleet", "md")}<span><b>${esc(name)}</b><small>${esc(summary)}</small><em>${esc(activity)}</em></span></span><span><b>${g.age.toFixed(1)}s</b><small>delay</small></span></button><div><button type="button" data-deck-act="roster-group" data-fleet="${escAttr(g.id)}" aria-pressed="${grouped}">${grouped ? "✓ Grouped" : "+ Group"}</button><button type="button" data-deck-act="roster-center" data-fleet="${escAttr(g.id)}">Center</button></div></article>`;
+    const summary = [exact === null ? `estimated ${countClassLabel(g.count_class)} ships` : `${exact} ship${exact === 1 ? "" : "s"}`, composition, cargo ? `${fmt(cargo)} cargo` : ""].filter(Boolean).join(" · ");
+    return `<article class="deck-roster-row${grouped ? " is-grouped" : ""}"><button type="button" data-deck-act="roster-open" data-fleet="${escAttr(g.id)}"><span>${icon(g.kind === "convoy" ? "convoy" : "fleet", "md")}<span><b>${esc(name)}</b><small>${esc(summary)}</small><em>${esc(activity)}</em></span></span><span class="deck-stale-value"><b>${esc(informationDelay(g.age))}</b></span></button><div><button type="button" data-deck-act="roster-group" data-fleet="${escAttr(g.id)}" aria-pressed="${grouped}">${grouped ? "✓ Grouped" : "+ Group"}</button><button type="button" data-deck-act="roster-center" data-fleet="${escAttr(g.id)}">Center</button></div></article>`;
   }
 
   private officersHtml(): string {
@@ -172,7 +186,8 @@ export class DeckRosterRoutes {
     const memorial = this.ctx.state.captains.length - living;
     const used = living + pending;
     const canRecruit = !!home && academyTier > 0 && used < this.ctx.state.captainCapacity;
-    return `<section class="deck-page deck-officers"><header class="deck-page__lead"><span>Personnel · physical command</span><h2>Officer Corps</h2><p>Junior officers cover several light formations; senior ranks concentrate authority over capital fleets.</p></header><div class="deck-stat-grid"><dl class="deck-stat"><dt>Active</dt><dd>${living}</dd></dl><dl class="deck-stat"><dt>Commissioning</dt><dd>${pending}</dd></dl><dl class="deck-stat"><dt>Berths</dt><dd>${used} / ${this.ctx.state.captainCapacity}</dd></dl><dl class="deck-stat"><dt>Memorial</dt><dd>${memorial}</dd></dl></div><section class="deck-section"><header><div><h3>Academy commission</h3><p>60s · 40 Provisions · 20 Electronics · 10 Machinery.</p></div><button type="button" data-deck-act="officer-academy">Open Academy</button></header><button type="button" class="is-primary" data-deck-act="officer-recruit" ${canRecruit ? "" : "disabled"}>Commission Lieutenant · Academy ${academyTier || "required"}</button></section><div class="deck-officer-grid">${this.ctx.state.captains.length ? this.ctx.state.captains.map((entry) => this.officerCard(entry, home)).join("") : empty("No officer reports", "Build and staff an Academy to commission an officer.")}</div><p class="deck-muted">Career XP: combat 60–85 · survey 35 · delivery 20 · jump 12. Loss reports can reveal rescue, injury, capture or death.</p></section>`;
+    const recruitReason = !home ? "Home-system report unavailable." : academyTier === 0 ? "Build an Academy at home first." : used >= this.ctx.state.captainCapacity ? "Officer berths are full." : "";
+    return `<section class="deck-page deck-officers"><header class="deck-page__lead"><span>Personnel · physical command</span><h2>Officer Corps</h2><p>Junior officers cover several light formations; senior ranks concentrate authority over capital fleets.</p></header><div class="deck-stat-grid"><dl class="deck-stat"><dt>Active</dt><dd>${living}</dd></dl><dl class="deck-stat"><dt>Commissioning</dt><dd>${pending}</dd></dl><dl class="deck-stat"><dt>Berths</dt><dd>${used} / ${this.ctx.state.captainCapacity}</dd></dl><dl class="deck-stat"><dt>Memorial</dt><dd>${memorial}</dd></dl></div><section class="deck-section"><header><div><h3>Academy commission</h3><p>60s · 40 Provisions · 20 Electronics · 10 Machinery.</p></div><button type="button" data-deck-act="officer-academy">Open Academy</button></header><button type="button" class="is-primary" data-deck-act="officer-recruit" ${canRecruit ? "" : "disabled"}>Commission Lieutenant</button>${recruitReason ? `<small class="deck-disabled-reason">${esc(recruitReason)}</small>` : ""}</section><div class="deck-officer-grid">${this.ctx.state.captains.length ? this.ctx.state.captains.map((entry) => this.officerCard(entry, home)).join("") : empty("No officer reports", "Build and staff an Academy to commission an officer.")}</div><p class="deck-muted">Career XP: combat 60–85 · survey 35 · delivery 20 · jump 12. Loss reports can reveal rescue, injury, capture or death.</p></section>`;
   }
 
   private officerCard(entry: CaptainRosterView, home: string | null): string {
@@ -194,7 +209,7 @@ export class DeckRosterRoutes {
     const assignment = report && local && options ? `<div class="deck-inline-form"><select data-officer-fleet="${entry.id}">${options}</select><button type="button" data-deck-act="officer-assign" data-captain="${entry.id}">${entry.assigned_fleet ? "Transfer" : "Assign"}</button></div>` : "";
     const train = report && report.unspent > 0 ? `<div class="deck-officer-train">${(["command", "navigation", "fieldcraft", "logistics"] as CaptainAttribute[]).map((attribute) => `<button type="button" data-deck-act="officer-train" data-captain="${entry.id}" data-attribute="${attribute}" ${canTrain ? "" : "disabled"}>+ ${label(attribute)}</button>`).join("")}</div>` : "";
     const actions = `${entry.assigned_fleet && local ? `<button type="button" data-deck-act="officer-reserve" data-captain="${entry.id}">Return to reserve</button>` : ""}${assigned ? `<button type="button" data-deck-act="officer-fleet" data-fleet="${escAttr(assigned.id)}">Open formation</button>` : ""}`;
-    return `<article class="deck-officer-card${killed ? " is-lost" : recovering ? " is-recovering" : ""}">${captainPortrait(entry.portrait, report?.portrait_age ?? "young", `Portrait of ${titled}`, "deck-officer-card__portrait", true)}<div><header><div><span>${esc(status)}</span><h3>${esc(titled)}</h3></div>${report ? `<b>Lv ${report.level}</b>` : ""}</header><p>${report ? `Cmd ${report.attributes.command} · Nav ${report.attributes.navigation} · Field ${report.attributes.fieldcraft} · Log ${report.attributes.logistics}` : "Personnel light has not reached command."}</p><div class="deck-meter"><i style="width:${progress.toFixed(1)}%"></i></div><small>${report ? report.level >= 10 ? "Maximum level" : `${report.xp.toLocaleString()} / ${report.next_level_xp.toLocaleString()} XP · authority ${report.command_capacity}` : "Attributes pending"}</small>${train}${assignment}<div class="deck-officer-actions">${actions}</div></div></article>`;
+    return `<article class="deck-officer-card${killed ? " is-lost" : recovering ? " is-recovering" : ""}">${captainPortrait(entry.portrait, report?.portrait_age ?? "young", `Portrait of ${titled}`, "deck-officer-card__portrait", true)}<div><header><div><span>${esc(status)}</span><h3>${esc(titled)}</h3></div>${report ? `<b>Lv ${report.level}</b>` : ""}</header><p>${report ? `Command ${report.attributes.command} · Navigation ${report.attributes.navigation} · Fieldcraft ${report.attributes.fieldcraft} · Logistics ${report.attributes.logistics}` : "Personnel light has not reached command."}</p><div class="deck-meter"><i style="width:${progress.toFixed(1)}%"></i></div><small>${report ? report.level >= 10 ? "Maximum level" : `${report.xp.toLocaleString()} / ${report.next_level_xp.toLocaleString()} XP · authority ${report.command_capacity}` : "Attributes pending"}</small>${train}${assignment}<div class="deck-officer-actions">${actions}</div></div></article>`;
   }
 
   private researchHtml(): string {
@@ -209,33 +224,39 @@ export class DeckRosterRoutes {
       const firstQueued = activePinned ? index === 1 : index === 0;
       return `<div class="deck-research-queue-row"><span><b>${index + 1}</b><span><strong>${esc(programme?.name ?? id)}</strong><small>${pinned ? "active · pinned" : "queued"}</small></span></span><div><button type="button" data-deck-act="research-up" data-index="${index}" ${pinned || firstQueued ? "disabled" : ""}>↑</button><button type="button" data-deck-act="research-down" data-index="${index}" ${pinned || index === queue.length - 1 ? "disabled" : ""}>↓</button><button type="button" data-deck-act="research-remove" data-index="${index}" ${pinned ? "disabled" : ""}>Remove</button></div></div>`;
     }).join("") : `<div class="deck-empty-inline">Queue empty — choose an available programme below.</div>`;
-    const boards = FIELD_ORDER.map((field) => this.researchBoard(field, research.programmes.filter((entry) => entry.field === field), queue)).join("");
+    const academyReady = research.academies.some((academy) => academy.supplied);
+    const boards = FIELD_ORDER.map((field) => this.researchBoard(field, research.programmes.filter((entry) => entry.field === field), queue, academyReady)).join("");
     return `<section class="deck-page deck-research"><header class="deck-page__lead"><span>Private corporation programme boards</span><h2>Research</h2><p>Programmes apply corporation-wide when their completion report is served.</p></header>${active}<section class="deck-section"><header><div><h3>Programme queue</h3><p>Reorder or remove work; the first row is active.</p></div><b>${queue.length}</b></header><div class="deck-research-queue">${queueHtml}</div></section><div class="deck-research-boards">${boards}</div></section>`;
   }
 
   private activeResearchHtml(active: { name: string; progress: number; cost: number; eta_secs: number | null }, rate: number, stalled: boolean, academies: AcademyRow[]): string {
     const pct = Math.max(0, Math.min(100, active.progress / Math.max(1e-9, active.cost) * 100));
     const eta = active.eta_secs !== null ? fmtEta(active.eta_secs) : stalled ? "stalled" : "awaiting supply";
-    const academy = academies.length ? academies.map((row) => `<div class="deck-academy-row${row.supplied ? "" : " is-warn"}"><span><b>${esc(row.system)}</b><small>${row.supplied ? "supplied" : "unsupplied"}</small></span><em>T${row.tier} · ${row.rate.toFixed(2)}/s</em></div>`).join("") : `<div class="deck-alert"><b>No staffed Academy</b><span>Assign workforce to an Academy to produce research.</span></div>`;
+    const academy = academies.length ? academies.map((row) => `<div class="deck-academy-row${row.supplied ? "" : " is-warn"}"><span><b>${esc(row.system)}</b><small>${row.supplied ? "supplied" : "unsupplied"}</small></span><em>Tier ${ROMAN[row.tier] ?? row.tier} · ${row.rate.toFixed(2)}/s</em></div>`).join("") : `<div class="deck-alert"><b>No staffed Academy</b><span>Build and staff an Academy to produce research.</span></div>`;
     return `<section class="deck-section deck-research-active"><header><div><span>Active programme</span><h3>${esc(active.name)}</h3></div><button type="button" data-deck-act="research-academy">Open Academy</button></header><div class="deck-research-progress"><div><span>${fmt(active.progress)} / ${fmt(active.cost)} research-seconds</span><b>${esc(eta)} · ${rate.toFixed(2)}/s</b></div><div class="deck-meter"><i style="width:${pct.toFixed(1)}%"></i></div></div><div class="deck-academies">${academy}</div></section>`;
   }
 
-  private researchBoard(field: string, programmes: ProgrammeView[], queue: string[]): string {
+  private researchBoard(field: string, programmes: ProgrammeView[], queue: string[], academyReady: boolean): string {
     const schools = [...new Set(programmes.filter((entry) => entry.school).map((entry) => entry.school as string))];
     const group = (school: string | null, tier: number) => {
       const rows = programmes.filter((entry) => (entry.school ?? null) === school && entry.tier === tier);
       if (!rows.length) return "";
       const gate = rows.find((entry) => entry.gate)?.gate;
-      const gateHtml = gate ? `<div class="deck-research-gate"><span>${esc(gate.label)} · ${Math.floor(gate.current)} / ${Math.round(gate.threshold)}</span><div class="deck-meter"><i style="width:${Math.max(0, Math.min(100, gate.current / Math.max(1e-9, gate.threshold) * 100)).toFixed(1)}%"></i></div></div>` : "";
-      return `<section class="deck-research-tier"><h4>Tier ${ROMAN[tier]}</h4>${gateHtml}${rows.map((entry) => this.researchNode(entry, queue.indexOf(entry.id))).join("")}</section>`;
+      const gateHtml = gate ? `<div class="deck-research-gate"><span>${esc(gate.label)} · ${Math.floor(gate.current)} / ${Math.round(gate.threshold)}${gate.current >= gate.threshold ? " · gate met" : ""}</span><div class="deck-meter"><i style="width:${Math.max(0, Math.min(100, gate.current / Math.max(1e-9, gate.threshold) * 100)).toFixed(1)}%"></i></div></div>` : "";
+      const gateMet = !gate || gate.current >= gate.threshold;
+      return `<section class="deck-research-tier"><h4>Tier ${ROMAN[tier]}</h4>${gateHtml}${rows.map((entry) => this.researchNode(entry, queue.indexOf(entry.id), academyReady, gateMet)).join("")}</section>`;
     };
     return `<article class="deck-research-board"><header><span>${icon(fieldIcon(field), "md")}</span><h3>${esc(FIELD_TITLE[field] ?? label(field))}</h3></header>${group(null, 1)}${group(null, 2)}${schools.map((school) => `<div class="deck-research-school">${esc(SCHOOL_TITLE[school] ?? label(school))}</div>${[3, 4, 5, 6, 7, 8].map((tier) => group(school, tier)).join("")}`).join("")}</article>`;
   }
 
-  private researchNode(programme: ProgrammeView, queueIndex: number): string {
+  private researchNode(programme: ProgrammeView, queueIndex: number, academyReady: boolean, gateMet: boolean): string {
     const available = programme.state === "available";
     const queued = queueIndex >= 0;
-    return `<article class="deck-research-node is-${escAttr(programme.state)}"><header><b>${esc(programme.name)}</b>${queued ? `<em>#${queueIndex + 1}</em>` : `<em>${esc(label(programme.state))}</em>`}</header><p>${esc(programme.blurb)}</p>${available ? `<button type="button" data-deck-act="research-add" data-programme="${escAttr(programme.id)}">Add to queue</button>` : ""}</article>`;
+    const prerequisite = (available || queued) && !academyReady
+      ? `<em class="deck-research-prerequisite">Requires a staffed, supplied Academy to progress.</em>`
+      : "";
+    const stateLabel = programme.state === "locked" && gateMet ? "prerequisites required" : label(programme.state);
+    return `<article class="deck-research-node is-${escAttr(programme.state)}"><header><b>${esc(programme.name)}</b>${queued ? `<em>#${queueIndex + 1}</em>` : `<em>${esc(stateLabel)}</em>`}</header><p>${esc(programme.blurb)}</p>${prerequisite}${available ? `<button type="button" data-deck-act="research-add" data-programme="${escAttr(programme.id)}">Add to queue</button>` : ""}</article>`;
   }
 
   private toggleGroup(fleet: GhostView): void {

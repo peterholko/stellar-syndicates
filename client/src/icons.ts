@@ -2,7 +2,7 @@
 // used EVERYWHERE, so an icon reads the same in every panel and swapping in
 // generated art later is a one-file change.
 //
-// Each entry is ART-BACKED (resource PNG, generated panel PNG, or legacy SVG) or
+// Each entry is ART-BACKED (resource PNG, generated panel/hull PNG, or legacy SVG) or
 // a PLACEHOLDER (`glyph` = a unicode/emoji stand-in until dedicated art exists).
 // Every entry carries a default `tip` (hover text), because in the icon-first UI
 // the words live in tooltips, not on screen.
@@ -15,6 +15,13 @@ export type IconKey =
   // economy / structures
   | "storage" | "slots" | "shipyard" | "sensor" | "defense" | "habitat" | "refinery" | "interdictor"
   | "extractor" | "orbital_warehouse" | "build" | "queue" | "warehouse" | "manifest" | "freightRoute" | "authorityFreighter"
+  // dedicated structure-builder art
+  | "structureMiningComplex" | "structureVolatileHarvester" | "structureBioharvester"
+  | "structureSmelter" | "structureElectronicsFabricator" | "structureChemicalWorks" | "structureFuelRefinery"
+  | "structureAgroplex" | "structureMachineWorks" | "structureArmamentsComplex"
+  | "structureShipyard" | "structureNavalDrydock" | "structureCapitalSlipway" | "structureOrdnanceFoundry"
+  | "structureHabitat" | "structureOrbitalWarehouse" | "structureSensorArray" | "structureDefensePlatform"
+  | "structureAcademy" | "structureGarrison"
   // planetary profile / colony identity
   | "planetHabitable" | "planetHostile" | "planetUninhabitable"
   | "geologyPoor" | "geologyRich" | "geologyUltraRich"
@@ -22,6 +29,7 @@ export type IconKey =
   | "roleAgriculture" | "roleMining" | "roleFuel" | "roleElectronics" | "roleShipbuilding" | "rolePopulation" | "roleOutpost"
   // fleets / ship kinds
   | "fleet" | "scout" | "raider" | "corvette" | "convoy" | "colony"
+  | "destroyer" | "cruiser" | "battleship" | "dreadnought" | "titan"
   // verbs / orders
   | "move" | "attack" | "raid" | "withdraw" | "reinforce" | "recall" | "blockade" | "siege"
   | "doctrine" | "posture" | "claim" | "cargo" | "market" | "jump" | "dock" | "undock" | "unload" | "escort"
@@ -53,6 +61,10 @@ interface IconDef {
   png128?: string;
   /** Generated 64px transparent panel PNG under /art/ui_icons/panel/. */
   panel?: string;
+  /** Dedicated 128px transparent ship-builder art under /art/ui_icons/hulls/. */
+  hull?: string;
+  /** Dedicated 128px transparent structure-builder art. */
+  structure?: string;
   /** Bundled SVG slug (art-backed) — takes precedence over `glyph`. */
   art?: string;
   /** Unicode/emoji placeholder when there is no art yet. */
@@ -63,11 +75,13 @@ interface IconDef {
   placeholder: boolean;
 }
 
-// R(name) = resource PNG; N(name) = generated panel PNG; A(slug) = legacy SVG;
-// P(glyph) = emoji placeholder.
+// R(name) = resource PNG; N(name) = generated panel PNG; H(name) = hull PNG;
+// S(name) = structure PNG; A(slug) = legacy SVG; P(glyph) = emoji placeholder.
 const R = (png: string, tip: string): IconDef => ({ png, tip, placeholder: false });
 const R128 = (png128: string, tip: string): IconDef => ({ png128, tip, placeholder: false });
 const N = (panel: string, tip: string): IconDef => ({ panel, tip, placeholder: false });
+const H = (hull: string, tip: string): IconDef => ({ hull, tip, placeholder: false });
+const S = (structure: string, tip: string): IconDef => ({ structure, tip, placeholder: false });
 const A = (art: string, tip: string): IconDef => ({ art, tip, placeholder: false });
 const P = (glyph: string, tip: string): IconDef => ({ glyph, tip, placeholder: true });
 
@@ -83,20 +97,41 @@ export const ICONS: Record<IconKey, IconDef> = {
   // economy / structures
   storage: N("concept-stockpile", "Storage / stockpile capacity"),
   slots: N("status-development-slots", "Development slots (used / total)"),
-  shipyard: N("role-shipbuilding", "Shipyard tier"),
+  shipyard: S("shipyard", "Shipyard tier"),
   sensor: A("concept-sensor-range", "Sensor array"),
-  defense: P("🛡", "Defense platform tier"),
-  habitat: P("🏠", "Habitat tier (output boost)"),
-  refinery: P("⚗", "Fuel refinery (Volatiles → Fuel)"),
+  defense: S("defense_platform", "Defense platform tier"),
+  habitat: S("habitat", "Habitat tier (output boost)"),
+  refinery: S("fuel_refinery", "Fuel refinery (Volatiles → Fuel)"),
   interdictor: P("⛓", "Interdictor"),
-  extractor: P("⛏", "Extractor tier (output ×1.5)"),
-  orbital_warehouse: N("concept-warehouse", "Orbital Warehouse tier (storage cap)"),
+  extractor: S("mining_complex", "Extractor tier (output ×1.5)"),
+  orbital_warehouse: S("orbital_warehouse", "Orbital Warehouse tier (storage cap)"),
   build: A("action-build", "Build"),
   queue: N("status-construction-queue", "Under construction"),
   warehouse: N("concept-warehouse", "Market Warehouse"),
   manifest: N("concept-manifest", "Cargo manifest"),
   freightRoute: N("concept-freight-route", "Freight route"),
   authorityFreighter: N("concept-authority-freighter", "Authority freighter"),
+  // structure builder — one purpose-built installation per buildable structure
+  structureMiningComplex: S("mining_complex", "Mining Complex"),
+  structureVolatileHarvester: S("volatile_harvester", "Volatile Harvester"),
+  structureBioharvester: S("bioharvester", "Bioharvester"),
+  structureSmelter: S("smelter", "Smelter"),
+  structureElectronicsFabricator: S("electronics_fabricator", "Electronics Fabricator"),
+  structureChemicalWorks: S("chemical_works", "Chemical Works"),
+  structureFuelRefinery: S("fuel_refinery", "Fuel Refinery"),
+  structureAgroplex: S("agroplex", "Agroplex"),
+  structureMachineWorks: S("machine_works", "Machine Works"),
+  structureArmamentsComplex: S("armaments_complex", "Armaments Complex"),
+  structureShipyard: S("shipyard", "Shipyard"),
+  structureNavalDrydock: S("naval_drydock", "Naval Drydock"),
+  structureCapitalSlipway: S("capital_slipway", "Capital Slipway"),
+  structureOrdnanceFoundry: S("ordnance_foundry", "Ordnance Foundry"),
+  structureHabitat: S("habitat", "Habitat"),
+  structureOrbitalWarehouse: S("orbital_warehouse", "Orbital Warehouse"),
+  structureSensorArray: S("sensor_array", "Sensor Array"),
+  structureDefensePlatform: S("defense_platform", "Defense Platform"),
+  structureAcademy: S("academy", "Academy"),
+  structureGarrison: S("garrison", "Garrison"),
   // planetary profile / colony identity
   planetHabitable: N("planet-habitable", "Habitable world"),
   planetHostile: N("planet-hostile", "Hostile world"),
@@ -116,11 +151,16 @@ export const ICONS: Record<IconKey, IconDef> = {
   roleOutpost: N("role-strategic-outpost", "Strategic outpost"),
   // fleets / ship kinds
   fleet: A("concept-fleet", "Fleet"),
-  scout: P("🛰", "Scout"),
-  raider: P("🗡", "Interceptor"),
-  corvette: P("🛡", "Corvette"),
-  convoy: A("concept-convoy", "Freighter"),
-  colony: P("🏗", "Colony ship"),
+  scout: H("scout", "Scout"),
+  raider: H("raider", "Interceptor"),
+  corvette: H("corvette", "Corvette"),
+  convoy: H("convoy", "Freighter"),
+  colony: H("colony", "Colony ship"),
+  destroyer: H("destroyer", "Destroyer"),
+  cruiser: H("cruiser", "Cruiser"),
+  battleship: H("battleship", "Battleship"),
+  dreadnought: H("dreadnought", "Dreadnought"),
+  titan: H("titan", "Titan"),
   // verbs / orders
   move: A("action-move-travel", "Move"),
   attack: P("⚔", "Attack (destroy)"),
@@ -189,6 +229,8 @@ const ART_BASE = "/art/ui_icons/svg/";
 const PNG_BASE = "/art/ui_icons/resource/"; // downscaled 64px resource PNGs
 const PNG_128_BASE = "/art/ui_icons/png/128/"; // high-DPI general UI PNGs
 const PANEL_BASE = "/art/ui_icons/panel/"; // generated transparent 64px panel PNGs
+const HULL_BASE = "/art/ui_icons/hulls/"; // generated transparent 128px builder hulls
+const STRUCTURE_BASE = "/art/ui_icons/structures/"; // generated transparent 128px builder structures
 const escAttr = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
 /** ICON SIZE TOKENS — the ONE source of truth for icon dimensions (mapped to the
@@ -224,6 +266,12 @@ export function icon(key: IconKey, size: IconSize = "sm", tip?: string, cls = ""
   if (def.panel) {
     return `<img class="${c}" src="${PANEL_BASE}${def.panel}.png" alt="" title="${t}" />`;
   }
+  if (def.hull) {
+    return `<img class="${c}" src="${HULL_BASE}${def.hull}.png" alt="" title="${t}" />`;
+  }
+  if (def.structure) {
+    return `<img class="${c}" src="${STRUCTURE_BASE}${def.structure}.png" alt="" title="${t}" />`;
+  }
   if (def.art) {
     return `<img class="${c}" src="${ART_BASE}${def.art}.svg" alt="" title="${t}" />`;
   }
@@ -248,4 +296,33 @@ export function badgeChip(key: IconKey, label: string, tone = "neutral", tip?: s
 /** Whether `key` is still an art PLACEHOLDER (for the generation batch / audits). */
 export function isPlaceholder(key: IconKey): boolean {
   return ICONS[key].placeholder;
+}
+
+/** Build wire slug → its dedicated installation art. This covers every current
+ * `StructureKind`; the generic build icon remains only a forward-compatible
+ * fallback for a newly added server structure whose art has not landed yet. */
+export function structureIcon(key: string): IconKey {
+  const icons: Record<string, IconKey> = {
+    mining_complex: "structureMiningComplex",
+    volatile_harvester: "structureVolatileHarvester",
+    bioharvester: "structureBioharvester",
+    smelter: "structureSmelter",
+    electronics_fabricator: "structureElectronicsFabricator",
+    chemical_works: "structureChemicalWorks",
+    fuel_refinery: "structureFuelRefinery",
+    agroplex: "structureAgroplex",
+    machine_works: "structureMachineWorks",
+    armaments_complex: "structureArmamentsComplex",
+    shipyard: "structureShipyard",
+    naval_drydock: "structureNavalDrydock",
+    capital_slipway: "structureCapitalSlipway",
+    ordnance_foundry: "structureOrdnanceFoundry",
+    habitat: "structureHabitat",
+    orbital_warehouse: "structureOrbitalWarehouse",
+    sensor_array: "structureSensorArray",
+    defense_platform: "structureDefensePlatform",
+    academy: "structureAcademy",
+    garrison: "structureGarrison",
+  };
+  return icons[key] ?? "build";
 }

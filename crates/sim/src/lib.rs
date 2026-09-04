@@ -36,6 +36,7 @@ pub mod math;
 pub mod migration;
 pub mod module;
 pub mod movement;
+pub mod nebula;
 pub mod node;
 pub mod operation;
 pub mod pirate;
@@ -84,6 +85,7 @@ pub use math::Vec2;
 pub use migration::{MigrantLeg, MigrantRun, MigrationPolicy};
 pub use module::{DamageType, Family, Loadout, ModuleKind, weapon_family};
 pub use movement::{MoveStep, advance_toward, intercept_point, pursue_step};
+pub use nebula::{NebulaKind, NebulaRegion};
 pub use node::{NODE_REGION_RADIUS, NODES_PER_CORP, Node, NodeBonus, node_bonus_for};
 pub use operation::{
     Contribution, KnownOperation, MidgameStage, Operation, OperationIssuer, OperationKind,

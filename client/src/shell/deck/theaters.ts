@@ -12,7 +12,7 @@ import {
   clearBattleCloseTimer,
   shipKindLabel,
 } from "../../core/derive/fleet";
-import { fmtDur } from "../../core/derive/format";
+import { fmtDur, informationDelay } from "../../core/derive/format";
 import { nearestSystemName, systemName } from "../../core/derive/geo";
 import { latestPendingOrder } from "../../core/derive/orders";
 import {
@@ -36,7 +36,6 @@ import { setHtml } from "../dom";
 import type { CoreContext } from "../types";
 import type { DeckRoute } from "./router";
 
-const BATTLE_ROUND_SECONDS = 0.55;
 const BATTLE_STALE_MS = 4_500;
 const SEMANTIC_TRANSITION_MS = 480;
 
@@ -148,9 +147,18 @@ export class DeckTheaters {
     if (this.battleClosing) return false;
     const battle = this.ctx.state.battles.find((candidate) => candidate.id === id);
     const record = this.battleRecord(id);
-    if (!battle || !record || record.outcome !== null) return false;
-    this.ctx.renderer.enterBattleView(id, battle.pos);
-    this.hooks.go({ name: "battle", params: { id, label: "Ongoing battle" } });
+    if (!record) return false;
+    if (battle && record.outcome === null) {
+      // Running: semantic-zoom the map into the fight and follow the light.
+      this.ctx.renderer.enterBattleView(id, battle.pos);
+      this.hooks.go({ name: "battle", params: { id, label: "Ongoing battle" } });
+    } else if (record.outcome !== null) {
+      // Concluded: same gesture opens the recorded replay (no battle view —
+      // the map stays put behind the theater).
+      this.hooks.go({ name: "battle", params: { id, label: "Battle replay" } });
+    } else {
+      return false; // record exists but the battle is gone from the live list — mid-transition; ignore
+    }
     return this.openBattle(id, { semantic: true });
   }
 
@@ -376,7 +384,13 @@ export class DeckTheaters {
         }
       }
     } else if (this.battlePlaying && frontier >= 0) {
-      this.battleAccum += dt * this.battleSpeed / BATTLE_ROUND_SECONDS;
+      // Replay pacing = the record's own tick spacing (rounds are 1:1 with
+      // engine steps), so 1× IS the battle at true speed.
+      if (this.battleRound < frontier) {
+        const hz = this.ctx.state.tickHz || 30;
+        const windowSeconds = Math.max(0.2, (record.rounds[this.battleRound + 1].tick - record.rounds[this.battleRound].tick) / hz);
+        this.battleAccum += dt * this.battleSpeed / windowSeconds;
+      }
       let changed = false;
       while (this.battleAccum >= 1 && this.battleRound < frontier) {
         this.battleRound++;
@@ -480,7 +494,7 @@ export class DeckTheaters {
     const round = frontier >= 0 ? record.rounds[this.battleRound] : undefined;
     const label0 = record.own_side === 0 ? "You" : "Attackers";
     const label1 = record.own_side === 1 ? "You" : "Defenders";
-    const ageText = this.battleLastAge === null ? "arrival frontier" : `as of ~${Math.ceil(this.battleLastAge)}s ago`;
+    const ageText = this.battleLastAge === null ? "arrival frontier" : informationDelay(this.battleLastAge);
     const status = running
       ? `<div class="deck-theater-live${stale ? " is-stale" : ""}"><i></i><b>FOLLOWING LIGHT</b><span>real battle pace · ${esc(ageText)}</span>${stalled ? `<em>light in transit · holding last arrival</em>` : ""}</div>`
       : `<div class="deck-theater-live is-complete"><i></i><b>COMPLETE</b><span>${esc(outcomeText(record))}</span></div>`;

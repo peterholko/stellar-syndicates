@@ -1,5 +1,5 @@
-import { constructionStock } from "../../core/derive/fleet";
-import { fmtBuildDur } from "../../core/derive/format";
+import { constructionStock, dockedAtSystem, shipKindLabel } from "../../core/derive/fleet";
+import { fmtBuildDur, informationDelay } from "../../core/derive/format";
 import {
   bodyPoolUsage,
   buildOption,
@@ -20,15 +20,15 @@ import {
 } from "../../core/derive/market";
 import { latestGroundRecordFor, SHIP_STATS } from "../../core/derive/orders";
 import type { CoreEvent } from "../../core/events";
-import { icon, label, type IconKey } from "../../icons";
-import type { AssignmentView, BodyView, Commodity, ModuleKind, ShipKind, SystemInfo, SystemStateView } from "../../protocol";
+import { icon, label, structureIcon, type IconKey } from "../../icons";
+import { fleetCargoUnits, fleetExactCount, type AssignmentView, type BodyView, type Commodity, type ModuleKind, type ShipKind, type SystemInfo, type SystemStateView } from "../../protocol";
 import { liveSimTime } from "../../state";
 import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext } from "../types";
 import type { DeckRoute } from "./router";
 
-export type DeckSystemTab = "overview" | "worlds" | "production";
+export type DeckSystemTab = "overview" | "worlds" | "production" | "fleets" | "build";
 
 interface EmpireHooks {
   go(route: DeckRoute): void;
@@ -62,6 +62,7 @@ export class DeckEmpireRoutes {
   private pendingFit: ModuleKind[] = [];
   private buildFeedback: BuildFeedback | null = null;
   private lastBuildPreset = "";
+  private lastSystemId = "";
   private signature = "";
 
   constructor(
@@ -77,45 +78,68 @@ export class DeckEmpireRoutes {
   render(route: DeckRoute | null, force = false): boolean {
     if (route?.name !== "system" && route?.name !== "build" && route?.name !== "world") return false;
     const context = this.systemContext(route);
+    const systemId = context.system?.id ?? "";
+    if (systemId && systemId !== this.lastSystemId) {
+      this.systemTab = route.name === "build"
+        ? "build"
+        : isSystemTab(route.query?.tab) ? route.query.tab : "overview";
+      this.lastSystemId = systemId;
+    } else if (route.name === "build") {
+      this.systemTab = "build";
+    } else if (isSystemTab(route.query?.tab)) {
+      this.systemTab = route.query.tab;
+    }
+    const docked = context.system ? this.dockedFleets(context.system) : [];
     const signature = sheetFingerprint([
       route, this.systemTab, this.builderMode, this.selectedBuild, this.selectedHull,
       this.shipQuantity, this.pendingFit, this.buildFeedback, Math.floor(liveSimTime()),
       context.system, context.dynamic, this.ctx.state.timeline.length, this.ctx.state.syndicate?.fits,
+      this.systemTab === "fleets" ? docked.map((fleet) => [
+        fleet.id, fleet.kind, fleet.docked, Math.floor(fleet.age), fleet.composition,
+        fleet.cargo_manifest, fleet.cargo,
+      ]) : null,
     ]);
     if (!force && signature === this.signature) return true;
     if (renderDeferred(this.root.id, () => this.render(route, true))) return true;
     this.signature = signature;
-    setHtml(this.root, route.name === "build"
-      ? this.buildHtml(route, context.system, context.dynamic)
-      : route.name === "world"
+    setHtml(this.root, route.name === "world"
         ? this.worldHtml(route, context.system, context.dynamic)
-        : this.systemHtml(context.system, context.dynamic));
+        : this.systemHtml(route, context.system, context.dynamic));
     return true;
   }
 
   handleAction(button: HTMLButtonElement, route: DeckRoute | null): boolean {
-    if (route?.name === "build") return this.handleBuildAction(button, route);
     if (route?.name === "world") return this.handleWorldAction(button, route);
-    if (route?.name !== "system") return false;
+    if (route?.name !== "system" && route?.name !== "build") return false;
     const action = button.dataset.deckAct;
     const { system, dynamic } = this.systemContext(route);
     if (!system) return false;
+    if (action === "system-tab") {
+      const tab = button.dataset.tab;
+      if (!isSystemTab(tab)) return true;
+      this.systemTab = tab;
+      this.signature = "";
+      if (route.name === "build" && tab !== "build") {
+        this.hooks.go({ name: "system", params: { id: system.id, systemLabel: system.name } });
+      } else {
+        this.render(route, true);
+      }
+      return true;
+    }
+    if (this.systemTab === "build") return this.handleBuildAction(button, route);
     if (action === "watch-ground" && button.dataset.ground) {
       this.hooks.openGroundViewer(button.dataset.ground);
       return true;
     }
-    if (action === "system-tab") {
-      const tab = button.dataset.tab;
-      if (tab === "build") {
-        this.hooks.go({
-          name: "build",
-          params: { systemId: system.id, systemLabel: system.name },
-          query: dynamic?.bodies[0] ? { body: String(dynamic.bodies[0].id) } : undefined,
-        });
-      } else if (isSystemTab(tab)) {
-        this.systemTab = tab;
-        this.signature = "";
-        this.render(route, true);
+    if (action === "system-fleet-open" && button.dataset.fleet) {
+      const fleet = this.ctx.state.ghosts.find((candidate) =>
+        candidate.id === button.dataset.fleet && candidate.own && dockedAtSystem(candidate, system.id));
+      if (fleet) {
+        this.ctx.state.selectedShipId = fleet.id;
+        this.ctx.state.selectedShipIds = new Set([fleet.id]);
+        this.ctx.state.selectedEmplacementId = null;
+        this.ctx.renderer.stateVersion++;
+        this.hooks.go({ name: "fleet", params: { id: fleet.id, fleetLabel: `${shipKindLabel(fleet.kind)} fleet` } });
       }
       return true;
     }
@@ -176,8 +200,9 @@ export class DeckEmpireRoutes {
     if (!rejected) return;
     this.buildFeedback = { ...this.buildFeedback, text: rejected.text, tone: "bad" };
     this.signature = "";
-    this.hooks.toast("Build refused", rejected.text, "bad", route?.name === "build" ? route : undefined);
-    if (route?.name === "build") this.render(route, true);
+    const onBuildTab = route?.name === "build" || (route?.name === "system" && this.systemTab === "build");
+    this.hooks.toast("Build refused", rejected.text, "bad", onBuildTab ? route ?? undefined : undefined);
+    if (onBuildTab && route) this.render(route, true);
   }
 
   private systemContext(route: DeckRoute): { system?: SystemInfo; dynamic?: SystemStateView } {
@@ -190,7 +215,7 @@ export class DeckEmpireRoutes {
     };
   }
 
-  private systemHtml(system?: SystemInfo, dynamic?: SystemStateView): string {
+  private systemHtml(route: DeckRoute, system?: SystemInfo, dynamic?: SystemStateView): string {
     if (!system) return emptyState("System unavailable", "Select a star on the galaxy map to inspect its served report.");
     const mine = dynamic?.owner === this.ctx.state.playerId;
     const held = dynamic?.owner !== null && dynamic?.owner !== undefined;
@@ -198,7 +223,7 @@ export class DeckEmpireRoutes {
     const owner = mine ? "Owned system" : held ? "Rival-held system" : "Unclaimed system";
     const survey = surveyed ? "survey report received" : `${label(system.band)} spectral band · geology unsurveyed`;
     const tabs = [
-      ["overview", "Overview"], ["worlds", "Worlds"], ["production", "Production"], ["build", "Build"],
+      ["overview", "Overview"], ["worlds", "Worlds"], ["production", "Production"], ["fleets", "Fleets"], ["build", "Build"],
     ].map(([tab, text]) => `<button type="button" data-deck-act="system-tab" data-tab="${tab}" aria-selected="${tab === this.systemTab}">${text}</button>`).join("");
     const alert = dynamic?.blockade
       ? `<div class="deck-alert deck-alert--bad"><b>${dynamic.blockade.by_me ? "Blockade established" : "Under blockade"}</b><span>Physical shipping is interdicted while this report remains current.</span></div>`
@@ -207,7 +232,11 @@ export class DeckEmpireRoutes {
       ? this.systemOverview(system, dynamic, mine, owner, survey)
       : this.systemTab === "worlds"
         ? this.systemWorlds(system, dynamic, mine)
-        : this.systemProduction(system, dynamic, mine);
+        : this.systemTab === "production"
+          ? this.systemProduction(system, dynamic, mine)
+          : this.systemTab === "fleets"
+            ? this.systemFleets(system)
+            : this.buildHtml(route, system, dynamic);
     return `<section class="deck-page deck-system"><header class="deck-page__lead"><span>${esc(systemFlavor(system, dynamic?.deposits ?? null))}</span><h2>${esc(system.name)}</h2><p>${esc(owner)} · ${esc(survey)}</p></header>${alert}<nav class="deck-tabs" aria-label="System sections">${tabs}</nav>${active}</section>`;
   }
 
@@ -285,6 +314,35 @@ export class DeckEmpireRoutes {
       this.queueHtml(dynamic);
   }
 
+  private systemFleets(system: SystemInfo): string {
+    // Membership is deliberately the player's SERVED dock report. A departing
+    // fleet remains listed until that light reaches command; no client-side
+    // position estimate or authoritative server truth corrects the roster.
+    const fleets = this.dockedFleets(system);
+    if (!fleets.length) return emptyState("No docked fleets", `No owned fleet is reported berthed at ${system.name}.`);
+    const rows = fleets.map((fleet) => {
+      const exact = fleetExactCount(fleet);
+      const composition = (fleet.composition ?? [])
+        .filter((stack) => stack.count > 0)
+        .map((stack) => `${stack.count}× ${shipKindLabel(stack.kind)}`)
+        .join(" · ");
+      const cargo = fleetCargoUnits(fleet);
+      const summary = [
+        exact === null ? "served strength unknown" : `${exact} ship${exact === 1 ? "" : "s"}`,
+        composition,
+        cargo > 0 ? `${fmt(cargo)} cargo` : "",
+      ].filter(Boolean).join(" · ");
+      return `<button type="button" class="deck-system-fleet" data-deck-act="system-fleet-open" data-fleet="${esc(fleet.id)}"><span class="deck-system-fleet__icon">${icon(shipIcon(fleet.kind), "md")}</span><span><b>${esc(shipKindLabel(fleet.kind))} fleet</b><small>${esc(summary)}</small></span><em><b>Docked</b><small>${esc(informationDelay(fleet.age))}</small></em></button>`;
+    }).join("");
+    return `<section class="deck-section"><header><div><h3>Docked fleets</h3><p>Owned formations in the served berth report. Open one for cargo, orders and fleet management.</p></div><b>${fleets.length}</b></header><div class="deck-system-fleet-list">${rows}</div></section>`;
+  }
+
+  private dockedFleets(system: SystemInfo) {
+    return this.ctx.state.ghosts
+      .filter((fleet) => fleet.own && dockedAtSystem(fleet, system.id))
+      .sort((a, b) => shipKindLabel(a.kind).localeCompare(shipKindLabel(b.kind)) || a.id.localeCompare(b.id));
+  }
+
   private assignmentHtml(dynamic: SystemStateView, line: AssignmentView): string {
     const body = dynamic.bodies.find((entry) => entry.id === line.body_id);
     const output = line.outputs.length
@@ -298,9 +356,16 @@ export class DeckEmpireRoutes {
     const rows = [...dynamic.builds].sort((a, b) => a.complete_time - b.complete_time).map((job) => {
       const body = dynamic.bodies.find((entry) => entry.id === job.body_id);
       const duration = Math.max(0, job.complete_time - now);
-      return `<div class="deck-queue-row"><span>${icon("queue", "sm")}<span><b>${esc(buildName(job.key))}</b><small>${esc(body?.name ?? "System yard")}</small></span></span><em>${duration > 0 ? fmtBuildDur(duration) : "completing"}</em></div>`;
+      // Restore the Travian-style build progression bar from the legacy shell.
+      // It is reconstructed from the served completion clock and the public
+      // recipe duration, so reconnects and background tabs never depend on a
+      // client-accumulated timer.
+      const total = Math.max(0, buildOption(job.key)?.build_secs ?? 0);
+      const started = job.complete_time - total;
+      const progress = total > 0 ? Math.max(0, Math.min(100, (now - started) / total * 100)) : 0;
+      return `<div class="deck-queue-row"><span>${icon("queue", "sm")}<span><b>${esc(buildName(job.key))}</b><small>${esc(body?.name ?? "System yard")}</small><span class="deck-queue-progress" role="progressbar" aria-label="${esc(buildName(job.key))} build progression" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.toFixed(0)}"><i style="width:${progress.toFixed(1)}%"></i></span></span></span><em>${duration > 0 ? fmtBuildDur(duration) : "completing"}</em></div>`;
     }).join("");
-    const feedback = this.buildFeedback?.systemId === dynamic.id
+    const feedback = this.buildFeedback?.systemId === dynamic.id && this.buildFeedback.text
       ? `<div class="deck-build-feedback is-${this.buildFeedback.tone}">${esc(this.buildFeedback.text)}</div>`
       : "";
     return `<section class="deck-section"><header><div><h3>Construction queue</h3><p>Completion times follow the live simulation clock.</p></div><b>${dynamic.builds.length}</b></header>${feedback}${rows || `<div class="deck-empty-inline">Nothing under construction.</div>`}</section>`;
@@ -439,12 +504,15 @@ export class DeckEmpireRoutes {
     const content = this.builderMode === "structures"
       ? this.structureBuilder(dynamic, body)
       : this.shipBuilder(dynamic, body);
-    return `<section class="deck-page deck-build"><header class="deck-page__lead"><span>Local construction · served inventory</span><h2>Build at ${esc(system.name)}</h2><p>Recipes may draw from the system stockpile and owned freighters docked here.</p></header><nav class="deck-tabs" aria-label="Build category">${modeTabs}</nav><div class="deck-builder-worlds"><span>Build site</span>${worlds}</div>${content}${this.queueHtml(dynamic)}</section>`;
+    return `<section class="deck-page deck-build">${this.queueHtml(dynamic)}<nav class="deck-tabs" aria-label="Build category">${modeTabs}</nav><div class="deck-builder-worlds"><span>Build site</span>${worlds}</div>${content}</section>`;
   }
 
   private builderBody(route: DeckRoute, dynamic: SystemStateView): BodyView | undefined {
     const requested = route.query?.body;
-    return dynamic.bodies.find((entry) => String(entry.id) === requested) ?? dynamic.bodies[0];
+    const explicit = dynamic.bodies.find((entry) => String(entry.id) === requested);
+    if (explicit) return explicit;
+    if (this.builderMode === "ships") return bestShipyardBody(dynamic);
+    return bestStructureBody(dynamic, this.selectedBuild) ?? dynamic.bodies[0];
   }
 
   private worldHtml(route: DeckRoute, system?: SystemInfo, dynamic?: SystemStateView): string {
@@ -509,13 +577,19 @@ export class DeckEmpireRoutes {
     const groups = (["resource", "industrial", "infrastructure"] as Pool[]).map((pool) => {
       const rows = options.filter((entry) => POOL_OF[entry.key] === pool).map((entry) => {
         const state = structOption(entry, dynamic, body, pools);
-        return `<button type="button" class="deck-builder-row${entry.key === this.selectedBuild ? " is-selected" : ""}${state.buildable ? "" : " is-disabled"}" data-deck-act="builder-select" data-key="${esc(entry.key)}"><span>${icon(structureIcon(entry.key), "sm")}<span><b>${esc(entry.label)}</b><small>${state.tierUp ? `Tier ${state.currentTier} → ${state.targetTier}` : "New Tier I"}</small></span></span><em>${state.buildable ? fmtBuildDur(entry.build_secs * body.construction_time_mult) : esc(shortReason(state.reason))}</em></button>`;
+        return `<button type="button" class="deck-builder-row${entry.key === this.selectedBuild ? " is-selected" : ""}${state.buildable ? "" : " is-disabled"}" data-deck-act="builder-select" data-key="${esc(entry.key)}"><span>${icon(structureIcon(entry.key), "sm", undefined, "deck-structure-icon")}<span><b>${esc(entry.label)}</b><small>${state.tierUp ? `Tier ${state.currentTier} → ${state.targetTier}` : "New Tier I"}</small></span></span><em>${state.buildable ? fmtBuildDur(entry.build_secs * body.construction_time_mult) : esc(shortReason(state.reason))}</em></button>`;
       }).join("");
       return rows ? `<h3 class="deck-builder-group">${POOL_LABEL[pool]}</h3>${rows}` : "";
     }).join("");
     const selected = options.find((entry) => entry.key === this.selectedBuild);
     const detail = selected ? this.structureDetail(dynamic, body, selected, pools) : emptyState("Choose a structure", "Inspect its recipe, slot and build time.");
-    return `<div class="deck-pools">${poolBars}</div><div class="deck-builder"><div class="deck-builder__list">${groups}</div><div class="deck-builder__detail">${detail}</div></div>`;
+    const commit = selected ? this.structureCommit(dynamic, body, selected, pools) : "";
+    return `<div class="deck-pools">${poolBars}</div><div class="deck-builder">${commit}<div class="deck-builder__list">${groups}</div><div class="deck-builder__detail">${detail}</div></div>`;
+  }
+
+  private structureCommit(dynamic: SystemStateView, body: BodyView, option: BuildOpt, pools: ReturnType<typeof bodyPoolUsage>): string {
+    const state = structOption(option, dynamic, body, pools);
+    return `<div class="deck-builder__commit"><span><small>Selected structure</small><b>${esc(option.label)}</b></span><button type="button" class="is-primary" data-deck-act="builder-queue" ${state.buildable ? "" : "disabled"}>Queue build</button></div>`;
   }
 
   private structureDetail(dynamic: SystemStateView, body: BodyView, option: BuildOpt, pools: ReturnType<typeof bodyPoolUsage>): string {
@@ -526,7 +600,7 @@ export class DeckEmpireRoutes {
       const have = supply.get(commodity) ?? 0;
       return `<div class="deck-cost${have < cost.units ? " is-short" : ""}"><span>${commodityGlyph(commodity)} ${esc(label(commodity))}</span><b>${cost.units} <small>have ${fmt(have)}</small></b></div>`;
     }).join("");
-    return `<article class="deck-build-detail"><header>${icon(structureIcon(option.key), "md")}<span><small>${POOL_LABEL[state.pool]} · ${state.foundsNew ? "new structure" : `upgrade to tier ${state.targetTier}`}</small><h3>${esc(option.label)}</h3></span></header><div class="deck-costs">${costs}</div><dl><div><dt>Build time</dt><dd>${fmtBuildDur(option.build_secs * body.construction_time_mult)}</dd></div><div><dt>Slot</dt><dd>${state.foundsNew ? `${POOL_LABEL[state.pool]} ${pools[state.pool].used} → ${pools[state.pool].used + 1}/${pools[state.pool].total}` : "Deepens in place"}</dd></div></dl>${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}<button type="button" class="is-primary" data-deck-act="builder-queue" ${state.buildable ? "" : "disabled"}>Queue build</button></article>`;
+    return `<article class="deck-build-detail"><header>${icon(structureIcon(option.key), "md", undefined, "deck-structure-icon")}<span><small>${POOL_LABEL[state.pool]} · ${state.foundsNew ? "new structure" : `upgrade to tier ${state.targetTier}`}</small><h3>${esc(option.label)}</h3></span></header><div class="deck-costs">${costs}</div><dl><div><dt>Build time</dt><dd>${fmtBuildDur(option.build_secs * body.construction_time_mult)}</dd></div><div><dt>Slot</dt><dd>${state.foundsNew ? `${POOL_LABEL[state.pool]} ${pools[state.pool].used} → ${pools[state.pool].used + 1}/${pools[state.pool].total}` : "Deepens in place"}</dd></div></dl>${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}</article>`;
   }
 
   private shipBuilder(dynamic: SystemStateView, body: BodyView): string {
@@ -535,11 +609,22 @@ export class DeckEmpireRoutes {
     const rows = options.map((entry) => {
       const state = shipOption(entry, dynamic);
       const stats = SHIP_STATS[entry.key];
-      return `<button type="button" class="deck-builder-row${entry.key === this.selectedHull ? " is-selected" : ""}${state.buildable ? "" : " is-disabled"}" data-deck-act="builder-select-hull" data-hull="${entry.key}"><span>${icon(shipIcon(entry.key), "sm")}<span><b>${esc(buildName(entry.key))}</b><small>${esc(stats?.role ?? "Fleet hull")}</small></span></span><em>${state.buildable ? `max ${state.maxAff}` : esc(shortReason(state.reason))}</em></button>`;
+      return `<button type="button" class="deck-builder-row${entry.key === this.selectedHull ? " is-selected" : ""}${state.buildable ? "" : " is-disabled"}" data-deck-act="builder-select-hull" data-hull="${entry.key}"><span>${icon(shipIcon(entry.key), "md", undefined, "deck-hull-icon")}<span><b>${esc(buildName(entry.key))}</b><small>${esc(stats?.role ?? "Fleet hull")}</small></span></span><em>${state.buildable ? `max ${state.maxAff}` : esc(shortReason(state.reason))}</em></button>`;
     }).join("");
     const selected = this.selectedHull ? options.find((entry) => entry.key === this.selectedHull) : undefined;
     const detail = selected ? this.shipDetail(dynamic, body, selected) : emptyState("Choose a hull", "Inspect its recipe, capability and fitting budget.");
-    return `<div class="deck-builder"><div class="deck-builder__list"><h3 class="deck-builder-group">Hull catalogue</h3>${rows}</div><div class="deck-builder__detail">${detail}${this.moduleForge(dynamic)}</div></div>`;
+    const commit = selected ? this.shipCommit(dynamic, selected) : "";
+    return `<div class="deck-builder">${commit}<div class="deck-builder__list"><h3 class="deck-builder-group">Hull catalogue</h3>${rows}</div><div class="deck-builder__detail">${detail}${this.moduleForge(dynamic)}</div></div>`;
+  }
+
+  private shipCommit(dynamic: SystemStateView, option: BuildOpt): string {
+    const hull = option.key as ShipKind;
+    const state = shipOption(option, dynamic);
+    const max = Math.max(1, state.maxAff);
+    const quantity = Math.min(Math.max(1, this.shipQuantity), max);
+    const fitOkay = fitLegal(hull, this.effectiveFit(dynamic.id, hull));
+    const canQueue = state.buildable && quantity <= state.maxAff && fitOkay;
+    return `<div class="deck-builder__commit"><span><small>Selected hull</small><b>${esc(buildName(hull))} ×${quantity}</b></span><button type="button" class="is-primary" data-deck-act="builder-queue-ships" ${canQueue ? "" : "disabled"}>Queue ${quantity} hull${quantity === 1 ? "" : "s"}</button></div>`;
   }
 
   private shipDetail(dynamic: SystemStateView, body: BodyView, option: BuildOpt): string {
@@ -559,10 +644,9 @@ export class DeckEmpireRoutes {
     const quantities = [...new Set([1, 5, 10, max])].filter((value) => value <= max).map((value) => `<button type="button" data-deck-act="builder-quantity" data-quantity="${value}" aria-selected="${quantity === value}">${value === max && max > 10 ? `Max ${value}` : value}</button>`).join("");
     const fit = this.fitPicker(dynamic, hull);
     const fitOkay = fitLegal(hull, this.effectiveFit(dynamic.id, hull));
-    const canQueue = state.buildable && quantity <= state.maxAff && fitOkay;
     const gate = SHIP_YARD[hull] ?? { yard: "shipyard", tier: 1 };
     const siteTime = body.ship_build_time_mult ?? 1;
-    return `<article class="deck-build-detail"><header>${icon(shipIcon(hull), "md")}<span><small>${esc(YARD_TITLE[gate.yard] ?? label(gate.yard))} · Tier ${gate.tier}</small><h3>${esc(buildName(hull))}</h3></span></header><p>${esc(stats?.role ?? "Fleet hull")}</p><div class="deck-quantity"><span>Quantity</span>${quantities}</div><div class="deck-costs">${costs}</div><dl><div><dt>Build time</dt><dd>${fmtBuildDur(option.build_secs * siteTime)}</dd></div><div><dt>Site</dt><dd>${esc(body.name)} · ×${siteTime.toFixed(2)}</dd></div></dl>${stats ? `<div class="deck-hull-stats">${stat("Speed", fmt(stats.speed))}${stat("Hull", fmt(stats.hull))}${stat("Attack", fmt(stats.atk))}${stat("Defense", fmt(stats.def))}</div>` : ""}${fit}${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}${!fitOkay ? `<div class="deck-build-warning">The composed fit exceeds this hull's fitting budget or module slots.</div>` : ""}<button type="button" class="is-primary" data-deck-act="builder-queue-ships" ${canQueue ? "" : "disabled"}>Queue ${quantity} hull${quantity === 1 ? "" : "s"}</button></article>`;
+    return `<article class="deck-build-detail"><header>${icon(shipIcon(hull), "lg", undefined, "deck-hull-icon")}<span><small>${esc(YARD_TITLE[gate.yard] ?? label(gate.yard))} · Tier ${gate.tier}</small><h3>${esc(buildName(hull))}</h3></span></header><p>${esc(stats?.role ?? "Fleet hull")}</p><div class="deck-quantity"><span>Quantity</span>${quantities}</div><div class="deck-costs">${costs}</div><dl><div><dt>Build time</dt><dd>${fmtBuildDur(option.build_secs * siteTime)}</dd></div><div><dt>Site</dt><dd>${esc(body.name)} · ×${siteTime.toFixed(2)}</dd></div></dl>${stats ? `<div class="deck-hull-stats">${stat("Speed", fmt(stats.speed))}${stat("Hull", fmt(stats.hull))}${stat("Attack", fmt(stats.atk))}${stat("Defense", fmt(stats.def))}</div>` : ""}${fit}${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}${!fitOkay ? `<div class="deck-build-warning">The composed fit exceeds this hull's fitting budget or module slots.</div>` : ""}</article>`;
   }
 
   private fitPicker(dynamic: SystemStateView, hull: ShipKind): string {
@@ -600,10 +684,10 @@ export class DeckEmpireRoutes {
 
   private dispatchBuild(key: string, systemId: string, bodyId?: number): void {
     dispatchBuildKey(key, systemId, bodyId);
-    this.noteBuildDispatch(systemId, `${buildName(key)} sent to local administration.`);
+    this.noteBuildDispatch(systemId);
   }
 
-  private noteBuildDispatch(systemId: string, text: string): void {
+  private noteBuildDispatch(systemId: string, text = ""): void {
     this.buildFeedback = {
       systemId,
       issuedAt: this.ctx.state.simTime,
@@ -611,7 +695,7 @@ export class DeckEmpireRoutes {
       text,
       tone: "info",
     };
-    this.hooks.notice(`<b>Build order sent</b> · ${esc(text)}`);
+    if (text) this.hooks.notice(`<b>Build order sent</b> · ${esc(text)}`);
   }
 
   private opportunityHtml(dynamic?: SystemStateView): string {
@@ -623,11 +707,44 @@ export class DeckEmpireRoutes {
 }
 
 function isSystemTab(value?: string): value is DeckSystemTab {
-  return value === "overview" || value === "worlds" || value === "production";
+  return value === "overview" || value === "worlds" || value === "production" || value === "fleets" || value === "build";
 }
 
 function isMigrationPolicy(value?: string): value is BodyView["migration_policy"] {
   return value === "closed" || value === "managed" || value === "open" || value === "priority";
+}
+
+function bestStructureBody(system: SystemStateView, structure: string): BodyView | undefined {
+  const wanted: Partial<Record<string, Commodity[]>> = {
+    mining_complex: ["metallic_ore", "rare_elements", "silicates"],
+    volatile_harvester: ["volatiles"],
+    bioharvester: ["biomass"],
+  };
+  const resources = wanted[structure];
+  return [...system.bodies].sort((a, b) => {
+    const score = (body: BodyView): number => {
+      const deposits = body.deposits ?? [];
+      const richness = deposits
+        .filter((deposit) => !resources || resources.includes(deposit.resource))
+        .reduce((sum, deposit) => sum + deposit.richness, 0);
+      const pool = structure && POOL_OF[structure];
+      const slots = pool === "industrial" ? body.industrial_slots ?? 0
+        : pool === "infrastructure" ? body.infrastructure_slots ?? 0
+          : body.resource_slots ?? 0;
+      return richness * 100 + slots;
+    };
+    return score(b) - score(a) || a.id - b.id;
+  })[0];
+}
+
+function bestShipyardBody(system: SystemStateView): BodyView | undefined {
+  return [...system.bodies].sort((a, b) => {
+    const aLowGravity = a.special === "low_gravity" ? 1 : 0;
+    const bLowGravity = b.special === "low_gravity" ? 1 : 0;
+    return bLowGravity - aLowGravity
+      || (b.industrial_slots ?? 0) - (a.industrial_slots ?? 0)
+      || a.id - b.id;
+  })[0];
 }
 
 function systemName(ctx: CoreContext, id: string): string {
@@ -661,19 +778,11 @@ function buildName(key: string): string {
   return label(key === "convoy" ? "freighter" : key === "raider" ? "interceptor" : key);
 }
 
-function structureIcon(key: string): IconKey {
-  const icons: Record<string, IconKey> = {
-    shipyard: "shipyard", sensor_array: "sensor", defense_platform: "defense",
-    habitat: "habitat", fuel_refinery: "refinery", orbital_warehouse: "orbital_warehouse",
-    mining_complex: "extractor", volatile_harvester: "extractor", bioharvester: "extractor",
-    academy: "intel", armaments_complex: "moduleMassDriver",
-  };
-  return icons[key] ?? "build";
-}
-
 function shipIcon(key: string): IconKey {
   const icons: Record<string, IconKey> = {
     scout: "scout", corvette: "corvette", raider: "raider", convoy: "convoy", colony: "colony",
+    destroyer: "destroyer", cruiser: "cruiser", battleship: "battleship",
+    dreadnought: "dreadnought", titan: "titan",
   };
   return icons[key] ?? "fleet";
 }

@@ -65,7 +65,7 @@ const DOCTRINE_FIELDS: readonly DoctrineField[] = [
     options: [
       ["drop", "Drop cargo"],
       ["return_home", "Return cargo home"],
-      ["sell_at_hub", "Sell cargo at the Hub"],
+      ["sell_at_hub", "Sell cargo at the Market Hub"],
     ],
   },
 ];
@@ -84,6 +84,7 @@ export class DeckPolicyRoutes {
   private logisticsFeedback = "";
   private doctrineFeedback = "";
   private signature = "";
+  private appliedPreset = "";
 
   constructor(
     private readonly root: HTMLElement,
@@ -93,6 +94,7 @@ export class DeckPolicyRoutes {
 
   render(route: DeckRoute | null, force = false): boolean {
     if (route?.name !== "logistics" && route?.name !== "doctrine") return false;
+    if (route.name === "logistics") this.applyRoutePreset(route);
     this.repairForm();
     const state = this.ctx.state;
     const signature = sheetFingerprint([
@@ -230,6 +232,15 @@ export class DeckPolicyRoutes {
       || owned.some((system) => system.id === this.destination)
       || allySystems().some((system) => system.id === this.destination);
     if (!validDestination) this.destination = "hub";
+  }
+
+  private applyRoutePreset(route: DeckRoute): void {
+    const preset = JSON.stringify(route.query ?? {});
+    if (!route.query || preset === this.appliedPreset) return;
+    if (route.query.source) this.source = route.query.source;
+    if (route.query.destination) this.destination = route.query.destination;
+    if (isCommodity(route.query.commodity)) this.commodity = route.query.commodity;
+    this.appliedPreset = preset;
   }
 }
 

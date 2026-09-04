@@ -21,7 +21,7 @@ import {
 import { syncOrderLifecycles } from "./derive/orders";
 import { mergeResearch } from "./derive/research";
 
-export const EXPECTED_PROTOCOL_VERSION = 29;
+export const EXPECTED_PROTOCOL_VERSION = 31;
 
 export const jumpDepartureKey = (
   departure: Pick<JumpDepartureView, "fleet" | "departed_at">,
@@ -80,6 +80,13 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       return [{ kind: "GalaxyUpdated" }];
 
     case "View": {
+      const hadServedView = st.systems.length > 0 || st.ghosts.length > 0;
+      const previousGhosts = new Map(st.ghosts.map((ghost) => [ghost.id, ghost]));
+      const previousSystems = new Map(st.systems.map((system) => [system.id, system]));
+      const previousOrders = { ...st.orders };
+      const previousCompletedResearch = new Set(
+        st.research?.programmes.filter((programme) => programme.state === "completed").map((programme) => programme.id) ?? [],
+      );
       st.tick = msg.tick;
       syncRenderClock(msg.sim_time, st.pacingScale);
       st.simTime = msg.sim_time;
@@ -121,6 +128,56 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       noteSurveyReports(msg.sim_time, st);
       syncOrderLifecycles(msg.pending_orders, msg.sim_time, st);
 
+      const derived: CoreEvent[] = [];
+      for (const ghost of st.ghosts) {
+        if (!hadServedView || !ghost.own) continue;
+        const previous = previousGhosts.get(ghost.id);
+        if (ghost.docked && previous && previous.docked !== ghost.docked) {
+          derived.push({ kind: "FleetDocked", fleetId: ghost.id, berth: ghost.docked });
+          continue;
+        }
+        const dest = previousOrders[ghost.id];
+        if (!dest || !previous) continue;
+        const arrived = Math.hypot(ghost.pos.x - dest.x, ghost.pos.y - dest.y) < 500
+          && Math.hypot(ghost.vel.x, ghost.vel.y) < 0.5;
+        const wasArrived = Math.hypot(previous.pos.x - dest.x, previous.pos.y - dest.y) < 500
+          && Math.hypot(previous.vel.x, previous.vel.y) < 0.5;
+        if (arrived && !wasArrived) derived.push({ kind: "FleetArrived", fleetId: ghost.id });
+      }
+      if (hadServedView) {
+        for (const system of st.systems) {
+          const previous = previousSystems.get(system.id);
+          if (!previous || system.owner !== st.playerId) continue;
+          const remainingBuilds = new Map<string, number>();
+          for (const build of system.builds) {
+            const key = `${build.body_id}:${build.key}`;
+            remainingBuilds.set(key, (remainingBuilds.get(key) ?? 0) + 1);
+          }
+          for (const build of previous.builds) {
+            const key = `${build.body_id}:${build.key}`;
+            const remaining = remainingBuilds.get(key) ?? 0;
+            if (remaining > 0) remainingBuilds.set(key, remaining - 1);
+            else if (build.complete_time <= msg.sim_time + 1) {
+              derived.push({ kind: "BuildCompleted", systemId: system.id, buildKey: build.key });
+            }
+          }
+          const previousAssignments = new Map(
+            previous.assignments.map((assignment) => [`${assignment.body_id}:${assignment.structure}`, assignment]),
+          );
+          for (const assignment of system.assignments) {
+            const old = previousAssignments.get(`${assignment.body_id}:${assignment.structure}`);
+            if (assignment.workers > 0 && (old?.workers ?? 0) === 0) {
+              derived.push({ kind: "StructureStaffed", systemId: system.id, title: assignment.title });
+            }
+          }
+        }
+        for (const programme of st.research?.programmes ?? []) {
+          if (programme.state === "completed" && !previousCompletedResearch.has(programme.id)) {
+            derived.push({ kind: "ResearchCompleted", programmeId: programme.id, programmeName: programme.name });
+          }
+        }
+      }
+
       for (const [id, dest] of Object.entries(st.orders)) {
         const ghost = st.ghosts.find((candidate) => candidate.id === id && candidate.own);
         if (!ghost) continue;
@@ -132,7 +189,7 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       recordPriceHistory(st);
       st.corpsInView = new Set(msg.ghosts.map((ghost) => ghost.owner)).size;
       st.link = "online";
-      return [{ kind: "ViewApplied" }];
+      return [{ kind: "ViewApplied" }, ...derived];
     }
 
     case "BattleRecords": {
@@ -251,13 +308,22 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       return [{ kind: "EstimateReady", estimate }];
     }
 
-    case "Timeline":
+    case "Timeline": {
+      const previous = new Set(st.timeline.map((entry) => `${entry.at_time}:${entry.severity}:${entry.text}`));
+      const hadTimeline = st.awaySet;
       st.timeline = msg.entries;
       if (!st.awaySet) {
         st.awaySince = msg.away_since;
         st.awaySet = true;
       }
-      return [{ kind: "TimelineApplied" }];
+      const rejected = hadTimeline
+        ? msg.entries
+            .filter((entry) => !previous.has(`${entry.at_time}:${entry.severity}:${entry.text}`))
+            .filter((entry) => /^(order refused|can't build)/i.test(entry.text))
+            .map((entry): CoreEvent => ({ kind: "CommandRejected", message: entry.text }))
+        : [];
+      return [{ kind: "TimelineApplied" }, ...rejected];
+    }
 
     case "Trade":
       return [{ kind: "TradeSettled", trade: msg.trade }];

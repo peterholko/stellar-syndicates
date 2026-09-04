@@ -1,6 +1,8 @@
 import { guardCapable, jumpCapable, shipKindLabel } from "../../core/derive/fleet";
 import { gravityWellAt, nearestKnownDock } from "../../core/derive/geo";
 import { intentSummary } from "../../core/derive/orders";
+import { informationDelay } from "../../core/derive/format";
+import { jumpRangeAt } from "../../core/derive/nebula";
 import type { GhostView, TransitMode } from "../../protocol";
 import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
@@ -62,7 +64,10 @@ export class DeckCommandStrip {
     else if (selected.length) modeHtml = this.selectionHtml(selected);
     if (renderDeferred(this.root.id, () => this.render(true))) return;
     this.signature = signature;
-    setHtml(this.root, modeHtml ? modeHtml + this.statusLineHtml() : "");
+    // Receipts and refusals remain visible even with no fleet selected. A
+    // status message is feedback from command, not decoration owned by the
+    // selection strip.
+    setHtml(this.root, modeHtml + this.statusLineHtml());
     this.root.hidden = !this.root.childElementCount;
   }
 
@@ -144,7 +149,6 @@ export class DeckCommandStrip {
       this.hooks.notice(`<b>${mode === "full" ? "Full-speed" : "Stealth"} transit requested</b> · visible when the next report reaches command.`);
     } else if (action === "recall" && fleet) {
       this.ctx.send({ type: "RecallRaid", raider_id: fleet.id });
-      delete this.ctx.state.raids[fleet.id];
       this.hooks.notice(`<b>Recall sent</b> · it may arrive after contact has already begun.`);
     }
     this.ctx.renderer.stateVersion++;
@@ -168,7 +172,7 @@ export class DeckCommandStrip {
   private armedHtml(mode: "jump" | "guard", shipId: string): string {
     const fleet = this.ctx.state.ghosts.find((entry) => entry.id === shipId);
     const detail = mode === "jump"
-      ? `click a destination within ${Math.round(this.ctx.state.galaxy?.jump_range ?? 0).toLocaleString()} su`
+      ? `click a destination within ${Math.round(fleet ? jumpRangeAt(this.ctx.state.galaxy, fleet.pos) : 0).toLocaleString()} su`
       : "click another one of your fleet markers";
     return `<div class="deck-command-strip__frame deck-command-strip__frame--armed">` +
       `<div class="deck-command-strip__mode">${mode.toUpperCase()} AIMING</div>` +
@@ -194,11 +198,11 @@ export class DeckCommandStrip {
 
   private fleetChip(fleet: GhostView): string {
     const composition = fleet.composition?.length
-      ? fleet.composition.map((stack) => `◆ ${stack.count} ${shipKindLabel(stack.kind)}`).join(" · ")
-      : "composition delayed";
+      ? fleet.composition.map((stack) => `${stack.count}× ${shipKindLabel(stack.kind)}`).join(" · ")
+      : fleet.own ? "formation report pending" : "composition unresolved";
     return `<div class="deck-fleet-chip${fleet.id === this.ctx.state.selectedShipId ? " is-primary" : ""}">` +
       `<span><b>${esc(shipKindLabel(fleet.kind))}</b><small>${esc(composition)}</small></span>` +
-      `<span class="deck-fleet-chip__delay">Δt ${Math.round(fleet.age)}s</span>` +
+      `<span class="deck-fleet-chip__delay">${esc(informationDelay(fleet.age))}</span>` +
       `<button type="button" data-deck-command="center" data-fleet-id="${esc(fleet.id)}" aria-label="Center fleet">⌾</button>` +
       `<button type="button" data-deck-command="remove" data-fleet-id="${esc(fleet.id)}" aria-label="Deselect fleet">✕</button>` +
       `</div>`;
@@ -207,28 +211,30 @@ export class DeckCommandStrip {
   private verbHtml(fleet: GhostView): string {
     const dock = nearestKnownDock(fleet);
     const hasCourse = this.hasCourse(fleet);
+    const queue = this.ctx.state.pendingOrders.get(fleet.id) ?? [];
+    const pending = (kind: (typeof queue)[number]["kind"]) => queue.some((order) => !order.lost && order.kind === kind);
     const jumpReason = !jumpCapable(fleet)
       ? "All hulls must carry compatible jump drives."
       : fleet.docked
         ? "Undock before spooling."
         : gravityWellAt(fleet.pos, this.ctx.state)
           ? "Served sighting is inside a gravity well."
-          : "";
+          : pending("jump") ? "Jump order already in flight." : "";
     const guardReason = !guardCapable(fleet)
       ? "Requires an Interceptor fleet."
       : !this.ctx.state.ghosts.some((candidate) => candidate.own && candidate.id !== fleet.id && !candidate.docked)
         ? "No undocked friendly fleet to guard."
-        : "";
-    const dockReason = fleet.docked ? "Already docked." : dock ? "" : "No known friendly berth.";
-    const holdReason = fleet.docked ? "Docked fleets are already stationary." : hasCourse ? "" : "No active course to cancel.";
-    const recallReason = this.ctx.state.raids[fleet.id] ? "" : "Fleet has no active raid/intercept.";
+        : pending("guard") ? "Guard order already in flight." : "";
+    const dockReason = fleet.docked ? "Already docked." : pending("move") ? "Move or docking order already in flight." : dock ? "" : "No known friendly berth.";
+    const holdReason = fleet.docked ? "Docked fleets are already stationary." : pending("hold") ? "Hold order already in flight." : hasCourse ? "" : "No active course to cancel.";
+    const recallReason = pending("recall") ? "Recall already in flight." : this.ctx.state.raids[fleet.id] ? "" : "Fleet has no active raid/intercept.";
     return [
-      this.verb("move", "Move", "Click map"),
+      this.verb("move", "Move", "Click map", pending("move") ? "Move order already in flight." : ""),
       this.verb("dock", "Dock", dock ? dock.name : "Nearest berth", dockReason),
-      this.verb("jump", "Jump", this.ctx.state.galaxy ? `${Math.round(this.ctx.state.galaxy.jump_range).toLocaleString()} su` : "Range unavailable", jumpReason),
+      this.verb("jump", "Jump", this.ctx.state.galaxy ? `${Math.round(jumpRangeAt(this.ctx.state.galaxy, fleet.pos)).toLocaleString()} su` : "Range unavailable", jumpReason),
       this.verb("guard", "Guard", "Choose fleet", guardReason),
       this.verb("hold", "Hold", "Cancel course", holdReason),
-      this.transitVerb(),
+      this.transitVerb(fleet, pending("configure")),
       this.verb("recall", "Recall", "Break off", recallReason),
     ].join("");
   }
@@ -237,17 +243,22 @@ export class DeckCommandStrip {
     const detail = reason || hint;
     return `<span class="deck-command-verb${reason ? " is-disabled" : ""}">` +
       `<button type="button" data-deck-command="${action}"${extra}${reason ? " disabled" : ""} aria-label="${esc(label)}. ${esc(detail)}">${esc(label)}</button>` +
-      `<em>${esc(detail)}</em>` +
+      (reason ? `<small>${esc(reason)}</small>` : `<em>${esc(detail)}</em>`) +
       `</span>`;
   }
 
-  private transitVerb(): string {
-    return `<span class="deck-command-verb deck-command-verb--transit">` +
+  private transitVerb(fleet: GhostView, pending: boolean): string {
+    const requested = [...(this.ctx.state.pendingOrders.get(fleet.id) ?? [])]
+      .reverse()
+      .map((order) => order.configuration)
+      .find((configuration) => configuration?.kind === "transit");
+    const current = requested?.kind === "transit" ? requested.mode : fleet.transit ?? "full";
+    return `<span class="deck-command-verb deck-command-verb--transit${pending ? " is-disabled" : ""}">` +
       `<span class="deck-command-transit" role="group" aria-label="Transit mode">` +
         `<span>Transit</span>` +
-        `<button type="button" data-deck-command="transit" data-mode="full" aria-label="Set full-speed transit">Full</button>` +
-        `<button type="button" data-deck-command="transit" data-mode="stealth" aria-label="Set stealth transit">Stealth</button>` +
-      `</span><em>Choose the fleet's standing transit mode.</em></span>`;
+        `<button type="button" data-deck-command="transit" data-mode="full" aria-pressed="${current === "full"}" ${pending ? "disabled" : ""} aria-label="Set full-speed transit">Full</button>` +
+        `<button type="button" data-deck-command="transit" data-mode="stealth" aria-pressed="${current === "stealth"}" ${pending ? "disabled" : ""} aria-label="Set stealth transit">Stealth</button>` +
+      `</span>${pending ? "<small>Configuration signal in flight.</small>" : "<em>Choose the fleet's standing transit mode.</em>"}</span>`;
   }
 
   private hasCourse(fleet: GhostView): boolean {
@@ -255,7 +266,7 @@ export class DeckCommandStrip {
     return !!this.ctx.state.orders[fleet.id]
       || !!fleet.path?.length
       || Math.hypot(fleet.vel.x, fleet.vel.y) >= 0.5
-      || queue.some((order) => order.kind !== "hold");
+      || queue.some((order) => !order.lost && ["move", "jump", "guard", "raid", "attack", "recall", "withdraw", "haul"].includes(order.kind));
   }
 
   private selectedFleets(): GhostView[] {

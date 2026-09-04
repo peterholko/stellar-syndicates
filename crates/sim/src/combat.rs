@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{DT, TICK_HZ};
+use crate::config::DT;
 use crate::doctrine::EngagementPolicy;
 use crate::event::RaidOutcome;
 use crate::ids::{EntityId, PlayerId};
@@ -249,11 +249,6 @@ pub const RECORD_PER_CORP_FLOOR: usize = 25;
 /// Absolute cap on stored records; the oldest RESOLVED ones evict past it (a
 /// runaway-battle backstop). Tunable.
 pub const MAX_BATTLE_RECORDS: usize = 2000;
-/// The target number of ROUNDS a full-length battle records — the timeline is
-/// down-sampled to about this many flushes (plus one per event beat), so a
-/// 45-minute battle and a 45-second one both read as a legible ~40-step replay.
-/// Tunable.
-pub const RECORD_TARGET_ROUNDS: u64 = 40;
 
 /// One side of a recorded battle at the moment it OPENED. Part B adds the
 /// per-loadout initial breakdown; for now the composition is per-kind.
@@ -380,24 +375,18 @@ pub struct BattleOutcomeSummary {
     pub total_losses: [BTreeMap<ShipKind, u32>; 2],
 }
 
-/// Recorder bookkeeping accumulated BETWEEN round flushes (not part of the
+/// Recorder bookkeeping accumulated BETWEEN engine steps (not part of the
 /// observable timeline, but persisted so a mid-battle snapshot resumes exactly).
+/// Rounds are 1:1 with tactical engine steps — there is no recorder cadence of
+/// its own; whatever lands here on off-step ticks rides the next step's round.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 struct PendingRound {
-    /// Damage dealt by [attackers, defenders] since the last flush.
+    /// Damage dealt by [attackers, defenders] since the last step.
     dealt: [f64; 2],
-    /// Ships lost by [attackers, defenders] since the last flush.
+    /// Ships lost by [attackers, defenders] since the last step.
     kills: [BTreeMap<ShipKind, u32>; 2],
-    /// Beats since the last flush (each forces a flush next round tick).
+    /// Beats since the last step.
     notes: Vec<RoundNote>,
-    /// Sim tick of the last flush (round cadence is measured from here).
-    last_flush_tick: u64,
-    /// §tactical T3: the LATEST truth keyframe since the last flush (the
-    /// flushed round carries it) + deaths accumulated across the window.
-    frame: Option<Keyframe>,
-    deaths: Vec<KfDeath>,
-    /// Flush cadence in ticks (computed at open from the expected duration).
-    round_every: u64,
 }
 
 /// One recorded battle: its sides' opening state, a per-round timeline captured
@@ -434,15 +423,6 @@ fn add_losses_into(map: &mut BTreeMap<ShipKind, u32>, l: &Losses) {
 }
 
 impl BattleRecord {
-    /// The round-flush cadence (ticks) for a battle of this timescale: the
-    /// expected duration down-sampled to ≈[`RECORD_TARGET_ROUNDS`] flushes, floor
-    /// 1. Raids expect only a short slice, so they record a handful of rounds.
-    pub fn round_every_for(battle_target_secs: f64, raid: bool) -> u64 {
-        let frac = if raid { RAID_CAP_FRAC } else { 1.0 };
-        let expected_ticks = (frac * battle_target_secs.max(1.0) * TICK_HZ as f64).max(1.0);
-        ((expected_ticks / RECORD_TARGET_ROUNDS as f64).floor() as u64).max(1)
-    }
-
     /// Open a record for a battle whose sides and geometry are known.
     pub fn open(
         id: EntityId,
@@ -450,7 +430,6 @@ impl BattleRecord {
         system: Option<EntityId>,
         raid: bool,
         started_tick: u64,
-        battle_target_secs: f64,
         sides: [SideRecord; 2],
     ) -> Self {
         BattleRecord {
@@ -463,11 +442,7 @@ impl BattleRecord {
             sides,
             rounds: Vec::new(),
             outcome: None,
-            pending: PendingRound {
-                round_every: Self::round_every_for(battle_target_secs, raid),
-                last_flush_tick: started_tick,
-                ..Default::default()
-            },
+            pending: PendingRound::default(),
         }
     }
 
@@ -480,39 +455,26 @@ impl BattleRecord {
         add_losses_into(&mut self.pending.kills[1], lb);
     }
 
-    /// Note a beat (forces a round flush on the next `flush_if_due`).
-    /// §tactical T3: feed the latest truth keyframe (deaths ACCUMULATE across
-    /// the round window, capped; the positional snapshot is last-wins).
-    pub fn keyframe(&mut self, mut frame: Keyframe) {
-        self.pending.deaths.append(&mut frame.deaths);
-        self.pending.deaths.truncate(KEYFRAME_DEATH_CAP);
-        self.pending.frame = Some(frame);
-    }
-
+    /// Note a beat. It rides the next engine step's round (or the finalize
+    /// tail) — beats no longer force off-step flushes of their own.
     pub fn note(&mut self, note: RoundNote) {
         self.pending.notes.push(note);
     }
 
-    /// Flush a round if the cadence elapsed OR a beat is pending, snapshotting
-    /// the survivors `counts`. No-op otherwise.
-    pub fn flush_if_due(&mut self, tick: u64, counts: [BTreeMap<ShipKind, u32>; 2]) {
-        let due = tick.saturating_sub(self.pending.last_flush_tick) >= self.pending.round_every;
-        if due || !self.pending.notes.is_empty() {
-            self.flush_round(tick, counts);
-        }
+    /// One tactical engine STEP → one recorded round, carrying that step's
+    /// truth keyframe verbatim (deaths capped). Everything accumulated on the
+    /// ticks since the previous step rides along; nothing is down-sampled —
+    /// the replay IS the engine's battle.
+    pub fn flush_step(&mut self, tick: u64, mut frame: Keyframe, counts: [BTreeMap<ShipKind, u32>; 2]) {
+        frame.deaths.truncate(KEYFRAME_DEATH_CAP);
+        self.flush_round(tick, Some(frame), counts);
     }
 
-    fn flush_round(&mut self, tick: u64, counts: [BTreeMap<ShipKind, u32>; 2]) {
+    fn flush_round(&mut self, tick: u64, frame: Option<Keyframe>, counts: [BTreeMap<ShipKind, u32>; 2]) {
         let dealt = self.pending.dealt;
         let kills = std::mem::take(&mut self.pending.kills);
         let notes = std::mem::take(&mut self.pending.notes);
-        let frame = self.pending.frame.take().map(|mut f| {
-            f.deaths = std::mem::take(&mut self.pending.deaths);
-            f
-        });
-        self.pending.deaths.clear();
         self.pending.dealt = [0.0, 0.0];
-        self.pending.last_flush_tick = tick;
         self.rounds.push(RoundRecord {
             tick,
             counts,
@@ -542,8 +504,11 @@ impl BattleRecord {
         total_losses: [BTreeMap<ShipKind, u32>; 2],
         final_counts: [BTreeMap<ShipKind, u32>; 2],
     ) {
+        // A frameless tail: only what landed AFTER the last engine step (an
+        // off-step ending — hard stop, scout sync). The viewer holds the
+        // previous keyframe through it.
         if self.pending_has_content() {
-            self.flush_round(tick, final_counts);
+            self.flush_round(tick, None, final_counts);
         }
         self.ended_tick = Some(tick);
         self.outcome = Some(BattleOutcomeSummary {
@@ -639,7 +604,7 @@ mod tests {
                 platform_tiers: 0,
             },
         ];
-        let mut r = BattleRecord::open(id, Vec2::ZERO, None, false, tick, 45.0, sides);
+        let mut r = BattleRecord::open(id, Vec2::ZERO, None, false, tick, sides);
         r.finalize(
             tick,
             RaidOutcome::BothSurvive,
@@ -650,26 +615,7 @@ mod tests {
     }
 
     #[test]
-    fn round_cadence_targets_forty_flushes_under_both_presets() {
-        // A full-length battle records ≈ RECORD_TARGET_ROUNDS flushes under BOTH
-        // the playtest and production battle timescales — the timeline stays a
-        // legible ~40-step replay whether the fight lasts 45 s or 45 min.
-        for target in [45.0, 2700.0] {
-            let re = BattleRecord::round_every_for(target, false);
-            let full_ticks = target * TICK_HZ as f64;
-            let flushes = full_ticks / re as f64;
-            assert!(
-                (flushes - RECORD_TARGET_ROUNDS as f64).abs() <= 2.0,
-                "target {target}s → {flushes:.1} flushes (want ≈ {})",
-                RECORD_TARGET_ROUNDS
-            );
-        }
-        // A raid records only a handful of rounds (short cap slice).
-        assert!(BattleRecord::round_every_for(45.0, true) >= 1);
-    }
-
-    #[test]
-    fn accumulate_flushes_on_cadence_and_records_dealt_and_kills() {
+    fn accumulate_rides_until_the_step_flush() {
         let sides = [
             SideRecord {
                 corp: PlayerId(1),
@@ -686,46 +632,38 @@ mod tests {
                 platform_tiers: 0,
             },
         ];
-        // round_every for a 20 s battle = floor(20*30/40) = 15 ticks.
-        let mut r = BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 20.0, sides);
-        // Fourteen quiet ticks: no flush yet (under the cadence, no beat).
-        for t in 1..=14 {
+        let mut r = BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, sides);
+        // Fourteen off-step ticks: everything accumulates, nothing flushes —
+        // rounds exist only where the tactical engine stepped.
+        for _t in 1..=14 {
             r.accumulate(
                 1.0,
                 0.5,
                 &Losses::default(),
                 &losses(&[(ShipKind::Raider, 0)]),
             );
-            r.flush_if_due(
-                t,
-                [
-                    comp(&[(ShipKind::Raider, 5)]),
-                    comp(&[(ShipKind::Raider, 5)]),
-                ],
-            );
         }
-        assert!(r.rounds.is_empty(), "no flush before the cadence elapses");
-        // Tick 15 hits the cadence and one enemy raider died: a round flushes.
+        assert!(r.rounds.is_empty(), "no round without an engine step");
+        // Tick 15: the engine steps (a keyframe arrives) and one enemy raider
+        // died — the step's round carries the whole accumulated window.
         r.accumulate(
             1.0,
             0.5,
             &Losses::default(),
             &losses(&[(ShipKind::Raider, 1)]),
         );
-        r.flush_if_due(
+        r.flush_step(
             15,
+            Keyframe::default(),
             [
                 comp(&[(ShipKind::Raider, 5)]),
                 comp(&[(ShipKind::Raider, 4)]),
             ],
         );
-        assert_eq!(
-            r.rounds.len(),
-            1,
-            "the cadence tick flushes exactly one round"
-        );
+        assert_eq!(r.rounds.len(), 1, "one engine step → exactly one round");
         let round = &r.rounds[0];
         assert_eq!(round.tick, 15);
+        assert!(round.frame.is_some(), "every step round carries its keyframe");
         assert!(
             (round.dealt[0] - 15.0).abs() < 1e-9,
             "accumulated attacker damage"
@@ -747,7 +685,7 @@ mod tests {
     }
 
     #[test]
-    fn a_beat_forces_a_flush_off_cadence() {
+    fn a_beat_rides_until_the_next_step() {
         let sides = [
             SideRecord {
                 corp: PlayerId(1),
@@ -764,23 +702,27 @@ mod tests {
                 platform_tiers: 0,
             },
         ];
-        let mut r = BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 2700.0, sides);
-        // A single early tick with a beat — nowhere near the (huge) cadence.
+        let mut r = BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, sides);
+        // A beat on an off-step tick: it waits (no frameless note-only round).
         r.note(RoundNote::Joined {
             side: 1,
             comp: comp(&[(ShipKind::Corvette, 3)]),
         });
         r.accumulate(2.0, 0.0, &Losses::default(), &Losses::default());
-        r.flush_if_due(3, [BTreeMap::new(), comp(&[(ShipKind::Corvette, 3)])]);
-        assert_eq!(
-            r.rounds.len(),
-            1,
-            "the join beat forced a flush off-cadence"
+        assert!(r.rounds.is_empty(), "a beat alone never flushes a round");
+        // The next engine step's round carries the beat — WITH a keyframe, so
+        // the theater always has positions under every recorded event.
+        r.flush_step(
+            30,
+            Keyframe::default(),
+            [BTreeMap::new(), comp(&[(ShipKind::Corvette, 3)])],
         );
+        assert_eq!(r.rounds.len(), 1);
         assert!(matches!(
             r.rounds[0].notes[0],
             RoundNote::Joined { side: 1, .. }
         ));
+        assert!(r.rounds[0].frame.is_some(), "the beat's round is framed");
     }
 
     #[test]
@@ -801,14 +743,14 @@ mod tests {
                 platform_tiers: 0,
             },
         ];
-        let mut r = BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 2700.0, sides);
+        let mut r = BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, sides);
         r.accumulate(
             5.0,
             1.0,
             &Losses::default(),
             &losses(&[(ShipKind::Raider, 2)]),
         );
-        assert!(r.rounds.is_empty(), "no cadence flush yet");
+        assert!(r.rounds.is_empty(), "no step flush yet");
         r.finalize(
             7,
             RaidOutcome::TargetDestroyed,
@@ -894,7 +836,7 @@ mod tests {
         // for a DIFFERENT corp so the floor can't protect the runner incidentally.
         recs.insert(
             EntityId(1),
-            BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, 45.0, sides),
+            BattleRecord::open(EntityId(1), Vec2::ZERO, None, false, 0, sides),
         );
         for i in 0..30u64 {
             let id = EntityId(1000 + i);
@@ -932,7 +874,6 @@ mod tests {
             Some(EntityId(5)),
             false,
             3,
-            2700.0,
             sides,
         );
         r.accumulate(
@@ -942,8 +883,9 @@ mod tests {
             &Losses::default(),
         );
         r.note(RoundNote::PlatformDestroyed);
-        r.flush_if_due(
+        r.flush_step(
             4,
+            Keyframe::default(),
             [
                 comp(&[(ShipKind::Raider, 3)]),
                 comp(&[(ShipKind::Corvette, 3)]),

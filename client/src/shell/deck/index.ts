@@ -20,6 +20,7 @@ import { DeckPolicyRoutes } from "./policy";
 import { DeckFleetRoutes } from "./fleet";
 import { DeckLogRoutes } from "./log";
 import { bindResearchNet } from "../../core/derive/research";
+import { gameClock, informationDelay } from "../../core/derive/format";
 import { DeckBottomBand } from "./bottom-band";
 import { DeckRosterRoutes } from "./roster";
 import { DeckStrategicRoutes } from "./strategic";
@@ -97,6 +98,7 @@ class DeckShell implements Shell {
       go: (route) => this.router?.go(route),
       focusSystem: (id) => this.focusInboxSystem(id),
       focusFleet: (id) => this.focusInboxFleet(id),
+      runFounding: () => this.command?.runFoundingPrimary(),
     });
     this.command = new DeckCommandRoutes(byId("deck-workspace-body"), byId("deck-founding"), ctx, {
       go: (route) => this.router?.go(route),
@@ -269,8 +271,8 @@ class DeckShell implements Shell {
         this.setStatus(event.readout);
       } else if (event.kind === "OrderConfirmed") {
         const fleet = this.ctx?.state.ghosts.find((entry) => entry.id === event.shipId);
-        this.setStatus(`<b>Order confirmed</b> · ${escapeHtml(humanize(event.orderKind))}${fleet ? ` · ${escapeHtml(shipKindLabel(fleet.kind))}` : ""}`);
-      } else if (event.kind === "ServerError") {
+        this.setStatus(`<b>Order received</b> · ${escapeHtml(humanize(event.orderKind))}${fleet ? ` · ${escapeHtml(shipKindLabel(fleet.kind))}` : ""}`);
+      } else if (event.kind === "ServerError" || event.kind === "CommandRejected") {
         this.setStatus(`<span class="deck-command-status__error"><b>Command refused</b> · ${escapeHtml(event.message)}</span>`);
       }
       if (!fleetAbsorbed) this.toastFor(event);
@@ -397,7 +399,7 @@ class DeckShell implements Shell {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const routeKeys: Partial<Record<string, DeckRouteName>> = {
       m: "market", v: "fleets", r: "research", p: "officers",
-      u: "operations", y: "syndicate", c: "faction", l: "log",
+      u: "operations", y: "syndicate", c: "faction", k: "rankings", l: "log",
     };
     const route = routeKeys[key.toLowerCase()];
     if (route) {
@@ -472,6 +474,11 @@ class DeckShell implements Shell {
     } else if (this.ctx.renderer.viewMode.type === "battle") {
       this.ctx.renderer.exitBattleView();
       if (this.router?.current) this.router.back();
+    } else if (this.ctx.renderer.viewMode.type === "system") {
+      // First Esc leaves the semantic orrery but preserves its workspace. A
+      // second Esc walks the router, matching the visible layer stack.
+      this.ctx.renderer.exitSystemView();
+      this.ctx.renderer.setSystemDynamic([], [], true);
     } else if (this.router?.current) {
       this.router.back();
     } else if (this.ctx.state.selectedShipId || this.ctx.state.selectedShipIds.size) {
@@ -520,11 +527,14 @@ class DeckShell implements Shell {
         break;
       }
       case "hub":
-        this.router.go({ name: "market" });
+        this.router.go({ name: "market", query: { inspect: "map" } });
         break;
-      case "ongoingBattle":
-        this.router.go({ name: "battle", params: { id: target.id, label: "Ongoing battle" } });
+      case "ongoingBattle": {
+        // One marker family: the id is a running engagement OR a concluded record.
+        const running = state.battles.some((battle) => battle.id === target.id);
+        this.router.go({ name: "battle", params: { id: target.id, label: running ? "Ongoing battle" : "Battle replay" } });
         break;
+      }
       case "aftermath":
         this.router.go({ name: "battle", params: { id: String(target.id), report: "battle", label: "Battle report" } });
         break;
@@ -583,6 +593,8 @@ class DeckShell implements Shell {
     }
     this.activeCrumbs = this.router.breadcrumbs(route);
     this.workspace.show(route, this.activeCrumbs, stack.length > 1);
+    const focus = this.routeFocus(route);
+    if (focus) requestAnimationFrame(() => this.ctx?.renderer.ensureWorldVisible(focus));
     const commandHandled = this.command?.render(route, true) ?? false;
     const empireHandled = this.empire?.render(route, true) ?? false;
     const marketHandled = this.market?.render(route, true) ?? false;
@@ -595,17 +607,35 @@ class DeckShell implements Shell {
     this.renderActiveNav(route.name);
   }
 
+  private routeFocus(route: DeckRoute): { x: number; y: number } | null {
+    if (!this.ctx) return null;
+    if (route.name === "market") return this.ctx.state.galaxy?.hub ?? null;
+    if (route.name === "fleet" && route.params?.id) {
+      return this.ctx.state.ghosts.find((fleet) => fleet.id === route.params!.id)?.pos ?? null;
+    }
+    if (route.name === "system" || route.name === "world" || route.name === "build") {
+      const id = route.params?.systemId ?? route.params?.id;
+      return this.ctx.state.galaxy?.systems.find((system) => system.id === id)?.pos ?? null;
+    }
+    if (route.name === "battle" && route.params?.id) {
+      return this.ctx.state.battles.find((battle) => battle.id === route.params!.id)?.pos
+        ?? this.ctx.state.battleRecords.find((record) => record.id === route.params!.id)?.pos
+        ?? null;
+    }
+    return null;
+  }
+
   private renderPlaceholder(route: DeckRoute): void {
     const body = byId("deck-workspace-body");
     body.replaceChildren();
     const placeholder = document.createElement("div");
     placeholder.className = "deck-placeholder";
     const eyebrow = document.createElement("span");
-    eyebrow.textContent = "Route scaffold";
+    eyebrow.textContent = "Workspace unavailable";
     const title = document.createElement("b");
     title.textContent = DECK_ROUTES[route.name].title;
     const copy = document.createElement("p");
-    copy.textContent = "Operational content lands in its scheduled Deck phase.";
+    copy.textContent = "This report is not available in the current served picture.";
     placeholder.append(eyebrow, title, copy);
     body.append(placeholder);
   }
@@ -642,15 +672,59 @@ class DeckShell implements Shell {
     if (!this.toasts) return;
     if (event.kind === "OrderConfirmed") {
       this.toasts.push({
-        title: "Order confirmed",
+        title: "Order received",
         message: humanize(event.orderKind),
         tone: "good",
         destination: { name: "fleet", params: { id: event.shipId } },
       });
+    } else if (event.kind === "FleetDocked") {
+      const fleet = this.ctx?.state.ghosts.find((entry) => entry.id === event.fleetId);
+      const system = event.berth === "hub" ? null : this.ctx?.state.galaxy?.systems.find((entry) => entry.id === event.berth);
+      this.toasts.push({
+        title: "Fleet docked",
+        message: `${fleet ? shipKindLabel(fleet.kind) : "Fleet"} · ${event.berth === "hub" ? "Market Hub" : system?.name ?? "system berth"}`,
+        tone: "good",
+        destination: event.berth === "hub"
+          ? { name: "market", query: { tab: "warehouse" } }
+          : { name: "system", params: { id: event.berth, systemLabel: system?.name ?? "System" }, query: { tab: "fleets" } },
+      });
+    } else if (event.kind === "FleetArrived") {
+      const fleet = this.ctx?.state.ghosts.find((entry) => entry.id === event.fleetId);
+      this.toasts.push({
+        title: "Fleet arrived",
+        message: fleet ? shipKindLabel(fleet.kind) : "Destination reached",
+        tone: "good",
+        destination: { name: "fleet", params: { id: event.fleetId } },
+      });
+    } else if (event.kind === "BuildCompleted") {
+      const system = this.ctx?.state.galaxy?.systems.find((entry) => entry.id === event.systemId);
+      this.toasts.push({
+        title: "Construction complete",
+        message: `${humanize(event.buildKey)} · ${system?.name ?? "colony"}`,
+        tone: "good",
+        destination: { name: "system", params: { id: event.systemId, systemLabel: system?.name ?? "System" }, query: { tab: "build" } },
+      });
+    } else if (event.kind === "StructureStaffed") {
+      const system = this.ctx?.state.galaxy?.systems.find((entry) => entry.id === event.systemId);
+      this.toasts.push({
+        title: "Production staffed",
+        message: `${event.title} · ${system?.name ?? "colony"}`,
+        tone: "good",
+        destination: { name: "system", params: { id: event.systemId, systemLabel: system?.name ?? "System" }, query: { tab: "production" } },
+      });
+    } else if (event.kind === "ResearchCompleted") {
+      this.toasts.push({
+        title: "Research complete",
+        message: event.programmeName,
+        tone: "good",
+        destination: { name: "research" },
+      });
+    } else if (event.kind === "CommandRejected") {
+      this.toasts.push({ title: "Command refused", message: event.message, tone: "bad", destination: { name: "log" } });
     } else if (event.kind === "ReportArrived") {
       this.toasts.push({
         title: "Combat report arrived",
-        message: `${humanize(event.report.outcome)} · delayed ${Math.round(event.report.age)}s`,
+        message: `${humanize(event.report.outcome)} · ${informationDelay(event.report.age)}`,
         tone: event.report.outcome === "target_destroyed" && event.report.you === "attacker" ? "good" : "warn",
         destination: { name: "log" },
       });
@@ -704,8 +778,8 @@ class DeckShell implements Shell {
     byId("deck-credits").textContent = state.wallet ? `${reserved > 0 ? "~" : ""}${Math.round(spendableMarketCredits()).toLocaleString()}` : "—";
     byId("deck-reserved").textContent = reserved > 0 ? `${Math.round(reserved).toLocaleString()} reserved` : "";
     byId("deck-equity").textContent = state.wallet ? Math.round(state.wallet.valuation).toLocaleString() : "—";
-    byId("deck-tick").textContent = state.link === "online" ? state.tick.toLocaleString() : "—";
-    byId("deck-pacing").textContent = state.pacingScale !== 1 ? `FAST ${state.pacingScale}×` : "";
+    byId("deck-tick").textContent = state.link === "online" ? gameClock(state.simTime) : "—";
+    byId("deck-pacing").textContent = state.pacingScale !== 1 ? `×${state.pacingScale} speed` : "×1 speed";
     const link = byId("deck-link");
     link.textContent = state.link === "online" ? "● online" : state.link === "reconnecting" ? "reconnecting…" : state.link === "connecting" ? "connecting…" : "offline";
     link.classList.toggle("is-online", state.link === "online");
@@ -727,7 +801,7 @@ class DeckShell implements Shell {
     return {
       fleets: state.ghosts.filter((fleet) => fleet.own && (fleet.stalled || fleet.rescue_inbound || ownBattleIds.has(fleet.id))).length,
       market: (state.wallet?.orders.length ?? 0) + (state.freight?.shipments.length ?? 0),
-      research: state.research?.stalled || (state.research && !state.research.active && state.research.queue.length === 0) ? 1 : 0,
+      research: state.research?.stalled ? 1 : 0,
       officers: state.captains.filter((captain) => !captain.assigned_fleet || (captain.report?.unspent ?? 0) > 0).length,
       operations: state.operations.filter((operation) => operation.state === "offered" || (operation.state === "active" && !operation.joined)).length,
       syndicate: state.syndicateInvites.length,

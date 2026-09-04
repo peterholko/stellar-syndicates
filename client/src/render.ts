@@ -6,12 +6,13 @@
 
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import { label } from "./icons";
-import type { BodyView, GalaxyInfo, GhostView, PathPointView, ShipKind, SystemInfo, Vec2 } from "./protocol";
+import type { BodyView, GalaxyInfo, GhostView, NebulaInfo, NebulaKind, PathPointView, ShipKind, SystemInfo, Vec2 } from "./protocol";
 import { countClassLabel, fleetCargoManifest, fleetExactCount } from "./protocol";
 import { JUMP_DEPARTURE_TTL_S, liveSimTime, type ViewState } from "./state";
 import { hashId } from "./prng";
 import { STAR_TYPES, starAnchor, starIconUrl, starTypeFor, starVisualRatio } from "./stars";
 import { buildVisualSystem, SystemViewScene, type CameraRect, type SystemBodyDetail } from "./systemview";
+import { jumpRangeAt, nebulaContains } from "./core/derive/nebula";
 
 // --- SEMANTIC-ZOOM VIEW MODE (galaxy ⇄ system) --------------------------------
 // The renderer hosts TWO scenes with INDEPENDENT coordinate systems: the galaxy
@@ -69,7 +70,7 @@ const COL_PIRATE = 0xe08a2c;
 // the only hulls that wear it.
 const COL_TCA = 0x7fa6c8;
 // §node: EXOTIC NODES — a VIOLET exotic accent, distinct from every faction hue.
-// The glyph marks a node; ownership stays on the system ring/tint.
+// The glyph marks a node; ownership stays on the system label.
 const COL_NODE = 0xb98cff;
 const COL_ANCHOR_OWN = 0x9be7ff;
 const COL_ANCHOR_OTHER = 0xcf9b6b;
@@ -148,7 +149,7 @@ interface JumpDepartureFx {
 }
 
 // §perf: pooled per-system draw objects (drawSystems). One `g` carries ALL the
-// system's geometry (glow, ownership rings, blockade/enclave/node dashes,
+// system's geometry (glow, blockade/enclave/node dashes,
 // selection ring, dot fallback) exactly as the old per-frame Graphics did; the
 // label + three optional tag texts are pooled and toggled by visibility. Reused
 // across frames via clear()+redraw, so the drawn result is identical with zero
@@ -159,6 +160,12 @@ interface SystemGfx {
   blockade: Text; // "⛔ BLOCKADE" tag
   enclave: Text; // "☠ ENCLAVE T‹n›" tag
   node: Text; // "◈" dormant glyph OR "◈ TITLE" awakened tag
+}
+
+interface NebulaSprite {
+  sprite: Sprite;
+  boundary: Graphics;
+  label: Text;
 }
 
 // Ship sprites are top-down with the nose at -y; the heading convention here points
@@ -236,15 +243,15 @@ const BODY_HIT_CAP_PX = 90;
 // resolution; the sprite is scaled to this size regardless of the source PNG's
 // dimensions). Doubled from the original 22/26 so the icons read clearly on the
 // galaxy map. Tunable.
-const BATTLE_MARKER_PX = 44; // aftermath / capture icon size on screen
-const BATTLE_MARKER_TTL_S = 1800; // hide markers learned > 30 min ago (tunable)
-const BATTLE_MARKER_HIT_PX = 24; // click radius (scaled with the bigger markers)
-const BATTLE_ONGOING_PX = 52; // the in-progress icon size (pulse scales it a bit)
-// §aftermath-fade: a concluded-battle marker fades with time since the viewer's
-// report ARRIVED — full (with the fresh pulse) at first, a smooth decay over
-// AFTERMATH_FADE_SECS down to AFTERMATH_FLOOR_ALPHA, then held at that floor
-// (still selectable) until BATTLE_MARKER_TTL_S removes it. Old battles literally
-// fade into the dark. Both tunable.
+const BATTLE_MARKER_PX = 44; // capture icon size on screen
+const BATTLE_MARKER_TTL_S = 1800; // hide CAPTURE markers learned > 30 min ago (tunable)
+const BATTLE_MARKER_HIT_PX = 24; // capture-marker click radius
+const BATTLE_ONGOING_PX = 52; // the battle icon size (running pulse scales it a bit)
+// §aftermath-fade (captures only — battle markers are steady and live as long
+// as their record is served): a capture marker fades with time since the
+// viewer's report ARRIVED — full (with the fresh pulse) at first, a smooth
+// decay over AFTERMATH_FADE_SECS down to AFTERMATH_FLOOR_ALPHA, then held at
+// that floor (still selectable) until BATTLE_MARKER_TTL_S removes it. Tunable.
 const AFTERMATH_FADE_SECS = 240;
 const AFTERMATH_FLOOR_ALPHA = 0.15;
 // A jump scar is a short-lived bookmark, not a retained report: it fades all
@@ -357,6 +364,9 @@ export class Renderer {
   // camera (scale/cx/cy) still drives everything inside it exactly as before.
   private galaxyRoot = new Container();
   private bg = new Container(); // galaxy rings + hub (was: also the starfield)
+  private nebulaLayer = new Container();
+  private nebulaSprites = new Map<number, NebulaSprite>();
+  private nebulaTex = new Map<NebulaKind, Texture>();
   /// §emplacements: coverage/fallback glyphs, dedicated structure art, then
   /// selection chrome. Keeping these as separate children puts the selection
   /// ring above the opaque sprite while coverage remains beneath it.
@@ -370,11 +380,6 @@ export class Renderer {
   private routesGfx = new Graphics();
   private operationGfx = new Graphics();
   private systemsLayer = new Container();
-  // Docked fleets remain part of the command picture. They use compact berth
-  // pips rather than full hull art so systems stay legible without making a
-  // berthed formation impossible to select from the map.
-  private berthGfx = new Graphics();
-  private berthScreenByFleet = new Map<string, { x: number; y: number }>();
   private anchorsLayer = new Container();
   private orderLayer = new Container();
   // §perf: persistent Graphics/Text reused across frames (clear()+redraw instead
@@ -386,8 +391,6 @@ export class Renderer {
     style: new TextStyle({ fill: COL_ROUTE_PREVIEW, fontFamily: "ui-monospace, monospace", fontSize: 9 }),
   });
   private anchorGfx = new Graphics(); // anchor circles (pooled)
-  private ccGfx = new Graphics(); // command-center pulse (pooled)
-  private homeText: Text | null = null; // the viewer's "HOME" seat label (pooled)
   private bgGfx: Graphics | null = null; // hub glow rings (pooled)
   private hubText: Text | null = null; // the "HUB" label (pooled)
   private sensorGfx = new Graphics(); // honest CC + Raider sensor ranges
@@ -396,23 +399,24 @@ export class Renderer {
   // present — never allocated per frame.
   private systemGfx = new Map<string, SystemGfx>();
   private interceptGfx = new Graphics(); // soft intercept-estimate zones
-  // §battle-aftermath: concluded-battle markers (owner-only UI chrome) — under
-  // the ghosts (a marker never hides a ship), over bodies/estimates.
+  // Battle + capture marker chrome — under the ghosts (a marker never hides a
+  // ship), over bodies/estimates.
   private aftermathLayer = new Container();
   private aftermathGfx = new Graphics();
   private jumpDepartureGfx = new Graphics();
-  private aftermathSprites = new Map<number, Sprite>();
   private jumpDepartureFx = new Map<string, JumpDepartureFx>();
   /// Historical departure currently selected in the right-hand detail dock.
   /// Key shape matches the retained event ledger: fleet + exact departure time.
   selectedJumpDepartureKey: string | null = null;
-  private battleSprites = new Map<string, Sprite>(); // pooled ongoing-battle icons, keyed by engagement id
+  // Pooled battle icons — ONE marker family for running AND concluded battles
+  // (running = pulsing, concluded = steady replay affordance), keyed by the
+  // engagement/record id (they share the id space).
+  private battleSprites = new Map<string, Sprite>();
   private battleHits: { id: string; sx: number; sy: number }[] = []; // §one-battle-one-icon click targets
-  private aftermathHits: { id: number; sx: number; sy: number }[] = [];
-  // §aftermath-select: the concluded-battle marker (aftermath OR capture report id)
-  // that currently carries the standard selection ring. Set by main.ts on click,
-  // cleared when any other object is selected. Ring draws at full even at the fade
-  // floor, so an all-but-faded marker is still visibly selectable.
+  // §aftermath-select: the capture-report marker that currently carries the
+  // standard selection ring. Set by the shell on click, cleared when any other
+  // object is selected. Ring draws at full even at the fade floor, so an
+  // all-but-faded marker is still visibly selectable.
   selectedBattleMarkerId: number | null = null;
   private captureHits: { id: number; sx: number; sy: number }[] = []; // §Part 2 capture markers
   private ghostsLayer = new Container();
@@ -473,10 +477,9 @@ export class Renderer {
   // Fleet formation sprites, keyed `${family}_${tier}` (12 = 4 families × 3
   // tiers). A missing entry falls back to the single-ship sprite + badge.
   private texFleet = new Map<string, Texture>();
-  // §battle-aftermath: the two battle icons (in-progress / aftermath). Null →
-  // the drawn fallback markers keep working (the established art idiom).
+  // The battle icon (running pulses, concluded is steady — same marker family).
+  // Null → the drawn fallback marker keeps working (the established art idiom).
   private texBattleOngoing: Texture | null = null;
-  private texBattleAftermath: Texture | null = null;
 
   // The schematic System View scene (its own camera). Presentation only.
   private systemScene = new SystemViewScene();
@@ -552,11 +555,11 @@ export class Renderer {
     // the per-layer camera math are unchanged — only the parent is now galaxyRoot.
     this.galaxyRoot.addChild(
       this.bg,
+      this.nebulaLayer, // public deep-space terrain, beneath all tactical overlays
       this.sensorGfx, // base capability rings, beneath every map object
       this.emplacementLayer, // ...and what you built on them sits just above
       this.bodyLayer, // celestial body sprites, under the data cues that decorate them
       this.systemsLayer,
-      this.berthGfx,
       this.anchorsLayer,
       this.operationGfx, // known contract/objective sites, under routes and fleets
       this.routesGfx, // visible convoy routes, under ghosts
@@ -570,17 +573,12 @@ export class Renderer {
       this.deckSaliencyGfx, // opt-in labels/home/ping/reticle above map effects
     );
     this.aftermathLayer.addChild(this.aftermathGfx, this.jumpDepartureGfx);
-    // §perf: pooled persistent graphics for the order + anchor + command-center
-    // layers (drawn via clear()+redraw, never re-allocated per frame). Child order
-    // preserves the old draw order: anchor circles, then HOME label, then the
-    // command-center pulse on top.
+    // §perf: pooled persistent graphics for the order + anchor layers (drawn via
+    // clear()+redraw, never re-allocated per frame).
     this.jumpEstimateText.anchor.set(0.5, 1);
     this.jumpEstimateText.visible = false;
     this.orderLayer.addChild(this.orderGfx, this.jumpEstimateText);
-    this.homeText = new Text({ text: "HOME", style: new TextStyle({ fill: COL_ANCHOR_OWN, fontFamily: "ui-monospace, monospace", fontSize: 10, fontWeight: "700", letterSpacing: 2 }) });
-    this.homeText.anchor.set(0.5, 1);
-    this.homeText.visible = false;
-    this.anchorsLayer.addChild(this.anchorGfx, this.homeText, this.ccGfx);
+    this.anchorsLayer.addChild(this.anchorGfx);
     // Stage: persistent starfield (bottom) · galaxy scene · system scene (top,
     // hidden until entered). The HUD/breadcrumb/panels are DOM (the "hudRoot"),
     // and persist across both scenes.
@@ -724,15 +722,10 @@ export class Renderer {
     this.texScout = scout;
     this.texTransport = transport;
     this.texBuilder = builder;
-    // §battle-aftermath: the battle-state icons (background-removed, downscaled
-    // to 256 — they render at ~22-26px screen-space and never grow). The drawn
-    // fallback markers still cover a failed/missing load.
-    const [battleOngoing, battleAftermath] = await Promise.all([
-      load("/art/battle_in_progress.png"),
-      load("/art/battle_aftermath.png"),
-    ]);
-    this.texBattleOngoing = battleOngoing;
-    this.texBattleAftermath = battleAftermath;
+    // The battle icon (background-removed, downscaled to 256 — it renders at
+    // ~22-52px screen-space and never grows). The drawn fallback marker still
+    // covers a failed/missing load.
+    this.texBattleOngoing = await load("/art/battle_in_progress.png");
     // §fleet-lod: the far-zoom single-hull markers. They render at a few dozen
     // px from their 256px source, so enable mipmaps for shimmer-free minification.
     // A missing file simply leaves the detailed art in place.
@@ -771,6 +764,20 @@ export class Renderer {
         if (tex) this.starTex.set(t.slug, tex);
       }),
     );
+    const nebulaKinds: NebulaKind[] = [
+      "molecular_cloud",
+      "ion_nebula",
+      "dust_cloud",
+      "supernova_remnant",
+      "precursor_cloud",
+    ];
+    await Promise.all(nebulaKinds.map(async (kind) => {
+      const tex = await load(`/art/nebulas/${kind}.png`);
+      if (!tex) return;
+      tex.source.autoGenerateMipmaps = true;
+      this.nebulaTex.set(kind, tex);
+    }));
+    this.syncNebulaSprites();
     // §perf: the star icons drive the (dirty-gated) systems layer — force one
     // rebuild so they replace the dot fallbacks even if the player is idle.
     this.viewDirty = true;
@@ -853,22 +860,13 @@ export class Renderer {
       return;
     }
     const before = this.viewportRect();
-    const focus = this.galaxy
-      ? this.screenToWorld(before.x + before.w / 2, before.y + before.h / 2)
-      : null;
     this.cameraRectOverride = rect ? { ...rect } : null;
     const after = this.viewportRect();
     if (before.x === after.x && before.y === after.y && before.w === after.w && before.h === after.h) return;
-    if (this.userView && focus) {
-      this.scale = this.clampScale(this.scale);
-      this.beginCameraTween(
-        after.x + after.w / 2 - focus.x * this.scale,
-        after.y + after.h / 2 - focus.y * this.scale,
-        220,
-      );
-    } else {
-      this.recompute();
-    }
+    // Opening or resizing a workspace changes only the visible frame. It must
+    // never silently refit or recenter the galaxy beneath the player's cursor.
+    // The shell may separately request the smallest pan needed to keep the
+    // inspected target in-frame.
     this.systemScene.layout(this.viewW, this.viewH, after);
     this.viewDirty = true;
   }
@@ -880,12 +878,25 @@ export class Renderer {
     return { x: (sx - this.cx) / this.scale, y: (sy - this.cy) / this.scale };
   }
 
-  /// The fit-to-galaxy scale (whole galaxy comfortably visible) — the default and
-  /// reset view, and the basis for the zoom clamp.
+  private galaxyBounds(): { minX: number; maxX: number; minY: number; maxY: number; cx: number; cy: number } {
+    const points = this.galaxy ? [this.galaxy.hub, ...this.galaxy.systems.map((system) => system.pos)] : [];
+    if (!points.length) return { minX: -1, maxX: 1, minY: -1, maxY: 1, cx: 0, cy: 0 };
+    const minX = Math.min(...points.map((point) => point.x));
+    const maxX = Math.max(...points.map((point) => point.x));
+    const minY = Math.min(...points.map((point) => point.y));
+    const maxY = Math.max(...points.map((point) => point.y));
+    return { minX, maxX, minY, maxY, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2 };
+  }
+
+  /// Fit the actual system + Hub footprint, not the generator's empty outer
+  /// radius. This is the default/reset view and the zoom-clamp basis.
   private fitScale(): number {
     if (!this.galaxy) return 1;
     const rect = this.cameraRect;
-    return (Math.min(rect.w, rect.h) * 0.46) / this.galaxy.radius;
+    const bounds = this.galaxyBounds();
+    const spanX = Math.max(1, bounds.maxX - bounds.minX);
+    const spanY = Math.max(1, bounds.maxY - bounds.minY);
+    return Math.min(rect.w / spanX, rect.h / spanY) * 0.88;
   }
   private clampScale(s: number): number {
     const fit = this.fitScale();
@@ -944,6 +955,26 @@ export class Renderer {
       rect.y + rect.h / 2 - pos.y * this.scale,
       duration,
     );
+  }
+
+  /** Keep an inspected target legible after chrome changes with the minimum
+   * possible pan. Zoom and every already-visible world point remain untouched. */
+  ensureWorldVisible(pos: Vec2, margin = 48): void {
+    if (this.mode.type !== "galaxy" || this.transition || this.isSystemScrubbing()) return;
+    const rect = this.cameraRect;
+    const shown = this.worldToScreen(pos);
+    const left = rect.x + Math.min(margin, rect.w * 0.2);
+    const right = rect.x + rect.w - Math.min(margin, rect.w * 0.2);
+    const top = rect.y + Math.min(margin, rect.h * 0.2);
+    const bottom = rect.y + rect.h - Math.min(margin, rect.h * 0.2);
+    const dx = shown.x < left ? left - shown.x : shown.x > right ? right - shown.x : 0;
+    const dy = shown.y < top ? top - shown.y : shown.y > bottom ? bottom - shown.y : 0;
+    if (!dx && !dy) return;
+    this.cameraTween = null;
+    this.cx += dx;
+    this.cy += dy;
+    this.userView = true;
+    this.viewDirty = true;
   }
 
   private tickCameraTween(now: number): void {
@@ -1183,9 +1214,92 @@ export class Renderer {
       e.node.destroy();
     }
     this.systemGfx.clear();
+    for (const entry of this.nebulaSprites.values()) {
+      entry.sprite.destroy();
+      entry.boundary.destroy();
+      entry.label.destroy();
+    }
+    this.nebulaSprites.clear();
+    this.nebulaLayer.removeChildren();
+    this.syncNebulaSprites();
     this.systemsAnimating = false;
     this.viewDirty = true; // force a full systems rebuild against the new galaxy
     this.recompute();
+  }
+
+  private syncNebulaSprites(): void {
+    if (!this.galaxy) return;
+    const ids = new Set(this.galaxy.nebulas.map((region) => region.id));
+    for (const [id, entry] of this.nebulaSprites) {
+      if (ids.has(id)) continue;
+      this.nebulaLayer.removeChild(entry.sprite, entry.boundary, entry.label);
+      entry.sprite.destroy();
+      entry.boundary.destroy();
+      entry.label.destroy();
+      this.nebulaSprites.delete(id);
+    }
+    for (const region of this.galaxy.nebulas) {
+      if (this.nebulaSprites.has(region.id)) continue;
+      const texture = this.nebulaTex.get(region.kind);
+      if (!texture) continue;
+      const sprite = new Sprite(texture);
+      sprite.anchor.set(0.5);
+      const boundary = new Graphics();
+      const label = new Text({
+        text: region.name.toUpperCase(),
+        style: new TextStyle({
+          fill: 0xb7c9d9,
+          fontFamily: "ui-monospace, monospace",
+          fontSize: 9,
+          fontWeight: "600",
+          letterSpacing: 1.4,
+          dropShadow: { color: 0x02040a, alpha: 0.9, blur: 3, distance: 1 },
+        }),
+      });
+      label.anchor.set(0.5, 0);
+      this.nebulaLayer.addChild(sprite, boundary, label);
+      this.nebulaSprites.set(region.id, { sprite, boundary, label });
+    }
+    this.drawNebulas();
+  }
+
+  private drawNebulas(): void {
+    if (!this.galaxy) return;
+    for (const region of this.galaxy.nebulas) {
+      const entry = this.nebulaSprites.get(region.id);
+      if (!entry) continue;
+      const center = this.worldToScreen(region.center);
+      entry.sprite.position.set(center.x, center.y);
+      entry.sprite.rotation = region.rotation;
+      entry.sprite.width = region.radius_x * 2 * this.scale;
+      entry.sprite.height = region.radius_y * 2 * this.scale;
+      entry.sprite.alpha = region.kind === "dust_cloud" ? 0.46
+        : region.kind === "precursor_cloud" ? 0.42
+          : 0.38;
+      const edge = region.kind === "molecular_cloud" ? 0x68b8a7
+        : region.kind === "ion_nebula" ? 0x65aee8
+          : region.kind === "dust_cloud" ? 0x98745f
+            : region.kind === "supernova_remnant" ? 0xe27a55
+              : 0xa887e8;
+      entry.boundary.clear();
+      entry.boundary.ellipse(0, 0, region.radius_x * this.scale, region.radius_y * this.scale)
+        .stroke({ width: 1, color: edge, alpha: 0.16 });
+      entry.boundary.position.set(center.x, center.y);
+      entry.boundary.rotation = region.rotation;
+      entry.label.position.set(center.x, center.y + Math.min(34, region.radius_y * this.scale * 0.34));
+      entry.label.alpha = 0.72;
+      entry.label.visible = region.radius_x * this.scale >= 34;
+    }
+  }
+
+  /** Public terrain hit test used by shell hover/readout. A selected fleet may
+   * still order through the region; nebulae are terrain, never click blockers. */
+  nebulaPick(sx: number, sy: number): NebulaInfo | null {
+    if (!this.galaxy) return null;
+    const world = this.screenToWorld(sx, sy);
+    return [...this.galaxy.nebulas]
+      .reverse()
+      .find((region) => nebulaContains(region, world)) ?? null;
   }
 
   private recompute(): void {
@@ -1196,9 +1310,10 @@ export class Renderer {
       this.scale = this.clampScale(this.scale);
     } else {
       const rect = this.cameraRect;
+      const bounds = this.galaxyBounds();
       this.scale = this.fitScale();
-      this.cx = rect.x + rect.w / 2;
-      this.cy = rect.y + rect.h / 2;
+      this.cx = rect.x + rect.w / 2 - bounds.cx * this.scale;
+      this.cy = rect.y + rect.h / 2 - bounds.cy * this.scale;
     }
     this.drawBackground();
     // Systems are redrawn per-frame in update() (ownership/stockpile are dynamic).
@@ -1289,10 +1404,9 @@ export class Renderer {
   }
 
   /// Draw star systems with their resource geology and (light-gated) ownership.
-  /// A system's glow grows with its deposit value-rate, so the frontier visibly
-  /// out-produces the core (§4); the ring shows ownership — cyan (yours), red (a
-  /// rival, once their claim's light has reached you), or dim (unclaimed). Your
-  /// own systems also surface their accumulated production.
+  /// A system's star size reflects its public richness band; its label shows
+  /// light-gated ownership — cyan (yours), green (an ally), red (a rival), or
+  /// grey (unclaimed).
   ///
   /// §perf: pooled per system (SystemGfx), rebuilt only when geometry is dirty
   /// (camera / new View / selection) OR a system is animating a pulse (rival
@@ -1327,24 +1441,24 @@ export class Renderer {
       const dyn = dynById.get(sys.id);
       const owner = dyn?.owner ?? null;
       const mine = owner !== null && owner === state.playerId;
+      const home = !!state.commandCenter
+        && Math.hypot(sys.pos.x - state.commandCenter.x, sys.pos.y - state.commandCenter.y) < 1;
       // §syndicates: an ALLY-owned system (per the viewer's light-delayed
       // knowledge) tints friendly-green; a plain rival stays red.
       const ally = owner !== null && !mine && !!dyn?.ally;
       const rival = owner !== null && !mine && !ally;
       const selected = state.selectedSystemId === sys.id;
 
-      // §explore: BAND → glow size (the public gradient made visible — 3 steps).
-      // Neutral tint: the dominant-resource color was exact-geology knowledge.
-      const glow = BAND_GLOW[sys.band] ?? BAND_GLOW.poor;
-      const topColor = COL_SYSTEM;
+      // §explore: the public richness band still sizes the star and provides a
+      // stable radius for its label/selection spacing. The desktop Deck removes
+      // the old filled value glow because it represents no physical boundary;
+      // the non-Deck renderer keeps its existing presentation unchanged.
+      const richnessRadius = BAND_GLOW[sys.band] ?? BAND_GLOW.poor;
 
       // §size-hierarchy: the star's rendered VISIBLE diameter — its normal-zoom
       // deposit-value size through r=72, then the body curve grows it over the
-      // final approach (see starDiameters). Every ownership ring /
-      // halo / label below keeps its ORIGINAL radius plus only `extra` (the
-      // radius the disk gained in the deep-zoom band) — so normal zoom is
-      // pixel-identical to before, and at deep zoom the cues ride out with the
-      // growing rim instead of drowning inside the giant disk.
+      // final approach (see starDiameters). The label rides the rendered rim so
+      // it never drowns inside the growing disk.
       const { base: bodyD, rendered } = this.starDiameters(sys);
       const extra = (rendered - bodyD) / 2;
 
@@ -1355,40 +1469,20 @@ export class Renderer {
           .stroke({ width: 1, color: COL_IMPULSE_BOUNDARY, alpha: wellAlpha });
       }
 
-      g.circle(s.x, s.y, glow).fill({ color: topColor, alpha: 0.07 }); // geology value-glow
-
-      // Ownership treatment — own and rival are a matched pair (halo + bold ring),
-      // so territory reads at a glance; unclaimed systems stay deliberately subdued
-      // (no ring) so they recede. Ownership is still light-gated upstream: a rival
-      // only appears as rival once their claim's light has reached this player.
-      if (mine) {
-        // Friendly territory: cyan halo + bold ring.
-        g.circle(s.x, s.y, 10 + extra).fill({ color: COL_OWN, alpha: 0.10 });
-        g.circle(s.x, s.y, 7 + extra).stroke({ width: 1.8, color: COL_OWN, alpha: 0.95 });
-      } else if (ally) {
-        // §syndicates: ally territory — a green halo + bold ring, the friendly
-        // treatment in a distinct hue (no rival danger-breath).
-        g.circle(s.x, s.y, 10 + extra).fill({ color: COL_ALLY, alpha: 0.10 });
-        g.circle(s.x, s.y, 7 + extra).stroke({ width: 1.8, color: COL_ALLY, alpha: 0.9 });
-      } else if (rival) {
-        // Rival / contested territory: a slow-breathing red danger halo + a bold
-        // DOUBLE ring — unmistakable as hostile-held, and clearly distinct from the
-        // fast-pulsing raider-threat marker (slower cadence, static rings, sized to
-        // the system body, softer COL_OTHER hue vs. the alert COL_THREAT red).
-        const breath = 0.5 + 0.5 * Math.sin(now / 1100);
-        g.circle(s.x, s.y, 13 + extra).fill({ color: COL_OTHER, alpha: 0.05 + 0.07 * breath });
-        g.circle(s.x, s.y, 9.5 + extra).stroke({ width: 1, color: COL_OTHER, alpha: 0.4 });
-        g.circle(s.x, s.y, 7 + extra).stroke({ width: 2, color: COL_OTHER, alpha: 0.98 });
-        animating = true; // the breath halo pulses every frame
+      if (!this.deckSaliencyEnabled) {
+        g.circle(s.x, s.y, richnessRadius).fill({ color: COL_SYSTEM, alpha: 0.07 });
       }
-      if (selected) {
-        g.circle(s.x, s.y, (owner !== null ? 12 : glow + 4) + extra).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
+
+      // The desktop Deck supplies its square-corner selection reticle in the
+      // awareness layer; keep this legacy circle only for shells without it.
+      if (selected && !this.deckSaliencyEnabled) {
+        g.circle(s.x, s.y, (owner !== null ? 12 : richnessRadius + 4) + extra).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
       }
       // The BODY itself: the system's assigned STAR-TYPE icon (deterministic by id,
       // stars.ts), pooled, sized by deposit value (the frontier-richer hierarchy)
-      // and dimmed when unclaimed so owned/rival territory leads. The glow +
-      // ownership rings + label above are the data cues; the star is just the body
-      // they decorate — ownership stays on the RING, and the star icon carries NO
+      // and dimmed when unclaimed so owned/rival territory leads. The ownership
+      // label above is the data cue; the star is just the body it decorates —
+      // ownership stays off the star, whose icon carries NO
       // tint, so a blue star is never mistaken for "owned" nor a red star for
       // "rival". Dot fallback until the icon loads. Because each icon's VISIBLE star
       // fills a different area of its transparent canvas, use the type's manifest
@@ -1412,9 +1506,10 @@ export class Renderer {
         g.circle(s.x, s.y, 2.4).fill({ color: dotCol, alpha: 0.95 });
       }
 
-      // Label: name; your own systems also show their top stockpiled good.
+      // Keep the home label clean; colonies may still surface their leading
+      // stockpiled good as an at-a-glance logistics cue.
       let txt = sys.name;
-      if (mine && dyn?.stockpile && dyn.stockpile.length) {
+      if (mine && !home && dyn?.stockpile && dyn.stockpile.length) {
         const top = dyn.stockpile.reduce((a, b) => (a.units > b.units ? a : b));
         txt = `${sys.name}  ◆${top.units} ${label(top.commodity)}`;
       }
@@ -1422,8 +1517,8 @@ export class Renderer {
       const t = e.label;
       t.text = txt;
       t.style.fill = col;
-      t.style.fontSize = this.deckSaliencyEnabled && mine ? 9 : 8;
-      t.position.set(s.x + glow + 2 + extra, s.y); // +extra: rides the grown rim at deep zoom
+      t.style.fontSize = mine || rival ? 10 : 8;
+      t.position.set(s.x + richnessRadius + 2 + extra, s.y); // +extra: rides the grown rim at deep zoom
       t.alpha = mine ? (this.deckSaliencyEnabled ? 1 : 0.95) : ally ? 0.9 : rival ? 0.88 : selected ? 0.8 : 0.5;
 
       // §contestable-territory Part 1: a BLOCKADE marker — a slow-pulsing red
@@ -1525,7 +1620,7 @@ export class Renderer {
   /// §size-hierarchy: a system's star VISIBLE diameter — `base` at normal zoom
   /// (the deposit-value 20–46px, unchanged) and `rendered` at the current zoom
   /// (the late body-bloom curve). One place computes both so the body sprite,
-  /// its ownership rings/label, and the click hit-test all agree.
+  /// its ownership label and the click hit-test all agree.
   /// The deep-zoom endpoint is the EXISTING System View star's visible diameter.
   /// This is deliberately a visible-disk cap rather than a canvas cap: texture
   /// fill ratios differ, but no galaxy star may outgrow its unchanged schematic
@@ -1547,18 +1642,15 @@ export class Renderer {
   }
 
   private drawAnchors(state: ViewState): void {
-    // §perf: pooled anchorGfx (clear+redraw) + a single pooled HOME text, instead
-    // of removeChildren()+new Graphics/Text every frame. A corp has exactly one
-    // command seat, so one HOME text is repositioned and shown/hidden.
+    // §perf: pooled anchorGfx (clear+redraw) rather than allocating map geometry.
     const g = this.anchorGfx;
     g.clear();
-    let homeShown = false;
     if (this.galaxy) {
       for (const a of state.anchors) {
         const own = a.owner !== null && a.owner === state.playerId;
         const s = this.worldToScreen(a.pos);
-        // A command base now coincides with the owner's HOME STAR SYSTEM, which is
-        // drawn as an owned cyan/red system (+ the command-center pulse for your own).
+        // A command base now coincides with the owner's home star system, which is
+        // already drawn as an owned cyan/red system.
         // So skip the redundant anchor circle when a system sits here — no more
         // "mystery circle." Only draw a glyph for a base in OPEN space (e.g. a
         // command center relocated away from its home system, a future mechanic).
@@ -1574,21 +1666,8 @@ export class Renderer {
             g.circle(s.x, s.y, 4).stroke({ width: 1, color: 0x3a4660, alpha: 0.7 });
           }
         }
-        // Name your own command seat "HOME" (above the home system's own label —
-        // riding the star's rendered rim, so it clears the grown disk at deep zoom).
-        if (own && this.homeText) {
-          const homeSys = this.galaxy.systems.find(
-            (sys) => Math.abs(sys.pos.x - a.pos.x) < 1 && Math.abs(sys.pos.y - a.pos.y) < 1,
-          );
-          const dm = homeSys ? this.starDiameters(homeSys) : null;
-          const extra = dm ? (dm.rendered - dm.base) / 2 : 0; // deep-zoom growth only — normal zoom identical
-          this.homeText.position.set(s.x, s.y - 13 - extra);
-          this.homeText.visible = true;
-          homeShown = true;
-        }
       }
     }
-    if (this.homeText && !homeShown) this.homeText.visible = false;
   }
 
   /// Soft, fuzzy INTERCEPT ESTIMATES for committed raids (§8, §14.1). A CRUDE
@@ -1650,10 +1729,15 @@ export class Renderer {
     }
   }
 
-  /// §battles-take-time: a pulsing BATTLE MARKER at each ongoing engagement the
-  /// player can see (strictly light-gated by the server) — the "battle in
-  /// progress" icon when its art is loaded (same pulse cadence), the original
-  /// drawn burst otherwise. Under the ghosts — "something is happening HERE".
+  /// §battles-take-time + §replay-marker: ONE battle marker family on the map.
+  /// A pulsing icon at each ongoing engagement the player can see (strictly
+  /// light-gated by the server), and the SAME icon — steady — at each concluded
+  /// battle whose record the server still serves this viewer (equally light-
+  /// gated: `outcome` appears only once the conclusion light arrived). The
+  /// steady marker is the map affordance for opening the replay; it leaves the
+  /// map when its report is dismissed or the record ages out of the served
+  /// picture. Art icon when loaded, the original drawn burst otherwise. Under
+  /// the ghosts — "something is happening (or happened) HERE".
   private drawBattles(state: ViewState): void {
     const g = this.interceptGfx;
     const now = performance.now();
@@ -1664,24 +1748,41 @@ export class Renderer {
     // coincide fan out slightly so they stay two icons (a merged fight is one
     // engagement id → one icon already).
     const slotByCell = new Map<string, number>();
-    for (const b of state.battles) {
-      const base = this.worldToScreen(b.pos);
-      const cell = `${Math.round(b.pos.x / 50)},${Math.round(b.pos.y / 50)}`;
+    const place = (pos: { x: number; y: number }): { sx: number; sy: number } => {
+      const base = this.worldToScreen(pos);
+      const cell = `${Math.round(pos.x / 50)},${Math.round(pos.y / 50)}`;
       const slot = slotByCell.get(cell) ?? 0;
       slotByCell.set(cell, slot + 1);
-      const sx = base.x + slot * (BATTLE_ONGOING_PX * 0.85);
-      const sy = base.y - slot * 4;
+      return { sx: base.x + slot * (BATTLE_ONGOING_PX * 0.85), sy: base.y - slot * 4 };
+    };
+    // OWN-INVOLVEMENT PIP: one cyan diamond on the icon's edge if the viewer
+    // has forces in this fight — "my fight" at a glance (one pip regardless of
+    // how many of their fleets are in). No rival pips beyond the site-reveal.
+    const ownPip = (sx: number, sy: number): void => {
+      const pr = 4;
+      const px = sx + BATTLE_ONGOING_PX * 0.42;
+      const py = sy - BATTLE_ONGOING_PX * 0.42;
+      const diamond = (rr: number): number[] => [px, py - rr, px + rr, py, px, py + rr, px - rr, py];
+      g.poly(diamond(pr + 1.3)).fill({ color: 0x05070d, alpha: 0.8 });
+      g.poly(diamond(pr)).fill({ color: COL_OWN, alpha: 0.95 });
+    };
+    const pooled = (id: string, tex: Texture): Sprite => {
+      let sp = this.battleSprites.get(id);
+      if (!sp) {
+        sp = new Sprite(tex);
+        sp.anchor.set(0.5);
+        this.aftermathLayer.addChild(sp);
+        this.battleSprites.set(id, sp);
+      }
+      sp.visible = true;
+      sp.texture = tex;
+      return sp;
+    };
+    for (const b of state.battles) {
+      const { sx, sy } = place(b.pos);
       live.add(b.id);
       if (this.texBattleOngoing) {
-        let sp = this.battleSprites.get(b.id);
-        if (!sp) {
-          sp = new Sprite(this.texBattleOngoing);
-          sp.anchor.set(0.5);
-          this.aftermathLayer.addChild(sp);
-          this.battleSprites.set(b.id, sp);
-        }
-        sp.visible = true;
-        sp.texture = this.texBattleOngoing;
+        const sp = pooled(b.id, this.texBattleOngoing);
         sp.position.set(sx, sy);
         sp.scale.set(((BATTLE_ONGOING_PX + pulse * 5) / this.texBattleOngoing.width));
         sp.alpha = 0.7 + 0.3 * pulse;
@@ -1696,20 +1797,39 @@ export class Renderer {
         g.stroke({ width: 1.5, color: COL_THREAT, alpha: 0.35 + 0.4 * pulse });
         g.circle(sx, sy, 3.2).fill({ color: COL_THREAT, alpha: 0.75 });
       }
-      // OWN-INVOLVEMENT PIP: one cyan diamond on the icon's edge if the viewer
-      // has forces in this fight — "my fight" at a glance (one pip regardless of
-      // how many of their fleets are in). No rival pips beyond the site-reveal.
-      if (b.own) {
-        const pr = 4;
-        const px = sx + BATTLE_ONGOING_PX * 0.42;
-        const py = sy - BATTLE_ONGOING_PX * 0.42;
-        const diamond = (rr: number): number[] => [px, py - rr, px + rr, py, px, py + rr, px - rr, py];
-        g.poly(diamond(pr + 1.3)).fill({ color: 0x05070d, alpha: 0.8 });
-        g.poly(diamond(pr)).fill({ color: COL_OWN, alpha: 0.95 });
-      }
+      if (b.own) ownPip(sx, sy);
       this.battleHits.push({ id: b.id, sx, sy });
     }
-    // Destroy pooled icons for engagements that have ended.
+    // Concluded battles: same icon, steady (no pulse, no alert ring) — history
+    // you can open, not an alarm. Dismissing the battle's report (the button on
+    // its report page) hides the marker; the record itself keeps the replay.
+    const dismissedAt = new Set<string>();
+    for (const r of state.battleReports) {
+      if (state.battleDismissed.has(r.id)) dismissedAt.add(`${r.pos.x}:${r.pos.y}`);
+    }
+    for (const rec of state.battleRecords) {
+      if (rec.outcome === null || live.has(rec.id)) continue;
+      if (dismissedAt.has(`${rec.pos.x}:${rec.pos.y}`)) continue;
+      const { sx, sy } = place(rec.pos);
+      live.add(rec.id);
+      if (this.texBattleOngoing) {
+        const sp = pooled(rec.id, this.texBattleOngoing);
+        sp.position.set(sx, sy);
+        sp.scale.set(BATTLE_ONGOING_PX / this.texBattleOngoing.width);
+        sp.alpha = 0.85;
+      } else {
+        const r = 14;
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * Math.PI * 2;
+          g.moveTo(sx + Math.cos(a) * r * 0.5, sy + Math.sin(a) * r * 0.5).lineTo(sx + Math.cos(a) * r, sy + Math.sin(a) * r);
+        }
+        g.stroke({ width: 1.5, color: COL_THREAT, alpha: 0.45 });
+        g.circle(sx, sy, 3.2).fill({ color: COL_THREAT, alpha: 0.55 });
+      }
+      if (rec.own_side !== null) ownPip(sx, sy);
+      this.battleHits.push({ id: rec.id, sx, sy });
+    }
+    // Destroy pooled icons for battles no longer on the map.
     for (const [id, sp] of this.battleSprites) {
       if (!live.has(id)) {
         sp.destroy();
@@ -1718,8 +1838,8 @@ export class Renderer {
     }
   }
 
-  /// Hit-test the ongoing-battle icons (screen-space, fixed radius). Returns the
-  /// clicked engagement id, or null. Consumed by main.ts's map click.
+  /// Hit-test the battle icons — ongoing AND concluded (screen-space, fixed
+  /// radius). Returns the clicked engagement/record id, or null.
   battlePick(sx: number, sy: number): string | null {
     let best: string | null = null;
     let bestD = BATTLE_ONGOING_PX * 0.65;
@@ -1728,79 +1848,6 @@ export class Renderer {
       if (d < bestD) { bestD = d; best = h.id; }
     }
     return best;
-  }
-
-  /// §battle-aftermath: the concluded-battle markers — one per RETAINED report
-  /// (owner-only by construction: the server only sends reports you were in,
-  /// and each appears only once YOUR conclusion light arrived). SCREEN-SPACE
-  /// UI like pips/badges: fixed size at every zoom, never in the deep-zoom
-  /// ramp. Unviewed = subtle attention pulse; viewed = static + dimmed;
-  /// dismissed / older than BATTLE_MARKER_TTL_S = hidden. Co-located battles
-  /// fan out in a small row so each stays clickable.
-  private drawAftermath(state: ViewState): void {
-    const g = this.aftermathGfx;
-    g.clear();
-    this.aftermathHits = [];
-    const simNow = liveSimTime();
-    const live = new Set<number>();
-    const slotIndex = new Map<string, number>();
-    for (const r of state.battleReports) {
-      if (state.battleDismissed.has(r.id)) continue;
-      // An ESCAPED raid isn't a battle — no contact, no wreckage — so it leaves no
-      // aftermath marker on the map (the "raid failed" news still lands in the log).
-      if (r.outcome === "escaped") continue;
-      if (simNow - r.learned_at > BATTLE_MARKER_TTL_S) continue;
-      const s = this.worldToScreen(r.pos);
-      const key = `${Math.round(r.pos.x / 60)},${Math.round(r.pos.y / 60)}`;
-      const slot = slotIndex.get(key) ?? 0;
-      slotIndex.set(key, slot + 1);
-      const sx = s.x + slot * (BATTLE_MARKER_PX * 0.7);
-      const sy = s.y - slot * 4;
-      const viewed = state.battleViewed.has(r.id);
-      const pulse = viewed ? 0 : 0.5 + 0.5 * Math.sin(performance.now() / 320);
-      // A VIEWED marker is static (no pulse) and dimmer — history, not a live
-      // alert — but the aftermath art is a low-saturation cool grey-teal, so a
-      // very low alpha reads as "greyed out / broken." Keep it clearly legible.
-      const base = viewed ? 0.68 : 0.8 + 0.2 * pulse;
-      // §aftermath-fade: decay the whole marker toward the floor as its report ages.
-      const alpha = this.aftermathFadeAlpha(base, simNow - r.learned_at);
-      live.add(r.id);
-      if (r.id === this.selectedBattleMarkerId) this.drawMarkerSelectionRing(g, sx, sy);
-      if (this.texBattleAftermath) {
-        let sp = this.aftermathSprites.get(r.id);
-        if (!sp) {
-          sp = new Sprite(this.texBattleAftermath);
-          sp.anchor.set(0.5);
-          this.aftermathLayer.addChild(sp);
-          this.aftermathSprites.set(r.id, sp);
-        }
-        sp.position.set(sx, sy);
-        sp.scale.set(BATTLE_MARKER_PX / this.texBattleAftermath.width);
-        sp.alpha = alpha;
-      } else {
-        // Drawn fallback (used only if battle_aftermath.png fails to load): a
-        // broken-blade cross + drifting-debris arc, in a cooled-ember tone
-        // (this is HISTORY, not the red alert of an ongoing battle).
-        const col = viewed ? 0x8a8f9c : 0xd08a5a;
-        const r2 = BATTLE_MARKER_PX * 0.32;
-        g.moveTo(sx - r2, sy - r2).lineTo(sx + r2 * 0.4, sy + r2 * 0.4).stroke({ width: 1.8, color: col, alpha });
-        g.moveTo(sx + r2, sy - r2).lineTo(sx - r2 * 0.4, sy + r2 * 0.4).stroke({ width: 1.8, color: col, alpha });
-        g.arc(sx, sy, r2 * 1.7, -Math.PI * 0.15, Math.PI * 0.45).stroke({ width: 1, color: col, alpha: alpha * 0.7 });
-        g.circle(sx + r2 * 1.5, sy + r2 * 0.9, 1.1).fill({ color: col, alpha });
-      }
-      if (!viewed) {
-        // The new-report attention pulse (subtle — an invitation, not an alarm).
-        // Fades with the marker so an old, never-opened report goes quiet too.
-        g.circle(sx, sy, BATTLE_MARKER_PX * 0.7 + pulse * 3).stroke({ width: 1, color: 0xd08a5a, alpha: alpha * (0.2 + 0.4 * pulse) });
-      }
-      this.aftermathHits.push({ id: r.id, sx, sy });
-    }
-    for (const [id, sp] of this.aftermathSprites) {
-      if (!live.has(id)) {
-        sp.destroy();
-        this.aftermathSprites.delete(id);
-      }
-    }
   }
 
   /// §aftermath-fade: the marker's alpha given how long ago the viewer's report
@@ -1820,28 +1867,14 @@ export class Renderer {
     g.circle(sx, sy, BATTLE_MARKER_PX * 0.62).stroke({ width: 1.2, color: 0xffffff, alpha: 0.85 });
   }
 
-  /// Hit-test the aftermath markers (screen-space, fixed radius). Returns the
-  /// clicked report id, or null. Consumed by main.ts's map click.
-  aftermathPick(sx: number, sy: number): number | null {
-    let best: number | null = null;
-    let bestD = BATTLE_MARKER_HIT_PX;
-    for (const h of this.aftermathHits) {
-      const d = Math.hypot(h.sx - sx, h.sy - sy);
-      if (d < bestD) {
-        bestD = d;
-        best = h.id;
-      }
-    }
-    return best;
-  }
-
   /// §contestable-territory Part 2: CAPTURE markers — a flip changed a system's
   /// hands. Screen-space UI like the aftermath markers (fixed size, never grows),
   /// under the ghosts. A GOLD flag = you captured; RED = you lost. Unviewed
   /// pulses; viewed dims; dismissed / older than the TTL are hidden. Shares the
   /// battleViewed / battleDismissed sets with battles (ids are globally unique).
   private drawCaptures(state: ViewState): void {
-    const g = this.aftermathGfx; // same layer as the aftermath vector fallback
+    const g = this.aftermathGfx;
+    g.clear(); // sole owner of this surface now that battle markers unified
     this.captureHits = [];
     const simNow = liveSimTime();
     for (const r of state.captureReports) {
@@ -1850,7 +1883,7 @@ export class Renderer {
       const s = this.worldToScreen(r.pos);
       const viewed = state.battleViewed.has(r.id);
       const pulse = viewed ? 0 : 0.5 + 0.5 * Math.sin(performance.now() / 320);
-      const base = viewed ? 0.68 : 0.8 + 0.2 * pulse; // legible-when-viewed (see drawAftermath)
+      const base = viewed ? 0.68 : 0.8 + 0.2 * pulse; // legible-when-viewed
       const alpha = this.aftermathFadeAlpha(base, simNow - r.learned_at); // §aftermath-fade
       const col = r.captor ? 0xffcf6b : COL_THREAT; // gold = gained, red = lost
       // A little flag on a pole (territory changed hands).
@@ -1962,18 +1995,6 @@ export class Renderer {
       this.interceptLabels.set(id, t);
     }
     return t;
-  }
-
-  /// The command center: the player's vantage, with a pulsing ring.
-  private drawCommandCenter(state: ViewState): void {
-    // §perf: pooled ccGfx (clear+redraw). Runs every frame — the pulse animates.
-    const g = this.ccGfx;
-    g.clear();
-    if (!state.commandCenter) return;
-    const s = this.worldToScreen(state.commandCenter);
-    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 600);
-    g.circle(s.x, s.y, 14 + pulse * 4).stroke({ width: 1, color: COL_OWN, alpha: 0.25 + 0.25 * pulse });
-    g.circle(s.x, s.y, 5).stroke({ width: 1.5, color: COL_OWN, alpha: 0.9 });
   }
 
   /// Draw the same mobile sensor sources the server uses: the fixed command
@@ -2171,7 +2192,8 @@ export class Renderer {
       : undefined;
     if (jumpGhost && state.galaxy) {
       const origin = this.worldToScreen(jumpGhost.pos);
-      const rangePx = state.galaxy.jump_range * this.scale;
+      const jumpRange = jumpRangeAt(state.galaxy, jumpGhost.pos);
+      const rangePx = jumpRange * this.scale;
       // The reach is explicitly estimated: it is centered on the served
       // sighting, not the fleet's hidden true position when the order arrives.
       dashedCircle(g, origin.x, origin.y, rangePx, 10);
@@ -2184,7 +2206,7 @@ export class Renderer {
       const wells = [state.galaxy.hub, ...state.galaxy.systems.map((system) => system.pos)];
       for (const well of wells) {
         if (Math.hypot(well.x - jumpGhost.pos.x, well.y - jumpGhost.pos.y)
-            > state.galaxy.jump_range + state.galaxy.hyperlimit) continue;
+            > jumpRange + state.galaxy.hyperlimit) continue;
         const center = this.worldToScreen(well);
         g.circle(center.x, center.y, state.galaxy.hyperlimit * this.scale)
           .stroke({ width: 1, color: COL_IMPULSE_BOUNDARY, alpha: 0.22 });
@@ -2196,7 +2218,7 @@ export class Renderer {
         const inWell = wells.some((well) =>
           Math.hypot(intent.dest!.x - well.x, intent.dest!.y - well.y) < state.galaxy!.hyperlimit,
         );
-        const valid = distance <= state.galaxy.jump_range && !inWell;
+        const valid = distance <= jumpRange && !inWell;
         dashedLine(g, origin.x, origin.y, target.x, target.y, 5, 5);
         g.stroke({ width: 1.35, color: valid ? COL_ROUTE_PREVIEW : COL_THREAT, alpha: 0.82 });
         dashedCircle(g, target.x, target.y, 8, 6);
@@ -2670,52 +2692,11 @@ export class Renderer {
     return this.shipHitRadius(ghost.kind) * (marker ? marker.mult : 1);
   }
 
-  /// Screen position used by desktop picking/hover. Docked hulls are represented
-  /// by fixed-size berth pips around their dock; every other fleet uses its served
-  /// position. The cache is rebuilt from the same served View as the drawing.
+  /// Screen position used by desktop picking/hover and signal reconciliation.
+  /// Ordinary docked fleets have no galaxy-map marker or pick target; their
+  /// system and corporation-wide Fleet panels remain the roster.
   fleetScreenPosition(ghost: GhostView): { x: number; y: number } {
-    return this.berthScreenByFleet.get(ghost.id) ?? this.worldToScreen(ghost.pos);
-  }
-
-  private drawBerthPips(state: ViewState, engaged: Map<string, Vec2>): void {
-    const g = this.berthGfx;
-    g.clear();
-    this.berthScreenByFleet.clear();
-    if (!state.galaxy) return;
-
-    const groups = new Map<string, GhostView[]>();
-    for (const ghost of state.ghosts) {
-      if (!ghost.own || !ghost.docked || engaged.has(ghost.id)) continue;
-      const group = groups.get(ghost.docked) ?? [];
-      group.push(ghost);
-      groups.set(ghost.docked, group);
-    }
-
-    for (const [dock, fleets] of groups) {
-      const dockWorld = dock === "hub"
-        ? state.galaxy.hub
-        : state.galaxy.systems.find((system) => dock === system.id || dock === `E${system.id}`)?.pos;
-      if (!dockWorld) continue;
-      const center = this.worldToScreen(dockWorld);
-      fleets.sort((a, b) => a.id.localeCompare(b.id));
-      for (let index = 0; index < fleets.length; index++) {
-        const fleet = fleets[index];
-        const ring = Math.floor(index / 8);
-        const slot = index % 8;
-        const slots = Math.min(8, fleets.length - ring * 8);
-        const angle = -Math.PI / 2 + slot * Math.PI * 2 / Math.max(1, slots);
-        const radius = 21 + ring * 13;
-        const p = { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius };
-        this.berthScreenByFleet.set(fleet.id, p);
-        g.moveTo(center.x, center.y).lineTo(p.x, p.y).stroke({ width: 1, color: COL_OWN, alpha: 0.18 });
-        g.circle(p.x, p.y, 5).fill({ color: 0x071522, alpha: 0.96 });
-        g.circle(p.x, p.y, 5).stroke({ width: 1.5, color: COL_OWN, alpha: 0.92 });
-        g.circle(p.x, p.y, 1.5).fill({ color: COL_OWN, alpha: 0.95 });
-        if (state.selectedShipId === fleet.id || state.selectedShipIds.has(fleet.id)) {
-          g.circle(p.x, p.y, 8).stroke({ width: 1.5, color: 0xffffff, alpha: 0.9 });
-        }
-      }
-    }
+    return this.worldToScreen(ghost.pos);
   }
 
   /// §emplacements: MIRRORS `emplace::site_check` IN THE SIM.
@@ -3237,6 +3218,7 @@ export class Renderer {
         || this.selectedBattleMarkerId !== this.lastSelMarker;
       if (this.viewDirty) {
         this.drawBackground();
+        this.drawNebulas();
         this.viewDirty = false;
       }
       // Emplacements change when a construction/demolition completes, and their
@@ -3259,7 +3241,6 @@ export class Renderer {
       this.drawOperations(state);
       this.drawRoutes(state);
       this.drawAnchors(state);
-      this.drawCommandCenter(state);
 
       for (const sp of this.ghosts.values()) sp.seen = false;
       // §perf: one ghost-by-id map built per frame, shared by the draw paths that
@@ -3280,7 +3261,6 @@ export class Renderer {
       for (const b of state.battles) {
         for (const p of b.participants) engaged.set(p, b.pos);
       }
-      this.drawBerthPips(state, engaged);
       // §dock: BERTHED hulls are not drawn on the star chart. A docked ship
       // belongs to the system view — drawing it here is what buried systems
       // under stacks of overlapping sprites and forced the hit-radius caps
@@ -3338,7 +3318,6 @@ export class Renderer {
       this.drawOrders(state, orderFleetIds);
       this.drawIntercepts(state, ghostById);
       this.drawBattles(state);
-      this.drawAftermath(state);
       this.drawCaptures(state);
       this.drawJumpDepartures(state);
       this.drawSignals(state, screenById, dt);
@@ -3367,8 +3346,8 @@ export class Renderer {
   }
 
   /** Desktop Deck awareness layer: minimum own labels are handled at their
-   * pooled Text nodes above; this topmost geometry supplies the home badge,
-   * selected-target reticle, and a transient inbox focus ping. */
+   * pooled Text nodes above; this topmost geometry supplies the selected-target
+   * reticle and a transient inbox focus ping. */
   private drawDeckSaliency(
     state: ViewState,
     screenById: Map<string, { x: number; y: number }>,
@@ -3387,20 +3366,6 @@ export class Renderer {
       g.moveTo(x + r - arm, y + r).lineTo(x + r, y + r).lineTo(x + r, y + r - arm);
       g.stroke({ width: 1.5, color, alpha });
     };
-
-    // The command seat is the home system in today's galaxy. Its fixed-screen
-    // diamond stays readable at every zoom without changing the star itself.
-    if (state.commandCenter) {
-      const home = this.worldToScreen(state.commandCenter);
-      const homeSystem = state.galaxy.systems.find((system) => Math.hypot(system.pos.x - state.commandCenter!.x, system.pos.y - state.commandCenter!.y) < 1);
-      const extra = homeSystem ? (this.starDiameters(homeSystem).rendered - this.starDiameters(homeSystem).base) / 2 : 0;
-      const bx = home.x - 19;
-      const by = home.y - 18 - extra;
-      g.poly([bx, by - 5, bx + 5, by, bx, by + 5, bx - 5, by])
-        .fill({ color: 0x05070d, alpha: 0.9 })
-        .stroke({ width: 1.4, color: COL_ANCHOR_OWN, alpha: 1 });
-      g.circle(bx, by, 1.6).fill({ color: COL_ANCHOR_OWN, alpha: 1 });
-    }
 
     const selectedFleetIds = new Set(state.selectedShipIds);
     if (state.selectedShipId) selectedFleetIds.add(state.selectedShipId);

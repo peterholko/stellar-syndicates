@@ -42,6 +42,20 @@ pub enum OrderKind {
     /// A GUARD order — an Interceptor shadows a named friendly fleet and
     /// autonomously breaks off to engage threats before resuming formation.
     Guard,
+    /// Load cargo into a fleet at its present dock.
+    Load,
+    /// Unload a fleet's cargo at its present dock.
+    Unload,
+    /// Assign a cargo fleet to haul between a system and the Market Hub.
+    Haul,
+    /// Change a fleet-local standing setting (transit, posture, or interdiction).
+    Configure,
+    /// Begin dockside refitting on a fleet.
+    Refit,
+    /// Merge or split physical fleet formations.
+    Reorganize,
+    /// Assign a captain or an operation to a fleet.
+    Assign,
 }
 
 impl OrderKind {
@@ -60,6 +74,13 @@ impl OrderKind {
             OrderKind::Attack => "attack",
             OrderKind::Survey => "survey",
             OrderKind::Guard => "guard",
+            OrderKind::Load => "load",
+            OrderKind::Unload => "unload",
+            OrderKind::Haul => "haul",
+            OrderKind::Configure => "configure",
+            OrderKind::Refit => "refit",
+            OrderKind::Reorganize => "reorganize",
+            OrderKind::Assign => "assign",
         }
     }
 }
@@ -1081,8 +1102,9 @@ pub enum TradeRejectReason {
     CharterRevoked,
 }
 
-/// Why a fleet ORDER was soft-rejected. Owner-only: the order simply never
-/// installs, nothing is spent, and the client is never hard-errored.
+/// Why a fleet ORDER was soft-rejected. Owner-only: the order may fail at
+/// preflight or when it reaches the receiver; it never installs, nothing is
+/// spent, and the client is never hard-errored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum OrderRejectReason {
@@ -1103,6 +1125,10 @@ pub enum OrderRejectReason {
     DiplomaticProtection,
     /// Territorial coercion requires declared war or a defender's live reprisal.
     FormalWarRequired,
+    /// The command was valid when transmitted, but its receiver-side requirements
+    /// were no longer true when the signal arrived (for example, a fleet had left
+    /// its berth or a refit no longer had the required modules).
+    DeliveryConditionsChanged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

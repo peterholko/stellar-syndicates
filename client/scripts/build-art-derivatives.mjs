@@ -5,6 +5,7 @@ import sharp from "sharp";
 
 const clientRoot = fileURLToPath(new URL("..", import.meta.url));
 const publicArt = path.join(clientRoot, "public", "art");
+const sourceArt = path.join(clientRoot, "art-src");
 
 async function stale(source, output) {
   try {
@@ -96,9 +97,53 @@ async function buildPwaIcons() {
   return { sources: variants.length, written };
 }
 
-const [captains, lore, pwa] = await Promise.all([buildCaptains(), buildLore(), buildPwaIcons()]);
+async function buildStructureIcons() {
+  const sourceDir = path.join(sourceArt, "ui-icons", "structures");
+  const outputDir = path.join(publicArt, "ui_icons", "structures");
+  await mkdir(outputDir, { recursive: true });
+  const sources = (await readdir(sourceDir)).filter((name) => name.endsWith(".png")).sort();
+  const transparent = { r: 0, g: 0, b: 0, alpha: 0 };
+  let written = 0;
+  for (const name of sources) {
+    written += Number(await derive(
+      path.join(sourceDir, name),
+      path.join(outputDir, name),
+      (image) => image
+        .trim({ background: transparent, threshold: 3 })
+        .resize(116, 116, { fit: "contain", background: transparent })
+        .extend({ top: 6, bottom: 6, left: 6, right: 6, background: transparent })
+        .png({ compressionLevel: 9 }),
+    ));
+  }
+  return { sources: sources.length, written };
+}
+
+async function buildNebulas() {
+  const sourceDir = path.join(sourceArt, "nebulas");
+  const outputDir = path.join(publicArt, "nebulas");
+  await mkdir(outputDir, { recursive: true });
+  const sources = (await readdir(sourceDir)).filter((name) => name.endsWith(".png")).sort();
+  const transparent = { r: 0, g: 0, b: 0, alpha: 0 };
+  let written = 0;
+  for (const name of sources) {
+    written += Number(await derive(
+      path.join(sourceDir, name),
+      path.join(outputDir, name),
+      (image) => image
+        .resize(1024, 1024, { fit: "contain", background: transparent })
+        .png({ compressionLevel: 9 }),
+    ));
+  }
+  return { sources: sources.length, written };
+}
+
+const [captains, lore, pwa, structures, nebulas] = await Promise.all([
+  buildCaptains(), buildLore(), buildPwaIcons(), buildStructureIcons(), buildNebulas(),
+]);
 console.log(
   `art derivatives: ${captains.sources} captain portraits (${captains.written} written), ` +
   `${lore.sources} lore illustrations (${lore.written} written), ` +
-  `${pwa.sources} PWA icons (${pwa.written} written)`,
+  `${pwa.sources} PWA icons (${pwa.written} written), ` +
+  `${structures.sources} structure icons (${structures.written} written), ` +
+  `${nebulas.sources} nebula textures (${nebulas.written} written)`,
 );

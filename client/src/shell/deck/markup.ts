@@ -6,7 +6,7 @@ export function mountDeckMarkup(root: HTMLElement): void {
         <div id="deck-stats" class="deck-stats">
           <span>Credits <b id="deck-credits">—</b><small id="deck-reserved"></small></span>
           <span>Equity <b id="deck-equity">—</b></span>
-          <span>Tick <b id="deck-tick">—</b></span>
+          <span>Game <b id="deck-tick">—</b></span>
           <span id="deck-pacing"></span>
           <span id="deck-link">offline</span>
         </div>
@@ -24,6 +24,7 @@ export function mountDeckMarkup(root: HTMLElement): void {
         </nav>
       </header>
       <div id="deck-nav-overflow" class="deck-nav-overflow" role="menu" hidden>
+        ${overflowButton("rankings", "Rankings")}
         ${overflowButton("operations", "Operations")}
         ${overflowButton("syndicate", "Syndicate")}
         ${overflowButton("faction", "Faction")}
@@ -79,7 +80,7 @@ export function mountDeckMarkup(root: HTMLElement): void {
               <kbd>J / G</kbd><span>Arm Jump / Guard for the selected fleet</span>
               <kbd>[ / ]</kbd><span>Cycle and center your fleets</span>
               <kbd>M V R P</kbd><span>Market · Fleets · Research · Officers</span>
-              <kbd>U Y C L</kbd><span>Operations · Syndicate · Faction · Log</span>
+              <kbd>U Y C K L</kbd><span>Operations · Syndicate · Faction · Rankings · Log</span>
               <kbd>S</kbd><span>Open the selected system's workspace</span>
               <kbd>Esc</kbd><span>Cancel one layer: order · aim · scrub · overlay · workspace · selection</span>
               <kbd>?</kbd><span>Open or close this shortcuts overlay</span>

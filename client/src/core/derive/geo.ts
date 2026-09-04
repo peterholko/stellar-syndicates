@@ -38,7 +38,7 @@ export function nearestKnownDock(g: GhostView): DockTarget | null {
     key, name, pos, distance: Math.hypot(pos.x - g.pos.x, pos.y - g.pos.y),
   });
   if (state.galaxy) {
-    add("hub", "Wormhole Hub", state.galaxy.hub);
+    add("hub", "Market Hub", state.galaxy.hub);
     for (const system of state.galaxy.systems) {
       const served = state.systems.find((entry) => entry.id === system.id);
       if (served?.owner === state.playerId || served?.ally) {

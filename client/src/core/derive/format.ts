@@ -108,15 +108,33 @@ export function fmtEta(secs: number): string {
   return `${(h / 24).toFixed(1)}d`;
 }
 
+/** The campaign clock is simulation time. Keeping it next to the pacing
+ * multiplier makes every ETA legible without pretending a 4x playtest minute
+ * is a wall-clock minute. */
+export function gameClock(simTime: number): string {
+  if (!Number.isFinite(simTime)) return "—";
+  const total = Math.max(0, Math.floor(simTime));
+  const day = Math.floor(total / 86_400) + 1;
+  const hh = String(Math.floor(total / 3_600) % 24).padStart(2, "0");
+  const mm = String(Math.floor(total / 60) % 60).padStart(2, "0");
+  const ss = String(total % 60).padStart(2, "0");
+  return `D${day} ${hh}:${mm}:${ss}`;
+}
+
+/** Canonical served-age vocabulary for command surfaces. */
+export function informationDelay(secs: number): string {
+  return secs > 0.5 ? `Information delay ${Math.max(1, Math.round(secs))}s` : "Live report";
+}
+
 // A one-way delay mapped onto the player's wall-clock, to the second ("~14:32:10").
 export function arrivalLocal(delaySecs: number): string {
-  return new Date(Date.now() + delaySecs * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return new Date(Date.now() + delaySecs / Math.max(0.01, state.pacingScale) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 /// The absolute wall-clock completion ("done 14:32" local) — the async-planning
 /// detail: sim-time delta mapped onto the player's clock.
 export function doneAtLocal(completeTime: number): string {
-  const ms = Date.now() + Math.max(0, completeTime - liveSimTime()) * 1000;
+  const ms = Date.now() + Math.max(0, completeTime - liveSimTime()) / Math.max(0.01, state.pacingScale) * 1000;
   return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 

@@ -4,6 +4,7 @@ import { renderer } from "../render";
 import { state, type PendingIntent } from "../state";
 import { emplacementLabel, knownDeposits } from "./derive/geo";
 import { guardCapable, jumpCapable, shipKindLabel } from "./derive/fleet";
+import { jumpRangeAt, nebulaAt } from "./derive/nebula";
 import { intentTargetLabel, SURVEY_SECS_UI } from "./derive/orders";
 import type { CoreEvent } from "./events";
 
@@ -88,10 +89,12 @@ export function armJumpAiming(ship: GhostView): void {
   intentAiming.jump = ship.id;
   renderer.jumpAimingShipId = ship.id;
   renderer.stateVersion++;
+  const range = jumpRangeAt(state.galaxy, ship.pos);
+  const precursor = nebulaAt(state.galaxy, ship.pos)?.kind === "precursor_cloud";
   emitIntentChanged({
     refreshShip: true,
     readout: `<b>Jump drive armed.</b> Pick a point within ` +
-      `<b>${Math.round(state.galaxy.jump_range).toLocaleString()} su</b>. ` +
+      `<b>${Math.round(range).toLocaleString()} su</b>${precursor ? " <span class=\"dim\">(precursor field)</span>" : ""}. ` +
       `<span class="dim">Both ends must be clear of gravity wells · Esc cancels.</span>`,
   });
 }
@@ -121,7 +124,7 @@ function previewReadout(intent: PendingIntent): string {
       return `Prospective route for your <b>${esc(ship ? shipKindLabel(ship.kind) : "fleet")}</b>. ` +
         `<span class="dim">Compare the lighter dashed course with the solid current route, then confirm or cancel.</span>`;
     case "jump": {
-      const range = state.galaxy?.jump_range ?? 50_000;
+      const range = ship ? jumpRangeAt(state.galaxy, ship.pos) : state.galaxy?.jump_range ?? 50_000;
       return `Jump preview from the fleet's <b>light-delayed sighting</b>. ` +
         `<span class="dim">The dashed circle is the estimated ${Math.round(range).toLocaleString()} su reach; ` +
         `the sim checks the true fleet, range, and gravity wells when the signal arrives. Jump fuel is unlimited during playtesting.</span>`;

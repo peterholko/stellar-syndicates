@@ -22,6 +22,12 @@ export type CoreEvent =
   | { kind: "CommandSignal"; orderId: number; shipId: EntityId }
   | { kind: "CommandChevron"; fleetId?: EntityId }
   | { kind: "OrderConfirmed"; orderId: number; shipId: EntityId; orderKind: OrderKind }
+  | { kind: "FleetDocked"; fleetId: EntityId; berth: EntityId }
+  | { kind: "FleetArrived"; fleetId: EntityId }
+  | { kind: "BuildCompleted"; systemId: EntityId; buildKey: string }
+  | { kind: "StructureStaffed"; systemId: EntityId; title: string }
+  | { kind: "ResearchCompleted"; programmeId: string; programmeName: string }
+  | { kind: "CommandRejected"; message: string }
   | { kind: "ReportArrived"; report: RaidReport }
   | { kind: "BattleConcluded"; recordId: EntityId; outcome: RaidOutcome }
   | { kind: "EstimateReady"; estimate: EngagementEstimate }

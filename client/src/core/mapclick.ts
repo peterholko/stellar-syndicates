@@ -4,6 +4,7 @@ import { JUMP_DEPARTURE_TTL_S, liveSimTime, type PendingIntent, type ViewState }
 import type { SystemBodyDetail } from "../systemview";
 import { emplacementLabel, gravityWellAt, knownDeposits } from "./derive/geo";
 import { guardCapable, jumpCapable, shipKindLabel } from "./derive/fleet";
+import { jumpRangeAt } from "./derive/nebula";
 import { armedSelection } from "./derive/orders";
 import { jumpDepartureKey } from "./session";
 
@@ -81,14 +82,15 @@ export function resolveMapClick(
     }
     const dest = renderer.screenToWorld(sx, sy);
     const distance = Math.hypot(dest.x - ship.pos.x, dest.y - ship.pos.y);
+    const jumpRange = jumpRangeAt(state.galaxy, ship.pos);
     const originWell = gravityWellAt(ship.pos, state);
     const destinationWell = gravityWellAt(dest, state);
-    if (distance > state.galaxy.jump_range + 1e-6) {
+    if (distance > jumpRange + 1e-6) {
       return {
         kind: "reject",
         reason: `<span style="color:var(--warn)"><b>Out of jump range.</b> ` +
           `${Math.round(distance).toLocaleString()} su from the served sighting; maximum ` +
-          `${Math.round(state.galaxy.jump_range).toLocaleString()} su.</span>`,
+          `${Math.round(jumpRange).toLocaleString()} su.</span>`,
       };
     }
     if (originWell) {
@@ -216,6 +218,9 @@ export function resolveMapClick(
   for (const battle of state.battles) {
     for (const participant of battle.participants) engagedIds.set(participant, battle.pos);
   }
+  const besieged = new Set(
+    state.systems.filter((system) => system.blockade !== null).map((system) => system.id),
+  );
 
   const selected = state.selectedShipId
     ? state.ghosts.find((ghost) => ghost.id === state.selectedShipId)
@@ -227,11 +232,15 @@ export function resolveMapClick(
 
   for (const ghost of state.ghosts) {
     const battlePos = engagedIds.get(ghost.id);
+    // Ordinary berths live in the system/Hub and Fleets panels, not as
+    // invisible targets over a star. A battle or blockade exposes the fleet on
+    // the map again, matching the renderer's anti-concealment exceptions.
+    if (ghost.docked && !battlePos && !besieged.has(ghost.docked)) continue;
     const point = battlePos
       ? renderer.worldToScreen(battlePos)
       : renderer.fleetScreenPosition(ghost);
     const distance = Math.hypot(point.x - sx, point.y - sy);
-    const radius = ghost.docked ? 11 : Math.max(24, renderer.fleetHitRadius(ghost));
+    const radius = Math.max(24, renderer.fleetHitRadius(ghost));
     if (distance >= radius) continue;
     if (ghost.own) {
       cands.push({
@@ -264,7 +273,10 @@ export function resolveMapClick(
 
   const battleAtClick = renderer.battlePick(sx, sy);
   if (battleAtClick !== null) {
+    // §replay-marker: one marker family — a hit is either a RUNNING engagement
+    // or a CONCLUDED record (same id space); both open the battle view.
     const battle = state.battles.find((candidate) => candidate.id === battleAtClick);
+    const record = battle ? undefined : state.battleRecords.find((candidate) => candidate.id === battleAtClick && candidate.outcome !== null);
     if (battle) {
       const point = renderer.worldToScreen(battle.pos);
       cands.push({
@@ -273,6 +285,15 @@ export function resolveMapClick(
         label: "ongoing battle",
         target: { type: "ongoingBattle", id: battle.id },
         readout: `<b>Battle in progress</b> — open the arrived combat picture.`,
+      });
+    } else if (record) {
+      const point = renderer.worldToScreen(record.pos);
+      cands.push({
+        key: `battle:${record.id}`,
+        sortD: Math.hypot(point.x - sx, point.y - sy),
+        label: "concluded battle",
+        target: { type: "ongoingBattle", id: record.id },
+        readout: `<b>Battle concluded</b> — open the recorded replay.`,
       });
     }
   }
@@ -339,9 +360,9 @@ export function resolveMapClick(
   }
 
   if (cands.length) {
-    // A fleet pip (including a berth pip) is a more precise hit than the
-    // enlarged star affordance beneath it. Keep co-location cycling for the
-    // remaining stack, but make the player's own hull the first result.
+    // A visible fleet is a more precise hit than the enlarged star affordance
+    // beneath it. Keep co-location cycling for the remaining stack, but make
+    // the player's own hull the first result.
     cands.sort((a, b) => Number(!a.ownFleet) - Number(!b.ownFleet) || a.sortD - b.sortD);
     const keys = cands.map((candidate) => candidate.key).join(",");
     const previous = clickCycle;
@@ -460,9 +481,6 @@ export function resolveMapClick(
 
   const battle = renderer.battlePick(sx, sy);
   if (battle !== null) return { kind: "select", target: { type: "ongoingBattle", id: battle } };
-
-  const aftermath = renderer.aftermathPick(sx, sy);
-  if (aftermath !== null) return { kind: "select", target: { type: "aftermath", id: aftermath } };
 
   const capture = renderer.capturePick(sx, sy);
   if (capture !== null) return { kind: "select", target: { type: "capture", id: capture } };

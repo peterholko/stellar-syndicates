@@ -1,5 +1,5 @@
 import { hubDockedFleets, shipKindLabel } from "../../core/derive/fleet";
-import { agoLabel, fmt, fmtDur, rejectText, trend } from "../../core/derive/format";
+import { agoLabel, fmt, fmtDur, informationDelay, rejectText, trend } from "../../core/derive/format";
 import { systemName } from "../../core/derive/geo";
 import {
   COMMODITIES,
@@ -109,7 +109,7 @@ export class DeckMarketRoutes {
       this.freightSellOnArrival, freightDraftEntries(), this.feedback, Math.floor(liveSimTime()),
       state.market, state.wallet, state.charter, state.freight,
       state.priceHistory, state.systems.map((system) => [system.id, system.owner, system.stockpile, system.storage_used, system.storage_cap, system.modules]),
-      hubDockedFleets().map((fleet) => [fleet.id, fleet.kind, fleet.count_class, fleet.composition, fleet.cargo, fleet.cargo_manifest]),
+      hubDockedFleets().map((fleet) => [fleet.id, fleet.kind, fleet.count_class, fleet.composition, fleet.cargo, fleet.cargo_manifest, state.pendingOrders.get(fleet.id)]),
       marketReservations, recentMarketOrders,
     ]);
     if (!force && signature === this.signature) return true;
@@ -220,7 +220,7 @@ export class DeckMarketRoutes {
 
   private marketHtml(): string {
     const state = this.ctx.state;
-    if (!state.market || !state.wallet) return emptyState("Market report unavailable", "Waiting for light from the Wormhole Hub.");
+    if (!state.market || !state.wallet) return emptyState("Market report unavailable", "Waiting for light from the Market Hub.");
     const stale = state.market.staleness;
     const reserved = reservedMarketCredits();
     const tabs = (["exchange", "warehouse", "specialists", "modules"] as DeckMarketTab[])
@@ -229,8 +229,8 @@ export class DeckMarketRoutes {
       : this.tab === "warehouse" ? this.warehouseHtml()
         : this.tab === "specialists" ? this.specialistsHtml()
           : this.modulesHtml();
-    return `<section class="deck-page deck-market"><header class="deck-page__lead"><span>the shared commons · light-delayed</span><h2>Wormhole Hub</h2><p>The Exchange, your Market Warehouse and the Authority freight desk share one served account picture.</p></header>` +
-      `<div class="deck-stat-grid deck-market__stats">${stat("Spendable credits", `${reserved > 0 ? "~" : ""}${fmt(spendableMarketCredits())} Cr`)}${stat("Reserved in flight", `${fmt(reserved)} Cr`, reserved > 0)}${stat("Equity", `${fmt(state.wallet.valuation)} Cr`)}${stat("Market report", stale > 0.5 ? `~${stale.toFixed(0)}s stale` : "live", stale > 0.5)}</div>` +
+    return `<section class="deck-page deck-market"><header class="deck-page__lead"><span>the shared commons · light-delayed</span><h2>Market Hub</h2><p>The Exchange, your Market Warehouse and the Authority freight desk share one served account picture.</p></header>` +
+      `<div class="deck-stat-grid deck-market__stats">${stat("Spendable credits", `${reserved > 0 ? "~" : ""}${fmt(spendableMarketCredits())} Cr`)}${stat("Reserved in flight", `${fmt(reserved)} Cr`, reserved > 0 ? "warn" : "")}${stat("Equity", `${fmt(state.wallet.valuation)} Cr`)}${stat("Market report", informationDelay(stale), stale > 0.5 ? "stale" : "")}</div>` +
       `<nav class="deck-tabs" aria-label="Market sections">${tabs}</nav>${this.feedback ? `<div class="deck-market-feedback">${esc(this.feedback)}</div>` : ""}${body}</section>`;
   }
 
@@ -246,9 +246,9 @@ export class DeckMarketRoutes {
         `<span>${commodityIcon(commodity)}<span><b>${esc(label(commodity))}</b><small>warehouse ${warehouseUnits(commodity)}</small></span></span>` +
         spark(history.length ? history : price === undefined ? [0, 0] : [price, price]) +
         `<em class="is-${movement.tone}">${price === undefined ? "—" : `${stale ? "~" : ""}${price.toFixed(2)}`} ${movement.glyph}</em>` +
-        `<small>${quote ? `buy ${quote.available_buy} · sell ${quote.available_sell}` : "no arrived quote"}</small></button>`;
+        `<small>${quote ? quote.available_buy === quote.available_sell ? `depth ${quote.available_buy}` : `buy depth ${quote.available_buy} · sell depth ${quote.available_sell}` : "no arrived quote"}</small></button>`;
     }).join("");
-    return `<div class="deck-market-layout"><section class="deck-section deck-market-board"><header><div><h3>Observed prices</h3><p>Sparklines are arrived history, never a forecast. Liquidity and prices may already have moved.</p></div><b>${market.staleness > 0.5 ? `~${market.staleness.toFixed(0)}s` : "live"}</b></header><div class="deck-market-board__head"><span>Commodity</span><span>History</span><span>Price</span><span>Observed liquidity</span></div>${board}</section>` +
+    return `<div class="deck-market-layout"><section class="deck-section deck-market-board"><header><div><h3>Observed prices</h3><p>Sparklines are arrived history, never a forecast. Liquidity and prices may already have moved.</p></div><b class="deck-stale-value">${esc(informationDelay(market.staleness))}</b></header><div class="deck-market-board__head"><span>Commodity</span><span>History</span><span>Price</span><span>Observed liquidity</span></div>${board}</section>` +
       `<div class="deck-market-side">${this.ticketHtml()}${this.ordersHtml()}</div></div>`;
   }
 
@@ -296,15 +296,16 @@ export class DeckMarketRoutes {
     const ledger = holdings.map((row) => `<span>${commodityIcon(row.commodity)}<small>${esc(label(row.commodity))}</small><b>${row.units}</b></span>`).join("");
     const berths = hubDockedFleets().map((fleet) => {
       const manifest = fleetCargoManifest(fleet);
+      const unloadQueued = (this.ctx.state.pendingOrders.get(fleet.id) ?? []).some((order) => !order.lost && order.kind === "unload");
       const cargo = manifest.length ? manifest.map((stack) => `${fmt(stack.units)} ${label(stack.commodity)}`).join(" · ") : "hold empty";
       const exact = fleetExactCount(fleet);
       const count = exact === null ? `est. ${countClassLabel(fleet.count_class)} ships` : `${exact} ship${exact === 1 ? "" : "s"}`;
-      return `<article class="deck-berth"><button type="button" data-deck-act="market-hub-fleet" data-fleet="${esc(fleet.id)}">${icon("manifest", "md")}<span><b>${esc(shipKindLabel(fleet.kind))} fleet</b><small>${esc(count)} · ${esc(cargo)}</small></span><em>›</em></button>${manifest.length ? `<button type="button" data-deck-act="market-hub-unload" data-fleet="${esc(fleet.id)}">${icon("unload", "sm")} Unload all</button>` : ""}</article>`;
+      return `<article class="deck-berth"><button type="button" data-deck-act="market-hub-fleet" data-fleet="${esc(fleet.id)}">${icon("manifest", "md")}<span><b>${esc(shipKindLabel(fleet.kind))} fleet</b><small>${esc(count)} · ${esc(cargo)}</small></span><em>›</em></button>${manifest.length ? `<button type="button" data-deck-act="market-hub-unload" data-fleet="${esc(fleet.id)}" ${unloadQueued ? "disabled" : ""}>${icon("unload", "sm")} ${unloadQueued ? "Unload queued" : "Unload all"}</button>` : ""}</article>`;
     }).join("");
     const shipments = (this.ctx.state.freight?.shipments ?? []).map((shipment) => `<div class="deck-order-row"><span>${icon("authorityFreighter", "sm")}<span><b>${shipment.units} ${esc(label(shipment.commodity))} ${shipment.direction === "outbound" ? "→" : "←"} ${esc(systemName(shipment.system))}</b><small>${shipment.aboard ? "aboard" : "awaiting departure"}${shipment.direction === "inbound" && shipment.sell_on_arrival ? " · sells on arrival" : ""}</small></span></span></div>`).join("");
     return `<section class="deck-section deck-market-hub"><img src="/art/wormhole_hub_concept.png" alt=""/><div><h3>Authority market station</h3><p>The wormhole terminus to Sol. Exchange trades settle against your private warehouse here.</p><p>Move goods through scheduled Authority freight or command an owned Freighter from its fleet route.</p></div></section>` +
       `<section class="deck-section"><header><div><h3>Market Warehouse</h3><p>The only inventory Exchange orders can buy into or sell from.</p></div><b>${holdings.reduce((sum, row) => sum + row.units, 0)}</b></header><div class="deck-ledger">${ledger || `<span><small>Warehouse</small><b>empty</b></span>`}</div></section>` +
-      `<section class="deck-section"><header><div><h3>Hub berths</h3><p>Served reports for owned fleets docked at the Authority station.</p></div><b>${hubDockedFleets().length}</b></header><div class="deck-berth-list">${berths || `<div class="deck-empty-inline">No fleets reported berthed at the Hub.</div>`}</div></section>` +
+      `<section class="deck-section"><header><div><h3>Market Hub berths</h3><p>Served reports for owned fleets docked at the Authority station.</p></div><b>${hubDockedFleets().length}</b></header><div class="deck-berth-list">${berths || `<div class="deck-empty-inline">No fleets reported berthed at the Market Hub.</div>`}</div></section>` +
       this.freightHtml() +
       `<section class="deck-section"><header><div><h3>Shipments in hand</h3><p>Booked lots waiting for a departure or already aboard.</p></div><b>${this.ctx.state.freight?.shipments.length ?? 0}</b></header>${shipments || `<div class="deck-empty-inline">No freight booked.</div>`}</section>`;
   }
@@ -504,14 +505,14 @@ export function deckTradeNotice(trade: TradeEvent): DeckTradeNotice {
       message = `${label(trade.side)} ${trade.units} ${label(trade.commodity)} @ ${trade.limit_price.toFixed(2)} Cr/u · escrow returned.`;
       break;
     case "AutoDispatched":
-      title = `Standing order #${trade.rule_id}`;
+      title = `Logistics rule ${trade.rule_id}`;
       message = `${trade.units} ${label(trade.commodity)} shipped automatically · raidable.`;
       destination = warehouse;
       break;
     case "SupplyDiverted": {
       const action = trade.action === "lost" ? "lost; cargo dropped"
         : trade.action === "returned_home" ? "rerouted home · raidable"
-          : "rerouted to sell at the Hub · raidable";
+          : "rerouted to sell at the Market Hub · raidable";
       title = "Supply diverted";
       message = `${systemName(trade.system)} is no longer held: ${trade.units} ${label(trade.commodity)} ${action}.`;
       tone = trade.action === "lost" ? "bad" : "warn";
@@ -520,7 +521,7 @@ export function deckTradeNotice(trade: TradeEvent): DeckTradeNotice {
     }
     case "StorageOverflow":
       title = "Destination storage full";
-      message = `${trade.units} ${label(trade.commodity)} could not unload at ${systemName(trade.system)} and continues to the Hub.`;
+      message = `${trade.units} ${label(trade.commodity)} could not unload at ${systemName(trade.system)} and continues to the Market Hub.`;
       tone = "warn";
       destination = warehouse;
       break;
@@ -564,13 +565,13 @@ export function deckTradeNotice(trade: TradeEvent): DeckTradeNotice {
     }
     case "Loaded":
       title = "Cargo loaded";
-      message = `${trade.units} ${label(trade.commodity)} loaded at ${trade.system ? systemName(trade.system) : "the Hub"}.`;
+      message = `${trade.units} ${label(trade.commodity)} loaded at ${trade.system ? systemName(trade.system) : "the Market Hub"}.`;
       tone = "good";
       destination = warehouse;
       break;
     case "Unloaded":
       title = "Cargo unloaded";
-      message = `${trade.units} ${label(trade.commodity)} unloaded at ${trade.system ? systemName(trade.system) : "the Hub"}.`;
+      message = `${trade.units} ${label(trade.commodity)} unloaded at ${trade.system ? systemName(trade.system) : "the Market Hub"}.`;
       tone = "good";
       destination = warehouse;
       break;
@@ -591,8 +592,8 @@ function positiveInteger(value: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function stat(name: string, value: string, warn = false): string {
-  return `<span class="deck-stat${warn ? " is-warn" : ""}"><small>${esc(name)}</small><b>${esc(value)}</b></span>`;
+function stat(name: string, value: string, tone: "" | "warn" | "stale" = ""): string {
+  return `<span class="deck-stat${tone ? ` is-${tone}` : ""}"><small>${esc(name)}</small><b>${esc(value)}</b></span>`;
 }
 
 function commodityIcon(commodity: Commodity): string {

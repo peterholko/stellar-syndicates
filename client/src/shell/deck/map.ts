@@ -1,4 +1,5 @@
 import { shipKindLabel } from "../../core/derive/fleet";
+import { nebulaEffect } from "../../core/derive/nebula";
 import { type MapClickResult, type SelectTarget, resolveMapClick, resolveSystemClick } from "../../core/mapclick";
 import type { GhostView, SystemInfo } from "../../protocol";
 import type { CoreContext } from "../types";
@@ -208,8 +209,9 @@ export class DeckMapInteraction {
     if (renderer.viewMode.type !== "galaxy" || renderer.isSystemScrubbing()) return;
     const battleId = renderer.battlePick(event.clientX, event.clientY);
     if (battleId !== null) {
-      const battle = this.ctx.state.battles.find((entry) => entry.id === battleId);
-      if (battle) this.hooks.enteredBattle(battle.id);
+      // Running or concluded — enterBattle resolves which and opens the
+      // live follow or the replay accordingly.
+      this.hooks.enteredBattle(battleId);
       return;
     }
     const system = this.systemUnderPoint(event.clientX, event.clientY);
@@ -385,11 +387,15 @@ export class DeckMapInteraction {
     };
     const engaged = new Map<string, { x: number; y: number }>();
     for (const battle of state.battles) for (const id of battle.participants) engaged.set(id, battle.pos);
+    const besieged = new Set(
+      state.systems.filter((system) => system.blockade !== null).map((system) => system.id),
+    );
     for (const ghost of state.ghosts) {
       const battlePos = engaged.get(ghost.id);
+      if (ghost.docked && !battlePos && !besieged.has(ghost.docked)) continue;
       const point = battlePos ? renderer.worldToScreen(battlePos) : renderer.fleetScreenPosition(ghost);
       const distance = Math.hypot(point.x - clientX, point.y - clientY);
-      const radius = ghost.docked ? 11 : Math.max(18, renderer.fleetHitRadius(ghost));
+      const radius = Math.max(18, renderer.fleetHitRadius(ghost));
       if (distance >= radius) continue;
       consider(ghost.own ? 0 : 1, distance, this.fleetHover(ghost, !!battlePos));
     }
@@ -411,8 +417,13 @@ export class DeckMapInteraction {
         consider(1, distance, selected ? `Move ${shipKindLabel(selected.kind)} to Market Hub` : "Open Market Hub");
       }
     }
+    const nebula = renderer.nebulaPick(clientX, clientY);
+    if (nebula) consider(3, 0, `${nebula.name} · ${nebulaEffect(nebula)}`);
     const battleId = renderer.battlePick(clientX, clientY);
-    if (battleId !== null) consider(1, 0, "Open ongoing battle");
+    if (battleId !== null) {
+      const running = state.battles.some((entry) => entry.id === battleId);
+      consider(1, 0, running ? "Open ongoing battle" : "Open battle replay");
+    }
     if (!copy) {
       this.hideHover();
       renderer.canvas.style.cursor = selected ? "crosshair" : "grab";

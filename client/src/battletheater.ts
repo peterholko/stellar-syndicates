@@ -824,10 +824,15 @@ function rebuildWindow(): void {
   st.windowKey = key;
   releaseAllShips();
   st.ships = [];
-  const f0 = rec.rounds[round]?.frame;
+  // Rounds are 1:1 with engine steps and each carries its step's keyframe.
+  // For the rare frameless round (a finalize tail, or a legacy record) HOLD
+  // the nearest previous keyframe rather than blanking the battlefield.
+  let fi = round;
+  let f0 = rec.rounds[fi]?.frame;
+  while (!f0 && fi > 0) f0 = rec.rounds[--fi]?.frame;
   if (!f0) {
-    // A frameless round (old/bucket data mid-list): no ships, no FX — never
-    // replay a stale schedule against an empty scene.
+    // No keyframe anywhere up to this round (e.g. a sensor-estimate record —
+    // frames ride participant fidelity only): no ships, no FX.
     st.fx = null;
     fxG?.clear();
     debrisG?.clear();
@@ -836,7 +841,7 @@ function rebuildWindow(): void {
   // Window-ENTRY headings: match the PREVIOUS frame to this one, so each
   // ship's rotation lerps hdg0→hdg purely from (record, round, frac) — no
   // wall-clock easing, no stale pooled rotation (the determinism law).
-  const fPrev = rec.rounds[round - 1]?.frame;
+  const fPrev = fi > 0 ? rec.rounds[fi - 1]?.frame : undefined;
   const prevHdg = new Map<KfShipView, number>();
   if (fPrev) {
     for (const tr of matchFrames(fPrev.ships, f0.ships)) {

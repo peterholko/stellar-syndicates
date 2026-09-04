@@ -220,7 +220,8 @@ pub enum Command {
     },
 
     /// Assign a reserve officer to an idle formation at the same owned-system
-    /// dock, or transfer an already-docked officer between such formations.
+    /// dock, or transfer an already-docked officer between such formations. The
+    /// assignment reaches the named fleet through the ordinary command delay.
     AssignCaptain {
         player_id: PlayerId,
         captain_id: u32,
@@ -228,7 +229,8 @@ pub enum Command {
     },
 
     /// Take an officer off an idle formation into reserve at its current owned
-    /// system. Officers never teleport to the command center through this verb.
+    /// system. Officers never teleport to the command center through this verb;
+    /// an assigned officer receives the instruction at their fleet.
     ReserveCaptain {
         player_id: PlayerId,
         captain_id: u32,
@@ -284,8 +286,8 @@ pub enum Command {
     /// is debited, and the modules REMOVED (`from` minus `to`) are returned to
     /// the ledger. The hulls leave the fleet into the refit queue (safely OUT of
     /// combat while in the yard) and rejoin fitted after `REFIT_TICKS_PER_SHIP`
-    /// × n. Soft-reject on any violation (no partial debit). INSTANT local
-    /// administration to KICK OFF (like a build); the completion is on the clock.
+    /// × n. Soft-reject on any violation (no partial debit). The instruction is
+    /// light-delayed to the fleet; once received, the yard job has its own clock.
     RefitShips {
         player_id: PlayerId,
         fleet_id: EntityId,
@@ -343,9 +345,9 @@ pub enum Command {
         fleet_id: EntityId,
     },
 
-    /// Set a fleet's TRANSIT throttle (§Part 4): Full or Stealth. Instant local
-    /// administration on the player's own fleet — governs its move speed and, via
-    /// its velocity, its detection signature. Soft-reject if not the player's.
+    /// Set a fleet's TRANSIT throttle (§Part 4): Full or Stealth. Light-delayed to
+    /// the player's fleet; once installed it governs move speed and, via velocity,
+    /// detection signature. Soft-reject if not the player's.
     SetFleetTransit {
         player_id: PlayerId,
         fleet_id: EntityId,
@@ -356,7 +358,8 @@ pub enum Command {
     /// Both must be the player's, Idle, and co-located at one of the player's
     /// OWNED systems. `from`'s composition (and cargo, if `into` carries none) is
     /// absorbed into `into`; `from` is removed. Soft-reject on any violation — an
-    /// in-flight fleet can't be merged (no in-flight detachment in v1).
+    /// in-flight fleet can't be merged (no in-flight detachment in v1). The
+    /// instruction is queued to the receiving formation.
     MergeFleets {
         player_id: PlayerId,
         into: EntityId,
@@ -368,6 +371,7 @@ pub enum Command {
     /// OWNED systems. `counts` names how many of each kind to detach; the new
     /// fleet spawns Idle beside the source. Soft-reject if the counts are empty,
     /// exceed what's aboard, or would empty the source (split SOME, keep SOME).
+    /// The source changes only when the light-delayed instruction arrives.
     SplitFleet {
         player_id: PlayerId,
         fleet_id: EntityId,
@@ -511,9 +515,10 @@ pub enum Command {
 
     // ---- §TCA Part 5: PLAYER-CONVOY LOGISTICS --------------------------------
     // The second, player-owned logistics channel: you fly it, you load it, you
-    // take the risk, and it costs no fee. Every one of these requires the fleet to
-    // be the player's, IDLE, unengaged, and within `ship::DOCK_RADIUS` of the
-    // dock — loading is dockside work. All soft-reject, free, owner-only.
+    // take the risk, and it costs no fee. Every command here is addressed to the
+    // physical fleet and therefore joins the ordinary light-delay queue. On
+    // arrival it requires the fleet to still be the player's, IDLE, unengaged,
+    // and within `ship::DOCK_RADIUS` of the dock. All soft-reject, free, owner-only.
     /// Move goods from the corp's MARKET WAREHOUSE into a fleet's hold.
     /// Tops up that commodity's stack in a mixed manifest; every stack shares
     /// the fleet's aggregate cargo capacity.
@@ -586,11 +591,10 @@ pub enum Command {
 
     /// §TCA: toggle whether one of the player's fleets, while BLOCKADING, also
     /// engages Terran Charter Authority FREIGHTERS arriving at the strangled
-    /// system. INSTANT local administration on the player's own fleet — a standing
-    /// policy like [`Command::SetFleetPosture`], not a real-time order, so it can
-    /// be flipped without disturbing the blockade the fleet is holding. Off by
-    /// default: a blockade strangles a rival's logistics without picking a fight
-    /// with the chartering power. Soft-reject if not the player's fleet.
+    /// system. The standing policy is light-delayed to the blockading fleet and
+    /// does not disturb the blockade it is holding. Off by default: a blockade
+    /// strangles a rival's own logistics without picking a fight with the
+    /// chartering power. Soft-reject if not the player's fleet.
     SetEngageFreight {
         player_id: PlayerId,
         fleet_id: EntityId,
@@ -623,12 +627,11 @@ pub enum Command {
     },
 
     /// Set a fleet's ENGAGEMENT POSTURE (§offensive-orders Part 2): the standing
-    /// per-fleet aggression (Passive / Defensive / WeaponsFree). INSTANT local
-    /// administration on the player's own fleet — a standing policy, like the
-    /// sibling `SetFleetTransit` throttle and the corp `SetFleetDoctrine` (not a
-    /// real-time command). The ACTION it authorizes is taken on the fleet's OWN
-    /// local detection (forward autonomy); the owner learns of any engagement
-    /// light-delayed. Soft-reject if not the player's fleet.
+    /// per-fleet aggression (Passive / Defensive / WeaponsFree). The setting is
+    /// light-delayed to the fleet, unlike corporation-wide doctrine. Once there,
+    /// the action it authorizes is taken on the fleet's OWN local detection
+    /// (forward autonomy); the owner learns of any engagement light-delayed.
+    /// Soft-reject if not the player's fleet.
     SetFleetPosture {
         player_id: PlayerId,
         fleet_id: EntityId,

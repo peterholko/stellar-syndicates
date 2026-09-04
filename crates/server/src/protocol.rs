@@ -24,7 +24,7 @@ use sim::{
 /// closes carry a dedicated transport code.
 /// A client seeing an unexpected version can warn the user to refresh; the
 /// server sends it in [`ServerMsg::Welcome`].
-pub const PROTOCOL_VERSION: u32 = 29;
+pub const PROTOCOL_VERSION: u32 = 31;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Deserialize)]
@@ -875,12 +875,31 @@ pub struct SystemInfo {
     pub claim_cost: f64,
 }
 
+/// Static public deep-space terrain. Geometry is the exact rotated ellipse used
+/// by the sim; explicit multipliers make client previews/readouts rule-derived
+/// instead of duplicating balance constants.
+#[derive(Debug, Clone, Serialize)]
+pub struct NebulaInfo {
+    pub id: u32,
+    pub kind: sim::NebulaKind,
+    pub name: String,
+    pub center: Vec2,
+    pub radius_x: f64,
+    pub radius_y: f64,
+    pub rotation: f64,
+    pub signature_mult: f64,
+    pub sensor_mult: f64,
+    pub jump_range_mult: f64,
+}
+
 /// Static galaxy geography, sent once at join. Never changes during a session
 /// (systems don't move), so it doesn't need to be in the per-tick stream.
 #[derive(Debug, Clone, Serialize)]
 pub struct GalaxyInfo {
     pub hub: Vec2,
     pub radius: f64,
+    /// Public deep-space terrain; static for the life of the galaxy.
+    pub nebulas: Vec<NebulaInfo>,
     /// Speed of light (sim units / s) — lets the client annotate light-delays.
     pub c: f64,
     /// Public jump-drive geometry and timing. These mirror the sim constants so
@@ -1545,6 +1564,11 @@ pub struct PendingOrderView {
     pub target_id: Option<EntityId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emplacement: Option<sim::emplace::EmplacementKind>,
+    /// Exact owner-issued configuration carried by this signal. This is
+    /// command knowledge, not fleet truth, and lets controls stay visibly
+    /// pending until a served report confirms the setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configuration: Option<sim::world::PendingConfigurationView>,
     /// Owner-only intended route from the served sighting to a fixed destination.
     /// Positions only: this line never claims the fleet has advanced along it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -2153,6 +2177,11 @@ pub struct GhostView {
     /// Authority freight. `None` on anyone else's ghost, like `posture`.
     #[serde(default)]
     pub engage_freight: Option<bool>,
+    /// §light-delayed controls: owner-only served transit setting. Unlike a
+    /// local button latch, this can reconcile a pending request after the
+    /// fleet's own report returns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transit: Option<sim::ship::TransitMode>,
 }
 
 /// Messages pushed by the server to a single player's connection.

@@ -39,7 +39,7 @@ export const DECK_ROUTES: Record<DeckRouteName, DeckRouteMeta> = {
   command: { title: "Command", width: "standard" },
   system: { title: "System", width: "standard" },
   world: { title: "World", width: "standard" },
-  build: { title: "Build", width: "wide" },
+  build: { title: "Build", width: "standard" },
   fleet: { title: "Fleet", width: "standard" },
   fleets: { title: "Fleets", width: "standard" },
   logistics: { title: "Logistics", width: "standard" },

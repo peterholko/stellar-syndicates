@@ -119,6 +119,14 @@ export class DeckCommandRoutes {
     this.foundingRoot.replaceChildren();
   }
 
+  /** The inbox and floating guide share this exact founding action; neither
+   * invents a competing "next step" or a shallower destination. */
+  runFoundingPrimary(): void {
+    const founding = this.ctx.state.founding;
+    if (!founding || founding.stage === "complete") return;
+    this.runFoundingAction(this.foundingContent(founding).action, founding);
+  }
+
   private renderFounding(force: boolean): void {
     const founding = this.ctx.state.founding;
     const signature = sheetFingerprint([Math.floor(this.ctx.state.simTime), founding, this.minimized, this.ctx.state.systems, this.ctx.state.ghosts]);

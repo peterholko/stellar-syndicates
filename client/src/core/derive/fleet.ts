@@ -274,7 +274,7 @@ export function systemFleetsAt(sys: SystemInfo): GhostView[] {
 
 
 export function fleetRosterDockName(g: GhostView): string | null {
-  if (g.docked === "hub") return "Wormhole Hub";
+  if (g.docked === "hub") return "Market Hub";
   if (!g.docked) return null;
   return state.galaxy?.systems.find((system) => dockedAtSystem(g, system.id))?.name ?? "known berth";
 }

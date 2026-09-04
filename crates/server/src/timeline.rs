@@ -401,11 +401,11 @@ impl Timeline {
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);
                 }
-                // A soft-rejected fleet ORDER (§TCA sovereignty) — owner-only,
-                // instant (your own command staff refusing to transmit): the order
-                // never installed, the fleet kept its current one, nothing was
-                // spent. Without this line the refusal is invisible and the click
-                // just seems to do nothing.
+                // A soft-rejected fleet ORDER — owner-only, whether preflight
+                // refused it or receiver-side conditions changed before delivery.
+                // The order never installed, the fleet kept its current one, and
+                // nothing was spent. Without this line the refusal is invisible
+                // and the click just seems to do nothing.
                 EventPayload::OrderRejected { owner, reason, .. } => {
                     let text = match reason {
                         sim::OrderRejectReason::InsideSovereignZone =>
@@ -434,6 +434,9 @@ impl Timeline {
                                 .to_string(),
                         sim::OrderRejectReason::FormalWarRequired =>
                             "Order refused: blockading territory requires an active war declaration or your corporation's live right of reprisal."
+                                .to_string(),
+                        sim::OrderRejectReason::DeliveryConditionsChanged =>
+                            "Order refused: conditions changed before the signal reached the fleet. Its previous instructions remain in force."
                                 .to_string(),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);
@@ -1078,7 +1081,7 @@ impl Timeline {
                         e.time,
                         TimelineSeverity::Good,
                         format!(
-                            "{name} confirmed its {} — you can see it complying now.",
+                            "Response received from {name} — you can see its {} now.",
                             kind.label()
                         ),
                     );
