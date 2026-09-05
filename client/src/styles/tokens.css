@@ -47,6 +47,7 @@
   --deck-workspace-standard: 460px;
   --deck-workspace-system: 552px; /* 20% wider than the standard workspace. */
   --deck-workspace-wide: 1240px;
+  --deck-build-workbench-max: 920px;
   --deck-control-height: 32px;
   --deck-radius: 6px;
   --deck-focus-ring: 2px;

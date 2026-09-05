@@ -25,7 +25,7 @@ import { jumpRangeAt } from "../../core/derive/nebula";
 import { projectedBand } from "../../core/derive/research";
 import type { CoreEvent } from "../../core/events";
 import { jumpDepartureKey } from "../../core/session";
-import { icon, label } from "../../icons";
+import { icon, label, type IconKey } from "../../icons";
 import {
   fleetCargoManifest,
   fleetCargoUnits,
@@ -287,7 +287,7 @@ export class DeckFleetRoutes {
       stat("Speed", `${Math.round(Math.hypot(g.vel.x, g.vel.y)).toLocaleString()} su/s`),
       stat("Position", `${fmt(g.pos.x)} · ${fmt(g.pos.y)}`),
     ].join("");
-    return `<section class="deck-page deck-fleet"><header class="deck-page__lead"><span>${esc(role)} · served picture</span><h2>${icon(g.kind === "convoy" || g.kind === "freighter" ? "convoy" : "fleet", "md")} ${esc(title)}</h2><p>${g.own ? "Commands and internal telemetry follow this report's information delay." : "Only information carried by arrived light is shown."}</p></header><div class="deck-stat-grid deck-fleet__stats">${stats}</div>${g.own ? this.ownHtml(g) : this.rivalHtml(g)}</section>`;
+    return `<section class="deck-page deck-fleet"><header class="deck-page__lead"><span>${esc(role)} · served picture</span><h2>${icon(fleetHeaderIcon(g), "md")} ${esc(title)}</h2><p>${g.own ? "Commands and internal telemetry follow this report's information delay." : "Only information carried by arrived light is shown."}</p></header><div class="deck-stat-grid deck-fleet__stats">${stats}</div>${g.own ? this.ownHtml(g) : this.rivalHtml(g)}</section>`;
   }
 
   private ownHtml(g: GhostView): string {
@@ -368,7 +368,7 @@ export class DeckFleetRoutes {
   private compositionHtml(g: GhostView): string {
     const stacks = [...(g.composition ?? [])].filter((entry) => entry.count > 0).sort((a, b) => FLAGSHIP_ORDER.indexOf(a.kind) - FLAGSHIP_ORDER.indexOf(b.kind));
     if (!stacks.length) return `<div class="deck-muted">Composition report unavailable.</div>`;
-    const rows = stacks.map((entry) => `<div class="deck-fleet-stack"><span>${icon("fleet", "sm")}<b>${esc(shipKindLabel(entry.kind))}</b></span><em>×${entry.count}</em></div>`).join("");
+    const rows = stacks.map((entry) => `<div class="deck-fleet-stack"><span>${icon(shipKindIcon(entry.kind), "sm")}<b>${esc(shipKindLabel(entry.kind))}</b></span><em>×${entry.count}</em></div>`).join("");
     const total = stacks.reduce((sum, entry) => sum + entry.count, 0);
     const reorganizing = (this.ctx.state.pendingOrders.get(g.id) ?? []).some((order) => !order.lost && order.kind === "reorganize");
     const split = total > 1 ? `<div class="deck-fleet-split">${stacks.map((entry) => `<button type="button" data-deck-act="fleet-split" data-kind="${entry.kind}" ${reorganizing ? "disabled" : ""}>${reorganizing ? "Reorganization in flight" : `Split 1 ${esc(shipKindLabel(entry.kind))}`}</button>`).join("")}</div>` : "";
@@ -497,7 +497,7 @@ export class DeckFleetRoutes {
 
   private rivalComposition(g: GhostView): string {
     if (!g.composition?.length) return `<div class="deck-alert"><b>Estimated ${esc(label(g.count_class))} formation</b><span>Exact composition remains outside sensor coverage.</span></div>`;
-    return `<div class="deck-subhead"><b>Composition</b><span>${fleetExactCount(g)} ships</span></div><div class="deck-fleet-stacks">${g.composition.map((entry) => `<div class="deck-fleet-stack"><span>${icon("fleet", "sm")}<b>${esc(shipKindLabel(entry.kind))}</b></span><em>×${entry.count}</em></div>`).join("")}</div>`;
+    return `<div class="deck-subhead"><b>Composition</b><span>${fleetExactCount(g)} ships</span></div><div class="deck-fleet-stacks">${g.composition.map((entry) => `<div class="deck-fleet-stack"><span>${icon(shipKindIcon(entry.kind), "sm")}<b>${esc(shipKindLabel(entry.kind))}</b></span><em>×${entry.count}</em></div>`).join("")}</div>`;
   }
 
   private rivalPayload(g: GhostView): string {
@@ -771,6 +771,29 @@ function fleetTitle(g: GhostView): string {
   if (g.tca) return "Authority Enforcement";
   if (g.pirate && g.kind === "raider") return "Pirate Interceptor";
   return `${shipKindLabel(g.kind)} fleet`;
+}
+
+function fleetHeaderIcon(g: GhostView): IconKey {
+  if (fleetExactCount(g) !== 1) return "fleet";
+  const onlyShip = g.composition?.find((entry) => entry.count === 1)?.kind ?? g.kind;
+  return shipKindIcon(onlyShip);
+}
+
+function shipKindIcon(kind: ShipKind): IconKey {
+  const icons: Partial<Record<ShipKind, IconKey>> = {
+    scout: "scout",
+    raider: "raider",
+    corvette: "corvette",
+    convoy: "convoy",
+    colony: "colony",
+    destroyer: "destroyer",
+    cruiser: "cruiser",
+    battleship: "battleship",
+    dreadnought: "dreadnought",
+    titan: "titan",
+    freighter: "authorityFreighter",
+  };
+  return icons[kind] ?? "fleet";
 }
 
 function commandButton(action: string, title: string, copy: string, modifier = "", disabledReason = ""): string {

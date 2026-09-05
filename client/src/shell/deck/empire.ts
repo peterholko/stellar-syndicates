@@ -23,6 +23,8 @@ import type { CoreEvent } from "../../core/events";
 import { icon, label, structureIcon, type IconKey } from "../../icons";
 import { fleetCargoUnits, fleetExactCount, type AssignmentView, type BodyView, type Commodity, type ModuleKind, type ShipKind, type SystemInfo, type SystemStateView } from "../../protocol";
 import { liveSimTime } from "../../state";
+import { starIconUrl, starTypeFor } from "../../stars";
+import { bodyArtUrl } from "../../systemview";
 import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext } from "../types";
@@ -37,11 +39,39 @@ interface EmpireHooks {
   toast(title: string, message: string, tone?: "quiet" | "good" | "warn" | "bad", destination?: DeckRoute): void;
 }
 
-type BuilderMode = "structures" | "ships";
+type BuilderMode = "structures" | "ships" | "modules";
 type BuildFeedback = { systemId: string; issuedAt: number; timelineLength: number; text: string; tone: "info" | "good" | "bad" };
+type WorldWorkbenchContext = { systemId: string; bodyId: number; origin: string };
 
 const SHIP_ORDER: ShipKind[] = ["scout", "corvette", "raider", "convoy", "colony", "destroyer", "cruiser", "battleship", "dreadnought", "titan"];
 const SHIP_KEYS = new Set<string>(SHIP_ORDER);
+const WORKFORCE_STRUCTURES = new Set([
+  "mining_complex", "volatile_harvester", "bioharvester", "smelter", "electronics_fabricator",
+  "chemical_works", "fuel_refinery", "machine_works", "armaments_complex", "agroplex", "academy",
+  "shipyard", "naval_drydock", "capital_slipway", "ordnance_foundry",
+]);
+const STRUCTURE_DESCRIPTION: Record<string, string> = {
+  mining_complex: "Extracts Metallic Ore, Silicates, or Rare Elements from local deposits.",
+  volatile_harvester: "Extracts Volatiles from a local deposit.",
+  bioharvester: "Harvests Biomass from a habitable world's biosphere.",
+  smelter: "Turns Metallic Ore and Fuel into Alloys.",
+  electronics_fabricator: "Turns Rare Elements and Silicates into Electronics.",
+  chemical_works: "Turns Volatiles and Biomass into Polymers.",
+  fuel_refinery: "Turns Volatiles into ship Fuel.",
+  agroplex: "Turns Biomass into Provisions for colonies and fleets.",
+  machine_works: "Turns Alloys, Electronics, and Fuel into Machinery.",
+  armaments_complex: "Produces Armaments and manufactures fleet modules.",
+  shipyard: "Builds civilian hulls and light warships.",
+  naval_drydock: "Builds Destroyers, Cruisers, and Battleships.",
+  capital_slipway: "Builds Dreadnoughts and Titans.",
+  ordnance_foundry: "Repairs battle damage and supports fleet refits.",
+  habitat: "Raises this world's population capacity and workforce.",
+  orbital_warehouse: "Expands the system's shared stockpile capacity.",
+  sensor_array: "Projects a sensor bubble around the system.",
+  defense_platform: "Defends the system against hostile fleets.",
+  academy: "Contributes research and trains specialists and officers.",
+  garrison: "Defends the planet and raises troop transports.",
+};
 const MODULES: { kind: ModuleKind; label: string; icon: IconKey; fit: number }[] = [
   { kind: "mass_driver", label: "Mass Driver", icon: "moduleMassDriver", fit: 2 },
   { kind: "torpedo_rack", label: "Torpedo Rack", icon: "moduleTorpedoRack", fit: 3 },
@@ -63,10 +93,16 @@ export class DeckEmpireRoutes {
   private buildFeedback: BuildFeedback | null = null;
   private lastBuildPreset = "";
   private lastSystemId = "";
+  private buildContext = "";
+  private workbenchOpen = false;
+  private worldWorkbench: WorldWorkbenchContext | null = null;
+  private worldSignature = "";
   private signature = "";
 
   constructor(
     private readonly root: HTMLElement,
+    private readonly workbenchRoot: HTMLElement,
+    private readonly worldWorkbenchRoot: HTMLElement,
     private readonly ctx: CoreContext,
     private readonly hooks: EmpireHooks,
   ) {}
@@ -76,7 +112,11 @@ export class DeckEmpireRoutes {
   }
 
   render(route: DeckRoute | null, force = false): boolean {
-    if (route?.name !== "system" && route?.name !== "build" && route?.name !== "world") return false;
+    this.renderWorldWorkbench(route, force);
+    if (route?.name !== "system" && route?.name !== "build" && route?.name !== "world") {
+      this.resetWorkbench();
+      return false;
+    }
     const context = this.systemContext(route);
     const systemId = context.system?.id ?? "";
     if (systemId && systemId !== this.lastSystemId) {
@@ -89,10 +129,15 @@ export class DeckEmpireRoutes {
     } else if (isSystemTab(route.query?.tab)) {
       this.systemTab = route.query.tab;
     }
+    const buildContext = !this.worldWorkbench && route.name !== "world" && this.systemTab === "build" ? systemId : "";
+    if (buildContext !== this.buildContext) {
+      this.buildContext = buildContext;
+      this.workbenchOpen = !!buildContext;
+    }
     const docked = context.system ? this.dockedFleets(context.system) : [];
     const signature = sheetFingerprint([
       route, this.systemTab, this.builderMode, this.selectedBuild, this.selectedHull,
-      this.shipQuantity, this.pendingFit, this.buildFeedback, Math.floor(liveSimTime()),
+      this.shipQuantity, this.pendingFit, this.buildFeedback, this.workbenchOpen, Math.floor(liveSimTime()),
       context.system, context.dynamic, this.ctx.state.timeline.length, this.ctx.state.syndicate?.fits,
       this.systemTab === "fleets" ? docked.map((fleet) => [
         fleet.id, fleet.kind, fleet.docked, Math.floor(fleet.age), fleet.composition,
@@ -100,11 +145,13 @@ export class DeckEmpireRoutes {
       ]) : null,
     ]);
     if (!force && signature === this.signature) return true;
-    if (renderDeferred(this.root.id, () => this.render(route, true))) return true;
+    if (renderDeferred(this.root.id, () => this.render(route, true))
+      || (this.workbenchOpen && renderDeferred(this.workbenchRoot.id, () => this.render(route, true)))) return true;
     this.signature = signature;
     setHtml(this.root, route.name === "world"
         ? this.worldHtml(route, context.system, context.dynamic)
-        : this.systemHtml(route, context.system, context.dynamic));
+        : this.systemHtml(context.system, context.dynamic));
+    this.renderWorkbench(route, context.system, context.dynamic);
     return true;
   }
 
@@ -114,10 +161,12 @@ export class DeckEmpireRoutes {
     const action = button.dataset.deckAct;
     const { system, dynamic } = this.systemContext(route);
     if (!system) return false;
+    if (action === "build-workbench-close") return this.closeBuildWorkbench(route);
     if (action === "system-tab") {
       const tab = button.dataset.tab;
       if (!isSystemTab(tab)) return true;
       this.systemTab = tab;
+      if (tab === "build") this.workbenchOpen = true;
       this.signature = "";
       if (route.name === "build" && tab !== "build") {
         this.hooks.go({ name: "system", params: { id: system.id, systemLabel: system.name } });
@@ -145,15 +194,7 @@ export class DeckEmpireRoutes {
     }
     if (action === "open-world") {
       const body = dynamic?.bodies.find((candidate) => String(candidate.id) === button.dataset.body);
-      if (body) this.hooks.go({
-        name: "world",
-        params: {
-          systemId: system.id,
-          systemLabel: system.name,
-          bodyId: String(body.id),
-          worldLabel: body.name,
-        },
-      });
+      if (body) this.openWorldWorkbench(system.id, body.id, route);
       return true;
     }
     if (action === "ship-production") {
@@ -188,6 +229,61 @@ export class DeckEmpireRoutes {
 
   invalidate(): void {
     this.signature = "";
+    this.worldSignature = "";
+  }
+
+  openWorldWorkbench(systemId: string, bodyId: number, origin: DeckRoute | null): boolean {
+    const system = this.ctx.state.galaxy?.systems.find((entry) => entry.id === systemId);
+    const dynamic = this.ctx.state.systems.find((entry) => entry.id === systemId);
+    const body = dynamic?.bodies.find((entry) => entry.id === bodyId);
+    if (!system || !dynamic || !body) return false;
+    this.resetWorkbench();
+    this.worldWorkbench = { systemId, bodyId, origin: routeIdentity(origin) };
+    this.worldSignature = "";
+    this.ctx.state.selectedSystemId = systemId;
+    this.ctx.renderer.pulseSystemBody(String(bodyId));
+    this.renderWorldWorkbench(origin, true);
+    requestAnimationFrame(() => this.worldWorkbenchPanel.focus());
+    return true;
+  }
+
+  handleWorldWorkbenchAction(button: HTMLButtonElement, origin: DeckRoute | null): boolean {
+    if (!this.worldWorkbench) return false;
+    if (button.dataset.deckAct === "world-workbench-close") return this.closeWorldWorkbench();
+    const route = this.worldRoute(this.worldWorkbench);
+    const handled = this.handleWorldAction(button, route, this.worldWorkbenchRoot);
+    if (handled) {
+      this.worldSignature = "";
+      this.renderWorldWorkbench(origin, true);
+    }
+    return handled;
+  }
+
+  closeWorldWorkbench(): boolean {
+    if (!this.worldWorkbench) return false;
+    this.resetWorldWorkbench();
+    return true;
+  }
+
+  closeBuildWorkbench(route: DeckRoute | null): boolean {
+    if (!route) {
+      const wasOpen = this.workbenchOpen;
+      this.resetWorkbench();
+      return wasOpen;
+    }
+    if (!this.workbenchOpen) return false;
+    this.workbenchOpen = false;
+    this.signature = "";
+    if (route.name === "system" || route.name === "build") this.render(route, true);
+    else this.resetWorkbench();
+    return true;
+  }
+
+  teardown(): void {
+    this.buildContext = "";
+    this.workbenchOpen = false;
+    this.resetWorkbench();
+    this.resetWorldWorkbench();
   }
 
   onCore(events: readonly CoreEvent[], route: DeckRoute | null): void {
@@ -215,13 +311,14 @@ export class DeckEmpireRoutes {
     };
   }
 
-  private systemHtml(route: DeckRoute, system?: SystemInfo, dynamic?: SystemStateView): string {
+  private systemHtml(system?: SystemInfo, dynamic?: SystemStateView): string {
     if (!system) return emptyState("System unavailable", "Select a star on the galaxy map to inspect its served report.");
     const mine = dynamic?.owner === this.ctx.state.playerId;
     const held = dynamic?.owner !== null && dynamic?.owner !== undefined;
     const surveyed = dynamic?.deposits !== null && dynamic?.deposits !== undefined;
     const owner = mine ? "Owned system" : held ? "Rival-held system" : "Unclaimed system";
     const survey = surveyed ? "survey report received" : `${label(system.band)} spectral band · geology unsurveyed`;
+    const star = starTypeFor(system.id);
     const tabs = [
       ["overview", "Overview"], ["worlds", "Worlds"], ["production", "Production"], ["fleets", "Fleets"], ["build", "Build"],
     ].map(([tab, text]) => `<button type="button" data-deck-act="system-tab" data-tab="${tab}" aria-selected="${tab === this.systemTab}">${text}</button>`).join("");
@@ -236,8 +333,8 @@ export class DeckEmpireRoutes {
           ? this.systemProduction(system, dynamic, mine)
           : this.systemTab === "fleets"
             ? this.systemFleets(system)
-            : this.buildHtml(route, system, dynamic);
-    return `<section class="deck-page deck-system"><header class="deck-page__lead"><span>${esc(systemFlavor(system, dynamic?.deposits ?? null))}</span><h2>${esc(system.name)}</h2><p>${esc(owner)} · ${esc(survey)}</p></header>${alert}<nav class="deck-tabs" aria-label="System sections">${tabs}</nav>${active}</section>`;
+            : this.buildDashboard(dynamic);
+    return `<section class="deck-page deck-system"><header class="deck-page__lead deck-system__lead"><img class="deck-system__star" src="${esc(starIconUrl(star))}" alt="${esc(star.title)}"><h2>${esc(system.name)}</h2><span>${esc(systemFlavor(system, dynamic?.deposits ?? null))}</span></header>${alert}<nav class="deck-tabs" aria-label="System sections">${tabs}</nav>${active}</section>`;
   }
 
   private systemOverview(system: SystemInfo, dynamic: SystemStateView | undefined, mine: boolean, owner: string, survey: string): string {
@@ -306,11 +403,17 @@ export class DeckEmpireRoutes {
       .map(([commodity, units]) => `<span>${commodityGlyph(commodity)}<small>${esc(label(commodity))}</small><b>${fmt(units)}</b></span>`).join("");
     const shipmentUnits = manifest.reduce((sum, slot) => sum + slot.units, 0);
     const shipment = `<div class="deck-section__action"><button type="button" class="is-primary" data-deck-act="ship-production" ${dynamic.blockade || !manifest.length ? "disabled" : ""}>Ship ${shipmentUnits ? fmt(shipmentUnits) : "no"} goods to Market</button><span>Fuel remains in the system reserve. Pickup, transit and sale are physical and delayed.</span></div>`;
-    const assignments = dynamic.assignments.length
-      ? dynamic.assignments.map((line) => this.assignmentHtml(dynamic, line)).join("")
-      : `<div class="deck-empty-inline">No staffed production lines.</div>`;
+    const assignments = dynamic.assignments.map((line) => this.assignmentHtml(dynamic, line));
+    const assigned = new Set(dynamic.assignments.map((line) => `${line.body_id}:${line.structure}`));
+    for (const body of dynamic.bodies) {
+      for (const [structure, tier] of Object.entries(body.structures)) {
+        if (tier <= 0 || !WORKFORCE_STRUCTURES.has(structure) || assigned.has(`${body.id}:${structure}`)) continue;
+        assignments.push(this.unassignedAssignmentHtml(body, structure, tier));
+      }
+    }
+    const productionRows = assignments.join("") || `<div class="deck-empty-inline">No production structures in this system.</div>`;
     return `<section class="deck-section"><header><div><h3>Stockpile</h3><p>Local stock plus cargo on docked owned freighters.</p></div><b>${fmt(dynamic.storage_used)}/${fmt(dynamic.storage_cap)}</b></header><div class="deck-ledger">${stock || `<span><small>Stockpile</small><b>empty</b></span>`}</div>${shipment}</section>` +
-      `<section class="deck-section"><header><div><h3>Production lines</h3><p>Output = throughput × staffing × expertise × supply × site.</p></div><b>${dynamic.assignments.length}</b></header><div class="deck-assignment-list">${assignments}</div></section>` +
+      `<section class="deck-section"><header><div><h3>Production lines</h3><p>Output = throughput × staffing × expertise × supply × site.</p></div><b>${assignments.length}</b></header><div class="deck-assignment-list">${productionRows}</div></section>` +
       this.queueHtml(dynamic);
   }
 
@@ -351,6 +454,10 @@ export class DeckEmpireRoutes {
     return `<article class="deck-assignment${line.suspended ? " is-warn" : ""}"><div><b>${esc(line.title)} · Tier ${line.tier}</b><span>${esc(body?.name ?? "System")}${line.suspended ? ` · ${esc(label(line.suspended))}` : ""}</span><small>${esc(output)}</small></div><div class="deck-stepper" aria-label="Workforce assigned"><button type="button" data-deck-act="set-workers" data-body="${line.body_id}" data-structure="${esc(line.structure)}" data-workers="${Math.max(0, line.workers - 1)}" ${line.workers <= 0 ? "disabled" : ""}>−</button><b>${line.workers}</b><button type="button" data-deck-act="set-workers" data-body="${line.body_id}" data-structure="${esc(line.structure)}" data-workers="${line.workers + 1}">+</button></div></article>`;
   }
 
+  private unassignedAssignmentHtml(body: BodyView, structure: string, tier: number): string {
+    return `<article class="deck-assignment is-warn"><div><b>${esc(label(structure))} · Tier ${tier}</b><span>${esc(body.name)} · needs workforce</span><small>Idle</small></div><div class="deck-stepper" aria-label="Workforce assigned"><button type="button" disabled>−</button><b>0</b><button type="button" data-deck-act="set-workers" data-body="${body.id}" data-structure="${esc(structure)}" data-workers="1">+</button></div></article>`;
+  }
+
   private queueHtml(dynamic: SystemStateView): string {
     const now = liveSimTime();
     const rows = [...dynamic.builds].sort((a, b) => a.complete_time - b.complete_time).map((job) => {
@@ -368,7 +475,8 @@ export class DeckEmpireRoutes {
     const feedback = this.buildFeedback?.systemId === dynamic.id && this.buildFeedback.text
       ? `<div class="deck-build-feedback is-${this.buildFeedback.tone}">${esc(this.buildFeedback.text)}</div>`
       : "";
-    return `<section class="deck-section"><header><div><h3>Construction queue</h3><p>Completion times follow the live simulation clock.</p></div><b>${dynamic.builds.length}</b></header>${feedback}${rows || `<div class="deck-empty-inline">Nothing under construction.</div>`}</section>`;
+    const queueCount = rows ? `<b>${dynamic.builds.length}</b>` : "";
+    return `<section class="deck-section"><header><div><h3>Construction queue</h3></div>${queueCount}</header>${feedback}${rows || `<div class="deck-empty-inline">Empty</div>`}</section>`;
   }
 
   private handleBuildAction(button: HTMLButtonElement, route: DeckRoute): boolean {
@@ -377,7 +485,7 @@ export class DeckEmpireRoutes {
     const action = button.dataset.deckAct;
     if (action === "builder-mode") {
       const mode = button.dataset.mode;
-      if (mode === "structures" || mode === "ships") {
+      if (mode === "structures" || mode === "ships" || mode === "modules") {
         this.builderMode = mode;
         this.hooks.go({ ...route, query: { ...(route.query ?? {}), mode } });
       }
@@ -442,12 +550,13 @@ export class DeckEmpireRoutes {
     return true;
   }
 
-  private handleWorldAction(button: HTMLButtonElement, route: DeckRoute): boolean {
+  private handleWorldAction(button: HTMLButtonElement, route: DeckRoute, actionRoot = this.root): boolean {
     const { system, dynamic } = this.systemContext(route);
     const body = dynamic?.bodies.find((entry) => String(entry.id) === route.params?.bodyId);
     if (!system || !dynamic || !body) return false;
     const action = button.dataset.deckAct;
     if (action === "world-build") {
+      this.resetWorldWorkbench();
       this.hooks.go({
         name: "build",
         params: { systemId: system.id, systemLabel: system.name },
@@ -475,7 +584,7 @@ export class DeckEmpireRoutes {
       return true;
     }
     if (action === "relocate-migrants") {
-      const select = this.root.querySelector<HTMLSelectElement>("#deck-relocation-target");
+      const select = actionRoot.querySelector<HTMLSelectElement>("[data-deck-relocation-target]");
       const [toSystem, toBodyText] = select?.value.split("|") ?? [];
       const toBody = Number(toBodyText);
       if (dynamic.owner === this.ctx.state.playerId && toSystem && Number.isFinite(toBody)) {
@@ -490,32 +599,128 @@ export class DeckEmpireRoutes {
   private buildHtml(route: DeckRoute, system?: SystemInfo, dynamic?: SystemStateView): string {
     if (!system || !dynamic) return emptyState("Build context unavailable", "Open an owned system before entering construction.");
     if (dynamic.owner !== this.ctx.state.playerId) return emptyState("Construction is private", "You can inspect this system, but only its owner receives production and build controls.");
-    if (route.query?.mode === "ships" || route.query?.mode === "structures") this.builderMode = route.query.mode;
+    if (route.query?.mode === "ships" || route.query?.mode === "structures" || route.query?.mode === "modules") this.builderMode = route.query.mode;
     const preset = `${dynamic.id}:${route.query?.body ?? ""}:${route.query?.mode ?? ""}:${route.query?.select ?? ""}`;
     if (route.query?.select && preset !== this.lastBuildPreset) {
       if (SHIP_KEYS.has(route.query.select)) this.selectedHull = route.query.select as ShipKind;
       else this.selectedBuild = route.query.select;
       this.lastBuildPreset = preset;
     }
+    const modeTabs = (["structures", "ships", "modules"] as BuilderMode[]).map((mode) => `<button type="button" data-deck-act="builder-mode" data-mode="${mode}" aria-selected="${this.builderMode === mode}">${mode === "structures" ? "Structures" : mode === "ships" ? "Ships" : "Modules"}</button>`).join("");
+    if (this.builderMode === "modules") {
+      return `<section class="deck-page deck-build"><nav class="deck-tabs" aria-label="Build category">${modeTabs}</nav>${this.moduleForge(dynamic)}</section>`;
+    }
     const body = this.builderBody(route, dynamic);
-    if (!body) return emptyState("No build site", "No served world is available in this system.");
-    const modeTabs = (["structures", "ships"] as BuilderMode[]).map((mode) => `<button type="button" data-deck-act="builder-mode" data-mode="${mode}" aria-selected="${this.builderMode === mode}">${mode === "structures" ? "Structures" : "Ships & Modules"}</button>`).join("");
-    const worlds = dynamic.bodies.map((entry) => `<button type="button" data-deck-act="builder-body" data-body="${entry.id}" aria-selected="${entry.id === body.id}">${esc(entry.name)}</button>`).join("");
+    const sites = this.builderMode === "ships" ? dynamic.bodies.filter(isShipbuildingBody) : dynamic.bodies;
+    if (!body) {
+      const unavailable = this.builderMode === "ships"
+        ? emptyState("No shipyard", "Build a Shipyard on a planet before ordering hulls here.")
+        : emptyState("No build site", "No served planet is available in this system.");
+      return `<section class="deck-page deck-build"><nav class="deck-tabs" aria-label="Build category">${modeTabs}</nav>${unavailable}</section>`;
+    }
+    const worlds = sites.map((entry) => `<button type="button" data-deck-act="builder-body" data-body="${entry.id}" aria-selected="${entry.id === body.id}">${esc(entry.name)}</button>`).join("");
     const content = this.builderMode === "structures"
       ? this.structureBuilder(dynamic, body)
       : this.shipBuilder(dynamic, body);
-    return `<section class="deck-page deck-build">${this.queueHtml(dynamic)}<nav class="deck-tabs" aria-label="Build category">${modeTabs}</nav><div class="deck-builder-worlds"><span>Build site</span>${worlds}</div>${content}</section>`;
+    return `<section class="deck-page deck-build"><nav class="deck-tabs" aria-label="Build category">${modeTabs}</nav><div class="deck-builder-worlds"><span>Build site</span>${worlds}</div>${content}</section>`;
+  }
+
+  private buildDashboard(dynamic?: SystemStateView): string {
+    if (!dynamic) return emptyState("Construction unavailable", "The served system ledger has not arrived.");
+    return this.queueHtml(dynamic);
+  }
+
+  private renderWorkbench(route: DeckRoute, system?: SystemInfo, dynamic?: SystemStateView): void {
+    const visible = this.workbenchOpen && this.systemTab === "build" && route.name !== "world" && !!system && !!dynamic;
+    this.workbenchPanel.hidden = !visible;
+    this.workbenchPanel.setAttribute("aria-hidden", String(!visible));
+    if (!visible) {
+      setHtml(this.workbenchRoot, "");
+      return;
+    }
+    const title = this.workbenchPanel.querySelector<HTMLElement>("#deck-build-workbench-title");
+    if (title) title.textContent = `${system.name} Construction`;
+    setHtml(this.workbenchRoot, this.buildHtml(route, system, dynamic));
+  }
+
+  private renderWorldWorkbench(origin: DeckRoute | null, force: boolean): void {
+    const context = this.worldWorkbench;
+    if (!context || context.origin !== routeIdentity(origin)) {
+      if (context) this.resetWorldWorkbench();
+      return;
+    }
+    const system = this.ctx.state.galaxy?.systems.find((entry) => entry.id === context.systemId);
+    const dynamic = this.ctx.state.systems.find((entry) => entry.id === context.systemId);
+    const body = dynamic?.bodies.find((entry) => entry.id === context.bodyId);
+    const signature = sheetFingerprint([context, system, dynamic, this.ctx.state.systems]);
+    if (!force && signature === this.worldSignature) return;
+    if (renderDeferred(this.worldWorkbenchRoot.id, () => this.renderWorldWorkbench(origin, true))) return;
+    this.worldSignature = signature;
+    this.worldWorkbenchPanel.hidden = false;
+    this.worldWorkbenchPanel.setAttribute("aria-hidden", "false");
+    const title = this.worldWorkbenchPanel.querySelector<HTMLElement>("#deck-world-workbench-title");
+    if (title) title.textContent = body && system ? `${body.name} · ${system.name}` : "World details";
+    const artwork = this.worldWorkbenchPanel.querySelector<HTMLImageElement>("#deck-world-workbench-art");
+    if (artwork) {
+      artwork.hidden = !body || !system;
+      artwork.alt = body ? `${body.name} world` : "";
+      if (body && system) artwork.src = bodyArtUrl(system.id, body);
+      else artwork.removeAttribute("src");
+    }
+    if (!system || !dynamic || !body) {
+      setHtml(this.worldWorkbenchRoot, emptyState("World report unavailable", "The served body record is no longer available."));
+      return;
+    }
+    setHtml(this.worldWorkbenchRoot, this.worldHtml(this.worldRoute(context), system, dynamic, false));
+  }
+
+  private resetWorkbench(): void {
+    this.buildContext = "";
+    this.workbenchOpen = false;
+    this.workbenchPanel.hidden = true;
+    this.workbenchPanel.setAttribute("aria-hidden", "true");
+    setHtml(this.workbenchRoot, "");
+  }
+
+  private resetWorldWorkbench(): void {
+    this.worldWorkbench = null;
+    this.worldSignature = "";
+    this.worldWorkbenchPanel.hidden = true;
+    this.worldWorkbenchPanel.setAttribute("aria-hidden", "true");
+    setHtml(this.worldWorkbenchRoot, "");
+  }
+
+  private worldRoute(context: WorldWorkbenchContext): DeckRoute {
+    const system = this.ctx.state.galaxy?.systems.find((entry) => entry.id === context.systemId);
+    const body = this.ctx.state.systems.find((entry) => entry.id === context.systemId)?.bodies.find((entry) => entry.id === context.bodyId);
+    return {
+      name: "world",
+      params: {
+        systemId: context.systemId,
+        systemLabel: system?.name ?? "System",
+        bodyId: String(context.bodyId),
+        worldLabel: body?.name ?? "World",
+      },
+    };
+  }
+
+  private get workbenchPanel(): HTMLElement {
+    return this.workbenchRoot.closest("#deck-build-workbench") as HTMLElement;
+  }
+
+  private get worldWorkbenchPanel(): HTMLElement {
+    return this.worldWorkbenchRoot.closest("#deck-world-workbench") as HTMLElement;
   }
 
   private builderBody(route: DeckRoute, dynamic: SystemStateView): BodyView | undefined {
     const requested = route.query?.body;
     const explicit = dynamic.bodies.find((entry) => String(entry.id) === requested);
-    if (explicit) return explicit;
+    if (explicit && (this.builderMode !== "ships" || isShipbuildingBody(explicit))) return explicit;
     if (this.builderMode === "ships") return bestShipyardBody(dynamic);
     return bestStructureBody(dynamic, this.selectedBuild) ?? dynamic.bodies[0];
   }
 
-  private worldHtml(route: DeckRoute, system?: SystemInfo, dynamic?: SystemStateView): string {
+  private worldHtml(route: DeckRoute, system?: SystemInfo, dynamic?: SystemStateView, includeLead = true): string {
     const body = dynamic?.bodies.find((entry) => String(entry.id) === route.params?.bodyId);
     if (!system || !dynamic || !body) return emptyState("World report unavailable", "The requested served body record is not in this system report.");
     const mine = dynamic.owner === this.ctx.state.playerId;
@@ -532,25 +737,26 @@ export class DeckEmpireRoutes {
     const roleHtml = roles.length ? `<div class="deck-opportunities">${roles.map((entry) => `<article class="deck-opportunity is-${entry.tier}"><small>${esc(label(entry.tier))}</small><b>${esc(entry.title)} · ×${entry.score.toFixed(2)}</b><span>${esc(entry.reason)}</span></article>`).join("")}</div>` : "";
     const publicSections = `<section class="deck-section"><header><div><h3>World summary</h3><p>Public astronomy; mineral grade and deposits require arrived survey light.</p></div></header>${profile}${feature}${roleHtml}</section><section class="deck-section"><header><div><h3>Deposits</h3><p>Natural site richness before staffing, research and structures.</p></div></header>${deposits}</section>`;
     if (!mine) {
-      return `<section class="deck-page deck-world-page"><header class="deck-page__lead"><span>${body.habitable ? "Habitable world" : "Observed world"}</span><h2>${esc(body.name)}</h2><p>${esc(system.name)} · private economy hidden</p></header>${publicSections}</section>`;
+      const lead = includeLead ? `<header class="deck-page__lead"><span>${body.habitable ? "Habitable world" : "Observed world"}</span><h2>${esc(body.name)}</h2><p>${esc(system.name)} · private economy hidden</p></header>` : "";
+      return `<section class="deck-page deck-world-page">${lead}${publicSections}</section>`;
     }
     const economy = this.worldEconomy(dynamic, body);
     const population = this.worldPopulation(system.id, body);
     const structures = Object.entries(body.structures).filter(([, tier]) => tier > 0).map(([key, tier]) => `<span>${icon(structureIcon(key), "sm")}<small>${esc(label(key))}</small><b>Tier ${tier}</b></span>`).join("");
     const pools = bodyPoolUsage(body, dynamic);
     const poolLine = (["resource", "industrial", "infrastructure"] as Pool[]).map((pool) => `<span class="deck-stat${pools[pool].used >= pools[pool].total ? " is-warn" : ""}"><small>${POOL_LABEL[pool]} slots</small><b>${pools[pool].used}/${pools[pool].total}</b></span>`).join("");
-    const buildActions = `<div class="deck-world-actions"><button type="button" class="is-primary" data-deck-act="world-build" data-mode="structures">Build structure</button>${(body.structures.shipyard ?? 0) > 0 ? `<button type="button" data-deck-act="world-build" data-mode="ships">Build ship</button>` : ""}</div>`;
-    return `<section class="deck-page deck-world-page"><header class="deck-page__lead"><span>Owned world · served management</span><h2>${esc(body.name)}</h2><p>${esc(system.name)} · ${fmtPopulation(body.population)}</p></header>${publicSections}<section class="deck-section"><header><div><h3>Economy</h3><p>Structures, outputs and posted workforce on this world.</p></div></header><div class="deck-ledger">${structures || `<span><small>Development</small><b>none</b></span>`}</div>${economy}</section><section class="deck-section"><header><div><h3>Population</h3><p>Migration is physical; policy directs future Authority allocations.</p></div></header>${population}</section><section class="deck-section"><header><div><h3>Development</h3><p>New structures use a world slot; later tiers deepen in place.</p></div></header><div class="deck-stat-grid">${poolLine}</div>${buildActions}</section></section>`;
+    const buildActions = `<div class="deck-world-actions"><button type="button" class="is-primary" data-deck-act="world-build" data-mode="structures">Build structure</button>${isShipbuildingBody(body) ? `<button type="button" data-deck-act="world-build" data-mode="ships">Build ship</button>` : ""}</div>`;
+    const lead = includeLead ? `<header class="deck-page__lead"><span>Owned world · served management</span><h2>${esc(body.name)}</h2><p>${esc(system.name)} · ${fmtPopulation(body.population)}</p></header>` : "";
+    return `<section class="deck-page deck-world-page">${lead}${publicSections}<section class="deck-section"><header><div><h3>Economy</h3><p>Structures, outputs and posted workforce on this world.</p></div></header><div class="deck-ledger">${structures || `<span><small>Development</small><b>none</b></span>`}</div>${economy}</section><section class="deck-section"><header><div><h3>Population</h3><p>Migration is physical; policy directs future Authority allocations.</p></div></header>${population}</section><section class="deck-section"><header><div><h3>Development</h3><p>New structures use a world slot; later tiers deepen in place.</p></div></header><div class="deck-stat-grid">${poolLine}</div>${buildActions}</section></section>`;
   }
 
   private worldEconomy(dynamic: SystemStateView, body: BodyView): string {
     const assignments = dynamic.assignments.filter((entry) => entry.body_id === body.id);
     const assigned = new Set(assignments.map((entry) => entry.structure));
-    const producers = new Set(["mining_complex", "volatile_harvester", "bioharvester", "smelter", "electronics_fabricator", "chemical_works", "fuel_refinery", "machine_works", "armaments_complex", "agroplex", "academy", "shipyard", "naval_drydock", "capital_slipway", "ordnance_foundry"]);
     const rows = assignments.map((entry) => this.assignmentHtml(dynamic, entry));
     for (const [structure, tier] of Object.entries(body.structures)) {
-      if (tier <= 0 || assigned.has(structure) || !producers.has(structure)) continue;
-      rows.push(`<article class="deck-assignment is-warn"><div><b>${esc(label(structure))} · Tier ${tier}</b><span>${esc(body.name)} · needs workforce</span><small>Idle</small></div><div class="deck-stepper"><button type="button" disabled>−</button><b>0</b><button type="button" data-deck-act="set-workers" data-structure="${esc(structure)}" data-workers="1">+</button></div></article>`);
+      if (tier <= 0 || assigned.has(structure) || !WORKFORCE_STRUCTURES.has(structure)) continue;
+      rows.push(this.unassignedAssignmentHtml(body, structure, tier));
     }
     return `<div class="deck-assignment-list">${rows.join("") || `<div class="deck-empty-inline">No production structures on this world.</div>`}</div>`;
   }
@@ -561,7 +767,7 @@ export class DeckEmpireRoutes {
     const options = this.ctx.state.systems
       .filter((entry) => entry.owner === this.ctx.state.playerId && !entry.blockade && entry.habitat_fed)
       .flatMap((entry) => entry.bodies.filter((candidate) => !(entry.id === systemId && candidate.id === body.id) && candidate.population > 0).map((candidate) => `<option value="${esc(entry.id)}|${candidate.id}">${esc(systemName(this.ctx, entry.id))} · ${esc(candidate.name)}</option>`)).join("");
-    return `<div class="deck-stat-grid">${stat("Population", fmtPopulation(body.population))}${stat("Inbound", `${fmt(body.inbound_migrants)} people`)}${stat("Food use", `×${body.provisions_mult.toFixed(2)}`)}${stat("Settlement appeal", `×${body.population_growth_mult.toFixed(2)}`)}</div><div class="deck-policy"><span>Immigration policy</span>${policyButtons}</div><div class="deck-inline-form"><select id="deck-relocation-target">${options}</select><button type="button" data-deck-act="relocate-migrants" ${options && body.population * 1_000_000 >= cohort * 2 ? "" : "disabled"}>Relocate ${cohort.toLocaleString()}</button></div>`;
+    return `<div class="deck-stat-grid">${stat("Population", fmtPopulation(body.population))}${stat("Inbound", `${fmt(body.inbound_migrants)} people`)}${stat("Food use", `×${body.provisions_mult.toFixed(2)}`)}${stat("Settlement appeal", `×${body.population_growth_mult.toFixed(2)}`)}</div><div class="deck-policy"><span>Immigration policy</span>${policyButtons}</div><div class="deck-inline-form"><select data-deck-relocation-target>${options}</select><button type="button" data-deck-act="relocate-migrants" ${options && body.population * 1_000_000 >= cohort * 2 ? "" : "disabled"}>Relocate ${cohort.toLocaleString()}</button></div>`;
   }
 
   private structureBuilder(dynamic: SystemStateView, body: BodyView): string {
@@ -577,7 +783,7 @@ export class DeckEmpireRoutes {
     const groups = (["resource", "industrial", "infrastructure"] as Pool[]).map((pool) => {
       const rows = options.filter((entry) => POOL_OF[entry.key] === pool).map((entry) => {
         const state = structOption(entry, dynamic, body, pools);
-        return `<button type="button" class="deck-builder-row${entry.key === this.selectedBuild ? " is-selected" : ""}${state.buildable ? "" : " is-disabled"}" data-deck-act="builder-select" data-key="${esc(entry.key)}"><span>${icon(structureIcon(entry.key), "sm", undefined, "deck-structure-icon")}<span><b>${esc(entry.label)}</b><small>${state.tierUp ? `Tier ${state.currentTier} → ${state.targetTier}` : "New Tier I"}</small></span></span><em>${state.buildable ? fmtBuildDur(entry.build_secs * body.construction_time_mult) : esc(shortReason(state.reason))}</em></button>`;
+        return `<button type="button" class="deck-builder-row${entry.key === this.selectedBuild ? " is-selected" : ""}${state.buildable ? "" : " is-disabled"}" data-deck-act="builder-select" data-key="${esc(entry.key)}"><span>${icon(structureIcon(entry.key), "sm", undefined, "deck-structure-icon")}<b>${esc(entry.label)}</b></span></button>`;
       }).join("");
       return rows ? `<h3 class="deck-builder-group">${POOL_LABEL[pool]}</h3>${rows}` : "";
     }).join("");
@@ -598,9 +804,11 @@ export class DeckEmpireRoutes {
     const costs = option.costs.map((cost) => {
       const commodity = cost.commodity as Commodity;
       const have = supply.get(commodity) ?? 0;
-      return `<div class="deck-cost${have < cost.units ? " is-short" : ""}"><span>${commodityGlyph(commodity)} ${esc(label(commodity))}</span><b>${cost.units} <small>have ${fmt(have)}</small></b></div>`;
+      return `<tr${have < cost.units ? ` class="is-short"` : ""}><th scope="row"><span>${commodityGlyph(commodity)} ${esc(label(commodity))}</span></th><td>${cost.units}</td><td>${fmt(have)}</td></tr>`;
     }).join("");
-    return `<article class="deck-build-detail"><header>${icon(structureIcon(option.key), "md", undefined, "deck-structure-icon")}<span><small>${POOL_LABEL[state.pool]} · ${state.foundsNew ? "new structure" : `upgrade to tier ${state.targetTier}`}</small><h3>${esc(option.label)}</h3></span></header><div class="deck-costs">${costs}</div><dl><div><dt>Build time</dt><dd>${fmtBuildDur(option.build_secs * body.construction_time_mult)}</dd></div><div><dt>Slot</dt><dd>${state.foundsNew ? `${POOL_LABEL[state.pool]} ${pools[state.pool].used} → ${pools[state.pool].used + 1}/${pools[state.pool].total}` : "Deepens in place"}</dd></div></dl>${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}</article>`;
+    const category = state.foundsNew ? POOL_LABEL[state.pool] : `${POOL_LABEL[state.pool]} · upgrade to tier ${state.targetTier}`;
+    const description = STRUCTURE_DESCRIPTION[option.key] ?? "Adds a new capability to this world.";
+    return `<article class="deck-build-detail"><header>${icon(structureIcon(option.key), "md", undefined, "deck-structure-icon")}<span><small>${esc(category)}</small><h3>${esc(option.label)}</h3></span></header><p>${esc(description)}</p><table class="deck-cost-table" aria-label="Construction requirements"><thead><tr><th aria-label="Resource"></th><th scope="col">Cost</th><th scope="col">Stock</th></tr></thead><tbody>${costs}</tbody></table><dl><div><dt>Build time</dt><dd>${fmtBuildDur(option.build_secs * body.construction_time_mult)}</dd></div><div><dt>Slot</dt><dd>${state.foundsNew ? `${POOL_LABEL[state.pool]} ${pools[state.pool].used} → ${pools[state.pool].used + 1}/${pools[state.pool].total}` : "Deepens in place"}</dd></div></dl>${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}</article>`;
   }
 
   private shipBuilder(dynamic: SystemStateView, body: BodyView): string {
@@ -608,13 +816,12 @@ export class DeckEmpireRoutes {
     if (!this.selectedHull || !options.some((entry) => entry.key === this.selectedHull)) this.selectedHull = options[0]?.key as ShipKind ?? "";
     const rows = options.map((entry) => {
       const state = shipOption(entry, dynamic);
-      const stats = SHIP_STATS[entry.key];
-      return `<button type="button" class="deck-builder-row${entry.key === this.selectedHull ? " is-selected" : ""}${state.buildable ? "" : " is-disabled"}" data-deck-act="builder-select-hull" data-hull="${entry.key}"><span>${icon(shipIcon(entry.key), "md", undefined, "deck-hull-icon")}<span><b>${esc(buildName(entry.key))}</b><small>${esc(stats?.role ?? "Fleet hull")}</small></span></span><em>${state.buildable ? `max ${state.maxAff}` : esc(shortReason(state.reason))}</em></button>`;
+      return `<button type="button" class="deck-builder-row${entry.key === this.selectedHull ? " is-selected" : ""}${state.buildable ? "" : " is-disabled"}" data-deck-act="builder-select-hull" data-hull="${entry.key}"><span>${icon(shipIcon(entry.key), "md", undefined, "deck-hull-icon")}<b>${esc(buildName(entry.key))}</b></span></button>`;
     }).join("");
     const selected = this.selectedHull ? options.find((entry) => entry.key === this.selectedHull) : undefined;
     const detail = selected ? this.shipDetail(dynamic, body, selected) : emptyState("Choose a hull", "Inspect its recipe, capability and fitting budget.");
     const commit = selected ? this.shipCommit(dynamic, selected) : "";
-    return `<div class="deck-builder">${commit}<div class="deck-builder__list"><h3 class="deck-builder-group">Hull catalogue</h3>${rows}</div><div class="deck-builder__detail">${detail}${this.moduleForge(dynamic)}</div></div>`;
+    return `<div class="deck-builder">${commit}<div class="deck-builder__list"><h3 class="deck-builder-group">Hull catalogue</h3>${rows}</div><div class="deck-builder__detail">${detail}</div></div>`;
   }
 
   private shipCommit(dynamic: SystemStateView, option: BuildOpt): string {
@@ -738,13 +945,19 @@ function bestStructureBody(system: SystemStateView, structure: string): BodyView
 }
 
 function bestShipyardBody(system: SystemStateView): BodyView | undefined {
-  return [...system.bodies].sort((a, b) => {
+  return system.bodies.filter(isShipbuildingBody).sort((a, b) => {
     const aLowGravity = a.special === "low_gravity" ? 1 : 0;
     const bLowGravity = b.special === "low_gravity" ? 1 : 0;
     return bLowGravity - aLowGravity
       || (b.industrial_slots ?? 0) - (a.industrial_slots ?? 0)
       || a.id - b.id;
   })[0];
+}
+
+function isShipbuildingBody(body: BodyView): boolean {
+  return (body.structures.shipyard ?? 0) > 0
+    || (body.structures.naval_drydock ?? 0) > 0
+    || (body.structures.capital_slipway ?? 0) > 0;
 }
 
 function systemName(ctx: CoreContext, id: string): string {
@@ -763,7 +976,8 @@ function commodityGlyph(commodity: Commodity): string {
     metallic_ore: "ore", alloys: "alloys", fuel: "fuel", provisions: "provisions",
     volatiles: "volatiles", biomass: "biomass",
   };
-  return icon(keys[commodity] ?? "cargo", "sm", label(commodity));
+  if (keys[commodity]) return icon(keys[commodity]!, "sm", label(commodity));
+  return `<img class="icon icon--resource" src="/art/ui_icons/resource/${commodity}.png" alt="${esc(label(commodity))}">`;
 }
 
 function shippableStock(dynamic: SystemStateView) {
@@ -787,12 +1001,6 @@ function shipIcon(key: string): IconKey {
   return icons[key] ?? "fleet";
 }
 
-function shortReason(reason: string): string {
-  if (!reason) return "Unavailable";
-  const cut = reason.indexOf(" — ");
-  return cut > 0 ? reason.slice(0, cut) : reason;
-}
-
 function fmt(value: number): string {
   return Number.isFinite(value) ? Math.round(value).toLocaleString() : "—";
 }
@@ -806,6 +1014,12 @@ function fmtPopulation(millions: number): string {
 
 function emptyState(title: string, copy: string): string {
   return `<div class="deck-empty"><b>${esc(title)}</b><span>${esc(copy)}</span></div>`;
+}
+
+function routeIdentity(route: DeckRoute | null): string {
+  if (!route) return "";
+  const sorted = (values?: Record<string, string>) => Object.entries(values ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify([route.name, sorted(route.params), sorted(route.query)]);
 }
 
 function esc(value: string): string {

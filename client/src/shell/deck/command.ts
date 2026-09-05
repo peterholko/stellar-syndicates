@@ -19,6 +19,7 @@ const FOUNDING_STEP: Record<FoundingStage, number> = {
 
 interface CommandHooks {
   go(route: DeckRoute): void;
+  openWorld(systemId: string, bodyId: number): void;
   focusFleet(id: string): void;
   notice(html: string): void;
   inbox(): DeckInboxItem[];
@@ -252,8 +253,7 @@ export class DeckCommandRoutes {
 
   private openWorld(system: SystemInfo, body: BodyView): void {
     this.focusSystem(system.id);
-    this.ctx.renderer.pulseSystemBody(String(body.id));
-    this.hooks.go({ name: "world", params: { systemId: system.id, systemLabel: system.name, bodyId: String(body.id), worldLabel: body.name } });
+    this.hooks.openWorld(system.id, body.id);
   }
 
   private openSystem(id: string): void {

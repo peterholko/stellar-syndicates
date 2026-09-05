@@ -150,7 +150,7 @@ export const ICONS: Record<IconKey, IconDef> = {
   rolePopulation: N("role-population-center", "Population center"),
   roleOutpost: N("role-strategic-outpost", "Strategic outpost"),
   // fleets / ship kinds
-  fleet: A("concept-fleet", "Fleet"),
+  fleet: R128("concept-fleet-v2", "Fleet"),
   scout: H("scout", "Scout"),
   raider: H("raider", "Interceptor"),
   corvette: H("corvette", "Corvette"),

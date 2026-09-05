@@ -88,7 +88,7 @@ class DeckShell implements Shell {
       () => this.workspace?.publishCameraRect(true),
       signal,
     );
-    this.empire = new DeckEmpireRoutes(byId("deck-workspace-body"), ctx, {
+    this.empire = new DeckEmpireRoutes(byId("deck-workspace-body"), byId("deck-build-workbench-body"), byId("deck-world-workbench-body"), ctx, {
       go: (route) => this.router?.go(route),
       openGroundViewer: (id) => this.theaters?.openGround(id),
       notice: (html) => this.setStatus(html),
@@ -102,6 +102,7 @@ class DeckShell implements Shell {
     });
     this.command = new DeckCommandRoutes(byId("deck-workspace-body"), byId("deck-founding"), ctx, {
       go: (route) => this.router?.go(route),
+      openWorld: (systemId, bodyId) => this.openWorldPanel(systemId, bodyId),
       focusFleet: (id) => this.map?.focusFleet(id),
       notice: (html) => this.setStatus(html),
       inbox: () => this.log?.items() ?? [],
@@ -120,6 +121,7 @@ class DeckShell implements Shell {
     });
     this.roster = new DeckRosterRoutes(byId("deck-workspace-body"), ctx, {
       go: (route) => this.router?.go(route),
+      openWorld: (systemId, bodyId) => this.openWorldPanel(systemId, bodyId),
       notice: (html) => this.setStatus(html),
     });
     this.strategic = new DeckStrategicRoutes(byId("deck-workspace-body"), ctx, {
@@ -223,6 +225,25 @@ class DeckShell implements Shell {
       event.preventDefault();
       submit.click();
     }, { signal });
+    byId("deck-build-workbench").addEventListener("click", (event) => {
+      const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
+      if (button) this.empire?.handleAction(button, this.router?.current ?? null);
+    }, { signal });
+    byId("deck-build-workbench").addEventListener("keydown", (event) => {
+      const input = event.target;
+      if (event.key !== "Enter" || !(input instanceof HTMLInputElement)) return;
+      const action = input.dataset.deckEnter;
+      if (!action) return;
+      const scope = input.closest<HTMLElement>(".deck-inline-confirm, .deck-inline-form") ?? byId("deck-build-workbench");
+      const submit = scope.querySelector<HTMLButtonElement>(`[data-deck-act="${action}"]`);
+      if (!submit || submit.disabled) return;
+      event.preventDefault();
+      submit.click();
+    }, { signal });
+    byId("deck-world-workbench").addEventListener("click", (event) => {
+      const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
+      if (button) this.empire?.handleWorldWorkbenchAction(button, this.router?.current ?? null);
+    }, { signal });
     byId("deck-founding").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
       if (button) this.command?.handleFoundingAction(button);
@@ -320,7 +341,7 @@ class DeckShell implements Shell {
     this.map?.teardown();
     this.toasts?.teardown();
     this.strip?.clear();
-    this.empire?.invalidate();
+    this.empire?.teardown();
     this.command?.teardown();
     this.market?.invalidate();
     this.policy?.invalidate();
@@ -465,6 +486,10 @@ class DeckShell implements Shell {
       this.ctx.intent.clearGuardAiming();
     } else if (!byId("deck-nav-overflow").hidden) {
       this.setNavOverflow(false);
+    } else if (this.empire?.closeWorldWorkbench()) {
+      // World details float above, without replacing, their originating workspace.
+    } else if (this.empire?.closeBuildWorkbench(this.router?.current ?? null)) {
+      // The central construction workbench is the topmost non-modal layer.
     } else if (this.ctx.renderer.isSystemScrubbing()) {
       this.ctx.renderer.cancelSystemScrub();
     } else if (this.theaters?.closeTop()) {
@@ -543,11 +568,7 @@ class DeckShell implements Shell {
         break;
       case "systemBody": {
         const systemId = this.ctx.renderer.viewMode.type === "system" ? this.ctx.renderer.viewMode.systemId : state.selectedSystemId ?? "";
-        this.ctx.renderer.pulseSystemBody(String(target.detail.id));
-        this.router.go({
-          name: "world",
-          params: { systemId, bodyId: String(target.detail.id), worldLabel: target.detail.name ?? "World" },
-        });
+        this.openWorldPanel(systemId, Number(target.detail.id));
         break;
       }
       case "emplacement":
@@ -561,9 +582,17 @@ class DeckShell implements Shell {
         this.router.go({ name: "command" });
         break;
       case "clearSystemBody":
-        if (this.router.current?.name === "world") this.router.back();
+        if (!this.empire?.closeWorldWorkbench() && this.router.current?.name === "world") this.router.back();
         break;
     }
+  }
+
+  private openWorldPanel(systemId: string, bodyId: number): void {
+    if (!this.ctx || !this.router || !systemId || !Number.isFinite(bodyId)) return;
+    const system = this.ctx.state.galaxy?.systems.find((entry) => entry.id === systemId);
+    if (!system) return;
+    if (!this.router.current) this.router.go({ name: "system", params: { id: system.id, systemLabel: system.name } });
+    this.empire?.openWorldWorkbench(systemId, bodyId, this.router.current);
   }
 
   private routeChanged(route: DeckRoute | null, stack: readonly DeckRoute[]): void {
@@ -574,6 +603,8 @@ class DeckShell implements Shell {
     }
     if (!route || !this.workspace || !this.router) {
       this.activeCrumbs = [];
+      this.empire?.closeBuildWorkbench(null);
+      this.empire?.closeWorldWorkbench();
       this.workspace?.close();
       this.renderActiveNav(null);
       return;

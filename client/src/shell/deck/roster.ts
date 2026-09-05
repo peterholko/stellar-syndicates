@@ -23,6 +23,7 @@ import type { DeckRoute } from "./router";
 
 interface RosterHooks {
   go(route: DeckRoute): void;
+  openWorld(systemId: string, bodyId: number): void;
   notice(html: string): void;
 }
 
@@ -143,9 +144,10 @@ export class DeckRosterRoutes {
       const home = foundingHomeSystemId();
       const system = this.ctx.state.galaxy?.systems.find((entry) => entry.id === home);
       const body = home ? this.ctx.state.systems.find((entry) => entry.id === home)?.bodies.find((entry) => (entry.structures.academy ?? 0) > 0) : undefined;
-      if (home && system) this.hooks.go(body
-        ? { name: "world", params: { systemId: home, systemLabel: system.name, bodyId: String(body.id), worldLabel: body.name } }
-        : { name: "build", params: { systemId: home, systemLabel: system.name }, query: { mode: "structures", select: "academy" } });
+      if (home && system) {
+        if (body) this.hooks.openWorld(home, body.id);
+        else this.hooks.go({ name: "build", params: { systemId: home, systemLabel: system.name }, query: { mode: "structures", select: "academy" } });
+      }
     }
     this.signature = "";
     this.render(route, true);

@@ -40,6 +40,29 @@ export function mountDeckMarkup(root: HTMLElement): void {
         </header>
         <div id="deck-workspace-body" class="deck-workspace__body"></div>
       </aside>
+      <section id="deck-build-workbench" class="deck-build-workbench" aria-labelledby="deck-build-workbench-title" tabindex="-1" hidden>
+        <header class="deck-build-workbench__header">
+          <div>
+            <span>Construction workbench</span>
+            <h2 id="deck-build-workbench-title">Build</h2>
+          </div>
+          <button type="button" data-deck-act="build-workbench-close" aria-label="Close construction workbench">✕</button>
+        </header>
+        <div id="deck-build-workbench-body" class="deck-build-workbench__body"></div>
+      </section>
+      <section id="deck-world-workbench" class="deck-build-workbench deck-world-workbench" aria-labelledby="deck-world-workbench-title" tabindex="-1" hidden>
+        <header class="deck-build-workbench__header">
+          <div class="deck-world-workbench__identity">
+            <img id="deck-world-workbench-art" class="deck-world-workbench__art" alt="" hidden>
+            <div>
+              <span>World details</span>
+              <h2 id="deck-world-workbench-title">World</h2>
+            </div>
+          </div>
+          <button type="button" data-deck-act="world-workbench-close" aria-label="Close world details">✕</button>
+        </header>
+        <div id="deck-world-workbench-body" class="deck-build-workbench__body"></div>
+      </section>
       <section id="deck-toast-lane" class="deck-toast-lane" aria-live="polite"></section>
       <div id="deck-bottom-band" class="deck-bottom-band">
         <section id="deck-command-strip" class="deck-command-strip" aria-live="polite"></section>

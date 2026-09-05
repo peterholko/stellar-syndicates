@@ -279,6 +279,13 @@ function visualKindFor(b: BodyView, rng: () => number): PlanetKind {
   }
 }
 
+/** The same deterministic body artwork used by the System View. */
+export function bodyArtUrl(systemId: string, body: BodyView): string {
+  if (body.parent !== null) return MOON_ART_URL;
+  const rng = mulberry32(hashId(`${systemId}:${body.id}`) ^ 0xc0511c);
+  return PLANET_ART_URL(visualKindFor(body, rng));
+}
+
 // ---- The scene ---------------------------------------------------------------
 //
 // Owns `root` (an independent scene container with its OWN schematic camera). The
