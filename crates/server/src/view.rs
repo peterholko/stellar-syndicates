@@ -1994,6 +1994,12 @@ pub struct RecordSpec {
     pub names: [Option<String>; 2],
 }
 
+/// Shared by ongoing markers and the concluded-but-not-yet-reported bridge.
+/// Only legacy records without participation history use the old fallback.
+pub fn battle_participants_at(record: Option<&sim::BattleRecord>, legacy: &[EntityId], now: f64, delay: f64) -> Vec<EntityId> {
+    record.and_then(|record| record.arrived_participants(now, delay)).unwrap_or(legacy).to_vec()
+}
+
 /// §perf Part A: enumerate the records a viewer can observe, with their arrived
 /// prefix lengths. The gates are IDENTICAL to [`battle_record_views_named`]:
 /// a record exists only once its start light arrived; participant > covering
@@ -2261,10 +2267,23 @@ pub fn record_rounds_range(
 ) -> Vec<RoundRecordView> {
     let to = to.min(r.rounds.len());
     let from = from.min(to);
-    r.rounds[from..to]
-        .iter()
-        .map(|rr| record_round(rr, participant))
-        .collect()
+    // Reconstruct only AFTER visibility chose this arrived slice, and only for
+    // participants. Archive seeds, checkpoints, inputs and future rounds never
+    // enter the wire. Bucket observers do not even pay for reconstruction.
+    let frames = if participant {
+        match r.frames_range(from, to) {
+            Ok(frames) => Some(frames),
+            Err(error) => {
+                tracing::warn!(battle = ?r.id, %error, "battle reconstruction unavailable; keeping recorded summary");
+                None // fail closed: never silently replay with different rules
+            }
+        }
+    } else { None };
+    r.rounds[from..to].iter().enumerate().map(|(index, rr)| {
+        let mut round = record_round(rr, participant);
+        if let Some(frames) = &frames { round.frame = frames[index].clone(); }
+        round
+    }).collect()
 }
 
 /// §ladder B4: the full builder — `flagship_of(corp)` resolves a side's
@@ -6372,6 +6391,122 @@ mod tests {
             Some(sim::RaidOutcome::TargetDestroyed),
             "the outcome unlocks with the end light"
         );
+    }
+
+    #[test]
+    fn archived_battle_packets_keep_seeds_and_future_reinforcements_behind_light() {
+        use sim::ship::Ship;
+        use sim::tactical::{SideMods, TacticalState};
+        let (a, d, observer) = (PlayerId(1), PlayerId(2), PlayerId(3));
+        let id = EntityId(700);
+        let pos = Vec2::new(60.0, 0.0);
+        let c = df(1.0); // exactly sixty seconds from origin, ten from x=50
+        assert_eq!(sim::transit::delay(pos, Vec2::ZERO, c), 60.0);
+        let mut attackers = vec![(EntityId(10), Ship::new(0, ShipKind::Battleship, sim::Loadout::from_key("torpedo_rack")))];
+        let mut defenders = vec![(EntityId(20), Ship::new(0, ShipKind::Dreadnought, sim::Loadout::from_key("point_defense_screen")))];
+        let mut state = TacticalState::open(0x1234_5678, id.0, &attackers, &defenders, 0, 0.0, Vec2::new(1.0, 0.0));
+        let sides = [
+            sim::SideRecord { corp: a, initial: kinds(&[(ShipKind::Battleship, 1)]), initial_loadouts: Default::default(), posture: sim::EngagementPolicy::EngageAny, platform_tiers: 0 },
+            sim::SideRecord { corp: d, initial: kinds(&[(ShipKind::Dreadnought, 1)]), initial_loadouts: Default::default(), posture: sim::EngagementPolicy::Avoid, platform_tiers: 0 },
+        ];
+        let mut record = sim::BattleRecord::open(id, pos, None, false, 0, sides);
+        record.record_participants(0, vec![EntityId(10), EntityId(20)]);
+        for step in 1..=240u64 {
+            let tick = step * 15;
+            if tick == 90 * u64::from(sim::TICK_HZ) {
+                defenders.push((EntityId(30), Ship::new(0, ShipKind::Cruiser, sim::Loadout::default())));
+                record.note(sim::RoundNote::Joined { side: 1, comp: kinds(&[(ShipKind::Cruiser, 1)]) });
+            }
+            if tick == 100 * u64::from(sim::TICK_HZ) {
+                defenders.retain(|(fleet, _)| *fleet != EntityId(20));
+                record.note(sim::RoundNote::WithdrawOrdered { side: 1 });
+            }
+            record.record_participants(tick, attackers.iter().chain(&defenders).map(|(fleet, _)| *fleet).collect());
+            record.sync_tactical(tick, &mut state, [&attackers, &defenders]);
+            // Weak weapons keep this visibility fixture in combat for the full
+            // delay window. These are recorded inputs, not retuned game rules.
+            let out = record.step_tactical(tick, &mut state, false,
+                [SideMods { opening_bonus: true, flak_mult: 1.2, damage_mult: 0.05 }; 2]);
+            record.accumulate(out.dealt[0], out.dealt[1], &out.losses[0], &out.losses[1]);
+            let counts = [0, 1].map(|side| {
+                let mut counts = BTreeMap::new();
+                for ship in state.combatants.iter().filter(|ship| ship.side == side && !ship.platform) {
+                    *counts.entry(ship.kind).or_default() += 1;
+                }
+                counts
+            });
+            record.flush_step(tick, state.keyframe(out.deaths), counts);
+            let health = state.hp_writeback().into_iter().map(|(fleet, ship, hp)| ((fleet, ship), hp)).collect::<BTreeMap<_, _>>();
+            for roster in [&mut attackers, &mut defenders] {
+                roster.retain_mut(|(fleet, ship)| {
+                    if let Some(&hp) = health.get(&(*fleet, ship.id)) { ship.hp = hp; true } else { false }
+                });
+            }
+        }
+        record.finalize(120 * u64::from(sim::TICK_HZ), sim::RaidOutcome::BothSurvive, Default::default(), Default::default());
+        let warm = BTreeMap::from([(id, record)]);
+        let disk = serde_json::to_string(&warm).unwrap();
+        assert!(disk.contains("\"rng\""), "the archive really contains private RNG state");
+        let cold: BTreeMap<EntityId, sim::BattleRecord> = serde_json::from_str(&disk).unwrap();
+        assert!(cold[&id].rounds.iter().all(|round| round.frame.is_none()));
+
+        fn assert_public(value: &serde_json::Value) {
+            match value {
+                serde_json::Value::Object(fields) => for (key, value) in fields {
+                    assert!(!["replay", "rng", "checkpoints", "inputs", "initial_checksum", "before_step", "checksum", "damage_mult", "flak_mult", "controls", "participant_history"].contains(&key.as_str()),
+                        "private archive field {key} reached a network packet");
+                    assert_public(value);
+                },
+                serde_json::Value::Array(values) => for value in values { assert_public(value); },
+                _ => {},
+            }
+        }
+
+        // Same packet shape and gates as the reliable incremental sender. A
+        // near viewer sees the join at t=100, the far viewer only at t=150.
+        for (viewer, cc, delay, coverage) in [
+            (a, Vec2::ZERO, 60.0, Vec::new()),
+            (d, Vec2::new(50.0, 0.0), 10.0, Vec::new()),
+            (observer, Vec2::ZERO, 60.0, vec![(pos, 2.0)]),
+        ] {
+            let mut sent = 0;
+            for now in [0.0, 59.9, 60.0, 90.0, 99.9, 100.0, 120.0, 130.0, 149.9, 150.0, 179.9, 180.0] {
+                let expected = battle_record_views(&warm, viewer, cc, c, now, &coverage);
+                let actual = battle_record_views(&cold, viewer, cc, c, now, &coverage);
+                assert_eq!(serde_json::to_value(&actual).unwrap(), serde_json::to_value(&expected).unwrap(),
+                    "restoring an archive must not change a viewer's evidence");
+                let specs = visible_record_specs(&cold, viewer, cc, c, now, &coverage, &|_| None);
+                let mut updates = Vec::new();
+                for spec in specs {
+                    let participant = spec.own_side.is_some();
+                    let rounds = record_rounds_range(&cold[&id], sent, spec.arrived_len, participant);
+                    assert!(rounds.iter().all(|round| round.tick as f64 * sim::DT + delay <= now));
+                    if !participant { assert!(rounds.iter().all(|round| round.frame.is_none() && round.dealt.is_none())); }
+                    if now < 90.0 + delay {
+                        assert!(rounds.iter().flat_map(|round| &round.notes).all(|note| note.kind != "joined"));
+                        assert!(rounds.iter().filter_map(|round| round.frame.as_ref()).flat_map(|frame| &frame.ships)
+                            .all(|ship| ship.kind != ShipKind::Cruiser));
+                    }
+                    assert_eq!(spec.outcome.is_some(), now >= 120.0 + delay);
+                    // Deliberately give the helper the PRESENT roster as its
+                    // legacy fallback. New records must ignore it and use only
+                    // the arrived history, even when the battle has ended.
+                    let members = battle_participants_at(Some(&cold[&id]), &[EntityId(10), EntityId(30)], now, delay);
+                    assert_eq!(members.contains(&EntityId(30)), now >= 90.0 + delay);
+                    assert_eq!(members.contains(&EntityId(20)), now < 100.0 + delay);
+                    updates.push(crate::protocol::BattleRecordUpdate {
+                        id, header: (sent == 0).then(|| record_header(&cold[&id], &spec)),
+                        new_rounds: rounds, light_frontier_tick: spec.frontier_tick, outcome: spec.outcome,
+                    });
+                    sent = spec.arrived_len;
+                }
+                let packet = crate::protocol::ServerMsg::BattleRecords { updates, removed: Vec::new() };
+                assert_public(&serde_json::to_value(packet).unwrap());
+            }
+            let at_join = battle_record_views(&cold, viewer, cc, c, 90.0 + delay, &coverage);
+            assert!(at_join[0].rounds.last().unwrap().notes.iter().any(|note| note.kind == "joined"));
+        }
+        assert!(battle_record_views(&cold, PlayerId(4), Vec2::ZERO, c, 1_000.0, &[]).is_empty());
     }
 
     #[test]

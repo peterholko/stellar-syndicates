@@ -2063,7 +2063,8 @@ impl World {
                 platform_tiers: ptiers,
             },
         ];
-        let rec = crate::combat::BattleRecord::open(eid, pos, system, raid, self.tick, sides);
+        let mut rec = crate::combat::BattleRecord::open(eid, pos, system, raid, self.tick, sides);
+        rec.record_participants(self.tick, e.attackers.iter().chain(&e.defenders).copied().collect());
         self.battle_records.insert(eid, rec);
         crate::combat::prune_records(&mut self.battle_records, self.time);
     }
@@ -4535,6 +4536,8 @@ impl World {
             };
             let a_comp = self.side_comp(&attackers);
             let d_comp = self.side_comp(&defenders);
+            self.battle_records.get_mut(eid).unwrap().record_participants(
+                self.tick, attackers.iter().chain(&defenders).copied().collect());
             let (ptiers, ppool) = platform_system
                 .and_then(|sid| self.systems.iter().find(|s| s.id == sid))
                 .map(|s| {
@@ -4582,7 +4585,8 @@ impl World {
             // SYNC to the live strategic sides (relief joins unpack at the edge;
             // withdrawn fleets' ships leave). Scouts die at the boundary — the
             // same instant death the old strip_scouts applied.
-            let scouts = tac.sync([&a_ships, &d_ships]);
+            let scouts = self.battle_records.get_mut(eid).unwrap()
+                .sync_tactical(self.tick, &mut tac, [&a_ships, &d_ships]);
             let mut la = crate::combat::Losses::default();
             let mut lb = crate::combat::Losses::default();
             if scouts[0] > 0 {
@@ -4616,7 +4620,8 @@ impl World {
                         damage_mult: self.combat_damage_mult_for(d_owner, &defenders),
                     },
                 ];
-                let outcome = tac.step(raid, mods);
+                let outcome = self.battle_records.get_mut(eid).unwrap()
+                    .step_tactical(self.tick, &mut tac, raid, mods);
                 for (k, lo_map) in &outcome.losses[0].per_stack {
                     la.add_stack(k.0, k.1.clone(), *lo_map);
                 }
@@ -4822,16 +4827,16 @@ impl World {
             // Safety valve: a no-retreat grind ends in MUTUAL disengage.
             let safety = elapsed >= crate::combat::MAX_BATTLE_MULT * target;
             if a_retreats || raid_cap {
-                tac.order_withdraw(0);
+                self.battle_records.get_mut(eid).unwrap().withdraw_tactical(self.tick, &mut tac, 0);
                 self.engagements.get_mut(eid).unwrap().a_fled = true;
             }
             if d_retreats {
-                tac.order_withdraw(1);
+                self.battle_records.get_mut(eid).unwrap().withdraw_tactical(self.tick, &mut tac, 1);
                 self.engagements.get_mut(eid).unwrap().d_fled = true;
             }
             if safety && !(tac.withdrawing[0] && tac.withdrawing[1]) {
-                tac.order_withdraw(0);
-                tac.order_withdraw(1);
+                self.battle_records.get_mut(eid).unwrap().withdraw_tactical(self.tick, &mut tac, 0);
+                self.battle_records.get_mut(eid).unwrap().withdraw_tactical(self.tick, &mut tac, 1);
                 let e = self.engagements.get_mut(eid).unwrap();
                 e.a_fled = true;
                 e.d_fled = true;
@@ -26154,13 +26159,13 @@ mod tests {
             framed.iter().any(|f| !f.deaths.is_empty()),
             "the battle's kills appear as exact death events"
         );
-        // Serde round-trip keeps frames (and old frame-less records still load —
-        // the field is serde-default).
+        // The compact archive regenerates the SAME frames after load; frame
+        // caches are no longer duplicated in every persisted tactical round.
         let json = serde_json::to_string(rec).unwrap();
         let back: crate::combat::BattleRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(
-            back.rounds.iter().filter(|r| r.frame.is_some()).count(),
-            framed.len()
+            back.frames_range(0, back.rounds.len()).unwrap(),
+            rec.rounds.iter().map(|r| r.frame.clone()).collect::<Vec<_>>()
         );
     }
 
@@ -26876,6 +26881,59 @@ mod tests {
             w.battle_records, w2.battle_records,
             "records survive a snapshot round-trip"
         );
+    }
+
+    #[test]
+    fn world_battle_archive_matches_live_reinforcements_withdrawal_and_restart() {
+        let mut world = test_world();
+        let (a, d) = (PlayerId(1), PlayerId(2));
+        world.step(&[
+            Command::AddPlayer { id: a, name: "A".into() },
+            Command::AddPlayer { id: d, name: "D".into() },
+        ]);
+        world.fleets.clear(); // isolated fixture, no granted patrols folding in
+        let pos = world.players[&a].command_center + Vec2::new(600.0, 0.0);
+        let target = squad(&mut world, d, pos, ShipKind::Corvette, 8, FleetOrder::Idle);
+        let striker = squad(&mut world, a, pos + Vec2::new(40.0, 0.0), ShipKind::Raider, 4,
+            FleetOrder::Intercept { target });
+        squad(&mut world, a, pos, ShipKind::Battleship, 3, FleetOrder::Idle);
+        let mut restored: Option<World> = None;
+        let mut checked = 0;
+        for tick in 0..240 {
+            if tick == 10 {
+                squad(&mut world, d, pos, ShipKind::Cruiser, 3, FleetOrder::Idle);
+            }
+            let commands = if tick == 30 { vec![Command::Withdraw { player_id: a, fleet_id: striker }] } else { Vec::new() };
+            world.step(&commands);
+            if let Some(restored) = &mut restored { restored.step(&commands); }
+            for (id, battle) in &world.engagements {
+                if let Some(state) = &battle.tactical {
+                    let replay = world.battle_records[id].tactical_replay().expect("new battles are archived");
+                    assert_eq!(&replay.reconstruct().unwrap(), state, "world boundary mismatch on tick {}", world.tick);
+                    checked += 1;
+                }
+            }
+            if tick == 20 {
+                let mut loaded: World = serde_json::from_str(&serde_json::to_string(&world).unwrap()).unwrap();
+                // Test-only bootstrap policy is intentionally not persisted;
+                // keep the two fixtures under the same non-production policy.
+                loaded.legacy_test_bootstrap = world.legacy_test_bootstrap;
+                restored = Some(loaded);
+            }
+        }
+        assert!(checked > 30, "the fixture must actually exercise an ongoing battle");
+        let records = world.battle_records.values().collect::<Vec<_>>();
+        assert!(records.iter().flat_map(|r| &r.rounds).flat_map(|r| &r.notes)
+            .any(|n| matches!(n, crate::RoundNote::Joined { .. })));
+        assert!(records.iter().flat_map(|r| &r.rounds).flat_map(|r| &r.notes)
+            .any(|n| matches!(n, crate::RoundNote::WithdrawOrdered { .. })), "the delayed withdraw really arrived");
+        let restored = restored.unwrap();
+        assert_eq!(serde_json::to_string(&world).unwrap(), serde_json::to_string(&restored).unwrap(),
+            "continuing a cold archive is byte-identical to uninterrupted resolution");
+        for (id, record) in &world.battle_records {
+            assert_eq!(record.frames_range(0, record.rounds.len()).unwrap(),
+                restored.battle_records[id].frames_range(0, record.rounds.len()).unwrap());
+        }
     }
 
     // ===================================================================

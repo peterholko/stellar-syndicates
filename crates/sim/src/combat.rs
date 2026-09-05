@@ -232,8 +232,8 @@ pub fn typical_forces(class: crate::ship::CountClass) -> Forces {
 // pure OBSERVER of the engagement lifecycle: it reads round-by-round state and
 // never feeds back into resolution, so `same seed + commands → identical
 // records` (the determinism law). Balance patches must never rewrite an old
-// record — a `BattleRecord` is history captured at resolution time, replayed
-// verbatim.
+// record. Legacy records keep verbatim keyframes; new records persist a
+// private, versioned tactical archive and regenerate those same keyframes.
 //
 // Because nothing outruns light, the record IS the battle as far as any viewer
 // is concerned: A2 unlocks round `i` per viewer exactly when its light arrives.
@@ -389,11 +389,17 @@ struct PendingRound {
     notes: Vec<RoundNote>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct ParticipantChange {
+    tick: u64,
+    fleets: Vec<EntityId>,
+}
+
 /// One recorded battle: its sides' opening state, a per-round timeline captured
 /// at resolution time, and (once resolved) an outcome summary. Keyed by the
 /// engagement's own id, so the record, the map icon, and the news event share
 /// one identity.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct BattleRecord {
     pub id: EntityId,
     pub pos: Vec2,
@@ -410,6 +416,94 @@ pub struct BattleRecord {
     /// Recorder accumulator between flushes (persisted; opaque to the view).
     #[serde(default)]
     pending: PendingRound,
+    /// Private snapshot/archive data, NEVER a player-facing protocol field.
+    /// Missing on legacy records, which continue using their stored frames.
+    #[serde(default)]
+    replay: Option<crate::tactical::replay::BattleReplay>,
+    /// Marker visibility follows the SAME emission clock as replay rounds.
+    /// A current-truth roster would reveal reinforcements/withdrawals early.
+    #[serde(default)]
+    participant_history: Vec<ParticipantChange>,
+    /// Restored archives hydrate frames only when requested, not every battle
+    /// on server startup. Live rounds already have warm frames. This cache is
+    /// neither game state nor persistent data and does not affect equality.
+    #[serde(skip)]
+    replay_frames: ReplayFrames,
+}
+
+impl PartialEq for BattleRecord {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && self.pos == other.pos && self.system == other.system
+            && self.started_tick == other.started_tick && self.ended_tick == other.ended_tick
+            && self.raid == other.raid && self.sides == other.sides
+            && self.outcome == other.outcome && self.pending == other.pending
+            && self.replay == other.replay && self.participant_history == other.participant_history
+            && self.rounds.len() == other.rounds.len()
+            && self.rounds.iter().zip(&other.rounds).enumerate().all(|(index, (a, b))| {
+                a.tick == b.tick && a.counts == b.counts && a.dealt == b.dealt
+                    && a.kills == b.kills && a.notes == b.notes
+                    // Archived frames are a derived cache, whether warm from
+                    // resolution or cold after load. Legacy frames remain data.
+                    && (self.replay.as_ref().is_some_and(|r| r.records_round(index)) || a.frame == b.frame)
+            })
+    }
+}
+
+#[derive(Debug, Default)]
+struct ReplayFrames(std::sync::Mutex<BTreeMap<usize, Keyframe>>);
+
+impl Clone for ReplayFrames {
+    // World forks must not share a cache: their subsequent inputs may differ.
+    fn clone(&self) -> Self { Self::default() }
+}
+
+impl PartialEq for ReplayFrames {
+    fn eq(&self, _: &Self) -> bool { true }
+}
+
+impl Serialize for BattleRecord {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{SerializeSeq, SerializeStruct};
+        #[derive(Serialize)]
+        struct StoredRound<'a> {
+            tick: u64,
+            counts: &'a [BTreeMap<ShipKind, u32>; 2],
+            dealt: [f64; 2],
+            kills: &'a [BTreeMap<ShipKind, u32>; 2],
+            notes: &'a [RoundNote],
+            #[serde(skip_serializing_if = "Option::is_none")]
+            frame: Option<&'a Keyframe>,
+        }
+        struct StoredRounds<'a>(&'a BattleRecord);
+        impl Serialize for StoredRounds<'_> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                let mut seq = serializer.serialize_seq(Some(self.0.rounds.len()))?;
+                for (index, round) in self.0.rounds.iter().enumerate() {
+                    let archived = self.0.replay.as_ref().is_some_and(|replay| replay.records_round(index));
+                    seq.serialize_element(&StoredRound {
+                        tick: round.tick, counts: &round.counts, dealt: round.dealt,
+                        kills: &round.kills, notes: &round.notes,
+                        frame: if archived { None } else { round.frame.as_ref() },
+                    })?;
+                }
+                seq.end()
+            }
+        }
+        let mut out = serializer.serialize_struct("BattleRecord", 12)?;
+        out.serialize_field("id", &self.id)?;
+        out.serialize_field("pos", &self.pos)?;
+        out.serialize_field("system", &self.system)?;
+        out.serialize_field("started_tick", &self.started_tick)?;
+        out.serialize_field("ended_tick", &self.ended_tick)?;
+        out.serialize_field("raid", &self.raid)?;
+        out.serialize_field("sides", &self.sides)?;
+        out.serialize_field("rounds", &StoredRounds(self))?;
+        out.serialize_field("outcome", &self.outcome)?;
+        out.serialize_field("pending", &self.pending)?;
+        out.serialize_field("replay", &self.replay)?;
+        out.serialize_field("participant_history", &self.participant_history)?;
+        out.end()
+    }
 }
 
 /// Fold a side's `Losses` (scouts already merged in by the caller) into a
@@ -443,7 +537,89 @@ impl BattleRecord {
             rounds: Vec::new(),
             outcome: None,
             pending: PendingRound::default(),
+            replay: None,
+            participant_history: Vec::new(),
+            replay_frames: ReplayFrames::default(),
         }
+    }
+
+    pub fn tactical_replay(&self) -> Option<&crate::tactical::replay::BattleReplay> {
+        self.replay.as_ref()
+    }
+
+    pub fn record_participants(&mut self, tick: u64, mut fleets: Vec<EntityId>) {
+        fleets.sort_unstable();
+        fleets.dedup();
+        if self.participant_history.last().is_none_or(|last| last.fleets != fleets) {
+            self.participant_history.push(ParticipantChange { tick, fleets });
+        }
+    }
+
+    /// `None` identifies old records without a roster timeline. Before a new
+    /// record's first arrived roster, return an empty list, never future truth.
+    pub fn arrived_participants(&self, now: f64, delay: f64) -> Option<&[EntityId]> {
+        if self.participant_history.is_empty() { return None; }
+        let through = self.participant_history.partition_point(|change| change.tick as f64 * DT + delay <= now);
+        Some(through.checked_sub(1).map_or(&[], |index| self.participant_history[index].fleets.as_slice()))
+    }
+
+    /// Capture at the kernel boundary, where all effects of strategic inputs
+    /// are known. The recorder never performs a second resolution or consumes
+    /// random draws. A resumed legacy battle stays legacy until it ends.
+    pub fn sync_tactical(
+        &mut self, tick: u64, state: &mut crate::tactical::TacticalState,
+        desired: [&[(EntityId, crate::ship::Ship)]; 2],
+    ) -> [u32; 2] {
+        if self.replay.is_none() && self.rounds.is_empty() {
+            self.replay = Some(crate::tactical::replay::BattleReplay::new(state));
+        }
+        let (scouts, changes) = state.sync_recorded(desired);
+        if let Some(replay) = &mut self.replay { replay.roster(tick, changes); }
+        scouts
+    }
+
+    pub fn step_tactical(
+        &mut self, tick: u64, state: &mut crate::tactical::TacticalState,
+        raid: bool, mods: [crate::tactical::SideMods; 2],
+    ) -> crate::tactical::StepOutcome {
+        if let Some(replay) = &mut self.replay { replay.controls(tick, raid, mods); }
+        let outcome = state.step(raid, mods);
+        if let Some(replay) = &mut self.replay { replay.stepped(tick, self.rounds.len(), state); }
+        outcome
+    }
+
+    pub fn withdraw_tactical(&mut self, tick: u64, state: &mut crate::tactical::TacticalState, side: u8) {
+        if let Some(replay) = &mut self.replay { replay.withdraw(tick, side); }
+        state.order_withdraw(side);
+    }
+
+    /// Existing wire-shaped frames, never archive inputs. Only reconstruct a
+    /// missing requested slice, from its nearest checkpoint, then cache it.
+    /// Ordinary live delivery still reads the frames resolution already made;
+    /// restored history is reconstructed once per requested slice, not once per
+    /// viewer per broadcast. No startup replay of every retained battle.
+    pub fn frames_range(&self, from: usize, to: usize) -> Result<Vec<Option<Keyframe>>, crate::tactical::replay::ReplayError> {
+        let to = to.min(self.rounds.len());
+        let from = from.min(to);
+        let mut frames = {
+            let cached = self.replay_frames.0.lock().unwrap_or_else(|error| error.into_inner());
+            (from..to).map(|index| self.rounds[index].frame.clone()
+                .or_else(|| cached.get(&index).cloned())).collect::<Vec<_>>()
+        };
+        if let Some(replay) = &self.replay {
+            let missing = frames.iter().enumerate()
+                .filter(|(index, frame)| frame.is_none() && replay.records_round(from + index))
+                .map(|(index, _)| from + index).collect::<Vec<_>>();
+            if let (Some(&first), Some(&last)) = (missing.first(), missing.last()) {
+                let recovered = replay.frames_range(first, last + 1)?;
+                let mut cached = self.replay_frames.0.lock().unwrap_or_else(|error| error.into_inner());
+                for (index, frame) in recovered {
+                    frames[index - from] = Some(frame.clone());
+                    cached.insert(index, frame);
+                }
+            }
+        }
+        Ok(frames)
     }
 
     /// Accumulate one attrition tick: damage dealt by each side and the ships

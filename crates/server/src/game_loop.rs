@@ -1824,24 +1824,24 @@ impl GameLoop {
             let arrays = self.world.array_sensor_sources(player_id);
             // BATTLES (§battles-take-time), STRICTLY light-gated: a battle (and its
             // participants, revealed by weapons fire) appears only once the light
-            // of its start has reached THIS player's command center.
+            // of its start has reached THIS player's command center. Subsequent
+            // roster changes ride their OWN reports, not the opening wavefront.
             let mut battles: Vec<crate::protocol::BattleView> = Vec::new();
             let mut battle_reveal: std::collections::BTreeSet<sim::EntityId> =
                 std::collections::BTreeSet::new();
             for b in self.world.active_battles() {
                 let delay = sim::transit::delay(b.pos, cc, c);
                 if now >= b.started_at + delay {
-                    battle_reveal.extend(b.participants.iter().copied());
+                    let participants = view::battle_participants_at(
+                        self.world.battle_records.get(&b.id), &b.participants, now, delay);
+                    battle_reveal.extend(participants.iter().copied());
                     battles.push(crate::protocol::BattleView {
                         id: b.id,
                         pos: b.pos,
                         age: delay,
                         started_at: b.started_at,
                         own: player_id == b.a_owner || player_id == b.d_owner,
-                        // All participants are revealed to any observer of the
-                        // battle (the weapons-fire site-reveal above), so their
-                        // ids carry no more than the ghosts already sent.
-                        participants: b.participants,
+                        participants,
                     });
                 }
             }
@@ -1855,14 +1855,17 @@ impl GameLoop {
             // faster than its light could reach them) still never sees a phantom icon.
             for cb in &self.concluded_battles {
                 if cb.shows_in_progress(cc, c, now) {
-                    battle_reveal.extend(cb.participants.iter().copied());
+                    let delay = sim::transit::delay(cb.pos, cc, c);
+                    let participants = view::battle_participants_at(
+                        self.world.battle_records.get(&cb.id), &cb.participants, now, delay);
+                    battle_reveal.extend(participants.iter().copied());
                     battles.push(crate::protocol::BattleView {
                         id: cb.id,
                         pos: cb.pos,
-                        age: sim::transit::delay(cb.pos, cc, c),
+                        age: delay,
                         started_at: cb.started_at,
                         own: player_id == cb.a_owner || player_id == cb.d_owner,
-                        participants: cb.participants.clone(),
+                        participants,
                     });
                 }
             }
