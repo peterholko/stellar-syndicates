@@ -1,3 +1,5 @@
+import { gameSocket, encodeMessage, decodeMessage } from "./game-socket.mjs";
+
 // Own-ship lightspeed-law check (no deps — Node 18+ global WebSocket).
 //
 // Proves the corrected law (§6): certainty tracks PROXIMITY to the command
@@ -15,11 +17,11 @@ const URL = process.env.SERVER_WS || "ws://127.0.0.1:8080/ws";
 const fail = (m) => { console.error("FAIL:", m); process.exit(1); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const ws = new WebSocket(URL);
+const ws = gameSocket(URL);
 const views = [];
-ws.addEventListener("open", () => ws.send(JSON.stringify({ type: "Join", name: "Fog Probe" })));
+ws.addEventListener("open", () => ws.send(encodeMessage({ type: "Join", name: "Fog Probe" })));
 ws.addEventListener("message", (ev) => {
-  const m = JSON.parse(ev.data);
+  const m = decodeMessage(ev.data);
   if (m.type === "View") views.push(m);
 });
 

@@ -1,4 +1,6 @@
-// M1 checkpoint smoke test (no dependencies — uses Node 18+ global WebSocket).
+import { gameSocket, encodeMessage, decodeMessage } from "./game-socket.mjs";
+
+// M1 checkpoint smoke test (uses Node 22+ WebSocket and the client binary codec).
 //
 // Verifies: TWO clients connect simultaneously, each gets its OWN per-player
 // stream (distinct player ids) and a live tick from the authoritative loop, and
@@ -19,11 +21,11 @@ const fail = (m) => {
 const onlinePlayers = async () => (await (await fetch(STATUS_URL)).json()).online_players;
 
 function client(name) {
-  const ws = new WebSocket(URL);
+  const ws = gameSocket(URL);
   const got = { welcome: null, ticks: [], lastOnline: 0, errors: [] };
-  ws.addEventListener("open", () => ws.send(JSON.stringify({ type: "Join", name })));
+  ws.addEventListener("open", () => ws.send(encodeMessage({ type: "Join", name })));
   ws.addEventListener("message", (ev) => {
-    const m = JSON.parse(ev.data);
+    const m = decodeMessage(ev.data);
     if (m.type === "Welcome") got.welcome = m;
     else if (m.type === "View") got.ticks.push(m.tick);
     else if (m.type === "Error") got.errors.push(m.message);

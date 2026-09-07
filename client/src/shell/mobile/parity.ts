@@ -1,5 +1,9 @@
 import { captainTitle, captainXpFloor, fleetCommandLoad, officerFleetName } from "../../core/derive/captains";
-import { constructionStock, dockedAtSystem, shipKindLabel, systemFleetsAt } from "../../core/derive/fleet";
+import { constructionStock, dockedAtSystem, guardCapable, shipKindLabel, systemFleetsAt } from "../../core/derive/fleet";
+import { colonyPurpose } from "../../core/derive/colony";
+import { buildsByPlanet } from "../../core/derive/construction";
+import { fleetReadiness } from "../../core/derive/readiness";
+import { postVictoryHandoff } from "../../core/derive/handoff";
 import { allySystems, foundingHomeSystemId, ownedSystems, systemName } from "../../core/derive/geo";
 import {
   bodyPoolUsage,
@@ -118,6 +122,7 @@ export class MobileParitySurfaces {
   private readonly renderSignatures = new Map<SheetEntry["id"], string>();
   private researchField = "propulsion";
   private operationTab: OperationTab = "active";
+  private handoffContract = "";
   private systemTab: SystemTab = "worlds";
   private planetTab: PlanetTab = "economy";
   private rankingCategory = "valuation";
@@ -164,6 +169,12 @@ export class MobileParitySurfaces {
     const action = button.dataset.mobileAct;
     if (!action || !this.ownsAction(action)) return false;
     switch (action) {
+      case "next-objectives":
+        this.hooks.openSheet({ id: "operations" });
+        break;
+      case "next-goal": case "next-funding": case "next-prospect":
+        this.openHandoffGoal(action, button.dataset.goal);
+        break;
       case "research-field":
         if (button.dataset.field) this.researchField = button.dataset.field;
         this.sheets.refresh();
@@ -182,18 +193,18 @@ export class MobileParitySurfaces {
       case "officer-assign": {
         const captain = Number(button.dataset.captain);
         const fleet = element<HTMLSelectElement>(`m-officer-fleet-${captain}`)?.value;
-        if (Number.isFinite(captain) && fleet) this.ctx.send({ type: "AssignCaptain", captain_id: captain, fleet_id: fleet });
+        if (Number.isFinite(captain) && fleet) this.ctx.intent.beginFleetCommand({ type: "AssignCaptain", captain_id: captain, fleet_id: fleet });
         break;
       }
       case "officer-reserve": {
         const captain = Number(button.dataset.captain);
-        if (Number.isFinite(captain)) this.ctx.send({ type: "ReserveCaptain", captain_id: captain });
+        if (Number.isFinite(captain)) this.ctx.intent.beginFleetCommand({ type: "ReserveCaptain", captain_id: captain });
         break;
       }
       case "officer-train": {
         const captain = Number(button.dataset.captain);
         const attribute = button.dataset.attribute as CaptainAttribute | undefined;
-        if (Number.isFinite(captain) && isCaptainAttribute(attribute)) this.ctx.send({ type: "TrainCaptain", captain_id: captain, attribute });
+        if (Number.isFinite(captain) && isCaptainAttribute(attribute)) this.ctx.intent.beginFleetCommand({ type: "TrainCaptain", captain_id: captain, attribute });
         break;
       }
       case "officer-fleet":
@@ -211,9 +222,23 @@ export class MobileParitySurfaces {
       case "operation-assign": case "operation-recover": {
         const id = button.dataset.id;
         const fleet = id ? element<HTMLSelectElement>(`m-op-fleet-${safeId(id)}`)?.value : "";
-        if (id && fleet) this.ctx.send(action === "operation-assign"
-          ? { type: "AssignOperationFleet", operation_id: id, fleet_id: fleet }
-          : { type: "RecoverOperation", operation_id: id, fleet_id: fleet });
+        const operation = this.ctx.state.operations.find(o => o.id === id);
+        if (id && fleet && operation?.kind.kind === "freight_escort") {
+          const protected_fleet = element<HTMLSelectElement>(`m-op-charge-${safeId(id)}`)?.value;
+          const guard = this.ctx.state.ghosts.find(g => g.own && g.id === fleet);
+          if (protected_fleet && guard && guardCapable(guard)) {
+            this.ctx.intent.beginFleetCommand([
+              { type: "AssignOperationFleet", operation_id: id, fleet_id: fleet, protected_fleet },
+              { type: "GuardFleet", interceptor_id: fleet, target_id: protected_fleet },
+            ]);
+          }
+        } else if (id && fleet) {
+          const order = action === "operation-assign"
+            ? { type: "AssignOperationFleet" as const, operation_id: id, fleet_id: fleet }
+            : { type: "RecoverOperation" as const, operation_id: id, fleet_id: fleet };
+          this.ctx.intent.beginFleetCommand(operation?.briefing && operation.kind.kind === "rescue_salvage"
+            ? [order, { type: "MoveShip", ship_id: fleet, dest: operation.target_pos }] : order);
+        }
         break;
       }
       case "operation-contribute": {
@@ -499,28 +524,68 @@ export class MobileParitySurfaces {
     const available = this.ctx.state.operations.filter((operation) => operation.state === "offered" || (operation.state === "active" && !operation.joined));
     const history = this.ctx.state.operations.filter((operation) => !["offered", "active"].includes(operation.state)).sort((a, b) => b.reported_at - a.reported_at);
     const rows = this.operationTab === "active" ? active : this.operationTab === "available" ? available : history;
+    const selected = this.ctx.state.operations.find(o => o.id === this.handoffContract);
     return {
       title: "Operations",
       eyebrow: `${stageTitle} · contracts and objectives`,
       html: `<article class="m-feature-card"><small>CURRENT ARC</small><b>${esc(stageTitle)}</b><span>${esc(stageCopy)}</span></article>` +
+        (selected ? `<section class="m-section"><h3>Funding contract</h3>${this.operationCard(selected)}</section>` : "") + this.handoffHtml() +
         `<div class="m-subtabs m-subtabs--3">${(["active", "available", "history"] as OperationTab[]).map((tab) => `<button type="button" data-mobile-act="operation-tab" data-tab="${tab}" aria-selected="${tab === this.operationTab}">${human(tab)} · ${(tab === "active" ? active : tab === "available" ? available : history).length}</button>`).join("")}</div>` +
-        `<div class="m-programmes">${rows.map((operation) => this.operationCard(operation)).join("") || `<div class="m-empty">No ${this.operationTab} operations.</div>`}</div>`,
+        `<div class="m-programmes">${rows.filter(o => o !== selected).map((operation) => this.operationCard(operation)).join("") || `<div class="m-empty">No other ${this.operationTab} operations.</div>`}</div>`,
     };
+  }
+
+  private handoffHtml(): string {
+    const goals = postVictoryHandoff();
+    if (!goals.length) return "";
+    return `<section class="m-section"><h3>Your next chapter</h3>${goals.map(g => `<article class="m-feature-card"><small>${esc(g.status)}</small><b>${esc(g.title)}</b><span>${esc(g.summary)}</span>
+      <ul>${g.requirements.map(r => `<li>${r.met ? "✓" : "○"} ${esc(r.text)}</li>`).join("")}</ul>
+      <small>${g.id === "explore" ? "Reward" : "Gain"}: ${esc(g.payoff)}</small>
+      <button type="button" data-mobile-act="${g.action?.kind === "warehouse" ? "founding-action" : "next-goal"}" data-kind="market" data-goal="${g.id}" ${g.action ? "" : "disabled"}>${esc(g.actionLabel)}</button>
+      ${g.prospect && !g.done ? `<button type="button" data-mobile-act="next-prospect" data-goal="${g.id}">Inspect ${esc(systemName(g.prospect))}</button>` : ""}
+      ${g.funding && !g.done ? `<button type="button" data-mobile-act="next-funding" data-goal="${g.id}">Fund this · ${esc(operationTitle(g.funding))}<small>${esc(operationReward(g.funding))}</small></button>` : ""}</article>`).join("")}</section>`;
+  }
+
+  private openHandoffGoal(action: string, id?: string): void {
+    const goal = postVictoryHandoff().find(g => g.id === id);
+    if (!goal) return;
+    if (action === "next-funding") {
+      if (goal.funding) { this.handoffContract = goal.funding.id; this.sheets.refresh(); }
+      return;
+    }
+    const a = action === "next-prospect" && goal.prospect ? { kind: "system" as const, id: goal.prospect } : goal.action;
+    if (!a) return;
+    // Like desktop these are navigation, not orders. The existing founding
+    // market action opens the Warehouse tab for the already-earned kit.
+    if (a.kind === "fleet") this.hooks.focusFleet(a.id);
+    else if (a.kind === "system") this.hooks.focusSystem(a.id);
+    else if (a.kind === "world") this.openPlanet(a.system, a.body);
+    else if (a.kind === "build") {
+      this.selectedBuild = a.mode === "structures" ? a.select : "";
+      this.selectedHull = a.mode === "ships" ? a.select as ShipKind : "";
+      this.pendingFit = [];
+      this.hooks.openSheet({ id: a.mode === "ships" ? "shipyard" : "build", props: { systemId: a.system, bodyId: a.body } });
+    } else if (a.kind === "research" || a.kind === "operations") this.hooks.openSheet({ id: a.kind });
   }
 
   private operationCard(operation: OperationView): string {
     const pct = Math.max(0, Math.min(100, operation.goal > 0 ? operation.progress / operation.goal * 100 : 0));
-    const fleetOptions = this.ctx.state.ghosts.filter((fleet) => fleet.own).map((fleet) => option(fleet.id, officerFleetName(fleet), fleet.id === operation.assigned_fleet)).join("");
+    const fleetOptions = this.ctx.state.ghosts.filter((fleet) => fleet.own
+      && (operation.kind.kind !== "freight_escort" || guardCapable(fleet)))
+      .map((fleet) => option(fleet.id, officerFleetName(fleet), fleet.id === operation.assigned_fleet)).join("");
+    const charges = this.ctx.state.ghosts.filter(g => g.own && fleetReadiness(g).cargoCapacity > 0)
+      .map(g => option(g.id, officerFleetName(g), false)).join("");
     const id = safeId(operation.id);
     let actions = "";
     if ((operation.state === "offered" || (operation.state === "active" && !operation.joined)) && !operation.joined) actions = `<button type="button" class="m-primary" data-mobile-act="operation-accept" data-id="${esc(operation.id)}">Accept</button>`;
     if (operation.state === "active" && operation.joined) {
-      actions += fleetOptions ? `<div class="m-inline-form"><select id="m-op-fleet-${id}">${fleetOptions}</select><button type="button" data-mobile-act="operation-assign" data-id="${esc(operation.id)}">Assign</button>` +
+      actions += fleetOptions ? `<div class="m-inline-form"><select aria-label="Assigned fleet" id="m-op-fleet-${id}">${fleetOptions}</select>${operation.kind.kind === "freight_escort" ? `<select aria-label="Protected Freighter" id="m-op-charge-${id}"><option value="">Choose Freighter</option>${charges}</select>` : ""}<button type="button" data-mobile-act="operation-assign" data-id="${esc(operation.id)}">${operation.kind.kind === "freight_escort" ? "Assign guard" : operation.briefing?.follow_up === "salvage" ? "Plot recovery" : "Assign"}</button>` +
         (operation.kind.kind === "rescue_salvage" ? `<button type="button" data-mobile-act="operation-recover" data-id="${esc(operation.id)}">Recover now</button>` : "") + `</div>` : "";
       if (operation.kind.kind === "syndicate_megaproject") actions += `<div class="m-inline-form"><input id="m-op-units-${id}" type="number" min="1" inputmode="numeric" value="25"><button type="button" data-mobile-act="operation-contribute" data-id="${esc(operation.id)}">Commit goods</button></div>`;
       if (operation.kind.kind !== "syndicate_megaproject") actions += `<button type="button" data-mobile-act="operation-abandon" data-id="${esc(operation.id)}">Abandon</button>`;
     }
     return `<article class="m-card"><header><small>${esc(human(operation.issuer))}</small><em>${esc(human(operation.state))}</em></header><b>${esc(operationTitle(operation))}</b><p>${esc(operationCopy(operation))}</p>` +
+      (operation.briefing ? `<span>${esc(operation.briefing.difficulty)} · ${esc(operation.briefing.suitable_fleets)}</span>` : "") +
       `<div class="m-progress"><i style="width:${pct.toFixed(1)}%"></i></div><span>${operation.progress}/${operation.goal} · ${esc(operationReward(operation))} · ${operation.state === "completed" ? "complete" : `${fmtEta(Math.max(0, operation.expires_at - liveSimTime()))} left`}</span>${actions}</article>`;
   }
 
@@ -607,8 +672,13 @@ export class MobileParitySurfaces {
 
   private systemOverview(name: string, dynamic: SystemStateView | undefined, mine: boolean, fleets: GhostView[], systemId: string): string {
     const pools = poolUsage(dynamic);
+    const homeId = foundingHomeSystemId();
+    const home = this.ctx.state.systems.find(s => s.id === homeId && s.owner === this.ctx.state.playerId);
+    const purpose = dynamic && systemId !== homeId ? colonyPurpose(dynamic, home) : null;
+    const purposeHtml = purpose ? `<section class="m-section"><h3>Colony purpose</h3><b>${esc(purpose.headline)}</b>
+      <p>${esc(purpose.homeNeed)}</p><span>Supply imports: ${esc(purpose.imports.map(human).join(", ") || "No essential feedstock missing")}</span></section>` : "";
     const fleetRows = fleets.map((fleet) => `<button type="button" class="m-list-row" data-mobile-act="system-fleet" data-id="${esc(fleet.id)}"><span class="m-list-row__icon">△</span><span class="m-list-row__main"><b>${esc(shipKindLabel(fleet.kind))} fleet</b><small>${fleet.docked ? "docked" : Math.hypot(fleet.vel.x, fleet.vel.y) > 1 ? "under way" : "holding"}</small></span><span class="m-list-row__meta"><small>${fleet.age.toFixed(1)}s delay</small></span></button>`).join("");
-    return `<div class="m-stat-grid"><span><small>Owner</small><b>${mine ? "Your corporation" : dynamic?.owner ? "Rival" : "Unclaimed"}</b></span><span><small>Worlds</small><b>${dynamic?.bodies.length ?? 0}</b></span>` +
+    return purposeHtml + `<div class="m-stat-grid"><span><small>Owner</small><b>${mine ? "Your corporation" : dynamic?.owner ? "Rival" : "Unclaimed"}</b></span><span><small>Worlds</small><b>${dynamic?.bodies.length ?? 0}</b></span>` +
       (mine ? `<span><small>Population</small><b>${fmtPopulation(dynamic?.population ?? 0)}</b></span><span><small>Storage</small><b>${fmt(dynamic?.storage_used ?? 0)}/${fmt(dynamic?.storage_cap ?? 0)}</b></span>` : "") + `</div>` +
       (mine ? `<section class="m-section"><h3>Development pools</h3><div class="m-ledger">${(["resource", "industrial", "infrastructure"] as Pool[]).map((pool) => `<span>${POOL_LABEL[pool]}<b>${pools[pool].used}/${pools[pool].total}</b></span>`).join("")}</div>${this.developmentPoolHelp()}</section>` : "") +
       `<section class="m-section"><h3>Fleets at ${esc(name)}</h3><div class="m-list">${fleetRows || `<div class="m-muted">No own fleets in the served picture.</div>`}</div></section>` +
@@ -627,7 +697,7 @@ export class MobileParitySurfaces {
   }
 
   private systemConstruction(systemId: string, dynamic: SystemStateView): string {
-    const queue = [...dynamic.builds].sort((a, b) => a.complete_time - b.complete_time).map((job) => `<div class="m-order"><b>${esc(buildOption(job.key)?.label ?? human(job.key))}</b><span>${fmtEta(Math.max(0, job.complete_time - liveSimTime()))}<small>${esc(dynamic.bodies.find((body) => body.id === job.body_id)?.name ?? "system yard")}</small></span></div>`).join("");
+    const queue = buildsByPlanet(dynamic.builds).map(({ bodyId, jobs }) => `<div class="m-section"><h4>${esc(dynamic.bodies.find((body) => body.id === bodyId)?.name ?? "System yard")}</h4>${jobs.map((job) => `<div class="m-order"><b>${esc(buildOption(job.key)?.label ?? human(job.key))}</b><span>${job.queued ? "Queued" : job.complete_time == null ? "Paused · needs workforce" : `Building · ${fmtEta(Math.max(0, job.complete_time - liveSimTime()))}`}</span></div>`).join("")}</div>`).join("");
     const worlds = dynamic.bodies.map((body) => `<div class="m-service-row"><span><b>${esc(body.name)}</b><small>${Object.values(body.structures).reduce((sum, tier) => sum + tier, 0)} structure tiers</small></span><div><button type="button" data-mobile-act="open-build" data-system="${esc(systemId)}" data-body="${body.id}">Structures</button>${(body.structures.shipyard ?? 0) > 0 ? `<button type="button" data-mobile-act="open-shipyard" data-system="${esc(systemId)}" data-body="${body.id}">Ships</button>` : ""}</div></div>`).join("");
     return `<section class="m-section m-section--first"><h3>Queue</h3>${queue || `<div class="m-muted">Nothing under construction.</div>`}</section>` +
       `<section class="m-section"><h3>Build by world</h3>${worlds}</section>` +
@@ -697,7 +767,7 @@ export class MobileParitySurfaces {
 
   private planetInfrastructure(systemId: string, dynamic: SystemStateView, body: BodyView): string {
     const pools = bodyPoolUsage(body, dynamic);
-    const queue = dynamic.builds.filter((job) => job.body_id === body.id).map((job) => `<div class="m-order"><b>${esc(buildOption(job.key)?.label ?? human(job.key))}</b><span>${fmtEta(Math.max(0, job.complete_time - liveSimTime()))}</span></div>`).join("");
+    const queue = dynamic.builds.filter((job) => job.body_id === body.id).map((job) => `<div class="m-order"><b>${esc(buildOption(job.key)?.label ?? human(job.key))}</b><span>${job.queued ? "Queued" : job.complete_time == null ? "Paused · needs workforce" : `Building · ${fmtEta(Math.max(0, job.complete_time - liveSimTime()))}`}</span></div>`).join("");
     const modules = (body.structures.armaments_complex ?? 0) > 0 ? `<section class="m-section"><h3>Module forge</h3>${MODULES.map((module) => {
       const recipe = buildOption(`module:${module.kind}`);
       const have = constructionStock(dynamic).available;
@@ -771,7 +841,7 @@ export class MobileParitySurfaces {
     if (this.selectedHull && !options.some((candidate) => candidate.key === this.selectedHull)) this.selectedHull = "";
     const rows = options.map((candidate) => {
       const state = shipOption(candidate, dynamic);
-      return `<button type="button" class="m-build-row${candidate.key === this.selectedHull ? " is-active" : ""}" data-mobile-act="ship-select" data-kind="${candidate.key}"><span><b>${esc(candidate.label)}</b><small>${SHIP_YARD[candidate.key]?.yard ? human(SHIP_YARD[candidate.key].yard) : "yard"} · ${fmtEta(candidate.build_secs)}</small></span><em>${state.buildable ? `max ${state.maxAff}` : esc(state.reason)}</em></button>`;
+      return `<button type="button" class="m-build-row${candidate.key === this.selectedHull ? " is-active" : ""}" data-mobile-act="ship-select" data-kind="${candidate.key}"><span><b>${esc(candidate.label)}</b><small>${SHIP_YARD[candidate.key]?.yard ? human(SHIP_YARD[candidate.key].yard) : "yard"} · ${state.buildRate > 0 ? fmtEta(candidate.build_secs * (state.yardBody?.ship_build_time_mult ?? 1) / state.buildRate) : "needs workforce"}</small></span><em>${state.buildable ? `max ${state.maxAff}` : esc(state.reason)}</em></button>`;
     }).join("");
     const selected = options.find((candidate) => candidate.key === this.selectedHull);
     const detail = selected ? this.shipDetail(systemId, dynamic, body, selected) : `<div class="m-empty">Choose a hull to inspect its recipe, fitting and batch controls.</div>`;
@@ -872,7 +942,7 @@ export class MobileParitySurfaces {
   private saveDoctrine(): void {
     const doctrine = { ...this.ctx.state.doctrine } as FleetDoctrine;
     for (const field of DOCTRINE_FIELDS) (doctrine as unknown as Record<string, string>)[field.key] = element<HTMLSelectElement>(`m-doctrine-${field.key}`)?.value ?? doctrine[field.key];
-    this.ctx.send({ type: "SetFleetDoctrine", doctrine });
+    this.ctx.intent.beginFleetCommand({ type: "SetFleetDoctrine", doctrine });
   }
 
   private rememberSignature(entry: SheetEntry): void {
@@ -892,7 +962,7 @@ export class MobileParitySurfaces {
       case "officers":
         return sheetFingerprint([clock, state.captains, state.captainCapacity, state.systems, state.ghosts.filter((fleet) => fleet.own)]);
       case "operations":
-        return sheetFingerprint([clock, this.operationTab, state.midgameStage, state.operations, state.ghosts.filter((fleet) => fleet.own)]);
+        return sheetFingerprint([clock, this.operationTab, this.handoffContract, state.midgameStage, state.operations, state.ghosts.filter((fleet) => fleet.own), state.founding, state.systems, state.research]);
       case "syndicate":
         return sheetFingerprint([clock, state.syndicate, state.syndicateInvites, state.diplomacy, state.systems, state.ghosts.filter((fleet) => fleet.own)]);
       case "faction":

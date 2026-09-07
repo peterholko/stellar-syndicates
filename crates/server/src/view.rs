@@ -37,14 +37,14 @@ use sim::{
 
 use crate::protocol::{
     AnchorView, BattleFidelity, BattleRecordHeader, BattleRecordView, BlockadeStateView,
-    BuildStateView, CargoView, CompCount, DepositView, GhostView, GroundFidelity,
+    BuildStateView, BuildWorkView, CargoView, CompCount, DepositView, GhostView, GroundFidelity,
     GroundRecordHeader, GroundRoundView, GroundStateView, IntelView, JumpDepartureView,
     LoadoutStack, ManifestEntryView, RecordCount, RoundNoteView, RoundRecordView, SideRecordView,
     StockSlot, SystemStateView,
 };
 
 /// One recorded true state of a ship at a sim time.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct Sample {
     time: f64,
     pos: Vec2,
@@ -109,10 +109,48 @@ impl Sample {
     }
 }
 
+/// Discrete onboard facts stamped at emission, never at view assembly. Identity,
+/// hull damage, cargo and orders must travel with the position they describe.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+struct FleetFacts {
+    owner: PlayerId,
+    owner_name: String,
+    captain_id: Option<u32>,
+    captain_name: Option<String>,
+    captain_portrait: Option<sim::CaptainPortrait>,
+    composition: BTreeMap<ShipKind, u32>,
+    flagship: ShipKind,
+    broadcasts: bool,
+    projects_sensor: bool,
+    sensor_mult: f64,
+    max_speed: f64,
+    count_class: CountClass,
+    damage_frac: f64,
+    job: Option<crate::protocol::JobView>,
+    cargo: Vec<Cargo>,
+    passengers: BTreeMap<sim::SpecialistKind, u32>,
+    loadouts: BTreeMap<ShipKind, BTreeMap<String, u32>>,
+    modules: BTreeMap<sim::ModuleKind, u32>,
+    route: Option<Vec<Vec2>>,
+    ships: Vec<sim::ship::Ship>,
+    marines: u32,
+    posture: sim::EngagementPosture,
+    transit: sim::ship::TransitMode,
+    engage_freight: Option<bool>,
+    garrison_host: Option<EntityId>,
+    garrison_fed: bool,
+    supplied: bool,
+    rescue_inbound: bool,
+    survey_progress: Option<f64>,
+    freight_run: Option<sim::tca::FreightRun>,
+}
+
 /// Position history + current metadata for one FLEET. Fleet-derived scalars
 /// (flagship, broadcast, sensor source, cap speed, size bucket) are snapshotted
 /// at record time so the view filter never needs the live sim `Fleet`.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Track {
+    facts: VecDeque<(f64, FleetFacts)>,
     owner: PlayerId,
     /// Public corporation label captured with the visible fleet identity. A
     /// departure scar may outlive the ghost it came from, so the label belongs
@@ -227,12 +265,20 @@ pub struct NodeEffects<'a> {
 /// Everything the fleet filter learned for one viewer on this wavefront. Jump
 /// departures are kept separate from live ghosts because they are history, not
 /// a claim that a hull still occupies the observed origin.
+impl Track {
+    fn facts_at(&self, emitted: f64) -> Option<&FleetFacts> {
+        let end = self.facts.partition_point(|(at, _)| *at <= emitted + 1e-9);
+        end.checked_sub(1).map(|i| &self.facts[i].1)
+    }
+}
+
 pub struct FleetPicture {
     pub ghosts: Vec<GhostView>,
     pub jump_departures: Vec<JumpDepartureView>,
 }
 
 /// The view filter's state: every moving object's recent true-position history.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct PositionHistory {
     tracks: HashMap<EntityId, Track>,
     /// How many seconds of history to retain. Must exceed the largest possible
@@ -249,10 +295,13 @@ pub struct PositionHistory {
     /// Mutable serving state is viewer-local, never part of the shared track.
     /// `RefCell` preserves the read-only view API while allowing a view to move
     /// only its own light frontier forward.
+    // Preserve already-served light and the pending arrival brackets across a
+    // checkpoint. Reconstructing a fresh cursor could regress the known picture.
+    #[serde(default, with = "frontier_checkpoint")]
     frontiers: RefCell<FrontierCache>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 enum FrontierPath {
     /// The full per-view composite used for fog and detection.
     Composite,
@@ -261,14 +310,14 @@ enum FrontierPath {
     DirectOwn,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 struct FrontierKey {
     viewer: PlayerId,
     track: EntityId,
     path: FrontierPath,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct ArrivedSample {
     sample: Sample,
     arrival: f64,
@@ -276,7 +325,7 @@ struct ArrivedSample {
 
 /// A report that has been emitted but has not yet reached this viewer. Its
 /// straight warp-light arrival is priced exactly once.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct ScheduledCopy {
     sample: Sample,
     arrival: f64,
@@ -288,7 +337,7 @@ impl ScheduledCopy {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct PendingArrival(ScheduledCopy);
 
 impl PartialEq for PendingArrival {
@@ -315,7 +364,7 @@ impl Ord for PendingArrival {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct FrontierCursor {
     last_now: f64,
     /// Latest-emission discrete sample known to have arrived. The interpolated
@@ -337,9 +386,24 @@ struct FrontierCursor {
     endpoint: Option<(Vec2, f64)>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct FrontierCache {
     cursors: HashMap<FrontierKey, FrontierCursor>,
+}
+
+// Structured keys are encoded as pairs, including in legacy JSON snapshots.
+mod frontier_checkpoint {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    pub fn serialize<S: serde::Serializer>(value: &RefCell<FrontierCache>, serializer: S) -> Result<S::Ok, S::Error> {
+        value.borrow().cursors.iter().collect::<Vec<_>>().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<RefCell<FrontierCache>, D::Error> {
+        let pairs = Vec::<(FrontierKey, FrontierCursor)>::deserialize(deserializer)?;
+        Ok(RefCell::new(FrontierCache { cursors: pairs.into_iter().collect() }))
+    }
 }
 
 /// The complete player-known kinematic picture used to aim an outbound order.
@@ -387,6 +451,7 @@ impl PositionHistory {
             let track = match self.tracks.entry(*id) {
                 std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
                 std::collections::hash_map::Entry::Vacant(entry) => entry.insert(Track {
+                    facts: VecDeque::new(),
                     owner: ship.owner,
                     owner_name: owner_name(ship.owner),
                     captain_id: None,
@@ -524,6 +589,50 @@ impl PositionHistory {
             track.loadouts = ship.loadouts.clone();
             track.modules = ship.modules.clone();
             track.route = route_of(&ship.order);
+            let facts = FleetFacts {
+                owner: track.owner.clone(),
+                owner_name: track.owner_name.clone(),
+                captain_id: track.captain_id.clone(),
+                captain_name: track.captain_name.clone(),
+                captain_portrait: track.captain_portrait.clone(),
+                composition: track.composition.clone(),
+                flagship: track.flagship.clone(),
+                broadcasts: track.broadcasts.clone(),
+                projects_sensor: track.projects_sensor.clone(),
+                sensor_mult: track.sensor_mult.clone(),
+                max_speed: track.max_speed.clone(),
+                count_class: track.count_class.clone(),
+                damage_frac: track.damage_frac.clone(),
+                job: track.job.clone(),
+                cargo: track.cargo.clone(),
+                passengers: track.passengers.clone(),
+                loadouts: track.loadouts.clone(),
+                modules: track.modules.clone(),
+                route: track.route.clone(),
+                ships: ship.ships.clone(),
+                marines: ship.marines(),
+                posture: ship.posture,
+                transit: ship.transit,
+                engage_freight: matches!(ship.order, FleetOrder::Blockade { .. })
+                    .then_some(ship.engage_freight),
+                garrison_host: world.garrison_host_of(*id),
+                garrison_fed: ship.garrison_fed,
+                supplied: ship.supplied,
+                rescue_inbound: world.fuel_rescues.values()
+                    .any(|run| run.customer == *id),
+                survey_progress: match ship.order {
+                    FleetOrder::Survey { dwell_since: Some(since), .. } =>
+                        Some(((now - since) / sim::explore::SURVEY_SECS).clamp(0.0, 1.0)),
+                    _ => None,
+                },
+                freight_run: world.freight_runs.get(id).cloned(),
+            };
+            if track.facts.back().is_none_or(|(_, previous)| *previous != facts) {
+                track.facts.push_back((now, facts));
+            }
+            while track.facts.len() > 1 && track.facts[1].0 < now - self.horizon {
+                track.facts.pop_front();
+            }
             // `record` runs after the world step: on the jump tick the previous
             // sample's time is exactly `last_jump`, while this report is the
             // first one at the landing. The equality is therefore intentional.
@@ -672,7 +781,7 @@ impl PositionHistory {
         let mut frontiers = self.frontiers.borrow_mut();
         let cursors = &mut frontiers.cursors;
         for (id, track) in &self.tracks {
-            if track.owner != viewer || !track.projects_sensor {
+            if track.owner != viewer {
                 continue;
             }
             let cursor = cursors
@@ -683,6 +792,11 @@ impl PositionHistory {
                 })
                 .or_default();
             if let Some(s) = serve_track_cached(track, cc, c, now, cursor, true) {
+                let emitted = if s.jump_presumed {
+                    cursor.confirmed.map_or(s.time, |r| r.sample.time)
+                } else { s.time };
+                let Some(facts) = track.facts_at(emitted) else { continue; };
+                if !facts.projects_sensor { continue; }
                 let coverage_pos = if s.jump_presumed {
                     cursor
                         .confirmed
@@ -693,7 +807,7 @@ impl PositionHistory {
                 coverage.push((
                     coverage_pos,
                     self.sensor_range
-                        * track.sensor_mult
+                        * facts.sensor_mult
                         * sim::nebula::sensor_factor_at(&self.nebulas, coverage_pos),
                 ));
             }
@@ -747,6 +861,7 @@ impl PositionHistory {
         // Pass 1: retarded ghost for every observable ship, and gather the
         // viewer's sensor coverage (command center + their own ships' ghosts).
         struct Pre<'a> {
+            facts: &'a FleetFacts,
             id: EntityId,
             owner: PlayerId,
             owner_name: &'a str,
@@ -819,7 +934,11 @@ impl PositionHistory {
             else {
                 continue; // dark — no light from this object has arrived yet
             };
-            if track.owner == viewer && track.projects_sensor {
+            let fact_time = if sample.jump_presumed {
+                cursor.confirmed.map_or(sample.time, |r| r.sample.time)
+            } else { sample.time };
+            let Some(facts) = track.facts_at(fact_time) else { continue; };
+            if facts.owner == viewer && facts.projects_sensor {
                 // A Raider-bearing fleet projects its mobile bubble. A scout
                 // aboard preserves the existing range multiplier. A presumed
                 // destination is only a map bookmark, so coverage stays on the
@@ -834,7 +953,7 @@ impl PositionHistory {
                 coverage.push((
                     coverage_pos,
                     self.sensor_range
-                        * track.sensor_mult
+                        * facts.sensor_mult
                         * sim::nebula::sensor_factor_at(&self.nebulas, coverage_pos),
                 ));
             }
@@ -846,17 +965,18 @@ impl PositionHistory {
                 && !track.broadcasts
                 && self.detected_at_retarded_time(viewer, cc, sample.pos, sample.time, arrays);
             pre.push(Pre {
+                facts,
                 id: *id,
-                owner: track.owner,
-                owner_name: &track.owner_name,
-                captain_name: &track.captain_name,
-                captain_id: track.captain_id,
-                captain_portrait: track.captain_portrait,
-                flagship: track.flagship,
-                broadcasts: track.broadcasts,
-                max_speed: track.max_speed,
-                count_class: track.count_class,
-                damage_frac: track.damage_frac,
+                owner: facts.owner,
+                owner_name: &facts.owner_name,
+                captain_name: &facts.captain_name,
+                captain_id: facts.captain_id,
+                captain_portrait: facts.captain_portrait,
+                flagship: facts.flagship,
+                broadcasts: facts.broadcasts,
+                max_speed: facts.max_speed,
+                count_class: facts.count_class,
+                damage_frac: facts.damage_frac,
                 fuel: track
                     .bunkers
                     .iter()
@@ -881,7 +1001,7 @@ impl PositionHistory {
                     .rev()
                     .find(|(emitted, _)| *emitted <= sample.time + 1e-9)
                     .and_then(|(_, dock)| *dock),
-                job: track.job,
+                job: facts.job,
                 path: track
                     .plans
                     .iter()
@@ -895,13 +1015,13 @@ impl PositionHistory {
                     .rev()
                     .find(|(t, _)| *t <= sample.time)
                     .and_then(|(_, target)| *target),
-                composition: &track.composition,
-                loadouts: &track.loadouts,
+                composition: &facts.composition,
+                loadouts: &facts.loadouts,
                 sample,
-                cargo: &track.cargo,
-                passengers: &track.passengers,
-                modules: &track.modules,
-                route: &track.route,
+                cargo: &facts.cargo,
+                passengers: &facts.passengers,
+                modules: &facts.modules,
+                route: &facts.route,
                 destroyed_detected,
                 migrant: track.migrant,
                 rescue_service: track.rescue_service,
@@ -1129,7 +1249,7 @@ impl PositionHistory {
                 fuel: own.then_some(p.fuel),
                 fuel_capacity: own.then_some(p.fuel_capacity),
                 stalled: own && p.stalled,
-                rescue_inbound: false,
+                rescue_inbound: own && p.facts.rescue_inbound,
                 rescue_service: p.rescue_service,
                 id: p.id,
                 owner: p.owner,
@@ -1170,20 +1290,20 @@ impl PositionHistory {
                 signature: if p.broadcasts { None } else { Some(signature) },
                 // OWNER-ONLY per-fleet posture is filled in by the game loop from the
                 // authoritative fleet (this history-only view can't see it); None here.
-                posture: None,
+                posture: own.then_some(p.facts.posture),
                 // §explore: OWNER-ONLY survey progress — injected by the game loop.
-                survey_progress: None,
+                survey_progress: own.then_some(p.facts.survey_progress).flatten(),
                 // §syndicates: ally tint (Part 1) + garrison status (Part 3) are
                 // injected by the game loop from authoritative state (this
                 // history-only view can't see them).
                 ally: false,
-                garrison_host: None,
-                garrison_fed: false,
+                garrison_host: own.then_some(p.facts.garrison_host).flatten(),
+                garrison_fed: own && p.facts.garrison_fed,
                 // §upkeep: OWNER-ONLY supply state — injected by the game loop
                 // from authoritative fleet state (this history-only view can't
                 // see it). Defaults to supplied, so a rival's ghost never carries
                 // a hint about whether you can feed your navy.
-                supplied: true,
+                supplied: !own || p.facts.supplied,
                 // §pirates: the neutral faction flag — this history-only view keys
                 // off the recorded owner, filled by the game loop.
                 pirate: p.owner.is_pirate(),
@@ -1192,10 +1312,11 @@ impl PositionHistory {
                 // can't see runs); `revealed` is the Tier-2 gate it needs.
                 tca: p.owner.is_tca(),
                 migrant: p.migrant,
-                manifest: Vec::new(),
+                manifest: p.facts.freight_run.as_ref()
+                    .map(|run| visible_manifest(run, viewer, detected)).unwrap_or_default(),
                 revealed: detected,
-                engage_freight: None,
-                transit: None,
+                engage_freight: own.then_some(p.facts.engage_freight).flatten(),
+                transit: own.then_some(p.facts.transit),
             });
         }
         // Deterministic ordering by id.
@@ -1235,6 +1356,18 @@ impl PositionHistory {
         })
     }
 
+    pub fn own_hulls_at(&self, viewer: PlayerId, fleet: EntityId, emitted: f64)
+        -> Option<&[sim::ship::Ship]>
+    {
+        let facts = self.tracks.get(&fleet)?.facts_at(emitted)?;
+        (facts.owner == viewer).then_some(facts.ships.as_slice())
+    }
+
+    pub fn own_marines_at(&self, viewer: PlayerId, fleet: EntityId, emitted: f64) -> u32 {
+        self.tracks.get(&fleet).and_then(|t| t.facts_at(emitted))
+            .filter(|f| f.owner == viewer).map_or(0, |f| f.marines)
+    }
+
     /// Was a (destroyed) raider's ghost — observed at retarded position `ghost_pos`,
     /// whose light left at sim-time `t_r` — inside the viewer's sensor coverage *at
     /// that same retarded time*? This reconstructs coverage from the viewer's own
@@ -1258,9 +1391,7 @@ impl PositionHistory {
         {
             return true;
         }
-        // Standing sensor arrays are fixed assets too (near-permanent
-        // infrastructure — treated as present in any retarded frame; a
-        // deliberate simplification vs. tracking per-array build times).
+        // Only arrived infrastructure reports are supplied by the caller.
         if arrays.iter().any(|(p, r)| {
             ghost_pos.distance(*p)
                 <= *r * sim::nebula::sensor_factor_at(&self.nebulas, *p) * target
@@ -1268,7 +1399,8 @@ impl PositionHistory {
             return true;
         }
         for track in self.tracks.values() {
-            if track.owner != viewer || !track.projects_sensor {
+            let Some(facts) = track.facts_at(t_r) else { continue; };
+            if facts.owner != viewer || !facts.projects_sensor {
                 continue; // mobile coverage comes only from the viewer's Raiders
             }
             // An asset can't have provided coverage after its own observed death.
@@ -1280,7 +1412,7 @@ impl PositionHistory {
             if let Some(s) = sample_at(&track.samples, t_r)
                 && s.pos.distance(ghost_pos)
                     <= self.sensor_range
-                        * track.sensor_mult
+                        * facts.sensor_mult
                         * sim::nebula::sensor_factor_at(&self.nebulas, s.pos)
                         * target
             {
@@ -1351,6 +1483,9 @@ pub struct AllyIntel<'a> {
 // A per-player view filter legitimately takes many light-cone inputs; bundling
 // them into a struct would only move the noise. (11 args.)
 #[allow(clippy::too_many_arguments)]
+/// Privacy projection of ARRIVED site reports. The production caller must use
+/// InformationHistory::systems_for and its matching build jobs, never World
+/// truth. Ownership permits private fields; it does not waive their travel time.
 pub fn filter_systems(
     systems: &[StarSystem],
     viewer: PlayerId,
@@ -1402,11 +1537,28 @@ pub fn filter_systems(
                     .iter()
                     .filter(|j| j.system == sys.id && j.owner == viewer)
                     .collect();
-                jobs.sort_by_key(|j| j.complete_tick);
+                // Waiting jobs have no deadline; tie-break by receipt id so
+                // their FIFO order survives snapshot/collection rearrangement.
+                jobs.sort_by_key(|j| (j.complete_tick, j.id));
                 jobs.into_iter()
                     .map(|j| BuildStateView {
                         key: build_key(j.what).to_string(),
-                        complete_time: now + (j.complete_tick.saturating_sub(tick)) as f64 * dt,
+                        // Both clocks come from the SAME arrived site report's
+                        // job, never the live queue or current workforce bonuses.
+                        start_time: j
+                            .started_tick
+                            .map(|started| now + (started as f64 - tick as f64) * dt),
+                        // A reported job can still be on the way back after its
+                        // estimated finish. Preserve that absolute estimate;
+                        // clock expiry is not evidence of completed construction.
+                        complete_time: (j.complete_tick != u64::MAX)
+                            .then(|| now + (j.complete_tick as f64 - tick as f64) * dt),
+                        queued: j.is_queued_structure(),
+                        work: j.work().filter(|_| j.started_tick.is_some() || j.queued_tick.is_some()).map(|work| BuildWorkView {
+                            fraction: work.completed / work.required,
+                            per_second: work.rate / (work.required * dt),
+                            at_time: now + (work.at_tick as f64 - tick as f64) * dt,
+                        }),
                         body_id: j.body_id,
                     })
                     .collect()
@@ -1426,11 +1578,8 @@ pub fn filter_systems(
                             && matches!(j.what, sim::BuildKind::Upgrade { .. })
                     })
                     .count() as u32;
-            // BLOCKADE (§contestable-territory Part 1), fog-safe: surfaced to the
-            // two participants only. The BESIEGER sees it via their on-station
-            // fleet (no delay); the OWNER learns it once the onset light reaches
-            // their command center (`since + dist/c`), matching the timeline
-            // notice. Third parties get None (they see the fight via `battles`).
+            // Both participants read the arrived blockade report. Being the
+            // besieger does not waive the history gate applied by the caller.
             let blockade = sys.blockade.and_then(|b| {
                 let by_me = b.by == viewer;
                 let owner_sees = own && now >= b.since + sim::transit::delay(sys.pos, cc, c);
@@ -1441,12 +1590,8 @@ pub fn filter_systems(
                     siege_since: b.siege_since,
                 })
             });
-            // §ground: what a landing here would have to beat. Same two-viewer
-            // rule as the blockade, for the same reason — but NOT light-gated:
-            // the owner is reading their own building, and the besieger is
-            // reading it through a fleet parked in the system. Third parties get
-            // None (a rival's garrison strength is private intel, exactly like
-            // their defense platform).
+            // Ground strength comes from the same arrived site snapshot, with
+            // the same participant-only disclosure as the blockade.
             let ground = {
                 let besieging = sys.blockade.is_some_and(|b| b.by == viewer);
                 (own || besieging).then(|| GroundStateView {
@@ -2412,12 +2557,14 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
 /// **light-delayed** from the hub (§9). The Exchange ticker is a lightspeed
 /// broadcast; far from the hub you read an old copy. Mirrors [`PositionHistory`]
 /// but for the (single, shared) hub.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct MarketTickerSample {
     pub prices: BTreeMap<Commodity, f64>,
     pub available_buy: BTreeMap<Commodity, u32>,
     pub available_sell: BTreeMap<Commodity, u32>,
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct PriceHistory {
     samples: VecDeque<(f64, MarketTickerSample)>,
     horizon: f64,
@@ -2449,27 +2596,16 @@ impl PriceHistory {
                     .collect(),
             },
         ));
-        while let Some((t, _)) = self.samples.front() {
-            if now - t > self.horizon {
-                self.samples.pop_front();
-            } else {
-                break;
-            }
+        while self.samples.len() > 1 && self.samples[1].0 < now - self.horizon {
+            self.samples.pop_front();
         }
     }
 
     /// The hub prices as of `target` sim-time (the latest sample whose time is
-    /// `≤ target`). Falls back to the oldest sample if `target` predates history.
+    /// `≤ target`). No report predating history exists; never backdate fresh truth.
     pub fn at(&self, target: f64) -> Option<&MarketTickerSample> {
-        let mut best: Option<&MarketTickerSample> = None;
-        for (t, sample) in &self.samples {
-            if *t <= target {
-                best = Some(sample);
-            } else {
-                break;
-            }
-        }
-        best.or_else(|| self.samples.front().map(|(_, sample)| sample))
+        let end = self.samples.partition_point(|(at, _)| *at <= target);
+        end.checked_sub(1).map(|i| &self.samples[i].1)
     }
 }
 
@@ -2710,16 +2846,128 @@ fn latest_observable_cached(
 /// coverage in a destroyed raider's retarded frame (`detected_at_retarded_time`).
 fn sample_at(samples: &VecDeque<Sample>, t_r: f64) -> Option<Sample> {
     let newer = samples.partition_point(|sample| sample.time <= t_r);
-    if newer == 0 {
-        samples.front().copied()
-    } else {
-        samples.get(newer - 1).copied()
-    }
+    newer.checked_sub(1).and_then(|i| samples.get(i).copied())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paused_ship_work_is_owner_only_and_comes_from_the_supplied_report() {
+        let mut world = World::new(sim::SimConfig::for_players(123, 4));
+        let owner = PlayerId(701);
+        world.step(&[sim::Command::AddPlayer { id: owner, name: "Yard reports".into() }]);
+        let system = world.systems.iter().find(|s| s.owner == Some(owner)).unwrap().clone();
+        let job = sim::BuildJob {
+            id: 1, owner, system: system.id, body_id: system.bodies[0].id,
+            what: sim::BuildKind::Ship { ship: ShipKind::Convoy },
+            started_tick: Some(0), complete_tick: u64::MAX,
+            queued_tick: None, structure_work: None,
+            ship_work: Some(sim::build::BuildWork { required: 360.0, completed: 90.0, at_tick: 72, rate: 0.0 }),
+            join: None, loadout: Default::default(),
+        };
+        let serve = |viewer, jobs: &[sim::BuildJob]| filter_systems(std::slice::from_ref(&system),
+            viewer, system.pos, world.config.c, 10.0, jobs, 300, sim::DT,
+            &BTreeMap::new(), &[], &BTreeSet::new());
+        let known = serve(owner, std::slice::from_ref(&job));
+        let build = &known[0].builds[0];
+        assert_eq!(build.complete_time, None);
+        assert_eq!(build.work.as_ref().unwrap().fraction, 0.25);
+        assert_eq!(build.work.as_ref().unwrap().per_second, 0.0);
+        assert!((build.work.as_ref().unwrap().at_time - 2.4).abs() < 1e-9);
+        let json = serde_json::to_value(build).unwrap();
+        assert!(json["complete_time"].is_null());
+        assert!(serve(PlayerId(702), std::slice::from_ref(&job))[0].builds.is_empty());
+        // Even if live work resumes, serving the old report must remain paused.
+        let mut live = job.clone();
+        live.ship_work.as_mut().unwrap().set_rate(300, 1.25);
+        live.complete_tick = live.ship_work.as_ref().unwrap().completion_tick().unwrap();
+        assert!(serve(owner, &[live])[0].builds[0].complete_time.is_some());
+        assert!(serve(owner, &[job])[0].builds[0].complete_time.is_none());
+    }
+
+    #[test]
+    fn structure_queue_status_and_order_come_only_from_the_arrived_jobs() {
+        use sim::build::{BuildWork, StructureKind as K};
+        let mut world = World::new(sim::SimConfig::for_players(123, 4));
+        let owner = PlayerId(703);
+        world.step(&[sim::Command::AddPlayer { id: owner, name: "Queued reports".into() }]);
+        let system = world.systems.iter().find(|s| s.owner == Some(owner)).unwrap().clone();
+        let active = sim::BuildJob {
+            id: 10, owner, system: system.id, body_id: system.bodies[0].id,
+            what: sim::BuildKind::Upgrade { upgrade: K::Shipyard },
+            queued_tick: Some(0), started_tick: Some(0), complete_tick: 600,
+            ship_work: None,
+            structure_work: Some(BuildWork { required: 600.0, completed: 0.0, at_tick: 0, rate: 1.0 }),
+            join: None, loadout: Default::default(),
+        };
+        let mut mine = active.clone();
+        mine.id = 11;
+        mine.what = sim::BuildKind::Upgrade { upgrade: K::MiningComplex };
+        mine.started_tick = None;
+        mine.complete_tick = u64::MAX;
+        mine.structure_work.as_mut().unwrap().rate = 0.0;
+        let mut store = mine.clone();
+        store.id = 12;
+        store.what = sim::BuildKind::Upgrade { upgrade: K::OrbitalWarehouse };
+        // Far past the old active job's ETA: no client-side clock may activate a waiter.
+        let serve = |jobs: &[sim::BuildJob]| filter_systems(std::slice::from_ref(&system),
+            owner, system.pos, world.config.c, 100.0, jobs, 3000, sim::DT,
+            &BTreeMap::new(), &[], &BTreeSet::new());
+        let served = serve(&[store, active, mine.clone()]);
+        let builds = &served[0].builds;
+        assert_eq!(builds.iter().map(|j| j.key.as_str()).collect::<Vec<_>>(),
+            vec!["shipyard", "mining_complex", "orbital_warehouse"]);
+        assert!(!builds[0].queued);
+        for waiting in &builds[1..] {
+            assert!(waiting.queued);
+            assert!(waiting.start_time.is_none());
+            assert!(waiting.complete_time.is_none());
+            assert_eq!(waiting.work.as_ref().unwrap().fraction, 0.0);
+            assert_eq!(waiting.work.as_ref().unwrap().per_second, 0.0);
+        }
+        mine.started_tick = Some(600);
+        mine.structure_work.as_mut().unwrap().set_rate(600, 1.0);
+        mine.complete_tick = 1200;
+        let fresh = serve(&[mine]);
+        assert!(!fresh[0].builds[0].queued);
+        assert!((fresh[0].builds[0].start_time.unwrap() - 20.0).abs() < 1e-9);
+    }
+
+    /// Static fixture facts exist from the first recorded emission, just like
+    /// record(World) stamps real onboard facts. Tests which change a fact later
+    /// must append a new emission instead of silently changing the whole past.
+    fn record_fixture_facts(track: &mut Track) {
+        let facts = FleetFacts {
+            owner: track.owner.clone(),
+            owner_name: track.owner_name.clone(),
+            captain_id: track.captain_id.clone(),
+            captain_name: track.captain_name.clone(),
+            captain_portrait: track.captain_portrait.clone(),
+            composition: track.composition.clone(),
+            flagship: track.flagship.clone(),
+            broadcasts: track.broadcasts.clone(),
+            projects_sensor: track.projects_sensor.clone(),
+            sensor_mult: track.sensor_mult.clone(),
+            max_speed: track.max_speed.clone(),
+            count_class: track.count_class.clone(),
+            damage_frac: track.damage_frac.clone(),
+            job: track.job.clone(),
+            cargo: track.cargo.clone(),
+            passengers: track.passengers.clone(),
+            loadouts: track.loadouts.clone(),
+            modules: track.modules.clone(),
+            route: track.route.clone(),
+            ships: Vec::new(), marines: 0,
+            posture: sim::EngagementPosture::Passive,
+            transit: sim::ship::TransitMode::Full,
+            engage_freight: None, garrison_host: None, garrison_fed: false,
+            supplied: true, rescue_inbound: false, survey_progress: None,
+            freight_run: None,
+        };
+        track.facts = VecDeque::from([(track.samples.front().map_or(0.0, |s| s.time), facts)]);
+    }
 
     /// Preserve the older tests' convention that their local `c` is the
     /// effective signal speed while production supplies the physical constant.
@@ -2764,7 +3012,8 @@ mod tests {
         };
         let mut composition = BTreeMap::new();
         composition.insert(kind, 1u32);
-        Track {
+        let mut track = Track {
+            facts: VecDeque::new(),
             owner,
             owner_name: owner.to_string(),
             captain_id: None,
@@ -2793,7 +3042,9 @@ mod tests {
             gone: None,
             migrant: false,
             rescue_service: false,
-        }
+        };
+        record_fixture_facts(&mut track);
+        track
     }
 
     fn at(id: u64, x: f64, y: f64, owner: PlayerId, kind: ShipKind) -> (EntityId, Track) {
@@ -2875,6 +3126,7 @@ mod tests {
         track.captain_id = Some(0);
         track.captain_name = Some("Mara Venn".to_string());
         track.captain_portrait = Some(sim::CaptainPortrait::MaraVenn);
+        record_fixture_facts(&mut track);
         let history = history_with(track);
 
         let before = history.view_for(owner, Vec2::ZERO, df(400.0), 5.5);
@@ -3553,7 +3805,10 @@ mod tests {
                 what: sim::BuildKind::Ship {
                     ship: sim::ShipKind::Convoy,
                 },
+                started_tick: Some(12),
+                queued_tick: None, structure_work: None,
                 complete_tick: 300,
+                ship_work: None,
                 join: None,
                 loadout: Default::default(),
             },
@@ -3565,7 +3820,10 @@ mod tests {
                 what: sim::BuildKind::Ship {
                     ship: sim::ShipKind::Raider,
                 },
+                started_tick: Some(0),
+                queued_tick: None, structure_work: None,
                 complete_tick: 300,
+                ship_work: None,
                 join: None,
                 loadout: Default::default(),
             },
@@ -3579,7 +3837,10 @@ mod tests {
                 what: sim::BuildKind::Ship {
                     ship: sim::ShipKind::Scout,
                 },
+                started_tick: None, // legacy save: ETA is known, duration is not
+                queued_tick: None, structure_work: None,
                 complete_tick: 200,
+                ship_work: None,
                 join: None,
                 loadout: Default::default(),
             },
@@ -3612,6 +3873,14 @@ mod tests {
         assert_eq!(v10[0].builds.len(), 2, "owner sees their whole build QUEUE");
         assert_eq!(v10[0].builds[0].key, "scout", "queue is completion-ordered");
         assert_eq!(v10[0].builds[1].key, "convoy");
+        let convoy = &v10[0].builds[1];
+        assert_eq!(convoy.start_time, Some(10.0 + 12.0 * sim::DT));
+        assert!((convoy.complete_time.unwrap() - convoy.start_time.unwrap() - 9.6).abs() < 1e-9);
+        assert_eq!(v10[0].builds[0].start_time, None, "legacy start stays unknown");
+        // JSON and named MessagePack omit unknown metadata, not a guessed start.
+        let wire = serde_json::to_value(&v10[0].builds).unwrap();
+        assert_eq!(wire[1]["start_time"], convoy.start_time.unwrap());
+        assert!(wire[0].get("start_time").is_none());
         assert_eq!(
             v10[0].build.as_ref().unwrap().key,
             "scout",
@@ -4877,6 +5146,7 @@ mod tests {
             kind: crate::protocol::JobKind::Building,
             progress: 0.4,
         });
+        record_fixture_facts(&mut track);
         let hist = history_with(track);
 
         let g_own = &hist.view_for(owner, cc, df(c), 50.0)[0];
@@ -4978,6 +5248,7 @@ mod tests {
             commodity: sim::Commodity::Alloys,
             units: 40,
         });
+        record_fixture_facts(&mut convoy);
         let hist = history_of(vec![(id, convoy)], 1000.0);
         // Command center 200 su from the convoy → inside the 1000 su sensor range.
         let view = hist.view_for(VIEWER, Vec2::new(4800.0, 0.0), df(300.0), 60.0);
@@ -5007,6 +5278,7 @@ mod tests {
             track
                 .passengers
                 .insert(sim::SpecialistKind::NavalArchitect, 3);
+            record_fixture_facts(&mut track);
             history_of(vec![(id, track)], 1000.0)
         };
         // 5000 su out, viewer at 300 su sensor range → OUT of coverage.
@@ -5430,7 +5702,8 @@ mod tests {
             f.composition.insert(*k, *n);
             composition.insert(*k, *n);
         }
-        Track {
+        let mut track = Track {
+            facts: VecDeque::new(),
             owner,
             owner_name: owner.to_string(),
             captain_id: None,
@@ -5459,7 +5732,9 @@ mod tests {
             gone: None,
             migrant: false,
             rescue_service: false,
-        }
+        };
+        record_fixture_facts(&mut track);
+        track
     }
 
     /// §roster LEAK CHECK: a fleet's DAMAGE rides the composition gate. A far
@@ -5480,6 +5755,7 @@ mod tests {
             let mut t = fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp);
             // 0.30 of the formation's total hull is missing, spread unevenly.
             t.damage_frac = 0.30;
+            record_fixture_facts(&mut t);
             t
         };
 
@@ -6435,7 +6711,7 @@ mod tests {
                 }
                 counts
             });
-            record.flush_step(tick, state.keyframe(out.deaths), counts);
+            record.flush_step(tick, state.step_keyframe(out), counts);
             let health = state.hp_writeback().into_iter().map(|(fleet, ship, hp)| ((fleet, ship), hp)).collect::<BTreeMap<_, _>>();
             for roster in [&mut attackers, &mut defenders] {
                 roster.retain_mut(|(fleet, ship)| {
@@ -6481,6 +6757,12 @@ mod tests {
                     let participant = spec.own_side.is_some();
                     let rounds = record_rounds_range(&cold[&id], sent, spec.arrived_len, participant);
                     assert!(rounds.iter().all(|round| round.tick as f64 * sim::DT + delay <= now));
+                    if participant {
+                        for frame in rounds.iter().filter_map(|round| round.frame.as_ref()) {
+                            assert!(frame.gunfire.is_some(), "resolved shots share the arrived round, including after archive restoration");
+                            assert!(frame.ships.iter().all(|ship| ship.cid.is_some()));
+                        }
+                    }
                     if !participant { assert!(rounds.iter().all(|round| round.frame.is_none() && round.dealt.is_none())); }
                     if now < 90.0 + delay {
                         assert!(rounds.iter().flat_map(|round| &round.notes).all(|note| note.kind != "joined"));
@@ -6501,7 +6783,10 @@ mod tests {
                     sent = spec.arrived_len;
                 }
                 let packet = crate::protocol::ServerMsg::BattleRecords { updates, removed: Vec::new() };
-                assert_public(&serde_json::to_value(packet).unwrap());
+                let binary = crate::wire::encode_server(&packet).unwrap();
+                let delivered: serde_json::Value = rmp_serde::from_slice(&binary[4..]).unwrap();
+                assert_eq!(delivered, serde_json::to_value(packet).unwrap());
+                assert_public(&delivered);
             }
             let at_join = battle_record_views(&cold, viewer, cc, c, 90.0 + delay, &coverage);
             assert!(at_join[0].rounds.last().unwrap().notes.iter().any(|note| note.kind == "joined"));

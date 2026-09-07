@@ -273,10 +273,10 @@ export function resolveMapClick(
 
   const battleAtClick = renderer.battlePick(sx, sy);
   if (battleAtClick !== null) {
-    // §replay-marker: one marker family — a hit is either a RUNNING engagement
-    // or a CONCLUDED record (same id space); both open the battle view.
+    // One engagement-id marker family, including the reliable-record handoff
+    // while its ending is still arriving separately from the latest View.
     const battle = state.battles.find((candidate) => candidate.id === battleAtClick);
-    const record = battle ? undefined : state.battleRecords.find((candidate) => candidate.id === battleAtClick && candidate.outcome !== null);
+    const record = battle ? undefined : state.battleRecords.find((candidate) => candidate.id === battleAtClick);
     if (battle) {
       const point = renderer.worldToScreen(battle.pos);
       cands.push({
@@ -291,9 +291,9 @@ export function resolveMapClick(
       cands.push({
         key: `battle:${record.id}`,
         sortD: Math.hypot(point.x - sx, point.y - sy),
-        label: "concluded battle",
+        label: record.outcome !== null ? "concluded battle" : "battle report arriving",
         target: { type: "ongoingBattle", id: record.id },
-        readout: `<b>Battle concluded</b> — open the recorded replay.`,
+        readout: record.outcome !== null ? `<b>Battle concluded</b> — open the recorded replay.` : `<b>Battle report arriving</b> — open the arrived combat picture.`,
       });
     }
   }

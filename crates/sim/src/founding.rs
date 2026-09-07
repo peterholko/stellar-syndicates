@@ -37,15 +37,14 @@ pub const PRIVATEER_ROUTE_OFFSET_SU: f64 = 25_000.0;
 /// A limping tutorial Raider: barely faster than a Convoy, less than half the
 /// starting Interceptor's speed. Ordinary enclave pirates remain untouched.
 pub const PRIVATEER_SPEED_MULT: f64 = 0.45;
-/// The tutorial privateer begins damaged, but has enough hull to make the
-/// Interceptor's first battle readable instead of disappearing on the opening
-/// hit. Ordinary enclave pirates remain full-health and are unaffected.
-pub const PRIVATEER_HULL_FRAC: f64 = 0.50;
+/// Start undamaged so players see combat take the privateer from full hull
+/// to destruction. Tutorial safety comes from weak weapons, not missing HP.
+/// Ordinary enclave pirates are unaffected.
+pub const PRIVATEER_HULL_FRAC: f64 = 1.0;
 /// Its improvised weapons are deliberately weak. A caught Freighter therefore
 /// takes damage over time instead of being erased by the ordinary raid burst,
-/// leaving a real relief window for the player's Interceptor. Combined with the
-/// larger damaged-hull fraction above, this spreads the tutorial threat over a
-/// much longer exchange rather than increasing its lethality.
+/// leaving a real relief window for the player's Interceptor. Full starting
+/// hull gives it staying power without increasing its damage per hit.
 pub const PRIVATEER_DAMAGE_MULT: f64 = 0.05;
 
 /// Three legible opening choices surfaced by the guide. They remain ordinary

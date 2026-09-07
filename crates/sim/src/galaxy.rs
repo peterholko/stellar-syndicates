@@ -19,7 +19,7 @@ use crate::rng::Rng;
 /// Stellar Charters' "deposits on bodies", simplified to hang directly off the
 /// system — no planet/body hierarchy yet). A claimed system's deposits produce
 /// their `resource` continuously into the system's stockpile.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Deposit {
     /// A commodity that already trades on the hub Exchange.
     pub resource: Commodity,
@@ -43,7 +43,7 @@ fn default_true_sys() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StarSystem {
     pub id: EntityId,
     pub pos: Vec2,
@@ -197,7 +197,7 @@ pub struct StarSystem {
 /// The live BLOCKADE at a system (§contestable-territory). Recomputed each tick
 /// from fleet presence; persisted so an unbroken blockade's clocks survive a
 /// snapshot. `siege_since` is populated in Part 2 (siege→capture).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Blockade {
     /// The blockading corporation (the badge / capture attribution; there may be
     /// several on-station fleets — this is the earliest-arrived owner).

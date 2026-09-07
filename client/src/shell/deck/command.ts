@@ -1,6 +1,7 @@
-import { fmtDur } from "../../core/derive/format";
+import { fmtDur, operationTitle } from "../../core/derive/format";
 import { foundingHomeSystemId } from "../../core/derive/geo";
 import { nextDecisionLabel } from "../../core/derive/orders";
+import { postVictoryHandoff } from "../../core/derive/handoff";
 import { icon, label } from "../../icons";
 import type { BodyView, FoundingStage, FoundingView, GhostView, SystemInfo, SystemStateView } from "../../protocol";
 import { renderDeferred, setHtml } from "../dom";
@@ -8,6 +9,7 @@ import { sheetFingerprint } from "../signature";
 import type { CoreContext } from "../types";
 import type { DeckInboxItem } from "./log";
 import type { DeckRoute } from "./router";
+import { handoffHtml, handleHandoffAction } from "./handoff";
 
 const FOUNDING_MINIMIZED_KEY = "stellar-syndicates:founding-guide-minimized";
 const FOUNDING_STEP: Record<FoundingStage, number> = {
@@ -58,6 +60,7 @@ export class DeckCommandRoutes {
       Math.floor(this.ctx.state.simTime), this.ctx.state.founding, this.ctx.state.systems,
       this.ctx.state.battles, this.ctx.state.operations, this.ctx.state.timeline.slice(-8),
       this.ctx.state.midgameStage,
+      this.ctx.state.ghosts, this.ctx.state.research,
     ]);
     if (!force && signature === this.signature) return true;
     if (renderDeferred(this.workspaceRoot.id, () => this.render(route, true))) return true;
@@ -69,6 +72,7 @@ export class DeckCommandRoutes {
 
   handleWorkspaceAction(button: HTMLButtonElement, route: DeckRoute | null): boolean {
     if (route?.name !== "command") return false;
+    if (handleHandoffAction(button, this.ctx, { go: this.hooks.go, openWorld: this.hooks.openWorld, selectFleet: this.hooks.focusFleet })) return true;
     if (button.dataset.deckAct === "command-operations") {
       this.hooks.go({ name: "operations" });
       return true;
@@ -91,6 +95,7 @@ export class DeckCommandRoutes {
 
   handleFoundingAction(button: HTMLButtonElement): boolean {
     const action = button.dataset.deckAct;
+    if (action === "handoff-details") { this.hooks.go({ name: "operations" }); return true; }
     if (action === "founding-toggle") {
       this.minimized = !this.minimized;
       try { localStorage.setItem(FOUNDING_MINIMIZED_KEY, this.minimized ? "1" : "0"); } catch { /* session-only */ }
@@ -133,7 +138,7 @@ export class DeckCommandRoutes {
     const signature = sheetFingerprint([Math.floor(this.ctx.state.simTime), founding, this.minimized, this.ctx.state.systems, this.ctx.state.ghosts]);
     if (!force && signature === this.foundingSignature) return;
     this.foundingSignature = signature;
-    if (!founding || (founding.stage === "complete" && !founding.protected)) {
+    if (!founding || (founding.stage === "complete" && !founding.protected && !postVictoryHandoff().some(g => !g.done))) {
       this.foundingRoot.hidden = true;
       return;
     }
@@ -145,7 +150,7 @@ export class DeckCommandRoutes {
     const expanded = !this.minimized;
     setHtml(this.foundingRoot,
       `<header><span>Founding ${FOUNDING_STEP[founding.stage]}/12</span><em>${esc(shield)}</em><button type="button" data-deck-act="founding-toggle" aria-expanded="${expanded}" aria-label="${expanded ? "Minimize" : "Expand"} founding guide">${expanded ? "−" : "+"}</button></header>` +
-      `<div class="deck-founding__body"><b>${esc(content.title)}</b><p>${esc(content.copy)}</p>${prospects}<button type="button" class="is-primary" data-deck-act="founding-action" data-action="${esc(content.action)}" ${disabled ? "disabled" : ""}>${esc(content.label)}</button></div>`);
+      `<div class="deck-founding__body"><b>${esc(content.title)}</b><p>${esc(content.copy)}</p>${prospects}<button type="button" class="is-primary" data-deck-act="founding-action" data-action="${esc(content.action)}" ${disabled ? "disabled" : ""}>${esc(content.label)}</button>${founding.bounty_received && founding.stage !== "complete" ? `<button type="button" data-deck-act="handoff-details">Next objectives &amp; rewards</button>` : ""}</div>`);
     this.foundingRoot.classList.toggle("is-minimized", this.minimized);
     this.foundingRoot.hidden = false;
   }
@@ -153,9 +158,9 @@ export class DeckCommandRoutes {
   private commandHtml(): string {
     const founding = this.ctx.state.founding;
     const step = founding ? FOUNDING_STEP[founding.stage] : 0;
-    const foundingCard = founding
+    const foundingCard = (founding
       ? `<article class="deck-command-progress"><header><span>Founding programme</span><b>${step}/12</b></header><div><i style="width:${(step / 12 * 100).toFixed(1)}%"></i></div><p>${founding.stage === "complete" ? "Founding complete. Ordinary expansion and trade clocks now apply." : this.foundingContent(founding).title}</p></article>`
-      : "";
+      : "") + handoffHtml(true);
     const decisions = this.decisions.length
       ? this.decisions.map((decision, index) => `<article class="deck-decision is-${decision.tone === "negative" ? "bad" : decision.tone}"><span>${icon(decision.icon, "md")}</span><div><b>${esc(decision.headline)}</b><p>${esc(decision.stakes ?? "Served information needs your attention.")}</p></div>${decision.actions.length ? `<button type="button" data-deck-act="command-decision" data-index="${index}">${esc((decision.actions.find((action) => action.primary) ?? decision.actions[0]).label)}</button>` : ""}</article>`).join("")
       : `<div class="deck-command-clear">${icon("success", "md")}<span><b>Command picture clear</b><small>${esc(nextDecisionLabel())}</small></span></div>`;
@@ -177,19 +182,19 @@ export class DeckCommandRoutes {
       build_mine: mineBody
         ? { title: mineStaffed ? "Mining Complex staffed" : "Assign workforce to Mining Complex I", copy: mineStaffed ? `${mineBody.name} is producing Metallic Ore.` : "An unstaffed mine produces no ore.", action: "mine", label: `Open ${mineBody.name}` }
         : { title: "Build Mining Complex I", copy: "Establish the ore line for the opening export.", action: "build-mine", label: "Build Mining Complex I" },
-      build_convoy: { title: "Build your first Freighter", copy: "Use the remaining local founding kit at the Shipyard.", action: "build-convoy", label: "Build Freighter" },
+      build_convoy: { title: "Build your first Freighter", copy: "Assign workforce to the Shipyard, then build a Freighter.", action: "build-convoy", label: "Build Freighter" },
       export_production: { title: "Dispatch the opening export", copy: "Load Provisions and Metallic Ore, then send the Freighter.", action: "convoy", label: "Select Freighter" },
       defeat_privateer: { title: "Guard the Freighter", copy: "Intercept the Rogue Privateer before it reaches the civilian hull.", action: "privateer", label: "Select Rogue Privateer" },
       complete_export: { title: "Complete the guarded export", copy: "Deliver and sell both opening goods at the Market Hub.", action: "convoy", label: "Select Freighter" },
       build_academy: academyBody
         ? { title: academyStaffed ? "Academy staffed" : "Assign workforce to Academy I", copy: academyStaffed ? "Its first research report is reaching command." : "An unstaffed Academy produces no research.", action: "academy", label: `Open ${academyBody.name}` }
-        : { title: "Establish Academy I", copy: "Acquire the required goods, then build and staff an Academy.", action: "market", label: "Open Market" },
+        : { title: "Establish Academy I", copy: "Build and staff an Academy for your first research programme.", action: "build-academy", label: "Build Academy" },
       first_research: { title: "Choose your first programme", copy: "Complete any Tier I programme.", action: "research", label: "Open Research" },
-      build_scout: { title: "Build a Scout", copy: "Prepare the exploration hull for the next chapter.", action: "market", label: "Open Market" },
+      build_scout: { title: "Build a Scout", copy: "Survey both prospects to earn your Colony Ship kit.", action: "build-scout", label: "Build Scout" },
       survey_candidates: { title: "Compare two expansion prospects", copy: "Survey both assigned systems and wait for each report.", action: "scout", label: "Select Scout" },
-      build_colony: { title: "Build your first Colony Ship", copy: "Choose a prospect and assemble its settlement hull.", action: "market", label: "Open Market" },
+      build_colony: { title: "Build your first Colony Ship", copy: "Your kit is in the Market Warehouse. Haul it home to build.", action: "build-colony", label: "Build Colony Ship" },
       establish_colony: { title: "Establish your second holding", copy: "Send the Colony Ship to the prospect that fits your strategy.", action: "colony", label: "Select Colony Ship" },
-      complete: { title: "Founding complete", copy: "Research, trade and expansion now run on their ordinary clocks.", action: "command", label: "Open Command" },
+      complete: { title: "Founding complete", copy: "Choose your next objective or a paying contract.", action: "operations", label: "Choose next objective" },
     };
     return content[founding.stage];
   }
@@ -204,19 +209,24 @@ export class DeckCommandRoutes {
     } else if (action === "build-mine" && homeId && home && system) {
       const body = bestMineBody(home);
       if (body) this.openBuild(system, body, "structures", "mining_complex");
+    } else if (action === "build-academy" && home && system) {
+      const body = [...home.bodies].sort((a, b) => (b.infrastructure_slots ?? 0) - (a.infrastructure_slots ?? 0))[0];
+      if (body) this.openBuild(system, body, "structures", "academy");
     } else if ((action === "mine" || action === "academy") && homeId && home && system) {
       const structure = action === "mine" ? "mining_complex" : "academy";
       const body = home.bodies.find((entry) => (entry.structures[structure] ?? 0) > 0);
       if (body) this.openWorld(system, body);
-    } else if (action === "build-convoy" && homeId && home && system) {
+    } else if (["build-convoy", "build-scout", "build-colony"].includes(action) && homeId && home && system) {
       const body = home.bodies.find((entry) => (entry.structures.shipyard ?? 0) > 0) ?? bestShipyardBody(home);
-      if (body) this.openBuild(system, body, "ships", "convoy");
+      if (body) this.openBuild(system, body, "ships", action.slice("build-".length));
     } else if (action === "market") {
       this.hooks.go({ name: "market" });
     } else if (action === "research") {
       this.hooks.go({ name: "research" });
     } else if (action === "command") {
       this.hooks.go({ name: "command" });
+    } else if (action === "operations") {
+      this.hooks.go({ name: "operations" });
     } else if (action === "privateer" && founding.privateer) {
       this.hooks.focusFleet(founding.privateer);
     } else if (action === "convoy" || action === "scout" || action === "colony") {
@@ -226,8 +236,8 @@ export class DeckCommandRoutes {
   }
 
   private foundingActionAvailable(action: string, founding: FoundingView): boolean {
-    if (["market", "research", "command"].includes(action)) return true;
-    if (["build-shipyard", "build-mine", "build-convoy", "mine", "academy"].includes(action)) return !!foundingHomeSystemId();
+    if (["market", "research", "command", "operations"].includes(action)) return true;
+    if (["build-shipyard", "build-mine", "build-academy", "build-convoy", "build-scout", "build-colony", "mine", "academy"].includes(action)) return !!foundingHomeSystemId();
     if (action === "privateer") return !!founding.privateer && this.ctx.state.ghosts.some((entry) => entry.id === founding.privateer);
     return action === "convoy" || action === "scout" || action === "colony" ? !!this.fleetOfKind(action) : true;
   }
@@ -295,10 +305,6 @@ function bestMineBody(system: SystemStateView): BodyView | undefined {
     const br = b.deposits?.filter((entry) => entry.resource === "metallic_ore").reduce((sum, entry) => sum + entry.richness, 0) ?? 0;
     return br - ar || (b.resource_slots ?? 0) - (a.resource_slots ?? 0) || a.id - b.id;
   })[0];
-}
-
-function operationTitle(operation: { kind: { kind: string } }): string {
-  return label(operation.kind.kind);
 }
 
 function esc(value: string): string {

@@ -1,3 +1,5 @@
+import { gameSocket, encodeMessage, decodeMessage } from "./game-socket.mjs";
+
 // M4 checkpoint smoke test (no deps — Node 18+ global WebSocket).
 //
 // Verifies the raiding loop end to end: player A commits a raider to intercept
@@ -15,17 +17,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 function client(name) {
-  const ws = new WebSocket(URL);
+  const ws = gameSocket(URL);
   const got = { welcome: null, views: [], reports: [], errors: [] };
-  ws.addEventListener("open", () => ws.send(JSON.stringify({ type: "Join", name })));
+  ws.addEventListener("open", () => ws.send(encodeMessage({ type: "Join", name })));
   ws.addEventListener("message", (ev) => {
-    const m = JSON.parse(ev.data);
+    const m = decodeMessage(ev.data);
     if (m.type === "Welcome") got.welcome = m;
     else if (m.type === "View") got.views.push(m);
     else if (m.type === "Report") got.reports.push(m.report);
     else if (m.type === "Error") got.errors.push(m.message);
   });
-  return { ws, got, send: (o) => ws.send(JSON.stringify(o)) };
+  return { ws, got, send: (o) => ws.send(encodeMessage(o)) };
 }
 
 const main = async () => {

@@ -434,6 +434,8 @@
 
 .m-action-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .m-action-grid--top { margin-bottom: 11px; }
+.m-action-grid .battle-withdraw-confirm { grid-column: 1 / -1; display: grid; gap: 8px; padding: 9px; border: 1px solid var(--warn); border-radius: 9px; color: var(--warn); font-size: 12px; }
+.m-action-grid .battle-withdraw-confirm > div { display: flex; flex-wrap: wrap; gap: 7px; }
 .m-action-grid button,
 .m-primary,
 .m-service-row button,
@@ -842,6 +844,10 @@ button.m-primary, .m-action-grid button.m-primary, .m-decision button.m-primary,
 }
 .m-join button:disabled { opacity: .55; }
 .m-join__error { min-height: 17px; margin-top: 7px; color: var(--warn); font-size: 11px; }
+.m-join__card { max-height: calc(100dvh - 32px); overflow-y: auto; }
+.m-join [data-register-field][hidden] { display: none; }
+.m-join [data-account-toggle] { margin-top: 8px; background: transparent; color: var(--accent); }
+.m-join small { display: block; margin-bottom: 12px; color: var(--dim); }
 
 @media (max-width: 360px) {
   .m-tabs button > small { font-size: 10px; }

@@ -1,4 +1,5 @@
 import "./styles/tokens.css";
+import { accounts } from "./auth";
 
 import { updateSignals } from "./core/derive/orders";
 import * as intent from "./core/intent";
@@ -35,6 +36,12 @@ function present(events: Parameters<Shell["onCore"]>[0]): void {
 
 let net!: Net;
 net = new Net({
+  beforeConnect: async () => {
+    const account = await accounts.session();
+    if (!account) return false;
+    state.name = account.corporation_name;
+    return true;
+  },
   onOpen: () => {
     present(applyLinkStatus(state.playerId === null ? "connecting" : "reconnecting", state));
     if (state.name) net.join(state.name);
@@ -137,6 +144,12 @@ async function boot(): Promise<void> {
   await renderer.init(appRoot);
   await selectShell();
   requestAnimationFrame(frame);
+  try {
+    // Resume with the HttpOnly session, never a saved corporation-name login.
+    if (await accounts.session()) net.connect();
+  } catch {
+    present([{ kind: "JoinRejected", message: "Account service unavailable. Please try again shortly." }]);
+  }
 }
 
 void boot();

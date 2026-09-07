@@ -27,6 +27,7 @@ const JOURNAL_CAP: usize = 40;
 /// Drop a not-yet-observable entry whose light somehow never lands (bounded mem).
 const MAX_PENDING_AGE: f64 = 1800.0;
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Pending {
     player: PlayerId,
     /// Sim-time at which this becomes observable to `player` (light-arrival).
@@ -36,7 +37,7 @@ struct Pending {
     promoted: bool,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Timeline {
     pending: Vec<Pending>,
     journal: BTreeMap<PlayerId, VecDeque<TimelineEntry>>,
@@ -54,6 +55,7 @@ impl Timeline {
     pub fn ingest(&mut self, events: &[Event], world: &World) {
         // Every notice rides its own straight warp-light wavefront.
         for e in events {
+            let first_notice = self.pending.len();
             match &e.payload {
                 EventPayload::JumpFailed {
                     owner,
@@ -95,7 +97,7 @@ impl Timeline {
                         else {
                             continue;
                         };
-                        let origin = crate::game_loop::trade_report_origin(world, te);
+                        let origin = e.origin.unwrap_or_else(|| crate::game_loop::trade_report_origin(world, te));
                         let observe = e.time + sim::transit::delay(origin, cc, world.config.c);
                         self.push(player, observe, sev, text);
                     }
@@ -282,12 +284,13 @@ impl Timeline {
                         }
                     }
                 }
-                // Construction is your own private administration (§step1) — owner-only,
-                // observable instantly; the finished ship reveals as a light-gated ghost.
+                // Queue/start notices are private site news. The common physical-
+                // origin gate below applies the return delay, including activation.
                 EventPayload::BuildStarted {
                     owner,
                     system,
                     what,
+                    complete_tick,
                     ..
                 } => {
                     let name = system_name(world, *system);
@@ -295,7 +298,13 @@ impl Timeline {
                         *owner,
                         e.time,
                         TimelineSeverity::Good,
-                        format!("Construction started at {name}: {}.", build_label(*what)),
+                        if *complete_tick == u64::MAX && matches!(what, sim::BuildKind::Upgrade { .. }) {
+                            format!("Construction queued at {name}: {}.", build_label(*what))
+                        } else if *complete_tick == u64::MAX {
+                            format!("Construction queued at {name}: {} · awaiting workforce.", build_label(*what))
+                        } else {
+                            format!("Construction started at {name}: {}.", build_label(*what))
+                        },
                     );
                 }
                 // §plunder: a held blockade stripped goods off a colony. BOTH
@@ -1046,29 +1055,9 @@ impl Timeline {
                         format!("AAA callout refused — {why}."),
                     );
                 }
-                // §order-lifecycle (OWNER-ONLY). "Delivered" is the player's own
-                // command data (they computed delivery at issue), shown on their
-                // own clock at delivery, with the response countdown. A returning
-                // dark fleet responds at the comm-circle edge; other orders keep
-                // the confirming-light fallback.
-                EventPayload::OrderDelivered {
-                    owner,
-                    fleet,
-                    kind,
-                    echo_at,
-                } => {
-                    let name = fleet_label(world, *fleet);
-                    let wait = fmt_wait(echo_at - e.time);
-                    self.push(
-                        *owner,
-                        e.time,
-                        TimelineSeverity::Info,
-                        format!(
-                            "Order delivered to {name} — {} underway (response ~{wait}).",
-                            kind.label()
-                        ),
-                    );
-                }
+                // Execution is an internal event. Only served compliance light
+                // can turn an order estimate into a confirmed notification.
+                EventPayload::OrderDelivered { .. } => {}
                 EventPayload::OrderConfirmed {
                     owner,
                     fleet,
@@ -1218,6 +1207,18 @@ impl Timeline {
                     self.push(*recipient, *arrive_at, severity, text);
                 }
                 _ => {}
+            }
+            // Owner-only controls privacy, not propagation. This final gate is
+            // shared by every timeline branch, including attackers' own news
+            // and receiver-side refusals. Pre-priced arrival notices keep their
+            // existing clocks; a local desk has zero travel distance.
+            if let Some(origin) = e.physical_origin(world) {
+                for notice in &mut self.pending[first_notice..] {
+                    if let Some(corp) = world.players.get(&notice.player) {
+                        notice.observe_time = notice.observe_time.max(e.time
+                            + sim::transit::delay(origin, corp.command_center, world.config.c));
+                    }
+                }
             }
         }
     }
@@ -1906,9 +1907,9 @@ mod tests {
         );
         tl.ingest(&[ev], &w);
 
-        // Immediately: the owner knows; the rival does not yet.
+        // Ownership is permission, not a zero-delay communications channel.
         tl.promote(w.time);
-        assert_eq!(tl.journal_len(a), 1, "owner learns instantly");
+        assert_eq!(tl.journal_len(a), 0, "the owner's claim report is also in flight");
         assert_eq!(tl.journal_len(b), 0, "rival's light hasn't arrived");
 
         // After the light delay: the rival now sees it (light-respecting awareness).
@@ -1916,6 +1917,8 @@ mod tests {
         assert_eq!(tl.journal_len(b), 1, "rival learns after the light arrives");
         let (entries, _) = tl.digest(b);
         assert!(entries[0].text.contains("rival claimed"));
+        tl.promote(w.time + sim::transit::delay(pos, w.players[&a].command_center, w.config.c) + 0.01);
+        assert_eq!(tl.journal_len(a), 1, "the owner learns when its own report arrives");
     }
 
     #[test]

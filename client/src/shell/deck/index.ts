@@ -1,4 +1,5 @@
 import "../../styles/deck.css";
+import { bindAccountForm } from "../account";
 
 import { bindFleetNet, guardCapable as guardCapableForKey, jumpCapable as jumpCapableForKey, shipKindLabel } from "../../core/derive/fleet";
 import { bindMarketDerive, reservedMarketCredits, spendableMarketCredits } from "../../core/derive/market";
@@ -126,9 +127,16 @@ class DeckShell implements Shell {
     });
     this.strategic = new DeckStrategicRoutes(byId("deck-workspace-body"), ctx, {
       go: (route) => this.router?.go(route),
+      openWorld: (systemId, bodyId) => this.openWorldPanel(systemId, bodyId),
       back: () => this.router?.back(),
       notice: (html) => this.setStatus(html),
       openBattleViewer: (id) => this.theaters?.openBattle(id),
+      selectFleets: (ids) => {
+        if (!ids.length) return;
+        this.map?.focusFleet(ids[0]);
+        for (const id of ids) ctx.state.selectedShipIds.add(id);
+        ctx.renderer.stateVersion++;
+      },
     });
     this.theaters = new DeckTheaters(
       byId("deck-battle-theater"),
@@ -152,10 +160,7 @@ class DeckShell implements Shell {
       (id) => this.theaters?.openGround(id),
       (id) => this.theaters?.enterBattle(id),
     );
-    byId<HTMLFormElement>("deck-join-form").addEventListener("submit", (event) => {
-      event.preventDefault();
-      this.join();
-    }, { signal });
+    bindAccountForm("deck", ctx, signal);
     byId("deck-nav").addEventListener("click", (event) => {
       const action = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
       if (action?.dataset.deckAct === "nav-more") {
@@ -208,7 +213,7 @@ class DeckShell implements Shell {
         if (event.type === "change" && target instanceof HTMLInputElement && target.type !== "checkbox") return;
         if (this.fleet?.handleInput(target, this.router?.current ?? null)) return;
         if (this.market?.handleInput(target, this.router?.current ?? null)) return;
-        if (target instanceof HTMLInputElement && this.strategic?.handleInput(target, this.router?.current ?? null)) return;
+        if (this.strategic?.handleInput(target, this.router?.current ?? null)) return;
         this.policy?.handleInput(target, this.router?.current ?? null);
       }
     };
@@ -263,7 +268,7 @@ class DeckShell implements Shell {
     this.syncSessionVisibility();
     this.renderChrome(true);
     if (ctx.state.playerId !== null) this.openRoute("command");
-    else requestAnimationFrame(() => byId<HTMLInputElement>("deck-name").focus());
+    else requestAnimationFrame(() => byId<HTMLInputElement>("deck-login")?.focus());
   }
 
   onCore(events: CoreEvent[]): void {
@@ -276,7 +281,7 @@ class DeckShell implements Shell {
         this.syncSessionVisibility();
         this.openRoute("command");
       } else if (event.kind === "SessionReplaced") {
-        byId("deck-join-error").textContent = "Signed out: this corporation was opened in another browser.";
+        byId("deck-join-error").textContent = "Session ended. Please sign in again.";
         byId<HTMLButtonElement>("deck-join-button").disabled = false;
         this.syncSessionVisibility();
       } else if (event.kind === "JoinRejected") {
@@ -288,8 +293,9 @@ class DeckShell implements Shell {
       } else if (event.kind === "ProtocolMismatch") {
         console.warn(`protocol mismatch: server v${event.server}, client expects v${event.client}`);
       }
-      if (event.kind === "IntentChanged" && event.readout) {
-        this.setStatus(event.readout);
+      if (event.kind === "IntentChanged" && event.readout !== undefined) {
+        if (event.readout) this.setStatus(event.readout);
+        else this.strip?.clearStatus();
       } else if (event.kind === "OrderConfirmed") {
         const fleet = this.ctx?.state.ghosts.find((entry) => entry.id === event.shipId);
         this.setStatus(`<b>Order received</b> · ${escapeHtml(humanize(event.orderKind))}${fleet ? ` · ${escapeHtml(shipKindLabel(fleet.kind))}` : ""}`);
@@ -378,21 +384,6 @@ class DeckShell implements Shell {
     this.activeCrumbs = [];
   }
 
-  private join(): void {
-    if (!this.ctx) return;
-    const name = byId<HTMLInputElement>("deck-name").value.trim();
-    if (!name) {
-      byId("deck-join-error").textContent = "Enter a corporation name.";
-      return;
-    }
-    byId("deck-join-error").textContent = "";
-    byId<HTMLButtonElement>("deck-join-button").disabled = true;
-    this.ctx.state.name = name;
-    if (this.ctx.net.connected) this.ctx.net.join(name);
-    else this.ctx.net.connect();
-    this.renderChrome(true);
-  }
-
   private openRoute(name: DeckRouteName): void {
     this.setNavOverflow(false);
     this.router?.go({ name });
@@ -408,6 +399,7 @@ class DeckShell implements Shell {
     const overlayOpen = this.overlayOpen();
     if (key === "Enter" && this.ctx.state.pendingIntent && !overlayOpen) {
       event.preventDefault();
+      if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
       this.ctx.intent.confirmPendingIntent();
       this.strip?.render(true);
       return;
@@ -649,6 +641,8 @@ class DeckShell implements Shell {
       return this.ctx.state.galaxy?.systems.find((system) => system.id === id)?.pos ?? null;
     }
     if (route.name === "battle" && route.params?.id) {
+      if (route.params.report === "battle") return this.ctx.state.battleReports.find((report) => String(report.id) === route.params!.id)?.pos ?? null;
+      if (route.params.report === "capture") return this.ctx.state.captureReports.find((report) => String(report.id) === route.params!.id)?.pos ?? null;
       return this.ctx.state.battles.find((battle) => battle.id === route.params!.id)?.pos
         ?? this.ctx.state.battleRecords.find((record) => record.id === route.params!.id)?.pos
         ?? null;
@@ -789,7 +783,7 @@ class DeckShell implements Shell {
     if (!ready) {
       this.workspace?.close();
       const connecting = this.ctx.state.link === "connecting" || this.ctx.state.link === "reconnecting";
-      byId<HTMLButtonElement>("deck-join-button").disabled = connecting && !!this.ctx.state.name;
+      byId<HTMLButtonElement>("deck-join-button").disabled = byId("deck-join-form").dataset.busy === "true" || (connecting && !!this.ctx.state.name);
     }
   }
 

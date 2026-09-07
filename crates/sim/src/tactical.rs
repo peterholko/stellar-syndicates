@@ -1,15 +1,44 @@
 //! Versioned tactical combat and private deterministic battle recordings.
 //!
-//! The live game currently uses v1. Keep old engines and their frozen tables
-//! when introducing v2: a replay's version selects its original rules, not the
+//! New battles use v3 independent Interceptor maneuvers. Keep old movement and tables:
+//! a saved battle's version selects its original rules, not the
 //! newest balance. The server alone reconstructs archives; seeds/state are
 //! never part of the player protocol.
 
 pub mod replay;
 mod rules_v1;
 mod v1;
+mod v2;
+mod v3;
 
 pub use v1::*;
+pub use v3::{project_distribution, simulate_engagement};
+
+/// Captured once at battle open. Missing in pre-v2 saves means v1, including
+/// an already-running fight; loading a save must never rebalance its replay.
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Rules {
+    #[default]
+    V1,
+    V2,
+    /// One private, frozen maneuver seed per engagement, not per frame or viewer.
+    V3 { maneuver_seed: u64 },
+}
+
+impl Rules {
+    fn is_v1(&self) -> bool { *self == Self::V1 }
+}
+
+impl TacticalState {
+    pub fn rules_version(&self) -> u32 {
+        match self.rules {
+            Rules::V1 => 1,
+            Rules::V2 => 2,
+            Rules::V3 { .. } => 3,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

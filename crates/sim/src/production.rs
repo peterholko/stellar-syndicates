@@ -231,11 +231,13 @@ pub fn food_factor(kind: StructureKind, state: crate::colony::FoodState) -> f64 
 
 // --- SHIPYARD ---------------------------------------------------------------------
 
-/// The Shipyard-boost coefficient: ship jobs enqueue at
-/// `build_ticks / (1 + SHIPYARD_BOOST · staffing · skill)` — 25% faster fully
-/// crewed. Locked in when the job starts (deterministic — no mid-flight
-/// retiming when crews move); structure upgrades are unaffected. Tunable.
+/// Shipyard speed bonus while staffed. Zero effective workforce means NO work;
+/// changing assignments changes the remaining work's rate, not completed work.
 pub const SHIPYARD_BOOST: f64 = 0.25;
+
+pub fn shipyard_work_rate(staffing: f64, skill: f64) -> f64 {
+    if staffing <= 0.0 { 0.0 } else { 1.0 + SHIPYARD_BOOST * staffing * skill }
+}
 
 #[cfg(test)]
 mod tests {

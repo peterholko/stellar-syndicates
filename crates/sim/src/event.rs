@@ -90,6 +90,10 @@ impl OrderKind {
 pub struct Event {
     /// Simulation time (seconds) at which this event occurred.
     pub time: f64,
+    /// Frozen at execution, especially for receiver-side refusals. A later
+    /// lookup of a moving (or destroyed) fleet cannot price this news correctly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<crate::Vec2>,
     pub payload: EventPayload,
 }
 
@@ -168,6 +172,14 @@ pub enum EventPayload {
     /// each learns the SAME outcome only when its light reaches their command
     /// center, so they may learn it at different times.
     RaidResolved {
+        /// Exact replay/engagement identity. None for a no-contact escape or
+        /// legacy event; never infer identity from a reused battle position.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        battle_id: Option<EntityId>,
+        /// Frozen results for [attacker, defender]. Never broadcast both: the
+        /// report scheduler releases only the recipient's own side, delayed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        aftermath: Option<[crate::combat::aftermath::BattleAftermath; 2]>,
         attacker: PlayerId,
         defender: PlayerId,
         attacker_ship: EntityId,
@@ -232,8 +244,8 @@ pub enum EventPayload {
     },
 
     /// Construction began at an owned system: a recipe was deducted and a build job
-    /// enqueued (§step1 growth sink). Owner-only news (the spend is private; the
-    /// finished ship reveals as a normal light-gated ghost).
+    /// enqueued (§step1 growth sink), or a waiting structure begins its turn.
+    /// Owner-only site news; u64::MAX means queued/paused, not a completion ETA.
     BuildStarted {
         id: u64,
         owner: PlayerId,
@@ -949,6 +961,23 @@ pub enum DivertAction {
 }
 
 impl TradeEvent {
+    /// Physical receipt origin, shared by accounts, biography and notifications.
+    pub fn physical_origin(&self, world: &crate::World) -> crate::Vec2 {
+        match *self {
+            Self::Delivered { system: Some(id), .. }
+            | Self::SupplyDiverted { system: id, .. }
+            | Self::StorageOverflow { system: id, .. }
+            | Self::AutoDispatched { source: id, .. }
+            | Self::Loaded { system: Some(id), .. }
+            | Self::Unloaded { system: Some(id), .. } =>
+                world.systems.iter().find(|s| s.id == id).map_or(world.hub, |s| s.pos),
+            Self::FreightMoved { system, stage: FreightStage::CollectedForPickup
+                | FreightStage::DeliveredToSystem, .. } =>
+                world.systems.iter().find(|s| s.id == system).map_or(world.hub, |s| s.pos),
+            _ => world.hub,
+        }
+    }
+
     /// The corporation this news is for.
     pub fn player(&self) -> PlayerId {
         match self {
@@ -1141,7 +1170,51 @@ pub enum JumpFailReason {
 }
 
 impl Event {
+    pub fn at_origin(mut self, pos: crate::Vec2) -> Self {
+        self.origin = Some(pos);
+        self
+    }
+
     pub fn new(time: f64, payload: EventPayload) -> Self {
-        Event { time, payload }
+        Event { time, origin: None, payload }
+    }
+
+    pub fn physical_origin(&self, world: &crate::World) -> Option<crate::Vec2> {
+        use EventPayload::*;
+        if self.origin.is_some() { return self.origin; }
+        match &self.payload {
+            Trade(trade) => Some(trade.physical_origin(world)),
+            RaidResolved { pos, .. } | SystemClaimed { pos, .. }
+            | ShipDestroyed { pos, .. } | EmplacementDestroyed { pos, .. }
+            | FlagshipDestroyed { pos, .. } | ColonyHeld { pos, .. }
+            | IntelGathered { pos, .. } | AssaultHeld { pos, .. }
+            | AssaultBegan { pos, .. } | AssaultRepulsed { pos, .. }
+            | SystemPlundered { pos, .. } | ModulesLost { pos, .. }
+            | SpecialistsLost { pos, .. } | PirateEnclaveCleared { pos, .. }
+            | NodeAwakened { pos, .. } | NodeCaptured { pos, .. }
+            | SurveyCompleted { pos, .. } | TraitRevealed { pos, .. }
+            | PlatformEngaged { pos, .. } | FuelRescueCompleted { pos, .. }
+            | FuelRescueFailed { pos, .. } | BlockadeEstablished { pos, .. }
+            | BlockadeLifted { pos, .. } | SystemCaptured { pos, .. }
+            | Citation { pos, .. } | EnforcementDispatched { pos, .. }
+            | EnforcementWithdrawn { pos, .. } | JumpFailed { pos, .. } => Some(*pos),
+            BuildStarted { system, .. } | SystemUpgraded { system, .. }
+            | BuildRejected { system, .. } | SpecialistTrained { system, .. }
+            | ModuleBuilt { system, .. } | ShipsRefitted { system, .. }
+            | GarrisonSupplyStateChanged { system, .. } | FleetRepaired { system, .. }
+            | ModulesDelivered { system, .. } | SpecialistsDelivered { system, .. }
+            | AssignmentSet { system, .. } | ProductionSuspended { system, .. }
+            | ProductionResumed { system, .. } | FoodStateChanged { system, .. }
+            | NodeSupplyChanged { system, .. } | GarrisonSupplyChanged { host: system, .. }
+                => world.systems.iter().find(|s| s.id == *system).map(|s| s.pos),
+            ShipSpawned { id: fleet, .. } | FleetSupplyChanged { fleet, .. }
+            | OrderRejected { fleet, .. } | OrderDelivered { fleet, .. }
+                => world.fleets.get(fleet).map(|f| f.pos),
+            SpecialistHired { .. } | ModulesPurchased { .. } | ModulesSold { .. }
+            | FuelRescueDispatched { .. } | FuelRescueRejected { .. } => Some(world.hub),
+            // These are either local intentions, or notifications which already
+            // name their arrival (confirmation, diplomacy, operation reports).
+            _ => None,
+        }
     }
 }

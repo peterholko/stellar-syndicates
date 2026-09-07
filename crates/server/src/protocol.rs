@@ -1,14 +1,14 @@
 //! The WebSocket wire protocol between client and server.
 //!
-//! Messages are JSON, tagged by a `type` field. The client sends *intents*
+//! Messages are versioned MessagePack binary frames, tagged by a `type` field.
+//! The client sends *intents*
 //! ([`ClientMsg`]); the server pushes each player their own *filtered view*
 //! ([`ServerMsg`]). The client holds no authoritative state — these messages
 //! are the entire contract (§14).
 //!
-//! NOTE (M2): the `View` currently carries TRUE world positions to all players,
-//! to verify movement. M3 replaces this with each player's delayed/fogged
-//! reconstruction — the wire types here are deliberately explicit (not the raw
-//! sim structs) so that step exposes exactly what each player is allowed to see.
+//! Views contain each player's delayed/fogged reconstruction, never server
+//! truth. The transport serializes these explicit DTOs only; changing the
+//! encoding must never move or bypass a visibility gate.
 
 use std::collections::BTreeMap;
 
@@ -19,21 +19,19 @@ use sim::{
     TradeEvent, TransitMode, Vec2,
 };
 
-/// The client↔server wire protocol version. BUMPED to 29 by the single-session
-/// mobile handshake: Join now negotiates a 5/10 Hz View cadence and replacement
-/// closes carry a dedicated transport code.
-/// A client seeing an unexpected version can warn the user to refresh; the
-/// server sends it in [`ServerMsg::Welcome`].
-pub const PROTOCOL_VERSION: u32 = 31;
+/// v32: binary MessagePack transport. Bump the WebSocket subprotocol and the
+/// client's wire version together; old text clients must refresh, not silently
+/// misinterpret binary data. Welcome retains the version for the UI contract.
+pub const PROTOCOL_VERSION: u32 = 32;
 
 /// Messages sent by the client to the server.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientMsg {
-    /// First message a connection must send: identify as a player. The name is
-    /// hashed server-side into a stable [`PlayerId`] so reconnecting with the
-    /// same name resumes the same corporation. Older clients omit `view_hz`
-    /// and retain the desktop 10 Hz cadence.
+    /// First application message: ready to receive the game. Identity comes
+    /// exclusively from the authenticated HTTP handshake; `name` is retained
+    /// for wire compatibility but cannot select or rename a corporation.
+    /// Missing `view_hz` retains the desktop 10 Hz cadence.
     Join {
         name: String,
         #[serde(default)]
@@ -208,8 +206,7 @@ pub enum ClientMsg {
     },
 
     /// Create or replace a standing logistics order (§15). `order.id == 0` creates;
-    /// a matching id edits. Instant local administration; the server attaches the
-    /// issuing player.
+    /// a matching id edits. The instruction travels to its source system.
     SetStandingOrder {
         order: StandingOrder,
     },
@@ -465,6 +462,8 @@ pub enum ClientMsg {
     AssignOperationFleet {
         operation_id: sim::OperationId,
         fleet_id: EntityId,
+        #[serde(default)]
+        protected_fleet: Option<EntityId>,
     },
     RecoverOperation {
         operation_id: sim::OperationId,
@@ -567,6 +566,9 @@ pub struct InvSlot {
 /// Warehouse holdings, and resting limit orders share the ticker's light delay.
 #[derive(Debug, Clone, Serialize)]
 pub struct WalletView {
+    /// Legacy save with no report history: unknown, not an empty live account.
+    #[serde(default)]
+    pub report_pending: bool,
     pub credits: f64,
     /// Equity / net worth, from the slow valuation close (§9).
     pub valuation: f64,
@@ -696,7 +698,7 @@ pub struct FreightView {
 }
 
 /// Which side of a raid the recipient is on.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Attacker,
@@ -714,6 +716,12 @@ pub struct RaidReport {
     /// report (`View.battle_reports`) — the news toast and the map marker /
     /// results panel can point at the same battle.
     pub report_id: u64,
+    /// Exact engagement id, carried only with this already-arrived report.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub battle_id: Option<EntityId>,
+    /// Frozen own-side survivors/rewards, gated with the result (never rivals).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aftermath: Option<sim::combat::aftermath::BattleAftermath>,
     pub outcome: RaidOutcome,
     pub attacker: PlayerId,
     pub defender: PlayerId,
@@ -742,6 +750,12 @@ pub struct BattleReportView {
     /// Stable id (shared with the transient `Report` news toast for the same
     /// battle, and usable by the timeline to open the same results).
     pub id: u64,
+    /// None on legacy reports/no-contact escapes: keep them readable, but do
+    /// not guess a replay or hide a marker by matching coordinates.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub battle_id: Option<EntityId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aftermath: Option<sim::combat::aftermath::BattleAftermath>,
     pub pos: Vec2,
     /// Sim-time the battle CONCLUDED (what happened, when).
     pub at_time: f64,
@@ -826,7 +840,7 @@ pub struct LossRange {
 }
 
 /// Severity of a check-in timeline entry — drives the client's colour/icon.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TimelineSeverity {
     Good,
@@ -839,7 +853,7 @@ pub enum TimelineSeverity {
 /// that became OBSERVABLE to them at `at_time` (their own clock — own economy is
 /// instant, distant battles/rival claims arrive light-delayed). The server
 /// composes the human-readable `text`; the client lists entries newest-first.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct TimelineEntry {
     /// Sim-time the news became observable to this player.
     pub at_time: f64,
@@ -896,6 +910,9 @@ pub struct NebulaInfo {
 /// (systems don't move), so it doesn't need to be in the per-tick stream.
 #[derive(Debug, Clone, Serialize)]
 pub struct GalaxyInfo {
+    /// Opaque identity of this game, not its reproducible map seed. Persists
+    /// across saved-game restarts; a fresh galaxy gets a fresh identity.
+    pub instance_id: String,
     pub hub: Vec2,
     pub radius: f64,
     /// Public deep-space terrain; static for the life of the galaxy.
@@ -974,7 +991,7 @@ pub struct BuildOptionView {
 }
 
 /// One commodity in a system's stockpile (whole units), shown only to the owner.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize)]
 pub struct StockSlot {
     pub commodity: Commodity,
     pub units: u32,
@@ -1040,13 +1057,30 @@ pub struct LandingOddsView {
 }
 
 /// An owner-only in-progress build at a system (§step1). `key` is what's building;
-/// `complete_time` is the sim-time of completion (the client shows ETA = it − now).
+/// All fields come from the arrived site report. `complete_time` is an estimate
+/// (None while waiting/paused), never evidence of completion. Builds also carry their
+/// latest earned-work segment so pauses cannot stretch/restart the progress bar.
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildStateView {
     pub key: String,
-    pub complete_time: f64,
+    /// Absent for waiting structures or legacy jobs with no recorded start.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<f64>,
+    pub complete_time: Option<f64>,
+    /// The arrived report says this structure is waiting for its planet's turn.
+    /// Clock expiry alone must never promote it to an active build.
+    pub queued: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub work: Option<BuildWorkView>,
     /// §bodies: the body this job builds on / displays at.
     pub body_id: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildWorkView {
+    pub fraction: f64,
+    pub per_second: f64,
+    pub at_time: f64,
 }
 
 /// A stored SCOUT-INTEL snapshot of a RIVAL system's fortifications (§scout
@@ -1317,6 +1351,8 @@ pub struct OperationView {
     pub expires_at: f64,
     pub target_pos: Vec2,
     pub reward: sim::OperationReward,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub briefing: Option<sim::operation::OperationBriefing>,
     pub joined: bool,
     pub assigned_fleet: Option<EntityId>,
     pub winner: Option<PlayerId>,
@@ -1833,7 +1869,7 @@ pub struct AnchorView {
 /// One (kind, count) entry of a fleet's exact composition — revealed only to
 /// the owner, or to a rival whose sensors cover the fleet (Tier 2). Ordered by
 /// kind for a stable wire form.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize)]
 pub struct CompCount {
     pub kind: ShipKind,
     pub count: u32,
@@ -2234,8 +2270,8 @@ pub enum ServerMsg {
         command_center: Vec2,
         /// Home anchors; each owner is light-gated (see [`AnchorView`]).
         anchors: Vec<AnchorView>,
-        /// Star systems' dynamic state: ownership light-gated to rivals, stockpile
-        /// shown only to the owner (see [`SystemStateView`]).
+        /// Arrived site reports for this CC. Ownership does not bypass delay;
+        /// private inventory additionally requires reported ownership.
         systems: Vec<SystemStateView>,
         /// Ships as delayed ghosts from this player's vantage.
         ghosts: Vec<GhostView>,
@@ -2247,15 +2283,13 @@ pub enum ServerMsg {
         /// retains each unique event briefly as a fading historical marker.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         jump_departures: Vec<JumpDepartureView>,
-        /// §emplacements: deep-space sensors standing in open space. Sent
-        /// UNDELAYED, and only the viewer's own:
-        /// they are your own infrastructure, so you know where you put them.
-        /// A rival's are found the way anything else is, by seeing them.
+        /// Arrived infrastructure reports; new construction and destruction
+        /// cross the same light gate even for the structure's owner.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         emplacements: Vec<EmplacementView>,
         /// The hub ticker, light-delayed (§9).
         market: MarketView,
-        /// The player's own credits + holdings (fresh).
+        /// Arrived Market Hub account report, or explicit report_pending.
         wallet: WalletView,
         /// §TCA Phase 2: the player's OWN charter standing and band. Owner-only —
         /// rivals learn of offenses only through public citations, never by
@@ -2424,9 +2458,9 @@ pub enum ServerMsg {
     Error { message: String },
 }
 
-/// Stable hash of a player name → [`PlayerId`]. FNV-1a (64-bit): tiny,
-/// dependency-free, and reproducible, so the same name always maps to the same
-/// corporation. (Not for security — names are not secret in M1.)
+/// Legacy deterministic IDs for simulation fixtures ONLY. Live accounts have
+/// random, durable PostgreSQL IDs; a public corporation name is not a login.
+#[cfg(test)]
 pub fn player_id_from_name(name: &str) -> PlayerId {
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;

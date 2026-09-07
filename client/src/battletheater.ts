@@ -16,12 +16,12 @@
 //     while the viewer is open, and pauses when the tab is hidden.
 //
 // Data reality (what the record actually carries, and what we derive):
-//   * `KeyframeView.ships` have no id, velocity, or stack key → identity is
-//     MATCHED between consecutive frames (nearest-neighbour within a
-//     (side, kind, platform) group), headings come from position deltas, and
+//   * `KeyframeView.ships` carry battle-local ids (old records fall back to
+//     nearest-neighbour matching); headings come from position deltas, and
 //     a representative's ×N badge is `side count of kind ÷ shown of kind`.
-//   * `dealt` is a scalar per side → weapon-FAMILY volumes are derived from
-//     the side's participant loadout stacks (each stack's offense family).
+//   * Gunfire is resolved shot evidence: one bolt per shown attempt, misses
+//     pass clear, impacts require damage. Legacy records can illustrate known
+//     hull loss but never manufacture successful fire on a zero-damage round.
 //   * torpedoes are ONE centroid salvo per side with a live count → the
 //     theater expands them into individual cosmetic arcs; the round-to-round
 //     count drop budgets how many arcs resolve (hit or intercepted).
@@ -32,6 +32,7 @@ import { hashId, mulberry32 } from "./prng";
 import { starTypeFor, starConceptUrl } from "./stars";
 import { STAR_TINT } from "./systemview";
 import { COL_OWN as TINT_OWN, COL_OTHER as TINT_FOE } from "./render";
+import { arrivedGunfire, matchBattleFrames, missedEndpoint } from "./battlefire";
 
 // --- Geometry & scale ---------------------------------------------------------
 
@@ -71,7 +72,7 @@ const MASS: Record<ShipKind, number> = {
 };
 const KIND_LABEL: Record<ShipKind, string> = {
   builder: "Construction Ship",
-  convoy: "Convoy", raider: "Interceptor", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
+  convoy: "Freighter", raider: "Interceptor", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
   transport: "Troop Transport",
   freighter: "Authority Freighter",
@@ -121,6 +122,18 @@ const PIRATE_RAIDER_ART = [
 const pirateRaiderArt = (battleId: string) =>
   PIRATE_RAIDER_ART[hashId(`${battleId}:pirate-hull`) % PIRATE_RAIDER_ART.length];
 
+/** The served side identifies the hull's owner: pirates share the `raider`
+ * combat class with corporate Interceptors, not their name or artwork. Keep
+ * the force header, hover labels and canvas on the same deterministic art. */
+export function theaterShipAppearance(
+  record: BattleRecordView, side: number, kind: ShipKind, pirateId: PlayerId | null,
+): { label: string; url: string; calib: number } {
+  const pirate = kind === "raider" && pirateId !== null && record.sides[side]?.corp === pirateId;
+  return pirate
+    ? { label: "Privateer", ...pirateRaiderArt(record.id) }
+    : { label: KIND_LABEL[kind], url: `/art/ship_sprites/${SHIP_ART[kind]}`, calib: 1 };
+}
+
 const texCache = new Map<string, Texture | null>();
 const texPending = new Set<string>();
 /// THE resolver: art if loaded, null → procedural fallback. Load is fired on
@@ -131,24 +144,32 @@ function resolveTexture(url: string): Texture | null {
   if (!texPending.has(url)) {
     texPending.add(url);
     Assets.load(url).then(
-      (t: Texture) => texCache.set(url, t),
+      (t: Texture) => {
+        texCache.set(url, t);
+        // A paused replay / held light frontier may never advance a round.
+        // Redress it when art lands instead of keeping the tiny placeholder.
+        if (st) st.windowKey = "";
+      },
       () => texCache.set(url, null), // missing art → permanent fallback
     );
   }
   return null;
 }
-const shipTexture = (kind: ShipKind): Texture | null => resolveTexture(`/art/ship_sprites/${SHIP_ART[kind]}`);
-
 // --- Scene types ----------------------------------------------------------------
 
 /// One tracked representative on screen (pooled — never allocated per frame).
 interface ShipVis {
+  cid?: number;
   root: Container;
   sprite: Sprite;
   body: Graphics; // procedural silhouette fallback
   glow: Graphics; // team engine glow
   badge: Text; // ×N representative count
   plate: Text; // Titan nameplate / platform label
+  hull: Container; // screen-space readout, not rotated or dimmed with the ship art
+  hullBar: Graphics;
+  hullLabel: Text;
+  hullOffsetPx: number;
   inUse: boolean;
   // matched track for the active window:
   x0: number; y0: number; x1: number; y1: number;
@@ -160,6 +181,9 @@ interface ShipVis {
   kind: ShipKind;
   plat: boolean;
   hp: number;
+  hpStart: number;
+  hpEnd: number;
+  hpT: number; // last evidenced impact in this already-arrived window
   reps: number; // hulls this sprite stands for
   seed: number; // per-ship cosmetic seed (idle drift phase)
   entered: boolean; // newly committed this window (wave arrival) → fade in
@@ -170,22 +194,21 @@ interface ShipVis {
 /// record data + the cosmetic PRNG, then rendered statelessly against the
 /// transport clock. Scrubbing back re-derives the identical schedule.
 interface FxWindow {
-  /// Beam volleys: instantaneous flash-lines (they arrive with their own
-  /// light — the instant line IS the fiction). `heavy` = capital emitter
+  /// Resolved beam attempts. `heavy` = capital emitter
   /// (charge-up + thicker, longer-held line; the Lance Array variant when
   /// that module lands). `glint` = target is Reflective-fitted (mirror-flash
   /// deflection instead of a full bloom).
-  beams: { t: number; from: number; to: number; w: number; heavy: boolean; glint: boolean }[];
+  beams: { t: number; from: number; to: number; w: number; heavy: boolean; glint: boolean; miss: boolean; missSign: number }[];
   /// Driver tracer streaks with short visible flight; `miss` tracers pass
-  /// close and carry on (pure cosmetics — hit math already happened in the
-  /// sim). `spall` = target is Whipple-fitted (shattered-armor debris puffs
+  /// close and carry on (miss offsets are cosmetic; hit/miss is resolved).
+  /// `spall` = target is Whipple-fitted (shattered-armor debris puffs
   /// instead of clean sparks).
-  tracers: { t: number; from: number; to: number; miss: boolean; spall: boolean }[];
+  tracers: { t: number; from: number; to: number; miss: boolean; missSign: number; spall: boolean; strength: number }[];
   /// Torpedo arcs — the centerpiece motion. Expanded from the per-side salvo
   /// summary: each arc curves from the salvo origin toward its target across
   /// the window. outcome: 'fly' persists past the window; 'hit' detonates at
   /// tEnd; 'flak' dies to point-defense short of the target at tEnd.
-  arcs: { side: number; x0: number; y0: number; cx: number; cy: number; to: number; tEnd: number; outcome: "fly" | "hit" | "flak" }[];
+  arcs: { side: number; x0: number; y0: number; cx: number; cy: number; to: number; tEnd: number; outcome: "fly" | "hit" | "flak" | "fade" }[];
   /// PD tracer fans: which defending ships screen this window (indices).
   pdShips: number[];
   /// Exact deaths from the record, timed within the window by their step.
@@ -248,7 +271,9 @@ let dragLast: [number, number] | null = null;
 const activePointers = new Map<number, [number, number]>();
 let pinchStart: { distance: number; zoom: number; worldX: number; worldY: number } | null = null;
 const CAM_ZOOM_MIN = 0.6;
-const CAM_ZOOM_MAX = 4.5;
+// Inspection zoom: a light Interceptor reaches ~83px instead of ~36px. Keep
+// the opening overview unchanged; both wheel and pinch use this ceiling.
+const CAM_ZOOM_MAX = 12;
 
 const sx = (x: number) => CANVAS_W / 2 + (x - camX) * SCALE * camZoom;
 const sy = (y: number) => CANVAS_H / 2 + (y - camY) * SCALE * camZoom;
@@ -436,7 +461,7 @@ async function initApp(): Promise<void> {
       const [hx, hy] = arcHead(a, st.frac);
       if (Math.hypot(sx(hx) - mx, sy(hy) - my) < 10) {
         const target = st.ships[a.to];
-        tooltip.textContent = `Torpedo salvo → ${target ? KIND_LABEL[target.kind] : "target"}`;
+        tooltip.textContent = `Torpedo salvo → ${target ? theaterShipAppearance(st.rec, target.side, target.kind, st.pirateId).label : "target"}`;
         tooltip.style.display = "block";
         tooltip.style.left = `${Math.min(CANVAS_W - 160, Math.max(4, mx + 10))}px`;
         tooltip.style.top = `${Math.max(4, my - 24)}px`;
@@ -528,10 +553,20 @@ export function theaterDebug(): Record<string, unknown> | null {
   if (!st || !layers || !app) return null;
   return {
     ships: st.ships.filter((s) => s.inUse).length,
+    hulls: st.ships.filter((s) => s.inUse).map((s) => ({
+      side: s.side, kind: s.kind, hp: s.hp, reps: s.reps,
+      label: s.hullLabel.text, visible: s.hull.visible, alpha: s.hull.alpha,
+    })),
     ticker: app.ticker.started,
     round: st.round,
     frac: st.frac,
     beams: st.fx?.beams.length ?? -1,
+    beamHits: st.fx?.beams.filter((b) => !b.miss).length ?? -1,
+    beamMisses: st.fx?.beams.filter((b) => b.miss).length ?? -1,
+    gunfire: st.fx ? [
+      ...st.fx.beams.map((b) => ({ from: b.from, to: b.to, t: b.t, miss: b.miss, weapon: "beam" })),
+      ...st.fx.tracers.map((b) => ({ from: b.from, to: b.to, t: b.t, miss: b.miss, weapon: "driver" })),
+    ] : [],
     tracers: st.fx?.tracers.length ?? -1,
     arcs: st.fx?.arcs.length ?? -1,
     arcFlak: st.fx?.arcs.filter((a) => a.outcome === "flak").length ?? -1,
@@ -562,10 +597,10 @@ export function theaterHash(): number {
   const fx = st.fx;
   if (fx) {
     for (const b of fx.beams) {
-      h = (Math.imul(h, 33) + b.from * 5 + b.to * 13 + Math.round(b.t * 1000) + (b.heavy ? 17 : 0) + (b.glint ? 29 : 0)) >>> 0;
+      h = (Math.imul(h, 33) + b.from * 5 + b.to * 13 + Math.round(b.t * 1000) + Math.round(b.w * 100) + (b.heavy ? 17 : 0) + (b.glint ? 29 : 0) + (b.miss ? 43 : 0) + b.missSign) >>> 0;
     }
     for (const tr of fx.tracers) {
-      h = (Math.imul(h, 33) + tr.from * 5 + tr.to * 13 + Math.round(tr.t * 1000) + (tr.miss ? 17 : 0) + (tr.spall ? 29 : 0)) >>> 0;
+      h = (Math.imul(h, 33) + tr.from * 5 + tr.to * 13 + Math.round(tr.t * 1000) + Math.round(tr.strength * 100) + (tr.miss ? 17 : 0) + (tr.spall ? 29 : 0) + tr.missSign) >>> 0;
     }
     for (const a of fx.arcs) {
       h = (Math.imul(h, 33) + a.to * 5 + Math.round(a.x0 * 10) * 3 + Math.round(a.y0 * 10) * 7 + Math.round(a.tEnd * 1000) + (a.outcome === "flak" ? 37 : a.outcome === "hit" ? 41 : 43)) >>> 0;
@@ -600,7 +635,7 @@ function scanWithdraw(rec: BattleRecordView): [number, number] {
 function bindRecord(rec: BattleRecordView, pirateId: PlayerId | null): void {
   if (st && st.rec.id === rec.id) {
     // Same battle — but the View handler hands us a FRESH record object every
-    // ~100 ms (JSON.parse identity), so compare CONTENT, not identity. Only real
+    // ~100 ms (decoded packet identity), so compare CONTENT, not identity. Only real
     // new truth (light extended the rounds, or the outcome/frontier landed)
     // invalidates the active window so tracks, the FX schedule, AND the withdraw
     // flags rebuild. Identity-comparison here rebuilt them all at 10 Hz for the
@@ -702,13 +737,19 @@ function makeShipVis(): ShipVis {
   badge.anchor.set(0, 1);
   const plate = new Text({ text: "", style: new TextStyle({ fontSize: 9, fill: 0xffe08a, fontFamily: "system-ui" }) });
   plate.anchor.set(0.5, 0);
+  const hull = new Container();
+  hull.eventMode = "none";
+  const hullBar = new Graphics();
+  const hullLabel = new Text({ text: "", style: new TextStyle({ fontSize: 10, fill: 0xe5edf7, fontFamily: "system-ui", fontWeight: "600" }) });
+  hullLabel.anchor.set(0.5, 0);
+  hull.addChild(hullBar, hullLabel);
   root.addChild(glow, body, sprite, badge, plate);
   root.eventMode = "static";
   root.cursor = "default";
   const v: ShipVis = {
-    root, sprite, body, glow, badge, plate,
+    root, sprite, body, glow, badge, plate, hull, hullBar, hullLabel, hullOffsetPx: 0,
     inUse: false, x0: 0, y0: 0, x1: 0, y1: 0, hdg: 0, hdg0: 0, deathT: null,
-    side: 0, kind: "raider", plat: false, hp: 1, reps: 1, seed: 0,
+    side: 0, kind: "raider", plat: false, hp: 1, hpStart: 1, hpEnd: 1, hpT: 1, reps: 1, seed: 0,
     entered: false, exiting: false,
   };
   root.on("pointerover", () => showTip(v));
@@ -723,9 +764,11 @@ function acquireShip(): ShipVis {
     v = makeShipVis();
     shipPool.push(v);
     layers!.ships.addChild(v.root);
+    layers!.ui.addChild(v.hull);
   }
   v.inUse = true;
   v.root.visible = true;
+  v.hull.visible = true;
   return v;
 }
 
@@ -733,6 +776,7 @@ function releaseAllShips(): void {
   for (const v of shipPool) {
     v.inUse = false;
     v.root.visible = false;
+    v.hull.visible = false;
   }
 }
 
@@ -741,7 +785,7 @@ function showTip(v: ShipVis): void {
   const side = st.rec.sides[v.side];
   const fits = (side?.loadouts ?? []).filter((l) => l.kind === v.kind && l.modules.length > 0);
   const fitLine = fits.length ? fits.map((f) => f.modules.join("+")).join(" · ") : "unfitted";
-  const label = v.plat ? "Defense Platform tier" : `${KIND_LABEL[v.kind]} ×${v.reps}`;
+  const label = v.plat ? "Defense Platform tier" : `${theaterShipAppearance(st.rec, v.side, v.kind, st.pirateId).label} ×${v.reps}`;
   tooltip.textContent = `${label} — ${Math.round(v.hp * 100)}% hull · ${v.plat ? "station" : fitLine}`;
   tooltip.style.display = "block";
   const p = v.root.position;
@@ -756,43 +800,7 @@ function hideTip(): void {
 
 type KfShipView = KeyframeView["ships"][number];
 
-/// Match ships of frame A to frame B within (side, kind, plat) groups by
-/// greedy nearest-neighbour — keyframes carry no ids, so identity is a
-/// cosmetic reconstruction (good tracks for interpolation, not gameplay).
-function matchFrames(a: KfShipView[], b: KfShipView[]): Array<{ from: KfShipView | null; to: KfShipView | null }> {
-  const keyOf = (s: KfShipView) => `${s.side}:${s.kind}:${s.plat ? 1 : 0}`;
-  const groups = new Map<string, { a: KfShipView[]; b: KfShipView[] }>();
-  for (const s of a) {
-    const g = groups.get(keyOf(s)) ?? { a: [], b: [] };
-    g.a.push(s);
-    groups.set(keyOf(s), g);
-  }
-  for (const s of b) {
-    const g = groups.get(keyOf(s)) ?? { a: [], b: [] };
-    g.b.push(s);
-    groups.set(keyOf(s), g);
-  }
-  const out: Array<{ from: KfShipView | null; to: KfShipView | null }> = [];
-  for (const g of groups.values()) {
-    const unmatchedB = new Set(g.b);
-    for (const s of g.a) {
-      let best: KfShipView | null = null;
-      let bestD = Infinity;
-      for (const t of unmatchedB) {
-        const d = (s.x - t.x) * (s.x - t.x) + (s.y - t.y) * (s.y - t.y);
-        if (d < bestD) { bestD = d; best = t; }
-      }
-      if (best) {
-        unmatchedB.delete(best);
-        out.push({ from: s, to: best });
-      } else {
-        out.push({ from: s, to: null }); // died / withdrew / sampled out
-      }
-    }
-    for (const t of unmatchedB) out.push({ from: null, to: t }); // wave arrival
-  }
-  return out;
-}
+const matchFrames = matchBattleFrames;
 
 /// Representative multiplier: how many hulls of (side, kind) each shown
 /// sprite stands for this round (count-stack philosophy on screen).
@@ -879,10 +887,14 @@ function rebuildWindow(): void {
   for (const tr of tracks) {
     const src = tr.from ?? tr.to!;
     const v = acquireShip();
+    v.cid = src.cid;
     v.side = src.side;
     v.kind = src.kind;
     v.plat = src.plat ?? false;
     v.hp = Math.max(0, Math.min(1, src.hp));
+    v.hpStart = v.hp;
+    v.hpEnd = Math.max(0, Math.min(1, tr.to?.hp ?? v.hp));
+    v.hpT = 1;
     v.reps = v.plat ? 1 : (reps.get(`${src.side}:${src.kind}`) ?? 1);
     v.x0 = (tr.from ?? tr.to!).x;
     v.y0 = (tr.from ?? tr.to!).y;
@@ -911,26 +923,17 @@ function rebuildWindow(): void {
 
 // --- The FX schedule (all volume derives from the record) --------------------------
 
-/// Weapon-family weights for a side, from its participant loadout stacks —
-/// the wire has no dealt-by-family, so the fits ARE the family signal.
-function familyWeights(rec: BattleRecordView, side: number): { beam: number; driver: number; torp: number; pdN: number; reflN: Map<ShipKind, number>; whipN: Map<ShipKind, number> } {
-  let beam = 0.0001, driver = 0, torp = 0, pdN = 0;
+/// Served protection fits affect the impact treatment, never whether it hit.
+function familyWeights(rec: BattleRecordView, side: number): { pdN: number; reflN: Map<ShipKind, number>; whipN: Map<ShipKind, number> } {
+  let pdN = 0;
   const reflN = new Map<ShipKind, number>();
   const whipN = new Map<ShipKind, number>();
   for (const stx of rec.sides[side]?.loadouts ?? []) {
-    if (stx.modules.includes("torpedo_rack")) torp += stx.n;
-    else if (stx.modules.includes("mass_driver")) driver += stx.n * 1.3;
-    else beam += stx.n * (stx.modules.includes("point_defense_screen") ? 0.5 : 1);
     if (stx.modules.includes("point_defense_screen")) pdN += stx.n;
     if (stx.modules.includes("reflective_plating")) reflN.set(stx.kind, (reflN.get(stx.kind) ?? 0) + stx.n);
     if (stx.modules.includes("whipple_armor")) whipN.set(stx.kind, (whipN.get(stx.kind) ?? 0) + stx.n);
   }
-  // Unfitted remainder fires stock beam: side counts minus fitted stacks.
-  const rd = rec.rounds[0];
-  const fitted = (rec.sides[side]?.loadouts ?? []).reduce((a, l) => a + l.n, 0);
-  const total = (rd?.counts[side] ?? []).reduce((a, c) => a + (c.exact ?? 0), 0);
-  beam += Math.max(0, total - fitted);
-  return { beam, driver, torp, pdN, reflN, whipN };
+  return { pdN, reflN, whipN };
 }
 
 /// Is the `idx`-th shown representative of its (side,kind) group treated as
@@ -952,16 +955,10 @@ function buildFxWindow(rec: BattleRecordView, round: number, ships: ShipVis[], w
   const alive = (side: number) => ships.map((v, i) => ({ v, i })).filter((e) => e.v.inUse && e.v.side === side);
   const wA = familyWeights(rec, 0);
   const wD = familyWeights(rec, 1);
-  // Normalized intensity per side: this round's dealt vs the battle's peak —
-  // fx volume visibly tracks the record's damage output.
-  const dmax = Math.max(1e-6, ...rec.rounds.flatMap((r) => (r.dealt ? [r.dealt[0], r.dealt[1]] : [0])));
   for (let side = 0 as 0 | 1; side < 2; side = (side + 1) as 0 | 1) {
-    const w = side === 0 ? wA : wD;
     const foes = alive(1 - side);
     const own = alive(side);
     if (!foes.length || !own.length) continue;
-    const intensity = Math.min(1, (rd?.dealt?.[side] ?? 0) / dmax);
-    const famTotal = w.beam + w.driver + w.torp;
     // Targets weighted by threat MASS (the sim's targeting spirit) — heavies
     // draw fire; the seeded roll keeps every viewer's scene identical.
     const pickTarget = () => {
@@ -970,37 +967,6 @@ function buildFxWindow(rec: BattleRecordView, round: number, ships: ShipVis[], w
       for (let k = 0; k < foes.length; k++) { r -= tw[k]; if (r <= 0) return foes[k].i; }
       return foes[foes.length - 1].i;
     };
-    const reflFoe = side === 0 ? wD.reflN : wA.reflN;
-    const whipFoe = side === 0 ? wD.whipN : wA.whipN;
-    // BEAMS — count scaled by the beam share of this side's output.
-    const nBeams = Math.round((1 + 7 * intensity) * (w.beam / famTotal));
-    for (let k = 0; k < nBeams; k++) {
-      const from = own[Math.floor(rng() * own.length)];
-      const to = pickTarget();
-      const tv = ships[to];
-      fx.beams.push({
-        t: 0.08 + rng() * 0.84,
-        from: from.i,
-        to,
-        w: 0.8 + 2.6 * intensity * (w.beam / famTotal),
-        heavy: (MASS[from.v.kind] ?? 0) >= 8000, // capitals fire the held lance-grade line
-        glint: fittedFlag(ships, tv, reflFoe.get(tv.kind) ?? 0),
-      });
-    }
-    // DRIVER tracers — bursty, short flight, seeded misses.
-    const nTracers = Math.round((2 + 14 * intensity) * (w.driver / famTotal));
-    for (let k = 0; k < nTracers; k++) {
-      const from = own[Math.floor(rng() * own.length)];
-      const to = pickTarget();
-      const tv = ships[to];
-      fx.tracers.push({
-        t: 0.05 + rng() * 0.85,
-        from: from.i,
-        to,
-        miss: rng() < 0.28,
-        spall: fittedFlag(ships, tv, whipFoe.get(tv.kind) ?? 0),
-      });
-    }
     // TORPEDO ARCS — expanded from the salvo summary; the count drop between
     // this frame and the next budgets how many arcs RESOLVE this window, and
     // the defender's PD presence decides how many of those die to flak.
@@ -1034,12 +1000,16 @@ function buildFxWindow(rec: BattleRecordView, round: number, ships: ShipVis[], w
           const p = ships[pi];
           dPd = Math.min(dPd, Math.hypot(mx - p.x1, my - p.y1));
         }
-        arcs.push({ d: dPd, a: { side, x0: s0.x + ox, y0: s0.y + oy, cx: mx, cy: my, to, tEnd, outcome: isResolved ? "hit" : "fly" } });
+        // A vanished salvo can also have missed or lost its target. Without
+        // hull-loss evidence it fades away; it must not explode on a ship.
+        const gunDamage = next?.frame?.gunfire?.filter((s) => s.side === side).reduce((sum, s) => sum + s.damage, 0) ?? 0;
+        const damaged = (next?.dealt?.[side] ?? 0) - gunDamage > 1e-4 && tv.hpEnd < tv.hpStart;
+        arcs.push({ d: dPd, a: { side, x0: s0.x + ox, y0: s0.y + oy, cx: mx, cy: my, to, tEnd, outcome: isResolved ? (damaged ? "hit" : "fade") : "fly" } });
       }
       arcs.sort((p, q) => p.d - q.d);
       let flakLeft = nFlak;
       for (const e of arcs) {
-        if (flakLeft > 0 && e.a.outcome === "hit") { e.a.outcome = "flak"; flakLeft--; }
+        if (flakLeft > 0 && e.a.outcome === "fade") { e.a.outcome = "flak"; flakLeft--; }
         fx.arcs.push(e.a);
       }
     }
@@ -1057,12 +1027,46 @@ function buildFxWindow(rec: BattleRecordView, round: number, ships: ShipVis[], w
       let shipIdx: number | null = null;
       let best = Infinity;
       ships.forEach((v, i) => {
-        if (v.inUse && v.exiting && v.side === d.side && v.kind === d.kind) {
+        if (v.inUse && v.exiting && v.side === d.side && v.kind === d.kind && !fx.deaths.some((death) => death.shipIdx === i)) {
           const dist = Math.hypot(v.x0 - d.x, v.y0 - d.y);
           if (dist < best) { best = dist; shipIdx = i; }
         }
       });
+      if (shipIdx !== null) ships[shipIdx].hpEnd = 0;
       fx.deaths.push({ t: hi > lo ? 0.15 + 0.7 * ((d.step - lo) / (hi - lo)) : 0.5, x: d.x, y: d.y, kind: d.kind, side: d.side, cls, shipIdx });
+    }
+  }
+  // Keep one attempt per recorded gunshot, including real misses/cooldowns.
+  // Its cosmetic start time is seeded; target, weapon and damage are evidence.
+  const gunfire = arrivedGunfire(rec, round, ships);
+  gunfire.forEach((shot, k) => {
+    const from = ships[shot.from], target = ships[shot.to];
+    const foe = from.side === 0 ? wD : wA;
+    const strength = Math.min(1, shot.damage / Math.max(1, (MASS[target.kind] ?? 800) * 0.35));
+    const t = 0.08 + 0.65 * ((k + 0.2 * rng()) / Math.max(1, gunfire.length));
+    const miss = shot.damage <= 0;
+    const missSign = rng() < 0.5 ? -1 : 1;
+    if (shot.weapon === "beam") {
+      fx.beams.push({ t, from: shot.from, to: shot.to, w: 0.65 + 2.6 * strength,
+        heavy: (MASS[from.kind] ?? 0) >= 8000, miss, missSign,
+        glint: !miss && fittedFlag(ships, target, foe.reflN.get(target.kind) ?? 0) });
+    } else {
+      fx.tracers.push({ t, from: shot.from, to: shot.to, miss, missSign, strength,
+        spall: !miss && fittedFlag(ships, target, foe.whipN.get(target.kind) ?? 0) });
+    }
+  });
+  // Hull meters and a killing explosion share the last visible impact beat.
+  // Both endpoints were already served; this never predicts future hull loss.
+  for (let i = 0; i < ships.length; i++) {
+    const impacts = [
+      ...fx.beams.filter((b) => b.to === i && !b.miss).map((b) => b.t + (b.heavy ? 0 : 0.14 / 1.16)),
+      ...fx.tracers.filter((b) => b.to === i && !b.miss).map((b) => b.t + 0.1),
+      ...fx.arcs.filter((a) => a.to === i && a.outcome === "hit").map((a) => a.tEnd),
+    ];
+    if (impacts.length) {
+      ships[i].hpT = Math.max(...impacts);
+      const death = fx.deaths.find((d) => d.shipIdx === i);
+      if (death) death.t = ships[i].hpT;
     }
   }
   return fx;
@@ -1104,14 +1108,11 @@ function dressShip(v: ShipVis): void {
   const own = st.rec.own_side;
   const mine = own !== null && v.side === own;
   const tint = mine ? TINT_OWN : TINT_FOE;
-  const pirateRaider = v.kind === "raider" && st.pirateId !== null && st.rec.sides[v.side]?.corp === st.pirateId;
-  const pirateArt = pirateRaider ? pirateRaiderArt(st.rec.id) : null;
-  const px = v.plat ? 26 : spritePx(v.kind) * (pirateArt?.calib ?? 1);
+  const appearance = theaterShipAppearance(st.rec, v.side, v.kind, st.pirateId);
+  const px = v.plat ? 26 : spritePx(v.kind) * appearance.calib;
   const tex = v.plat
     ? resolveTexture(STATION_ART)
-    : pirateArt
-      ? resolveTexture(pirateArt.url)
-      : shipTexture(v.kind);
+    : resolveTexture(appearance.url);
   if (tex) {
     v.sprite.texture = tex;
     v.sprite.visible = true;
@@ -1139,6 +1140,21 @@ function dressShip(v: ShipVis): void {
   const name = !v.plat && v.kind === "titan" ? st.rec.sides[v.side]?.flagship_name ?? "" : "";
   v.plate.text = name;
   v.plate.position.set(0, px * 0.6);
+  v.hullOffsetPx = Math.max(px, v.sprite.visible ? v.sprite.height : px) * 0.6 + (name ? 12 : 0);
+  drawHullMeter(v);
+}
+
+function drawHullMeter(v: ShipVis): void {
+  // Each meter is this representative's recorded hull fraction, never the
+  // side's survivor count or a fleet-wide average. Only arrived keyframes feed
+  // v.hp; recorded damage steps on its visible impact, never by extrapolation.
+  const hullColor = v.hp > 0.5 ? 0x8fe3a0 : v.hp > 0.25 ? 0xffce70 : 0xff7882;
+  v.hullLabel.text = `Hull ${Math.round(v.hp * 100)}%`;
+  v.hullLabel.style.fill = hullColor;
+  v.hullBar.clear()
+    .roundRect(-34, -2, 68, 23, 4).fill({ color: 0x070b15, alpha: 0.9 })
+    .rect(-28, 14, 56, 4).fill({ color: 0x354153 });
+  if (v.hp > 0) v.hullBar.rect(-28, 14, 56 * v.hp, 4).fill({ color: hullColor });
 }
 
 // --- The frame loop --------------------------------------------------------------------
@@ -1166,6 +1182,8 @@ function frame(dt: number): void {
   const zs = Math.pow(camZoom, 0.85); // ships grow with zoom (slightly damped)
   for (const v of st.ships) {
     if (!v.inUse) continue;
+    const hp = frac >= v.hpT ? v.hpEnd : v.hpStart;
+    if (hp !== v.hp) { v.hp = hp; drawHullMeter(v); }
     // Eased interpolation along the matched track.
     const e = frac * frac * (3 - 2 * frac); // smoothstep
     let x = v.x0 + (v.x1 - v.x0) * e;
@@ -1213,6 +1231,16 @@ function frame(dt: number): void {
       a *= Math.max(0, Math.min(1, (1400 - r) / 350));
     }
     v.root.alpha = a * (0.45 + 0.55 * v.hp);
+    // UI layer keeps hull meters horizontal and readable at every camera zoom.
+    // They follow the same arrival/death/withdraw visibility as their ship,
+    // without low hull integrity itself making the readout disappear.
+    // Opposing readouts sit on opposite sides of the hulls, so close passes
+    // do not stack two 68px meters on top of one another at overview zoom.
+    const below = v.side === (st.rec.own_side ?? 0);
+    const hullOffset = v.hullOffsetPx * zs + 7;
+    v.hull.position.set(v.root.position.x, v.root.position.y + (below ? hullOffset : -hullOffset - 23));
+    v.hull.alpha = a;
+    v.hull.visible = a > 0;
     // Withdrawal: engines flare hard while the side burns for the edge.
     if (!v.plat && st.round >= st.withdrawFrom[v.side]) {
       const px = spritePx(v.kind);
@@ -1287,6 +1315,7 @@ function drawFx(dt: number): void {
   // so scrubbing produces the identical volley rather than fresh fireworks.
   for (let bi = 0; bi < fx.beams.length; bi++) {
     const b = fx.beams[bi];
+    if (b.miss && perfTier >= 1) continue;
     const dur = b.heavy ? 0.20 : 0.14;
     const dtb = f - b.t;
     const color = sideLaserColor(st.ships[b.from]?.side ?? 0);
@@ -1302,11 +1331,14 @@ function drawFx(dt: number): void {
     const fade = 1 - Math.max(0, (p - 0.78) / 0.22);
     const [x0, y0] = shipXY(b.from, f);
     const [x1, y1] = shipXY(b.to, f);
-    const ax = sx(x0), ay = sy(y0), tx = sx(x1), ty = sy(y1);
+    const ax = sx(x0), ay = sy(y0);
+    const [tx, ty] = b.miss
+      ? missedEndpoint(ax, ay, sx(x1), sy(y1), spritePx(st.ships[b.to].kind) * zs * 0.8 + 12, b.missSign)
+      : [sx(x1), sy(y1)];
     const dx = tx - ax, dy = ty - ay;
     const dist = Math.max(1, Math.hypot(dx, dy));
     const ux = dx / dist, uy = dy / dist;
-    const headP = b.heavy ? 1 : Math.min(1, p * 1.16);
+    const headP = b.heavy ? 1 : Math.min(b.miss ? 1.35 : 1, p * (b.miss ? 1.5 : 1.16));
     const hx = ax + dx * headP, hy = ay + dy * headP;
     const boltLen = b.heavy ? dist : Math.min(dist * headP, (24 + b.w * 12) * zs);
     const bx = hx - ux * boltLen, by = hy - uy * boltLen;
@@ -1325,7 +1357,7 @@ function drawFx(dt: number): void {
       fxG.star(ax, ay, 4, mr, Math.max(0.6, mr * 0.18)).fill({ color: 0xffffff, alpha: 0.9 * mk });
     }
 
-    const impactP = clamp01((headP - 0.82) / 0.18);
+    const impactP = b.miss ? 0 : b.heavy ? 1 : clamp01((p - 1 / 1.16) / (1 - 1 / 1.16));
     if (impactP > 0 && b.glint) {
       // Reflective mitigation: a mirror-flash deflection sparkle, not a bloom.
       const gr = (4 + 7 * impactP) * zs;
@@ -1355,15 +1387,17 @@ function drawFx(dt: number): void {
     if (dtt < 0 || dtt > FLIGHT + 0.06) continue;
     const [x0, y0] = shipXY(tr.from, f);
     const [x1raw, y1raw] = shipXY(tr.to, f);
-    const missOff = tr.miss ? 26 : 0;
-    const x1 = x1raw + missOff, y1 = y1raw + missOff * 0.6;
+    const ox = sx(x0), oy = sy(y0);
+    const [x1, y1] = tr.miss
+      ? missedEndpoint(ox, oy, sx(x1raw), sy(y1raw), spritePx(st.ships[tr.to].kind) * zs * 0.8 + 12, tr.missSign)
+      : [sx(x1raw), sy(y1raw)];
     const p = Math.min(1, dtt / FLIGHT);
     const q = Math.max(0, p - (perfTier >= 2 ? 0.1 : 0.16)); // ladder: thinner streak
-    const ax = x0 + (x1 - x0) * (tr.miss ? p * 1.35 : p);
-    const ay = y0 + (y1 - y0) * (tr.miss ? p * 1.35 : p);
-    const bx = x0 + (x1 - x0) * (tr.miss ? q * 1.35 : q);
-    const by = y0 + (y1 - y0) * (tr.miss ? q * 1.35 : q);
-    fxG.moveTo(sx(bx), sy(by)).lineTo(sx(ax), sy(ay)).stroke({ color: 0xe8a13a, width: 1.1, alpha: 0.85 });
+    const ax = ox + (x1 - ox) * (tr.miss ? p * 1.35 : p);
+    const ay = oy + (y1 - oy) * (tr.miss ? p * 1.35 : p);
+    const bx = ox + (x1 - ox) * (tr.miss ? q * 1.35 : q);
+    const by = oy + (y1 - oy) * (tr.miss ? q * 1.35 : q);
+    fxG.moveTo(bx, by).lineTo(ax, ay).stroke({ color: 0xe8a13a, width: 0.7 + tr.strength, alpha: 0.85 });
     if (dtt < 0.03) fxG.circle(sx(x0), sy(y0), 2.2 * zs).fill({ color: 0xffd98a, alpha: 0.8 }); // muzzle
     if (!tr.miss && p >= 1) {
       if (tr.spall) {
@@ -1371,10 +1405,10 @@ function drawFx(dt: number): void {
         for (let k = 0; k < 4; k++) {
           const ox = (jitter(wjit ^ tr.from * 131 ^ tr.to * 61 ^ k * 977) - 0.5) * 12;
           const oy = (jitter(wjit ^ tr.from * 137 ^ tr.to * 67 ^ k * 983) - 0.5) * 12;
-          fxG.circle(sx(x1) + ox * zs, sy(y1) + oy * zs, 1.6 * zs).fill({ color: 0x9aa8ba, alpha: 0.7 });
+          fxG.circle(x1 + ox * zs, y1 + oy * zs, 1.6 * zs).fill({ color: 0x9aa8ba, alpha: 0.7 });
         }
       } else {
-        fxG.star(sx(x1), sy(y1), 4, 4 * zs, 1.4 * zs).fill({ color: 0xffe0a8, alpha: 0.85 });
+        fxG.star(x1, y1, 4, (2 + 2 * tr.strength) * zs, 1.4 * zs).fill({ color: 0xffe0a8, alpha: 0.85 });
       }
     }
   }

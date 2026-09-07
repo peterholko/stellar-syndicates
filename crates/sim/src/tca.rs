@@ -393,7 +393,7 @@ pub struct Shipment {
 /// of owners as well as commodities, whereas a player fleet's cargo manifest has
 /// no per-stack owner. Keyed in [`crate::world::World::freight_runs`] by the
 /// freighter fleet id.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FreightRun {
     /// The freighter fleet flying this run (the map/combat entity).
     pub fleet: EntityId,

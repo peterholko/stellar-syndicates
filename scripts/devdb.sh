@@ -3,9 +3,10 @@
 #
 # This does NOT touch your system Postgres. It creates a throwaway cluster under
 # ./.devdb (gitignored) so the server's real sqlx persistence path can be run
-# and tested with zero credential setup. The server itself defaults to an
-# in-memory stub when DATABASE_URL is unset, so this is only needed to exercise
-# durable persistence.
+# and tested with zero credential setup. ACCOUNTS_DATABASE_URL can point here
+# while DATABASE_URL stays unset: accounts persist, playtest galaxies do not.
+# Local development ONLY: public servers need a restricted DB role, credentials
+# and verified TLS for remote PostgreSQL, not this trust-auth cluster.
 #
 # Usage:
 #   scripts/devdb.sh init     # create the cluster + database (idempotent)

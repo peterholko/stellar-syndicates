@@ -1,3 +1,5 @@
+import { accountFields } from "../account";
+
 export const mobileMarkup = String.raw`
   <div class="m-shell">
     <header id="m-chrome" class="m-chrome" hidden>
@@ -16,6 +18,7 @@ export const mobileMarkup = String.raw`
         <span class="m-stat"><small>Account report</small><strong id="m-account-credits">—</strong></span>
         <span class="m-stat"><small>Reserved by orders</small><strong id="m-reserved-credits">—</strong></span>
         <p class="m-status-help">Credits above are spendable. Market buy orders reserve their maximum protected cost until execution or cancellation.</p>
+        <button id="m-sign-out" type="button">Sign out</button>
       </div>
     </header>
 
@@ -68,12 +71,7 @@ export const mobileMarkup = String.raw`
       </picture>
       <form id="m-join-form" class="m-join__card">
         <div class="m-join__eyebrow">Corporate command uplink</div>
-        <h1>Stellar Syndicates</h1>
-        <p>Charter a corporation or reconnect with its existing name.</p>
-        <label for="m-name">Corporation name</label>
-        <input id="m-name" type="text" placeholder="e.g. Meridian Freight" autocomplete="off" />
-        <button id="m-join-button" type="submit">Charter &amp; connect</button>
-        <div id="m-join-error" class="m-join__error" aria-live="polite"></div>
+        ${accountFields("m")}
       </form>
     </div>
   </div>

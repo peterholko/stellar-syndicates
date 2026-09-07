@@ -15,12 +15,12 @@ import { emplacementLabel, systemName } from "./geo";
 import { projectedBand } from "./research";
 import { estimatedFuelForLeg, fleetBaseSpeed, shipKindLabel, WARP_FACTOR } from "./fleet";
 import { doneAtLocal, fmt, fmtDur } from "./format";
+import { fleetCommandSummary } from "../fleetorders";
 
 export const TCA_INCIDENT_LOSS_UI = 10;
 export const SURVEY_SECS_UI = 20;
 const ORDER_ETA_FUDGE_LO = 0.10;
 const ORDER_ETA_FUDGE_HI = 0.25;
-const BATTLE_LS_KEY = "ss_battle_marks";
 
 export const orderPoint = (p: Vec2): string =>
   `(${Math.round(p.x).toLocaleString()} · ${Math.round(p.y).toLocaleString()})`;
@@ -89,6 +89,7 @@ export function intentTargetLabel(intent: PendingIntent): string {
 
 
 export function intentSummary(intent: PendingIntent): string {
+  if (intent.verb === "command") return fleetCommandSummary(intent, state);
   const ship = state.ghosts.find((g) => g.id === intent.shipId && g.own);
   const shipName = ship ? shipKindLabel(ship.kind) : "fleet";
   const batchCount = intent.shipIds?.length ?? 1;
@@ -206,28 +207,13 @@ export function orderObject(p: PendingOrderView): string {
   }
 }
 
-export function loadBattleMarks(): void {
-  try {
-    const raw = localStorage.getItem(BATTLE_LS_KEY);
-    if (!raw) return;
-    const m = JSON.parse(raw) as { viewed?: number[]; dismissed?: number[] };
-    state.battleViewed = new Set(m.viewed ?? []);
-    state.battleDismissed = new Set(m.dismissed ?? []);
-  } catch { /* corrupt marks → start clean */ }
-}
-
-export function saveBattleMarks(): void {
-  // Prune to ids the server still retains (the list is capped, so this stays tiny).
-  const live = new Set(state.battleReports.map((r) => r.id));
-  const keep = (s: Set<number>) => [...s].filter((id) => live.has(id));
-  localStorage.setItem(BATTLE_LS_KEY, JSON.stringify({ viewed: keep(state.battleViewed), dismissed: keep(state.battleDismissed) }));
-}
-
-// One-way COMMAND delay (§3): command-center → battle anchor, at light speed.
+// One-way COMMAND estimate: command-center → observed battle anchor, at warp
+// light speed (mirrors transit::signal_speed). Report age is not command lag.
 // The same math the order echo-lifecycle uses; null before the galaxy/CC arrive.
 export function battleCommandDelay(b: BattleView): number | null {
-  if (!state.commandCenter || !state.galaxy) return null;
-  return Math.hypot(b.pos.x - state.commandCenter.x, b.pos.y - state.commandCenter.y) / state.galaxy.c;
+  if (!state.commandCenter || !state.galaxy || !Number.isFinite(state.galaxy.c) || state.galaxy.c <= 0) return null;
+  const seconds = Math.hypot(b.pos.x - state.commandCenter.x, b.pos.y - state.commandCenter.y) / (state.galaxy.c * WARP_FACTOR);
+  return Number.isFinite(seconds) ? seconds : null;
 }
 
 
@@ -277,7 +263,7 @@ export function nextDecisionLabel(): string {
   const consider = (t: number, l: string) => { if (t > now && t < at) { at = t; label = l; } };
   const owned = state.systems.filter((s) => s.owner === state.playerId);
   for (const s of owned) {
-    for (const b of s.builds ?? []) consider(b.complete_time, `a build completes at ${systemName(s.id)}`);
+    for (const b of s.builds ?? []) if (b.complete_time != null) consider(b.complete_time, `a build completes at ${systemName(s.id)}`);
     if (s.blockade?.siege_since != null && state.galaxy) consider(s.blockade.siege_since + state.galaxy.siege_secs, `the siege at ${systemName(s.id)} completes`);
   }
   for (const queue of state.pendingOrders.values()) {

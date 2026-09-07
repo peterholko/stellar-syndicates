@@ -1,3 +1,5 @@
+import { gameSocket, encodeMessage, decodeMessage } from "./game-socket.mjs";
+
 // Two-player BATTLE observation smoke test (no deps — Node 18+ global WebSocket).
 //
 // Drives a real raider-vs-convoy battle between two connected players and proves
@@ -30,14 +32,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 function client(name) {
-  const ws = new WebSocket(URL);
+  const ws = gameSocket(URL);
   const got = { welcome: null, views: [], reports: [], errors: [] };
   const own = { raider: null, convoy: null }; // this player's own ship ids
   // Per-View timeline anchored to sim_time: which ghost ids were visible, and
   // how many reports had arrived by then.
-  ws.addEventListener("open", () => ws.send(JSON.stringify({ type: "Join", name })));
+  ws.addEventListener("open", () => ws.send(encodeMessage({ type: "Join", name })));
   ws.addEventListener("message", (ev) => {
-    const m = JSON.parse(ev.data);
+    const m = decodeMessage(ev.data);
     if (m.type === "Welcome") got.welcome = m;
     else if (m.type === "View") {
       for (const g of m.ghosts) if (g.own && own[g.kind] === null) own[g.kind] = g.id;
@@ -50,7 +52,7 @@ function client(name) {
     } else if (m.type === "Report") got.reports.push(m.report);
     else if (m.type === "Error") got.errors.push(m.message);
   });
-  return { ws, got, own, send: (o) => ws.send(JSON.stringify(o)) };
+  return { ws, got, own, send: (o) => ws.send(encodeMessage(o)) };
 }
 
 // In player p's timeline, was ship S visible at-or-before sim-time `st`, and was

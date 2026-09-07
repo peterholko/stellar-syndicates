@@ -97,21 +97,18 @@ export class DeckRosterRoutes {
       const captain = Number(button.dataset.captain);
       const select = this.root.querySelector<HTMLSelectElement>(`[data-officer-fleet="${captain}"]`);
       if (Number.isFinite(captain) && select?.value) {
-        this.ctx.send({ type: "AssignCaptain", captain_id: captain, fleet_id: select.value });
-        this.hooks.notice("<b>Assignment sent</b> · the officer transfers when the fleet receives it.");
+        this.ctx.intent.beginFleetCommand({ type: "AssignCaptain", captain_id: captain, fleet_id: select.value });
       }
     } else if (action === "officer-reserve") {
       const captain = Number(button.dataset.captain);
       if (Number.isFinite(captain)) {
-        this.ctx.send({ type: "ReserveCaptain", captain_id: captain });
-        this.hooks.notice("<b>Reserve order sent</b> · awaiting the fleet's received report.");
+        this.ctx.intent.beginFleetCommand({ type: "ReserveCaptain", captain_id: captain });
       }
     } else if (action === "officer-train") {
       const captain = Number(button.dataset.captain);
       const attribute = button.dataset.attribute as CaptainAttribute;
       if (Number.isFinite(captain) && attribute) {
-        this.ctx.send({ type: "TrainCaptain", captain_id: captain, attribute });
-        this.hooks.notice(`<b>Training ordered</b> · ${esc(label(attribute))}.`);
+        this.ctx.intent.beginFleetCommand({ type: "TrainCaptain", captain_id: captain, attribute });
       }
     } else if (action === "officer-fleet") {
       const fleet = this.ctx.state.ghosts.find((entry) => entry.id === button.dataset.fleet && entry.own);

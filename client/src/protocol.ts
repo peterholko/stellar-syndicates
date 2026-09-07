@@ -1,4 +1,4 @@
-// Wire protocol types — mirror the server's `protocol.rs`. The client holds no
+// MessagePack wire DTOs — mirror the server's `protocol.rs`. The client holds no
 // authoritative state; these messages are the entire contract (§14).
 
 // 64-bit id; sent as a decimal string to preserve precision beyond 2^53.
@@ -129,12 +129,20 @@ export interface StockSlot {
 // rival's claim light arrives (own claims are instant); `stockpile` is present
 // only for the owner — a rival's holdings never leak.
 // An owner-only in-progress build at a system (§step1). `key` = what's building
-// ("convoy"|"raider"|"extractor"); `complete_time` = sim-time of completion.
+// ("convoy"|"raider"|"extractor"); completion time is an estimate, null when waiting/paused.
 export interface BuildState {
   /// §bodies: the body this job builds on / displays at.
   body_id: number;
   key: string;
-  complete_time: number;
+  // Actual construction start from the same delayed report; absent while queued
+  // and for legacy jobs with unknown starts.
+  start_time?: number | null;
+  complete_time: number | null;
+  // Served queue state, never inferred from local clock expiry. Missing = legacy active job.
+  queued?: boolean;
+  // Earned-work segment from the same arrived site report. Rate zero freezes
+  // progress; never infer a new rate from a live or separately served assignment.
+  work?: { fraction: number; per_second: number; at_time: number };
 }
 
 
@@ -370,6 +378,9 @@ export interface BuildOption {
 }
 
 export interface GalaxyInfo {
+  // Persistent game identity, distinct even for fresh galaxies with equal seeds.
+  // Optional only for rolling upgrades; missing disables persisted battle marks.
+  instance_id?: string;
   hub: Vec2;
   radius: number;
   /// Public deep-space terrain. The rotated ellipse is both the visual footprint
@@ -480,6 +491,7 @@ export interface OrderView {
 }
 
 export interface WalletView {
+  report_pending?: boolean;
   credits: number;
   valuation: number; // equity / net worth (slow §9 close)
   /// §TCA: goods at the MARKET HUB — the only stock the Exchange trades against.
@@ -1077,7 +1089,7 @@ export type ClientMsg =
   // Operations + formal diplomacy.
   | { type: "AcceptOperation"; operation_id: OperationId }
   | { type: "AbandonOperation"; operation_id: OperationId }
-  | { type: "AssignOperationFleet"; operation_id: OperationId; fleet_id: EntityId }
+  | { type: "AssignOperationFleet"; operation_id: OperationId; fleet_id: EntityId; protected_fleet?: EntityId }
   | { type: "RecoverOperation"; operation_id: OperationId; fleet_id: EntityId }
   | { type: "ContributeOperationCargo"; operation_id: OperationId; commodity: Commodity; units: number }
   | { type: "CreateSyndicateOperation"; system_id: EntityId }
@@ -1123,6 +1135,7 @@ export type OperationKind =
   | { kind: "market_delivery"; commodity: Commodity; units: number }
   | { kind: "rescue_salvage"; pos: Vec2; commodity: Commodity; units: number; source_fleet: EntityId }
   | { kind: "convoy_escort"; protected_fleet: EntityId; destination: Vec2 }
+  | { kind: "freight_escort"; origin: Vec2; destination: Vec2 }
   | { kind: "authority_enforcement"; target: PlayerId }
   | { kind: "strategic_control"; system: EntityId }
   | { kind: "regional_mandate"; region: Vec2; radius: number }
@@ -1150,6 +1163,8 @@ export interface OperationView {
   expires_at: number;
   target_pos: Vec2;
   reward: OperationRewardView;
+  briefing?: { follow_up: "escort" | "salvage" | "production"; title: string;
+    difficulty: string; suitable_fleets: string; summary: string };
   joined: boolean;
   assigned_fleet?: EntityId | null;
   winner?: PlayerId | null;
@@ -1299,6 +1314,8 @@ export type RaidOutcome =
 // composition-vs-composition report — `*_kind` are the flagships and `*_losses`
 // list the per-kind ships each side lost over the Lanchester engagement.
 export interface RaidReport {
+  battle_id?: EntityId | null;
+  aftermath?: BattleAftermath | null;
   /// §battle-aftermath: stable id shared with the RETAINED copy in
   /// `View.battle_reports` — a news toast can open the same results panel.
   report_id: number;
@@ -1408,9 +1425,12 @@ export interface RoundRecordView {
 
 // §tactical T3: keyframe payloads (battle-local arena coords, ±~1400).
 export interface KeyframeView {
-  ships: { side: number; kind: ShipKind; x: number; y: number; hp: number; plat?: boolean }[];
+  ships: { cid?: number; side: number; kind: ShipKind; x: number; y: number; hp: number; plat?: boolean }[];
   torpedoes: { side: number; x: number; y: number; n: number }[];
   deaths: { step: number; side: number; kind: ShipKind; x: number; y: number }[];
+  // Already-resolved, capped beam/driver attempts. Empty = no shots; absent =
+  // legacy frame, never permission to invent successful hits. Same light gate.
+  gunfire?: { side: number; from: number; to: number; weapon: "beam" | "driver"; damage: number }[];
 }
 export interface BattleRecordView {
   id: EntityId;
@@ -1457,6 +1477,10 @@ export interface BattleRecordUpdate {
 // keeps the last BATTLE_REPORTS_KEPT per player). Strictly owner-only.
 export interface BattleReportView {
   id: number;
+  // Exact replay identity; absent only for legacy/no-contact reports.
+  battle_id?: EntityId | null;
+  /** Frozen own-side result. Absent on legacy reports; never infer from live fleets. */
+  aftermath?: BattleAftermath | null;
   pos: Vec2;
   at_time: number; // sim-time the battle concluded
   learned_at: number; // sim-time YOUR light arrived (when you learned)
@@ -1466,6 +1490,28 @@ export interface BattleReportView {
   outcome: RaidOutcome;
   attacker_losses: CompCount[];
   target_losses: CompCount[];
+}
+
+export interface BattleAftermath {
+  survivors: BattleSurvivor[];
+  /** Existing encounter bounty; not a new payout or a total of contract rewards. */
+  bounty_credits: number;
+}
+
+export interface BattleSurvivor {
+  fleet_id: EntityId;
+  kind: ShipKind;
+  composition: Partial<Record<ShipKind, number>>;
+  hull: number;
+  withdrew: boolean;
+  guard_target: EntityId | null;
+  captain: {
+    id: number;
+    name: string;
+    portrait: CaptainPortrait;
+    before: Omit<CaptainView, "id" | "name" | "portrait">;
+    after: Omit<CaptainView, "id" | "name" | "portrait">;
+  } | null;
 }
 
 // §contestable-territory Part 2: a retained CAPTURE this player participated in

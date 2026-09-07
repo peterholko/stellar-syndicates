@@ -1,3 +1,5 @@
+import { gameSocket, encodeMessage, decodeMessage } from "./game-socket.mjs";
+
 // Autonomous defensive interception — OFFLINE smoke test (Node 18+ WebSocket).
 //
 // Proves the core async principle (§5.1, Pillar 1): a player's standing patrol
@@ -19,17 +21,17 @@ const fail = (m) => { console.error("FAIL:", m); process.exit(1); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function client(name) {
-  const ws = new WebSocket(URL);
+  const ws = gameSocket(URL);
   const got = { welcome: null, views: [], reports: [], errors: [] };
-  ws.addEventListener("open", () => ws.send(JSON.stringify({ type: "Join", name })));
+  ws.addEventListener("open", () => ws.send(encodeMessage({ type: "Join", name })));
   ws.addEventListener("message", (ev) => {
-    const m = JSON.parse(ev.data);
+    const m = decodeMessage(ev.data);
     if (m.type === "Welcome") got.welcome = m;
     else if (m.type === "View") got.views.push(m);
     else if (m.type === "Report") got.reports.push(m.report);
     else if (m.type === "Error") got.errors.push(m.message);
   });
-  return { ws, got, send: (o) => ws.send(JSON.stringify(o)) };
+  return { ws, got, send: (o) => ws.send(encodeMessage(o)) };
 }
 const isRvr = (r) => r.attacker_kind === "raider" && r.target_kind === "raider";
 

@@ -5,6 +5,7 @@
 import type {
   EmplacementView, AnchorView, CaptainRosterView, CharterView, FleetDoctrine, FoundingView, FreightView, GalaxyInfo, GhostView, JumpDepartureView, MarketView, PathPointView, PendingOrderView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
 import { defaultDoctrine } from "./protocol";
+import type { FleetCommand } from "./core/fleetorders";
 
 export type LinkStatus = "connecting" | "reconnecting" | "online" | "offline";
 
@@ -81,7 +82,7 @@ export interface CommandSignal {
   hops: { pos: Vec2; frac: number }[];
 }
 
-export type OrderVerb = "move" | "jump" | "raid" | "attack" | "guard" | "blockade" | "demolish" | "survey";
+export type OrderVerb = "move" | "jump" | "raid" | "attack" | "guard" | "blockade" | "demolish" | "survey" | "command";
 
 /// A map order the player is comparing but has not committed. This lives in
 /// module state (not the 10 Hz rebuilt DOM), so replacing/cancelling an intent
@@ -95,6 +96,9 @@ export interface PendingIntent {
   dest?: Vec2;
   targetId?: string;
   path?: PathPointView[];
+  /// Frozen control payloads, sent only by Confirm (never on a setting click).
+  commands?: FleetCommand[];
+  commander?: PlayerId | null;
 }
 
 // NOTE: a raid result has NO inbound travelling signal. The map IS the inbound
@@ -185,11 +189,10 @@ export interface ViewState {
   rankings: import("./protocol").RankingRow[];
   /// §research R6: the viewer's OWN research picture (null if unaffiliated).
   research: import("./protocol").ResearchView | null;
-  /// §battle-aftermath: report ids the player has OPENED (viewed → static/dim
-  /// marker) and DISMISSED (marker hidden; the report stays in the log).
-  /// Client-local, persisted to localStorage across reloads.
-  battleViewed: Set<number>;
-  battleDismissed: Set<number>;
+  /// Battle/capture identities the player has opened or dismissed. Dismissal
+  /// hides only that marker, not its report. Persisted per galaxy + player.
+  battleViewed: Set<string>;
+  battleDismissed: Set<string>;
   /// The check-in timeline (§16, Layer 3): what became observable, newest last.
   timeline: TimelineEntry[];
   /// Sim-time the player was last online — the "while you were away" boundary.
@@ -207,9 +210,8 @@ export interface ViewState {
   selectedSystemId: string | null;
   /// The selected deep-space sensor. Shares the right-dock panel with ships.
   selectedEmplacementId: string | null;
-  /// Committed raids the player issued (raiderId → targetId), so the renderer can
-  /// draw a CRUDE, drifting intercept estimate for each. Cleared on recall, on the
-  /// result notification, or when either ship leaves the view.
+  /// Issued raids/attacks (fleetId → targetId), retained for assignment labels
+  /// and recall controls — not an interception prediction or receipt confirmation.
   raids: Record<string, string>;
   /// Client-side record of move orders the player issued (shipId → destination),
   /// purely for drawing the "commanded into the dark" line. The server never

@@ -3,15 +3,18 @@
 // logic lives here.
 
 import type { ClientMsg, ServerMsg } from "./protocol";
+import { decodeMessage, encodeMessage, PROTOCOL_CLOSE_CODE, SUBPROTOCOL } from "./wire.mjs";
 
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 30_000;
 const RECONNECT_JITTER = 0.2;
 const SESSION_REPLACED_CLOSE_CODE = 4001;
+const AUTH_REQUIRED_CLOSE_CODE = 4003;
 
 export type ViewHz = 5 | 10;
 
 export interface NetHandlers {
+  beforeConnect?: () => Promise<boolean>;
   onOpen: () => void;
   onMessage: (msg: ServerMsg) => void;
   onClose: () => void;
@@ -20,25 +23,25 @@ export interface NetHandlers {
 }
 
 // Resolve the server WebSocket URL. Works whether the page is served by Vite
-// (dev, port 5173) or by the Rust server itself (prod, port 8080). Override
-// with `?server=ws://host:port/ws`.
+// (dev, through Vite's proxy) or by Rust. Account cookies are same-origin;
+// ?server= must never redirect a signed-in client to an unrelated host.
 function resolveServerUrl(): string {
   const override = new URLSearchParams(location.search).get("server");
-  if (override) return override;
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  // In dev the page is on 5173 but the game server is on 8080; if we're already
-  // served from the game server, location.port is 8080 and this still resolves.
   const host = location.hostname;
-  const port = location.port === "5173" ? "8080" : location.port;
+  const port = location.port;
   const authority = port ? `${host}:${port}` : host;
-  return `${proto}://${authority}/ws`;
+  const url = `${proto}://${authority}/ws`;
+  return override === url ? override : url;
 }
 
 export class Net {
   private ws: WebSocket | null = null;
   private reconnectTimer: number | null = null;
   private reconnectAttempt = 0;
-  private stopped = false;
+  private stopped = true;
+  private opening = false;
+  private generation = 0;
   private viewHz: ViewHz = 10;
   readonly url: string;
 
@@ -48,6 +51,7 @@ export class Net {
   }
 
   connect(): void {
+    document.addEventListener("visibilitychange", this.handleVisibilityChange);
     this.stopped = false;
     this.clearReconnect();
     this.open();
@@ -55,6 +59,8 @@ export class Net {
 
   disconnect(): void {
     this.stopped = true;
+    this.generation += 1;
+    this.opening = false;
     this.clearReconnect();
     document.removeEventListener("visibilitychange", this.handleVisibilityChange);
     const ws = this.ws;
@@ -63,8 +69,33 @@ export class Net {
   }
 
   private open(): void {
+    if (this.stopped || this.opening || (this.ws && this.ws.readyState < WebSocket.CLOSING)) return;
+    if (!this.handlers.beforeConnect) { this.openSocket(); return; }
+    this.opening = true;
+    const generation = this.generation;
+    void this.handlers.beforeConnect().then(allowed => {
+      if (generation !== this.generation || this.stopped) return;
+      if (allowed) this.openSocket();
+      else {
+        this.stopped = true;
+        this.clearReconnect();
+        this.handlers.onSessionReplaced();
+      }
+    }).catch(() => {
+      if (generation !== this.generation || this.stopped) return;
+      this.handlers.onError(new Event("error"));
+      this.scheduleReconnect();
+    }).finally(() => {
+      if (generation === this.generation) this.opening = false;
+    });
+  }
+
+  private openSocket(): void {
     if (this.stopped || (this.ws && this.ws.readyState < WebSocket.CLOSING)) return;
-    const ws = new WebSocket(this.url);
+    const ws = new WebSocket(this.url, SUBPROTOCOL);
+    // Synchronous decoding preserves message order; Blob.arrayBuffer() per
+    // frame would introduce an asynchronous race between Views and increments.
+    ws.binaryType = "arraybuffer";
     this.ws = ws;
     ws.onopen = () => {
       if (this.ws !== ws) return;
@@ -72,19 +103,32 @@ export class Net {
       this.handlers.onOpen();
     };
     ws.onmessage = (ev) => {
-      if (this.ws !== ws) return;
+      if (this.ws !== ws || this.stopped) return;
+      let message: ServerMsg;
       try {
-        this.handlers.onMessage(JSON.parse(ev.data) as ServerMsg);
+        message = decodeMessage(ev.data);
       } catch (e) {
-        // Surface protocol violations instead of swallowing them — silent drops
-        // make client/server contract bugs near-impossible to diagnose.
-        console.warn("dropping unparseable server frame:", e, ev.data);
+        // A skipped reliable battle/order increment cannot be repaired by the
+        // next View. Stop this incompatible stream visibly, never quietly drop.
+        console.warn("invalid binary server frame:", e);
+        this.stopped = true;
+        this.clearReconnect();
+        this.handlers.onMessage({ type: "Error", message: "Network protocol error. Reload the game." });
+        ws.close(PROTOCOL_CLOSE_CODE, "invalid binary server frame");
+        return;
       }
+      this.handlers.onMessage(message);
     };
     ws.onclose = (event) => {
       if (this.ws !== ws) return;
       this.ws = null;
-      if (event.code === SESSION_REPLACED_CLOSE_CODE) {
+      if (event.code === PROTOCOL_CLOSE_CODE) {
+        const alreadyReported = this.stopped;
+        this.stopped = true;
+        this.clearReconnect();
+        if (!alreadyReported) this.handlers.onMessage({ type: "Error", message: "Network protocol changed. Reload the game." });
+      }
+      if (event.code === SESSION_REPLACED_CLOSE_CODE || event.code === AUTH_REQUIRED_CLOSE_CODE) {
         // This corporation permits one live client. A replacement is a
         // deliberate sign-out, not a network failure: retrying would kick the
         // newer browser and make the two tabs fight forever.
@@ -131,7 +175,11 @@ export class Net {
 
   send(msg: ClientMsg): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(msg));
+      try {
+        this.ws.send(encodeMessage(msg));
+      } catch (error) {
+        this.handlers.onMessage({ type: "Error", message: error instanceof Error ? error.message : "Order could not be sent." });
+      }
     }
   }
 

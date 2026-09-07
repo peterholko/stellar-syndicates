@@ -1,4 +1,6 @@
 import { constructionStock, dockedAtSystem, shipKindLabel } from "../../core/derive/fleet";
+import { colonyPurpose } from "../../core/derive/colony";
+import { buildProgress, buildsByPlanet } from "../../core/derive/construction";
 import { fmtBuildDur, informationDelay } from "../../core/derive/format";
 import {
   bodyPoolUsage,
@@ -20,7 +22,7 @@ import {
 } from "../../core/derive/market";
 import { latestGroundRecordFor, SHIP_STATS } from "../../core/derive/orders";
 import type { CoreEvent } from "../../core/events";
-import { icon, label, structureIcon, type IconKey } from "../../icons";
+import { commodityIcon as commodityGlyph, icon, label, structureIcon, type IconKey } from "../../icons";
 import { fleetCargoUnits, fleetExactCount, type AssignmentView, type BodyView, type Commodity, type ModuleKind, type ShipKind, type SystemInfo, type SystemStateView } from "../../protocol";
 import { liveSimTime } from "../../state";
 import { starIconUrl, starTypeFor } from "../../stars";
@@ -460,17 +462,16 @@ export class DeckEmpireRoutes {
 
   private queueHtml(dynamic: SystemStateView): string {
     const now = liveSimTime();
-    const rows = [...dynamic.builds].sort((a, b) => a.complete_time - b.complete_time).map((job) => {
-      const body = dynamic.bodies.find((entry) => entry.id === job.body_id);
-      const duration = Math.max(0, job.complete_time - now);
-      // Restore the Travian-style build progression bar from the legacy shell.
-      // It is reconstructed from the served completion clock and the public
-      // recipe duration, so reconnects and background tabs never depend on a
-      // client-accumulated timer.
-      const total = Math.max(0, buildOption(job.key)?.build_secs ?? 0);
-      const started = job.complete_time - total;
-      const progress = total > 0 ? Math.max(0, Math.min(100, (now - started) / total * 100)) : 0;
-      return `<div class="deck-queue-row"><span>${icon("queue", "sm")}<span><b>${esc(buildName(job.key))}</b><small>${esc(body?.name ?? "System yard")}</small><span class="deck-queue-progress" role="progressbar" aria-label="${esc(buildName(job.key))} build progression" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.toFixed(0)}"><i style="width:${progress.toFixed(1)}%"></i></span></span></span><em>${duration > 0 ? fmtBuildDur(duration) : "completing"}</em></div>`;
+    const rows = buildsByPlanet(dynamic.builds).map(({ bodyId, jobs }) => {
+      const body = dynamic.bodies.find((entry) => entry.id === bodyId);
+      const builds = jobs.map((job) => {
+        const duration = job.complete_time == null ? null : Math.max(0, job.complete_time - now);
+        const progress = buildProgress(job, now);
+        const bar = progress == null ? "" : `<span class="deck-queue-progress" role="progressbar" aria-label="${esc(buildName(job.key))} build progression" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.toFixed(0)}"><i style="width:${progress.toFixed(1)}%"></i></span>`;
+        const status = job.queued ? "Queued" : duration == null ? "Paused · needs workforce" : duration > 0 ? `Building · ${fmtBuildDur(duration)}` : "completing";
+        return `<div class="deck-queue-row${job.queued ? " is-queued" : ""}"><span>${icon("queue", "sm")}<span><b>${esc(buildName(job.key))}</b>${bar}</span></span><em>${status}</em></div>`;
+      }).join("");
+      return `<div class="deck-planet-queue"><h4>${esc(body?.name ?? "System yard")}</h4>${builds}</div>`;
     }).join("");
     const feedback = this.buildFeedback?.systemId === dynamic.id && this.buildFeedback.text
       ? `<div class="deck-build-feedback is-${this.buildFeedback.tone}">${esc(this.buildFeedback.text)}</div>`
@@ -735,7 +736,7 @@ export class DeckEmpireRoutes {
         : `<div class="deck-empty-inline">Surveyed · no extractable deposits.</div>`;
     const roles = (dynamic.opportunities ?? []).filter((entry) => entry.body_id === body.id);
     const roleHtml = roles.length ? `<div class="deck-opportunities">${roles.map((entry) => `<article class="deck-opportunity is-${entry.tier}"><small>${esc(label(entry.tier))}</small><b>${esc(entry.title)} · ×${entry.score.toFixed(2)}</b><span>${esc(entry.reason)}</span></article>`).join("")}</div>` : "";
-    const publicSections = `<section class="deck-section"><header><div><h3>World summary</h3><p>Public astronomy; mineral grade and deposits require arrived survey light.</p></div></header>${profile}${feature}${roleHtml}</section><section class="deck-section"><header><div><h3>Deposits</h3><p>Natural site richness before staffing, research and structures.</p></div></header>${deposits}</section>`;
+    const publicSections = `${this.colonyPurposeHtml(dynamic, body)}<section class="deck-section"><header><div><h3>World summary</h3><p>Public astronomy; mineral grade and deposits require arrived survey light.</p></div></header>${profile}${feature}${roleHtml}</section><section class="deck-section"><header><div><h3>Deposits</h3><p>Natural site richness before staffing, research and structures.</p></div></header>${deposits}</section>`;
     if (!mine) {
       const lead = includeLead ? `<header class="deck-page__lead"><span>${body.habitable ? "Habitable world" : "Observed world"}</span><h2>${esc(body.name)}</h2><p>${esc(system.name)} · private economy hidden</p></header>` : "";
       return `<section class="deck-page deck-world-page">${lead}${publicSections}</section>`;
@@ -781,7 +782,11 @@ export class DeckEmpireRoutes {
       return `<span class="deck-pool${usage.used >= usage.total ? " is-full" : ""}"><small>${POOL_LABEL[pool]}</small><b>${usage.used}/${usage.total}</b><i><span style="width:${pct.toFixed(1)}%"></span></i></span>`;
     }).join("");
     const groups = (["resource", "industrial", "infrastructure"] as Pool[]).map((pool) => {
-      const rows = options.filter((entry) => POOL_OF[entry.key] === pool).map((entry) => {
+      // Catalog placement only: Shipyard leads Infrastructure, but still uses
+      // its Industrial slot and recipe through structOption / POOL_OF.
+      const entries = options.filter((entry) => (entry.key === "shipyard" ? "infrastructure" : POOL_OF[entry.key]) === pool);
+      if (pool === "infrastructure") entries.sort((a, b) => Number(b.key === "shipyard") - Number(a.key === "shipyard"));
+      const rows = entries.map((entry) => {
         const state = structOption(entry, dynamic, body, pools);
         return `<button type="button" class="deck-builder-row${entry.key === this.selectedBuild ? " is-selected" : ""}${state.buildable ? "" : " is-disabled"}" data-deck-act="builder-select" data-key="${esc(entry.key)}"><span>${icon(structureIcon(entry.key), "sm", undefined, "deck-structure-icon")}<b>${esc(entry.label)}</b></span></button>`;
       }).join("");
@@ -852,8 +857,9 @@ export class DeckEmpireRoutes {
     const fit = this.fitPicker(dynamic, hull);
     const fitOkay = fitLegal(hull, this.effectiveFit(dynamic.id, hull));
     const gate = SHIP_YARD[hull] ?? { yard: "shipyard", tier: 1 };
-    const siteTime = body.ship_build_time_mult ?? 1;
-    return `<article class="deck-build-detail"><header>${icon(shipIcon(hull), "lg", undefined, "deck-hull-icon")}<span><small>${esc(YARD_TITLE[gate.yard] ?? label(gate.yard))} · Tier ${gate.tier}</small><h3>${esc(buildName(hull))}</h3></span></header><p>${esc(stats?.role ?? "Fleet hull")}</p><div class="deck-quantity"><span>Quantity</span>${quantities}</div><div class="deck-costs">${costs}</div><dl><div><dt>Build time</dt><dd>${fmtBuildDur(option.build_secs * siteTime)}</dd></div><div><dt>Site</dt><dd>${esc(body.name)} · ×${siteTime.toFixed(2)}</dd></div></dl>${stats ? `<div class="deck-hull-stats">${stat("Speed", fmt(stats.speed))}${stat("Hull", fmt(stats.hull))}${stat("Attack", fmt(stats.atk))}${stat("Defense", fmt(stats.def))}</div>` : ""}${fit}${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}${!fitOkay ? `<div class="deck-build-warning">The composed fit exceeds this hull's fitting budget or module slots.</div>` : ""}</article>`;
+    const siteTime = (state.yardBody ?? body).ship_build_time_mult ?? 1;
+    const buildTime = state.buildRate > 0 ? fmtBuildDur(option.build_secs * siteTime / state.buildRate) : "Awaiting workforce";
+    return `<article class="deck-build-detail"><header>${icon(shipIcon(hull), "lg", undefined, "deck-hull-icon")}<span><small>${esc(YARD_TITLE[gate.yard] ?? label(gate.yard))} · Tier ${gate.tier}</small><h3>${esc(buildName(hull))}</h3></span></header><p>${esc(stats?.role ?? "Fleet hull")}</p><div class="deck-quantity"><span>Quantity</span>${quantities}</div><div class="deck-costs">${costs}</div><dl><div><dt>Build time</dt><dd>${buildTime}</dd></div><div><dt>Site</dt><dd>${esc((state.yardBody ?? body).name)} · ×${siteTime.toFixed(2)}</dd></div></dl>${stats ? `<div class="deck-hull-stats">${stat("Speed", fmt(stats.speed))}${stat("Hull", fmt(stats.hull))}${stat("Attack", fmt(stats.atk))}${stat("Defense", fmt(stats.def))}</div>` : ""}${fit}${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}${!fitOkay ? `<div class="deck-build-warning">The composed fit exceeds this hull's fitting budget or module slots.</div>` : ""}</article>`;
   }
 
   private fitPicker(dynamic: SystemStateView, hull: ShipKind): string {
@@ -907,9 +913,25 @@ export class DeckEmpireRoutes {
 
   private opportunityHtml(dynamic?: SystemStateView): string {
     const opportunities = dynamic?.opportunities ?? [];
-    if (!opportunities.length) return "";
+    if (!opportunities.length) return dynamic ? this.colonyPurposeHtml(dynamic) : "";
     const cards = opportunities.slice(0, 3).map((entry) => `<article class="deck-opportunity is-${entry.tier}"><small>${esc(label(entry.tier))}</small><b>${esc(entry.title)} · ×${entry.score.toFixed(2)}</b><span>${entry.body_name ? `${esc(entry.body_name)} · ` : ""}${esc(entry.reason)}</span></article>`).join("");
-    return `<section class="deck-section"><header><div><h3>Surveyed opportunities</h3><p>Specialized strengths, not universal multipliers.</p></div></header><div class="deck-opportunities">${cards}</div></section>`;
+    return `${dynamic ? this.colonyPurposeHtml(dynamic) : ""}<section class="deck-section"><header><div><h3>Surveyed opportunities</h3></div></header><div class="deck-opportunities">${cards}</div></section>`;
+  }
+
+  private colonyPurposeHtml(candidate: SystemStateView, body?: BodyView): string {
+    const st = this.ctx.state;
+    const homeId = st.galaxy?.systems.find(s => st.commandCenter && Math.hypot(
+      s.pos.x - st.commandCenter.x, s.pos.y - st.commandCenter.y) < 1)?.id;
+    if (candidate.id === homeId) return "";
+    const home = st.systems.find(s => s.id === homeId && s.owner === st.playerId);
+    const purpose = colonyPurpose(candidate, home, body);
+    if (!purpose) return "";
+    const goods = (items: Commodity[]) => items.map(g => `${commodityGlyph(g)} ${esc(label(g))}`).join(" · ");
+    return `<section class="deck-section deck-colony-purpose" aria-label="Colony purpose"><header><h3>Colony purpose</h3></header>
+      <b>${esc(purpose.headline)}</b><span>${esc(purpose.homeNeed)}</span>
+      ${purpose.exports.length ? `<div><small>Potential exports</small><span>${goods(purpose.exports)}</span></div>` : ""}
+      <div><small>Supply imports</small><span>${purpose.imports.length ? goods(purpose.imports) : "No essential feedstock missing from the survey"}</span></div>
+      <small>${esc(purpose.advantages || "Potential requires structures, workforce and freight.")}</small></section>`;
   }
 }
 
@@ -971,15 +993,6 @@ function planetIcon(body: BodyView): string {
   return icon(key, "md", label(body.environment));
 }
 
-function commodityGlyph(commodity: Commodity): string {
-  const keys: Partial<Record<Commodity, IconKey>> = {
-    metallic_ore: "ore", alloys: "alloys", fuel: "fuel", provisions: "provisions",
-    volatiles: "volatiles", biomass: "biomass",
-  };
-  if (keys[commodity]) return icon(keys[commodity]!, "sm", label(commodity));
-  return `<img class="icon icon--resource" src="/art/ui_icons/resource/${commodity}.png" alt="${esc(label(commodity))}">`;
-}
-
 function shippableStock(dynamic: SystemStateView) {
   return (dynamic.stockpile ?? []).filter((slot) => slot.commodity !== "fuel" && slot.units >= 1);
 }
@@ -1025,3 +1038,184 @@ function routeIdentity(route: DeckRoute | null): string {
 function esc(value: string): string {
   return value.replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]!);
 }
+
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined

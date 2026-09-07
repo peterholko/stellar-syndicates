@@ -1,3 +1,5 @@
+import { gameSocket, encodeMessage, decodeMessage } from "./game-socket.mjs";
+
 // Economy smoke test (no deps — Node 18+ global WebSocket).
 //
 // Verifies the §9 hub-Exchange mechanics over the wire:
@@ -15,17 +17,17 @@ const fail = (m) => { console.error("FAIL:", m); process.exit(1); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function client(name) {
-  const ws = new WebSocket(URL);
+  const ws = gameSocket(URL);
   const got = { welcome: null, views: [], trades: [], errors: [] };
-  ws.addEventListener("open", () => ws.send(JSON.stringify({ type: "Join", name })));
+  ws.addEventListener("open", () => ws.send(encodeMessage({ type: "Join", name })));
   ws.addEventListener("message", (ev) => {
-    const m = JSON.parse(ev.data);
+    const m = decodeMessage(ev.data);
     if (m.type === "Welcome") got.welcome = m;
     else if (m.type === "View") got.views.push(m);
     else if (m.type === "Trade") got.trades.push(m.trade);
     else if (m.type === "Error") got.errors.push(m.message);
   });
-  return { ws, got, send: (o) => ws.send(JSON.stringify(o)) };
+  return { ws, got, send: (o) => ws.send(encodeMessage(o)) };
 }
 
 const ownConvoys = (v) => v.ghosts.filter((g) => g.own && g.kind === "convoy").length;

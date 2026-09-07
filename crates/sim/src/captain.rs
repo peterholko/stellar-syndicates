@@ -238,7 +238,7 @@ impl CaptainLossFate {
 /// The copy-safe portion recorded beside every fleet position sample. Identity
 /// is immutable and stays on the track; progression belongs here because a
 /// distant command center must not learn a level-up before its light arrives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CaptainSighting {
     pub level: u8,
     pub title: CaptainTitle,

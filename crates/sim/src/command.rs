@@ -691,6 +691,8 @@ pub enum Command {
         player_id: PlayerId,
         operation_id: crate::ids::OperationId,
         fleet_id: EntityId,
+        #[serde(default)]
+        protected_fleet: Option<EntityId>,
     },
     /// Recover a rescue/salvage site with a cargo-capable fleet physically on site.
     RecoverOperation {

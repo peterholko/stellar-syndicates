@@ -1,3 +1,5 @@
+import { gameSocket, encodeMessage, decodeMessage } from "./game-socket.mjs";
+
 // Limit-order / batch-clearing smoke test (no deps — Node 18+ global WebSocket).
 //
 // Two players place CROSSING limit orders; the periodic uniform-price call
@@ -12,17 +14,17 @@ const fail = (m) => { console.error("FAIL:", m); process.exit(1); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function client(name) {
-  const ws = new WebSocket(URL);
+  const ws = gameSocket(URL);
   const got = { welcome: null, views: [], trades: [], errors: [] };
-  ws.addEventListener("open", () => ws.send(JSON.stringify({ type: "Join", name })));
+  ws.addEventListener("open", () => ws.send(encodeMessage({ type: "Join", name })));
   ws.addEventListener("message", (ev) => {
-    const m = JSON.parse(ev.data);
+    const m = decodeMessage(ev.data);
     if (m.type === "Welcome") got.welcome = m;
     else if (m.type === "View") got.views.push(m);
     else if (m.type === "Trade") got.trades.push(m.trade);
     else if (m.type === "Error") got.errors.push(m.message);
   });
-  return { ws, got, send: (o) => ws.send(JSON.stringify(o)) };
+  return { ws, got, send: (o) => ws.send(encodeMessage(o)) };
 }
 const wallet = (c) => c.got.views.at(-1).wallet;
 const held = (c, com) => wallet(c).inventory.find((i) => i.commodity === com)?.units ?? 0;

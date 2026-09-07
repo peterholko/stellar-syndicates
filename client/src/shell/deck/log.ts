@@ -1,4 +1,5 @@
 import { traitLine } from "../../core/derive/captains";
+import { reportMarkKey } from "../../battlehistory";
 import { agoLabel, arrivalLocal, fmtDur, informationDelay, rejectText } from "../../core/derive/format";
 import { commandDelayTo, freshSurveyReports, locName, REPORT_RECENT_S, systemName } from "../../core/derive/geo";
 import { nextDecisionLabel, siegeProgress } from "../../core/derive/orders";
@@ -243,7 +244,7 @@ export class DeckLogRoutes {
       const key = `battle:${battle.id}`;
       const ownFleet = state.ghosts.find((fleet) => fleet.own && battle.participants.includes(fleet.id));
       const actions: DeckInboxAction[] = [{ label: "Open battle", primary: true, run: () => this.hooks.go({ name: "battle", params: { id: battle.id, label: "Ongoing battle" } }) }];
-      if (ownFleet) actions.push({ label: "Withdraw", danger: true, deliveryPos: battle.pos, run: () => this.ctx.send({ type: "Withdraw", fleet_id: ownFleet.id }) });
+      if (ownFleet) actions.push({ label: "Withdraw", danger: true, deliveryPos: battle.pos, run: () => this.ctx.intent.beginFleetCommand({ type: "Withdraw", fleet_id: ownFleet.id }) });
       actions.push(dismiss(key));
       push({ key, weight: INBOX_W.battle, tone: "negative", icon: "battle",
         headline: `Your fleet is engaged near ${locName(battle.pos)}`,
@@ -512,12 +513,12 @@ export class DeckLogRoutes {
     }
 
     for (const report of state.battleReports) {
-      if (state.battleViewed.has(report.id) || now - report.learned_at > REPORT_RECENT_S) continue;
+      if (state.battleViewed.has(reportMarkKey(report)) || now - report.learned_at > REPORT_RECENT_S) continue;
       const key = `report:${report.id}`;
       push({ key, weight: INBOX_W.battleReport, tone: "info", icon: "aftermath",
         headline: `A battle you were in concluded near ${locName(report.pos)}`,
         stakes: "Open the report for losses and the outcome.", age: report.learned_at,
-        actions: [{ label: "Open results", primary: true, run: () => this.hooks.go({ name: "battle", params: { id: String(report.id), label: "Battle report" } }) }, dismiss(key)] });
+        actions: [{ label: "Open results", primary: true, run: () => this.hooks.go({ name: "battle", params: { id: String(report.id), report: "battle", label: "Battle report" } }) }, dismiss(key)] });
     }
 
     if (owned.length > 0 && active.length === 0 && out.length === 0) {

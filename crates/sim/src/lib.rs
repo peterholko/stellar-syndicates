@@ -31,6 +31,7 @@ pub mod fuel;
 pub mod galaxy;
 pub mod ground;
 pub mod ids;
+pub mod information;
 pub mod market;
 pub mod math;
 pub mod migration;

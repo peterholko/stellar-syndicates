@@ -1,3 +1,5 @@
+import { gameSocket, encodeMessage, decodeMessage } from "./game-socket.mjs";
+
 // Raider-vs-raider BATTLE leak probe (no deps — Node 18+ global WebSocket).
 //
 // Reproduces the reported bug: when two raiders fight, the destroyed raider is
@@ -19,12 +21,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 function client(name) {
-  const ws = new WebSocket(URL);
+  const ws = gameSocket(URL);
   const got = { welcome: null, views: [], reports: [], errors: [] };
   const own = { raider: null, convoy: null };
-  ws.addEventListener("open", () => ws.send(JSON.stringify({ type: "Join", name })));
+  ws.addEventListener("open", () => ws.send(encodeMessage({ type: "Join", name })));
   ws.addEventListener("message", (ev) => {
-    const m = JSON.parse(ev.data);
+    const m = decodeMessage(ev.data);
     if (m.type === "Welcome") got.welcome = m;
     else if (m.type === "View") {
       for (const g of m.ghosts) if (g.own && own[g.kind] === null) own[g.kind] = g.id;
@@ -32,7 +34,7 @@ function client(name) {
     } else if (m.type === "Report") got.reports.push(m.report);
     else if (m.type === "Error") got.errors.push(m.message);
   });
-  return { ws, got, own, send: (o) => ws.send(JSON.stringify(o)) };
+  return { ws, got, own, send: (o) => ws.send(encodeMessage(o)) };
 }
 
 const main = async () => {

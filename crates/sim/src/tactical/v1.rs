@@ -1,5 +1,6 @@
-//! Frozen tactical rules v1. New balance/algorithm revisions belong in a new
-//! version module: archived battles must keep executing these exact rules.
+//! Frozen tactical rules v1 and the shared state/weapon kernel. Movement
+//! dispatch is versioned; newer maneuvers live in their own modules. Missing
+//! version tags use v1, so archived battles execute their exact original rules.
 //!
 //! §tactical — THE TACTICAL ENGINE: individual-ship combat, positional-lite.
 //!
@@ -131,7 +132,7 @@ pub fn to_hit(family: DamageType, target_mass: f64, target_speed: f64) -> f64 {
 /// `near`, radius preserved) to the nearest inside-arena arc, stepping in the
 /// orbit direction `sign` (±1). Deterministic; falls back to a radial clamp
 /// when the whole ring lies outside (a far-out runner being pursued).
-fn inside_ring_point(near: Vec2, dir0: Vec2, ring: f64, sign: f64) -> Vec2 {
+pub(super) fn inside_ring_point(near: Vec2, dir0: Vec2, ring: f64, sign: f64) -> Vec2 {
     let cap = ARENA_RADIUS * 0.95;
     let mut dir = dir0;
     for _ in 0..24 {
@@ -201,8 +202,8 @@ pub enum Role {
     /// PD-fitted: interpose between own heavies and the dominant torpedo
     /// threat axis, recomputed per step.
     Screen,
-    /// Raiders (and other fast light hulls): orbit the flanks at torpedo
-    /// standoff.
+    /// Raiders (and other fast light hulls): orbit the flanks at their
+    /// versioned, weapon-appropriate standoff.
     Skirmish,
     /// Doctrine-triggered: burn for the disengage edge; pursuers get real
     /// shots while the withdrawer is in envelope.
@@ -307,6 +308,9 @@ pub struct StepOutcome {
     pub platform_tiers_lost: u32,
     /// §T3: exact death events — (step, side, kind, where) for the keyframe.
     pub deaths: Vec<crate::combat::KfDeath>,
+    /// Presentation evidence only: observing a resolved roll must not consume
+    /// RNG or enter TacticalState/checksums, including for frozen v1 archives.
+    pub gunfire: Vec<crate::combat::KfGunfire>,
 }
 
 /// Per-side research flags fed into a step (owner-level lookups happen in the
@@ -346,6 +350,8 @@ impl SideMods {
 /// and the battle continues under this engine.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TacticalState {
+    #[serde(default, skip_serializing_if = "super::Rules::is_v1")]
+    pub(super) rules: super::Rules,
     pub rng: Rng,
     pub step: u64,
     pub next_cid: u32,
@@ -403,7 +409,8 @@ pub fn stacked(comp: &BTreeMap<ShipKind, u32>, loadouts: &LoadoutMap) -> Loadout
 }
 
 impl TacticalState {
-    /// OPEN a battle: derive the stream, deploy the defender anchored at the
+    /// OPEN a frozen-v1 battle (`open_current` selects rules for new battles):
+    /// derive the stream, deploy the defender anchored at the
     /// origin and the attacker at standoff on their real approach bearing.
     /// Platforms unpack as stationary combatants. Scouts never unpack — they
     /// die at the boundary (the caller books them, exactly like the old
@@ -428,6 +435,7 @@ impl TacticalState {
             Vec2::new(1.0, 0.0)
         };
         let mut st = TacticalState {
+            rules: super::Rules::V1,
             rng: battle_rng(world_seed, battle_id),
             step: 0,
             next_cid: 0,
@@ -737,7 +745,11 @@ impl TacticalState {
 
         // 1. MOVEMENT: seek/arrive toward each role's desired point.
         let desired: Vec<Vec2> = (0..self.combatants.len())
-            .map(|i| self.desired_point(i))
+            .map(|i| match self.rules {
+                super::Rules::V1 => self.desired_point(i),
+                super::Rules::V2 => super::v2::desired_point(self, i),
+                super::Rules::V3 { maneuver_seed } => super::v3::desired_point(self, i, maneuver_seed),
+            })
             .collect();
         for (i, want) in desired.iter().enumerate() {
             let c = &mut self.combatants[i];
@@ -953,9 +965,16 @@ impl TacticalState {
                             dmg *= 1.0 - (0.45 * prot).min(0.95);
                         }
                     }
-                    if connects {
-                        self.apply_damage(tcid, dmg, &mut out, side);
-                    }
+                    let actual_damage = if connects {
+                        self.apply_damage(tcid, dmg, &mut out, side)
+                    } else { 0.0 };
+                    out.gunfire.push(crate::combat::KfGunfire {
+                        side,
+                        from: self.combatants[i].cid,
+                        to: tcid,
+                        weapon: family,
+                        damage: actual_damage as f32,
+                    });
                     let c = &mut self.combatants[i];
                     match family {
                         DamageType::Beam => c.cooldowns.beam = BEAM_COOLDOWN,
@@ -1000,6 +1019,7 @@ impl TacticalState {
         for c in &self.combatants {
             if c.platform || featured(c.kind) {
                 ships.push(KfShip {
+                    cid: Some(c.cid),
                     side: c.side,
                     kind: c.kind,
                     x: c.pos.x as f32,
@@ -1015,6 +1035,7 @@ impl TacticalState {
             }
             if !c.platform && !featured(c.kind) {
                 ships.push(KfShip {
+                    cid: Some(c.cid),
                     side: c.side,
                     kind: c.kind,
                     x: c.pos.x as f32,
@@ -1044,14 +1065,28 @@ impl TacticalState {
             ships,
             torpedoes,
             deaths,
+            gunfire: None,
         }
+    }
+
+    /// Same arrived frame as before, plus bounded, already-resolved gunfire.
+    /// No new persistent archive data and no second simulation/accuracy roll.
+    pub fn step_keyframe(&self, outcome: StepOutcome) -> crate::combat::Keyframe {
+        let mut frame = self.keyframe(outcome.deaths);
+        let mut counts = [0; 2];
+        frame.gunfire = Some(outcome.gunfire.into_iter().filter(|shot| {
+            let count = &mut counts[shot.side as usize];
+            *count += 1;
+            *count <= crate::combat::KEYFRAME_GUNFIRE_CAP_PER_SIDE
+        }).collect());
+        frame
     }
 
     /// Damage into a combatant, with PER-HIT armor mitigation (Reflective vs
     /// beam, Whipple vs driver — torpedo callers skip this by passing the raw
     /// value; see call sites). Unarmed hulls take [`CIVILIAN_SOFT`] × the hit.
     /// Credits `dealt` to the firing side.
-    fn apply_damage(&mut self, cid: u32, dmg: f64, out: &mut StepOutcome, by_side: u8) {
+    fn apply_damage(&mut self, cid: u32, dmg: f64, out: &mut StepOutcome, by_side: u8) -> f64 {
         if let Some(c) = self.combatants.iter_mut().find(|c| c.cid == cid) {
             let soft = if !c.platform && attack_weight(c.kind) <= 0.0 {
                 CIVILIAN_SOFT
@@ -1061,6 +1096,9 @@ impl TacticalState {
             let dealt = dmg * soft;
             c.hp -= dealt;
             out.dealt[by_side as usize] += dealt;
+            dealt
+        } else {
+            0.0
         }
     }
 
@@ -1071,7 +1109,7 @@ impl TacticalState {
     /// slide around that ring to the inside-arena arc, so a fighting ship
     /// never takes the fight outside the arena. Only the Withdraw script
     /// crosses the ring — the exit is earned by breaking off.
-    fn desired_point(&self, i: usize) -> Vec2 {
+    pub(super) fn desired_point(&self, i: usize) -> Vec2 {
         let c = &self.combatants[i];
         if c.platform {
             return c.pos;
@@ -1179,7 +1217,7 @@ impl TacticalState {
         }
     }
 
-    fn preferred_band(&self, c: &Combatant) -> f64 {
+    pub(super) fn preferred_band(&self, c: &Combatant) -> f64 {
         match offense(&Loadout::from_key(&c.stack)).0 {
             DamageType::Beam => BEAM_RANGE * 0.85,
             DamageType::Driver => DRIVER_RANGE * 0.85,
@@ -1187,7 +1225,7 @@ impl TacticalState {
         }
     }
 
-    fn nearest_enemy(&self, i: usize) -> Option<Vec2> {
+    pub(super) fn nearest_enemy(&self, i: usize) -> Option<Vec2> {
         let c = &self.combatants[i];
         self.combatants
             .iter()
@@ -1276,16 +1314,27 @@ pub const MAX_PROJ_STEPS: u64 = 600;
 
 /// Run the REAL engine headless: pure over `(setup, seed)` — byte-identical
 /// outcome for identical inputs, and the world's RNG is never touched.
+#[cfg(test)] // Frozen-v1 projection is retained for historical regression checks.
 pub fn simulate_engagement(setup: &ProjSetup, seed: u64) -> SimOutcome {
+    simulate_engagement_with_rules(setup, seed, super::Rules::V1)
+}
+
+/// The fixed projection salt, shared with versioned movement seed derivation.
+pub(super) const PROJECTION_BATTLE_ID: u64 = 0xC0FFEE;
+
+/// Shared rollout bookkeeping; only the selected, persisted movement rules
+/// differ. The live calculator and the actual battle must use the same kernel.
+pub(super) fn simulate_engagement_with_rules(setup: &ProjSetup, seed: u64, rules: super::Rules) -> SimOutcome {
     let mut st = TacticalState::open(
         seed,
-        0xC0FFEE, // the projection's battle-id salt — any constant works
+        PROJECTION_BATTLE_ID,
         &setup.a,
         &setup.d,
         setup.platform_tiers,
         0.0,
         Vec2::new(1.0, 0.0),
     );
+    st.rules = rules;
     let scouts = st.sync([&setup.a, &setup.d]);
     let mut out = SimOutcome::default();
     // Boundary scouts die instantly, as in the real lifecycle.
@@ -1370,7 +1419,15 @@ pub struct Distribution {
 /// inputs, independent across rollouts. `k` is DOWNSAMPLED for huge setups
 /// (the stated CPU budget: a reference battle × 32 stays trivially cheap; a
 /// 300v300 echelon fight samples 8).
+#[cfg(test)]
 pub fn project_distribution(setup: &ProjSetup, base_seed: u64, k: u32) -> Distribution {
+    project_distribution_using(setup, base_seed, k, simulate_engagement)
+}
+
+pub(super) fn project_distribution_using(
+    setup: &ProjSetup, base_seed: u64, k: u32,
+    simulate: fn(&ProjSetup, u64) -> SimOutcome,
+) -> Distribution {
     let ships: u32 = (setup.a.len() + setup.d.len()) as u32;
     let k = if ships > 150 {
         k.min(8)
@@ -1381,7 +1438,7 @@ pub fn project_distribution(setup: &ProjSetup, base_seed: u64, k: u32) -> Distri
     };
     let mut outs: Vec<SimOutcome> = (0..k)
         .map(|i| {
-            simulate_engagement(
+            simulate(
                 setup,
                 base_seed ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
             )

@@ -1,3 +1,5 @@
+import { accountFields } from "../account";
+
 export function mountDeckMarkup(root: HTMLElement): void {
   root.innerHTML = `
     <div id="deck" class="deck">
@@ -22,6 +24,7 @@ export function mountDeckMarkup(root: HTMLElement): void {
           ${navButton("log", "Log")}
           <button id="deck-nav-more" class="deck-nav__more" type="button" data-deck-act="nav-more" aria-expanded="false" aria-controls="deck-nav-overflow">More ···</button>
         </nav>
+        <button id="deck-sign-out" type="button">Sign out</button>
       </header>
       <div id="deck-nav-overflow" class="deck-nav-overflow" role="menu" hidden>
         ${overflowButton("rankings", "Rankings")}
@@ -80,12 +83,7 @@ export function mountDeckMarkup(root: HTMLElement): void {
         <section id="deck-join" class="deck-overlay deck-join" aria-labelledby="deck-join-title">
           <form id="deck-join-form" class="deck-join__card">
             <div class="deck-eyebrow">Terran Charter Authority · corporate registry</div>
-            <h1 id="deck-join-title">Establish your corporation</h1>
-            <p>Your command picture is delayed by distance. Name the corporation whose light you will follow.</p>
-            <label for="deck-name">Corporation name</label>
-            <input id="deck-name" name="corporation" maxlength="32" autocomplete="organization" />
-            <button id="deck-join-button" type="submit">Enter Command Deck</button>
-            <div id="deck-join-error" class="deck-inline-error" role="alert"></div>
+            ${accountFields("deck")}
           </form>
         </section>
         <section id="deck-help" class="deck-overlay deck-help" aria-labelledby="deck-help-title" hidden>

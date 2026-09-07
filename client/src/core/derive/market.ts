@@ -82,6 +82,7 @@ export interface StructOpt {
 export interface ShipOpt {
   o: BuildOpt; needTier: number; yardTier: number; yardShort: boolean; afford: boolean;
   maxAff: number; buildable: boolean; reason: string; slipsFull: boolean; slips: number; foundingLocked: boolean;
+  buildRate: number; yardBody?: BodyView;
 }
 
 export const buildOption = (key: string): BuildOpt | undefined => state.galaxy?.build_options.find((option) => option.key === key);
@@ -293,6 +294,11 @@ export function shipOption(o: BuildOpt, dyn: SystemStateView): ShipOpt {
   const slips = slipsFor(yardTier);
   const occupied = (dyn.builds ?? []).filter((j) => SHIP_YARD[j.key]?.yard === gate.yard).length;
   const slipsFull = !yardShort && occupied >= slips;
+  // Match the server's actual construction site (highest gating-yard tier,
+  // last body on ties), not whichever planet the workbench happens to show.
+  const yardBody = dyn.bodies?.reduce<BodyView | undefined>((best, body) =>
+    !best || (body.structures?.[gate.yard] ?? 0) >= (best.structures?.[gate.yard] ?? 0) ? body : best, undefined);
+  const buildRate = yardBody ? shipyardBoost(dyn, yardBody, gate.yard) : 0;
   const buildable = !foundingLocked && !yardShort && !unresearched && !slipsFull && afford;
   const reason = foundingLocked
     ? "Complete the Founding Programme to unlock expansion."
@@ -300,16 +306,16 @@ export function shipOption(o: BuildOpt, dyn: SystemStateView): ShipOpt {
     ? "Requires its Line programme on the Hulls research board."
     : yardShort ? `Needs ${YARD_TITLE[gate.yard] ?? gate.yard} tier ${needTier} (have ${yardTier}).`
     : slipsFull ? `All ${slips} slipway${slips === 1 ? "" : "s"} busy — raise the ${YARD_TITLE[gate.yard] ?? gate.yard} or wait for a hull to launch.`
-    : !afford ? "Not enough goods available at this system." : "";
-  return { o, needTier, yardTier, yardShort: yardShort || unresearched, afford, maxAff, buildable, reason, slipsFull, slips, foundingLocked };
+    : !afford ? "Not enough goods available at this system."
+    : buildRate <= 0 ? `Queued hulls wait for workforce at ${YARD_TITLE[gate.yard] ?? gate.yard}${yardBody ? ` · ${yardBody.name}` : ""}.` : "";
+  return { o, needTier, yardTier, yardShort: yardShort || unresearched, afford, maxAff, buildable, reason, slipsFull, slips, foundingLocked, buildRate, yardBody };
 }
 
-/// The staffed-shipyard build-time multiplier (mirrors the sim: build_ticks /
-/// (1 + SHIPYARD_BOOST·staffing·skill), SHIPYARD_BOOST = 0.25). 1.0 when the yard
-/// has no worker assigned here (the AssignmentView carries the resolved factors).
-export function shipyardBoost(dyn: SystemStateView, body: BodyView): number {
-  const a = (dyn.assignments ?? []).find((x) => x.body_id === body.id && x.structure === "shipyard");
-  return a ? 1 + 0.25 * a.staffing * a.skill : 1;
+/// Mirrors sim::production::shipyard_work_rate. These are served factors, used
+/// only for a prospective quote; in-flight progress uses its own arrived segment.
+export function shipyardBoost(dyn: SystemStateView, body: BodyView, yard = "shipyard"): number {
+  const a = (dyn.assignments ?? []).find((x) => x.body_id === body.id && x.structure === yard);
+  return (body.structures?.[yard] ?? 0) > 0 && a && a.staffing > 0 ? 1 + 0.25 * a.staffing * a.skill : 0;
 }
 
 

@@ -2,7 +2,7 @@
 //!
 //! Each connection: splits the socket, spawns a writer task that drains this
 //! connection's private (bounded) outbound channel to the wire and emits
-//! keepalive pings, and runs a read loop that turns inbound JSON into
+//! keepalive pings, and runs a read loop that turns inbound binary frames into
 //! [`GameInput`]s for the loop. The first message must be a [`ClientMsg::Join`];
 //! everything after is an intent. The handler holds no game state.
 //!
@@ -18,6 +18,7 @@
 use std::time::Duration;
 
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use futures::stream::SplitSink;
@@ -26,8 +27,10 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::{MissedTickBehavior, interval, timeout};
 use tracing::{debug, warn};
 
-use crate::protocol::{ClientMsg, ServerMsg, player_id_from_name};
+use crate::auth::{AuthError, AuthSession, AuthStore, AUTH_REQUIRED_CLOSE_CODE};
+use crate::protocol::{ClientMsg, ServerMsg};
 use crate::session::{GameHandle, GameInput, OUTBOUND_CAPACITY};
+use crate::wire;
 
 /// How often the server pings an otherwise-idle connection.
 const PING_INTERVAL: Duration = Duration::from_secs(20);
@@ -35,8 +38,6 @@ const PING_INTERVAL: Duration = Duration::from_secs(20);
 /// Must exceed `PING_INTERVAL` so healthy idle clients (which pong every ping)
 /// are never falsely dropped.
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
-/// Longest a corporation name may be (defends against oversized join frames).
-const MAX_NAME_LEN: usize = 64;
 /// Private close code: a newer login now owns this corporation's sole session.
 /// The browser treats it as terminal instead of entering its reconnect loop.
 const SESSION_REPLACED_CLOSE_CODE: u16 = 4001;
@@ -53,28 +54,45 @@ fn view_divisor(view_hz: Option<u8>) -> u64 {
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(handle): State<GameHandle>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, handle))
+    State(auth): State<AuthStore>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, AuthError> {
+    // Both the HTTP handshake and its Origin are authenticated. Join is only
+    // readiness/cadence, never authority to choose a corporation by public name.
+    auth.check_origin(&headers)?;
+    let session = auth.authenticate(&headers).await?;
+    Ok(ws.protocols([wire::SUBPROTOCOL])
+        .max_message_size(wire::MAX_CLIENT_FRAME)
+        .max_frame_size(wire::MAX_CLIENT_FRAME)
+        .on_upgrade(move |socket| handle_socket(socket, handle, session)))
 }
 
 /// Serialize one `ServerMsg` and write it to the socket. `Ok(())` means the
-/// connection is still healthy (a serialization failure is logged and skipped,
-/// not fatal); `Err(())` means the socket send failed and the writer must stop.
+/// connection is still healthy. A serialization failure is FATAL: skipping a
+/// reliable increment after its cursor advanced would silently lose evidence.
+/// Reconnecting resets cursors and resends the permitted history instead.
 async fn write_msg(ws_tx: &mut SplitSink<WebSocket, Message>, msg: &ServerMsg) -> Result<(), ()> {
-    let json = match serde_json::to_string(msg) {
-        Ok(j) => j,
+    let bytes = match wire::encode_server(msg) {
+        Ok(bytes) => bytes,
         Err(e) => {
             warn!(error = %e, "failed to serialise ServerMsg");
-            return Ok(());
+            return Err(());
         }
     };
     ws_tx
-        .send(Message::Text(Utf8Bytes::from(json)))
+        .send(Message::Binary(bytes.into()))
         .await
         .map_err(|_| ())
 }
 
-async fn handle_socket(socket: WebSocket, handle: GameHandle) {
+async fn handle_socket(mut socket: WebSocket, handle: GameHandle, session: AuthSession) {
+    if socket.protocol().is_none_or(|protocol| protocol != wire::SUBPROTOCOL) {
+        let _ = socket.send(Message::Close(Some(CloseFrame {
+            code: wire::PROTOCOL_CLOSE_CODE,
+            reason: Utf8Bytes::from_static("binary protocol required; reload the game"),
+        }))).await;
+        return;
+    }
     let (mut ws_tx, mut ws_rx) = socket.split();
     let conn_id = handle.next_conn_id();
 
@@ -89,6 +107,10 @@ async fn handle_socket(socket: WebSocket, handle: GameHandle) {
     // session policy into either I/O loop.
     let (replace_tx, mut reader_replace_rx) = watch::channel(false);
     let mut writer_replace_rx = reader_replace_rx.clone();
+    let mut reader_auth_rx = session.revoked;
+    let mut writer_auth_rx = reader_auth_rx.clone();
+    let expires_in = (session.expires_at - chrono::Utc::now()).to_std().unwrap_or_default();
+    let auth_deadline = tokio::time::Instant::now() + expires_in;
 
     // Writer task: forward the latest View + queued discrete messages, and emit
     // keepalive pings.
@@ -98,7 +120,26 @@ async fn handle_socket(socket: WebSocket, handle: GameHandle) {
         // Skip the immediate first tick.
         ping.tick().await;
         loop {
+            if *writer_auth_rx.borrow() || tokio::time::Instant::now() >= auth_deadline {
+                let _ = ws_tx.send(Message::Close(Some(CloseFrame {
+                    code: AUTH_REQUIRED_CLOSE_CODE,
+                    reason: Utf8Bytes::from_static("sign in again"),
+                }))).await;
+                break;
+            }
             tokio::select! {
+                biased;
+                changed = writer_auth_rx.changed() => {
+                    if changed.is_err() {
+                        let _ = ws_tx.send(Message::Close(Some(CloseFrame {
+                            code: AUTH_REQUIRED_CLOSE_CODE,
+                            reason: Utf8Bytes::from_static("sign in again"),
+                        }))).await;
+                        break;
+                    }
+                    continue;
+                },
+                _ = tokio::time::sleep_until(auth_deadline) => continue,
                 // Latest View — borrow_and_update() hands us only the newest
                 // value, so any frames the loop pushed while we were busy writing
                 // collapse into this one send.
@@ -141,8 +182,12 @@ async fn handle_socket(socket: WebSocket, handle: GameHandle) {
     let mut joined = false;
 
     loop {
+        if *reader_auth_rx.borrow() || tokio::time::Instant::now() >= auth_deadline { break; }
         // Idle timeout detects half-open connections.
         let incoming = tokio::select! {
+            biased;
+            _ = reader_auth_rx.changed() => break,
+            _ = tokio::time::sleep_until(auth_deadline) => break,
             changed = reader_replace_rx.changed() => match changed {
                 Ok(()) if *reader_replace_rx.borrow_and_update() => break,
                 Ok(()) => continue,
@@ -164,31 +209,17 @@ async fn handle_socket(socket: WebSocket, handle: GameHandle) {
         };
 
         match frame {
-            Message::Text(text) => match serde_json::from_str::<ClientMsg>(text.as_str()) {
-                Ok(ClientMsg::Join { name, view_hz }) => {
+            Message::Binary(bytes) => match wire::decode_client(&bytes) {
+                Ok(ClientMsg::Join { view_hz, .. }) => {
                     if joined {
                         debug!(conn_id, "duplicate join ignored");
                         continue;
                     }
-                    let trimmed = name.trim();
-                    if trimmed.is_empty() {
-                        let _ = out_tx.try_send(ServerMsg::Error {
-                            message: "name must not be empty".into(),
-                        });
-                        continue;
-                    }
-                    if trimmed.chars().count() > MAX_NAME_LEN {
-                        let _ = out_tx.try_send(ServerMsg::Error {
-                            message: format!("name too long (max {MAX_NAME_LEN} characters)"),
-                        });
-                        continue;
-                    }
-                    let player_id = player_id_from_name(trimmed);
                     joined = true;
                     handle.send(GameInput::Connect {
                         conn_id,
-                        player_id,
-                        name: trimmed.to_string(),
+                        player_id: session.account.player_id(),
+                        name: session.account.corporation_name.clone(),
                         outbound: out_tx.clone(),
                         view_tx: view_tx.clone(),
                         replace_tx: replace_tx.clone(),
@@ -213,11 +244,17 @@ async fn handle_socket(socket: WebSocket, handle: GameHandle) {
                     });
                 }
             },
+            Message::Text(_) => {
+                let _ = out_tx.try_send(ServerMsg::Error {
+                    message: "binary protocol required; reload the game".into(),
+                });
+                break;
+            }
             Message::Close(_) => break,
             // A pong (reply to our keepalive ping) simply resets the read
             // deadline by virtue of arriving; nothing else to do. axum answers
             // inbound pings automatically.
-            Message::Ping(_) | Message::Pong(_) | Message::Binary(_) => {}
+            Message::Ping(_) | Message::Pong(_) => {}
         }
     }
 
@@ -233,3 +270,6 @@ async fn handle_socket(socket: WebSocket, handle: GameHandle) {
     }
     debug!(conn_id, "connection closed");
 }
+
+#[cfg(test)]
+mod tests;

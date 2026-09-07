@@ -1073,6 +1073,9 @@ pub struct Fleet {
     /// ordinary pirates and every player Raider retain the normal hull table.
     #[serde(default)]
     pub founding_privateer: bool,
+    /// Weak, full-hull opposition confined to optional post-privateer contracts.
+    #[serde(default)]
+    pub operation_privateer: bool,
     /// §economy Part 4: SPECIALIST PASSENGERS aboard (kind → headcount) —
     /// people, not cargo, but they ride the SAME two-tier fog rule: the
     /// broadcast never includes them, a sensor-revealed manifest does. Berths
@@ -1201,6 +1204,7 @@ impl Fleet {
             damage: BTreeMap::new(),
             transit: TransitMode::Full,
             founding_privateer: false,
+            operation_privateer: false,
             passengers: BTreeMap::new(),
             modules: BTreeMap::new(),
             posture: crate::doctrine::EngagementPosture::Passive,
@@ -1755,6 +1759,8 @@ impl Fleet {
             .fold(f64::INFINITY, f64::min);
         if self.founding_privateer {
             hull_speed * crate::founding::PRIVATEER_SPEED_MULT
+        } else if self.operation_privateer {
+            hull_speed * crate::operation::FOLLOW_UP_PIRATE_SPEED_MULT
         } else {
             hull_speed
         }

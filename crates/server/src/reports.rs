@@ -27,13 +27,19 @@ const MAX_REPORT_AGE: f64 = 1800.0;
 /// these back from every View, so they survive reconnects. Tunable.
 pub const BATTLE_REPORTS_KEPT: usize = 20;
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Recipient {
     player: PlayerId,
     delivered: bool,
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct PendingReport {
     id: u64,
+    #[serde(default)]
+    battle_id: Option<sim::EntityId>,
+    #[serde(default)]
+    aftermath: Option<[sim::combat::aftermath::BattleAftermath; 2]>,
     pos: Vec2,
     event_time: f64,
     attacker: PlayerId,
@@ -53,9 +59,13 @@ struct PendingReport {
 /// full result as THAT side learned it, stamped with when they learned it.
 /// Owner-only by construction: it lives keyed under that player and only their
 /// View ever carries it.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct RetainedReport {
     pub id: u64,
+    #[serde(default)]
+    pub battle_id: Option<sim::EntityId>,
+    #[serde(default)]
+    pub aftermath: Option<sim::combat::aftermath::BattleAftermath>,
     pub pos: Vec2,
     pub event_time: f64,
     /// Sim-time the report's light reached THIS player's command center.
@@ -70,6 +80,7 @@ pub struct RetainedReport {
 
 /// §contestable-territory Part 2: a queued CAPTURE report, delivered per
 /// participant when the flip's light reaches them (same machinery as battles).
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct PendingCapture {
     id: u64,
     pos: Vec2,
@@ -82,7 +93,7 @@ struct PendingCapture {
 /// A delivered CAPTURE as one participant learned it — powers the capture
 /// aftermath marker + results panel. Owner-only by construction (keyed by the
 /// two participants). `captor` = you took it; else you lost it.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct RetainedCapture {
     pub id: u64,
     pub pos: Vec2,
@@ -92,7 +103,7 @@ pub struct RetainedCapture {
     pub plunder: Vec<crate::protocol::StockSlot>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ReportScheduler {
     pending: Vec<PendingReport>,
     next_id: u64,
@@ -114,6 +125,8 @@ impl ReportScheduler {
     pub fn ingest(&mut self, events: &[Event]) {
         for e in events {
             if let EventPayload::RaidResolved {
+                battle_id,
+                aftermath,
                 attacker,
                 defender,
                 attacker_ship,
@@ -129,6 +142,8 @@ impl ReportScheduler {
                 self.next_id += 1;
                 self.pending.push(PendingReport {
                     id: self.next_id,
+                    battle_id: *battle_id,
+                    aftermath: aftermath.clone(),
                     pos: *pos,
                     event_time: e.time,
                     attacker: *attacker,
@@ -207,6 +222,8 @@ impl ReportScheduler {
                     };
                     out.push(RaidReport {
                         report_id: r.id,
+                        battle_id: r.battle_id,
+                        aftermath: r.aftermath.as_ref().map(|sides| sides[usize::from(player != r.attacker)].clone()),
                         outcome: r.outcome,
                         attacker: r.attacker,
                         defender: r.defender,
@@ -227,6 +244,8 @@ impl ReportScheduler {
                     let kept = self.retained.entry(player).or_default();
                     kept.push(RetainedReport {
                         id: r.id,
+                        battle_id: r.battle_id,
+                        aftermath: r.aftermath.as_ref().map(|sides| sides[usize::from(player != r.attacker)].clone()),
                         pos: r.pos,
                         event_time: r.event_time,
                         arrival_time: arrival,
@@ -320,6 +339,8 @@ mod tests {
         Event::new(
             time,
             EventPayload::RaidResolved {
+                battle_id: Some(EntityId(99)),
+                aftermath: None,
                 attacker,
                 defender,
                 attacker_ship: EntityId(1),
@@ -347,6 +368,90 @@ mod tests {
                 plunder,
             },
         )
+    }
+
+    #[test]
+    fn aftermath_is_frozen_owner_only_and_waits_for_conclusion_light() {
+        use sim::combat::aftermath::{BattleAftermath, SurvivingFleet, BattleCaptainGain};
+        let (a, d) = (PlayerId(1), PlayerId(2));
+        let pos = Vec2::new(30_000.0, 0.0);
+        let side = |owner: PlayerId, fleet: u64| {
+            let captain = sim::Captain::founding(owner, EntityId(fleet));
+            BattleAftermath {
+                survivors: vec![SurvivingFleet { fleet_id: EntityId(fleet), kind: ShipKind::Raider,
+                    composition: BTreeMap::from([(ShipKind::Raider, 2)]), hull: 0.72, withdrew: false,
+                    guard_target: None, captain: Some(BattleCaptainGain { id: captain.id, name: captain.name.clone(),
+                        portrait: captain.portrait, before: captain.sighting(), after: captain.sighting() }) }],
+                bounty_credits: 4500.0,
+            }
+        };
+        let mut event = raid_event(40.0, a, d, pos);
+        if let EventPayload::RaidResolved { aftermath, .. } = &mut event.payload {
+            *aftermath = Some([side(a, 101), side(d, 202)]);
+        }
+        let mut sched = ReportScheduler::new();
+        sched.ingest(&[event]);
+        let saved = serde_json::to_value(&sched).unwrap();
+        let mut sched: ReportScheduler = serde_json::from_value(saved.clone()).unwrap();
+        assert!(sched.due_for(a, Vec2::ZERO, 400.0, 54.999).is_empty());
+        assert!(sched.retained_for(a).is_empty(), "survivors and promotions cannot bypass the 15s return leg");
+        assert!(sched.due_for(PlayerId(3), pos, 400.0, 55.0).is_empty());
+        let learned = sched.due_for(a, Vec2::ZERO, 400.0, 55.0);
+        let own = learned[0].aftermath.as_ref().unwrap();
+        assert_eq!(own.survivors.len(), 1);
+        assert_eq!(own.survivors[0].fleet_id, EntityId(101));
+        assert_eq!(own.bounty_credits, 4500.0);
+        let packet = crate::wire::encode_server(&crate::protocol::ServerMsg::Report { report: learned[0].clone() }).unwrap();
+        let decoded: serde_json::Value = rmp_serde::from_slice(&packet[4..]).unwrap();
+        assert_eq!(decoded["report"]["aftermath"]["survivors"][0]["fleet_id"], "101");
+        assert!(!decoded.to_string().contains("202"), "opponent officer/fleet details must not enter the DTO");
+        let restored: ReportScheduler = serde_json::from_value(serde_json::to_value(&sched).unwrap()).unwrap();
+        assert_eq!(restored.retained_for(a)[0].aftermath.as_ref().unwrap().survivors[0].hull, 0.72);
+        assert!(restored.retained_for(d).is_empty());
+        let defender = sched.due_for(d, Vec2::ZERO, 400.0, 55.0);
+        assert_eq!(defender[0].aftermath.as_ref().unwrap().survivors[0].fleet_id, EntityId(202));
+        let mut legacy = saved;
+        legacy["pending"][0].as_object_mut().unwrap().remove("aftermath");
+        let mut old: ReportScheduler = serde_json::from_value(legacy).unwrap();
+        assert!(old.due_for(a, Vec2::ZERO, 400.0, 55.0)[0].aftermath.is_none());
+    }
+
+    #[test]
+    fn battle_identity_survives_delayed_reports_and_checkpoint_roundtrips() {
+        let (attacker, defender) = (PlayerId(1), PlayerId(2));
+        let (cc, pos, c) = (Vec2::ZERO, Vec2::new(30_000.0, 0.0), 400.0);
+        let first = raid_event(40.0, attacker, defender, pos);
+        let mut second = first.clone();
+        if let EventPayload::RaidResolved { battle_id, .. } = &mut second.payload {
+            *battle_id = Some(EntityId(100));
+        }
+        let mut sched = ReportScheduler::new();
+        // Same position AND conclusion instant: only the engagement id can
+        // identify these separate fights. Their report counters are not ids 99/100.
+        sched.ingest(&[first, second]);
+        let frozen = serde_json::to_value(&sched).unwrap();
+        let mut restored: ReportScheduler = serde_json::from_value(frozen.clone()).unwrap();
+        assert!(restored.due_for(attacker, cc, c, 54.999).is_empty());
+        assert!(restored.retained_for(attacker).is_empty());
+        let reports = restored.due_for(attacker, cc, c, 55.0);
+        assert_eq!(reports.iter().map(|r| r.report_id).collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!(reports.iter().map(|r| r.battle_id).collect::<Vec<_>>(), vec![Some(EntityId(99)), Some(EntityId(100))]);
+        let packet = crate::wire::encode_server(&crate::protocol::ServerMsg::Report {
+            report: reports[0].clone(),
+        }).unwrap();
+        let decoded: serde_json::Value = rmp_serde::from_slice(&packet[4..]).unwrap();
+        assert_eq!(decoded["report"]["battle_id"], "99", "binary transport keeps engagement ids as strings");
+        let reopened: ReportScheduler = serde_json::from_value(serde_json::to_value(&restored).unwrap()).unwrap();
+        assert_eq!(reopened.retained_for(attacker).iter().map(|r| r.battle_id).collect::<Vec<_>>(),
+            vec![Some(EntityId(99)), Some(EntityId(100))]);
+        assert!(reopened.retained_for(defender).is_empty());
+
+        let mut legacy = frozen;
+        legacy["pending"][0].as_object_mut().unwrap().remove("battle_id");
+        let mut old: ReportScheduler = serde_json::from_value(legacy).unwrap();
+        let reports = old.due_for(attacker, cc, c, 55.0);
+        assert_eq!(reports[0].battle_id, None, "legacy reports stay readable without guessing a link");
+        assert_eq!(reports[1].battle_id, Some(EntityId(100)));
     }
 
     /// §Part 2: a CAPTURE is retained per-participant, each stamped with THEIR

@@ -1,22 +1,18 @@
 #!/usr/bin/env bash
-# One command to get a clean game running: rebuild the client, rebuild the
-# server, throw away the old galaxy, and start fresh.
+# Rebuild the client/server and RESUME the saved galaxy by default.
 #
-#   scripts/start.sh
+#   scripts/start.sh                  # ordinary safe restart
+#   scripts/start.sh --reset-galaxy   # explicit new galaxy; old files archived
 #
-# What it does, in order:
-#   1. Builds the client (tsc --noEmit + vite build) into client/dist — the
-#      server serves that directory, so this is what "rebuild the ux" means.
-#   2. Builds target/release/server.
-#   3. Stops whatever is already listening on $PORT (TERM, then KILL).
-#   4. Wipes the persisted galaxy so the server boots a NEW one. With no
-#      DATABASE_URL the server is already in-memory, so a restart IS a fresh
-#      galaxy; with one set, the snapshot is truncated (that's the destructive
-#      step — pass --keep-galaxy to resume the old one instead).
-#   5. Starts the server and waits for /healthz, then reports which galaxy it got.
+# Full galaxy checkpoints run every 15 wall minutes and on clean shutdown.
+# A hard crash resumes the last successful save; intervening progress is lost.
+# Saves live in GALAXY_DATA_DIR (default saves/galaxy-PORT); back up that WHOLE
+# directory, not just its newest checkpoint. Accounts remain in PostgreSQL and
+# are never reset here. --keep-galaxy is retained as a compatibility no-op.
 #
-# Env: PORT (8080), GALAXY_SEED, MAX_PLAYERS, DATABASE_URL, RUST_LOG — all read
-# by the server itself; this script only passes them through.
+# Accounts: ACCOUNTS_DATABASE_URL (falls back to DATABASE_URL), APP_ORIGIN.
+# Local development starts scripts/devdb.sh if neither DB URL is set.
+# Env: PORT (8080), SIM_PACING (1), GALAXY_SEED, MAX_PLAYERS, RUST_LOG.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,11 +23,12 @@ PORT="${PORT:-8080}"
 # (gitignored as server*.log).
 LOG="$ROOT/server-$PORT.log"
 BIN="$ROOT/target/release/server"
-KEEP_GALAXY=0
+RESET_GALAXY=0
 
 for arg in "$@"; do
   case "$arg" in
-    --keep-galaxy) KEEP_GALAXY=1 ;;
+    --keep-galaxy) ;; # resume is now the default
+    --reset-galaxy) RESET_GALAXY=1 ;;
     # Print this file's header comment (everything after the shebang) as the help.
     -h|--help) awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown option: $arg (try --help)" >&2; exit 1 ;;
@@ -39,6 +36,21 @@ for arg in "$@"; do
 done
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
+
+if [ -z "${ACCOUNTS_DATABASE_URL:-}" ] && [ -z "${DATABASE_URL:-}" ]; then
+  case "${APP_ORIGIN:-http://localhost:$PORT}" in
+    http://localhost:*|http://127.0.0.1:*)
+      step "Starting local PostgreSQL for accounts"
+      scripts/devdb.sh init
+      ACCOUNTS_DATABASE_URL="$(scripts/devdb.sh url)"
+      export ACCOUNTS_DATABASE_URL
+      ;;
+    *)
+      echo "Set ACCOUNTS_DATABASE_URL before starting a public server." >&2
+      exit 1
+      ;;
+  esac
+fi
 
 step "Building the client → client/dist"
 npm --prefix client run build
@@ -51,46 +63,44 @@ PIDS="$(lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null || true)"
 if [ -n "$PIDS" ]; then
   # shellcheck disable=SC2086
   kill $PIDS 2>/dev/null || true
-  for _ in $(seq 1 40); do
-    lsof -ti "tcp:$PORT" -sTCP:LISTEN >/dev/null 2>&1 || break
+  # The listener can close before the final checkpoint finishes. Wait for the
+  # actual process, and never SIGKILL a server that may be saving the galaxy.
+  for _ in $(seq 1 240); do
+    ALIVE=0
+    for pid in $PIDS; do kill -0 "$pid" 2>/dev/null && ALIVE=1; done
+    [ "$ALIVE" = 0 ] && break
     sleep 0.25
   done
-  # Still holding the port after 10s — take it.
-  REMAIN="$(lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null || true)"
-  # shellcheck disable=SC2086
-  [ -n "$REMAIN" ] && kill -9 $REMAIN 2>/dev/null || true
+  if [ "$ALIVE" != 0 ]; then
+    echo "Server is still shutting down/saving after 60s; restart aborted. Check its log." >&2
+    exit 1
+  fi
   echo "  stopped: $(echo "$PIDS" | tr '\n' ' ')"
 else
   echo "  nothing was listening"
 fi
 
-step "Resetting the galaxy"
-if [ "$KEEP_GALAXY" = 1 ]; then
-  echo "  --keep-galaxy: leaving any snapshot in place (the server will resume it)"
-elif [ -n "${DATABASE_URL:-}" ]; then
-  if command -v psql >/dev/null 2>&1; then
-    psql "$DATABASE_URL" -q -c "truncate snapshots, events;" \
-      && echo "  truncated snapshots + events — the server will generate a new galaxy"
-  else
-    echo "  WARNING: DATABASE_URL is set but psql is not installed; the old galaxy" >&2
-    echo "           will be restored from its snapshot. Install psql or unset" >&2
-    echo "           DATABASE_URL for an in-memory galaxy." >&2
-  fi
+if [ "$RESET_GALAXY" = 1 ]; then
+  step "Explicit galaxy reset (server will archive the previous save files)"
 else
-  echo "  no DATABASE_URL — the server runs in-memory, so this start is a new galaxy"
+  step "Resuming the galaxy from its last saved checkpoint"
 fi
 
 step "Starting the server on :$PORT"
 : >"$LOG"
 # nohup + disown so the server outlives this script (and the shell that ran it).
-nohup "$BIN" >>"$LOG" 2>&1 &
+if [ "$RESET_GALAXY" = 1 ]; then
+  nohup "$BIN" --reset-galaxy >>"$LOG" 2>&1 &
+else
+  nohup "$BIN" >>"$LOG" 2>&1 &
+fi
 SRV=$!
 disown "$SRV" 2>/dev/null || true
-for _ in $(seq 1 80); do
+for _ in $(seq 1 480); do
   if curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1; then
     break
   fi
-  # Died during startup — surface the log rather than spinning for 20s.
+  # Died during startup — surface the log rather than waiting through recovery.
   if ! kill -0 "$SRV" 2>/dev/null; then
     echo "  server exited during startup:" >&2
     tail -20 "$LOG" >&2
@@ -109,8 +119,8 @@ fi
 CLEAN="$(perl -pe 's/\e\[[0-9;]*m//g' "$LOG")"
 if printf '%s\n' "$CLEAN" | grep -q "initialising fresh galaxy"; then
   echo "  new galaxy ($(printf '%s\n' "$CLEAN" | grep -o 'seed=[0-9]*' | head -1))"
-elif printf '%s\n' "$CLEAN" | grep -q "resuming galaxy from snapshot"; then
-  echo "  RESUMED the existing galaxy from its snapshot — not a new one"
+elif printf '%s\n' "$CLEAN" | grep -q "resuming galaxy from last saved checkpoint"; then
+  echo "  RESUMED the existing galaxy from its last saved checkpoint"
 fi
 
 printf '\n\033[1mReady →\033[0m http://localhost:%s   (pid %s, log %s)\n' "$PORT" "$SRV" "$(basename "$LOG")"

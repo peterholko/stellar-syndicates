@@ -4,13 +4,13 @@ import {
   theaterClose,
   theaterResetCamera,
   theaterSetTime,
+  theaterShipAppearance,
 } from "../../battletheater";
 import {
   battleReportForRecord,
   battleViewerTimers,
   clearBattleAftermathTimer,
   clearBattleCloseTimer,
-  shipKindLabel,
 } from "../../core/derive/fleet";
 import { fmtDur, informationDelay } from "../../core/derive/format";
 import { nearestSystemName, systemName } from "../../core/derive/geo";
@@ -28,11 +28,12 @@ import {
   type BattleRecordView,
   type GroundRecordView,
   type KeyframeView,
+  type PlayerId,
   type RecordCount,
   type RoundNoteView,
 } from "../../protocol";
-import { liveSimTime } from "../../state";
 import { setHtml } from "../dom";
+import { BattleWithdrawPrompt } from "../battlewithdraw";
 import type { CoreContext } from "../types";
 import type { DeckRoute } from "./router";
 
@@ -49,8 +50,9 @@ type BattleOpenOptions = { semantic?: boolean };
 
 /** Deck-owned modal hosts around the shared replay engines. The playback
  * cursor never crosses the arrived round prefix: an unresolved record chases
- * that frontier at real battle pace, while only a concluded record exposes
- * replay transport and its historical 4x default. */
+ * that frontier at the game's pace. A live viewer finishes the arrived ending
+ * before exposing replay transport, and stays open until the player leaves.
+ * Opening an already-concluded replay retains its historical 4x default. */
 export class DeckTheaters {
   private battleId: string | null = null;
   private battleRound = 0;
@@ -66,7 +68,7 @@ export class DeckTheaters {
   private battleLastAge: number | null = null;
   private battleLastFrontier = -1;
   private battleLastArrivalWallMs = 0;
-  private battleHandoffArmed = false;
+  private readonly withdrawal = new BattleWithdrawPrompt();
 
   private groundId: string | null = null;
   private groundRound = 0;
@@ -88,21 +90,9 @@ export class DeckTheaters {
   ) {
     battleRoot.addEventListener("click", (event) => this.battleClick(event), { signal });
     groundRoot.addEventListener("click", (event) => this.groundClick(event), { signal });
-    let semanticWheel = 0;
-    battleRoot.addEventListener("wheel", (event) => {
-      if (!this.battleSemantic) return;
-      if (event.deltaY > 0) {
-        semanticWheel += event.deltaY;
-        if (semanticWheel > 60) {
-          event.preventDefault();
-          event.stopPropagation();
-          semanticWheel = 0;
-          this.closeBattle();
-        }
-      } else {
-        semanticWheel = 0;
-      }
-    }, { passive: false, capture: true, signal });
+    // Wheel input belongs to the theater camera, even after zoom-to-enter.
+    // Zooming out clamps at its overview limit; leaving is an explicit close,
+    // never a scroll gesture captured by this overlay before the canvas.
   }
 
   get isOpen(): boolean { return this.battleId !== null || this.groundId !== null; }
@@ -110,6 +100,7 @@ export class DeckTheaters {
   openBattle(id: string, options: BattleOpenOptions = {}): boolean {
     const record = this.battleRecord(id);
     if (!record) return false;
+    this.withdrawal.clear();
     this.closeGround();
     clearBattleAftermathTimer();
     clearBattleCloseTimer();
@@ -120,7 +111,6 @@ export class DeckTheaters {
     const frontier = record.rounds.length - 1;
     this.battleLive = running;
     this.battleSpeed = running ? 1 : 4;
-    this.battleHandoffArmed = this.battleSemantic && running;
     this.battleRound = running ? Math.max(0, frontier) : 0;
     this.battlePlaying = !running && frontier > 0;
     this.battleAccum = 0;
@@ -235,9 +225,8 @@ export class DeckTheaters {
     switch (button.dataset.deckTheaterAct) {
       case "close": this.closeBattle(); break;
       case "play":
-        if (record?.outcome === null) break;
+        if (!record || record.outcome === null || this.battleLive) break;
         this.battleLive = false;
-        this.battleHandoffArmed = false;
         if (!this.battlePlaying && record && this.battleRound >= frontier) this.battleRound = 0;
         this.battlePlaying = !this.battlePlaying;
         this.battleAccum = 0;
@@ -245,9 +234,8 @@ export class DeckTheaters {
         this.renderBattle(true);
         break;
       case "speed":
-        if (record?.outcome === null) break;
+        if (!record || record.outcome === null || this.battleLive) break;
         this.battleLive = false;
-        this.battleHandoffArmed = false;
         this.battlePlaying = false;
         this.battleSpeed = Number(button.dataset.speed) || 1;
         this.battleAccum = 0;
@@ -255,19 +243,25 @@ export class DeckTheaters {
         this.renderBattle(true);
         break;
       case "round":
-        if (record?.outcome === null) break;
+        if (!record || record.outcome === null || this.battleLive) break;
         this.battleRound = Number(button.dataset.round) || 0;
         this.battleLive = false;
-        this.battleHandoffArmed = false;
         this.battlePlaying = false;
         this.battleAccum = 0;
         clearBattleAftermathTimer();
         this.renderBattle(true);
         break;
-      case "withdraw":
-        if (button.dataset.fleet) {
-          this.ctx.send({ type: "Withdraw", fleet_id: button.dataset.fleet });
-          this.hooks.notice("<b>Withdraw order sent</b> · the engaged fleet receives it after command lag.");
+      case "report": {
+        if (!record || record.outcome === null || this.battleLive) break;
+        const report = battleReportForRecord(record);
+        if (report) this.closeBattle(() => this.hooks.go({ name: "battle", params: { id: String(report.id), report: "battle", label: "Battle aftermath" } }));
+        break;
+      }
+      case "withdraw-ask": case "withdraw-confirm": case "withdraw-cancel":
+        if (this.battleId && button.dataset.battle === this.battleId && button.dataset.fleet) {
+          const notice = this.withdrawal.handle(button.dataset.deckTheaterAct.slice("withdraw-".length), this.battleId, button.dataset.fleet, this.ctx);
+          if (notice) this.hooks.notice(notice);
+          this.renderBattle(true);
         }
         break;
       case "doctrine":
@@ -326,10 +320,10 @@ export class DeckTheaters {
 
   private finishBattleClose(after?: () => void): void {
     clearBattleCloseTimer();
+    this.withdrawal.clear();
     this.battleId = null;
     this.battlePlaying = false;
     this.battleLive = false;
-    this.battleHandoffArmed = false;
     this.battleClosing = false;
     this.battleRoot.hidden = true;
     this.battleRoot.classList.remove("is-semantic", "is-entering", "is-leaving");
@@ -364,7 +358,9 @@ export class DeckTheaters {
       if (this.battleRound < frontier) {
         const hz = this.ctx.state.tickHz || 30;
         const windowSeconds = Math.max(0.2, (record.rounds[this.battleRound + 1].tick - record.rounds[this.battleRound].tick) / hz);
-        this.battleAccum += dt / windowSeconds;
+        // Match sim seconds per wall second (including accelerated playtests),
+        // not replay speed. The arrived frontier still caps every advancement.
+        this.battleAccum += dt * this.ctx.state.pacingScale / windowSeconds;
         let changed = false;
         while (this.battleAccum >= 1 && this.battleRound < frontier) {
           this.battleRound++;
@@ -378,9 +374,7 @@ export class DeckTheaters {
         if (record.outcome !== null) {
           this.battleLive = false;
           this.battlePlaying = false;
-          this.battleSpeed = 4;
           this.renderBattle(true);
-          this.maybeScheduleAftermath(record);
         }
       }
     } else if (this.battlePlaying && frontier >= 0) {
@@ -404,7 +398,6 @@ export class DeckTheaters {
       }
       if (changed) this.renderBattle(true);
     }
-    if (!this.battleLive && record.outcome !== null && this.battleRound >= frontier) this.maybeScheduleAftermath(record);
     theaterSetTime(this.battleRound, Math.min(1, this.battleAccum), this.battleLive);
     this.battleLastTs = timestamp;
     this.battleLoop = requestAnimationFrame((time) => this.tickBattle(time));
@@ -445,16 +438,6 @@ export class DeckTheaters {
     this.groundLoop = requestAnimationFrame((time) => this.tickGround(time));
   }
 
-  private maybeScheduleAftermath(record: BattleRecordView): void {
-    if (!this.battleSemantic || this.battleClosing || !this.battleHandoffArmed || this.battleLive || record.outcome === null || battleViewerTimers.aftermath !== null) return;
-    const report = battleReportForRecord(record);
-    if (!report) return;
-    battleViewerTimers.aftermath = window.setTimeout(() => {
-      battleViewerTimers.aftermath = null;
-      this.closeBattle(() => this.hooks.go({ name: "battle", params: { id: String(report.id), report: "battle", label: "Battle report" } }));
-    }, 900);
-  }
-
   private renderBattle(force = false): void {
     if (this.battleId === null) return;
     const record = this.battleRecord(this.battleId);
@@ -462,7 +445,7 @@ export class DeckTheaters {
       this.closeBattle();
       return;
     }
-    const running = record.outcome === null;
+    const running = this.battleLive || record.outcome === null;
     const frontier = record.rounds.length - 1;
     if (this.battleLive && frontier >= 0) this.battleRound = Math.min(this.battleRound, frontier);
     this.battleRound = Math.max(0, Math.min(this.battleRound, Math.max(0, frontier)));
@@ -489,7 +472,9 @@ export class DeckTheaters {
   }
 
   private battleHtml(record: BattleRecordView, stale: boolean, stalled: boolean): string {
-    const running = record.outcome === null;
+    // Receipt of the final packet is not completion of its on-screen playback.
+    // Keep LIVE chrome through the last impact; outcome alone never unlocks it.
+    const running = this.battleLive || record.outcome === null;
     const frontier = record.rounds.length - 1;
     const round = frontier >= 0 ? record.rounds[this.battleRound] : undefined;
     const label0 = record.own_side === 0 ? "You" : "Attackers";
@@ -499,34 +484,25 @@ export class DeckTheaters {
       ? `<div class="deck-theater-live${stale ? " is-stale" : ""}"><i></i><b>FOLLOWING LIGHT</b><span>real battle pace · ${esc(ageText)}</span>${stalled ? `<em>light in transit · holding last arrival</em>` : ""}</div>`
       : `<div class="deck-theater-live is-complete"><i></i><b>COMPLETE</b><span>${esc(outcomeText(record))}</span></div>`;
     const counter = frontier < 0 ? "awaiting first round" : `Round ${this.battleRound + 1} of ${record.rounds.length}${running ? " +" : ""}`;
-    const forces = round ? `<div class="deck-theater-forces">${sideHtml(record, round.counts[0], 0, label0)}<span>versus</span>${sideHtml(record, round.counts[1], 1, label1)}</div>` : `<div class="deck-theater-empty">Awaiting the first round's light…</div>`;
+    const pirateId = this.ctx.state.galaxy?.pirate_id ?? null;
+    const forces = round ? `<div class="deck-theater-forces">${sideHtml(record, round.counts[0], 0, label0, pirateId)}<span>versus</span>${sideHtml(record, round.counts[1], 1, label1, pirateId)}</div>` : `<div class="deck-theater-empty">Awaiting the first round's light…</div>`;
     const notes = round?.notes.length ? `<div class="deck-theater-notes">${round.notes.map(noteHtml).join("")}</div>` : "";
     const hasFrames = record.rounds.some((entry) => entry.frame);
     const frame = round?.frame ?? null;
     const stage = hasFrames && theaterAvailable()
       ? `<div class="deck-theater-stage" data-battle-theater-mount></div>`
       : frame ? truthMap(frame, record.own_side) : "";
-    const ticks = record.rounds.map((_entry, index) => `<button type="button" class="deck-theater-tick${index < this.battleRound ? " is-seen" : ""}${index === this.battleRound ? " is-current" : ""}"${running ? " disabled" : ` data-deck-theater-act="round" data-round="${index}"`} aria-label="Round ${index + 1}"></button>`).join("");
-    const transport = frontier < 0 ? "" : running
-      ? `<div class="deck-theater-transport"><div class="deck-theater-scrub">${ticks}<span class="deck-theater-beyond" aria-label="Later rounds are beyond your light cone"></span></div></div>`
-      : `<div class="deck-theater-transport"><button type="button" data-deck-theater-act="play">${this.battlePlaying ? "Pause" : "Play"}</button><span class="deck-theater-speeds">${[1, 4, 16].map((speed) => `<button type="button" data-deck-theater-act="speed" data-speed="${speed}" aria-pressed="${this.battleSpeed === speed}">${speed}×</button>`).join("")}</span><div class="deck-theater-scrub">${ticks}</div></div>`;
+    const ticks = running ? "" : record.rounds.map((_entry, index) => `<button type="button" class="deck-theater-tick${index < this.battleRound ? " is-seen" : ""}${index === this.battleRound ? " is-current" : ""}" data-deck-theater-act="round" data-round="${index}" aria-label="Round ${index + 1}"></button>`).join("");
+    const transport = frontier < 0 || running ? "" : `<div class="deck-theater-transport"><button type="button" data-deck-theater-act="play">${this.battlePlaying ? "Pause" : "Play"}</button><span class="deck-theater-speeds">${[1, 4, 16].map((speed) => `<button type="button" data-deck-theater-act="speed" data-speed="${speed}" aria-pressed="${this.battleSpeed === speed}">${speed}×</button>`).join("")}</span><div class="deck-theater-scrub">${ticks}</div></div>`;
     const elapsed = round ? Math.max(0, round.tick / (this.ctx.state.tickHz || 30) - record.started_at) : 0;
     const withdraw = this.withdrawHtml(record.id);
-    return `<header class="deck-theater-head"><div><span>${record.raid ? "Raid" : "Battle"} · ${record.fidelity === "participant" ? "participant record" : "sensor estimate"}</span><h2>Engagement ${esc(nearestSystemName(record.pos))}</h2></div><div><b>${esc(counter)}</b><button type="button" data-deck-theater-act="close" aria-label="Close battle theater">✕</button></div></header>${status}${forces}${stage}${notes}${transport}${round ? `<p class="deck-theater-time">At +${fmtDur(elapsed)} into the fight · arrived record round ${this.battleRound + 1}</p>` : ""}${withdraw}<footer class="deck-theater-footer"><button type="button" data-deck-theater-act="reset-camera">Reset camera</button>${record.own_side !== null ? `<button type="button" data-deck-theater-act="doctrine">Fleet doctrine</button>` : ""}<span>Esc closes · replay never advances beyond arrived light.</span></footer>`;
+    const report = !running && battleReportForRecord(record) ? `<button type="button" data-deck-theater-act="report">Battle aftermath</button>` : "";
+    return `<header class="deck-theater-head"><div><span>${record.raid ? "Raid" : "Battle"} · ${record.fidelity === "participant" ? "participant record" : "sensor estimate"}</span><h2>Engagement ${esc(nearestSystemName(record.pos))}</h2></div><div><b>${esc(counter)}</b><button type="button" data-deck-theater-act="close" aria-label="Close battle theater">✕</button></div></header>${status}${forces}${stage}${notes}${transport}${round ? `<p class="deck-theater-time">At +${fmtDur(elapsed)} into the fight · arrived record round ${this.battleRound + 1}</p>` : ""}${withdraw}<footer class="deck-theater-footer"><button type="button" data-deck-theater-act="reset-camera">Reset camera</button>${record.own_side !== null ? `<button type="button" data-deck-theater-act="doctrine">Fleet doctrine</button>` : ""}${report}<span>Esc closes · replay never advances beyond arrived light.</span></footer>`;
   }
 
   private withdrawHtml(recordId: string): string {
-    const battle = this.ctx.state.battles.find((candidate) => candidate.id === recordId);
-    if (!battle?.own) return "";
-    const participantIds = new Set(battle.participants);
-    const own = this.ctx.state.ghosts.filter((fleet) => fleet.own && participantIds.has(fleet.id));
-    if (!own.length) return "";
-    const now = liveSimTime();
-    return `<section class="deck-theater-withdraw"><b>Engaged fleets</b><div>${own.map((fleet) => {
-      const pending = latestPendingOrder(fleet.id);
-      const echo = pending ? now < pending.arrives_at ? ` · signal ${fmtDur(Math.max(0, pending.arrives_at - now))}` : ` · response ${fmtDur(Math.max(0, pending.response_at - now))}` : "";
-      return `<button type="button" data-deck-theater-act="withdraw" data-fleet="${escAttr(fleet.id)}">Withdraw ${esc(shipKindLabel(fleet.kind))}${esc(echo)}</button>`;
-    }).join("")}</div></section>`;
+    const controls = this.withdrawal.html(recordId, this.ctx, "data-deck-theater-act", "withdraw");
+    return controls ? `<section class="deck-theater-withdraw"><b>Engaged fleets</b><div>${controls}</div></section>` : "";
   }
 
   private withdrawSignature(recordId: string): unknown {
@@ -571,7 +547,7 @@ export class DeckTheaters {
   }
 }
 
-function sideHtml(record: BattleRecordView, current: RecordCount[], side: 0 | 1, heading: string): string {
+function sideHtml(record: BattleRecordView, current: RecordCount[], side: 0 | 1, heading: string, pirateId: PlayerId | null): string {
   const participant = record.fidelity === "participant";
   const rows = record.sides[side].initial.map((initial) => {
     const now = current.find((entry) => entry.kind === initial.kind);
@@ -580,7 +556,8 @@ function sideHtml(record: BattleRecordView, current: RecordCount[], side: 0 | 1,
     const pct = participant
       ? Math.max(0, Math.min(100, (now?.exact ?? 0) / Math.max(1, Number(opening)) * 100))
       : now ? Math.max(8, (countClassOrder(now.class) + 1) / 6 * 100) : 0;
-    return `<div class="deck-theater-force-row${now ? "" : " is-lost"}"><span>${icon("fleet", "sm")} ${esc(shipKindLabel(initial.kind))}</span><i><b style="width:${pct.toFixed(1)}%"></b></i><em>${esc(value)}</em></div>`;
+    const appearance = theaterShipAppearance(record, side, initial.kind, pirateId);
+    return `<div class="deck-theater-force-row${now ? "" : " is-lost"}"><span><img class="deck-theater-force-art" src="${escAttr(appearance.url)}" alt="" title="${escAttr(appearance.label)}"> ${esc(appearance.label)}</span><i><b style="width:${pct.toFixed(1)}%"></b></i><em>${esc(value)}</em></div>`;
   }).join("");
   return `<section class="deck-theater-side${record.own_side === side ? " is-own" : ""}"><header><b>${esc(heading)}</b>${record.sides[side].flagship_name ? `<span>⚑ ${esc(record.sides[side].flagship_name)}</span>` : ""}</header>${rows || `<span class="deck-muted">No arrived force detail</span>`}</section>`;
 }

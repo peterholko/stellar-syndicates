@@ -93,16 +93,11 @@ pub fn prepare_estimate(
 ) -> Option<EstimateInputs> {
     // Own fleet — EXACT (the player owns it, so it's fair to know it precisely),
     // carrying its current damage pools.
-    let own_fleet = world.fleets.get(&attacker)?;
-    if own_fleet.owner != viewer {
-        return None; // can only estimate for your own attacker
-    }
 
     // TARGET — only what the observer's view reveals. Find its ghost. §node: feed
     // the viewer's regional effects so a Deep-Scan target reads as exact (the
     // estimate honours the same tactical certainty the map shows).
-    let veil = world.active_veil_regions();
-    let deep = world.deep_scan_regions(viewer);
+    let (veil, deep) = world.known_node_regions(viewer);
     // The estimator reads the same straight warp-light-delayed view as the map.
     let ghosts = history.view_for_with_arrays(
         viewer,
@@ -116,7 +111,9 @@ pub fn prepare_estimate(
             deep_scan: &deep,
         },
     );
-    let ghost = ghosts.into_iter().find(|g| g.id == target)?;
+    let own = ghosts.iter().find(|g| g.id == attacker && g.own)?;
+    let own_hulls = history.own_hulls_at(viewer, attacker, now - own.age)?;
+    let ghost = ghosts.iter().find(|g| g.id == target)?;
     let composition_age = ghost.age;
 
     // Exact composition when in coverage; otherwise the bucket-midpoint typical
@@ -140,12 +137,13 @@ pub fn prepare_estimate(
     // the target's ghost position — aged, honest ("scouted N ago").
     let mut defenses_age = None;
     let mut platform_tiers = None;
-    if let Some(corp) = world.players.get(&viewer) {
-        let covering = corp
-            .intel
+    if world.players.contains_key(&viewer) {
+        let intel = world.information.intel(viewer, cc, c, now);
+        let covering = intel
             .values()
             .filter(|snap| {
                 snap.defense_tier > 0
+                    && snap.observed_at + sim::transit::delay(snap.pos, cc, c) <= now
                     && snap.pos.distance(ghost.pos) <= sim::build::DEFENSE_PLATFORM_RADIUS
             })
             .min_by(|a, b| {
@@ -172,10 +170,9 @@ pub fn prepare_estimate(
     // §roster: OWN SIDE IS EXACT — the actual hulls, each at its real remaining
     // health. A fleet that came out of its last fight hurt is projected hurt,
     // which is precisely what the player needs to know before committing again.
-    let a: Vec<(sim::EntityId, sim::ship::Ship)> = own_fleet
-        .ships
+    let a: Vec<(sim::EntityId, sim::ship::Ship)> = own_hulls
         .iter()
-        .map(|s| (own_fleet.id, s.clone()))
+        .map(|s| (attacker, s.clone()))
         .collect();
     // Target side exactly as the view shows it: exact comp (+ revealed fitted
     // stacks) inside coverage, else the bucket-midpoint typical warfleet. Their

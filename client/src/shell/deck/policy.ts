@@ -1,7 +1,7 @@
 import { triggerLabel } from "../../core/derive/format";
 import { allySystems, endpointLabel, ownedSystems } from "../../core/derive/geo";
 import { COMMODITIES } from "../../core/derive/market";
-import { icon, label } from "../../icons";
+import { commodityIcon, icon, label } from "../../icons";
 import type {
   Commodity,
   FleetDoctrine,
@@ -136,9 +136,11 @@ export class DeckPolicyRoutes {
     if (route.name === "doctrine" && target instanceof HTMLSelectElement && isDoctrineKey(field)) {
       const doctrine = { ...this.ctx.state.doctrine } as FleetDoctrine;
       (doctrine as unknown as Record<string, string>)[field] = target.value;
-      this.ctx.send({ type: "SetFleetDoctrine", doctrine });
-      this.doctrineFeedback = `${DOCTRINE_FIELDS.find((candidate) => candidate.key === field)?.title ?? "Doctrine"} update sent.`;
-      this.hooks.notice(`<b>Doctrine update sent</b> · direct orders still take precedence.`);
+      this.ctx.intent.beginFleetCommand({ type: "SetFleetDoctrine", doctrine });
+      // Keep the select on the served setting until the player confirms and
+      // the normal policy report returns; Cancel leaves it unchanged.
+      target.value = String(this.ctx.state.doctrine[field]);
+      this.doctrineFeedback = "";
     } else if (route.name === "logistics") {
       if (field === "standing-source") this.source = target.value;
       else if (field === "standing-destination") this.destination = target.value;
@@ -263,10 +265,6 @@ function nonNegative(value: string, fallback: number): number {
 
 function option(value: string, text: string, selected = false): string {
   return `<option value="${esc(value)}" ${selected ? "selected" : ""}>${esc(text)}</option>`;
-}
-
-function commodityIcon(commodity: Commodity): string {
-  return `<img class="icon icon--resource" src="/art/ui_icons/resource/${commodity}.png" alt="">`;
 }
 
 function esc(value: string): string {

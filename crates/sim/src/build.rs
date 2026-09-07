@@ -1,11 +1,9 @@
 //! Construction: spending resources to GROW (the Travian-style growth sink, §step1).
 //!
-//! Ships and a simple system upgrade ("Extractor") are built by deducting a fixed
-//! RECIPE of commodities from the owning system's stockpile and enqueuing a build
-//! job that completes after a fixed duration — server-driven, online or off. This
-//! is where **Ore and Alloys get their meaning**: they are what you BUILD WITH, not
-//! just goods to sell. All recipes/durations are `const` → deterministic; balance is
-//! not the goal, a working "production → build" loop is.
+//! Recipes spend local goods when a job is queued. Ship hulls then earn work only
+//! while their construction yard has assigned workforce; pausing retains that work.
+//! Structures take turns in each planet's queue; courses keep independent timers. Construction is
+//! server-driven, online or off; recipe costs and base work are deterministic.
 
 use serde::{Deserialize, Serialize};
 
@@ -251,7 +249,7 @@ impl StructureKind {
     }
 }
 
-/// A queued construction job, resolved when `complete_tick` is reached. Lives on
+/// A queued construction job; ship completion requires earned yard work. Lives on
 /// the `World` (not the system) so an ownership flip mid-build is unambiguous: the
 /// ship is delivered to whoever PAID (`owner`), even if the system is later lost.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -262,14 +260,33 @@ pub struct BuildJob {
     pub owner: PlayerId,
     /// Where it spawns (ship) / what it upgrades.
     pub system: EntityId,
-    /// §bodies: the BODY this job builds on (structures) or displays at (ship
-    /// jobs at the yard's body, courses at the Academy's). `default` 0 lets
+    /// §bodies: the BODY this job builds on (ship jobs use that yard's workforce;
+    /// courses use the Academy's body). `default` 0 lets
     /// pre-bodies snapshots parse; migration re-sites in-flight jobs.
     #[serde(default)]
     pub body_id: u32,
     pub what: BuildKind,
-    /// Absolute sim tick of completion.
+    /// Receipt/enqueue tick, before any wait for the planet's construction slot.
+    /// Absent in legacy saves; a modern waiting structure has this but no start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queued_tick: Option<u64>,
+    /// Actual start of this job's clock (enqueue for ships/courses, activation
+    /// for structures). Waiting never counts as construction. Ships retain
+    /// earned work separately so a staffing change never rewrites their start.
+    /// Legacy saves lack this fact; do not invent it from today's recipe/bonuses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_tick: Option<u64>,
+    /// Estimated completion tick; u64::MAX while waiting/paused. For work-based
+    /// jobs this is derived from their work, never an independent completion clock.
     pub complete_tick: u64,
+    /// Absent for non-ship jobs and old saves. Legacy ships migrate from their
+    /// recorded span on the next step, never from today's recipe or research.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ship_work: Option<BuildWork>,
+    /// Structures share one active work slot per (system, body), FIFO by job id.
+    /// Rate zero means queued, one means building. Costs/duration freeze at receipt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structure_work: Option<BuildWork>,
     /// For a ship build (§FLEETS management v1): the fleet to JOIN on completion
     /// if it's still the owner's and docked at this system — otherwise the new
     /// ship forms its own fleet-of-one. `None` always forms a new fleet.
@@ -281,6 +298,55 @@ pub struct BuildJob {
     /// = unfitted, so pre-module build jobs complete as stock ships.
     #[serde(default)]
     pub loadout: crate::module::Loadout,
+}
+
+impl BuildJob {
+    pub fn work(&self) -> Option<&BuildWork> {
+        self.ship_work.as_ref().or(self.structure_work.as_ref())
+    }
+
+    pub fn is_queued_structure(&self) -> bool {
+        matches!(self.what, BuildKind::Upgrade { .. })
+            && self.structure_work.as_ref().is_some_and(|work| work.rate == 0.0)
+    }
+}
+
+/// Piecewise-linear earned work, in unboosted build ticks. Re-anchor ONLY when
+/// the yard's rate changes: unchanged ticks need no writes or new full planetary
+/// reports. A paused/queued segment has rate zero and preserves completed work.
+/// Structures use rate one only at the head of their planet's queue; ships use
+/// the operating yard's staffing rate independently.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BuildWork {
+    pub required: f64,
+    pub completed: f64,
+    pub at_tick: u64,
+    pub rate: f64,
+}
+
+impl BuildWork {
+    pub fn completed_at(&self, tick: u64) -> f64 {
+        (self.completed + tick.saturating_sub(self.at_tick) as f64 * self.rate)
+            .min(self.required)
+    }
+
+    pub fn set_rate(&mut self, tick: u64, rate: f64) {
+        if self.rate != rate {
+            self.completed = self.completed_at(tick);
+            self.at_tick = tick;
+            self.rate = rate;
+        }
+    }
+
+    pub fn completion_tick(&self) -> Option<u64> {
+        if self.completed >= self.required {
+            Some(self.at_tick)
+        } else if self.rate > 0.0 {
+            Some(self.at_tick.saturating_add(((self.required - self.completed) / self.rate).ceil() as u64))
+        } else {
+            None
+        }
+    }
 }
 
 /// §modules Part B4: a queued REFIT — `n` ships of `ship` were pulled OUT of a

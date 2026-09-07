@@ -9,6 +9,8 @@
 //
 // Render through `icon()` / `chip()` / `badgeChip()` — never hand-roll an <img>.
 
+import type { Commodity } from "./protocol";
+
 export type IconKey =
   // resources
   | "fuel" | "ore" | "alloys" | "provisions" | "volatiles" | "credits" | "biomass"
@@ -276,6 +278,17 @@ export function icon(key: IconKey, size: IconSize = "sm", tip?: string, cls = ""
     return `<img class="${c}" src="${ART_BASE}${def.art}.svg" alt="" title="${t}" />`;
   }
   return `<span class="${c}" title="${t}" role="img" aria-label="${t}">${def.glyph}</span>`;
+}
+
+/** Commodity wire slugs are not always asset filenames: metallic_ore uses ore,
+ * and biomass has panel art. Keep every cargo/stockpile panel on the same map. */
+export function commodityIcon(commodity: Commodity): string {
+  const keys: Partial<Record<Commodity, IconKey>> = {
+    metallic_ore: "ore", alloys: "alloys", fuel: "fuel", provisions: "provisions",
+    volatiles: "volatiles", biomass: "biomass",
+  };
+  if (keys[commodity]) return icon(keys[commodity]!, "sm", label(commodity));
+  return `<img class="icon icon--resource" src="${PNG_BASE}${commodity}.png" alt="${escAttr(label(commodity))}">`;
 }
 
 /** An icon-VALUE chip: `⛽ 120`. The whole chip carries the tooltip, so the

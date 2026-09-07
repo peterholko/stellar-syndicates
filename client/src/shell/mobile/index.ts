@@ -1,6 +1,9 @@
 import "../../styles/mobile.css";
+import { bindAccountForm } from "../account";
 
 import { shipKindLabel } from "../../core/derive/fleet";
+import { intentReadinessWarnings } from "../../core/derive/readiness";
+import { intentSummary } from "../../core/derive/orders";
 import { reservedMarketCredits, spendableMarketCredits } from "../../core/derive/market";
 import { label } from "../../icons";
 import { formatId, type BattleRecordView, type RaidOutcome, type RaidReport } from "../../protocol";
@@ -151,10 +154,7 @@ class MobileShell implements Shell {
     this.foundingResizeObserver.observe(byId("m-founding"));
     byId("m-status-toggle").addEventListener("click", () => this.toggleStatus(), { signal });
     byId("m-armed-cancel").addEventListener("click", () => this.map?.cancelArmedMode(), { signal });
-    byId<HTMLFormElement>("m-join-form").addEventListener("submit", (event) => {
-      event.preventDefault();
-      this.join();
-    }, { signal });
+    bindAccountForm("m", ctx, signal);
     byId("m-tabs").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("button[data-destination]");
       if (!button) return;
@@ -202,7 +202,7 @@ class MobileShell implements Shell {
       } else if (event.kind === "ProtocolMismatch") {
         console.warn(`protocol mismatch: server v${event.server}, client expects v${event.client}`);
       } else if (event.kind === "SessionReplaced") {
-        byId("m-join-error").textContent = "Signed out: this corporation was opened in another browser.";
+        byId("m-join-error").textContent = "Session ended. Please sign in again.";
         byId<HTMLButtonElement>("m-join-button").disabled = false;
       } else if (event.kind === "IntentChanged") {
         if (event.readout) this.map?.showNotice(event.readout);
@@ -315,21 +315,6 @@ class MobileShell implements Shell {
     this.root?.replaceChildren();
     this.root = null;
     this.ctx = null;
-  }
-
-  private join(): void {
-    if (!this.ctx) return;
-    const name = byId<HTMLInputElement>("m-name").value.trim();
-    if (!name) {
-      byId("m-join-error").textContent = "Enter a corporation name.";
-      return;
-    }
-    byId("m-join-error").textContent = "";
-    byId<HTMLButtonElement>("m-join-button").disabled = true;
-    this.ctx.state.name = name;
-    if (this.ctx.net.connected) this.ctx.net.join(name);
-    else this.ctx.net.connect();
-    this.renderStatus(true);
   }
 
   private toggleStatus(): void {
@@ -469,11 +454,13 @@ class MobileShell implements Shell {
       title,
       eyebrow,
       html: `<div class="m-intent-card">` +
-        `<div class="m-intent-card__verb">${escapeHtml(intent.verb)} order</div>` +
-        `<div class="m-intent-card__route"><small>Fleet</small><b>${escapeHtml(intent.shipId)}</b>` +
-        `<small>Destination</small><b>${destination}</b></div>` +
+        `<div class="m-intent-card__verb">Order preview</div>` +
+        (intent.verb === "command" ? `<p>${escapeHtml(intentSummary(intent))}</p>` :
+          `<div class="m-intent-card__route"><small>Fleet</small><b>${escapeHtml(intent.shipId)}</b>` +
+          `<small>Destination</small><b>${destination}</b></div>`) +
+        intentReadinessWarnings(this.ctx!.state, intent).map(w => `<div class="m-warning">${escapeHtml(w)}</div>`).join("") +
         `<div class="m-sheet-actions"><button type="button" data-mobile-act="cancel-intent">Cancel</button>` +
-        `<button type="button" class="is-primary" data-mobile-act="confirm-intent">Send order</button></div></div>`,
+        `<button type="button" class="is-primary" data-mobile-act="confirm-intent">Confirm order</button></div></div>`,
     };
   }
 
@@ -540,7 +527,7 @@ class MobileShell implements Shell {
     if (!ready) byId("m-founding").hidden = true;
     if (!ready) {
       const reconnecting = this.ctx.state.link === "connecting" || this.ctx.state.link === "reconnecting";
-      byId<HTMLButtonElement>("m-join-button").disabled = reconnecting && !!this.ctx.state.name;
+      byId<HTMLButtonElement>("m-join-button").disabled = byId("m-join-form").dataset.busy === "true" || (reconnecting && !!this.ctx.state.name);
     }
     this.sheets?.layout();
   }

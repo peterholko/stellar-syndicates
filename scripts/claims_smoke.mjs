@@ -1,3 +1,5 @@
+import { gameSocket, encodeMessage, decodeMessage } from "./game-socket.mjs";
+
 // System-claims + production smoke test (no deps — Node 18+ global WebSocket).
 //
 // Verifies the new economic engine end to end, and that it obeys the lightspeed
@@ -21,11 +23,11 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const BAND_RANK = { poor: 0, fair: 1, rich: 2 };
 
 function client(name) {
-  const ws = new WebSocket(URL);
+  const ws = gameSocket(URL);
   const got = { welcome: null, views: [], trades: [], errors: [] };
-  ws.addEventListener("open", () => ws.send(JSON.stringify({ type: "Join", name })));
+  ws.addEventListener("open", () => ws.send(encodeMessage({ type: "Join", name })));
   ws.addEventListener("message", (ev) => {
-    const m = JSON.parse(ev.data);
+    const m = decodeMessage(ev.data);
     if (m.type === "Welcome") got.welcome = m;
     else if (m.type === "View") {
       const sys = new Map(m.systems.map((s) => [s.id, s]));
@@ -33,7 +35,7 @@ function client(name) {
     } else if (m.type === "Trade") got.trades.push(m.trade);
     else if (m.type === "Error") got.errors.push(m.message);
   });
-  return { ws, got, send: (o) => ws.send(JSON.stringify(o)) };
+  return { ws, got, send: (o) => ws.send(encodeMessage(o)) };
 }
 
 const latest = (c) => c.got.views.at(-1);

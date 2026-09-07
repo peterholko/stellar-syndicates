@@ -1,133 +1,26 @@
-//! Persistence — append-only event log + periodic full-state snapshots, kept
-//! strictly **off the hot path** (§14).
-//!
-//! The game loop never awaits the database. It pushes [`PersistJob`]s into an
-//! unbounded channel; a dedicated task drains them and writes to whichever
-//! [`Persistence`] backend is configured. If no `DATABASE_URL` is set (or the
-//! database is unreachable), we fall back to [`NoopPersistence`] so the server
-//! runs with zero database setup — the plan explicitly allows stubbing
-//! persistence behind a clean interface and continuing.
+//! Galaxy persistence: compressed binary disk checkpoints every 15 minutes and
+//! on clean shutdown. PostgreSQL owns accounts, independently of galaxy saves.
+//! The old JSON snapshot reader exists only for a one-time, fail-closed import.
 
-use serde::Serialize;
+pub(crate) mod store;
+pub(crate) use store::Storage;
+
+use anyhow::Context;
 use sim::World;
-use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
-use tokio::sync::mpsc;
-use tracing::{info, warn};
 
-/// A unit of work for the persistence task. Cheap to construct on the hot path
-/// (just owns already-serialised JSON).
-#[derive(Debug)]
-pub enum PersistJob {
-    /// Events that occurred at a given tick.
-    Events {
-        tick: u64,
-        time: f64,
-        events: Vec<serde_json::Value>,
-    },
-    /// A full-world snapshot.
-    Snapshot {
-        tick: u64,
-        time: f64,
-        world: serde_json::Value,
-    },
-}
-
-/// A persistence backend. Implemented by a real Postgres store and a no-op
-/// stub; selection happens at startup via [`init_persistence`].
-pub trait Persistence: Send + Sync {
-    /// Run any one-time setup (migrations). Called once at startup.
-    fn init(&self) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
-
-    fn record_events(
-        &self,
-        tick: u64,
-        time: f64,
-        events: &[serde_json::Value],
-    ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
-
-    fn save_snapshot(
-        &self,
-        tick: u64,
-        time: f64,
-        world: &serde_json::Value,
-    ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
-
-    /// Load the most recent full-world snapshot, if any — the basis for a
-    /// restart (§14: restart = load latest snapshot, continue forward).
-    fn load_latest_world(&self) -> impl std::future::Future<Output = Option<World>> + Send;
-}
-
-/// Real Postgres-backed persistence via sqlx.
-pub struct PgPersistence {
-    pool: PgPool,
-}
-
-impl Persistence for PgPersistence {
-    async fn init(&self) -> anyhow::Result<()> {
-        sqlx::migrate!("./migrations").run(&self.pool).await?;
-        info!("postgres migrations applied");
-        Ok(())
-    }
-
-    async fn record_events(
-        &self,
-        tick: u64,
-        time: f64,
-        events: &[serde_json::Value],
-    ) -> anyhow::Result<()> {
-        for ev in events {
-            sqlx::query("INSERT INTO events (tick, sim_time, payload) VALUES ($1, $2, $3)")
-                .bind(tick as i64)
-                .bind(time)
-                .bind(ev)
-                .execute(&self.pool)
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn save_snapshot(
-        &self,
-        tick: u64,
-        time: f64,
-        world: &serde_json::Value,
-    ) -> anyhow::Result<()> {
-        sqlx::query(
-            "INSERT INTO snapshots (tick, sim_time, world) VALUES ($1, $2, $3)
-             ON CONFLICT (tick) DO UPDATE SET sim_time = EXCLUDED.sim_time, world = EXCLUDED.world",
-        )
-        .bind(tick as i64)
-        .bind(time)
-        .bind(world)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    async fn load_latest_world(&self) -> Option<World> {
-        let row: Option<(serde_json::Value,)> =
-            sqlx::query_as("SELECT world FROM snapshots ORDER BY tick DESC LIMIT 1")
-                .fetch_optional(&self.pool)
-                .await
-                .ok()
-                .flatten();
-        let value = migrate_world_json(row.map(|(v,)| v)?);
-        match serde_json::from_value::<World>(value) {
-            Ok(w) => {
-                info!(
-                    tick = w.tick,
-                    players = w.players.len(),
-                    "restored world from snapshot"
-                );
-                Some(w)
-            }
-            Err(e) => {
-                warn!(error = %e, "snapshot found but failed to deserialize; starting fresh");
-                None
-            }
-        }
-    }
+pub async fn load_legacy_world(url: &str) -> anyhow::Result<Option<World>> {
+    let pool = PgPoolOptions::new().max_connections(1).connect(url).await
+        .context("checking legacy galaxy storage; refusing to start fresh on a database error")?;
+    let exists: bool = sqlx::query_scalar("SELECT to_regclass('snapshots') IS NOT NULL")
+        .fetch_one(&pool).await?;
+    if !exists { return Ok(None); }
+    let row: Option<(serde_json::Value,)> = sqlx::query_as("SELECT world FROM snapshots ORDER BY tick DESC LIMIT 1")
+        .fetch_optional(&pool).await?;
+    let world = row.map(|(value,)| serde_json::from_value(migrate_world_json(value)))
+        .transpose().context("legacy galaxy snapshot is unreadable; it was NOT reset")?;
+    pool.close().await;
+    Ok(world)
 }
 
 /// Migrate a persisted `World` snapshot forward to the current schema
@@ -168,181 +61,6 @@ pub fn migrate_world_json(mut value: serde_json::Value) -> serde_json::Value {
         }
     }
     value
-}
-
-/// In-memory stub: counts what it would have written and logs. Lets the whole
-/// server run without a database.
-#[derive(Default)]
-pub struct NoopPersistence;
-
-impl Persistence for NoopPersistence {
-    async fn init(&self) -> anyhow::Result<()> {
-        warn!(
-            "persistence: running WITHOUT a database (in-memory stub). Set DATABASE_URL to enable Postgres."
-        );
-        Ok(())
-    }
-
-    async fn record_events(
-        &self,
-        _tick: u64,
-        _time: f64,
-        _events: &[serde_json::Value],
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn save_snapshot(
-        &self,
-        tick: u64,
-        _time: f64,
-        _world: &serde_json::Value,
-    ) -> anyhow::Result<()> {
-        tracing::debug!(tick, "persistence(noop): snapshot dropped");
-        Ok(())
-    }
-
-    async fn load_latest_world(&self) -> Option<World> {
-        None // no database — nothing to restore
-    }
-}
-
-/// Either backend, chosen at runtime. Implements [`Persistence`] by delegating,
-/// so the persistence task can hold one concrete type with no `dyn`/`async`
-/// trait-object gymnastics.
-pub enum AnyPersistence {
-    Pg(PgPersistence),
-    Noop(NoopPersistence),
-}
-
-impl Persistence for AnyPersistence {
-    async fn init(&self) -> anyhow::Result<()> {
-        match self {
-            AnyPersistence::Pg(p) => p.init().await,
-            AnyPersistence::Noop(p) => p.init().await,
-        }
-    }
-    async fn record_events(
-        &self,
-        tick: u64,
-        time: f64,
-        events: &[serde_json::Value],
-    ) -> anyhow::Result<()> {
-        match self {
-            AnyPersistence::Pg(p) => p.record_events(tick, time, events).await,
-            AnyPersistence::Noop(p) => p.record_events(tick, time, events).await,
-        }
-    }
-    async fn save_snapshot(
-        &self,
-        tick: u64,
-        time: f64,
-        world: &serde_json::Value,
-    ) -> anyhow::Result<()> {
-        match self {
-            AnyPersistence::Pg(p) => p.save_snapshot(tick, time, world).await,
-            AnyPersistence::Noop(p) => p.save_snapshot(tick, time, world).await,
-        }
-    }
-    async fn load_latest_world(&self) -> Option<World> {
-        match self {
-            AnyPersistence::Pg(p) => p.load_latest_world().await,
-            AnyPersistence::Noop(p) => p.load_latest_world().await,
-        }
-    }
-}
-
-/// Bounded persistence backlog. If the database stalls, the game loop keeps
-/// running and the backlog is capped here rather than growing without bound;
-/// jobs past the cap are dropped (and logged) — acceptable because persistence
-/// is off the critical path and the next snapshot re-establishes full state.
-const PERSIST_CAPACITY: usize = 4096;
-
-/// A cheap, cloneable handle the game loop uses to enqueue persistence work
-/// without ever awaiting the database.
-#[derive(Clone)]
-pub struct PersistenceHandle {
-    tx: mpsc::Sender<PersistJob>,
-}
-
-impl PersistenceHandle {
-    /// Fire-and-forget. Returns immediately; never blocks the tick loop. Drops
-    /// (and warns) if the backlog is full so a slow DB cannot leak memory.
-    pub fn submit(&self, job: PersistJob) {
-        match self.tx.try_send(job) {
-            Ok(()) => {}
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!("persistence backlog full — dropping job (database too slow?)");
-            }
-            // Persistence task gone away: drop silently, the game continues.
-            Err(mpsc::error::TrySendError::Closed(_)) => {}
-        }
-    }
-}
-
-/// Connect to Postgres if `DATABASE_URL` is set and reachable, otherwise fall
-/// back to the no-op stub. Runs migrations, **loads the latest world snapshot**
-/// (so the galaxy survives a restart, §14), spawns the background persistence
-/// task, and returns the handle plus any restored world.
-pub async fn init_persistence() -> (PersistenceHandle, Option<World>) {
-    let backend = match std::env::var("DATABASE_URL") {
-        Ok(url) if !url.trim().is_empty() => match connect_pg(&url).await {
-            Ok(pool) => {
-                info!("persistence: connected to Postgres");
-                AnyPersistence::Pg(PgPersistence { pool })
-            }
-            Err(e) => {
-                warn!(error = %e, "persistence: Postgres unreachable, falling back to in-memory stub");
-                AnyPersistence::Noop(NoopPersistence)
-            }
-        },
-        _ => AnyPersistence::Noop(NoopPersistence),
-    };
-
-    if let Err(e) = backend.init().await {
-        warn!(error = %e, "persistence: init failed, continuing without durable storage");
-    }
-
-    // Restore the most recent snapshot, if any (the basis for a restart).
-    let restored = backend.load_latest_world().await;
-
-    let (tx, rx) = mpsc::channel(PERSIST_CAPACITY);
-    tokio::spawn(persistence_task(backend, rx));
-    (PersistenceHandle { tx }, restored)
-}
-
-async fn connect_pg(url: &str) -> anyhow::Result<PgPool> {
-    let pool = PgPoolOptions::new().max_connections(4).connect(url).await?;
-    Ok(pool)
-}
-
-/// Drains persistence jobs and writes them to the backend. Errors are logged
-/// and swallowed — a persistence failure must never take down the game.
-async fn persistence_task(backend: AnyPersistence, mut rx: mpsc::Receiver<PersistJob>) {
-    while let Some(job) = rx.recv().await {
-        let result = match &job {
-            PersistJob::Events { tick, time, events } => {
-                backend.record_events(*tick, *time, events).await
-            }
-            PersistJob::Snapshot { tick, time, world } => {
-                backend.save_snapshot(*tick, *time, world).await
-            }
-        };
-        if let Err(e) = result {
-            warn!(error = %e, "persistence write failed (continuing)");
-        }
-    }
-}
-
-/// Helper: serialise any value to JSON for storage, logging on failure.
-pub fn to_json<T: Serialize>(value: &T) -> serde_json::Value {
-    match serde_json::to_value(value) {
-        Ok(v) => v,
-        Err(e) => {
-            warn!(error = %e, "failed to serialise value for persistence; storing null");
-            serde_json::Value::Null
-        }
-    }
 }
 
 #[cfg(test)]

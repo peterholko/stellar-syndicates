@@ -12,6 +12,7 @@ import {
   type ViewState,
 } from "../state";
 import type { CoreEvent } from "./events";
+import { loadBattleMarks } from "../battlehistory";
 import { noteSurveyReports } from "./derive/geo";
 import {
   marketReservations,
@@ -21,7 +22,9 @@ import {
 import { syncOrderLifecycles } from "./derive/orders";
 import { mergeResearch } from "./derive/research";
 
-export const EXPECTED_PROTOCOL_VERSION = 31;
+import { PROTOCOL_VERSION } from "../wire.mjs";
+
+export const EXPECTED_PROTOCOL_VERSION = PROTOCOL_VERSION;
 
 export const jumpDepartureKey = (
   departure: Pick<JumpDepartureView, "fleet" | "departed_at">,
@@ -68,6 +71,7 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       st.standingOrders = [];
       st.battleReports = [];
       st.captureReports = [];
+      loadBattleMarks(st);
       st.rankings = [];
       st.link = "online";
       st.awaySet = false;
@@ -113,7 +117,9 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       );
       st.emplacements = msg.emplacements ?? [];
       st.market = msg.market;
-      st.wallet = msg.wallet;
+      // A legacy-save warm-up is unknown, not an empty bank account. Every
+      // shell keeps its ordinary unavailable-report treatment until light arrives.
+      st.wallet = msg.wallet.report_pending ? null : msg.wallet;
       st.freight = msg.freight;
       st.charter = msg.charter;
       st.founding = msg.founding;
@@ -157,7 +163,7 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
             const key = `${build.body_id}:${build.key}`;
             const remaining = remainingBuilds.get(key) ?? 0;
             if (remaining > 0) remainingBuilds.set(key, remaining - 1);
-            else if (build.complete_time <= msg.sim_time + 1) {
+            else if (build.complete_time != null && build.complete_time <= msg.sim_time + 1) {
               derived.push({ kind: "BuildCompleted", systemId: system.id, buildKey: build.key });
             }
           }

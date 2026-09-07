@@ -19,7 +19,7 @@ import {
 } from "../../core/derive/market";
 import { projectedBand } from "../../core/derive/research";
 import type { CoreEvent } from "../../core/events";
-import { icon, label, type IconKey } from "../../icons";
+import { commodityIcon, icon, label, type IconKey } from "../../icons";
 import {
   countClassLabel,
   fleetCargoManifest,
@@ -154,9 +154,7 @@ export class DeckMarketRoutes {
     } else if (action === "market-hub-unload") {
       const id = button.dataset.fleet;
       if (id && hubDockedFleets().some((fleet) => fleet.id === id)) {
-        this.ctx.send({ type: "HubUnload", fleet_id: id });
-        this.feedback = "Unload order sent to the berthed fleet.";
-        this.hooks.notice(`<b>Unload order sent</b> · cargo will enter the Market Warehouse.`);
+        this.ctx.intent.beginFleetCommand({ type: "HubUnload", fleet_id: id });
       }
     } else if (action === "freight-direction") {
       const direction = button.dataset.direction;
@@ -220,7 +218,7 @@ export class DeckMarketRoutes {
 
   private marketHtml(): string {
     const state = this.ctx.state;
-    if (!state.market || !state.wallet) return emptyState("Market report unavailable", "Waiting for light from the Market Hub.");
+    if (!state.market || !state.wallet || state.wallet.report_pending) return emptyState("Market report unavailable", "Waiting for light from the Market Hub.");
     const stale = state.market.staleness;
     const reserved = reservedMarketCredits();
     const tabs = (["exchange", "warehouse", "specialists", "modules"] as DeckMarketTab[])
@@ -594,15 +592,6 @@ function positiveInteger(value: string, fallback: number): number {
 
 function stat(name: string, value: string, tone: "" | "warn" | "stale" = ""): string {
   return `<span class="deck-stat${tone ? ` is-${tone}` : ""}"><small>${esc(name)}</small><b>${esc(value)}</b></span>`;
-}
-
-function commodityIcon(commodity: Commodity): string {
-  const keys: Partial<Record<Commodity, IconKey>> = {
-    metallic_ore: "ore", alloys: "alloys", fuel: "fuel", provisions: "provisions",
-    volatiles: "volatiles", biomass: "biomass",
-  };
-  if (keys[commodity]) return icon(keys[commodity]!, "sm", label(commodity));
-  return `<img class="icon icon--resource" src="/art/ui_icons/resource/${commodity}.png" alt="${esc(label(commodity))}">`;
 }
 
 function spark(data: number[]): string {

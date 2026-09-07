@@ -16,6 +16,7 @@ import {
 } from "../../protocol";
 import type { Net } from "../../net";
 import { state } from "../../state";
+import { recordForBattleReport, reportForBattleRecord } from "../../battlehistory";
 import { HYPERLIMIT_SU } from "./geo";
 
 // Mirror of the sim's commodity value-rank (also in render.ts) — for flavor
@@ -171,11 +172,10 @@ export function sumOwnComposition(ghosts: GhostView[]): Map<ShipKind, number> {
   return m;
 }
 
-/// §battle-records: a concluded aftermath report has a DIFFERENT id space than
-/// the record (its id is a report counter, the record's is the engagement id),
-/// so join by the shared engagement-anchor position.
+/// The report counter and engagement id are separate spaces. The server carries
+/// the explicit link; position cannot distinguish repeated/co-located battles.
 export function recordForReport(r: BattleReportView): BattleRecordView | undefined {
-  return state.battleRecords.find((rec) => rec.pos.x === r.pos.x && rec.pos.y === r.pos.y);
+  return recordForBattleReport(r, state.battleRecords);
 }
 
 
@@ -196,7 +196,7 @@ export function clearBattleCloseTimer(): void {
 
 
 export function battleReportForRecord(rec: BattleRecordView): BattleReportView | undefined {
-  return state.battleReports.find((r) => r.pos.x === rec.pos.x && r.pos.y === rec.pos.y);
+  return reportForBattleRecord(rec, state.battleReports);
 }
 
 export function sideFamily(sv: SideRecordView): SalvoFamily {

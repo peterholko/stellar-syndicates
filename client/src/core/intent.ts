@@ -7,6 +7,7 @@ import { guardCapable, jumpCapable, shipKindLabel } from "./derive/fleet";
 import { jumpRangeAt, nebulaAt } from "./derive/nebula";
 import { intentTargetLabel, SURVEY_SECS_UI } from "./derive/orders";
 import type { CoreEvent } from "./events";
+import { fleetCommandIntent, fleetCommandSummary, fleetCommandsValid, type FleetCommand } from "./fleetorders";
 
 // §TCA: UI mirror of crates/sim/src/tca.rs::TCA_SOVEREIGN_RADIUS — keep in step.
 // Used only to HEDGE the attack/raid readout when a target's last-seen position
@@ -120,9 +121,9 @@ function previewReadout(intent: PendingIntent): string {
   const target = intentTargetLabel(intent);
   const ship = state.ghosts.find((ghost) => ghost.id === intent.shipId && ghost.own);
   switch (intent.verb) {
+    case "command": return "";
     case "move":
-      return `Prospective route for your <b>${esc(ship ? shipKindLabel(ship.kind) : "fleet")}</b>. ` +
-        `<span class="dim">Compare the lighter dashed course with the solid current route, then confirm or cancel.</span>`;
+      return "";
     case "jump": {
       const range = ship ? jumpRangeAt(state.galaxy, ship.pos) : state.galaxy?.jump_range ?? 50_000;
       return `Jump preview from the fleet's <b>light-delayed sighting</b>. ` +
@@ -152,6 +153,20 @@ export function beginPendingIntent(intent: PendingIntent): void {
   state.pendingIntent = intent;
   renderer.stateVersion++;
   emitIntentChanged({ renderIntentBar: true, readout: previewReadout(intent) });
+}
+
+export function beginFleetCommand(command: FleetCommand | FleetCommand[]): void {
+  const intent = fleetCommandIntent(command, state);
+  if (!intent) {
+    // Selecting the existing setting cancels a different staged setting; it
+    // must not leave a previously previewed Stealth order armed behind it.
+    if (state.pendingIntent?.verb === "command"
+      && fleetCommandsValid(Array.isArray(command) ? command : [command], state)) clearPendingIntent();
+    return;
+  }
+  clearGuardAiming(true);
+  clearJumpAiming(true);
+  beginPendingIntent(intent);
 }
 
 function moveOrderReadout(ship: GhostView, dest: Vec2): string {
@@ -188,6 +203,24 @@ export function confirmPendingIntent(): void {
     ? state.ghosts.find((ghost) => ghost.id === intent.shipId && ghost.own)
     : undefined;
   const net = netSource();
+  if (intent?.verb === "command") {
+    if (intent.commander !== state.playerId || !intent.commands || !fleetCommandsValid(intent.commands, state)) {
+      clearPendingIntent();
+      emitIntentChanged({ readout: "<b>Order cancelled</b> · the received fleet picture has changed." });
+      return;
+    }
+    if (!net?.connected) {
+      emitIntentChanged({ readout: "<b>Not connected</b> · confirm again after reconnecting." });
+      return;
+    }
+    const summary = fleetCommandSummary(intent, state);
+    // Consume before sending: repeated Confirm clicks cannot dispatch twice.
+    // A cancel or a replacing preview never mutates orders/raids/telemetry.
+    clearPendingIntent(true);
+    for (const command of intent.commands) net.send(command);
+    emitIntentChanged({ refreshShip: true, readout: `<b>Order sent</b> · ${esc(summary)}` });
+    return;
+  }
   if (!intent || !ship || !net) {
     clearPendingIntent();
     return;

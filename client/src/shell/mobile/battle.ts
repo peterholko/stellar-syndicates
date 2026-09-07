@@ -4,9 +4,11 @@ import {
   theaterClose,
   theaterResetCamera,
   theaterSetTime,
+  theaterShipAppearance,
 } from "../../battletheater";
-import { shipKindLabel, sideFamily, type SalvoFamily } from "../../core/derive/fleet";
+import { sideFamily, type SalvoFamily } from "../../core/derive/fleet";
 import { nearestSystemName } from "../../core/derive/geo";
+import { latestPendingOrder } from "../../core/derive/orders";
 import {
   countClassLabel,
   type BattleRecordView,
@@ -20,6 +22,7 @@ import type { CoreContext } from "../types";
 import type { SheetEntry, SheetView } from "./sheets";
 import { SheetStack } from "./sheets";
 import { sheetFingerprint } from "../signature";
+import { BattleWithdrawPrompt } from "../battlewithdraw";
 
 const FAMILY_COLOR: Record<SalvoFamily, string> = {
   beam: "var(--accent)",
@@ -59,6 +62,7 @@ export class MobileBattleTheater {
   private lastTs = 0;
   private lastFrontier = -1;
   private lastViewport = "";
+  private readonly withdrawal = new BattleWithdrawPrompt();
 
   constructor(private readonly ctx: CoreContext, private readonly sheets: SheetStack) {}
 
@@ -100,6 +104,13 @@ export class MobileBattleTheater {
     const record = this.record();
     const frontier = (record?.rounds.length ?? 0) - 1;
     switch (action) {
+      case "battle-withdraw-ask": case "battle-withdraw-confirm": case "battle-withdraw-cancel":
+        if (this.id && button.dataset.battle === this.id && button.dataset.fleet) {
+          this.withdrawal.handle(action.slice("battle-withdraw-".length), this.id, button.dataset.fleet, this.ctx);
+          this.renderSignatures.delete("battle");
+          this.sheets.refresh();
+        }
+        break;
       case "battle-play":
         if (!record || record.outcome === null || frontier < 0) break;
         if (!this.playing && this.round >= frontier) this.round = 0;
@@ -213,6 +224,7 @@ export class MobileBattleTheater {
   }
 
   close(): void {
+    this.withdrawal.clear();
     if (!this.id && !this.lastViewport) return;
     this.id = null;
     this.playing = false;
@@ -223,6 +235,7 @@ export class MobileBattleTheater {
   }
 
   private bind(id: string | null, record: BattleRecordView | undefined): void {
+    if (id !== this.id) this.withdrawal.clear();
     if (id === this.id) {
       if (record && this.lastFrontier < 0) {
         const frontier = record.rounds.length - 1;
@@ -278,21 +291,20 @@ export class MobileBattleTheater {
     return sheetFingerprint([
       Math.floor(liveSimTime()), entry.props ?? null, this.round, this.live, this.playing, this.speed,
       this.ctx.renderer.viewMode.type, recordSlice, battle,
-      this.ctx.state.ghosts.filter((fleet) => fleet.own && participants.includes(fleet.id)).map((fleet) => [fleet.id, fleet.kind]),
+      this.ctx.state.commandCenter, this.ctx.state.galaxy?.c,
+      this.ctx.state.ghosts.filter((fleet) => fleet.own && participants.includes(fleet.id)).map((fleet) => [fleet.id, fleet.kind, latestPendingOrder(fleet.id)]),
     ]);
   }
 
   private viewer(record: BattleRecordView): string {
     const frontier = record.rounds.length - 1;
     const running = record.outcome === null;
-    const battle = this.ctx.state.battles.find((candidate) => candidate.id === record.id);
-    const ownFleet = battle ? this.ctx.state.ghosts.find((fleet) => fleet.own && battle.participants.includes(fleet.id)) : undefined;
     const semantic = this.ctx.renderer.viewMode.type === "battle";
     const outcome = record.outcome === null ? "FOLLOWING LIGHT" : outcomeLabel(record);
     const statusClass = running ? "is-live" : "is-complete";
     if (frontier < 0) {
       return `<div class="m-battle"><div class="m-battle-status ${statusClass}"><i></i><b>${outcome}</b><span>Awaiting the first round's light.</span></div>` +
-        this.viewerActions(ownFleet?.id, semantic) + `</div>`;
+        this.viewerActions(record.id, semantic) + `</div>`;
     }
     this.round = Math.max(0, Math.min(this.round, frontier));
     const current = record.rounds[this.round];
@@ -308,19 +320,20 @@ export class MobileBattleTheater {
     return `<div class="m-battle">` +
       `<div class="m-battle-status ${statusClass}"><i></i><b>${esc(outcome)}</b><span>Round ${this.round + 1}/${record.rounds.length}${running ? " · arrived prefix" : ""}</span></div>` +
       `<div class="bv-sub"><span class="bv-vs"><span class="${record.own_side === 0 ? "you" : "foe"}">${record.own_side === 0 ? "You" : "Attackers"}</span> vs <span class="${record.own_side === 1 ? "you" : "foe"}">${record.own_side === 1 ? "You" : "Defenders"}</span></span><span>${participant ? "participant record" : "sensor estimate"}</span></div>` +
-      this.viewerActions(ownFleet?.id, semantic) + sides + theater + notes + this.transport(record) + `</div>`;
+      this.viewerActions(record.id, semantic) + sides + theater + notes + this.transport(record) + `</div>`;
   }
 
-  private viewerActions(fleetId: string | undefined, semantic: boolean): string {
+  private viewerActions(battleId: string, semantic: boolean): string {
     return `<div class="m-action-grid m-action-grid--top">` +
-      (fleetId ? `<button type="button" data-mobile-act="decision-withdraw" data-id="${esc(fleetId)}">Withdraw fleet</button>` : "") +
+      this.withdrawal.html(battleId, this.ctx, "data-mobile-act", "battle-withdraw") +
       (semantic ? `<button type="button" class="m-primary" data-mobile-act="semantic-exit">Back to galaxy</button>` : "") + `</div>`;
   }
 
   private side(record: BattleRecordView, round: RoundRecordView, side: 0 | 1, participant: boolean, platformGone: boolean): string {
     const mine = record.own_side === side;
     const family = participant ? sideFamily(record.sides[side]) : null;
-    const fits = participant ? (record.sides[side].loadouts ?? []).map((fit) => `${fit.n}× ${shipKindLabel(fit.kind)} · ${fit.modules.map(human).join(" + ") || "stock"}`).join(" · ") : "";
+    const hullLabel = (kind: ShipKind) => theaterShipAppearance(record, side, kind, this.ctx.state.galaxy?.pirate_id ?? null).label;
+    const fits = participant ? (record.sides[side].loadouts ?? []).map((fit) => `${fit.n}× ${hullLabel(fit.kind)} · ${fit.modules.map(human).join(" + ") || "stock"}`).join(" · ") : "";
     const rows = record.sides[side].initial.map((opening) => {
       const survivor = recordCount(round.counts[side], opening.kind);
       const killed = recordCount(round.kills[side], opening.kind);
@@ -337,7 +350,7 @@ export class MobileBattleTheater {
         count = countClassLabel(survivor.class);
       }
       const loss = participant ? (killed?.exact ? `<span class="bv-krow__kill">−${killed.exact}</span>` : "") : killed ? `<span class="bv-krow__kill">▾</span>` : "";
-      return `<div class="bv-krow"><span class="m-battle-kind">${esc(shipKindLabel(opening.kind))}</span><div class="bv-krow__bar"><div class="bv-krow__fill${gone ? " gone" : ""}" style="width:${gone ? 100 : Math.max(5, pct).toFixed(1)}%"></div></div><span class="bv-krow__n${gone ? " is-gone" : ""}">${esc(count)}${loss}</span></div>`;
+      return `<div class="bv-krow"><span class="m-battle-kind">${esc(hullLabel(opening.kind))}</span><div class="bv-krow__bar"><div class="bv-krow__fill${gone ? " gone" : ""}" style="width:${gone ? 100 : Math.max(5, pct).toFixed(1)}%"></div></div><span class="bv-krow__n${gone ? " is-gone" : ""}">${esc(count)}${loss}</span></div>`;
     }).join("");
     const platform = side === 1 && record.sides[1].platform_tiers > 0 ? `<div class="bv-plat${platformGone ? " gone" : ""}">Defense Platform ×${record.sides[1].platform_tiers}</div>` : "";
     return `<section class="bv-side${side === 1 ? " right" : ""}${mine ? " mine" : ""}"><div class="bv-side__hd">${mine ? `<strong>YOU</strong>` : ""}${side === 0 ? "Attackers" : "Defenders"}${family ? `<span class="bv-fampip" style="color:${FAMILY_COLOR[family]}">● ${FAMILY_LABEL[family]}</span>` : ""}</div>${fits ? `<div class="bv-fits">${esc(fits)}</div>` : ""}${rows}${platform}</section>`;

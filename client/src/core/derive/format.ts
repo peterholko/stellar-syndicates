@@ -26,6 +26,7 @@ export function trend(h: number[]): { glyph: string; tone: string } {
 
 
 export function operationTitle(o: import("../../protocol").OperationView): string {
+  if (o.briefing) return o.briefing.title;
   const k = o.kind;
   switch (k.kind) {
     case "pirate_bounty": return `Suppress ${operationSystemName(k.system)} enclave`;
@@ -33,6 +34,7 @@ export function operationTitle(o: import("../../protocol").OperationView): strin
     case "market_delivery": return `Deliver ${k.units} ${label(k.commodity)}`;
     case "rescue_salvage": return "Recover a distress site";
     case "convoy_escort": return "Escort an Authority freighter";
+    case "freight_escort": return "Guard a market run";
     case "authority_enforcement": return `Authority enforcement · ${formatId(k.target)}`;
     case "strategic_control": return `Hold ${operationSystemName(k.system)} strategic node`;
     case "regional_mandate": return "Regional Authority mandate";
@@ -43,6 +45,7 @@ export function operationTitle(o: import("../../protocol").OperationView): strin
 
 export function operationIcon(o: import("../../protocol").OperationView): string {
   switch (o.kind.kind) {
+    case "freight_escort":
     case "convoy_escort": return icon("escort", "md", "Freighter escort");
     case "market_delivery": return icon("freightRoute", "md", "Market delivery");
     case "survey_expedition": return icon("planetUninhabitable", "md", "Survey expedition");
@@ -63,6 +66,7 @@ export function operationHullArt(o: import("../../protocol").OperationView): str
     case "market_delivery":
       return `${NPC_HULL_ROOT}/${o.kind.units >= 80 ? "salvage_carrier.png" : "contract_courier.png"}`;
     case "convoy_escort":
+    case "freight_escort":
     case "authority_enforcement":
       return `${NPC_HULL_ROOT}/contract_escort.png`;
     default:
@@ -72,6 +76,7 @@ export function operationHullArt(o: import("../../protocol").OperationView): str
 
 
 export function operationCopy(o: import("../../protocol").OperationView): string {
+  if (o.briefing) return o.briefing.summary;
   const k = o.kind;
   switch (k.kind) {
     case "pirate_bounty": return `Tier ${k.tier} enclave. Destroy its base; confirmation follows the battle report.`;
@@ -79,6 +84,7 @@ export function operationCopy(o: import("../../protocol").OperationView): string
     case "market_delivery": return "Physically deliver or sell this commodity at the Market Hub.";
     case "rescue_salvage": return `${k.units} ${label(k.commodity)} remain at the reported wreck position. A cargo fleet must recover them.`;
     case "convoy_escort": return "Assign a fleet and remain close when the protected freighter reaches its destination.";
+    case "freight_escort": return "Guard your Freighter from home to the Market Hub.";
     case "authority_enforcement": return "Join the public response against a proscribed corporation.";
     case "strategic_control": return "Capture and continuously supply the node through the published hold interval.";
     case "regional_mandate": return "Survey, trade, and suppress piracy inside the region. Highest contribution wins at close.";

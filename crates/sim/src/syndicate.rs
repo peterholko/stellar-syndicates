@@ -64,7 +64,7 @@ pub struct DoctrineFit {
 /// One alliance with explicit administrative roles. The founder retains final
 /// dissolution authority and — should they leave — hands the seat to the next
 /// member; officers and quartermasters receive only their published permissions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Syndicate {
     pub id: SyndicateId,
     pub name: String,

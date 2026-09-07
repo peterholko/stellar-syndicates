@@ -184,7 +184,7 @@ impl RankingCategory {
 /// Serialisable both ways: persisted with the world, and shipped verbatim to the
 /// client (PlayerId serialises as a decimal string, so `player_id` matches the
 /// client's own id for the "your row" highlight).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RankingRow {
     pub player_id: PlayerId,
     pub name: String,

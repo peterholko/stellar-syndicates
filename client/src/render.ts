@@ -6,12 +6,14 @@
 
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import { label } from "./icons";
+import { battleRecordMarkKey, reportMarkKey } from "./battlehistory";
 import type { BodyView, GalaxyInfo, GhostView, NebulaInfo, NebulaKind, PathPointView, ShipKind, SystemInfo, Vec2 } from "./protocol";
 import { countClassLabel, fleetCargoManifest, fleetExactCount } from "./protocol";
 import { JUMP_DEPARTURE_TTL_S, liveSimTime, type ViewState } from "./state";
 import { hashId } from "./prng";
 import { STAR_TYPES, starAnchor, starIconUrl, starTypeFor, starVisualRatio } from "./stars";
 import { buildVisualSystem, SystemViewScene, type CameraRect, type SystemBodyDetail } from "./systemview";
+import { shipKindLabel } from "./core/derive/fleet";
 import { jumpRangeAt, nebulaContains } from "./core/derive/nebula";
 
 // --- SEMANTIC-ZOOM VIEW MODE (galaxy ⇄ system) --------------------------------
@@ -81,8 +83,7 @@ const COL_ROUTE_PREVIEW = 0xc3f7cc; // prospective route, lighter than the commi
 const COL_IMPULSE_BOUNDARY = 0xf0a64a; // gravity-well edge, warm against route green
 const COL_REPORT = 0xffd24a; // known convoy cargo label (gold = intel)
 const COL_THREAT = 0xff4d4d; // detected raider (alert red)
-const COL_ESTIMATE = 0xffae5c; // crude intercept estimate (soft amber, fuzzy)
-const COL_DELAYED = 0xe2ad62; // presumed own jump, awaiting destination light
+const COL_DELAYED = 0xe2ad62; // awaiting response/destination light
 const COL_JUMP = 0xa98cff; // jump-drive charge / historical departure scar
 const COL_WARP_WAKE = 0x8ad8ff; // active warp-drive wake, neutral across factions
 const COL_SENSOR = 0x59d5c7; // sensor capability: CC, Raider pickets, short Convoy rings
@@ -118,6 +119,7 @@ interface GhostSprite {
   sprite: Sprite; // the ship art (rotated to heading, tinted by ownership)
   delayIcon: Sprite; // yellow delayed-information cue beside a presumed jump
   delayTooltip: Container; // canvas hover explanation for that cue
+  orderText: Text; // estimated response countdown beside the animated clock
   label: Text;
   ring: Graphics; // selection ring
   pip: Graphics; // ownership tag (cyan = yours, red = rival) — the friend/foe cue
@@ -171,15 +173,18 @@ interface NebulaSprite {
 // Ship sprites are top-down with the nose at -y; the heading convention here points
 // +x at angle 0, so rotate the sprite by +90° to align its nose with the heading.
 const SHIP_ART_FACING = Math.PI / 2;
-// The privateer cutout fills more of its 256px canvas than the corporate
-// Interceptor art. Calibrate its canvas down so both Raider-class hulls have
-// the same visible length; its broader salvaged silhouette remains intentional.
+// Privateer art fills more of its canvas than most corporate hulls. Retain the
+// per-silhouette calibration separately from the map-only size tuning below.
 const PRIVATEER_ART_CALIB = 0.73;
 // NPC pirate packs are one simulation family but not one stamped-out hull.
 // The variant is a deterministic cosmetic pick from the SERVED fleet id: it
 // changes no stats, reveals no composition, and remains stable across Views.
 const PIRATE_CORSAIR_ART_CALIB = 0.70;
 const PIRATE_BOARDING_ART_CALIB = 0.70;
+// Galaxy-map presentation only: scale the ENTIRE zoom curve, including its
+// upper endpoint. Pirate hulls use their own factor, not both reductions.
+const INTERCEPTOR_MAP_SCALE = 0.8;
+const PRIVATEER_MAP_SCALE = 0.9;
 
 // On-map ship sprite sizes (screen px at the fit zoom) — big enough that the
 // detailed art reads, with the convoy clearly LARGER than the nimble raider.
@@ -218,8 +223,21 @@ const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
 const SHIP_NATIVE_ZOOM_START = 12;
 const BODY_ZOOM_START = 0.75 * ZOOM_MAX_FACTOR;
 
-// §size-hierarchy: per-class size targets at the ends of their own bands.
-const SHIP_MAX_PX = 120; // a ship at max zoom (was: the art's native 256 — too big next to bodies)
+// §size-hierarchy: galaxy-only deep-zoom canvas targets, tuned against the
+// visible hulls (transparent padding is not ship length). At these sizes the
+// Scout is ~60px long, a Freighter ~102px, and the Titan ~200px. All remain
+// below their 256px source canvases. Unlisted civilians keep their old curve;
+// Interceptors retain 120 × 0.8 = 96px, and pirate art keeps its own calibration.
+const SHIP_MAX_PX = 120;
+const SHIP_CLASS_MAX_PX: Partial<Record<ShipKind, number>> = {
+  scout: 72,
+  corvette: 112,
+  destroyer: 136,
+  cruiser: 160,
+  battleship: 184,
+  dreadnought: 208,
+  titan: 232,
+};
 // The hub has NO fixed max target: its deep-zoom ceiling is the landmark
 // texture's NATIVE width (1254px), so max zoom renders it at sprite scale
 // exactly 1.0 — pixel-crisp by construction, never upscaled (a fixed target
@@ -398,9 +416,9 @@ export class Renderer {
   // geometry is dirty (camera / new View / selection) or an animated system is
   // present — never allocated per frame.
   private systemGfx = new Map<string, SystemGfx>();
-  private interceptGfx = new Graphics(); // soft intercept-estimate zones
+  private battleGfx = new Graphics(); // battle alert rings and ownership pips
   // Battle + capture marker chrome — under the ghosts (a marker never hides a
-  // ship), over bodies/estimates.
+  // ship), over bodies.
   private aftermathLayer = new Container();
   private aftermathGfx = new Graphics();
   private jumpDepartureGfx = new Graphics();
@@ -434,7 +452,6 @@ export class Renderer {
   private deckSaliencyGfx = new Graphics();
   private deckSaliencyEnabled = false;
   private deckWorldPing: { pos: Vec2; startedMs: number } | null = null;
-  private interceptLabels = new Map<string, Text>();
   private ghosts = new Map<string, GhostSprite>();
   private servedGhostFrames = new Map<string, { pos: Vec2; simTime: number; pinned: boolean }>();
 
@@ -564,7 +581,7 @@ export class Renderer {
       this.operationGfx, // known contract/objective sites, under routes and fleets
       this.routesGfx, // visible convoy routes, under ghosts
       this.orderLayer,
-      this.interceptGfx, // soft intercept estimate, under the ghosts it guides
+      this.battleGfx, // battle alert rings, under the ghosts
       this.aftermathLayer, // §battle-aftermath markers, under the ghosts
       this.reacquireGfx, // served jump discontinuity, beneath the fresh marker
       this.ghostsLayer,
@@ -1670,65 +1687,6 @@ export class Renderer {
     }
   }
 
-  /// Soft, fuzzy INTERCEPT ESTIMATES for committed raids (§8, §14.1). A CRUDE
-  /// constant-velocity lead projection from the delayed ghosts — honest, since
-  /// the real pursuit acts on light-delayed sightings it hasn't seen yet, so it
-  /// is EXPECTED to drift. Rendered in the sensor-circle idiom
-  /// (translucent, soft, concentric) precisely so it reads as "best guess, about
-  /// here," the way a sensor circle reads as a soft boundary — honest uncertainty,
-  /// not a precise promise.
-  private drawIntercepts(state: ViewState, ghostById: Map<string, GhostView>): void {
-    const g = this.interceptGfx;
-    g.clear();
-    const live = new Set<string>();
-    if (this.galaxy) {
-      const raiderSpeed = Math.max(this.galaxy.raider_speed || 100, 1);
-      for (const [raiderId, targetId] of Object.entries(state.raids)) {
-        // §perf: O(1) lookup from the shared ghost map (was two O(n) find()s per
-        // raid per frame).
-        const r = ghostById.get(raiderId);
-        const t = ghostById.get(targetId);
-        if (!r || !t) continue; // a ship left the view — no guess to draw
-
-        // Constant-velocity intercept: ETA ≈ range / cruise speed (§14.1, no
-        // acceleration ramp), then project the target forward along its heading.
-        const range = Math.hypot(t.pos.x - r.pos.x, t.pos.y - r.pos.y);
-        const eta = range / raiderSpeed;
-        const ip = { x: t.pos.x + t.vel.x * eta, y: t.pos.y + t.vel.y * eta };
-        const s = this.worldToScreen(ip);
-        const rp = this.worldToScreen({ x: r.pos.x, y: r.pos.y });
-
-        // Fuzzier the farther out (more uncertain). Soft fill + faint concentric
-        // rings = the "approximate zone" idiom.
-        const rad = Math.min(12 + eta * 1.4, 48);
-        g.circle(s.x, s.y, rad).fill({ color: COL_ESTIMATE, alpha: 0.05 });
-        for (const f of [1.0, 0.66, 0.34]) {
-          g.circle(s.x, s.y, rad * f).stroke({ width: 1, color: COL_ESTIMATE, alpha: 0.1 + (1 - f) * 0.08 });
-        }
-        g.circle(s.x, s.y, 1.6).fill({ color: COL_ESTIMATE, alpha: 0.5 });
-        // Faint dashed guidance from the raider to the estimate (not a path).
-        dashedLine(g, rp.x, rp.y, s.x, s.y, 4, 10);
-        g.stroke({ width: 1, color: COL_ESTIMATE, alpha: 0.12 });
-
-        const label = this.interceptLabel(raiderId);
-        label.text = `≈ intercept · ~${Math.round(eta)}s`;
-        label.position.set(s.x + rad + 3, s.y);
-        label.visible = true;
-        live.add(raiderId);
-      }
-    }
-    // §perf: destroy + drop stale intercept labels (was: hidden forever, so the
-    // map + their text textures grew unboundedly over a session). The lazy getter
-    // recreates one on demand the next time that raider commits a raid.
-    for (const [id, label] of this.interceptLabels) {
-      if (!live.has(id)) {
-        this.signalsLayer.removeChild(label);
-        label.destroy();
-        this.interceptLabels.delete(id);
-      }
-    }
-  }
-
   /// §battles-take-time + §replay-marker: ONE battle marker family on the map.
   /// A pulsing icon at each ongoing engagement the player can see (strictly
   /// light-gated by the server), and the SAME icon — steady — at each concluded
@@ -1739,7 +1697,8 @@ export class Renderer {
   /// picture. Art icon when loaded, the original drawn burst otherwise. Under
   /// the ghosts — "something is happening (or happened) HERE".
   private drawBattles(state: ViewState): void {
-    const g = this.interceptGfx;
+    const g = this.battleGfx;
+    g.clear();
     const now = performance.now();
     const pulse = 0.5 + 0.5 * Math.sin(now / 200);
     this.battleHits = [];
@@ -1778,7 +1737,15 @@ export class Renderer {
       sp.texture = tex;
       return sp;
     };
-    for (const b of state.battles) {
+    // View and reliable record packets can arrive separately. Keep an already
+    // observed engagement on the map until its final record arrives; otherwise
+    // the View dropping the live entry creates a gap before the replay marker.
+    // This uses only arrived records, never a predicted or true battle ending.
+    const ongoingIds = new Set(state.battles.map((b) => b.id));
+    const ongoing = [...state.battles, ...state.battleRecords
+      .filter((rec) => rec.outcome === null && !ongoingIds.has(rec.id))
+      .map((rec) => ({ id: rec.id, pos: rec.pos, own: rec.own_side !== null }))];
+    for (const b of ongoing) {
       const { sx, sy } = place(b.pos);
       live.add(b.id);
       if (this.texBattleOngoing) {
@@ -1803,13 +1770,10 @@ export class Renderer {
     // Concluded battles: same icon, steady (no pulse, no alert ring) — history
     // you can open, not an alarm. Dismissing the battle's report (the button on
     // its report page) hides the marker; the record itself keeps the replay.
-    const dismissedAt = new Set<string>();
-    for (const r of state.battleReports) {
-      if (state.battleDismissed.has(r.id)) dismissedAt.add(`${r.pos.x}:${r.pos.y}`);
-    }
     for (const rec of state.battleRecords) {
       if (rec.outcome === null || live.has(rec.id)) continue;
-      if (dismissedAt.has(`${rec.pos.x}:${rec.pos.y}`)) continue;
+      // Dismiss THIS engagement only, even after its separate report expires.
+      if (state.battleDismissed.has(battleRecordMarkKey(rec.id))) continue;
       const { sx, sy } = place(rec.pos);
       live.add(rec.id);
       if (this.texBattleOngoing) {
@@ -1871,17 +1835,17 @@ export class Renderer {
   /// hands. Screen-space UI like the aftermath markers (fixed size, never grows),
   /// under the ghosts. A GOLD flag = you captured; RED = you lost. Unviewed
   /// pulses; viewed dims; dismissed / older than the TTL are hidden. Shares the
-  /// battleViewed / battleDismissed sets with battles (ids are globally unique).
+  /// battleViewed / battleDismissed sets with battles (typed identity keys).
   private drawCaptures(state: ViewState): void {
     const g = this.aftermathGfx;
     g.clear(); // sole owner of this surface now that battle markers unified
     this.captureHits = [];
     const simNow = liveSimTime();
     for (const r of state.captureReports) {
-      if (state.battleDismissed.has(r.id)) continue;
+      if (state.battleDismissed.has(reportMarkKey(r))) continue;
       if (simNow - r.learned_at > BATTLE_MARKER_TTL_S) continue;
       const s = this.worldToScreen(r.pos);
-      const viewed = state.battleViewed.has(r.id);
+      const viewed = state.battleViewed.has(reportMarkKey(r));
       const pulse = viewed ? 0 : 0.5 + 0.5 * Math.sin(performance.now() / 320);
       const base = viewed ? 0.68 : 0.8 + 0.2 * pulse; // legible-when-viewed
       const alpha = this.aftermathFadeAlpha(base, simNow - r.learned_at); // §aftermath-fade
@@ -1980,21 +1944,6 @@ export class Renderer {
       if (d < bestD) { bestD = d; best = h.id; }
     }
     return best;
-  }
-
-  private interceptLabel(id: string): Text {
-    let t = this.interceptLabels.get(id);
-    if (!t) {
-      t = new Text({
-        text: "",
-        style: new TextStyle({ fill: COL_ESTIMATE, fontFamily: "ui-monospace, monospace", fontSize: 9, letterSpacing: 0.5 }),
-      });
-      t.anchor.set(0, 0.5);
-      t.alpha = 0.8;
-      this.signalsLayer.addChild(t);
-      this.interceptLabels.set(id, t);
-    }
-    return t;
   }
 
   /// Draw the same mobile sensor sources the server uses: the fixed command
@@ -2477,6 +2426,9 @@ export class Renderer {
       });
       const label = new Text({ text: "", style: new TextStyle({ fill: COL_OTHER, fontFamily: "ui-monospace, monospace", fontSize: 9 }) });
       label.anchor.set(0, 0.5);
+      const orderText = new Text({ text: "", style: new TextStyle({ fill: COL_DELAYED, fontFamily: "ui-monospace, monospace", fontSize: 10 }) });
+      orderText.anchor.set(0, 0.5);
+      orderText.visible = false;
       const pip = new Graphics();
       // Fleet count badge: a small pill at the sprite's lower-right showing the
       // fleet size (exact when known, the fog bucket otherwise).
@@ -2484,9 +2436,9 @@ export class Renderer {
       const badgeText = new Text({ text: "", style: new TextStyle({ fill: 0xffffff, fontFamily: "ui-monospace, monospace", fontSize: 9, fontWeight: "bold" }) });
       badgeText.anchor.set(0.5, 0.5);
       // Pip is topmost so the friend/foe tag is never hidden by the sprite/label.
-      container.addChild(cone, ring, body, sprite, label, badge, badgeText, pip, delayIcon, delayTooltip);
+      container.addChild(cone, ring, body, sprite, label, badge, badgeText, pip, orderText, delayIcon, delayTooltip);
       this.ghostsLayer.addChild(container);
-      sp = { container, cone, body, sprite, delayIcon, delayTooltip, label, ring, pip, badge, badgeText, seen: true };
+      sp = { container, cone, body, sprite, delayIcon, delayTooltip, orderText, label, ring, pip, badge, badgeText, seen: true };
       this.ghosts.set(id, sp);
     }
     return sp;
@@ -2636,15 +2588,15 @@ export class Renderer {
 
   /// On-screen ship size (px) as a function of the current zoom, in TWO phases:
   ///  1. Normal / indicator: base × clamp(r, SHIP_ZOOM_MIN, SHIP_ZOOM_MAX) — the
-  ///     small map markers, unchanged, across the whole normal zoom range.
-  ///  2. Neighborhood: r=12→24 ramps the indicator to SHIP_MAX_PX, then it
+  ///     baseline map markers across the whole normal zoom range.
+  ///  2. Neighborhood: r=12→24 ramps the indicator to its class cap, then it
   ///     freezes throughout the approach so increasing world-space separation
   ///     remains visible beside the later body bloom.
-  /// All kinds converge to the SAME max size: up close their role-specific
-  /// silhouettes do the class reading, so identical max size is intended.
-  private shipSizePx(kind: ShipKind): number {
-    // §ladder: capitals scale by MASS CLASS — each role-specific silhouette is
-    // visibly larger than the last, with the Titan the largest thing flying.
+  /// A cap can never be below the indicator: zooming in must not shrink a hull,
+  /// even if a later tuning pass raises its base size. Map-only Interceptor and
+  /// Privateer factors still scale the whole curve, not just the starting size.
+  private shipSizePx(kind: ShipKind, pirate = false): number {
+    // §ladder: preserve the established normal-zoom capital indicators.
     const capital: Partial<Record<ShipKind, number>> = { destroyer: 52, cruiser: 60, battleship: 70, dreadnought: 82, titan: 96 };
     const base = capital[kind]
       ?? (kind === "convoy" || kind === "freighter" ? SHIP_PX_CONVOY
@@ -2656,15 +2608,20 @@ export class Renderer {
                   : SHIP_PX_SCOUT);
     const r = this.scale / this.fitScale();
     const indicator = base * Math.max(SHIP_ZOOM_MIN, Math.min(SHIP_ZOOM_MAX, r));
-    return this.deepZoomPx(indicator, SHIP_MAX_PX);
+    // Contract pirates can have Corvette stats but draw the same privateer
+    // silhouettes: their agreed size is independent of corporate class caps.
+    const classCap = pirate ? SHIP_MAX_PX : (SHIP_CLASS_MAX_PX[kind] ?? SHIP_MAX_PX);
+    const maxPx = Math.max(indicator, classCap);
+    const mapScale = pirate ? PRIVATEER_MAP_SCALE : kind === "raider" ? INTERCEPTOR_MAP_SCALE : 1;
+    return this.deepZoomPx(indicator, maxPx) * mapScale;
   }
 
   /// Half the ship's CURRENT on-screen size — the click hit radius, so ships stay
-  /// clickable as they enlarge in the 12→24 machine band (capped under the body
-  /// hit cap, so ships always win the first-pass hit-test over grown bodies).
-  /// Consumed by main.ts's map hit-test.
-  shipHitRadius(kind: ShipKind): number {
-    return this.shipSizePx(kind) / 2;
+  /// clickable as they enlarge in the 12→24 machine band. Map picking retains
+  /// a 24px minimum radius for small hulls independently of their visible size.
+  /// fleetHitRadius adds art calibration for map picking and overlay anchors.
+  shipHitRadius(kind: ShipKind, pirate = false): number {
+    return this.shipSizePx(kind, pirate) / 2;
   }
 
   /// On-screen size for a completed open-space structure. It follows the same
@@ -2689,7 +2646,7 @@ export class Renderer {
   /// pip/badge anchors.
   fleetHitRadius(ghost: GhostView): number {
     const marker = this.fleetMarker(ghost);
-    return this.shipHitRadius(ghost.kind) * (marker ? marker.mult : 1);
+    return this.shipHitRadius(ghost.kind, ghost.pirate) * (marker ? marker.mult : 1);
   }
 
   /// Screen position used by desktop picking/hover and signal reconciliation.
@@ -2814,9 +2771,8 @@ export class Renderer {
     // `age x hull speed` — drawn when you selected a contact. It was deleted
     // rather than fixed: drive state changes make a single extrapolated radius
     // misleading. The panel's SEEN age and the sighting's drive state carry the
-    // same information without the false precision, and
-    // the amber intercept estimate answers the question the circle was reached
-    // for. `sp.cone` still carries the survey ring, pending badge, threat ring
+    // same information without the false precision.
+    // `sp.cone` still carries the survey ring, pending badge, threat ring
     // and signature flare below.
     sp.cone.clear();
     const speed = Math.hypot(ghost.vel.x, ghost.vel.y);
@@ -2918,62 +2874,7 @@ export class Renderer {
         sp.cone.arc(0, 0, r, -Math.PI / 2, -Math.PI / 2 + p * Math.PI * 2).stroke({ width: 2, color: COL_OWN, alpha: 0.9 });
       }
     }
-    // §order-lifecycle: is this own fleet's relevant order still unconfirmed (its
-    // compliance light hasn't returned)? An estimate expiring cannot resolve this
-    // state: only the server's arrived-evidence event retires the lifecycle row.
-    // While so, the commanded-heading hint is
-    // drawn DASHED (= commanded/claimed) and a pending badge shows; both resolve
-    // to the normal SOLID hint / no badge at echo (= observed). The TWO pending
-    // phases get subtly different treatments, mirroring the fleet panel's ◈/◔
-    // vocabulary with the SAME estimated boundary (liveSim vs arrives_at, then
-    // arrives_at):
-    //   phase 1 IN TRANSIT (before arrives_at): the fleet doesn't know yet —
-    //     hollow-diamond badge (the signal motif), sparser/dimmer dashes.
-    //   phase 2 PRESUMED DELIVERED: the forecast says they have it and are executing,
-    //     you just haven't seen it — quarter-filled clock, tighter/brighter dashes.
-    // The 1.5s suppression matches the panel's LIFECYCLE_MIN_S (no sub-second
-    // flicker for a fleet at the command center).
-    const queue = own ? state.pendingOrders.get(ghost.id) ?? [] : [];
-    const activeQueue = queue.filter((order) => !order.lost);
-    const selectedPend = state.selectedOrderId === null
-      ? undefined
-      : activeQueue.find((p) => p.id === state.selectedOrderId);
-    const pend = selectedPend ?? activeQueue[activeQueue.length - 1];
-    const unconfirmed = !!pend && pend.response_at - pend.arrives_at >= 1.5;
-    const inTransit = unconfirmed && liveSim < pend!.arrives_at; // phase 1, else phase 2
-    const selectedDelivered = !!selectedPend && liveSim >= selectedPend.arrives_at;
-
-    // (No "probably advanced to about here" pip: its length was the uncertainty
-    // radius, and `drawOrders` already draws the fleet's WHOLE commanded route —
-    // the real flight plan. The pending badge below still
-    // carries the order phase.)
-
-    // Pending badge, own-cyan, just off the pip while the order is unconfirmed —
-    // a subtle state tag, not an alarm. Gone at echo. The glyph steps with the
-    // phase at arrives_at, mirroring the panel: ◈ hollow diamond while the
-    // signal is IN TRANSIT, ◔ quarter-filled clock while a response is expected.
-    if (unconfirmed) {
-      const bx = 11;
-      const by = -(this.fleetHitRadius(ghost) + 5);
-      if (selectedDelivered) {
-        const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 260);
-        sp.cone.circle(bx, by, 6.2 + pulse * 1.8).stroke({
-          width: 1.8,
-          color: COL_COMMAND,
-          alpha: 0.7 + pulse * 0.25,
-        });
-      }
-      if (inTransit) {
-        // ◈ — hollow diamond (the signal motif) with a tiny center pip.
-        const dr = 3.8;
-        sp.cone.poly([bx, by - dr, bx + dr, by, bx, by + dr, bx - dr, by]).stroke({ width: 1.2, color: COL_OWN, alpha: 0.85 });
-        sp.cone.circle(bx, by, 0.9).fill({ color: COL_OWN, alpha: 0.85 });
-      } else {
-        // ◔ — clock outline with the first quarter filled (delivered, unechoed).
-        sp.cone.circle(bx, by, 3.6).stroke({ width: selectedDelivered ? 1.8 : 1.2, color: COL_OWN, alpha: selectedDelivered ? 1 : 0.85 });
-        sp.cone.moveTo(bx, by).arc(bx, by, 3.6, -Math.PI / 2, 0).lineTo(bx, by).fill({ color: COL_OWN, alpha: selectedDelivered ? 1 : 0.85 });
-      }
-    }
+    this.drawOrderBadge(ghost, state, sp, liveSim);
     // Detected rival raider = a threat contact (it's otherwise invisible). Make
     // it unmistakable with a pulsing alert ring — this is your only warning.
     if (!own && ghost.kind === "raider") {
@@ -3033,10 +2934,10 @@ export class Renderer {
     } else if (marker) {
       sp.sprite.visible = true;
       if (sp.sprite.texture !== marker.tex) sp.sprite.texture = marker.tex;
-      // Size vs zoom: a small indicator through normal zoom, ramping to
-      // SHIP_MAX_PX in the deepest band (see shipSizePx / the size hierarchy).
+      // Size vs zoom: the role-adjusted curve includes its deep-zoom endpoint;
+      // art calibration applies equally to this sprite and fleetHitRadius.
       // Always ≤ the art's native px, so sprites stay downscale-crisp.
-      const targetPx = this.shipSizePx(ghost.kind) * marker.mult;
+      const targetPx = this.shipSizePx(ghost.kind, ghost.pirate) * marker.mult;
       sp.sprite.scale.set(targetPx / marker.tex.width);
       sp.sprite.rotation = angle + SHIP_ART_FACING;
       sp.sprite.tint = 0xffffff; // natural art — no per-syndicate tint
@@ -3118,7 +3019,7 @@ export class Renderer {
       const cargo = ghost.kind === "convoy" && manifest.length
         ? `${manifest.slice(0, 2).map((stack) => `${label(stack.commodity)} ×${stack.units}`).join(" · ")}${manifest.length > 2 ? ` · +${manifest.length - 2}` : ""}  `
         : "";
-      const ownLabel = this.deckSaliencyEnabled ? `${label(ghost.kind).toUpperCase()}  ` : "";
+      const ownLabel = this.deckSaliencyEnabled ? `${shipKindLabel(ghost.kind).toUpperCase()}  ` : "";
       txt = `${ownLabel}${cargo}${stale}`;
       col = COL_OWN;
       lalpha = sel ? 0.95 : 0.7;
@@ -3187,6 +3088,64 @@ export class Renderer {
     return s;
   }
 
+  private drawOrderBadge(ghost: GhostView, state: ViewState, sp: GhostSprite, now: number): void {
+    sp.orderText.visible = false;
+    const queue = ghost.own ? state.pendingOrders.get(ghost.id) ?? [] : [];
+    const active = queue.filter((order) => !order.lost);
+    const selected = active.find((order) => order.id === state.selectedOrderId);
+    const order = selected ?? active[active.length - 1];
+    // Suppress very short waits near CC, as before. This is owner-only evidence:
+    // selecting a rival or receiving a loss/confirmation must clear the badge.
+    if (!order || order.response_at - order.arrives_at < 1.5) return;
+    const g = sp.cone;
+    const half = this.fleetHitRadius(ghost);
+    if (now < order.arrives_at) {
+      // Outbound signal stays a cyan diamond; the response clock starts only
+      // at ESTIMATED receipt, not when the player first clicks Confirm.
+      const bx = 11, by = -(half + 5), dr = 3.8;
+      g.poly([bx, by - dr, bx + dr, by, bx, by + dr, bx - dr, by])
+        .stroke({ width: 1.2, color: COL_OWN, alpha: 0.85 });
+      g.circle(bx, by, 0.9).fill({ color: COL_OWN, alpha: 0.85 });
+      return;
+    }
+
+    // One-clock rule: this countdown and draining rim use the SAME served
+    // response_at as the Orders panel, never ghost.age or another route solve.
+    // These are estimates, not proof of receipt. Expiry keeps a moving clock
+    // and "awaiting" until arrived evidence removes the pending lifecycle.
+    const span = order.response_at - order.arrives_at;
+    const remaining = order.response_at - now;
+    const estimated = Number.isFinite(span) && Number.isFinite(remaining) && span > 0;
+    const progress = estimated ? clamp01(1 - remaining / span) : 1;
+    const bx = 20, by = -(half + 12), r = 6;
+    const top = -Math.PI / 2;
+    if (selected) {
+      const pulse = 0.5 + 0.5 * Math.sin(now * 4);
+      g.circle(bx, by, 11 + pulse).stroke({ width: 1.2, color: COL_COMMAND, alpha: 0.65 + pulse * 0.25 });
+    }
+    g.circle(bx, by, 9).fill({ color: 0x05070d, alpha: 0.9 });
+    g.circle(bx, by, r).stroke({ width: 1.2, color: COL_DELAYED, alpha: 0.95 });
+    if (progress < 1) {
+      const start = top + progress * Math.PI * 2;
+      g.moveTo(bx + Math.cos(start) * 8.5, by + Math.sin(start) * 8.5)
+        .arc(bx, by, 8.5, start, top + Math.PI * 2)
+        .stroke({ width: 1.6, color: COL_DELAYED, alpha: 0.8 });
+    }
+    // A four-second sweep is animation only, not a second estimate. The shared
+    // continuous sim clock keeps it smooth and makes pause/pacing apply equally
+    // to the hands, rim and seconds. Fixed screen pixels stay crisp at any zoom.
+    const hand = top + ((Math.max(0, now - order.arrives_at) / 4) % 1) * Math.PI * 2;
+    g.moveTo(bx - 2.2, by - 2.5).lineTo(bx, by)
+      .lineTo(bx + Math.cos(hand) * 4.2, by + Math.sin(hand) * 4.2)
+      .stroke({ width: 1.4, color: COL_DELAYED, alpha: 1 });
+    g.circle(bx, by, 0.9).fill({ color: COL_DELAYED, alpha: 1 });
+    sp.orderText.text = estimated && remaining > 0 ? `~${Math.ceil(remaining)}s` : "awaiting";
+    sp.orderText.position.set(bx + 14, by);
+    sp.orderText.visible = true;
+    g.roundRect(bx + 11, by - 7, sp.orderText.width + 6, 14, 3)
+      .fill({ color: 0x05070d, alpha: 0.8 });
+  }
+
   update(state: ViewState): void {
     if (!state.galaxy) return;
     this.renderedFrames++;
@@ -3243,10 +3202,6 @@ export class Renderer {
       this.drawAnchors(state);
 
       for (const sp of this.ghosts.values()) sp.seen = false;
-      // §perf: one ghost-by-id map built per frame, shared by the draw paths that
-      // used to each run their own O(n) find() (drawIntercepts).
-      const ghostById = new Map<string, GhostView>();
-      for (const gh of state.ghosts) ghostById.set(gh.id, gh);
       const screenById = new Map<string, { x: number; y: number }>();
       const orderFleetIds = new Set<string>();
       // §one-battle-one-icon: a fleet ENGAGED in a visible battle has its whole
@@ -3316,7 +3271,6 @@ export class Renderer {
       this.updateRivalJumpArrivals();
 
       this.drawOrders(state, orderFleetIds);
-      this.drawIntercepts(state, ghostById);
       this.drawBattles(state);
       this.drawCaptures(state);
       this.drawJumpDepartures(state);

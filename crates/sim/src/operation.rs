@@ -21,6 +21,34 @@ pub const SALVAGE_LIFETIME_S: f64 = 10.0 * 60.0;
 pub const SALVAGE_RECOVERY_RADIUS: f64 = 300.0;
 pub const ESCORT_RADIUS: f64 = 1_200.0;
 pub const CONTROL_HOLD_S: f64 = 3.0 * 60.0;
+/// Optional beginner jobs repeat, but never flood the founding checklist.
+pub const FOLLOW_UP_COOLDOWN_S: f64 = 10.0 * 60.0;
+pub const FOLLOW_UP_PIRATE_SPEED_MULT: f64 = 0.50;
+pub const FOLLOW_UP_PIRATE_DAMAGE_MULT: f64 = 0.10;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FollowUpKind { Escort, Salvage, Production }
+
+/// Published contract terms, not a reading of unseen enemy strength. Immutable
+/// after posting; actual progress and enemy sightings use their usual light.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperationBriefing {
+    pub follow_up: FollowUpKind,
+    pub title: String,
+    pub difficulty: String,
+    pub suitable_fleets: String,
+    pub summary: String,
+}
+
+/// Physical encounter bookkeeping, deliberately NOT included in OperationView.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FollowUpEncounter {
+    pub protected_fleet: Option<EntityId>,
+    pub staged_at_home: bool,
+    pub launched: bool,
+    pub pirates: Vec<EntityId>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -85,6 +113,9 @@ pub enum OperationKind {
         protected_fleet: EntityId,
         destination: Vec2,
     },
+    /// Player chooses the Freighter and its guard; neither is conjured or moved
+    /// by accepting. Guard and travel remain ordinary delayed fleet commands.
+    FreightEscort { origin: Vec2, destination: Vec2 },
     AuthorityEnforcement {
         target: PlayerId,
     },
@@ -116,7 +147,7 @@ impl OperationKind {
             | Self::SyndicateMegaproject { system, .. } => system_pos(system),
             Self::MarketDelivery { .. } => hub,
             Self::RescueSalvage { pos, .. } => pos,
-            Self::ConvoyEscort { destination, .. } => destination,
+            Self::ConvoyEscort { destination, .. } | Self::FreightEscort { destination, .. } => destination,
             Self::AuthorityEnforcement { .. } => hub,
             Self::RegionalMandate { region, .. } => region,
         }
@@ -173,6 +204,10 @@ pub struct Operation {
     pub goal: u32,
     pub progress: u32,
     pub reward: OperationReward,
+    #[serde(default)]
+    pub briefing: Option<OperationBriefing>,
+    #[serde(default)]
+    pub encounter: Option<FollowUpEncounter>,
     #[serde(default)]
     pub participants: BTreeSet<PlayerId>,
     #[serde(default)]

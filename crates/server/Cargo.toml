@@ -5,16 +5,28 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.103"
+argon2 = { version = "0.5.3", features = ["std", "zeroize"] }
 axum = { version = "0.8.9", features = ["ws"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 futures = "0.3.32"
+rmp-serde = "1.3.1"
+rand_core = { version = "0.6.4", features = ["getrandom"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+sha2 = "0.10.9"
 sim = { version = "0.1.0", path = "../sim" }
-sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres", "macros", "json", "chrono", "migrate"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "macros", "json", "chrono", "migrate", "uuid"] }
 thiserror = "2.0.18"
 tokio = { version = "1.52.3", features = ["full"] }
 tower-http = { version = "0.7.0", features = ["fs", "cors", "trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { version = "1.23.4", features = ["v4", "serde"] }
+url = "2.5.8"
+zeroize = "1.8.2"
+zstd = "0.13.3"
+
+[dev-dependencies]
+tokio = { version = "1.52.3", features = ["test-util"] }
+tokio-tungstenite = "0.29.0"
+tower = { version = "0.5.3", features = ["util"] }

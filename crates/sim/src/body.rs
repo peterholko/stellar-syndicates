@@ -244,7 +244,7 @@ impl BodySpecial {
 /// The independent identity of one body. `version == 0` is a pre-feature save;
 /// [`Body::ensure_profile`] deterministically fills it from stable ids without
 /// moving deposits, structures, assignments, or population.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PlanetaryProfile {
     #[serde(default)]
     pub version: u8,
@@ -286,7 +286,7 @@ impl BodyKind {
 /// final inner→outer roster order, moons after all planets); the sim owns
 /// names now — planets by Roman orbital position ("Veles II"), moons with a
 /// hyphenated letter ("Veles II-a").
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
     pub id: u32,
     pub name: String,

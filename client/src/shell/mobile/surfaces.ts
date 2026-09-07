@@ -13,7 +13,9 @@ import {
   warehouseUnits,
 } from "../../core/derive/market";
 import { fleetCargoCapacity, guardCapable, jumpCapable, shipKindLabel, shipRoleLore } from "../../core/derive/fleet";
+import { fleetReadiness, dispatchWarnings } from "../../core/derive/readiness";
 import { foundingHomeSystemId } from "../../core/derive/geo";
+import { postVictoryHandoff } from "../../core/derive/handoff";
 import { jumpRangeAt } from "../../core/derive/nebula";
 import {
   countClassLabel,
@@ -159,7 +161,7 @@ export class MobileSurfaces {
     if (!root) return;
     if (renderDeferred("m-founding", () => this.refreshFounding())) return;
     const founding = this.ctx.state.founding;
-    if (!founding || (founding.stage === "complete" && !founding.protected)) {
+    if (!founding || (founding.stage === "complete" && !founding.protected && !postVictoryHandoff().some(g => !g.done))) {
       root.hidden = true;
       return;
     }
@@ -176,7 +178,7 @@ export class MobileSurfaces {
       `<header><span>Founding ${step}/12 · ${shield}</span>` +
       `<button type="button" data-mobile-act="founding-toggle" aria-label="${this.foundingMinimized ? "Expand" : "Minimize"} tutorial">${this.foundingMinimized ? "+" : "−"}</button></header>` +
       `<div class="m-founding__body"><b>${esc(content.title)}</b><p>${esc(content.copy)}</p>` +
-      `<button type="button" class="m-primary" data-mobile-act="founding-action" data-kind="${content.action}">${esc(content.label)}</button></div>`,
+      `<button type="button" class="m-primary" data-mobile-act="founding-action" data-kind="${content.action}">${esc(content.label)}</button>${founding.bounty_received ? `<button type="button" data-mobile-act="next-objectives">Next objectives &amp; rewards</button>` : ""}</div>`,
     );
   }
 
@@ -211,22 +213,19 @@ export class MobileSurfaces {
       }
       case "fleet-recall":
         if (button.dataset.id) {
-          this.ctx.send({ type: "RecallRaid", raider_id: button.dataset.id });
-          delete this.ctx.state.raids[button.dataset.id];
-          this.hooks.notice("Recall order dispatched.");
+          this.ctx.intent.beginFleetCommand({ type: "RecallRaid", raider_id: button.dataset.id });
         }
         break;
       case "fleet-transit":
         if (button.dataset.id && (button.dataset.mode === "full" || button.dataset.mode === "stealth")) {
-          this.ctx.send({ type: "SetFleetTransit", fleet_id: button.dataset.id, mode: button.dataset.mode });
-          this.hooks.notice(`${human(button.dataset.mode)} transit order dispatched.`);
+          this.ctx.intent.beginFleetCommand({ type: "SetFleetTransit", fleet_id: button.dataset.id, mode: button.dataset.mode });
         }
         break;
       case "fleet-unload":
         this.unloadFleet(button.dataset.id);
         break;
       case "fleet-rescue":
-        if (button.dataset.id) this.ctx.send({ type: "RequestFuelRescue", fleet_id: button.dataset.id });
+        if (button.dataset.id) this.ctx.intent.beginFleetCommand({ type: "RequestFuelRescue", fleet_id: button.dataset.id });
         break;
       case "fleet-estimate": {
         const target = button.dataset.target;
@@ -247,8 +246,7 @@ export class MobileSurfaces {
         else if (siteError) this.hooks.notice(`<span class="warn">Can't build here: ${esc(siteError)}</span>`);
         else if (!kitAffordable("deep_space_sensor")) this.hooks.notice(`<span class="warn">No single owned system can supply ${esc(kitCostLabel("deep_space_sensor"))}.</span>`);
         else {
-          this.ctx.send({ type: "BuildEmplacement", builder: fleet.id, emplacement: "deep_space_sensor" });
-          this.hooks.notice("Deep-Space Sensor order dispatched.");
+          this.ctx.intent.beginFleetCommand({ type: "BuildEmplacement", builder: fleet.id, emplacement: "deep_space_sensor" });
         }
         break;
       }
@@ -313,7 +311,7 @@ export class MobileSurfaces {
         }
         break;
       case "decision-withdraw":
-        if (button.dataset.id) this.ctx.send({ type: "Withdraw", fleet_id: button.dataset.id });
+        if (button.dataset.id) this.ctx.intent.beginFleetCommand({ type: "Withdraw", fleet_id: button.dataset.id });
         break;
       case "battle-open":
         if (button.dataset.id) this.hooks.openSheet({ id: "battle", props: { id: button.dataset.id } });
@@ -390,6 +388,13 @@ export class MobileSurfaces {
         }).join("")
       : `<div class="m-muted">No commands in flight.</div>`;
     const ownControls = fleet.own ? this.shipControls(fleet) : "";
+    const readiness = fleetReadiness(fleet);
+    const ready = fleet.own ? `<section class="m-section"><h3>Readiness</h3><div class="m-stat-grid">
+      <span><small>Hull</small><b>${readiness.hull == null ? "Unknown" : `${Math.round(readiness.hull * 100)}%`}</b></span>
+      <span><small>Cargo space</small><b>${readiness.cargoCapacity ? `${readiness.cargoFree} free / ${readiness.cargoCapacity}` : "No hold"}</b></span>
+      <span><small>Captain</small><b>${esc(readiness.captain?.name ?? "Unassigned")}</b></span>
+      <span><small>Assignment</small><b>${esc(this.fleetStatus(fleet))}</b></span></div>
+      ${dispatchWarnings(fleet, fleet.path?.at(-1)?.pos).map(w => `<div class="m-warning">${esc(w)}</div>`).join("")}</section>` : "";
     const engagement = fleet.own ? "" : this.engagementSection(fleet);
     const roleLore = fleet.own ? shipRoleLore(fleet) : "";
     const supply = fleet.own && fleet.supplied === false
@@ -403,7 +408,7 @@ export class MobileSurfaces {
         `<span><small>Drive</small><b>${esc(this.driveLabel(fleet))}</b></span>` +
         `<span><small>Fuel</small><b>${fleet.fuel == null ? "—" : `${fmt(fleet.fuel)}/${fmt(fleet.fuel_capacity ?? 0)}`}</b></span></div>` +
         `<section class="m-section"><h3>Formation</h3><p>${esc(composition)}</p>${roleLore ? `<details class="m-details m-help"><summary>Fleet role</summary><div><p>${esc(roleLore)}</p></div></details>` : ""}</section>` +
-        supply +
+        ready + supply +
         `<section class="m-section"><h3>Cargo</h3><div class="m-ledger">${cargo}</div></section>` +
         engagement +
         ownControls +
@@ -780,9 +785,8 @@ export class MobileSurfaces {
   private unloadFleet(id?: string): void {
     const fleet = this.ownFleet(id);
     if (!fleet?.docked) return;
-    if (fleet.docked === "hub") this.ctx.send({ type: "HubUnload", fleet_id: fleet.id });
-    else this.ctx.send({ type: "SystemUnload", fleet_id: fleet.id, system: fleet.docked });
-    this.hooks.notice("Unload order dispatched.");
+    if (fleet.docked === "hub") this.ctx.intent.beginFleetCommand({ type: "HubUnload", fleet_id: fleet.id });
+    else this.ctx.intent.beginFleetCommand({ type: "SystemUnload", fleet_id: fleet.id, system: fleet.docked });
   }
 
   private runFoundingAction(action: string): void {
@@ -867,7 +871,7 @@ function foundingCopy(stage: keyof typeof FOUNDING_STEPS): { title: string; copy
   switch (stage) {
     case "build_shipyard": return { title: "Build Shipyard I", copy: "Open your home system and establish orbital shipbuilding.", action: "home", label: "Open home" };
     case "build_mine": return { title: "Build and staff a Mining Complex", copy: "Mine Metallic Ore on the designated world, then assign workforce.", action: "home", label: "Open home" };
-    case "build_convoy": return { title: "Build your first Freighter", copy: "Use the founding kit at your Shipyard.", action: "home", label: "Open home" };
+    case "build_convoy": return { title: "Build your first Freighter", copy: "Assign workforce to the Shipyard, then build a Freighter.", action: "home", label: "Open home" };
     case "export_production": return { title: "Dispatch the opening export", copy: "Load Provisions and Metallic Ore, then send the Freighter.", action: "freighter", label: "Select Freighter" };
     case "defeat_privateer": return { title: "Guard the Freighter", copy: "Intercept the Rogue Privateer before it reaches the civilian hull.", action: "privateer", label: "Select Privateer" };
     case "complete_export": return { title: "Complete the export", copy: "Deliver and sell both opening goods at the Market Hub.", action: "freighter", label: "Select Freighter" };

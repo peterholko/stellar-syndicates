@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use super::v1::{RosterDelta, SideMods, TacticalState};
 use crate::combat::{KEYFRAME_DEATH_CAP, Keyframe};
 
-pub const RULES_VERSION: u32 = 1;
+pub const RULES_VERSION: u32 = 3;
 /// A cold seek does at most this many extra tactical steps before its slice.
 pub const CHECKPOINT_STEPS: usize = 64;
 
@@ -130,6 +130,10 @@ pub fn state_checksum(state: &TacticalState) -> u64 {
         }
     }
     let mut h = Hash(0xcbf2_9ce4_8422_2325);
+    // Preserve historical v1/v2 fingerprints. New archives also cover the
+    // private maneuver seed: changing future steering must invalidate a checkpoint.
+    if state.rules_version() > 1 { h.u(u64::from(state.rules_version())); }
+    if let super::Rules::V3 { maneuver_seed } = state.rules { h.u(maneuver_seed); }
     h.u(state.rng.state_bits());
     h.u(state.step);
     h.u(u64::from(state.next_cid));
@@ -184,7 +188,7 @@ pub fn state_checksum(state: &TacticalState) -> u64 {
 impl BattleReplay {
     pub(crate) fn new(initial: &TacticalState) -> Self {
         Self {
-            version: RULES_VERSION,
+            version: initial.rules_version(),
             initial: initial.clone(),
             initial_checksum: state_checksum(initial),
             inputs: Vec::new(),
@@ -252,12 +256,13 @@ impl BattleReplay {
     }
 
     fn validate_version(&self) -> Result<(), ReplayError> {
-        // Dispatch stays pinned to v1, not the mutable `tactical::*` facade.
-        // Future versions need their own kernel/state variant; never silently
-        // run an unknown archive through the newest engine.
-        if self.version != RULES_VERSION {
+        // Only explicit versions are supported. The state selects the same
+        // frozen movement rules in live play and reconstruction, never today's
+        // default. A v1 archive (including missing state tags) remains v1.
+        if !(1..=RULES_VERSION).contains(&self.version) {
             return Err(ReplayError::UnsupportedVersion(self.version));
         }
+        if self.version != self.initial.rules_version() { return Err(ReplayError::InvalidArchive); }
         Ok(())
     }
 
@@ -288,7 +293,7 @@ impl BattleReplay {
         &self,
         checkpoint: Option<&Checkpoint>,
         end: usize,
-        mut on_step: impl FnMut(usize, &TacticalState, Vec<crate::combat::KfDeath>),
+        mut on_step: impl FnMut(usize, &TacticalState, super::v1::StepOutcome),
     ) -> Result<(TacticalState, usize, Option<Controls>), ReplayError> {
         self.validate_version()?;
         let (mut state, mut next_input, mut controls, start, expected) = match checkpoint {
@@ -335,7 +340,7 @@ impl BattleReplay {
             if state_checksum(&state) != step.checksum {
                 return Err(ReplayError::Diverged { step: index + 1 });
             }
-            on_step(index, &state, outcome.deaths);
+            on_step(index, &state, outcome);
         }
         Ok((state, next_input, controls))
     }
@@ -371,10 +376,10 @@ impl BattleReplay {
         }
         let checkpoint = self.checkpoints.iter().rev().find(|cp| cp.through <= first);
         let mut frames = Vec::with_capacity(end - first);
-        self.run(checkpoint, end, |index, state, mut deaths| {
+        self.run(checkpoint, end, |index, state, mut outcome| {
             if index >= first {
-                deaths.truncate(KEYFRAME_DEATH_CAP);
-                frames.push((self.steps[index].round, state.keyframe(deaths)));
+                outcome.deaths.truncate(KEYFRAME_DEATH_CAP);
+                frames.push((self.steps[index].round, state.step_keyframe(outcome)));
             }
         })?;
         Ok(frames)
@@ -474,7 +479,7 @@ mod tests {
                 &outcome.losses[0],
                 &outcome.losses[1],
             );
-            record.flush_step(tick, live.keyframe(outcome.deaths), Default::default());
+            record.flush_step(tick, live.step_keyframe(outcome), Default::default());
             writeback(&live, &mut a);
             writeback(&live, &mut d);
             if i == 70 || i == 130 {
@@ -562,10 +567,10 @@ mod tests {
             ));
         }
         let mut unknown = replay.clone();
-        unknown.version += 1;
+        unknown.version = RULES_VERSION + 1;
         assert_eq!(
             unknown.frames_range(0, 1),
-            Err(ReplayError::UnsupportedVersion(2))
+            Err(ReplayError::UnsupportedVersion(RULES_VERSION + 1))
         );
         let mut damaged = replay.clone();
         damaged.checkpoints[0].state.combatants[0].hp += 1.0;
@@ -623,7 +628,7 @@ mod tests {
         record.sync_tactical(3, &mut live, [&a, &d]);
         record.withdraw_tactical(4, &mut live, 0);
         let out = record.step_tactical(15, &mut live, false, [SideMods::default(); 2]);
-        record.flush_step(15, live.keyframe(out.deaths), Default::default());
+        record.flush_step(15, live.step_keyframe(out), Default::default());
         assert_eq!(
             record.tactical_replay().unwrap().reconstruct().unwrap(),
             live
@@ -642,5 +647,60 @@ mod tests {
         // Published v1 is immutable. Introduce a new rules version for balance
         // changes; do not rebaseline this historical-state fingerprint.
         assert_eq!(state_checksum(&state), 17_995_168_257_162_801_699);
+    }
+
+    #[test]
+    fn close_pass_replay_keeps_v2_through_reinforcements_and_restart() {
+        maneuver_replay_roundtrip(false);
+    }
+
+    #[test]
+    fn independent_maneuvers_replay_through_reinforcements_and_restart() {
+        maneuver_replay_roundtrip(true);
+    }
+
+    fn maneuver_replay_roundtrip(current: bool) {
+        let mut a = fleet(1, ShipKind::Raider, "", 12);
+        let mut d = fleet(2, ShipKind::Raider, "mass_driver", 12);
+        let mut live = if current {
+            TacticalState::open_current(191, 77, &a, &d, 0, 0.0, Vec2::new(1.0, 0.0))
+        } else {
+            let mut state = TacticalState::open(191, 77, &a, &d, 0, 0.0, Vec2::new(1.0, 0.0));
+            state.rules = super::super::Rules::V2;
+            state
+        };
+        let mut record = BattleRecord::open(EntityId(77), Vec2::ZERO, None, false, 0, sides());
+        for i in 0..80 {
+            let tick = (i + 1) * 15;
+            if i == 17 { d.extend(fleet(3, ShipKind::Raider, "", 8)); }
+            record.sync_tactical(tick - 1, &mut live, [&a, &d]);
+            if i == 42 { record.withdraw_tactical(tick - 1, &mut live, 1); }
+            let out = record.step_tactical(tick, &mut live, false, [SideMods::default(); 2]);
+            record.accumulate(out.dealt[0], out.dealt[1], &out.losses[0], &out.losses[1]);
+            record.flush_step(tick, live.step_keyframe(out), Default::default());
+            writeback(&live, &mut a);
+            writeback(&live, &mut d);
+            assert_eq!(record.tactical_replay().unwrap().reconstruct().unwrap(), live);
+            if i == 31 {
+                record = serde_json::from_str(&serde_json::to_string(&record).unwrap()).unwrap();
+                live = serde_json::from_str(&serde_json::to_string(&live).unwrap()).unwrap();
+            }
+        }
+        let replay = record.tactical_replay().unwrap();
+        assert_eq!(replay.version, if current { 3 } else { 2 });
+        assert_eq!(live.rules_version(), replay.version);
+        assert!(!replay.checkpoints.is_empty());
+        let restored: BattleRecord = serde_json::from_str(&serde_json::to_string(&record).unwrap()).unwrap();
+        assert_eq!(restored.frames_range(64, 80).unwrap(), record.frames_range(64, 80).unwrap());
+        assert_eq!(restored.tactical_replay().unwrap().reconstruct().unwrap(), live);
+        let mut mismatched = replay.clone();
+        mismatched.version = 1;
+        assert_eq!(mismatched.reconstruct(), Err(ReplayError::InvalidArchive));
+        if let super::super::Rules::V3 { maneuver_seed } = replay.initial.rules {
+            let mut tampered = replay.clone();
+            tampered.initial.rules = super::super::Rules::V3 { maneuver_seed: maneuver_seed ^ 1 };
+            assert_ne!(state_checksum(&tampered.initial), replay.initial_checksum);
+            assert!(tampered.reconstruct().is_err(), "private steering seed is part of replay integrity");
+        }
     }
 }

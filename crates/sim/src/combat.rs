@@ -29,6 +29,8 @@ use crate::math::Vec2;
 use crate::module::Loadout;
 use crate::ship::ShipKind;
 
+pub mod aftermath;
+
 /// A per-side per-fleet LOADOUT partition (§modules): `kind → loadout key →
 /// count`, storing only NON-default (fitted) stacks. The wire/type form used by
 /// the tactical unpack ([`crate::tactical::stacked`]) and the fleet partition
@@ -319,6 +321,9 @@ pub struct RoundRecord {
 pub const KEYFRAME_SHIP_CAP: usize = 60;
 /// Exact death events kept per recorded round. Tunable.
 pub const KEYFRAME_DEATH_CAP: usize = 40;
+/// Representative gunfire per side per round. Bound the wire, not the combat:
+/// small fights show every actual shot; large fights show a stable subset.
+pub const KEYFRAME_GUNFIRE_CAP_PER_SIDE: usize = 32;
 
 /// A recorded round's slice of battle TRUTH: where (a sample of) the ships
 /// actually were, what torpedo salvos were in flight, and exactly where ships
@@ -329,12 +334,32 @@ pub struct Keyframe {
     pub ships: Vec<KfShip>,
     pub torpedoes: Vec<KfSalvo>,
     pub deaths: Vec<KfDeath>,
+    /// Resolved beam/driver attempts, not future firing solutions. `Some([])`
+    /// means nobody fired; `None` is a legacy frame without shot evidence.
+    /// Reconstructed from the private replay, never added to its persisted
+    /// inputs/checkpoints. This shares the frame's participant + arrival gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gunfire: Option<Vec<KfGunfire>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KfGunfire {
+    pub side: u8,
+    /// Battle-local combatant ids, NOT strategic fleet/ship identifiers.
+    pub from: u32,
+    pub to: u32,
+    pub weapon: crate::module::DamageType,
+    /// Actual mitigated hull damage (zero = miss).
+    pub damage: f32,
 }
 
 /// One sampled combatant (positions in battle-local arena coords; `hp` is the
 /// remaining fraction so the client can dim the wounded).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KfShip {
+    /// Stable only within this battle; absent in legacy verbatim keyframes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cid: Option<u32>,
     pub side: u8,
     pub kind: ShipKind,
     pub x: f32,
