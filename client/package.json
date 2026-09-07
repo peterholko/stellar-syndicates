@@ -16,6 +16,8 @@
     "test:order-confirmation": "node scripts/test-order-confirmation.mjs",
     "test:order-response-clock": "node scripts/test-order-response-clock.mjs",
     "test:map-ship-sizes": "node scripts/test-map-ship-sizes.mjs",
+    "test:map-hub-size": "node scripts/test-map-hub-size.mjs",
+    "test:fleet-lists": "node scripts/test-fleet-lists.mjs",
     "test:live-battle": "node scripts/test-live-battle.mjs && node scripts/test-battle-history.mjs && node scripts/test-battle-aftermath.mjs"
   },
   "dependencies": {

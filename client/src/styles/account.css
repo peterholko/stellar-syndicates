@@ -1,0 +1,22 @@
+.account-guest-hint { margin: 0; color: var(--dim); font-size: var(--fs-fine); line-height: 1.4; }
+.account-profile { width: min(440px, calc(100vw - var(--space-4) * 2)); max-height: calc(100dvh - var(--space-4) * 2); margin: auto; padding: var(--space-6); overflow-y: auto; border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel); color: var(--ink); box-shadow: var(--panel-shadow); font-size: var(--fs-body); pointer-events: auto; }
+.account-profile::backdrop { background: rgba(3, 6, 12, .82); }
+.account-profile header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.account-profile h2 { margin: 0; font-size: var(--fs-page); }
+.account-profile p { margin: var(--space-3) 0; line-height: 1.45; }
+.account-profile [data-profile-status], .account-profile small, .account-profile form p { color: var(--dim); }
+.account-profile form { display: grid; gap: var(--space-2); }
+.account-profile [hidden] { display: none !important; }
+.account-profile label { color: var(--dim); font-size: var(--fs-fine); }
+.account-profile input, .account-profile button { min-height: 44px; padding: var(--space-2) var(--space-3); border: 1px solid var(--field-bd); border-radius: var(--deck-radius); color: var(--ink); font: inherit; }
+.account-profile input { min-width: 0; width: 100%; background: var(--field-bg); }
+.account-profile button { cursor: pointer; background: var(--btn-bg); }
+.account-profile button:hover { background: var(--btn-bg-hover); }
+.account-profile button:disabled { opacity: .6; cursor: default; }
+.account-profile button.account-profile__primary { margin-top: var(--space-2); border-color: var(--accent); color: var(--accent); }
+.account-profile [data-profile-error] { color: var(--negative); }
+.account-profile [data-profile-error]:empty { display: none; }
+.account-profile [data-profile-leave] { padding: var(--space-3); margin-bottom: var(--space-3); border: 1px solid var(--warn); border-radius: var(--deck-radius); }
+.account-profile [data-profile-leave] p { margin-top: 0; }
+.account-profile [data-profile-leave] button { margin-top: var(--space-1); }
+.account-profile :focus-visible { outline: var(--deck-focus-ring) solid var(--accent); outline-offset: var(--space-1); }

@@ -1,4 +1,4 @@
-import { accountFields } from "../account";
+import { accountBackdrop, accountFields, accountProfile } from "../account";
 
 export function mountDeckMarkup(root: HTMLElement): void {
   root.innerHTML = `
@@ -24,7 +24,7 @@ export function mountDeckMarkup(root: HTMLElement): void {
           ${navButton("log", "Log")}
           <button id="deck-nav-more" class="deck-nav__more" type="button" data-deck-act="nav-more" aria-expanded="false" aria-controls="deck-nav-overflow">More ···</button>
         </nav>
-        <button id="deck-sign-out" type="button">Sign out</button>
+        <button id="deck-profile-open" type="button">Profile</button>
       </header>
       <div id="deck-nav-overflow" class="deck-nav-overflow" role="menu" hidden>
         ${overflowButton("rankings", "Rankings")}
@@ -79,8 +79,10 @@ export function mountDeckMarkup(root: HTMLElement): void {
         </div>
       </div>
       <div id="deck-hover" class="deck-hover" hidden></div>
+      ${accountProfile("deck")}
       <div id="deck-overlays" class="deck-overlays">
         <section id="deck-join" class="deck-overlay deck-join" aria-labelledby="deck-join-title">
+          ${accountBackdrop("deck")}
           <form id="deck-join-form" class="deck-join__card">
             <div class="deck-eyebrow">Terran Charter Authority · corporate registry</div>
             ${accountFields("deck")}

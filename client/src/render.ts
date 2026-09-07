@@ -215,11 +215,12 @@ const RIVAL_JUMP_ARRIVAL_FX_MS = 2_200; // Tunable: arrival flash + warning chev
 const SMOOTH_SNAP_SU = 4_000;
 const SMOOTH_SNAP_S = 0.75; // ...or this many seconds of its own travel, whichever is larger
 const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
-// §zoom-continuum has distinct machine and body bands. Machines retain the
-// established 12→24 ramp and then freeze. Bodies stay at map-indicator size
+// §zoom-continuum has distinct machine and star bands. Machines retain the
+// established 12→24 ramp and then freeze. Stars stay at map-indicator size
 // throughout that neighborhood and almost all of the 24→96 approach; only the
 // final quarter blooms them to their unchanged System View-matched endpoints.
-// Between r=24 and r=72 no object grows, so world-space separation does the work.
+// Between r=24 and r=72 ships/stars hold size while world-space separation opens.
+// The hub uses its own restrained station curve (HUB_SIZE_STOPS), not this bloom.
 const SHIP_NATIVE_ZOOM_START = 12;
 const BODY_ZOOM_START = 0.75 * ZOOM_MAX_FACTOR;
 
@@ -238,12 +239,8 @@ const SHIP_CLASS_MAX_PX: Partial<Record<ShipKind, number>> = {
   dreadnought: 208,
   titan: 232,
 };
-// The hub has NO fixed max target: its deep-zoom ceiling is the landmark
-// texture's NATIVE width (1254px), so max zoom renders it at sprite scale
-// exactly 1.0 — pixel-crisp by construction, never upscaled (a fixed target
-// above the asset's resolution is what made it blurry). See hubRenderedPx.
-// Click-target cap for grown BODIES: a max-zoom star/hub is hundreds of px, and
-// its hit circle stops here.
+// Click-target cap for stars; the hub's pick radius follows its own bounded
+// visible-size curve instead of sharing this cap.
 //
 // §dock: this cap existed because ships PARKED ON a star competed with it for
 // clicks. Berthed hulls are no longer drawn on the star chart at all, so that
@@ -359,13 +356,18 @@ function nearestOnPath(
 
 // Lane terrain and relay overlays were removed by §jump-v1; routes are now straight realspace geometry.
 
-// The WORMHOLE HUB map sprite (§hub-art): the game's most important location
-// reads as a LANDMARK — clearly the largest body on the map at normal zoom
-// (stars top out at 46px), holds through the approach, then blooms to its native
-// landmark size over r=72→96 (§zoom-continuum).
-const HUB_PX = 72;
-/// Fraction of the hub sprite's canvas its visible subject fills (measured).
-const HUB_ART_FILL = 0.93;
+// The hub is a station landmark, not a giant star. These VISIBLE screen-pixel
+// targets keep the overview compact and reveal detail gradually as we approach.
+// Texture resolution supplies detail; it must never decide the display ceiling.
+const HUB_SIZE_STOPS = [
+  { zoom: ZOOM_MIN_FACTOR, px: 44 },
+  { zoom: INITIAL_HOME_ZOOM_FACTOR, px: 64 },
+  { zoom: MACHINE_ZOOM_END, px: 120 },
+  { zoom: ZOOM_MAX_FACTOR, px: 180 },
+] as const;
+// wormhole_hub_v2.png: widest visible span at alpha >= 128 / canvas width.
+// Keep this measured calibration separate from the desired display sizes.
+const HUB_ART_FILL = 1245 / 1254;
 
 export class Renderer {
   private app = new Application();
@@ -685,7 +687,7 @@ export class Renderer {
       transport,
       builder,
     ] = await Promise.all([
-      load("/art/wormhole_hub.png"),
+      load("/art/wormhole_hub_v2.png"),
       load("/art/celestial_sprites/mining_station.png"),
       load("/art/celestial_sprites/deep_space_sensor.png"),
       load("/art/ship_sprites/corporate_freighter.png"),
@@ -711,10 +713,9 @@ export class Renderer {
     this.texBattleship = battleship;
     this.texDreadnought = dreadnought;
     this.texTitan = titan;
-    // The landmark is ONE 1254px texture drawn from a ~72px marker all the way
-    // up to native 1:1 — enable mipmap generation so the minified marker keeps
-    // trilinear filtering (no shimmer/aliasing at normal zoom); linear mag
-    // filtering (Pixi's default) covers the crisp native view at max zoom.
+    // The high-resolution landmark stays downscaled to a 44–180px visible
+    // station. Mipmaps keep its fine dock details stable at overview zoom;
+    // the source also has ample resolution for high-DPI close-ups.
     if (hub) hub.source.autoGenerateMipmaps = true;
     this.texHub = hub;
     this.texStation = station;
@@ -739,10 +740,10 @@ export class Renderer {
     this.texScout = scout;
     this.texTransport = transport;
     this.texBuilder = builder;
-    // The battle icon (background-removed, downscaled to 256 — it renders at
-    // ~22-52px screen-space and never grows). The drawn fallback marker still
-    // covers a failed/missing load.
-    this.texBattleOngoing = await load("/art/battle_in_progress.png");
+    // Transparent battle marker, downscaled to 256px for its fixed 52px map
+    // footprint (ongoing battles pulse slightly larger). Keep the drawn
+    // fallback for a failed/missing load.
+    this.texBattleOngoing = await load("/art/battle_in_progress_v2.png");
     // §fleet-lod: the far-zoom single-hull markers. They render at a few dozen
     // px from their 256px source, so enable mipmaps for shimmer-free minification.
     // A missing file simply leaves the detailed art in place.
@@ -907,9 +908,10 @@ export class Renderer {
 
   /// Fit the actual system + Hub footprint, not the generator's empty outer
   /// radius. This is the default/reset view and the zoom-clamp basis.
-  private fitScale(): number {
+  /// Only hub sizing passes the full canvas explicitly, so panel insets cannot
+  /// resize the station. Existing camera, star and fleet callers are unchanged.
+  private fitScale(rect: CameraRect = this.cameraRect): number {
     if (!this.galaxy) return 1;
-    const rect = this.cameraRect;
     const bounds = this.galaxyBounds();
     const spanX = Math.max(1, bounds.maxX - bounds.minX);
     const spanY = Math.max(1, bounds.maxY - bounds.minY);
@@ -2217,12 +2219,9 @@ export class Renderer {
     return sp;
   }
 
-  /// The hub body: the WORMHOLE landmark sprite (swirling aperture + station)
-  /// at the hub, over its teal glow (which stays in the background). Sized to
-  /// out-scale every star on the map at every zoom: HUB_PX through mid zoom,
-  /// then the late body-bloom curve grows it to its monumental native size at
-  /// max — the top of the size hierarchy. The old mining-station sprite remains
-  /// the fallback until the landmark art loads. Positioned each frame (zoom/pan).
+  /// The hub's broad station silhouette stays legible without dominating the
+  /// chart. Its own curve controls visible size; texture padding is calibrated
+  /// out. The old mining-station sprite remains the 28px loading fallback.
   private drawHubBody(): void {
     const tex = this.texHub ?? this.texStation;
     if (!this.galaxy || !tex) return;
@@ -2237,23 +2236,36 @@ export class Renderer {
     this.hubSprite.scale.set(
       tex === this.texHub ? this.hubRenderedPx() / (HUB_ART_FILL * tex.width) : 28 / tex.width,
     );
+    // The background's small-glow offset is only a no-art fallback. Keep the
+    // label below the displayed sprite, including zoom and async art swaps.
+    this.hubText?.position.set(h.x, h.y + this.hubSprite.height / 2 + 6);
   }
 
-  /// The hub landmark's rendered VISIBLE size at the current zoom. Its late
-  /// body band still targets the texture's NATIVE extent (fill × width = 0.93 ×
-  /// 1254 ≈ 1166px visible), so the sprite-scale math below lands at exactly 1.0
-  /// at max zoom — the hub is never upscaled. Before the landmark loads, stay at
-  /// the marker size (the station fallback has no deep-zoom treatment anyway).
+  /// Station sizing uses full-canvas magnification, not the available workspace
+  /// rectangle: opening a panel changes neither camera scale nor hub size.
+  /// Stops are smoothstepped in log-zoom space (the wheel is multiplicative),
+  /// distributing growth across the approach with zero-slope joins and a fixed
+  /// 180px ceiling. Source resolution and the star's late bloom are independent.
   private hubRenderedPx(): number {
-    const maxPx = this.texHub ? HUB_ART_FILL * this.texHub.width : HUB_PX;
-    return this.deepZoomPx(HUB_PX, maxPx, BODY_ZOOM_START, ZOOM_MAX_FACTOR);
+    const fit = this.fitScale({ x: 0, y: 0, w: this.viewW, h: this.viewH });
+    const r = this.scale / fit;
+    if (r <= HUB_SIZE_STOPS[0].zoom) return HUB_SIZE_STOPS[0].px;
+    for (let i = 1; i < HUB_SIZE_STOPS.length; i++) {
+      const from = HUB_SIZE_STOPS[i - 1];
+      const to = HUB_SIZE_STOPS[i];
+      if (r <= to.zoom) {
+        const t = Math.log(r / from.zoom) / Math.log(to.zoom / from.zoom);
+        const s = t * t * (3 - 2 * t);
+        return from.px + (to.px - from.px) * s;
+      }
+    }
+    return HUB_SIZE_STOPS[HUB_SIZE_STOPS.length - 1].px;
   }
 
-  /// Half the hub landmark's on-screen size — its click hit radius (main.ts) —
-  /// capped so the max-zoom monument never swallows clicks meant for the fleets
-  /// parked at the hub (ships are hit-tested first and stay under the cap).
+  /// Follow the visible station all the way to its 90px maximum radius. The
+  /// caller retains a 24px minimum pick target and gives nearby fleets priority.
   hubHitRadius(): number {
-    return Math.min(this.hubRenderedPx() / 2, BODY_HIT_CAP_PX);
+    return this.texHub ? this.hubRenderedPx() / 2 : 14;
   }
 
   /// The ship art for a kind (null until loaded — primitive fallback covers it).
@@ -2571,7 +2583,7 @@ export class Renderer {
   }
 
   /// §zoom-continuum: the smoothstep shared by two distinct size bands.
-  /// Machines use the default 12→24 interval and freeze thereafter; bodies pass
+  /// Machines use the default 12→24 interval and freeze thereafter; stars pass
   /// 72→96 explicitly. Zero-slope endpoints make either interval seamless.
   private deepZoomPx(
     basePx: number,
@@ -2978,8 +2990,8 @@ export class Renderer {
     pip.poly(diamond(pipY, pipR + 1.3)).fill({ color: 0x05070d, alpha: 0.7 * pipA }); // dark rim for contrast
     pip.poly(diamond(pipY, pipR)).fill({ color: pipCol, alpha: pipA });
 
-    // Label: threat warning for raiders, cargo manifest for convoys (shown only
-    // when known — i.e. within sensor range), staleness everywhere it matters.
+    // Map labels show ship identity/threat and staleness. Cargo manifests stay
+    // in the fleet panel, not beside the ship on the map.
     const sel = state.selectedShipId === ghost.id || state.selectedShipIds.has(ghost.id);
     // Honest staleness, shown finer-grained when fresh (near the command center).
     const stale = `Δ${displayAge.toFixed(displayAge < 10 ? 1 : 0)}s`;
@@ -3014,22 +3026,14 @@ export class Renderer {
       lalpha = 0.9;
     } else if (own) {
       // Own ships are light-delayed too now — always surface staleness so the fog
-      // reads as "reporting from Xs ago," not a glitch. Convoys also show cargo.
-      const manifest = fleetCargoManifest(ghost);
-      const cargo = ghost.kind === "convoy" && manifest.length
-        ? `${manifest.slice(0, 2).map((stack) => `${label(stack.commodity)} ×${stack.units}`).join(" · ")}${manifest.length > 2 ? ` · +${manifest.length - 2}` : ""}  `
-        : "";
+      // reads as "reporting from Xs ago," not a glitch.
       const ownLabel = this.deckSaliencyEnabled ? `${shipKindLabel(ghost.kind).toUpperCase()}  ` : "";
-      txt = `${ownLabel}${cargo}${stale}`;
+      txt = `${ownLabel}${stale}`;
       col = COL_OWN;
       lalpha = sel ? 0.95 : 0.7;
     } else if (ghost.kind === "convoy") {
-      const manifest = fleetCargoManifest(ghost);
-      const cargo = manifest.length
-        ? `${manifest.slice(0, 2).map((stack) => `${label(stack.commodity)} ×${stack.units}`).join(" · ")}${manifest.length > 2 ? ` · +${manifest.length - 2}` : ""}`
-        : "cargo ?";
-      txt = `${cargo}  ${stale}`;
-      col = manifest.length ? COL_REPORT : COL_OTHER; // known cargo = gold (intel!)
+      txt = `FREIGHTER  ${stale}`;
+      col = fleetCargoManifest(ghost).length ? COL_REPORT : COL_OTHER; // preserve the known-cargo accent
       lalpha = 0.9;
     } else if (ghost.kind === "freighter") {
       // §TCA: an Authority hull is named, in the Authority's own steel-blue —

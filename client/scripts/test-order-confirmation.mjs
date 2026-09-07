@@ -128,6 +128,67 @@ test("fleet-panel action family never transmits on first click", () => {
   }
 });
 
+function systemCargoFixture(docked = "E29") {
+  const f = fixture();
+  const freighter = f.state.ghosts.find(g => g.id === "103");
+  freighter.docked = docked;
+  freighter.vel = { x: 0, y: 0 };
+  f.state.galaxy.systems[0].id = "29";
+  f.state.systems[0].id = "29";
+  f.state.systems[0].stockpile = [{ commodity: "metallic_ore", units: 90 }];
+  const route = { name: "fleet", params: { id: freighter.id } };
+  for (const [selector, value] of [["[data-fleet-load-commodity]", "metallic_ore"], ["[data-fleet-load-quantity]", "25"]]) {
+    f.fleet.handleInput({ value, matches: query => query === selector }, route);
+  }
+  return { ...f, freighter };
+}
+
+test("system cargo buttons accept wire-format berths but still require Confirm and received cargo reports", () => {
+  // DockSite Display emits E29; SystemInfo/command EntityIds serialize as 29.
+  // Exercise real panel handlers, not just a fabricated matching-ID payload.
+  for (const docked of ["E29", "29"]) for (const action of ["load", "unload"]) {
+    const f = systemCargoFixture(docked);
+    const before = JSON.stringify([f.state.ghosts, f.state.systems]);
+    const expected = action === "load"
+      ? { type: "SystemLoad", fleet_id: "103", system: "29", commodity: "metallic_ore", units: 25 }
+      : { type: "SystemUnload", fleet_id: "103", system: "29" };
+    f.fleetClick(action, {}, "103");
+    assert.ok(f.state.pendingIntent, `${action} from ${docked} must open confirmation`);
+    assert.deepEqual(plain(f.state.pendingIntent.commands), [expected]);
+    assert.equal(f.sent.length, 0, "first click never transmits");
+    f.intent.clearPendingIntent();
+    assert.equal(f.sent.length, 0, "Cancel sends nothing");
+    assert.equal(JSON.stringify([f.state.ghosts, f.state.systems]), before);
+    f.fleetClick(action, {}, "103");
+    f.intent.confirmPendingIntent(); f.intent.confirmPendingIntent();
+    assert.deepEqual(plain(f.sent), [expected], "Confirm sends once, with the canonical system ID");
+    assert.equal(JSON.stringify([f.state.ghosts, f.state.systems]), before,
+      "loading/unloading still waits for delayed served reports; no optimistic inventory changes");
+  }
+});
+
+test("system cargo confirmation still rejects departure, another berth or lost ownership", () => {
+  for (const type of ["SystemLoad", "SystemUnload"]) for (const invalidate of [
+    f => { f.freighter.docked = null; },
+    f => { f.freighter.docked = "E30"; },
+    f => { f.freighter.docked = "30"; },
+    f => { f.freighter.docked = "hub"; },
+    f => { f.freighter.own = false; },
+  ]) {
+    const f = systemCargoFixture();
+    const command = { type, fleet_id: "103", system: "29",
+      ...(type === "SystemLoad" ? { commodity: "metallic_ore", units: 25 } : {}) };
+    f.intent.beginFleetCommand(command);
+    assert.ok(f.state.pendingIntent);
+    invalidate(f);
+    f.intent.confirmPendingIntent();
+    assert.equal(f.sent.length, 0, "a newly invalid berth must still cancel before sending");
+    assert.equal(f.state.pendingIntent, null);
+    f.intent.beginFleetCommand(command);
+    assert.equal(f.state.pendingIntent, null, "invalid berth is also rejected before preview");
+  }
+});
+
 test("all command payload families freeze, stage and dispatch through one gate", () => {
   const payloads = [
     { type: "HubLoad", fleet_id: "102", commodity: "fuel", units: 12 },

@@ -1,7 +1,7 @@
 import { constructionStock, dockedAtSystem, shipKindLabel } from "../../core/derive/fleet";
 import { colonyPurpose } from "../../core/derive/colony";
 import { buildProgress, buildsByPlanet } from "../../core/derive/construction";
-import { fmtBuildDur, informationDelay } from "../../core/derive/format";
+import { fmtBuildDur } from "../../core/derive/format";
 import {
   bodyPoolUsage,
   buildOption,
@@ -23,13 +23,14 @@ import {
 import { latestGroundRecordFor, SHIP_STATS } from "../../core/derive/orders";
 import type { CoreEvent } from "../../core/events";
 import { commodityIcon as commodityGlyph, icon, label, structureIcon, type IconKey } from "../../icons";
-import { fleetCargoUnits, fleetExactCount, type AssignmentView, type BodyView, type Commodity, type ModuleKind, type ShipKind, type SystemInfo, type SystemStateView } from "../../protocol";
+import type { AssignmentView, BodyView, Commodity, ModuleKind, ShipKind, SystemInfo, SystemStateView } from "../../protocol";
 import { liveSimTime } from "../../state";
 import { starIconUrl, starTypeFor } from "../../stars";
 import { bodyArtUrl } from "../../systemview";
 import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext } from "../types";
+import { fleetListRow } from "./fleet-row";
 import type { DeckRoute } from "./router";
 
 export type DeckSystemTab = "overview" | "worlds" | "production" | "fleets" | "build";
@@ -141,6 +142,7 @@ export class DeckEmpireRoutes {
       route, this.systemTab, this.builderMode, this.selectedBuild, this.selectedHull,
       this.shipQuantity, this.pendingFit, this.buildFeedback, this.workbenchOpen, Math.floor(liveSimTime()),
       context.system, context.dynamic, this.ctx.state.timeline.length, this.ctx.state.syndicate?.fits,
+      this.ctx.state.syndicate?.flagship_name,
       this.systemTab === "fleets" ? docked.map((fleet) => [
         fleet.id, fleet.kind, fleet.docked, Math.floor(fleet.age), fleet.composition,
         fleet.cargo_manifest, fleet.cargo,
@@ -425,21 +427,11 @@ export class DeckEmpireRoutes {
     // position estimate or authoritative server truth corrects the roster.
     const fleets = this.dockedFleets(system);
     if (!fleets.length) return emptyState("No docked fleets", `No owned fleet is reported berthed at ${system.name}.`);
-    const rows = fleets.map((fleet) => {
-      const exact = fleetExactCount(fleet);
-      const composition = (fleet.composition ?? [])
-        .filter((stack) => stack.count > 0)
-        .map((stack) => `${stack.count}× ${shipKindLabel(stack.kind)}`)
-        .join(" · ");
-      const cargo = fleetCargoUnits(fleet);
-      const summary = [
-        exact === null ? "served strength unknown" : `${exact} ship${exact === 1 ? "" : "s"}`,
-        composition,
-        cargo > 0 ? `${fmt(cargo)} cargo` : "",
-      ].filter(Boolean).join(" · ");
-      return `<button type="button" class="deck-system-fleet" data-deck-act="system-fleet-open" data-fleet="${esc(fleet.id)}"><span class="deck-system-fleet__icon">${icon(shipIcon(fleet.kind), "md")}</span><span><b>${esc(shipKindLabel(fleet.kind))} fleet</b><small>${esc(summary)}</small></span><em><b>Docked</b><small>${esc(informationDelay(fleet.age))}</small></em></button>`;
-    }).join("");
-    return `<section class="deck-section"><header><div><h3>Docked fleets</h3><p>Owned formations in the served berth report. Open one for cargo, orders and fleet management.</p></div><b>${fleets.length}</b></header><div class="deck-system-fleet-list">${rows}</div></section>`;
+    const rows = fleets.map((fleet) => fleetListRow(fleet, {
+      openAction: "system-fleet-open", status: "Docked",
+      flagshipName: this.ctx.state.syndicate?.flagship_name,
+    })).join("");
+    return `<section class="deck-section"><header><div><h3>Docked fleets</h3></div><b>${fleets.length}</b></header><div class="deck-fleet-list">${rows}</div></section>`;
   }
 
   private dockedFleets(system: SystemInfo) {

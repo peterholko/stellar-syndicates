@@ -1,4 +1,4 @@
-import { accountFields } from "../account";
+import { accountBackdrop, accountFields, accountProfile } from "../account";
 
 export const mobileMarkup = String.raw`
   <div class="m-shell">
@@ -18,7 +18,7 @@ export const mobileMarkup = String.raw`
         <span class="m-stat"><small>Account report</small><strong id="m-account-credits">—</strong></span>
         <span class="m-stat"><small>Reserved by orders</small><strong id="m-reserved-credits">—</strong></span>
         <p class="m-status-help">Credits above are spendable. Market buy orders reserve their maximum protected cost until execution or cancellation.</p>
-        <button id="m-sign-out" type="button">Sign out</button>
+        <button id="m-profile-open" type="button">Profile</button>
       </div>
     </header>
 
@@ -64,11 +64,9 @@ export const mobileMarkup = String.raw`
       </div>
     </div>
 
+    ${accountProfile("m")}
     <div id="m-join" class="m-join">
-      <picture class="m-join__art" aria-hidden="true">
-        <source type="image/webp" srcset="/art/derived/lore/corporate_command_center-768.webp 768w, /art/derived/lore/corporate_command_center-1280.webp 1280w" sizes="100vw">
-        <img src="/art/lore_illustrations/corporate_command_center.png" alt="" decoding="async" fetchpriority="high">
-      </picture>
+      ${accountBackdrop("m")}
       <form id="m-join-form" class="m-join__card">
         <div class="m-join__eyebrow">Corporate command uplink</div>
         ${accountFields("m")}

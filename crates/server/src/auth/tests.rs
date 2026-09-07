@@ -13,6 +13,15 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 #[test]
+fn password_minimum_is_eight_characters() {
+    assert!(password::validate("orbital").is_err());
+    assert!(password::validate("orbital8").is_ok());
+    // Count characters, not UTF-8 bytes, at the same seven/eight boundary.
+    assert!(password::validate("orbita🌙").is_err());
+    assert!(password::validate("orbital🌙").is_ok());
+}
+
+#[test]
 fn passwords_are_salted_argon2id_not_plaintext_or_fast_hashes() {
     let secret = "A long passphrase with spaces 🪐";
     password::validate(secret).unwrap();
@@ -240,7 +249,7 @@ async fn postgres_accounts_survive_restart_and_authenticate_every_socket() {
     assert_eq!(account["corporation_name"], "Secure Corp");
     assert_eq!(
         account.as_object().unwrap().len(),
-        2,
+        3,
         "no password/token/login leaked in response"
     );
     let (stored_hash, player_id): (String, i64) =
@@ -515,6 +524,409 @@ async fn postgres_accounts_survive_restart_and_authenticate_every_socket() {
     server.abort();
     pool.close().await;
     // The identifier is generated above from a UUID, never user/database input.
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+/// No shared accounts are mutated: this test owns a UUID-named schema and drops
+/// only that schema. Exercises the real migration, routes and cookie rotation.
+#[tokio::test]
+#[ignore = "requires TEST_ACCOUNTS_DATABASE_URL; creates its own isolated test schema"]
+async fn postgres_guests_register_in_place_without_claiming_other_players() {
+    let url = std::env::var("TEST_ACCOUNTS_DATABASE_URL").expect("set TEST_ACCOUNTS_DATABASE_URL");
+    let admin = PgPool::connect(&url).await.unwrap();
+    let schema = format!("guest_test_{}", Uuid::new_v4().simple());
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    let search_path = format!("SET search_path TO {schema}");
+    let pool = PgPoolOptions::new()
+        .max_connections(4)
+        .after_connect(move |conn, _| {
+            let statement = search_path.clone();
+            Box::pin(async move {
+                sqlx::query(&statement).execute(conn).await?;
+                Ok(())
+            })
+        })
+        .connect(&url)
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let config = AuthConfig::for_origin("http://localhost:8080").unwrap();
+    let store = AuthStore::new(pool.clone(), config.clone()).await.unwrap();
+    let app = routes(store.clone());
+    let origin = Some("http://localhost:8080");
+    for bad_origin in [None, Some("https://evil.example")] {
+        assert_eq!(
+            api(&app, "guest", "POST", bad_origin, None, json!({}))
+                .await
+                .0,
+            StatusCode::FORBIDDEN
+        );
+    }
+    let (status, headers, guest) = api(&app, "guest", "POST", origin, None, json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(guest["is_guest"], true);
+    assert!(
+        guest["corporation_name"]
+            .as_str()
+            .unwrap()
+            .starts_with("Venture ")
+    );
+    assert_eq!(
+        guest.as_object().unwrap().len(),
+        3,
+        "no credential or player ID exposed"
+    );
+    assert!(
+        headers[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=2592000")
+    );
+    let guest_cookie = cookie(&headers);
+    let guest_id: Uuid = guest["id"].as_str().unwrap().parse().unwrap();
+    let (player_id, login, hash): (i64, Option<String>, Option<String>) =
+        sqlx::query_as("SELECT player_id,login,password_hash FROM accounts WHERE id=$1")
+            .bind(guest_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        login.is_none() && hash.is_none(),
+        "no generated or shared password can claim a guest"
+    );
+    let (ttl,): (f64,) = sqlx::query_as("SELECT extract(epoch FROM (expires_at-created_at))::float8 FROM account_sessions WHERE account_id=$1")
+        .bind(guest_id).fetch_one(&pool).await.unwrap();
+    assert!((ttl - GUEST_SESSION_SECONDS as f64).abs() < 1.0);
+    let resumed = api(
+        &app,
+        "guest",
+        "POST",
+        origin,
+        Some(&guest_cookie),
+        json!({}),
+    )
+    .await;
+    assert_eq!(
+        resumed.2, guest,
+        "retry resumes instead of orphaning a corporation"
+    );
+    assert!(!resumed.1.contains_key(header::SET_COOKIE));
+    let other = api(&app, "guest", "POST", origin, None, json!({})).await;
+    let other_cookie = cookie(&other.1);
+    assert_ne!(other.2["id"], guest["id"]);
+    let claim = json!({"login":"MyPilot", "password":"orbital8"});
+    assert_eq!(
+        api(
+            &app,
+            "complete-registration",
+            "POST",
+            origin,
+            None,
+            claim.clone()
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        api(
+            &app,
+            "complete-registration",
+            "POST",
+            Some("https://evil.example"),
+            Some(&guest_cookie),
+            claim.clone()
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        api(
+            &app,
+            "complete-registration",
+            "POST",
+            origin,
+            Some(&guest_cookie),
+            json!({"login":"MyPilot", "password":"orbital"})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        api(
+            &app,
+            "complete-registration",
+            "POST",
+            origin,
+            Some(&guest_cookie),
+            json!({"login":"MyPilot", "password":"orbital8", "id":other.2["id"]})
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    // Reserving a used login refuses the claim atomically: guest/session intact.
+    let registered = api(
+        &app,
+        "register",
+        "POST",
+        origin,
+        None,
+        json!({"login":"taken", "password":"another8", "corporation_name":"Existing Corporation"}),
+    )
+    .await;
+    assert_eq!(registered.0, StatusCode::OK);
+    assert_eq!(registered.2["is_guest"], false);
+    assert_eq!(
+        api(
+            &app,
+            "complete-registration",
+            "POST",
+            origin,
+            Some(&guest_cookie),
+            json!({"login":"taken", "password":"orbital8"})
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        api(
+            &app,
+            "session",
+            "GET",
+            None,
+            Some(&guest_cookie),
+            Value::Null
+        )
+        .await
+        .2,
+        guest
+    );
+    let mut auth_headers = HeaderMap::new();
+    auth_headers.insert(header::COOKIE, guest_cookie.parse().unwrap());
+    let lease = store.authenticate(&auth_headers).await.unwrap();
+    let upgraded = api(
+        &app,
+        "complete-registration",
+        "POST",
+        origin,
+        Some(&guest_cookie),
+        claim.clone(),
+    )
+    .await;
+    assert_eq!(upgraded.0, StatusCode::OK, "{}", upgraded.2);
+    assert_eq!(upgraded.2["id"], guest["id"]);
+    assert_eq!(upgraded.2["corporation_name"], guest["corporation_name"]);
+    assert_eq!(upgraded.2["is_guest"], false);
+    let registered_cookie = cookie(&upgraded.1);
+    assert_ne!(registered_cookie, guest_cookie);
+    assert!(
+        *lease.revoked.borrow(),
+        "claim immediately revokes old socket leases"
+    );
+    assert_eq!(
+        api(
+            &app,
+            "session",
+            "GET",
+            None,
+            Some(&guest_cookie),
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        api(
+            &app,
+            "complete-registration",
+            "POST",
+            origin,
+            Some(&guest_cookie),
+            claim.clone()
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        api(
+            &app,
+            "complete-registration",
+            "POST",
+            origin,
+            Some(&registered_cookie),
+            claim.clone()
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let (same_player, hash): (i64, String) =
+        sqlx::query_as("SELECT player_id,password_hash FROM accounts WHERE id=$1")
+            .bind(guest_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        same_player, player_id,
+        "World ownership/progress uses this unchanged player ID"
+    );
+    assert!(hash.starts_with("$argon2id$"));
+    assert!(password::verify(Zeroizing::new("orbital8".into()), &hash));
+    assert_eq!(
+        api(
+            &app,
+            "session",
+            "GET",
+            None,
+            Some(&other_cookie),
+            Value::Null
+        )
+        .await
+        .2,
+        other.2
+    );
+
+    // A new store represents server restart; registration and identity persist.
+    let restarted = AuthStore::new(pool.clone(), config.clone()).await.unwrap();
+    let restarted_app = routes(restarted.clone());
+    let signed_in = api(&restarted_app, "login", "POST", origin, None, claim.clone()).await;
+    assert_eq!(signed_in.0, StatusCode::OK);
+    assert_eq!(signed_in.2, upgraded.2);
+    let signed_in_cookie = cookie(&signed_in.1);
+    auth_headers.insert(header::COOKIE, signed_in_cookie.parse().unwrap());
+    assert_eq!(
+        restarted
+            .authenticate(&auth_headers)
+            .await
+            .unwrap()
+            .account
+            .player_id(),
+        PlayerId(player_id as u64)
+    );
+    assert_eq!(
+        api(
+            &restarted_app,
+            "guest",
+            "POST",
+            origin,
+            Some(&signed_in_cookie),
+            json!({})
+        )
+        .await
+        .2,
+        upgraded.2,
+        "guest entry never replaces a registered session"
+    );
+    assert_eq!(
+        api(
+            &restarted_app,
+            "session",
+            "GET",
+            None,
+            Some(&other_cookie),
+            Value::Null
+        )
+        .await
+        .2,
+        other.2,
+        "unregistered guests survive restart too"
+    );
+    let other_id: Uuid = other.2["id"].as_str().unwrap().parse().unwrap();
+    sqlx::query(
+        "UPDATE account_sessions SET expires_at=now()-interval '1 second' WHERE account_id=$1",
+    )
+    .bind(other_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        api(
+            &restarted_app,
+            "complete-registration",
+            "POST",
+            origin,
+            Some(&other_cookie),
+            json!({"login":"stale-claim", "password":"orbital8"})
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (still_guest,): (bool,) = sqlx::query_as("SELECT is_guest FROM accounts WHERE id=$1")
+        .bind(other_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(still_guest);
+    let disabled = api(&restarted_app, "guest", "POST", origin, None, json!({})).await;
+    let disabled_id: Uuid = disabled.2["id"].as_str().unwrap().parse().unwrap();
+    sqlx::query("UPDATE accounts SET disabled=true WHERE id=$1")
+        .bind(disabled_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        api(
+            &restarted_app,
+            "complete-registration",
+            "POST",
+            origin,
+            Some(&cookie(&disabled.1)),
+            json!({"login":"disabled-claim", "password":"orbital8"})
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM accounts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 4, "claims and resumes never create another player");
+
+    let limited = routes(AuthStore::new(pool.clone(), config).await.unwrap());
+    for _ in 0..12 {
+        assert_eq!(
+            api(&limited, "guest", "POST", origin, None, json!({}))
+                .await
+                .0,
+            StatusCode::OK
+        );
+    }
+    assert_eq!(
+        api(&limited, "guest", "POST", origin, None, json!({}))
+            .await
+            .0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        api(
+            &limited,
+            "guest",
+            "POST",
+            origin,
+            Some(&signed_in_cookie),
+            json!({})
+        )
+        .await
+        .0,
+        StatusCode::OK,
+        "creation limits do not block resuming an existing account"
+    );
+    pool.close().await;
     sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
         .execute(&admin)
         .await

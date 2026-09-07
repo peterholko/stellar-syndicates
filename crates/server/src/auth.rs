@@ -40,6 +40,9 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 const SESSION_SECONDS: i64 = 24 * 60 * 60;
+// Give a guest time to return in this browser and register. Clearing the cookie
+// or letting it expire loses access, not the durable corporation itself.
+const GUEST_SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const RATE_WINDOW: Duration = Duration::from_secs(15 * 60);
 const MAX_RATE_KEYS: usize = 4096;
 pub const AUTH_REQUIRED_CLOSE_CODE: u16 = 4003;
@@ -192,6 +195,7 @@ pub struct Account {
     #[serde(skip)]
     player_id: i64,
     pub corporation_name: String,
+    pub is_guest: bool,
 }
 
 impl Account {
@@ -223,6 +227,7 @@ pub(crate) fn transport_test_session() -> (AuthSession, watch::Sender<bool>) {
                 id: Uuid::new_v4(),
                 player_id: 1234,
                 corporation_name: "Socket test".into(),
+                is_guest: false,
             },
             expires_at: Utc::now() + chrono::Duration::hours(1),
             revoked,
@@ -384,6 +389,7 @@ impl AuthStore {
             id: Uuid::new_v4(),
             player_id: random_player_id(),
             corporation_name: name.into(),
+            is_guest: false,
         };
         let mut live = self.0.live.lock().await;
         let mut tx = self.0.pool.begin().await?;
@@ -394,8 +400,84 @@ impl AuthStore {
             return Err(AuthError::Conflict);
         }
         let token = random_token();
-        write_session(&mut tx, account.id, &token).await?;
+        write_session(&mut tx, account.id, &token, SESSION_SECONDS).await?;
         tx.commit().await?;
+        revoke(&mut live, account.id);
+        Ok((account, token))
+    }
+
+    async fn guest(&self, ip: IpAddr) -> Result<(Account, String), AuthError> {
+        {
+            let mut limits = self.0.limits.lock().map_err(|_| AuthError::Unavailable)?;
+            let now = Instant::now();
+            limits.take(format!("ip:{ip}"), 60, now)?;
+            limits.take(format!("guest:{ip}"), 12, now)?;
+            limits.take("global".into(), 300, now)?;
+        }
+        // The label is public, not a credential. The random account/player IDs
+        // and session are the same durable identity machinery as registration.
+        for _ in 0..3 {
+            let id = Uuid::new_v4();
+            let name = format!("Venture {}", &id.simple().to_string()[..12].to_uppercase());
+            let account = Account {
+                id,
+                player_id: random_player_id(),
+                corporation_name: name.clone(),
+                is_guest: true,
+            };
+            let mut tx = self.0.pool.begin().await?;
+            let inserted = sqlx::query("INSERT INTO accounts (id,player_id,corporation_name,corporation_key,is_guest) VALUES ($1,$2,$3,$4,true) ON CONFLICT DO NOTHING")
+                .bind(id).bind(account.player_id).bind(&name).bind(name.to_lowercase())
+                .execute(&mut *tx).await?;
+            if inserted.rows_affected() == 0 {
+                continue;
+            }
+            let token = random_token();
+            write_session(&mut tx, id, &token, GUEST_SESSION_SECONDS).await?;
+            tx.commit().await?;
+            return Ok((account, token));
+        }
+        Err(AuthError::Unavailable)
+    }
+
+    async fn complete_registration(
+        &self,
+        headers: &HeaderMap,
+        input: CompleteRegistration,
+        ip: IpAddr,
+    ) -> Result<(Account, String), AuthError> {
+        // Only possession of this guest's current cookie can register it. No
+        // account/player ID or corporation name from the request selects a row.
+        let session = self.authenticate(headers).await?;
+        if !session.account.is_guest {
+            return Err(AuthError::BadInput("This account is already registered."));
+        }
+        let login = normalize_login(&input.login)?;
+        self.throttle(ip, &login)?;
+        password::validate(&input.password)?;
+        let hash = self.hash(input.password).await?;
+        let token_hash = self.0.config.token(headers)?;
+        let mut live = self.0.live.lock().await;
+        let mut tx = self.0.pool.begin().await?;
+        // Recheck after hashing: logout, expiry, a concurrent claim, or account
+        // disablement must not turn a stale guest session into credentials.
+        let mut account: Account = sqlx::query_as("SELECT a.id,a.player_id,a.corporation_name,a.is_guest FROM accounts a JOIN account_sessions s ON s.account_id=a.id WHERE s.token_hash=$1 AND s.expires_at>now() AND a.is_guest AND NOT a.disabled FOR UPDATE OF a,s")
+            .bind(token_hash.as_slice()).fetch_optional(&mut *tx).await?.ok_or(AuthError::Unauthorized)?;
+        sqlx::query("UPDATE accounts SET login=$1,password_hash=$2,is_guest=false,password_changed_at=now() WHERE id=$3")
+            .bind(login).bind(hash).bind(account.id).execute(&mut *tx).await
+            .map_err(|error| {
+                if error.as_database_error().is_some_and(|e| e.is_unique_violation()) {
+                    AuthError::Conflict
+                } else {
+                    AuthError::from(error)
+                }
+            })?;
+        account.is_guest = false;
+        let token = random_token();
+        write_session(&mut tx, account.id, &token, SESSION_SECONDS).await?;
+        tx.commit().await?;
+        // Credential creation rotates the session and revokes old sockets. The
+        // client rejoins with the SAME player ID; no World data is recreated.
         revoke(&mut live, account.id);
         Ok((account, token))
     }
@@ -407,11 +489,12 @@ impl AuthStore {
         if input.password.len() > 512 {
             return Err(AuthError::Unauthorized);
         }
-        let credential: Option<Credential> =
-            sqlx::query_as("SELECT id,password_hash,disabled FROM accounts WHERE login=$1")
-                .bind(login)
-                .fetch_optional(&self.0.pool)
-                .await?;
+        let credential: Option<Credential> = sqlx::query_as(
+            "SELECT id,password_hash,disabled FROM accounts WHERE login=$1 AND NOT is_guest",
+        )
+        .bind(login)
+        .fetch_optional(&self.0.pool)
+        .await?;
         let hash = credential
             .as_ref()
             .map_or(&self.0.dummy_hash, |c| &c.password_hash)
@@ -424,10 +507,10 @@ impl AuthStore {
         let mut tx = self.0.pool.begin().await?;
         // Recheck under a row lock: a password/disabled change while the costly
         // verifier was running must not issue a session using stale credentials.
-        let account: Account = sqlx::query_as("SELECT id,player_id,corporation_name FROM accounts WHERE id=$1 AND password_hash=$2 AND NOT disabled FOR UPDATE")
+        let account: Account = sqlx::query_as("SELECT id,player_id,corporation_name,is_guest FROM accounts WHERE id=$1 AND password_hash=$2 AND NOT disabled AND NOT is_guest FOR UPDATE")
             .bind(credential.id).bind(hash).fetch_optional(&mut *tx).await?.ok_or(AuthError::Unauthorized)?;
         let token = random_token();
-        write_session(&mut tx, account.id, &token).await?;
+        write_session(&mut tx, account.id, &token, SESSION_SECONDS).await?;
         tx.commit().await?;
         revoke(&mut live, account.id);
         Ok((account, token))
@@ -436,10 +519,11 @@ impl AuthStore {
     pub async fn authenticate(&self, headers: &HeaderMap) -> Result<AuthSession, AuthError> {
         let token_hash = self.0.config.token(headers)?;
         let mut live = self.0.live.lock().await;
-        let row: Option<(Uuid, i64, String, DateTime<Utc>)> = sqlx::query_as(
-            "SELECT a.id,a.player_id,a.corporation_name,s.expires_at FROM accounts a JOIN account_sessions s ON s.account_id=a.id WHERE s.token_hash=$1 AND s.expires_at>now() AND NOT a.disabled")
+        let row: Option<(Uuid, i64, String, bool, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT a.id,a.player_id,a.corporation_name,a.is_guest,s.expires_at FROM accounts a JOIN account_sessions s ON s.account_id=a.id WHERE s.token_hash=$1 AND s.expires_at>now() AND NOT a.disabled")
             .bind(token_hash.as_slice()).fetch_optional(&self.0.pool).await?;
-        let (id, player_id, corporation_name, expires_at) = row.ok_or(AuthError::Unauthorized)?;
+        let (id, player_id, corporation_name, is_guest, expires_at) =
+            row.ok_or(AuthError::Unauthorized)?;
         live.retain(|_, s| s.revoke.receiver_count() != 0);
         if live.get(&id).is_some_and(|s| s.token_hash != token_hash) {
             revoke(&mut live, id);
@@ -453,6 +537,7 @@ impl AuthStore {
                 id,
                 player_id,
                 corporation_name,
+                is_guest,
             },
             expires_at,
             revoked: entry.revoke.subscribe(),
@@ -477,11 +562,15 @@ impl AuthStore {
     }
 
     fn signed_in(&self, account: Account, token: String) -> Response {
+        let lifetime = if account.is_guest {
+            GUEST_SESSION_SECONDS
+        } else {
+            SESSION_SECONDS
+        };
         let mut response = Json(account).into_response();
-        response.headers_mut().insert(
-            header::SET_COOKIE,
-            self.0.config.cookie(&token, SESSION_SECONDS),
-        );
+        response
+            .headers_mut()
+            .insert(header::SET_COOKIE, self.0.config.cookie(&token, lifetime));
         response
             .headers_mut()
             .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -499,9 +588,10 @@ async fn write_session(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     id: Uuid,
     token: &str,
+    lifetime: i64,
 ) -> Result<(), AuthError> {
     sqlx::query("INSERT INTO account_sessions (account_id,token_hash,expires_at) VALUES ($1,$2,now()+($3 * interval '1 second')) ON CONFLICT (account_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,created_at=now(),expires_at=EXCLUDED.expires_at")
-        .bind(id).bind(Sha256::digest(token.as_bytes()).as_slice()).bind(SESSION_SECONDS as f64)
+        .bind(id).bind(Sha256::digest(token.as_bytes()).as_slice()).bind(lifetime as f64)
         .execute(&mut **tx).await?;
     Ok(())
 }
@@ -543,6 +633,46 @@ struct Register {
 struct Login {
     login: String,
     password: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompleteRegistration {
+    login: String,
+    password: String,
+}
+
+async fn guest(
+    State(auth): State<AuthStore>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Result<Response, AuthError> {
+    auth.check_origin(&headers)?;
+    // A retry with an issued cookie resumes that identity. Never replace an
+    // existing guest or registered account just because this button was hit.
+    match auth.authenticate(&headers).await {
+        Ok(session) => {
+            return Ok(
+                ([(header::CACHE_CONTROL, "no-store")], Json(session.account)).into_response(),
+            );
+        }
+        Err(AuthError::Unauthorized) => {}
+        Err(error) => return Err(error),
+    }
+    let (account, token) = auth.guest(peer.ip()).await?;
+    Ok(auth.signed_in(account, token))
+}
+
+async fn complete_registration(
+    State(auth): State<AuthStore>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(input): Json<CompleteRegistration>,
+) -> Result<Response, AuthError> {
+    auth.check_origin(&headers)?;
+    let (account, token) = auth
+        .complete_registration(&headers, input, peer.ip())
+        .await?;
+    Ok(auth.signed_in(account, token))
 }
 
 async fn register(
@@ -596,6 +726,11 @@ pub fn routes(auth: AuthStore) -> Router {
     Router::new()
         .route("/api/account/register", post(register))
         .route("/api/account/login", post(login))
+        .route("/api/account/guest", post(guest))
+        .route(
+            "/api/account/complete-registration",
+            post(complete_registration),
+        )
         .route("/api/account/session", get(session))
         .route("/api/account/logout", post(logout))
         .layer(DefaultBodyLimit::max(4096))

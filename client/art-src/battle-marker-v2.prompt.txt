@@ -1,0 +1,8 @@
+Use case: stylized-concept.
+Asset type: transparent raster galaxy-map BATTLE marker for the sci-fi strategy game Stellar Syndicates, displayed at just 52 pixels.
+Primary request: an entirely new, clean small-size-readable space-combat icon. One compact tactical skirmish emblem: two bold angular spacecraft silhouettes facing inward from opposing diagonals, trading two short laser bolts into a single sharp four-point impact flash at the center. The whole silhouette should immediately communicate two ships in combat.
+Style/medium: professionally finished sci-fi game HUD icon rendered as PNG; crisp precisely cut edges, broad simplified filled shapes, restrained metallic bevels, very limited interior detail. Strong silhouette and generous negative space between elements. Not a tiny detailed painting.
+Palette: warm coral-red and amber outer shapes, pale ivory highlights, small white-hot impact center, charcoal interior accents. High contrast on an almost-black navy galaxy map. No blue dominant areas.
+Composition: one centered square icon, balanced in all directions, no perspective scene; main shapes occupy about 88% of the canvas with clear transparent padding. All parts connected visually as a single marker, not a sprite sheet or alternatives.
+Background: genuinely transparent alpha, including open gaps between ships and beams. No painted background, no checkerboard pattern baked into the image.
+Constraints: no text, letters, numbers, logos, watermark, outer circle, badge plate, UI frame, swords, stars, planets, smoke cloud, broad glow haze, sketch strokes, crayon or brush texture. Prioritize legibility at 52px over micro-detail. Single finished production asset, 1024 by 1024 pixels.

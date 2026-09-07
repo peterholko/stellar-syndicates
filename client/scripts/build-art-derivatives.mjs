@@ -68,6 +68,24 @@ async function buildLore() {
   return { sources: sources.length, written };
 }
 
+async function buildLoginBackgrounds() {
+  const sourceDir = path.join(sourceArt, "login");
+  const outputDir = path.join(publicArt, "derived", "login");
+  await mkdir(outputDir, { recursive: true });
+  const sources = (await readdir(sourceDir)).filter((name) => name.endsWith(".png")).sort();
+  let written = 0;
+  for (const name of sources) {
+    written += Number(await derive(
+      path.join(sourceDir, name),
+      path.join(outputDir, `${path.basename(name, ".png")}.webp`),
+      // Full native resolution on both shells: cover crops can magnify the
+      // artwork, so don't serve a thumbnail or upscale a pretend 4K master.
+      (image) => image.webp({ quality: 92, effort: 5 }),
+    ));
+  }
+  return { sources: sources.length, written };
+}
+
 async function buildPwaIcons() {
   const source = path.join(publicArt, "stellar_syndicates_logo.png");
   const outputDir = path.join(publicArt, "pwa");
@@ -137,13 +155,14 @@ async function buildNebulas() {
   return { sources: sources.length, written };
 }
 
-const [captains, lore, pwa, structures, nebulas] = await Promise.all([
-  buildCaptains(), buildLore(), buildPwaIcons(), buildStructureIcons(), buildNebulas(),
+const [captains, lore, pwa, structures, nebulas, login] = await Promise.all([
+  buildCaptains(), buildLore(), buildPwaIcons(), buildStructureIcons(), buildNebulas(), buildLoginBackgrounds(),
 ]);
 console.log(
   `art derivatives: ${captains.sources} captain portraits (${captains.written} written), ` +
   `${lore.sources} lore illustrations (${lore.written} written), ` +
   `${pwa.sources} PWA icons (${pwa.written} written), ` +
   `${structures.sources} structure icons (${structures.written} written), ` +
-  `${nebulas.sources} nebula textures (${nebulas.written} written)`,
+  `${nebulas.sources} nebula textures (${nebulas.written} written), ` +
+  `${login.sources} login backgrounds (${login.written} written)`,
 );

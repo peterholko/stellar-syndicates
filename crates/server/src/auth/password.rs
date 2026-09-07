@@ -11,9 +11,9 @@ use super::AuthError;
 pub(super) fn validate(password: &str) -> Result<(), AuthError> {
     // No trimming, truncation or composition rules: spaces/Unicode and password
     // managers work. Bound bytes as well as characters before any expensive work.
-    if !(15..=128).contains(&password.chars().count()) || password.len() > 512 {
+    if !(8..=128).contains(&password.chars().count()) || password.len() > 512 {
         return Err(AuthError::BadInput(
-            "Use a password or passphrase of 15–128 characters.",
+            "Use a password or passphrase of 8–128 characters.",
         ));
     }
     // Reject trivial guesses without requiring arbitrary capitals/digits/symbols.

@@ -24,7 +24,7 @@
 .deck-nav button { position: relative; flex: 0 0 auto; padding-inline: var(--space-2); font-size: var(--fs-fine); }
 .deck-nav button[aria-current="page"] { border-color: var(--accent); color: var(--accent); }
 .deck-nav__more { display: none; }
-#deck-sign-out { flex: 0 0 auto; padding-inline: var(--space-2); font-size: var(--fs-fine); }
+#deck-profile-open { flex: 0 0 auto; padding-inline: var(--space-2); font-size: var(--fs-fine); }
 .deck-nav-overflow { position: fixed; z-index: var(--z-command); top: calc(var(--deck-topbar-height) + var(--space-1)); right: var(--space-3); min-width: calc(var(--space-6) * 6); padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); pointer-events: auto; }
 .deck-nav-overflow:not([hidden]) { display: grid; gap: var(--space-1); }
 .deck-nav-overflow button { width: 100%; padding-inline: var(--space-2); text-align: left; }
@@ -32,7 +32,7 @@
 .deck-nav__badge { position: absolute; top: calc(var(--space-1) * -1); right: calc(var(--space-1) * -1); min-width: var(--space-4); padding-inline: var(--space-1); border-radius: var(--space-3); background: var(--negative); color: var(--bg); font-size: var(--fs-fine); font-weight: 800; text-align: center; }
 .deck-workspace { position: fixed; z-index: var(--z-workspace); top: var(--deck-topbar-height); right: 0; bottom: 0; width: min(var(--deck-workspace-standard), calc(100vw - var(--space-6) - var(--space-1))); display: grid; grid-template-rows: auto minmax(0, 1fr); border-left: 1px solid var(--border); background: var(--panel-bg); box-shadow: var(--panel-shadow); pointer-events: auto; }
 .deck-workspace[aria-hidden="true"] { display: none; }
-.deck-workspace:is([data-route="system"], [data-route="world"], [data-route="build"], [data-route="fleet"])[data-width="standard"] { width: min(var(--deck-workspace-system), calc(100vw - var(--space-6) - var(--space-1))); }
+.deck-workspace:is([data-route="system"], [data-route="world"], [data-route="build"], [data-route="fleet"], [data-route="fleets"])[data-width="standard"] { width: min(var(--deck-workspace-system), calc(100vw - var(--space-6) - var(--space-1))); }
 .deck-workspace[data-width="wide"] { width: min(65vw, var(--deck-workspace-wide), calc(100vw - var(--space-6) - var(--space-1))); }
 .deck-build-workbench { position: fixed; z-index: var(--z-workspace); top: calc(var(--deck-topbar-height) + var(--space-3)); bottom: calc(var(--deck-control-height) + var(--space-6)); left: calc((100vw - var(--deck-workspace-inset, 0px)) / 2); width: min(var(--deck-build-workbench-max), calc(100vw - var(--deck-workspace-inset, 0px) - var(--space-6))); min-width: 0; transform: translateX(-50%); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); pointer-events: auto; }
 .deck-build-workbench[hidden] { display: none; }
@@ -96,13 +96,6 @@
 .deck-world__deposits { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
 .deck-world__deposits > span { color: var(--ink); }
 .deck-world__meta { text-align: right; }
-.deck-system-fleet-list { display: grid; gap: var(--space-1); }
-.deck-system-fleet { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); padding: var(--space-2); text-align: left; }
-.deck-system-fleet > span:not(.deck-system-fleet__icon), .deck-system-fleet > em { display: grid; min-width: 0; gap: var(--space-1); }
-.deck-system-fleet__icon { display: grid; place-items: center; }
-.deck-system-fleet small, .deck-system-fleet em { color: var(--dim); font-size: var(--fs-fine); font-style: normal; }
-.deck-system-fleet > em { justify-items: end; white-space: nowrap; }
-.deck-system-fleet > em b { color: var(--positive); }
 .deck-opportunities { display: grid; gap: var(--space-2); }
 .deck-opportunity { display: grid; gap: var(--space-1); padding: var(--space-2); border-left: var(--space-1) solid var(--accent); background: var(--field-bg); }
 .deck-opportunity.is-jackpot { border-color: var(--warn); }
@@ -166,13 +159,13 @@
 
 /* Rows are navigable records, not a wall of equally weighted buttons. The
    hover field appears on demand; quiet separators carry the resting list. */
-.deck :is(.deck-world, .deck-system-fleet, .deck-builder-row, .deck-objective) {
+.deck :is(.deck-world, .deck-builder-row, .deck-objective) {
   border-color: transparent;
   border-bottom-color: var(--border);
   border-radius: 0;
   background: transparent;
 }
-.deck :is(.deck-world, .deck-system-fleet, .deck-builder-row, .deck-objective):hover {
+.deck :is(.deck-world, .deck-builder-row, .deck-objective):hover {
   background: var(--field-bg);
 }
 .deck-build-detail { display: grid; gap: var(--space-3); }
@@ -314,7 +307,7 @@
 .deck-fleet__stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .deck-fleet__stats .deck-stat { margin: 0; }
 .deck-stat.is-warn dd { color: var(--warn); }
-.deck-stat.is-stale :is(b, dd), .deck-stale-value, .deck-roster-row .deck-stale-value { color: var(--fg-stale); }
+.deck-stat.is-stale :is(b, dd), .deck-stale-value { color: var(--fg-stale); }
 .deck-fleet-now { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-left: var(--space-1) solid var(--accent); background: var(--field-bg); }
 .deck-fleet-now > span, .deck-subhead > span { color: var(--dim); font-size: var(--fs-fine); }
 .deck-fleet-orders, .deck-fleet-stacks, .deck-refit-list, .deck-logistics, .deck-command-grid { display: grid; gap: var(--space-1); }
@@ -368,16 +361,26 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 .deck-job { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--accent); border-radius: var(--deck-radius); }
 .deck-estimate { display: grid; gap: var(--space-1); margin-top: var(--space-2); padding: var(--space-2); border-left: var(--space-1) solid var(--accent); background: var(--field-bg); }
 .deck-estimate small, .deck-estimate span { color: var(--dim); font-size: var(--fs-fine); }
-.deck-roster { display: grid; gap: var(--space-1); }
-.deck-roster-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: var(--space-1); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
-.deck-roster-row.is-grouped { border-color: var(--accent); }
-.deck-roster-row > button { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); border: 0; text-align: left; }
-.deck-roster-row > button > span { display: flex; min-width: 0; align-items: center; gap: var(--space-2); }
-.deck-roster-row > button > span > span, .deck-roster-row > button > span:last-child { display: grid; gap: var(--space-1); }
-.deck-roster-row small, .deck-roster-row em { color: var(--dim); font-size: var(--fs-fine); font-style: normal; }
-.deck-roster-row > div { display: flex; gap: var(--space-1); padding: var(--space-1); }
-.deck-roster-row > div button { padding-inline: var(--space-2); }
-.deck-roster-row > div button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+/* Both fleet lists use one record layout. Optional roster controls sit below
+   it so they never squeeze or move the shared identity/status columns. */
+.deck-fleet-list { display: grid; gap: var(--space-1); min-width: 0; }
+.deck-fleet-list-row { min-width: 0; border-bottom: 1px solid var(--border); }
+.deck-fleet-list-row.is-grouped { border-bottom-color: var(--accent); }
+.deck .deck-fleet-list-row__open { width: 100%; display: grid; grid-template-columns: calc(var(--space-6) * 2) minmax(0, 1fr) minmax(0, calc(var(--space-6) * 7)); align-items: center; gap: var(--space-2); padding: var(--space-2); border: 0; border-radius: 0; background: transparent; text-align: left; }
+.deck .deck-fleet-list-row__open:hover { background: var(--field-bg); }
+.deck-fleet-list-row__art, .deck-fleet-list-row__art > .icon { display: block; width: calc(var(--space-6) * 2); height: calc(var(--space-6) * 2); object-fit: contain; }
+.deck-fleet-list-row__identity, .deck-fleet-list-row__meta { display: grid; min-width: 0; gap: var(--space-1); overflow-wrap: anywhere; }
+.deck-fleet-list-row__identity small, .deck-fleet-list-row__meta small { color: var(--dim); font-size: var(--fs-fine); }
+.deck-fleet-list-row__meta { text-align: right; }
+.deck-fleet-list-row__meta .is-docked { color: var(--positive); }
+.deck-fleet-list-row__meta .deck-stale-value { color: var(--fg-stale); }
+.deck-fleet-list-row__actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-1); padding: 0 var(--space-2) var(--space-1); }
+.deck-fleet-list-row__actions button { min-height: var(--space-6); padding-inline: var(--space-2); font-size: var(--fs-fine); }
+.deck-fleet-list-row__actions button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+@container (max-width: 400px) {
+  .deck .deck-fleet-list-row__open { grid-template-columns: calc(var(--space-6) * 2) minmax(0, 1fr); }
+  .deck-fleet-list-row__meta { grid-column: 2; text-align: left; }
+}
 .deck-officer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: var(--space-2); }
 .deck-officer-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
 .deck-officer-card.is-lost { border-color: var(--negative); opacity: .7; }
@@ -584,12 +587,16 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 .deck-zoom__level { min-width: calc(var(--space-6) * 2); padding-inline: var(--space-2); color: var(--dim); font-size: var(--fs-fine); text-align: right; }
 .deck-overlays { position: fixed; z-index: var(--z-overlay); inset: 0; pointer-events: none; }
 .deck-overlay { position: absolute; inset: 0; display: grid; place-items: center; padding: var(--space-6); background: rgba(3, 6, 12, .82); pointer-events: auto; }
+.deck-join { isolation: isolate; background: var(--bg); }
+.deck-join__art { position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.deck-join__art img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .deck-join__card { width: min(420px, calc(100vw - var(--space-6) * 2)); display: grid; gap: var(--space-3); padding: var(--space-6); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); }
 .deck-join__card h1 { margin: 0; font-size: var(--fs-page); }
 .deck-join__card p { margin: 0; color: var(--dim); line-height: 1.5; }
 .deck-join__card { max-height: calc(100dvh - var(--space-6) * 2); overflow-y: auto; }
 .deck-join__card [data-register-field][hidden] { display: none; }
 .deck-join__card small { color: var(--dim); }
+.deck-join__card [data-account-guest] { border-color: var(--accent); color: var(--accent); }
 .deck-join__card label, .deck-eyebrow { color: var(--dim); font-size: var(--fs-fine); text-transform: uppercase; letter-spacing: .08em; }
 .deck-join__card input { min-height: var(--deck-control-height); padding-inline: var(--space-2); border: 1px solid var(--field-bd); border-radius: var(--deck-radius); background: var(--field-bg); color: var(--ink); font: inherit; }
 .deck-inline-error { min-height: var(--space-4); color: var(--negative); font-size: var(--fs-fine); }

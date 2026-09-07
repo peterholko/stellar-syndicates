@@ -1,24 +1,22 @@
 import { captainTitle, captainXpFloor, fleetCommandLoad, officerFleetName } from "../../core/derive/captains";
 import { fleetRosterDockName, shipKindLabel } from "../../core/derive/fleet";
-import { fmt, fmtEta, informationDelay } from "../../core/derive/format";
+import { fmt, fmtEta } from "../../core/derive/format";
 import { foundingHomeSystemId, systemName } from "../../core/derive/geo";
 import { researchQueueIds, sendResearchQueue } from "../../core/derive/research";
 import { icon, label } from "../../icons";
-import {
-  fleetCargoUnits,
-  fleetExactCount,
-  countClassLabel,
-  type AcademyRow,
-  type CaptainAttribute,
-  type CaptainRosterView,
-  type GhostView,
-  type ProgrammeView,
+import type {
+  AcademyRow,
+  CaptainAttribute,
+  CaptainRosterView,
+  GhostView,
+  ProgrammeView,
 } from "../../protocol";
 import { liveSimTime } from "../../state";
 import { captainPortrait } from "../art";
 import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext } from "../types";
+import { fleetListRow } from "./fleet-row";
 import type { DeckRoute } from "./router";
 
 interface RosterHooks {
@@ -59,7 +57,7 @@ export class DeckRosterRoutes {
       route, Math.floor(liveSimTime()), this.ctx.state.ghosts, this.ctx.state.selectedShipIds,
       this.ctx.state.battles, this.ctx.state.commandSignals, this.ctx.state.orders,
       this.ctx.state.raids, this.ctx.state.captains, this.ctx.state.captainCapacity,
-      this.ctx.state.research, this.ctx.state.systems,
+      this.ctx.state.research, this.ctx.state.systems, this.ctx.state.syndicate?.flagship_name,
     ]);
     if (!force && signature === this.signature) return true;
     if (renderDeferred(this.root.id, () => this.render(route, true))) return true;
@@ -157,23 +155,22 @@ export class DeckRosterRoutes {
     const fleets = this.ctx.state.ghosts.filter((entry) => entry.own).sort((a, b) => shipKindLabel(a.kind).localeCompare(shipKindLabel(b.kind)) || a.id.localeCompare(b.id));
     const undocked = fleets.filter((entry) => !entry.docked);
     const docked = fleets.filter((entry) => !!entry.docked);
-    const group = (name: string, entries: GhostView[]) => entries.length ? `<section class="deck-section"><header><div><h3>${esc(name)}</h3><p>Served status and location.</p></div><b>${entries.length}</b></header><div class="deck-roster">${entries.map((entry) => this.fleetRow(entry)).join("")}</div></section>` : "";
+    const group = (name: string, entries: GhostView[]) => entries.length ? `<section class="deck-section"><header><div><h3>${esc(name)}</h3></div><b>${entries.length}</b></header><div class="deck-fleet-list">${entries.map((entry) => this.fleetRow(entry)).join("")}</div></section>` : "";
     const grouped = this.ctx.state.selectedShipIds.size > 1;
-    return `<section class="deck-page deck-fleets"><header class="deck-page__lead"><span>Corporation-wide served roster</span><h2>${icon("fleet", "md")} Fleets</h2><p>${grouped ? `${this.ctx.state.selectedShipIds.size} fleets grouped. The next map move applies to the whole group.` : "Group fleets here, then choose one map destination for a batch move."}</p></header>${fleets.length ? group("Undocked", undocked) + group("Docked", docked) : empty("No fleet reports", "Build a ship or wait for a fleet report to arrive.")}</section>`;
+    return `<section class="deck-page deck-fleets"><header class="deck-page__lead"><h2>Fleets</h2>${grouped ? `<p>${this.ctx.state.selectedShipIds.size} fleets grouped · choose a map destination.</p>` : ""}</header>${fleets.length ? group("Undocked", undocked) + group("Docked", docked) : empty("No fleet reports", "Build a ship or wait for a fleet report to arrive.")}</section>`;
   }
 
   private fleetRow(g: GhostView): string {
-    const exact = fleetExactCount(g);
-    const composition = (g.composition ?? []).filter((entry) => entry.count > 0).map((entry) => `${entry.count}× ${shipKindLabel(entry.kind)}`).join(" · ");
-    const cargo = fleetCargoUnits(g);
     const dock = fleetRosterDockName(g);
     const battle = this.ctx.state.battles.some((entry) => entry.participants.includes(g.id));
     const guard = g.guard_target ? this.ctx.state.ghosts.find((entry) => entry.id === g.guard_target && entry.own) : undefined;
-    const activity = dock ? `Docked · ${dock}` : battle ? "In battle" : guard ? `Guarding ${shipKindLabel(guard.kind)} fleet` : this.rosterActivity(g);
-    const grouped = this.ctx.state.selectedShipIds.has(g.id);
-    const name = g.kind === "titan" && this.ctx.state.syndicate?.flagship_name?.trim() || `${shipKindLabel(g.kind)} fleet`;
-    const summary = [exact === null ? `estimated ${countClassLabel(g.count_class)} ships` : `${exact} ship${exact === 1 ? "" : "s"}`, composition, cargo ? `${fmt(cargo)} cargo` : ""].filter(Boolean).join(" · ");
-    return `<article class="deck-roster-row${grouped ? " is-grouped" : ""}"><button type="button" data-deck-act="roster-open" data-fleet="${escAttr(g.id)}"><span>${icon(g.kind === "convoy" ? "convoy" : "fleet", "md")}<span><b>${esc(name)}</b><small>${esc(summary)}</small><em>${esc(activity)}</em></span></span><span class="deck-stale-value"><b>${esc(informationDelay(g.age))}</b></span></button><div><button type="button" data-deck-act="roster-group" data-fleet="${escAttr(g.id)}" aria-pressed="${grouped}">${grouped ? "✓ Grouped" : "+ Group"}</button><button type="button" data-deck-act="roster-center" data-fleet="${escAttr(g.id)}">Center</button></div></article>`;
+    return fleetListRow(g, {
+      openAction: "roster-open",
+      status: dock ? "Docked" : battle ? "In battle" : guard ? "Guarding" : this.rosterActivity(g),
+      location: dock ?? (guard ? `${shipKindLabel(guard.kind)} fleet` : undefined),
+      flagshipName: this.ctx.state.syndicate?.flagship_name,
+      controls: true, grouped: this.ctx.state.selectedShipIds.has(g.id),
+    });
   }
 
   private officersHtml(): string {

@@ -1,7 +1,7 @@
 import type { ClientMsg, GhostView } from "../protocol";
 import type { PendingIntent, ViewState } from "../state";
 import { label } from "../icons";
-import { shipKindLabel, WARP_FACTOR } from "./derive/fleet";
+import { dockedAtSystem, shipKindLabel, WARP_FACTOR } from "./derive/fleet";
 
 /** Fleet controls stage the exact payload, never an optimistic order. Map
  * destinations and settings share the same Confirm/Cancel surface; only the
@@ -42,7 +42,8 @@ export function fleetCommandsValid(commands: FleetCommand[], st: ViewState): boo
     if (command.type === "Withdraw") return st.battles.some(b => b.own && b.participants.includes(id!)
       && !st.battleRecords.some(r => r.id === b.id && r.outcome !== null));
     if (command.type === "HubLoad" || command.type === "HubUnload") return fleet?.docked === "hub";
-    if (command.type === "SystemLoad" || command.type === "SystemUnload") return fleet?.docked === command.system;
+    // Match the cargo panel: served berths use E29 while command IDs use 29.
+    if (command.type === "SystemLoad" || command.type === "SystemUnload") return !!fleet && dockedAtSystem(fleet, command.system);
     if (command.type === "AssignCaptain" || command.type === "ReserveCaptain" || command.type === "TrainCaptain") {
       return st.captains.some(c => c.id === command.captain_id);
     }

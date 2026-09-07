@@ -101,10 +101,10 @@ export class DeckWorkspace {
     return DECK_ROUTES[route.name].width;
   }
 
-  /** Build is a System tab, so direct Build links share the System workspace
-   * width rather than maintaining a divergent per-route preference. */
+  /** Build and the corporation-wide fleet roster share the System workspace
+   * width, including the user's wide/standard preference. */
   private widthPreferenceKey(route: DeckRoute): string {
-    return route.name === "build" ? "system" : route.name;
+    return route.name === "build" || route.name === "fleets" ? "system" : route.name;
   }
 
   private renderBreadcrumbs(crumbs: readonly DeckCrumb[]): void {
