@@ -1,0 +1,195 @@
+{
+  "alphaThreshold": 16,
+  "stars": [
+    {
+      "slug": "red_dwarf",
+      "file": "red_dwarf.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 107,
+        "top": 109,
+        "width": 1055,
+        "height": 1030
+      },
+      "center": [
+        634.5,
+        624
+      ],
+      "visualDiameter": 1055
+    },
+    {
+      "slug": "yellow_star",
+      "file": "yellow_star.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 60,
+        "top": 53,
+        "width": 1134,
+        "height": 1161
+      },
+      "center": [
+        627,
+        633.5
+      ],
+      "visualDiameter": 1161
+    },
+    {
+      "slug": "white_star",
+      "file": "white_star.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 37,
+        "top": 51,
+        "width": 1174,
+        "height": 1143
+      },
+      "center": [
+        624,
+        622.5
+      ],
+      "visualDiameter": 1174
+    },
+    {
+      "slug": "blue_giant",
+      "file": "blue_giant.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 61,
+        "top": 51,
+        "width": 1128,
+        "height": 1142
+      },
+      "center": [
+        625,
+        622
+      ],
+      "visualDiameter": 1142
+    },
+    {
+      "slug": "red_giant",
+      "file": "red_giant.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 126,
+        "top": 132,
+        "width": 983,
+        "height": 985
+      },
+      "center": [
+        617.5,
+        624.5
+      ],
+      "visualDiameter": 985
+    },
+    {
+      "slug": "white_dwarf",
+      "file": "white_dwarf.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 67,
+        "top": 65,
+        "width": 1122,
+        "height": 1122
+      },
+      "center": [
+        628,
+        626
+      ],
+      "visualDiameter": 1122
+    },
+    {
+      "slug": "neutron_star",
+      "file": "neutron_star.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 43,
+        "top": 55,
+        "width": 1172,
+        "height": 1143
+      },
+      "center": [
+        629,
+        626.5
+      ],
+      "visualDiameter": 1172
+    },
+    {
+      "slug": "binary_star",
+      "file": "binary_star.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 194,
+        "top": 208,
+        "width": 895,
+        "height": 869
+      },
+      "center": [
+        641.5,
+        642.5
+      ],
+      "visualDiameter": 895
+    },
+    {
+      "slug": "black_hole",
+      "file": "black_hole.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 35,
+        "top": 329,
+        "width": 1191,
+        "height": 569
+      },
+      "center": [
+        630.5,
+        613.5
+      ],
+      "visualDiameter": 1191
+    },
+    {
+      "slug": "magnetar",
+      "file": "magnetar.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 54,
+        "top": 45,
+        "width": 1146,
+        "height": 1147
+      },
+      "center": [
+        627,
+        618.5
+      ],
+      "visualDiameter": 1147
+    }
+  ]
+}

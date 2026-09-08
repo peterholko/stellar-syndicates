@@ -35,6 +35,7 @@
 import { Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import type { Commodity, Deposit, PlayerId, SystemInfo, BodyView, Vec2 } from "./protocol";
 import { starAnchor, starTypeFor, starVisualRatio, type StarType } from "./stars";
+import type { StarArtGeometry } from "./starart";
 import { hashId, mulberry32 } from "./prng";
 
 // ---- Public presentation data model (client-side, non-authoritative) --------
@@ -375,6 +376,7 @@ export class SystemViewScene {
   private moonTex: Texture | null = null;
   private chunkTex: Texture | null = null;
   private lastStarTex: Texture | null = null;
+  private lastStarGeometry: StarArtGeometry | null = null;
 
   private vis: VisualSystem | null = null;
   /// What the static Graphics were last drawn for — redraw only when the
@@ -433,15 +435,19 @@ export class SystemViewScene {
     if (this.vis) {
       const v = this.vis;
       this.vis = null;
-      this.setSystem(v, this.lastStarTex);
+      this.setSystem(v, this.lastStarTex, this.lastStarGeometry);
     }
   }
 
   /// (Re)build the STATIC schematic for a system. No-op if already showing it.
-  setSystem(vis: VisualSystem, starTex: Texture | null): void {
-    if (this.vis?.systemId === vis.systemId) return;
+  setSystem(vis: VisualSystem, starTex: Texture | null, starGeometry: StarArtGeometry | null = null): void {
+    if (this.vis?.systemId === vis.systemId) {
+      this.setStarArt(starTex, starGeometry);
+      return;
+    }
     this.vis = vis;
     this.lastStarTex = starTex;
+    this.lastStarGeometry = starGeometry;
     this.selected = null;
     this.buildStatic(vis, starTex);
     this.layout(this.viewW, this.viewH, this.cameraRect);
@@ -449,6 +455,38 @@ export class SystemViewScene {
 
   currentId(): string | null {
     return this.vis?.systemId ?? null;
+  }
+
+  /** Late high-resolution art updates just the star, never the selected planet,
+   * body hit targets, orbit geometry, or the current handoff transform. */
+  setStarArt(texture: Texture | null, geometry: StarArtGeometry | null): void {
+    if (this.lastStarTex === texture && this.lastStarGeometry === geometry) return;
+    this.lastStarTex = texture;
+    this.lastStarGeometry = geometry;
+    if (!this.vis) return;
+    this.syncStarSprite(texture);
+    if (!texture) {
+      this.gfxScale = -1;
+      this.layout(this.viewW, this.viewH, this.cameraRect);
+    }
+  }
+
+  private syncStarSprite(texture: Texture | null): void {
+    if (!texture) {
+      this.starSprite?.destroy();
+      this.starSprite = null;
+      return;
+    }
+    const st = starTypeFor(this.vis!.systemId);
+    // Legacy callers (battle scenery) keep their existing icon and calibration.
+    // The interactive System View supplies its own detailed-art master geometry.
+    const anchor = this.lastStarGeometry?.anchor ?? starAnchor(st);
+    const ratio = this.lastStarGeometry?.visualRatio ?? starVisualRatio(st);
+    const sprite = this.starSprite ??= this.starLayer.addChild(new Sprite(texture));
+    sprite.texture = texture;
+    sprite.anchor.set(anchor[0], anchor[1]);
+    sprite.scale.set(SYSTEM_STAR_VISIBLE_UNITS / (ratio * texture.width));
+    this.starGfx.clear();
   }
 
   /// The schematic star's untransformed layout position. Transition choreography
@@ -513,19 +551,10 @@ export class SystemViewScene {
   }
 
   private buildStatic(vis: VisualSystem, starTex: Texture | null): void {
-    const st = starTypeFor(vis.systemId);
     // SPRITES only — every vector circle is drawn in redrawGfx with a segment
     // count matched to the displayed pixel size (§orbit-ring fix). Sprites are
     // immune to the tessellation problem, so they stay built-once here.
-    if (this.starSprite) { this.starSprite.destroy(); this.starSprite = null; }
-    if (starTex) {
-      const sp = new Sprite(starTex);
-      const a = starAnchor(st);
-      sp.anchor.set(a[0], a[1]);
-      sp.scale.set(SYSTEM_STAR_VISIBLE_UNITS / (starVisualRatio(st) * starTex.width)); // visible star ≈ 0.17 units
-      this.starSprite = sp;
-      this.starLayer.addChild(sp); // above orbits + belt chunks, under bodies
-    }
+    this.syncStarSprite(starTex); // above orbits + belt chunks, under bodies
 
     // Belt ART chunks (an INDEPENDENT seeded stream from the dust dots, so both
     // stay deterministic and stable per system).

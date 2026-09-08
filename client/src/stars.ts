@@ -2,8 +2,9 @@
 // system is given a star type as a pure function of its (server-assigned) id, so
 // a system is ALWAYS the same type across frames / reloads / sessions. It affects
 // NOTHING mechanical (deposits, production, ownership, fog) — only the map icon +
-// the System-view concept art. Both render.ts (map) and main.ts (panel) import
-// this so the assignment is single-sourced. Art in /art/celestial_sprites/stars.
+// System View artwork. Map, panels and battle scenery share this assignment.
+// New galaxy/system art and resolution tiers live in starart.ts; legacy icon
+// metadata below remains for the unchanged battle-scenery path.
 //
 // FUTURE IDEA (not built): star type could later influence system properties —
 // e.g. exotic stars as special/hazardous systems. That would be a SIM change.
@@ -12,7 +13,7 @@ export interface StarType {
   slug: string;
   title: string;
   exotic: boolean;
-  // Map-icon metadata (from the galaxy-map star-icons manifest). All icons share a
+  // Legacy icon metadata (from the original star-icons manifest). All icons share a
   // 1254px canvas but the VISIBLE star fills a different area/offset per type, so we
   // use `center` (visible-star centre, in canvas px) to place it at the system, and
   // `visualDiameter` (visible extent, canvas px) to size the visible star — NOT the
@@ -22,7 +23,7 @@ export interface StarType {
   visualDiameter: number;
 }
 
-// The star-icon canvas all icons are authored on (see the icons manifest).
+// The legacy icon metadata uses authoring-canvas coordinates (see the manifest).
 export const STAR_ICON_CANVAS = 1254;
 
 // 6 realistic (common) + 4 exotic (rare). The map-icon set has 10 types (the older

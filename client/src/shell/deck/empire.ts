@@ -25,7 +25,8 @@ import type { CoreEvent } from "../../core/events";
 import { commodityIcon as commodityGlyph, icon, label, structureIcon, type IconKey } from "../../icons";
 import type { AssignmentView, BodyView, Commodity, ModuleKind, ShipKind, SystemInfo, SystemStateView } from "../../protocol";
 import { liveSimTime } from "../../state";
-import { starIconUrl, starTypeFor } from "../../stars";
+import { starTypeFor } from "../../stars";
+import { starArtSrcset, starArtUrl } from "../../starart";
 import { bodyArtUrl } from "../../systemview";
 import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
@@ -338,7 +339,7 @@ export class DeckEmpireRoutes {
           : this.systemTab === "fleets"
             ? this.systemFleets(system)
             : this.buildDashboard(dynamic);
-    return `<section class="deck-page deck-system"><header class="deck-page__lead deck-system__lead"><img class="deck-system__star" src="${esc(starIconUrl(star))}" alt="${esc(star.title)}"><h2>${esc(system.name)}</h2><span>${esc(systemFlavor(system, dynamic?.deposits ?? null))}</span></header>${alert}<nav class="deck-tabs" aria-label="System sections">${tabs}</nav>${active}</section>`;
+    return `<section class="deck-page deck-system"><header class="deck-page__lead deck-system__lead"><img class="deck-system__star" src="${esc(starArtUrl("system", star.slug))}" srcset="${esc(starArtSrcset("system", star.slug))}" sizes="72px" alt="${esc(star.title)}"><h2>${esc(system.name)}</h2><span>${esc(systemFlavor(system, dynamic?.deposits ?? null))}</span></header>${alert}<nav class="deck-tabs" aria-label="System sections">${tabs}</nav>${active}</section>`;
   }
 
   private systemOverview(system: SystemInfo, dynamic: SystemStateView | undefined, mine: boolean, owner: string, survey: string): string {

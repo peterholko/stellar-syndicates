@@ -2,6 +2,7 @@ import { mkdir, readdir, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import sharp from "sharp";
+import { buildStarDerivatives } from "./build-star-derivatives.mjs";
 
 const clientRoot = fileURLToPath(new URL("..", import.meta.url));
 const publicArt = path.join(clientRoot, "public", "art");
@@ -155,8 +156,8 @@ async function buildNebulas() {
   return { sources: sources.length, written };
 }
 
-const [captains, lore, pwa, structures, nebulas, login] = await Promise.all([
-  buildCaptains(), buildLore(), buildPwaIcons(), buildStructureIcons(), buildNebulas(), buildLoginBackgrounds(),
+const [captains, lore, pwa, structures, nebulas, login, stars] = await Promise.all([
+  buildCaptains(), buildLore(), buildPwaIcons(), buildStructureIcons(), buildNebulas(), buildLoginBackgrounds(), buildStarDerivatives(),
 ]);
 console.log(
   `art derivatives: ${captains.sources} captain portraits (${captains.written} written), ` +
@@ -164,5 +165,6 @@ console.log(
   `${pwa.sources} PWA icons (${pwa.written} written), ` +
   `${structures.sources} structure icons (${structures.written} written), ` +
   `${nebulas.sources} nebula textures (${nebulas.written} written), ` +
-  `${login.sources} login backgrounds (${login.written} written)`,
+  `${login.sources} login backgrounds (${login.written} written), ` +
+  `${stars.sources} star masters / ${stars.variants} sizes (${stars.written} written)`,
 );

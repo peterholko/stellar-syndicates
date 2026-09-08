@@ -11,7 +11,9 @@ import type { BodyView, GalaxyInfo, GhostView, NebulaInfo, NebulaKind, PathPoint
 import { countClassLabel, fleetCargoManifest, fleetExactCount } from "./protocol";
 import { JUMP_DEPARTURE_TTL_S, liveSimTime, type ViewState } from "./state";
 import { hashId } from "./prng";
-import { STAR_TYPES, starAnchor, starIconUrl, starTypeFor, starVisualRatio } from "./stars";
+import { STAR_TYPES, starTypeFor } from "./stars";
+import { starArtwork } from "./starart";
+import { StarTextureCache } from "./startextures";
 import { buildVisualSystem, SystemViewScene, type CameraRect, type SystemBodyDetail } from "./systemview";
 import { shipKindLabel } from "./core/derive/fleet";
 import { jumpRangeAt, nebulaContains } from "./core/derive/nebula";
@@ -464,7 +466,10 @@ export class Renderer {
   private hubSprite: Sprite | null = null;
   // Star-type map icons, keyed by slug — a system draws the icon for its
   // deterministically-assigned type (stars.ts). Loaded lazily in loadArt.
-  private starTex = new Map<string, Texture>();
+  private starTextures = new StarTextureCache(() => {
+    this.viewDirty = true;
+    this.refreshSystemStar();
+  });
   private texStation: Texture | null = null;
   private texHub: Texture | null = null; // the wormhole aperture + station landmark
   private texDeepSpaceSensor: Texture | null = null;
@@ -613,6 +618,7 @@ export class Renderer {
     window.addEventListener("orientationchange", viewportChanged);
     window.visualViewport?.addEventListener("resize", viewportChanged);
     this.systemScene.layout(this.viewW, this.viewH, this.cameraRect);
+    this.warmStarTextures();
     this.scheduleViewportResize();
   }
 
@@ -775,13 +781,8 @@ export class Renderer {
         }),
       ),
     );
-    // The star-type icons (each independent; a missing one falls back to the dot).
-    await Promise.all(
-      STAR_TYPES.map(async (t) => {
-        const tex = await load(starIconUrl(t));
-        if (tex) this.starTex.set(t.slug, tex);
-      }),
-    );
+    // Star textures load independently at init, with enough native resolution
+    // for this viewport's entire galaxy zoom range (see warmStarTextures).
     const nebulaKinds: NebulaKind[] = [
       "molecular_cloud",
       "ion_nebula",
@@ -850,6 +851,8 @@ export class Renderer {
       this.recompute();
     }
     this.systemScene.layout(this.viewW, this.viewH, this.cameraRect);
+    this.warmStarTextures();
+    this.refreshSystemStar();
     this.viewDirty = true;
     if (settled) this.viewportResizeFocus = null;
   }
@@ -1041,10 +1044,32 @@ export class Renderer {
   private prepareSystemScene(sys: SystemInfo, bodies: BodyView[]): void {
     this.systemFocus = { ...sys.pos };
     const st = starTypeFor(sys.id);
-    this.systemScene.setSystem(buildVisualSystem(sys, bodies), this.starTex.get(st.slug) ?? null);
+    const art = starArtwork("system", st.slug);
+    const loaded = this.starTextures.get("system", st.slug,
+      this.systemScene.starVisibleDiameterPx(), this.app.renderer.resolution);
+    this.systemScene.setSystem(buildVisualSystem(sys, bodies), loaded?.texture ?? null, art);
     this.systemScene.layout(this.viewW, this.viewH, this.cameraRect);
     this.systemScene.root.visible = true;
     this.systemScene.root.alpha = 0;
+  }
+
+  private warmStarTextures(): void {
+    // Preload the map's known maximum, not every resolution of every star.
+    // Mipmaps cover intermediate zooms without a fetch or a texture-size pop.
+    const diameter = this.systemScene.starVisibleDiameterPx();
+    for (const type of STAR_TYPES) {
+      void this.starTextures.ensure("galaxy", type.slug, diameter, this.app.renderer.resolution);
+    }
+  }
+
+  private refreshSystemStar(): void {
+    if (this.mode.type !== "system" && this.transition?.target !== "system") return;
+    const id = this.systemScene.currentId();
+    if (!id) return;
+    const st = starTypeFor(id);
+    const loaded = this.starTextures.get("system", st.slug,
+      this.systemScene.starVisibleDiameterPx(), this.app.renderer.resolution);
+    if (loaded) this.systemScene.setStarArt(loaded.texture, loaded.art);
   }
 
   private startTransition(tr: Transition, raw: number, targetRaw: number): void {
@@ -1504,21 +1529,20 @@ export class Renderer {
       // ownership stays off the star, whose icon carries NO
       // tint, so a blue star is never mistaken for "owned" nor a red star for
       // "rival". Dot fallback until the icon loads. Because each icon's VISIBLE star
-      // fills a different area of its transparent canvas, use the type's manifest
-      // `center`/`visualDiameter` to CENTRE the visible star at the system and size
-      // that visible disk (not the canvas) to bodyD — so every type reads at a
-      // consistent on-map size regardless of its icon's fill.
+      // fills a different area of its transparent canvas, use the new galaxy
+      // master's normalized anchor/fill ratio at EVERY resolution. The lens
+      // flare's target extent and click radius keep the existing zoom curve.
       const st = starTypeFor(sys.id);
-      const starTex = this.starTex.get(st.slug);
-      if (starTex) {
-        const bsp = this.bodyFor(sys.id, starTex);
-        const anchor = starAnchor(st);
+      const loaded = this.starTextures.get("galaxy", st.slug, rendered, this.app.renderer.resolution);
+      if (loaded) {
+        const bsp = this.bodyFor(sys.id, loaded.texture);
+        const anchor = loaded.art.anchor;
         bsp.anchor.set(anchor[0], anchor[1]);
         bsp.position.set(s.x, s.y);
-        bsp.scale.set(rendered / (starVisualRatio(st) * starTex.width));
+        bsp.scale.set(rendered / (loaded.art.visualRatio * loaded.texture.width));
         // Keep unclaimed stars near-full brightness so the vivid star art reads
-        // (ownership is carried by the RING, not by dimming the star); owned/rival
-        // still lead via their full brightness + ring.
+        // (ownership is carried by the label); owned/rival still lead via full
+        // brightness. Texture resolution must never change presentation alpha.
         bsp.alpha = owner !== null ? 1 : 0.9;
       } else {
         const dotCol = mine ? COL_OWN : ally ? COL_ALLY : rival ? COL_OTHER : COL_SYSTEM;
@@ -3160,6 +3184,7 @@ export class Renderer {
     // which scene(s) to draw this frame. Only one scene is "live" at rest; during
     // a transition BOTH draw so the crossfade reads.
     const { drawGalaxy, drawSystem } = this.tickTransition();
+    if (drawSystem) this.refreshSystemStar();
     if (!this.transition && this.mode.type === "galaxy") this.tickCameraTween(performance.now());
 
     if (drawGalaxy) {
@@ -3410,9 +3435,10 @@ export class Renderer {
       this.cx = focusScreen.x - tr.focus.x * this.scale;
       this.cy = focusScreen.y - tr.focus.y * this.scale;
 
-      // INVARIANT: GALAXY STAR ≤ SYSTEM STAR ALWAYS. The two matched stars
-      // dissolve at one anchor while planets/orbits/belts grow around the fixed
-      // System View disk; the vignette remains outside `content`.
+      // INVARIANT: GALAXY STAR ≤ SYSTEM STAR ALWAYS. Lens-flare art dissolves
+      // into the detailed star at the same anchor and matched target extent.
+      // Planets/orbits/belts grow around the fixed System View disk; the
+      // vignette remains outside `content`.
       const star = this.systemScene.starLayoutPosition();
       const trackedFocus = this.worldToScreen(tr.focus);
       const contentScale = SCHEMATIC_GROW_FROM + (1 - SCHEMATIC_GROW_FROM) * semanticP;

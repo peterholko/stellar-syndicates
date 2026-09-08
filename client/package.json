@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "assets:derive": "node scripts/build-art-derivatives.mjs",
+    "assets:stars": "node scripts/build-star-derivatives.mjs",
     "build": "npm run assets:derive && tsc --noEmit && vite build",
     "preview": "vite preview",
     "test:wire": "node scripts/test-wire.mjs && node scripts/test-net.mjs",
@@ -17,6 +18,7 @@
     "test:order-response-clock": "node scripts/test-order-response-clock.mjs",
     "test:map-ship-sizes": "node scripts/test-map-ship-sizes.mjs",
     "test:map-hub-size": "node scripts/test-map-hub-size.mjs",
+    "test:star-art": "node scripts/test-star-art.mjs && node scripts/test-star-rendering.mjs",
     "test:fleet-lists": "node scripts/test-fleet-lists.mjs",
     "test:live-battle": "node scripts/test-live-battle.mjs && node scripts/test-battle-history.mjs && node scripts/test-battle-aftermath.mjs"
   },

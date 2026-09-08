@@ -1,0 +1,1261 @@
+{
+  "version": "2026-09-08",
+  "recipe": "full-canvas-lanczos3-rgba-v1",
+  "masterSize": 1254,
+  "sizes": [
+    32,
+    64,
+    128,
+    256,
+    512,
+    1024,
+    1254
+  ],
+  "selection": "smallest size >= visible CSS diameter / visualRatio * renderer resolution; native-master ceiling",
+  "sets": {
+    "galaxy": [
+      {
+        "slug": "red_dwarf",
+        "title": "Red Dwarf",
+        "source": "art-src/stars-galaxy-lens-2026-09-08/red_dwarf.png",
+        "sourceSha256": "ebcbf924358b8ce57b78c5f7bdab5024f79ad51b75bde81ede127444da7f7183",
+        "anchor": [
+          0.5059808612440191,
+          0.49760765550239233
+        ],
+        "visualRatio": 0.8413078149920256,
+        "levels": [
+          {
+            "size": 32,
+            "file": "red_dwarf-32.png",
+            "bytes": 941,
+            "sha256": "79cdb1ff62f50b3ede4d4b9574fc286bb86773391a8cc4b9abe11e634ee414bb",
+            "url": "/art/derived/stars/2026-09-08/galaxy/red_dwarf-32.png?v=79cdb1ff62f5"
+          },
+          {
+            "size": 64,
+            "file": "red_dwarf-64.png",
+            "bytes": 2806,
+            "sha256": "c71709e6ae6b1f7ffa0fa0b2319e561346b7e66e14a0e4928fad6b094d7d0eb1",
+            "url": "/art/derived/stars/2026-09-08/galaxy/red_dwarf-64.png?v=c71709e6ae6b"
+          },
+          {
+            "size": 128,
+            "file": "red_dwarf-128.png",
+            "bytes": 9336,
+            "sha256": "5621da629cbad6ff23a921f386c343b23a4906534c77befd7faa9c368982b0a9",
+            "url": "/art/derived/stars/2026-09-08/galaxy/red_dwarf-128.png?v=5621da629cba"
+          },
+          {
+            "size": 256,
+            "file": "red_dwarf-256.png",
+            "bytes": 33393,
+            "sha256": "51e332bb2f07b1138f0c3842763afbf105e1e25843f079765a6bfd8600cd86db",
+            "url": "/art/derived/stars/2026-09-08/galaxy/red_dwarf-256.png?v=51e332bb2f07"
+          },
+          {
+            "size": 512,
+            "file": "red_dwarf-512.png",
+            "bytes": 114916,
+            "sha256": "29dd0574f98be5e0879dad80960fb674dc98019bf6e24a748e99cc2a3f8611fa",
+            "url": "/art/derived/stars/2026-09-08/galaxy/red_dwarf-512.png?v=29dd0574f98b"
+          },
+          {
+            "size": 1024,
+            "file": "red_dwarf-1024.png",
+            "bytes": 405738,
+            "sha256": "29414873ef98f2a32f0fff7f78af75c79b2ec7de76abbab44b68acd7882f57d4",
+            "url": "/art/derived/stars/2026-09-08/galaxy/red_dwarf-1024.png?v=29414873ef98"
+          },
+          {
+            "size": 1254,
+            "file": "red_dwarf-1254.png",
+            "bytes": 429107,
+            "sha256": "ebcbf924358b8ce57b78c5f7bdab5024f79ad51b75bde81ede127444da7f7183",
+            "url": "/art/derived/stars/2026-09-08/galaxy/red_dwarf-1254.png?v=ebcbf924358b"
+          }
+        ]
+      },
+      {
+        "slug": "yellow_star",
+        "title": "Yellow Star",
+        "source": "art-src/stars-galaxy-lens-2026-09-08/yellow_star.png",
+        "sourceSha256": "ff4280e58465612ad62899d7f4e0dd1c3351ebed3db0e233a4ab5d657ed6bca3",
+        "anchor": [
+          0.5,
+          0.50518341307815
+        ],
+        "visualRatio": 0.9258373205741627,
+        "levels": [
+          {
+            "size": 32,
+            "file": "yellow_star-32.png",
+            "bytes": 1181,
+            "sha256": "7cf4e1a8530334ccc317b784d7c77053c52d5ccd52bfdfafc12f97d94397db20",
+            "url": "/art/derived/stars/2026-09-08/galaxy/yellow_star-32.png?v=7cf4e1a85303"
+          },
+          {
+            "size": 64,
+            "file": "yellow_star-64.png",
+            "bytes": 3636,
+            "sha256": "cf71a8c85b1f6601f6c89bc52bc6155a5656aaf18a3e8ef5256ff5a6f6be5dcb",
+            "url": "/art/derived/stars/2026-09-08/galaxy/yellow_star-64.png?v=cf71a8c85b1f"
+          },
+          {
+            "size": 128,
+            "file": "yellow_star-128.png",
+            "bytes": 13037,
+            "sha256": "3018445b243078b523f7996651dbbdb21d9420f0d5601affbf6d001b7d41988d",
+            "url": "/art/derived/stars/2026-09-08/galaxy/yellow_star-128.png?v=3018445b2430"
+          },
+          {
+            "size": 256,
+            "file": "yellow_star-256.png",
+            "bytes": 46203,
+            "sha256": "c5b991e72236842fcc537d0522223d733962056bf694c5baa97578570e945965",
+            "url": "/art/derived/stars/2026-09-08/galaxy/yellow_star-256.png?v=c5b991e72236"
+          },
+          {
+            "size": 512,
+            "file": "yellow_star-512.png",
+            "bytes": 156687,
+            "sha256": "4b8ce743893001579c9cf7c1cc6afc7510abda0b43a1d9b739078abbbe188b15",
+            "url": "/art/derived/stars/2026-09-08/galaxy/yellow_star-512.png?v=4b8ce7438930"
+          },
+          {
+            "size": 1024,
+            "file": "yellow_star-1024.png",
+            "bytes": 535346,
+            "sha256": "caf26d916e782775e68b569a0b194eae69edb7066b4056ee6cee34ffd364d888",
+            "url": "/art/derived/stars/2026-09-08/galaxy/yellow_star-1024.png?v=caf26d916e78"
+          },
+          {
+            "size": 1254,
+            "file": "yellow_star-1254.png",
+            "bytes": 559768,
+            "sha256": "ff4280e58465612ad62899d7f4e0dd1c3351ebed3db0e233a4ab5d657ed6bca3",
+            "url": "/art/derived/stars/2026-09-08/galaxy/yellow_star-1254.png?v=ff4280e58465"
+          }
+        ]
+      },
+      {
+        "slug": "white_star",
+        "title": "White Star",
+        "source": "art-src/stars-galaxy-lens-2026-09-08/white_star.png",
+        "sourceSha256": "79ddde99db9aac437179c053192d408f651ce7d7e2bab41624c918bb23bb9c05",
+        "anchor": [
+          0.49760765550239233,
+          0.4964114832535885
+        ],
+        "visualRatio": 0.9362041467304625,
+        "levels": [
+          {
+            "size": 32,
+            "file": "white_star-32.png",
+            "bytes": 1238,
+            "sha256": "94dd4635dcc0172a09f6958a2f6c6f4bcbd7c680df0ec4b66d852be36b96faf8",
+            "url": "/art/derived/stars/2026-09-08/galaxy/white_star-32.png?v=94dd4635dcc0"
+          },
+          {
+            "size": 64,
+            "file": "white_star-64.png",
+            "bytes": 3756,
+            "sha256": "151a1f136a163781bd6090c4b83deac5aa82ff1c9be00f284a13fb1b46044473",
+            "url": "/art/derived/stars/2026-09-08/galaxy/white_star-64.png?v=151a1f136a16"
+          },
+          {
+            "size": 128,
+            "file": "white_star-128.png",
+            "bytes": 12995,
+            "sha256": "04bea9fd9783ee5faf464987d1920af32bf70279c8dc6beaf355bd3e5380c877",
+            "url": "/art/derived/stars/2026-09-08/galaxy/white_star-128.png?v=04bea9fd9783"
+          },
+          {
+            "size": 256,
+            "file": "white_star-256.png",
+            "bytes": 45775,
+            "sha256": "9a9d242c6d689e5df2a3cfeff9bc2e1efeed9138d0b34c8be135c92af42e2f7e",
+            "url": "/art/derived/stars/2026-09-08/galaxy/white_star-256.png?v=9a9d242c6d68"
+          },
+          {
+            "size": 512,
+            "file": "white_star-512.png",
+            "bytes": 154488,
+            "sha256": "58f099436a3a89dbd684abc3e57636749b9407b3a30b1720c4a31753734bd2cb",
+            "url": "/art/derived/stars/2026-09-08/galaxy/white_star-512.png?v=58f099436a3a"
+          },
+          {
+            "size": 1024,
+            "file": "white_star-1024.png",
+            "bytes": 556920,
+            "sha256": "0c958a787895e728978315dc1f820c99ee29b9875415e1cc04ab326296c6e423",
+            "url": "/art/derived/stars/2026-09-08/galaxy/white_star-1024.png?v=0c958a787895"
+          },
+          {
+            "size": 1254,
+            "file": "white_star-1254.png",
+            "bytes": 596087,
+            "sha256": "79ddde99db9aac437179c053192d408f651ce7d7e2bab41624c918bb23bb9c05",
+            "url": "/art/derived/stars/2026-09-08/galaxy/white_star-1254.png?v=79ddde99db9a"
+          }
+        ]
+      },
+      {
+        "slug": "blue_giant",
+        "title": "Blue Giant",
+        "source": "art-src/stars-galaxy-lens-2026-09-08/blue_giant.png",
+        "sourceSha256": "3904a8bb6e3d3e1839061271f07db30db35ef8e8a72f319bdd309c5ea3e2b7d4",
+        "anchor": [
+          0.4984051036682616,
+          0.4960127591706539
+        ],
+        "visualRatio": 0.9106858054226475,
+        "levels": [
+          {
+            "size": 32,
+            "file": "blue_giant-32.png",
+            "bytes": 1147,
+            "sha256": "59a3996e9dfd9a0f398ab8163f1da69f5732744613d34fb625ebf3c5ad480062",
+            "url": "/art/derived/stars/2026-09-08/galaxy/blue_giant-32.png?v=59a3996e9dfd"
+          },
+          {
+            "size": 64,
+            "file": "blue_giant-64.png",
+            "bytes": 3467,
+            "sha256": "14a3b73a5c519a8d7ed1757d1bffeae99c5c337f1c7e2be051dcd9824a926d49",
+            "url": "/art/derived/stars/2026-09-08/galaxy/blue_giant-64.png?v=14a3b73a5c51"
+          },
+          {
+            "size": 128,
+            "file": "blue_giant-128.png",
+            "bytes": 12460,
+            "sha256": "80a488034f7e31e497e264857e4193d1442346294814f63dec85a5fc81ce59a6",
+            "url": "/art/derived/stars/2026-09-08/galaxy/blue_giant-128.png?v=80a488034f7e"
+          },
+          {
+            "size": 256,
+            "file": "blue_giant-256.png",
+            "bytes": 44705,
+            "sha256": "d821963869a4addbe84344835f739e54c1d48f922057d8c10d9441a480a70a0b",
+            "url": "/art/derived/stars/2026-09-08/galaxy/blue_giant-256.png?v=d821963869a4"
+          },
+          {
+            "size": 512,
+            "file": "blue_giant-512.png",
+            "bytes": 154628,
+            "sha256": "cfd2777892771e2ffcf7202fac286bdaf138c8bf1ce51fb2982ee6a444f011fb",
+            "url": "/art/derived/stars/2026-09-08/galaxy/blue_giant-512.png?v=cfd277789277"
+          },
+          {
+            "size": 1024,
+            "file": "blue_giant-1024.png",
+            "bytes": 542732,
+            "sha256": "59cd2849c0ad37b180aca51e45fe167395e9647e85250f920c5f59d42a89baf9",
+            "url": "/art/derived/stars/2026-09-08/galaxy/blue_giant-1024.png?v=59cd2849c0ad"
+          },
+          {
+            "size": 1254,
+            "file": "blue_giant-1254.png",
+            "bytes": 545226,
+            "sha256": "3904a8bb6e3d3e1839061271f07db30db35ef8e8a72f319bdd309c5ea3e2b7d4",
+            "url": "/art/derived/stars/2026-09-08/galaxy/blue_giant-1254.png?v=3904a8bb6e3d"
+          }
+        ]
+      },
+      {
+        "slug": "red_giant",
+        "title": "Red Giant",
+        "source": "art-src/stars-galaxy-lens-2026-09-08/red_giant.png",
+        "sourceSha256": "3e6ed0ab7d4f9c1a0957d5f1bba1a552405ffbbb529f457a0593cddd58864f22",
+        "anchor": [
+          0.49242424242424243,
+          0.49800637958532695
+        ],
+        "visualRatio": 0.7854864433811802,
+        "levels": [
+          {
+            "size": 32,
+            "file": "red_giant-32.png",
+            "bytes": 1185,
+            "sha256": "4b2f642874ae4dc2f1800c37c71a2732ccb61dfa740b0f4de6275152e8c169fe",
+            "url": "/art/derived/stars/2026-09-08/galaxy/red_giant-32.png?v=4b2f642874ae"
+          },
+          {
+            "size": 64,
+            "file": "red_giant-64.png",
+            "bytes": 3727,
+            "sha256": "522201662fd195dcba7c9b25a19932c00e7e610369b362e017f7d6d9af846b7e",
+            "url": "/art/derived/stars/2026-09-08/galaxy/red_giant-64.png?v=522201662fd1"
+          },
+          {
+            "size": 128,
+            "file": "red_giant-128.png",
+            "bytes": 12906,
+            "sha256": "1868e8351887eddb8f91e04c7dae1a743f4914e5e83bc611e4bfc3111be7a7d6",
+            "url": "/art/derived/stars/2026-09-08/galaxy/red_giant-128.png?v=1868e8351887"
+          },
+          {
+            "size": 256,
+            "file": "red_giant-256.png",
+            "bytes": 45512,
+            "sha256": "a5b9306dc0a3ca3ccc3a8a984a5179460570d47c2c821393fbe5ab945834344e",
+            "url": "/art/derived/stars/2026-09-08/galaxy/red_giant-256.png?v=a5b9306dc0a3"
+          },
+          {
+            "size": 512,
+            "file": "red_giant-512.png",
+            "bytes": 155124,
+            "sha256": "0c537d4df13aca2188e135bb0c7480ae5dd039e8b29a160170aaa18cb3ad0d6c",
+            "url": "/art/derived/stars/2026-09-08/galaxy/red_giant-512.png?v=0c537d4df13a"
+          },
+          {
+            "size": 1024,
+            "file": "red_giant-1024.png",
+            "bytes": 554207,
+            "sha256": "333411f9ecb0accbb62c510a5357f732f828e51d7acab121f09cae26c7532913",
+            "url": "/art/derived/stars/2026-09-08/galaxy/red_giant-1024.png?v=333411f9ecb0"
+          },
+          {
+            "size": 1254,
+            "file": "red_giant-1254.png",
+            "bytes": 611956,
+            "sha256": "3e6ed0ab7d4f9c1a0957d5f1bba1a552405ffbbb529f457a0593cddd58864f22",
+            "url": "/art/derived/stars/2026-09-08/galaxy/red_giant-1254.png?v=3e6ed0ab7d4f"
+          }
+        ]
+      },
+      {
+        "slug": "white_dwarf",
+        "title": "White Dwarf",
+        "source": "art-src/stars-galaxy-lens-2026-09-08/white_dwarf.png",
+        "sourceSha256": "966034a2099c13b445ad05e82c659c569b3df708f5e1cdfba5ccdca20b06c3f0",
+        "anchor": [
+          0.5007974481658692,
+          0.49920255183413076
+        ],
+        "visualRatio": 0.8947368421052632,
+        "levels": [
+          {
+            "size": 32,
+            "file": "white_dwarf-32.png",
+            "bytes": 881,
+            "sha256": "b8fc472cfee374562f79c7c7ed44a10763b81af97331a917cc65002495669991",
+            "url": "/art/derived/stars/2026-09-08/galaxy/white_dwarf-32.png?v=b8fc472cfee3"
+          },
+          {
+            "size": 64,
+            "file": "white_dwarf-64.png",
+            "bytes": 2608,
+            "sha256": "5be1006b909386a56bcb8cbeac610c3d6104eaa0aded6a17e341e6265a82c33d",
+            "url": "/art/derived/stars/2026-09-08/galaxy/white_dwarf-64.png?v=5be1006b9093"
+          },
+          {
+            "size": 128,
+            "file": "white_dwarf-128.png",
+            "bytes": 9125,
+            "sha256": "8ce1267fea5c7413d880d212cc68e8c2094fd7283afe9af3f7c730e08b17d2ca",
+            "url": "/art/derived/stars/2026-09-08/galaxy/white_dwarf-128.png?v=8ce1267fea5c"
+          },
+          {
+            "size": 256,
+            "file": "white_dwarf-256.png",
+            "bytes": 31920,
+            "sha256": "120e6494c698279f8f60fb9f6344c318c9849a1c6dfe8abbb9f1109007f9764a",
+            "url": "/art/derived/stars/2026-09-08/galaxy/white_dwarf-256.png?v=120e6494c698"
+          },
+          {
+            "size": 512,
+            "file": "white_dwarf-512.png",
+            "bytes": 108342,
+            "sha256": "286bf1272b5d34c85286810895da4b3e1842c84027554f17b63ec36c8c3b4487",
+            "url": "/art/derived/stars/2026-09-08/galaxy/white_dwarf-512.png?v=286bf1272b5d"
+          },
+          {
+            "size": 1024,
+            "file": "white_dwarf-1024.png",
+            "bytes": 379453,
+            "sha256": "e2faae22e44566fcc94ee55690a7951d29eea6117bb6d7ccb9d71dff8bcce307",
+            "url": "/art/derived/stars/2026-09-08/galaxy/white_dwarf-1024.png?v=e2faae22e445"
+          },
+          {
+            "size": 1254,
+            "file": "white_dwarf-1254.png",
+            "bytes": 407530,
+            "sha256": "966034a2099c13b445ad05e82c659c569b3df708f5e1cdfba5ccdca20b06c3f0",
+            "url": "/art/derived/stars/2026-09-08/galaxy/white_dwarf-1254.png?v=966034a2099c"
+          }
+        ]
+      },
+      {
+        "slug": "neutron_star",
+        "title": "Neutron Star / Pulsar",
+        "source": "art-src/stars-galaxy-lens-2026-09-08/neutron_star.png",
+        "sourceSha256": "c8c3d1a7e456224a336fb4cad2a2e5357015d0d04b7ca593f8335e4c3b17025b",
+        "anchor": [
+          0.5015948963317385,
+          0.4996012759170654
+        ],
+        "visualRatio": 0.9346092503987241,
+        "levels": [
+          {
+            "size": 32,
+            "file": "neutron_star-32.png",
+            "bytes": 1151,
+            "sha256": "e3a773fd02c0ea51eeec98a95f337eebf80628beff7858a3c4440e008115dd41",
+            "url": "/art/derived/stars/2026-09-08/galaxy/neutron_star-32.png?v=e3a773fd02c0"
+          },
+          {
+            "size": 64,
+            "file": "neutron_star-64.png",
+            "bytes": 3579,
+            "sha256": "3ce86003e7439dd5b1fad71c60231b0cd3cce423bb0e7e252e0944b6e18fbea2",
+            "url": "/art/derived/stars/2026-09-08/galaxy/neutron_star-64.png?v=3ce86003e743"
+          },
+          {
+            "size": 128,
+            "file": "neutron_star-128.png",
+            "bytes": 12353,
+            "sha256": "e79d3340f51636b9ec3ac3c6fce5e9dd97fe40b7a6c61128fc6bf931d462eba7",
+            "url": "/art/derived/stars/2026-09-08/galaxy/neutron_star-128.png?v=e79d3340f516"
+          },
+          {
+            "size": 256,
+            "file": "neutron_star-256.png",
+            "bytes": 44127,
+            "sha256": "83a0456a748b89e15b3e7dfbf67d05efd05cc6cb778d9666d9c682fd46d4c0c8",
+            "url": "/art/derived/stars/2026-09-08/galaxy/neutron_star-256.png?v=83a0456a748b"
+          },
+          {
+            "size": 512,
+            "file": "neutron_star-512.png",
+            "bytes": 158035,
+            "sha256": "c807623f2822cd16409b80ccc0689d31464a74d604818eaa1ef8804854e2216d",
+            "url": "/art/derived/stars/2026-09-08/galaxy/neutron_star-512.png?v=c807623f2822"
+          },
+          {
+            "size": 1024,
+            "file": "neutron_star-1024.png",
+            "bytes": 603616,
+            "sha256": "551597402c6d0861d29f543c25c558be7711a89b20b4d64f660b87a45d384353",
+            "url": "/art/derived/stars/2026-09-08/galaxy/neutron_star-1024.png?v=551597402c6d"
+          },
+          {
+            "size": 1254,
+            "file": "neutron_star-1254.png",
+            "bytes": 693144,
+            "sha256": "c8c3d1a7e456224a336fb4cad2a2e5357015d0d04b7ca593f8335e4c3b17025b",
+            "url": "/art/derived/stars/2026-09-08/galaxy/neutron_star-1254.png?v=c8c3d1a7e456"
+          }
+        ]
+      },
+      {
+        "slug": "binary_star",
+        "title": "Binary Star",
+        "source": "art-src/stars-galaxy-lens-2026-09-08/binary_star.png",
+        "sourceSha256": "8a830399d5cdbe205007eb79b72665cf2ea43947d0fe4450fa88296ac0f2c2c7",
+        "anchor": [
+          0.5115629984051037,
+          0.5123604465709729
+        ],
+        "visualRatio": 0.7137161084529505,
+        "levels": [
+          {
+            "size": 32,
+            "file": "binary_star-32.png",
+            "bytes": 953,
+            "sha256": "f67abb711cab94149af60f974d8b51b1c88b14c091789a8d9dbfafe8d6be7cac",
+            "url": "/art/derived/stars/2026-09-08/galaxy/binary_star-32.png?v=f67abb711cab"
+          },
+          {
+            "size": 64,
+            "file": "binary_star-64.png",
+            "bytes": 2953,
+            "sha256": "41b7ee2276aa76af02fba07784f681eaba101c71318ddf1663589ff695f2c210",
+            "url": "/art/derived/stars/2026-09-08/galaxy/binary_star-64.png?v=41b7ee2276aa"
+          },
+          {
+            "size": 128,
+            "file": "binary_star-128.png",
+            "bytes": 10315,
+            "sha256": "175f5389ab276bcf9d19c68bf83846be8e7a74ff25a64b972f9310918ddf3626",
+            "url": "/art/derived/stars/2026-09-08/galaxy/binary_star-128.png?v=175f5389ab27"
+          },
+          {
+            "size": 256,
+            "file": "binary_star-256.png",
+            "bytes": 35590,
+            "sha256": "b96476c1d920d5fac914f95c30b26506223672325c5ced25193920bb894ba859",
+            "url": "/art/derived/stars/2026-09-08/galaxy/binary_star-256.png?v=b96476c1d920"
+          },
+          {
+            "size": 512,
+            "file": "binary_star-512.png",
+            "bytes": 121328,
+            "sha256": "55a16e88fcee9aaae55de22bd2acfb3c939dc7e45bf673117ef08d333390ed2b",
+            "url": "/art/derived/stars/2026-09-08/galaxy/binary_star-512.png?v=55a16e88fcee"
+          },
+          {
+            "size": 1024,
+            "file": "binary_star-1024.png",
+            "bytes": 436572,
+            "sha256": "ac03cbc757166e372a12958e31d74164e68bb443fca112d571fa059258a18555",
+            "url": "/art/derived/stars/2026-09-08/galaxy/binary_star-1024.png?v=ac03cbc75716"
+          },
+          {
+            "size": 1254,
+            "file": "binary_star-1254.png",
+            "bytes": 509158,
+            "sha256": "8a830399d5cdbe205007eb79b72665cf2ea43947d0fe4450fa88296ac0f2c2c7",
+            "url": "/art/derived/stars/2026-09-08/galaxy/binary_star-1254.png?v=8a830399d5cd"
+          }
+        ]
+      },
+      {
+        "slug": "black_hole",
+        "title": "Black Hole",
+        "source": "art-src/stars-galaxy-lens-2026-09-08/black_hole.png",
+        "sourceSha256": "1a9fdd455b02cf62377003509eb3658302584ec755a6e00b291260e3b8546421",
+        "anchor": [
+          0.5027910685805422,
+          0.4892344497607656
+        ],
+        "visualRatio": 0.9497607655502392,
+        "levels": [
+          {
+            "size": 32,
+            "file": "black_hole-32.png",
+            "bytes": 1175,
+            "sha256": "0d2c56d27859d613bf37a9934e03e5af194b4c5a33d8092a6bac581b38851f0a",
+            "url": "/art/derived/stars/2026-09-08/galaxy/black_hole-32.png?v=0d2c56d27859"
+          },
+          {
+            "size": 64,
+            "file": "black_hole-64.png",
+            "bytes": 3634,
+            "sha256": "9acd215eca499d8d7d8d32557b55552cf93cd42d31163f9dd58423017a50b24a",
+            "url": "/art/derived/stars/2026-09-08/galaxy/black_hole-64.png?v=9acd215eca49"
+          },
+          {
+            "size": 128,
+            "file": "black_hole-128.png",
+            "bytes": 12379,
+            "sha256": "83fb07abf7622f04580c56992bee8ab4758ef2ba983111468a4914f05fe611e7",
+            "url": "/art/derived/stars/2026-09-08/galaxy/black_hole-128.png?v=83fb07abf762"
+          },
+          {
+            "size": 256,
+            "file": "black_hole-256.png",
+            "bytes": 42805,
+            "sha256": "9379eb8a0525f18819a5a9cb97b150aacb8c154d968ee1efb226bccd0fc50561",
+            "url": "/art/derived/stars/2026-09-08/galaxy/black_hole-256.png?v=9379eb8a0525"
+          },
+          {
+            "size": 512,
+            "file": "black_hole-512.png",
+            "bytes": 146226,
+            "sha256": "c89551f319cb1966f5c97c1ccc75534bc8e11d8f239531714b3e812156bb24dd",
+            "url": "/art/derived/stars/2026-09-08/galaxy/black_hole-512.png?v=c89551f319cb"
+          },
+          {
+            "size": 1024,
+            "file": "black_hole-1024.png",
+            "bytes": 547860,
+            "sha256": "39382896d2458233449e22f6c27a243b45d36fffc5e1511ab82c76c4de827c62",
+            "url": "/art/derived/stars/2026-09-08/galaxy/black_hole-1024.png?v=39382896d245"
+          },
+          {
+            "size": 1254,
+            "file": "black_hole-1254.png",
+            "bytes": 671130,
+            "sha256": "1a9fdd455b02cf62377003509eb3658302584ec755a6e00b291260e3b8546421",
+            "url": "/art/derived/stars/2026-09-08/galaxy/black_hole-1254.png?v=1a9fdd455b02"
+          }
+        ]
+      },
+      {
+        "slug": "magnetar",
+        "title": "Magnetar",
+        "source": "art-src/stars-galaxy-lens-2026-09-08/magnetar.png",
+        "sourceSha256": "c3da988cfda2f410090d627be28dca881b58c6bca62d7047786f4ebc6ecbaff7",
+        "anchor": [
+          0.5,
+          0.4932216905901116
+        ],
+        "visualRatio": 0.9146730462519936,
+        "levels": [
+          {
+            "size": 32,
+            "file": "magnetar-32.png",
+            "bytes": 1348,
+            "sha256": "4a0bd96f97e536cb6b0939aae411eaff07762b6b8489da43afacfbded3933305",
+            "url": "/art/derived/stars/2026-09-08/galaxy/magnetar-32.png?v=4a0bd96f97e5"
+          },
+          {
+            "size": 64,
+            "file": "magnetar-64.png",
+            "bytes": 4199,
+            "sha256": "0ae24d752a6d521bbca67245f8063f181ff519ce644d6f35dea6e90cf18f7701",
+            "url": "/art/derived/stars/2026-09-08/galaxy/magnetar-64.png?v=0ae24d752a6d"
+          },
+          {
+            "size": 128,
+            "file": "magnetar-128.png",
+            "bytes": 14716,
+            "sha256": "71870ef033e99fad0a8e8b81506d86e27969a60bddee5f87799659f61177ffde",
+            "url": "/art/derived/stars/2026-09-08/galaxy/magnetar-128.png?v=71870ef033e9"
+          },
+          {
+            "size": 256,
+            "file": "magnetar-256.png",
+            "bytes": 52776,
+            "sha256": "9ced21fc34973ac16bd5ce7fd551b0b454b04c14948c96b8ba566ed54596b13f",
+            "url": "/art/derived/stars/2026-09-08/galaxy/magnetar-256.png?v=9ced21fc3497"
+          },
+          {
+            "size": 512,
+            "file": "magnetar-512.png",
+            "bytes": 180638,
+            "sha256": "764f232a8cb8e8c823fb1810c23c16b2578158af92e3aaef637533a543a5e950",
+            "url": "/art/derived/stars/2026-09-08/galaxy/magnetar-512.png?v=764f232a8cb8"
+          },
+          {
+            "size": 1024,
+            "file": "magnetar-1024.png",
+            "bytes": 651531,
+            "sha256": "ae9e0607a4dcb612a26b1e9551506ed8c4ea3e8b6dab7b5324e988f39f8965f5",
+            "url": "/art/derived/stars/2026-09-08/galaxy/magnetar-1024.png?v=ae9e0607a4dc"
+          },
+          {
+            "size": 1254,
+            "file": "magnetar-1254.png",
+            "bytes": 665240,
+            "sha256": "c3da988cfda2f410090d627be28dca881b58c6bca62d7047786f4ebc6ecbaff7",
+            "url": "/art/derived/stars/2026-09-08/galaxy/magnetar-1254.png?v=c3da988cfda2"
+          }
+        ]
+      }
+    ],
+    "system": [
+      {
+        "slug": "red_dwarf",
+        "title": "Red Dwarf",
+        "source": "art-src/stars-2026-09-08/red_dwarf.png",
+        "sourceSha256": "3298ebcdaff9df90b7f79f30e39911b830e599164e59abd54dfa6fecf273593b",
+        "anchor": [
+          0.5,
+          0.4904306220095694
+        ],
+        "visualRatio": 0.8149920255183413,
+        "levels": [
+          {
+            "size": 32,
+            "file": "red_dwarf-32.png",
+            "bytes": 2174,
+            "sha256": "53d4ea991c5e80398bf2fcefd0450f3e83d8a727858e3f6640c27745fedf6b60",
+            "url": "/art/derived/stars/2026-09-08/system/red_dwarf-32.png?v=53d4ea991c5e"
+          },
+          {
+            "size": 64,
+            "file": "red_dwarf-64.png",
+            "bytes": 7465,
+            "sha256": "4dbbf724ac2408c3e6b6cb0dfe29cc51740b377ee62ebe0d500bbf51227b200d",
+            "url": "/art/derived/stars/2026-09-08/system/red_dwarf-64.png?v=4dbbf724ac24"
+          },
+          {
+            "size": 128,
+            "file": "red_dwarf-128.png",
+            "bytes": 27107,
+            "sha256": "1536dd55feaa9c5f74a0e42a6e669925f10ac4009d2a77e613400a07a37a6c02",
+            "url": "/art/derived/stars/2026-09-08/system/red_dwarf-128.png?v=1536dd55feaa"
+          },
+          {
+            "size": 256,
+            "file": "red_dwarf-256.png",
+            "bytes": 102944,
+            "sha256": "4039f0d4e07a76bf64905215a10371002af82d02700d458d4c67f1294996d9d4",
+            "url": "/art/derived/stars/2026-09-08/system/red_dwarf-256.png?v=4039f0d4e07a"
+          },
+          {
+            "size": 512,
+            "file": "red_dwarf-512.png",
+            "bytes": 391579,
+            "sha256": "c6899345762473510a2ba6dc04fcde0e9b384da5235c058c83209ed3af993df9",
+            "url": "/art/derived/stars/2026-09-08/system/red_dwarf-512.png?v=c68993457624"
+          },
+          {
+            "size": 1024,
+            "file": "red_dwarf-1024.png",
+            "bytes": 1551684,
+            "sha256": "38e98c4a81d6c8c0b9a6c578fb977bd987a7c42a438c5a7a73d9b282dd0e4171",
+            "url": "/art/derived/stars/2026-09-08/system/red_dwarf-1024.png?v=38e98c4a81d6"
+          },
+          {
+            "size": 1254,
+            "file": "red_dwarf-1254.png",
+            "bytes": 1770896,
+            "sha256": "3298ebcdaff9df90b7f79f30e39911b830e599164e59abd54dfa6fecf273593b",
+            "url": "/art/derived/stars/2026-09-08/system/red_dwarf-1254.png?v=3298ebcdaff9"
+          }
+        ]
+      },
+      {
+        "slug": "yellow_star",
+        "title": "Yellow Star",
+        "source": "art-src/stars-2026-09-08/yellow_star.png",
+        "sourceSha256": "127a74cb8562643410240b91a17e9ed5b066630ce7e24e2d49f5174468e3ff41",
+        "anchor": [
+          0.49920255183413076,
+          0.49401913875598086
+        ],
+        "visualRatio": 0.8748006379585327,
+        "levels": [
+          {
+            "size": 32,
+            "file": "yellow_star-32.png",
+            "bytes": 2570,
+            "sha256": "3aad02b559637b5dca80633bef87c1c709546a3deb3f0c6ad353353795f96b71",
+            "url": "/art/derived/stars/2026-09-08/system/yellow_star-32.png?v=3aad02b55963"
+          },
+          {
+            "size": 64,
+            "file": "yellow_star-64.png",
+            "bytes": 8605,
+            "sha256": "320cabe45c258994357e8c8aa51780950bfb9d361f807f98c0f5d849d0da8d96",
+            "url": "/art/derived/stars/2026-09-08/system/yellow_star-64.png?v=320cabe45c25"
+          },
+          {
+            "size": 128,
+            "file": "yellow_star-128.png",
+            "bytes": 32050,
+            "sha256": "c64c4c6b76325910a1a9bdcd9941ffa415e87a839a9e5d28eb9d83e72286c8ed",
+            "url": "/art/derived/stars/2026-09-08/system/yellow_star-128.png?v=c64c4c6b7632"
+          },
+          {
+            "size": 256,
+            "file": "yellow_star-256.png",
+            "bytes": 121919,
+            "sha256": "7a3e8042a256b89632937cfa94803045c6da2cfc2af9c87eb10c3d9a759bbb76",
+            "url": "/art/derived/stars/2026-09-08/system/yellow_star-256.png?v=7a3e8042a256"
+          },
+          {
+            "size": 512,
+            "file": "yellow_star-512.png",
+            "bytes": 469236,
+            "sha256": "84a62eb665aff3615ce75d2ac1970e228fe631c7f07a2bf5cd52db99982ddd05",
+            "url": "/art/derived/stars/2026-09-08/system/yellow_star-512.png?v=84a62eb665af"
+          },
+          {
+            "size": 1024,
+            "file": "yellow_star-1024.png",
+            "bytes": 1875958,
+            "sha256": "ac36753e8300fba4d616ecde9c5a162dbab0127e9f8f002cc5189639c3135916",
+            "url": "/art/derived/stars/2026-09-08/system/yellow_star-1024.png?v=ac36753e8300"
+          },
+          {
+            "size": 1254,
+            "file": "yellow_star-1254.png",
+            "bytes": 2082854,
+            "sha256": "127a74cb8562643410240b91a17e9ed5b066630ce7e24e2d49f5174468e3ff41",
+            "url": "/art/derived/stars/2026-09-08/system/yellow_star-1254.png?v=127a74cb8562"
+          }
+        ]
+      },
+      {
+        "slug": "white_star",
+        "title": "White Star",
+        "source": "art-src/stars-2026-09-08/white_star.png",
+        "sourceSha256": "dbdba8ce271d61d9a9bf10f88f01d38739f06e939f9e636866f0ab990dabba83",
+        "anchor": [
+          0.5011961722488039,
+          0.5
+        ],
+        "visualRatio": 0.8636363636363636,
+        "levels": [
+          {
+            "size": 32,
+            "file": "white_star-32.png",
+            "bytes": 2385,
+            "sha256": "ed6343cb2227b4361976a840d7e94b6a347d786595c561f0bbb874186d481a01",
+            "url": "/art/derived/stars/2026-09-08/system/white_star-32.png?v=ed6343cb2227"
+          },
+          {
+            "size": 64,
+            "file": "white_star-64.png",
+            "bytes": 8024,
+            "sha256": "89d51314b66da675b649e353df58a33aaa02ac2364504e96c044f93fbfc57094",
+            "url": "/art/derived/stars/2026-09-08/system/white_star-64.png?v=89d51314b66d"
+          },
+          {
+            "size": 128,
+            "file": "white_star-128.png",
+            "bytes": 28850,
+            "sha256": "f72b65b5312e06285d24c327cb832284936e5a5a8a19a2bd719a107544f4d1ad",
+            "url": "/art/derived/stars/2026-09-08/system/white_star-128.png?v=f72b65b5312e"
+          },
+          {
+            "size": 256,
+            "file": "white_star-256.png",
+            "bytes": 104698,
+            "sha256": "2a9dc887eb522e823709a99a228bbb338ea53374668c5792ef8d94786575c6a0",
+            "url": "/art/derived/stars/2026-09-08/system/white_star-256.png?v=2a9dc887eb52"
+          },
+          {
+            "size": 512,
+            "file": "white_star-512.png",
+            "bytes": 396236,
+            "sha256": "d6f68d0e71b4afad2fedb3b2778a1d0e1be2f9647897e552d3e57be951c920a1",
+            "url": "/art/derived/stars/2026-09-08/system/white_star-512.png?v=d6f68d0e71b4"
+          },
+          {
+            "size": 1024,
+            "file": "white_star-1024.png",
+            "bytes": 1594465,
+            "sha256": "b1d796f86db377f080a30339b6398bfdf16fc0aa9dbcaa75fde38b84277937ed",
+            "url": "/art/derived/stars/2026-09-08/system/white_star-1024.png?v=b1d796f86db3"
+          },
+          {
+            "size": 1254,
+            "file": "white_star-1254.png",
+            "bytes": 1822519,
+            "sha256": "dbdba8ce271d61d9a9bf10f88f01d38739f06e939f9e636866f0ab990dabba83",
+            "url": "/art/derived/stars/2026-09-08/system/white_star-1254.png?v=dbdba8ce271d"
+          }
+        ]
+      },
+      {
+        "slug": "blue_giant",
+        "title": "Blue Giant",
+        "source": "art-src/stars-2026-09-08/blue_giant.png",
+        "sourceSha256": "d1d04defc719c4da48b8f9ef8f17f4532be9ac15540978850bdc63fba7a3d1c0",
+        "anchor": [
+          0.507177033492823,
+          0.49362041467304624
+        ],
+        "visualRatio": 0.8484848484848485,
+        "levels": [
+          {
+            "size": 32,
+            "file": "blue_giant-32.png",
+            "bytes": 2406,
+            "sha256": "1182a0f548b329f857456d43495737ea8955e03ee6f7b5b5b349e3550b19fcc2",
+            "url": "/art/derived/stars/2026-09-08/system/blue_giant-32.png?v=1182a0f548b3"
+          },
+          {
+            "size": 64,
+            "file": "blue_giant-64.png",
+            "bytes": 8364,
+            "sha256": "80ee3db01a172fe01cf5241f0ec99b982e058b4f1991d4c0962f920fd5fc2c45",
+            "url": "/art/derived/stars/2026-09-08/system/blue_giant-64.png?v=80ee3db01a17"
+          },
+          {
+            "size": 128,
+            "file": "blue_giant-128.png",
+            "bytes": 31100,
+            "sha256": "83e7b20228a4343ddfa95e9e29eec059f58b03663a4ae67c8f72276f263eb77b",
+            "url": "/art/derived/stars/2026-09-08/system/blue_giant-128.png?v=83e7b20228a4"
+          },
+          {
+            "size": 256,
+            "file": "blue_giant-256.png",
+            "bytes": 118531,
+            "sha256": "9bfc7246e1b955ef75ff18e51b0c0fc1a64829957f077913ab6dd280583abb51",
+            "url": "/art/derived/stars/2026-09-08/system/blue_giant-256.png?v=9bfc7246e1b9"
+          },
+          {
+            "size": 512,
+            "file": "blue_giant-512.png",
+            "bytes": 456764,
+            "sha256": "ba3525f5dbffa55fbca43679e911e6bf12344e000fcd2a8921428fbad49c737f",
+            "url": "/art/derived/stars/2026-09-08/system/blue_giant-512.png?v=ba3525f5dbff"
+          },
+          {
+            "size": 1024,
+            "file": "blue_giant-1024.png",
+            "bytes": 1801247,
+            "sha256": "8a40d3a33a4ba76a44fce45a63c172df6649056f1713bb766b383913a8aa9ac3",
+            "url": "/art/derived/stars/2026-09-08/system/blue_giant-1024.png?v=8a40d3a33a4b"
+          },
+          {
+            "size": 1254,
+            "file": "blue_giant-1254.png",
+            "bytes": 2006291,
+            "sha256": "d1d04defc719c4da48b8f9ef8f17f4532be9ac15540978850bdc63fba7a3d1c0",
+            "url": "/art/derived/stars/2026-09-08/system/blue_giant-1254.png?v=d1d04defc719"
+          }
+        ]
+      },
+      {
+        "slug": "red_giant",
+        "title": "Red Giant",
+        "source": "art-src/stars-2026-09-08/red_giant.png",
+        "sourceSha256": "8f8e07e07ad80252c65e7c072a880a4d4808d2e4e4f00f8d0b97b7eb1a15015b",
+        "anchor": [
+          0.5087719298245614,
+          0.4892344497607656
+        ],
+        "visualRatio": 0.9425837320574163,
+        "levels": [
+          {
+            "size": 32,
+            "file": "red_giant-32.png",
+            "bytes": 2813,
+            "sha256": "c61433f75def57e91a6edf4def40dd1c5b7f6a22747751a472dc8a76f12cc5c3",
+            "url": "/art/derived/stars/2026-09-08/system/red_giant-32.png?v=c61433f75def"
+          },
+          {
+            "size": 64,
+            "file": "red_giant-64.png",
+            "bytes": 9766,
+            "sha256": "9dd298a4bde06a8db598cb278e8954808cbde81ea707f62f6272dff756a71bdf",
+            "url": "/art/derived/stars/2026-09-08/system/red_giant-64.png?v=9dd298a4bde0"
+          },
+          {
+            "size": 128,
+            "file": "red_giant-128.png",
+            "bytes": 36015,
+            "sha256": "a5b1a0327eefc19867149f12b4790d642f85af46f97735d2a8f41aeabc9ca87c",
+            "url": "/art/derived/stars/2026-09-08/system/red_giant-128.png?v=a5b1a0327eef"
+          },
+          {
+            "size": 256,
+            "file": "red_giant-256.png",
+            "bytes": 137417,
+            "sha256": "7fdc0f17d5f1421659e0004011182b10398f13b7e06c9c23eea9a9e0d3f00681",
+            "url": "/art/derived/stars/2026-09-08/system/red_giant-256.png?v=7fdc0f17d5f1"
+          },
+          {
+            "size": 512,
+            "file": "red_giant-512.png",
+            "bytes": 538789,
+            "sha256": "67010c2302de96ec8097360f85c5a10bffb473980dd6a7237b7c0407cdac4dd9",
+            "url": "/art/derived/stars/2026-09-08/system/red_giant-512.png?v=67010c2302de"
+          },
+          {
+            "size": 1024,
+            "file": "red_giant-1024.png",
+            "bytes": 2148472,
+            "sha256": "c0f45bb4ca10f19aadf3919b504b432190389d9cd8960066cce81b6bd4391abc",
+            "url": "/art/derived/stars/2026-09-08/system/red_giant-1024.png?v=c0f45bb4ca10"
+          },
+          {
+            "size": 1254,
+            "file": "red_giant-1254.png",
+            "bytes": 2255631,
+            "sha256": "8f8e07e07ad80252c65e7c072a880a4d4808d2e4e4f00f8d0b97b7eb1a15015b",
+            "url": "/art/derived/stars/2026-09-08/system/red_giant-1254.png?v=8f8e07e07ad8"
+          }
+        ]
+      },
+      {
+        "slug": "white_dwarf",
+        "title": "White Dwarf",
+        "source": "art-src/stars-2026-09-08/white_dwarf.png",
+        "sourceSha256": "99adb0fef6227401f0b0d800d42353afc1b33001003816cb877bc65837092843",
+        "anchor": [
+          0.5,
+          0.4988038277511962
+        ],
+        "visualRatio": 0.6299840510366826,
+        "levels": [
+          {
+            "size": 32,
+            "file": "white_dwarf-32.png",
+            "bytes": 1523,
+            "sha256": "6f550e1491f3463156f3a7130492fb8a5cd4a43d649d329c911cb5c3c2e0e0fa",
+            "url": "/art/derived/stars/2026-09-08/system/white_dwarf-32.png?v=6f550e1491f3"
+          },
+          {
+            "size": 64,
+            "file": "white_dwarf-64.png",
+            "bytes": 4912,
+            "sha256": "2f9646d6eaca63b7d4c034841fb681eae165e4c870fd9f871bb6d915f3e977d3",
+            "url": "/art/derived/stars/2026-09-08/system/white_dwarf-64.png?v=2f9646d6eaca"
+          },
+          {
+            "size": 128,
+            "file": "white_dwarf-128.png",
+            "bytes": 17420,
+            "sha256": "2a378d5ee0da0059ad9984f7f24c90719bfa802f330551490118ac311f7dcd68",
+            "url": "/art/derived/stars/2026-09-08/system/white_dwarf-128.png?v=2a378d5ee0da"
+          },
+          {
+            "size": 256,
+            "file": "white_dwarf-256.png",
+            "bytes": 63357,
+            "sha256": "9045383c5990800225a2e278a41c875c533ce07674458adbd2c7f267bcb25616",
+            "url": "/art/derived/stars/2026-09-08/system/white_dwarf-256.png?v=9045383c5990"
+          },
+          {
+            "size": 512,
+            "file": "white_dwarf-512.png",
+            "bytes": 238483,
+            "sha256": "efd2fc4e9d434ebcc1c088b42da1c2070844a32a8f6a5cf7c56a31bfc6fb5748",
+            "url": "/art/derived/stars/2026-09-08/system/white_dwarf-512.png?v=efd2fc4e9d43"
+          },
+          {
+            "size": 1024,
+            "file": "white_dwarf-1024.png",
+            "bytes": 948322,
+            "sha256": "b87def116e28f8b094b9ffcd7989b5caf65e86df6a452800fd56539170381e43",
+            "url": "/art/derived/stars/2026-09-08/system/white_dwarf-1024.png?v=b87def116e28"
+          },
+          {
+            "size": 1254,
+            "file": "white_dwarf-1254.png",
+            "bytes": 1120529,
+            "sha256": "99adb0fef6227401f0b0d800d42353afc1b33001003816cb877bc65837092843",
+            "url": "/art/derived/stars/2026-09-08/system/white_dwarf-1254.png?v=99adb0fef622"
+          }
+        ]
+      },
+      {
+        "slug": "neutron_star",
+        "title": "Neutron Star / Pulsar",
+        "source": "art-src/stars-2026-09-08/neutron_star.png",
+        "sourceSha256": "1430ef77d2b7c5c4924a676d84f66a66944fdf420fd76b832688040779ae519b",
+        "anchor": [
+          0.5219298245614035,
+          0.5043859649122807
+        ],
+        "visualRatio": 0.9178628389154705,
+        "levels": [
+          {
+            "size": 32,
+            "file": "neutron_star-32.png",
+            "bytes": 1190,
+            "sha256": "703c8d2ad8837e5df2ce84d335951d834f6dabda3febddeab57bb6670091ab88",
+            "url": "/art/derived/stars/2026-09-08/system/neutron_star-32.png?v=703c8d2ad883"
+          },
+          {
+            "size": 64,
+            "file": "neutron_star-64.png",
+            "bytes": 3807,
+            "sha256": "7cdcc75ddc692a916623e000340586c5e98d4b521df1333fa9f9a55a3846acb7",
+            "url": "/art/derived/stars/2026-09-08/system/neutron_star-64.png?v=7cdcc75ddc69"
+          },
+          {
+            "size": 128,
+            "file": "neutron_star-128.png",
+            "bytes": 13797,
+            "sha256": "0578b09c1e579301e6cc0c39a03ae7154731ab88f78ede1774c30b4846dc26fe",
+            "url": "/art/derived/stars/2026-09-08/system/neutron_star-128.png?v=0578b09c1e57"
+          },
+          {
+            "size": 256,
+            "file": "neutron_star-256.png",
+            "bytes": 51322,
+            "sha256": "8922e974610ed1751489edce8728b510dbe95e7f8083af46140f7ae3174dfc27",
+            "url": "/art/derived/stars/2026-09-08/system/neutron_star-256.png?v=8922e974610e"
+          },
+          {
+            "size": 512,
+            "file": "neutron_star-512.png",
+            "bytes": 186595,
+            "sha256": "4cfd8215a4b39b3f00d2ac877e69dd0a92abf72c7e0ec00581d1bc47ab923311",
+            "url": "/art/derived/stars/2026-09-08/system/neutron_star-512.png?v=4cfd8215a4b3"
+          },
+          {
+            "size": 1024,
+            "file": "neutron_star-1024.png",
+            "bytes": 722923,
+            "sha256": "b5c2b2c72e95137a32eef20dbf62deecb2f7718692135f199b7b507a818d3529",
+            "url": "/art/derived/stars/2026-09-08/system/neutron_star-1024.png?v=b5c2b2c72e95"
+          },
+          {
+            "size": 1254,
+            "file": "neutron_star-1254.png",
+            "bytes": 787777,
+            "sha256": "1430ef77d2b7c5c4924a676d84f66a66944fdf420fd76b832688040779ae519b",
+            "url": "/art/derived/stars/2026-09-08/system/neutron_star-1254.png?v=1430ef77d2b7"
+          }
+        ]
+      },
+      {
+        "slug": "binary_star",
+        "title": "Binary Star",
+        "source": "art-src/stars-2026-09-08/binary_star.png",
+        "sourceSha256": "dd0d311853072fed075ba693939a44c48a8ef5c20ba2d378332b36047578f5db",
+        "anchor": [
+          0.4996012759170654,
+          0.5035885167464115
+        ],
+        "visualRatio": 0.9274322169059012,
+        "levels": [
+          {
+            "size": 32,
+            "file": "binary_star-32.png",
+            "bytes": 2062,
+            "sha256": "00d598ec362dfc7f795548974d2d34aa091d5b9bd128252fc8f4e008a5b5fd21",
+            "url": "/art/derived/stars/2026-09-08/system/binary_star-32.png?v=00d598ec362d"
+          },
+          {
+            "size": 64,
+            "file": "binary_star-64.png",
+            "bytes": 7214,
+            "sha256": "afbb371677581759d60b107179a9d71e5f728cd87fde6c6f5ddd40f2f78c7666",
+            "url": "/art/derived/stars/2026-09-08/system/binary_star-64.png?v=afbb37167758"
+          },
+          {
+            "size": 128,
+            "file": "binary_star-128.png",
+            "bytes": 26793,
+            "sha256": "fb5bec289d3147826e57e53f39c9c3757b9e4bd4f1f5c423e1f76586418c27e4",
+            "url": "/art/derived/stars/2026-09-08/system/binary_star-128.png?v=fb5bec289d31"
+          },
+          {
+            "size": 256,
+            "file": "binary_star-256.png",
+            "bytes": 101379,
+            "sha256": "7f2c79ce2fd625d35138bf781544e9c8c0590bf429b6c67c08f561d18cc84d31",
+            "url": "/art/derived/stars/2026-09-08/system/binary_star-256.png?v=7f2c79ce2fd6"
+          },
+          {
+            "size": 512,
+            "file": "binary_star-512.png",
+            "bytes": 385112,
+            "sha256": "3e735b19f52be27d3d0689dad43d9cebb0af84b65633485918ef3442c67fa62d",
+            "url": "/art/derived/stars/2026-09-08/system/binary_star-512.png?v=3e735b19f52b"
+          },
+          {
+            "size": 1024,
+            "file": "binary_star-1024.png",
+            "bytes": 1505379,
+            "sha256": "2f7bbac09ce4e3796b1959261209bedce56b0ce466e575a7014774b9b6bc2aba",
+            "url": "/art/derived/stars/2026-09-08/system/binary_star-1024.png?v=2f7bbac09ce4"
+          },
+          {
+            "size": 1254,
+            "file": "binary_star-1254.png",
+            "bytes": 1642238,
+            "sha256": "dd0d311853072fed075ba693939a44c48a8ef5c20ba2d378332b36047578f5db",
+            "url": "/art/derived/stars/2026-09-08/system/binary_star-1254.png?v=dd0d31185307"
+          }
+        ]
+      },
+      {
+        "slug": "black_hole",
+        "title": "Black Hole",
+        "source": "art-src/stars-2026-09-08/black_hole.png",
+        "sourceSha256": "7e5c0e3468277554367057612eed7fabd55d308227e0952394a4b70e2c5fcb00",
+        "anchor": [
+          0.4996012759170654,
+          0.4748803827751196
+        ],
+        "visualRatio": 0.9625199362041468,
+        "levels": [
+          {
+            "size": 32,
+            "file": "black_hole-32.png",
+            "bytes": 1599,
+            "sha256": "3b98bcb568ed53e0b4c93ba170f404ef4dcd787b8bc23487ea154c082d9b10b4",
+            "url": "/art/derived/stars/2026-09-08/system/black_hole-32.png?v=3b98bcb568ed"
+          },
+          {
+            "size": 64,
+            "file": "black_hole-64.png",
+            "bytes": 5273,
+            "sha256": "cdfafc11c30e12995759b766f4278c4444f8b6f8b74038facdde78f1c48e7334",
+            "url": "/art/derived/stars/2026-09-08/system/black_hole-64.png?v=cdfafc11c30e"
+          },
+          {
+            "size": 128,
+            "file": "black_hole-128.png",
+            "bytes": 19351,
+            "sha256": "0bf3f71f3624c3463e82f310b1f2cb3a40439e5ba7db1c6148160a5533df8861",
+            "url": "/art/derived/stars/2026-09-08/system/black_hole-128.png?v=0bf3f71f3624"
+          },
+          {
+            "size": 256,
+            "file": "black_hole-256.png",
+            "bytes": 72635,
+            "sha256": "c8da568798448ce3e32d207538ee65929363c8fa5b8a22cab4fe573a80a34ff9",
+            "url": "/art/derived/stars/2026-09-08/system/black_hole-256.png?v=c8da56879844"
+          },
+          {
+            "size": 512,
+            "file": "black_hole-512.png",
+            "bytes": 271978,
+            "sha256": "4b153e22d27549efe3d3692fcd0058e4314005e79c7853321bb5a577f32c4ce9",
+            "url": "/art/derived/stars/2026-09-08/system/black_hole-512.png?v=4b153e22d275"
+          },
+          {
+            "size": 1024,
+            "file": "black_hole-1024.png",
+            "bytes": 1061946,
+            "sha256": "1e909ab6af0ffd6267f4887c8ba2492177e70ccb1fb430ab8d8c7babbcfab99b",
+            "url": "/art/derived/stars/2026-09-08/system/black_hole-1024.png?v=1e909ab6af0f"
+          },
+          {
+            "size": 1254,
+            "file": "black_hole-1254.png",
+            "bytes": 1133483,
+            "sha256": "7e5c0e3468277554367057612eed7fabd55d308227e0952394a4b70e2c5fcb00",
+            "url": "/art/derived/stars/2026-09-08/system/black_hole-1254.png?v=7e5c0e346827"
+          }
+        ]
+      },
+      {
+        "slug": "magnetar",
+        "title": "Magnetar",
+        "source": "art-src/stars-2026-09-08/magnetar.png",
+        "sourceSha256": "34c7b2a6ec8c58f9603ce05e2d88a34b5a34b23bf1051cb40a20ddfc62d5a1cf",
+        "anchor": [
+          0.5,
+          0.5023923444976076
+        ],
+        "visualRatio": 0.8452950558213717,
+        "levels": [
+          {
+            "size": 32,
+            "file": "magnetar-32.png",
+            "bytes": 2164,
+            "sha256": "3f1128f55f242d870f3bc2481edbee1519dcac61c99c5825e92efbe361c057ff",
+            "url": "/art/derived/stars/2026-09-08/system/magnetar-32.png?v=3f1128f55f24"
+          },
+          {
+            "size": 64,
+            "file": "magnetar-64.png",
+            "bytes": 7209,
+            "sha256": "cf84f7fb04cc966df1b5a4b8ff5e2741494730c9aee907ced0dfd1914f952681",
+            "url": "/art/derived/stars/2026-09-08/system/magnetar-64.png?v=cf84f7fb04cc"
+          },
+          {
+            "size": 128,
+            "file": "magnetar-128.png",
+            "bytes": 27029,
+            "sha256": "44d74f9eebf5a19834d81907751c14d14d501024d7c0e7f388c64aba8b7795ff",
+            "url": "/art/derived/stars/2026-09-08/system/magnetar-128.png?v=44d74f9eebf5"
+          },
+          {
+            "size": 256,
+            "file": "magnetar-256.png",
+            "bytes": 104031,
+            "sha256": "d2ecdf42020bf3bf644f4f32871f752f34414973f9fd55ac25734fe6fd3bb286",
+            "url": "/art/derived/stars/2026-09-08/system/magnetar-256.png?v=d2ecdf42020b"
+          },
+          {
+            "size": 512,
+            "file": "magnetar-512.png",
+            "bytes": 404242,
+            "sha256": "2eb49fff9142021026b7ed91017b202b8bcfdf6d338809f5124855b940fc519a",
+            "url": "/art/derived/stars/2026-09-08/system/magnetar-512.png?v=2eb49fff9142"
+          },
+          {
+            "size": 1024,
+            "file": "magnetar-1024.png",
+            "bytes": 1596350,
+            "sha256": "4af3f286cf3053a73764e70793142080042384314553a4ef0056775e21d56ae3",
+            "url": "/art/derived/stars/2026-09-08/system/magnetar-1024.png?v=4af3f286cf30"
+          },
+          {
+            "size": 1254,
+            "file": "magnetar-1254.png",
+            "bytes": 1746769,
+            "sha256": "34c7b2a6ec8c58f9603ce05e2d88a34b5a34b23bf1051cb40a20ddfc62d5a1cf",
+            "url": "/art/derived/stars/2026-09-08/system/magnetar-1254.png?v=34c7b2a6ec8c"
+          }
+        ]
+      }
+    ]
+  }
+}
