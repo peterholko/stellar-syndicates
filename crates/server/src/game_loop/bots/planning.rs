@@ -36,7 +36,24 @@ impl Observation {
             let deficit = (self.tank(fleet) - fleet.fuel.unwrap_or(0.0)).max(0.0);
             target += cycle + if fleet.docked.as_deref() == Some(self.home.system.id.to_string().as_str()) { deficit } else { 0.0 };
         }
-        target.max(20.0)
+        // Refining is a standing fuel customer too. Size its buffer to the
+        // replenishment lead time, with two coverage windows so the low-water
+        // reorder point still covers a full buy/book/delivery cycle. Otherwise
+        // unlocking a Smelter silently consumes the fleet's entire reserve.
+        let system = &self.home.system;
+        let processing = sim::research::mod_of(&self.research, sim::research::ModKey::ProcessingYield);
+        let industrial = system.bodies.iter().flat_map(|b| b.assignments.iter().map(move |(&kind, a)| {
+            let tier = b.tier(kind);
+            let Some(recipe) = sim::production::assigned_converter(kind, Some(a)) else { return 0.0; };
+            if tier == 0 { return 0.0; }
+            let fuel = recipe.inputs.iter().find(|(c, _)| *c == C::Fuel).map_or(0.0, |(_, n)| *n);
+            fuel * recipe.rate * sim::production::tier_throughput(tier)
+                * a.workers.min(tier) as f64 / tier as f64 * system.staffing_share() * processing
+        })).sum::<f64>();
+        let lead = sim::tca::TCA_DEPARTURE_PERIOD * 2.0
+            + home.distance(self.hub) / (H::Freighter.max_speed() * sim::transit::WARP_FACTOR)
+            + self.round_trip(self.hub) * 2.0 + 120.0;
+        (target + industrial * lead * 2.0).min(system.storage_cap() * 0.6).max(20.0)
     }
 
     pub(super) fn fuel_critical(&self) -> bool {
@@ -91,6 +108,7 @@ impl Bot {
         // (or rejection) before we release its reservation. Saves retain it.
         if p.account.is_some() { self.commitments.retain(|c| p.market_at < c.receiver_at); }
         self.surveys.retain(|fleet, _| p.own().any(|g| g.id == *fleet));
+        self.survey_started.retain(|id| self.surveys.contains_key(id));
         self.returns.retain(|id, trip| p.own().any(|g| g.id == *id
             && !(p.now - g.age >= trip.issued_at && g.docked.is_some()
                 && g.pos.distance(trip.destination) < sim::transit::HYPERLIMIT)));
@@ -128,7 +146,11 @@ impl Bot {
         let key = format!("fleet:{}", fleet.id);
         if !self.ready(&key, p.now) || self.returns.contains_key(&fleet.id) { return None; }
         let affordable = self.cash(p) >= p.tank(fleet) * p.price(C::Fuel) * 1.25;
-        let dest = p.refuel_port(fleet, affordable).or_else(|| {
+        let scout_port = (fleet.kind == H::Scout).then(|| p.sites.iter()
+            .map(|s| s.system.pos).chain(affordable.then_some(p.hub))
+            .filter(|pos| fleet.fuel.unwrap_or(0.0) >= p.scout_leg(fleet, fleet.pos, *pos))
+            .min_by(|a, b| fleet.pos.distance(*a).total_cmp(&fleet.pos.distance(*b)))).flatten();
+        let dest = scout_port.or_else(|| p.refuel_port(fleet, affordable)).or_else(|| {
             // An empty depot is still a safe berth. Do not leave a threatened
             // Scout investigating in the open just because its home needs fuel.
             p.sites.iter().map(|s| s.system.pos).filter(|pos| p.enough_fuel(fleet, *pos))
@@ -137,6 +159,14 @@ impl Bot {
         if fleet.docked.is_some() && fleet.pos.distance(dest) < sim::transit::HYPERLIMIT { return None; }
         self.wait(key, p, fleet.pos);
         self.returns.insert(fleet.id, ReturnTrip { destination: dest, issued_at: p.now });
+        if fleet.kind == H::Scout {
+            if fleet.vel.length_sq() > 1.0 {
+                let step = if fleet.pos.distance(dest) <= 4_000.0 { dest }
+                    else { fleet.pos + (dest - fleet.pos).normalized() * 2_000.0 };
+                return Some(Command::MoveShip { player_id: p.owner, ship_id: fleet.id, dest: step });
+            }
+            return self.scout_step(p, fleet, dest);
+        }
         self.status = "returning a low-fuel fleet to a reachable berth".into();
         Some(Command::MoveShip { player_id: p.owner, ship_id: fleet.id, dest })
     }

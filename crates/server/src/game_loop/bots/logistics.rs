@@ -137,8 +137,15 @@ impl Bot {
         // Sell arrived surplus already in the warehouse first: no rescue magic,
         // no assumed future revenue, and never liquidate earmarked imports.
         for (&good, &stored) in &account.warehouse {
-            if p.export_reserve(good, wanted).is_some() {
-                let reserve = (wanted.get(&good).copied().unwrap_or(0.0) - p.stock(good)).ceil().max(0.0) as u32;
+            let promised = p.own().any(|g| matches!(&g.industry, Some(FleetIndustry::Route { run })
+                if run.route.stops.iter().any(|s| s.port == FreightPort::Hub && s.load.contains_key(&good))));
+            let liquidation = self.recovering(p) && !matches!(good, C::Fuel | C::Provisions) && !promised;
+            if liquidation || p.export_reserve(good, wanted).is_some() {
+                // A future optional build is deferrable when bankrupt. Cargo
+                // promised to a live route, food and fuel are not liquidation.
+                let reserve = if liquidation { 0 } else {
+                    (wanted.get(&good).copied().unwrap_or(0.0) - p.stock(good)).ceil().max(0.0) as u32
+                };
                 let units = stored.saturating_sub(reserve).min(ticker.available_sell.get(&good).copied().unwrap_or(0));
                 if units > 0 {
                     self.wait("market".into(), p, p.hub);
@@ -158,7 +165,11 @@ impl Bot {
             let stored = account.warehouse.get(&good).copied().unwrap_or(0);
             let booked = need.min(stored).min(100);
             let own_pickup = p.own().any(|g| g.kind.is_player_freighter() && match &g.industry {
-                Some(FleetIndustry::Route { run }) => run.route.stops.iter().any(|s| s.port == FreightPort::Hub && s.load.contains_key(&good)),
+                Some(FleetIndustry::Route { run }) => run.route.stops.iter().any(|s| s.port == FreightPort::Hub && s.load.contains_key(&good))
+                    // A fuel-starved ship at home cannot fetch its own rescue
+                    // supplies. Its standing manifest is not inbound capacity.
+                    && !(g.docked.as_deref() == Some(home.to_string().as_str())
+                        && (run.hold.is_some() || !p.enough_fuel(g, p.hub))),
                 _ => g.docked.as_deref() == Some("hub") && !g.stalled,
             });
             let budget = self.spendable(p, essential);

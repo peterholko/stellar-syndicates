@@ -197,7 +197,14 @@ fn scouts_choose_public_unvisited_stars_and_retreat_from_visible_pirates() {
     pirate.kind = H::Raider;
     p.ghosts.push(pirate);
     bot.waits.retain(|key, _| !key.starts_with("fleet:"));
-    assert!(matches!(bot.decide(&p), Some(Command::MoveShip { dest, .. }) if dest == p.home.system.pos));
+    let retreat = bot.decide(&p);
+    let dest = match retreat {
+        Some(Command::MoveShip { dest, .. } | Command::JumpShip { dest, .. }) => dest,
+        _ => panic!("a threatened Scout must retreat, not continue investigating"),
+    };
+    assert!(dest.distance(p.home.system.pos) < p.ghosts[0].pos.distance(p.home.system.pos));
+    assert!(!bot.surveys.contains_key(&p.ghosts[0].id));
+    assert!(bot.avoided.contains_key(&target));
 }
 
 fn planning_picture() -> (Bot, Observation) {
@@ -230,7 +237,7 @@ fn spending_reservations_survive_saves_and_wait_for_account_light() {
     assert!(restored.commitments.is_empty());
     assert_eq!(restored.cash(&p), 19_000.0);
     let mut legacy = serde_json::to_value(&bot).unwrap();
-    for field in ["commitments", "returns", "avoided", "route_visits", "trade_cycles", "expansion", "status"] {
+    for field in ["commitments", "returns", "avoided", "route_visits", "trade_cycles", "expansion", "status", "survey_started"] {
         legacy.as_object_mut().unwrap().remove(field);
     }
     let old: Bot = serde_json::from_value(legacy).unwrap();
@@ -254,6 +261,21 @@ fn critical_fuel_precedes_project_materials_and_rescue_preserves_runway() {
     p.account.as_mut().unwrap().credits = 20_000.0;
     assert!(matches!(bot.rescue(&p), Some(Command::RequestFuelRescue { .. })));
     assert!(!bot.commitments.is_empty());
+}
+
+#[test]
+fn staffed_refining_reserves_its_fuel_delivery_lead_time() {
+    let (_, mut p) = planning_picture();
+    let before = p.fuel_target();
+    p.home.system.bodies[0].structures.insert(K::Smelter, 1);
+    p.home.system.bodies[0].assignments.insert(K::Smelter, sim::production::Assignment {
+        workers: 1, ..Default::default()
+    });
+    let refining = p.fuel_target();
+    assert!(refining > before * 1.5, "fuel reserve must cover industry as well as tanks: {before} -> {refining}");
+    assert!(refining <= p.home.system.storage_cap() * 0.6);
+    p.home.system.bodies[0].assignments.get_mut(&K::Smelter).unwrap().workers = 0;
+    assert_eq!(p.fuel_target(), before, "an idle line is not a fuel consumer");
 }
 
 #[test]
@@ -282,6 +304,15 @@ fn thirteen_credits_can_recover_through_a_small_paid_export() {
 }
 
 #[test]
+fn recovery_can_liquidate_optional_warehouse_goods_but_not_operating_fuel() {
+    let (mut bot, mut p) = planning_picture();
+    p.account.as_mut().unwrap().credits = 13.0;
+    p.account.as_mut().unwrap().warehouse = BTreeMap::from([(C::Fuel, 40), (C::Machinery, 10)]);
+    assert!(matches!(bot.market(&p, &BTreeMap::from([(C::Fuel, 40.0), (C::Machinery, 20.0)])),
+        Some(Command::MarketSell { commodity: C::Machinery, units: 10, .. })));
+}
+
+#[test]
 fn profitable_owned_routes_have_mixed_manifests_and_a_real_escort() {
     use sim::industry::FreightPort;
     let (mut bot, mut p) = planning_picture();
@@ -306,6 +337,25 @@ fn profitable_owned_routes_have_mixed_manifests_and_a_real_escort() {
 }
 
 #[test]
+fn a_dry_route_cannot_block_its_own_emergency_fuel_import() {
+    use sim::industry::{FleetIndustry, FreightPort, FreightRoute, FreightRun, RoutePhase, RouteStop};
+    let (mut bot, mut p) = planning_picture();
+    p.home.system.stockpile.insert(C::Fuel, 0.0);
+    p.account.as_mut().unwrap().warehouse.insert(C::Fuel, 50);
+    let f = p.ghosts.iter_mut().find(|g| g.kind.is_player_freighter()).unwrap();
+    f.fuel = Some(0.0);
+    f.industry = Some(FleetIndustry::Route { run: FreightRun {
+        route: FreightRoute { name: "Fuel circuit".into(), stops: vec![RouteStop {
+            port: FreightPort::Hub, load: BTreeMap::from([(C::Fuel, 50)]), unload: BTreeMap::new(), sell: false,
+        }], fuel_reserve: 1.0, escort: None, repeat: true },
+        stop: 0, phase: RoutePhase::Fuel, remaining_load: BTreeMap::new(), remaining_unload: BTreeMap::new(),
+        visits: 1, hold: Some("Waiting for fuel and arrival reserve".into()),
+    } });
+    assert!(matches!(bot.market(&p, &BTreeMap::from([(C::Fuel, 50.0)])),
+        Some(Command::BookFreightOut { commodity: C::Fuel, units: 50, .. })));
+}
+
+#[test]
 fn scouts_refuel_instead_of_retrying_unreachable_surveys() {
     let (mut bot, mut p) = planning_picture();
     let mut f = p.own().next().unwrap().clone();
@@ -317,7 +367,29 @@ fn scouts_refuel_instead_of_retrying_unreachable_surveys() {
     assert!(matches!(bot.scouts(&p), Some(Command::MoveShip { dest, .. }) if dest == p.home.system.pos));
     assert!(bot.returns.contains_key(&f.id));
     bot.waits.clear();
-    assert!(bot.scouts(&p).is_none(), "return intention must not be replaced by a fresh excursion on an old view");
+    assert!(!matches!(bot.scouts(&p), Some(Command::SurveySystem { .. })), "return intention must not be replaced by a fresh excursion on an old view");
+}
+
+#[test]
+fn scouts_stage_jumps_outside_public_wells_and_wait_for_arrival_light() {
+    let (mut bot, mut p) = planning_picture();
+    let mut f = p.own().next().unwrap().clone();
+    f.kind = H::Scout; f.composition = Some(vec![crate::protocol::CompCount { kind: H::Scout, count: 1 }]);
+    f.fuel_capacity = Some(2.8); f.fuel = Some(2.8); f.vel = Vec2::ZERO;
+    let far = p.home.system.pos + Vec2::new(180_000.0, 0.0);
+    let target = EntityId(9999);
+    p.chart = vec![(p.home.system.id, p.home.system.pos), (target, far)];
+    p.ghosts = vec![f.clone()];
+    assert!(p.leg(&f, f.pos, far, 0) * 2.0 > 2.8);
+    let Some(Command::MoveShip { dest: staging, .. }) = bot.scouts(&p) else { panic!("leave the well before jumping") };
+    assert!(staging.distance(p.home.system.pos) > sim::transit::HYPERLIMIT);
+    assert!(bot.scouts(&p).is_none(), "do not act on an unchanged report during the command round trip");
+    p.now += 60.0;
+    p.ghosts[0].pos = staging; p.ghosts[0].docked = None;
+    let Some(Command::JumpShip { dest, .. }) = bot.scouts(&p) else { panic!("use normal jump capability to reach the frontier") };
+    assert!(dest.distance(staging) <= sim::transit::JUMP_RANGE);
+    assert!(p.chart.iter().all(|(_, point)| point.distance(dest) > sim::transit::HYPERLIMIT));
+    assert_eq!(bot.surveys.get(&f.id), Some(&target));
 }
 
 #[test]
@@ -365,6 +437,14 @@ fn multi_seed_bot_balancing_report() {
                     p.own().filter(|g| matches!(g.industry, Some(sim::industry::FleetIndustry::Route { .. }))).count(),
                     p.own().filter(|g| g.stalled).count(), p.home.system.tier(K::MiningComplex), p.home.system.tier(K::Shipyard),
                     p.home.system.tier(K::Academy), p.research.completed.len(), bot.commands_sent, bot.status);
+                if minute == minutes {
+                    for scout in p.own().filter(|f| f.kind == H::Scout) {
+                        eprintln!("scout={} bot={} fuel={:?}/{:?} home_distance={:.0} speed={:.0} dock={:?} progress={:?} goal={:?} returning={:?} avoided={} threatened={}",
+                            scout.id, bot.slot + 1, scout.fuel, scout.fuel_capacity, scout.pos.distance(p.home.system.pos),
+                            scout.vel.length(), scout.docked, scout.survey_progress, bot.surveys.get(&scout.id),
+                            bot.returns.get(&scout.id), bot.avoided.len(), p.threatened(scout.pos));
+                    }
+                }
             }
         }
         for (&owner, bot) in &g.bots {

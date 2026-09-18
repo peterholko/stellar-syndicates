@@ -35,6 +35,8 @@ pub(super) struct Bot {
     /// issued intentions, not reads of the authoritative pending-order queue.
     waits: BTreeMap<String, f64>,
     surveys: BTreeMap<EntityId, EntityId>,
+    #[serde(default)]
+    survey_started: BTreeSet<EntityId>,
     pub(super) commands_sent: u64,
     #[serde(default)]
     commitments: Vec<Commitment>,
@@ -115,7 +117,7 @@ impl GameLoop {
             let owner = PlayerId(BOT_ID_BASE + slot as u64);
             self.bots.insert(owner, Bot {
                 slot, next_think: self.world.time + 1.0 + slot as f64 * 0.43,
-                waits: BTreeMap::new(), surveys: BTreeMap::new(), commands_sent: 0,
+                waits: BTreeMap::new(), surveys: BTreeMap::new(), survey_started: BTreeSet::new(), commands_sent: 0,
                 commitments: Vec::new(), returns: BTreeMap::new(), avoided: BTreeMap::new(),
                 route_visits: BTreeMap::new(), trade_cycles: 0, expansion: None, status: String::new(),
             });
@@ -346,6 +348,8 @@ impl Bot {
         // temperaments still prioritize science/trade, but every plan pays its
         // operating reserve. Replacement hulls and the starter mine come first.
         p.structure(K::MiningComplex, 1)
+            .or_else(|| (p.fuel_target() >= p.home.system.storage_cap() * 0.6 - 1e-9)
+                .then(|| p.structure(K::Warehouse, p.home.system.tier(K::Warehouse) + 1)).flatten())
             .or_else(|| p.structure(K::Shipyard, 1))
             .or_else(|| p.ship(H::TinyFreighter, 1))
             .or_else(|| p.structure(K::Academy, 1))
@@ -404,11 +408,17 @@ impl Bot {
         }
         if self.ready("research", p.now) && p.home.system.tier(K::Academy) > 0
             && p.research.active.is_none() && p.research.queue.is_empty() && !self.recovering(p) {
-            let bottleneck = if p.fuel_critical() { "prop_efficient_burns" }
+            let raw_trade_loses = p.home.system.tier(K::Smelter) == 0 && p.own()
+                .filter(|f| f.kind.is_player_freighter()).all(|f|
+                    p.route_margin(f, &p.exports(&wanted, p.safe_load(f, p.home.system.pos, p.hub)), &BTreeMap::new(), None) <= 0.0);
+            let bottleneck = if p.fuel_critical() { "prop_bunkerage" }
+                else if raw_trade_loses { "mat_enrichment" }
                 else if p.own().all(|g| !g.kind.is_player_freighter() || capacity(g) <= 50) { "prop_freight_frames" }
                 else if self.slot % 4 == 2 { "comp_sensor_gain" } else { "mat_ore_recovery" };
-            let priorities = [bottleneck, "prop_efficient_burns", "prop_bunkerage", "prop_freight_frames",
-                "mat_enrichment", "mat_ore_recovery", "prop_drive_tuning", "comp_sensor_gain", "weap_fire_control"];
+            // Unlock the missing capability before committing a young Academy
+            // to an eight-hour Tier II efficiency programme.
+            let priorities = [bottleneck, "mat_enrichment", "prop_bunkerage", "prop_freight_frames",
+                "prop_efficient_burns", "mat_ore_recovery", "prop_drive_tuning", "comp_sensor_gain", "weap_fire_control"];
             if let Some(id) = priorities.iter().find(|id| p.available_research.iter().any(|s| s == **id)) {
                 self.wait("research".into(), p, p.home.system.pos);
                 self.status = "researching the reported operating bottleneck".into();

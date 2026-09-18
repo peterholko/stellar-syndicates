@@ -1,6 +1,59 @@
 use super::*;
 
+impl Observation {
+    pub(super) fn scout_leg(&self, fleet: &GhostView, from: Vec2, to: Vec2) -> f64 {
+        let distance = from.distance(to);
+        if distance <= 4_000.0 { return self.leg(fleet, from, to, 0); }
+        let dir = (to - from).normalized();
+        // Pay ordinary impulse/warp for both well approaches and the existing
+        // jump tariff between them. Playtest jumps are free for EVERY player;
+        // restoring the global tariff automatically changes this budget too.
+        self.leg(fleet, from, from + dir * 2_000.0, 0)
+            + self.leg(fleet, to - dir * 2_000.0, to, 0)
+            + sim::fuel::fuel_cost(distance, hull_mass(fleet)) / sim::transit::JUMP_FUEL_FACTOR
+                * sim::research::mod_of(&self.research, sim::research::ModKey::FuelConsumption) * 1.15
+    }
+
+    fn outside_wells(&self, pos: Vec2) -> bool {
+        self.chart.iter().map(|(_, p)| *p).chain(std::iter::once(self.hub))
+            .all(|well| well.distance(pos) > sim::transit::HYPERLIMIT + 100.0)
+    }
+}
+
 impl Bot {
+    pub(super) fn scout_step(&mut self, p: &Observation, fleet: &GhostView, dest: Vec2) -> Option<Command> {
+        if fleet.vel.length_sq() > 1.0 || fleet.jump_spool.is_some() || fleet.jump_presumed.is_some() { return None; }
+        let delta = dest - fleet.pos;
+        let distance = delta.length();
+        let direction = delta.normalized();
+        let key = format!("fleet:{}", fleet.id);
+        let command = if distance <= 4_000.0 {
+            Command::MoveShip { player_id: p.owner, ship_id: fleet.id, dest }
+        } else if !p.outside_wells(fleet.pos) {
+            let point = fleet.pos + direction * 2_000.0;
+            if !p.outside_wells(point) { return None; }
+            Command::MoveShip { player_id: p.owner, ship_id: fleet.id, dest: point }
+        } else {
+            // Stop outside the target well, never spool inside one. The public
+            // base range is conservative even in a range-extending nebula.
+            let span = (distance - 2_000.0).min(sim::transit::JUMP_RANGE * 0.9);
+            let point = [0.0_f64, 0.25, -0.25, 0.5, -0.5].into_iter().map(|angle| {
+                let dir = Vec2::new(direction.x * angle.cos() - direction.y * angle.sin(),
+                    direction.x * angle.sin() + direction.y * angle.cos());
+                fleet.pos + dir * span
+            }).find(|point| p.outside_wells(*point)
+                && (self.returns.contains_key(&fleet.id) || !p.threatened(*point)))?;
+            Command::JumpShip { player_id: p.owner, ship_id: fleet.id, dest: point }
+        };
+        // Wait through spool AND the destination report; an owner-only presumed
+        // bookmark is not arrival evidence for issuing another jump.
+        let step = match &command { Command::MoveShip { dest, .. } | Command::JumpShip { dest, .. } => *dest, _ => unreachable!() };
+        self.waits.insert(key, p.now + p.round_trip(fleet.pos).max(p.round_trip(step))
+            + sim::transit::JUMP_SPOOL_S + THINK_SECONDS);
+        self.status = "staging a Scout expedition through observed jump waypoints".into();
+        Some(command)
+    }
+
     fn reachable_prospect(p: &Observation, s: &Prospect) -> bool {
         let tank = H::Colony.hull_mass() * sim::fuel::FUEL_PER_HULL_MASS
             * sim::research::mod_of(&p.research, sim::research::ModKey::FuelCapacity);
@@ -12,16 +65,39 @@ impl Bot {
             if !self.ready(&key, p.now) || p.fighting.contains(&scout.id) { continue; }
             if p.threatened(scout.pos) || scout.damage.unwrap_or(0.0) > 0.35 {
                 if let Some(target) = self.surveys.remove(&scout.id) {
+                    self.survey_started.remove(&scout.id);
                     self.avoided.insert(target, p.now + 600.0);
                 }
                 if scout.pos.distance(p.home.system.pos) > sim::transit::HYPERLIMIT {
+                    if let Some(trip) = self.returns.get(&scout.id) {
+                        let dest = trip.destination;
+                        if let Some(cmd) = self.scout_step(p, scout, dest) { return Some(cmd); }
+                        continue;
+                    }
                     if let Some(cmd) = self.return_for_fuel(p, scout) { return Some(cmd); }
                 }
                 continue;
             }
-            if self.returns.contains_key(&scout.id) { continue; }
+            if let Some(trip) = self.returns.get(&scout.id) {
+                let dest = trip.destination;
+                if let Some(cmd) = self.scout_step(p, scout, dest) { return Some(cmd); }
+                continue;
+            }
             if let Some(&target) = self.surveys.get(&scout.id) {
                 if !p.surveyed.contains(&target) {
+                    if !self.survey_started.contains(&scout.id) {
+                        if let Some((_, pos)) = p.chart.iter().find(|(id, _)| *id == target) {
+                            if scout.pos.distance(*pos) > 4_000.0 {
+                                if let Some(cmd) = self.scout_step(p, scout, *pos) { return Some(cmd); }
+                                continue;
+                            }
+                            if scout.vel.length_sq() > 1.0 || scout.jump_spool.is_some() || scout.jump_presumed.is_some() { continue; }
+                            self.survey_started.insert(scout.id);
+                            self.wait(key, p, scout.pos);
+                            self.waits.insert(format!("survey:{}", scout.id), p.now + p.round_trip(*pos) + 600.0);
+                            return Some(Command::SurveySystem { player_id: p.owner, fleet_id: scout.id, system_id: target });
+                        }
+                    }
                     // An idle old sighting is not a failed survey. Wait for the
                     // round trip, travel, investigation and its report. A real
                     // timeout backs off instead of reissuing the same mission.
@@ -29,12 +105,13 @@ impl Bot {
                     self.avoided.insert(target, p.now + 600.0);
                 }
                 self.surveys.remove(&scout.id);
+                self.survey_started.remove(&scout.id);
             } else if scout.survey_progress.is_some() || scout.vel.length_sq() > 1.0 { continue; }
             let target = p.chart.iter().filter(|(id, pos)| !p.surveyed.contains(id)
                 && !self.avoided.contains_key(id) && !self.surveys.values().any(|other| other == id)
                 && !p.threatened(*pos)
-                && scout.fuel.unwrap_or(0.0) >= p.leg(scout, scout.pos, *pos, 0)
-                    + p.leg(scout, *pos, p.home.system.pos, 0) + p.arrival_reserve(scout))
+                && scout.fuel.unwrap_or(0.0) >= p.scout_leg(scout, scout.pos, *pos)
+                    + p.scout_leg(scout, *pos, p.home.system.pos) + p.arrival_reserve(scout))
                 .min_by(|(_, a), (_, b)| scout.pos.distance(*a).total_cmp(&scout.pos.distance(*b)));
             if let Some(&(system_id, pos)) = target {
                 // A partial berth fill is allowed only if the whole excursion
@@ -43,6 +120,8 @@ impl Bot {
                 self.waits.insert(format!("survey:{}", scout.id), p.now + p.round_trip(pos)
                     + scout.pos.distance(pos) / H::Scout.max_speed() + 600.0);
                 self.surveys.insert(scout.id, system_id);
+                if scout.pos.distance(pos) > 4_000.0 { return self.scout_step(p, scout, pos); }
+                self.survey_started.insert(scout.id);
                 self.status = "surveying an unvisited star with fuel to return".into();
                 return Some(Command::SurveySystem { player_id: p.owner, fleet_id: scout.id, system_id });
             }
