@@ -8,6 +8,16 @@ use serde::{Deserialize, Serialize};
 use sim::{BuildKind, Commodity as C, EntityId, ShipKind as H, StructureKind as K, Vec2};
 use std::collections::BTreeSet;
 
+mod planning;
+mod logistics;
+mod expeditions;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Commitment { amount: f64, receiver_at: f64 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ReturnTrip { destination: Vec2, issued_at: f64 }
+
 // Accounts use positive PostgreSQL i64 ids. This separate, non-sentinel namespace
 // cannot collide with an authenticated account or impersonate an existing player.
 const BOT_ID_BASE: u64 = 0xB070_0000_0000_0000;
@@ -26,6 +36,20 @@ pub(super) struct Bot {
     waits: BTreeMap<String, f64>,
     surveys: BTreeMap<EntityId, EntityId>,
     pub(super) commands_sent: u64,
+    #[serde(default)]
+    commitments: Vec<Commitment>,
+    #[serde(default)]
+    returns: BTreeMap<EntityId, ReturnTrip>,
+    #[serde(default)]
+    avoided: BTreeMap<EntityId, f64>,
+    #[serde(default)]
+    route_visits: BTreeMap<EntityId, u32>,
+    #[serde(default)]
+    trade_cycles: u64,
+    #[serde(default)]
+    expansion: Option<EntityId>,
+    #[serde(default)]
+    status: String,
 }
 
 impl Bot {
@@ -33,9 +57,13 @@ impl Bot {
         owner == PlayerId(BOT_ID_BASE + self.slot as u64)
             && self.next_think.is_finite() && self.next_think >= 0.0
             && now.is_finite() && self.waits.values().all(|t| t.is_finite())
+            && self.commitments.iter().all(|c| c.amount.is_finite() && c.amount >= 0.0 && c.receiver_at.is_finite())
+            && self.returns.values().all(|r| r.destination.x.is_finite() && r.destination.y.is_finite() && r.issued_at.is_finite())
+            && self.avoided.values().all(|t| t.is_finite())
     }
 }
 
+#[derive(Clone)]
 struct Observation {
     owner: PlayerId,
     now: f64,
@@ -43,9 +71,13 @@ struct Observation {
     hub: Vec2,
     c: f64,
     home: sim::information::SiteReport,
+    sites: Vec<sim::information::SiteReport>,
+    prospects: Vec<Prospect>,
     ghosts: Vec<GhostView>,
     fighting: BTreeSet<EntityId>,
     account: Option<MarketAccountSample>,
+    market_at: f64,
+    exported: bool,
     ticker: Option<view::MarketTickerSample>,
     research: sim::research::ResearchState,
     available_research: Vec<String>,
@@ -54,6 +86,9 @@ struct Observation {
     /// The public chart contains positions, NOT unexplored resources/ownership.
     chart: Vec<(EntityId, Vec2)>,
 }
+
+#[derive(Clone)]
+struct Prospect { id: EntityId, pos: Vec2, score: f64 }
 
 #[derive(Clone, Copy)]
 struct Project {
@@ -81,6 +116,8 @@ impl GameLoop {
             self.bots.insert(owner, Bot {
                 slot, next_think: self.world.time + 1.0 + slot as f64 * 0.43,
                 waits: BTreeMap::new(), surveys: BTreeMap::new(), commands_sent: 0,
+                commitments: Vec::new(), returns: BTreeMap::new(), avoided: BTreeMap::new(),
+                route_visits: BTreeMap::new(), trade_cycles: 0, expansion: None, status: String::new(),
             });
             self.pending.push(Command::AddPlayer {
                 id: owner,
@@ -100,8 +137,19 @@ impl GameLoop {
         let c = self.world.config.c;
         let cc = corp.command_center;
         let home_id = corp.home_system?;
-        let home = self.world.information.owned_sites(owner, cc, c, now)
-            .find(|report| report.system.id == home_id)?.clone();
+        let sites: Vec<_> = self.world.information.owned_sites(owner, cc, c, now).cloned().collect();
+        let home = sites.iter().find(|report| report.system.id == home_id)?.clone();
+        // Only geology already surveyed by this corporation may inform a colony
+        // choice. Ownership is also an ARRIVED report, never current world truth.
+        let prospects = corp.surveyed.iter().filter_map(|id| {
+            let report = self.world.information.site(*id, cc, c, now)?;
+            let s = &report.system;
+            if s.owner.is_some() || !s.bodies.iter().any(|b| b.habitable) { return None; }
+            let score = s.bodies.iter().flat_map(|b| &b.deposits).map(|d|
+                d.richness * if d.resource == C::Volatiles { 2.0 } else if d.resource.is_ore() { 1.5 } else { 1.0 })
+                .sum::<f64>();
+            Some(Prospect { id: *id, pos: s.pos, score })
+        }).collect();
         let mut fighting = BTreeSet::new();
         for battle in self.world.active_battles() {
             let delay = sim::transit::delay(battle.pos, cc, c);
@@ -124,8 +172,10 @@ impl GameLoop {
         ghosts.sort_by_key(|g| g.id);
         let market_time = now - sim::transit::delay(self.world.hub, cc, c);
         Some(Observation {
-            owner, now, cc, hub: self.world.hub, c, home, ghosts, fighting,
+            owner, now, cc, hub: self.world.hub, c, home, sites, prospects, ghosts, fighting,
             account: self.market_accounts.at(owner, market_time).cloned(),
+            market_at: market_time,
+            exported: corp.founding.sale_report_at.is_some(),
             ticker: self.prices.at(market_time).cloned(),
             // Completed research and arrived survey knowledge are CC ledgers,
             // exactly like the human research panel; metrics use arrived sites.
@@ -148,10 +198,14 @@ impl GameLoop {
             let bot = self.bots.get_mut(&owner).unwrap();
             bot.next_think = self.world.time + THINK_SECONDS + (bot.slot % 3) as f64 * 0.37;
             let Some(picture) = picture else { continue; };
+            let old_status = bot.status.clone();
             if let Some(command) = bot.decide(&picture) {
                 debug!(%owner, ?command, "bot issued command");
                 bot.commands_sent += 1;
                 self.pending.push(command);
+            }
+            if bot.status != old_status {
+                info!(%owner, reason = %bot.status, "bot decision");
             }
             // An offline bot consumes the same compliance evidence as a human
             // View. No independent timer can confirm an unseen outcome.
@@ -182,33 +236,9 @@ impl Observation {
     /// empty-hull estimate can strand a fully loaded Tiny on its opening run.
     /// Merge well intersections so overlapping public wells aren't charged twice.
     fn fuel_per_mass(&self, from: Vec2, to: Vec2) -> f64 {
-        let distance = from.distance(to);
-        if distance < 1.0 { return 0.0; }
-        let direction = (to - from) * (1.0 / distance);
-        let radius = sim::transit::HYPERLIMIT;
-        let mut intervals = Vec::new();
-        for (_, center) in &self.chart {
-            let offset = *center - from;
-            let along = offset.dot(direction);
-            let across_sq = (offset.length_sq() - along * along).max(0.0);
-            if across_sq < radius * radius {
-                let half = (radius * radius - across_sq).sqrt();
-                let start = (along - half).max(0.0);
-                let end = (along + half).min(distance);
-                if end > start { intervals.push((start, end)); }
-            }
-        }
-        intervals.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let mut inside = 0.0;
-        let mut end: f64 = 0.0;
-        for &(a, b) in &intervals {
-            inside += (b - a.max(end)).max(0.0);
-            end = end.max(b);
-        }
-        let engine_distance = (distance - inside) / sim::transit::WARP_FACTOR + inside
-            + 250.0 * (1 + intervals.len()) as f64;
-        sim::fuel::fuel_cost(engine_distance, 1.0)
-            * sim::research::mod_of(&self.research, sim::research::ModKey::FuelConsumption) * 1.08
+        sim::fuel::route_estimate(from, to, 1.0,
+            sim::research::mod_of(&self.research, sim::research::ModKey::FuelConsumption),
+            self.chart.iter().map(|(_, p)| *p).chain(std::iter::once(self.hub)))
     }
 
     fn freight_limit(&self, fleet: &GhostView, dest: Vec2) -> u32 {
@@ -312,287 +342,80 @@ impl Bot {
     }
 
     fn project(&self, p: &Observation) -> Option<Project> {
-        // Distinct opening priorities, shared legal recipes. A lost freighter
-        // is replaced before optional expansion; no loss earns a free hull.
+        // Fix the binding bottleneck before adding more idle hulls. Different
+        // temperaments still prioritize science/trade, but every plan pays its
+        // operating reserve. Replacement hulls and the starter mine come first.
         p.structure(K::MiningComplex, 1)
             .or_else(|| p.structure(K::Shipyard, 1))
             .or_else(|| p.ship(H::TinyFreighter, 1))
-            .or_else(|| (self.slot % 4 == 0).then(|| p.ship(H::TinyFreighter, 2)).flatten())
             .or_else(|| p.structure(K::Academy, 1))
-            .or_else(|| (self.slot % 4 == 2).then(|| p.ship(H::Scout, 1)).flatten())
-            .or_else(|| p.ship(H::TinyFreighter, 2))
             .or_else(|| p.ship(H::Scout, 1))
             .or_else(|| p.structure(K::Smelter, 1))
-            .or_else(|| p.structure(K::Shipyard, 2))
-            .or_else(|| p.ship(H::Raider, 2))
+            .or_else(|| (p.fuel_critical()).then(|| p.structure(K::VolatileHarvester, 1)).flatten())
+            .or_else(|| (p.home.system.tier(K::VolatileHarvester) > 0).then(|| p.structure(K::FuelRefinery, 1)).flatten())
+            .or_else(|| (self.expansion.is_some()).then(|| p.ship(H::Colony, 1)).flatten())
             .or_else(|| p.ship(H::SmallFreighter, 1))
+            .or_else(|| (p.own().filter(|g| g.kind.is_player_freighter()).count() < 2
+                && p.own().any(|f| f.kind.is_player_freighter()
+                    && p.route_margin(f, &p.exports(&BTreeMap::new(), p.safe_load(f, p.home.system.pos, p.hub)), &BTreeMap::new(), None) > 0.0))
+                .then(|| p.ship(H::TinyFreighter, 2)).flatten())
             .or_else(|| p.structure(K::Warehouse, 2))
             .or_else(|| p.structure(K::MiningComplex, 2))
+            .or_else(|| p.structure(K::Shipyard, 2))
             .or_else(|| p.structure(K::Habitat, 2))
     }
 
     fn desired_stock(&self, p: &Observation, project: Option<Project>) -> BTreeMap<C, f64> {
-        let mut wanted = project.map(|project| p.project_costs(project)).unwrap_or_default();
-        // Keep food and a refuelling runway, then buy only the next project's
-        // shortfall. The actual goods must come home in a real mixed hold.
-        // Low/high water marks prevent a trickle of consumption monopolising
-        // every market decision with one-unit top-ups ahead of build materials.
-        wanted.insert(C::Fuel, if p.stock(C::Fuel) < 40.0 { 100.0 } else { 40.0 });
-        wanted.insert(C::Provisions, if p.stock(C::Provisions) < 10.0 { 40.0 } else { 20.0 });
-        if p.home.system.tier(K::Academy) > 0 {
-            if let Some(programme) = p.research.active.as_deref().and_then(sim::research::programme) {
-                for (good, rate) in sim::research::basket(programme.field, programme.tier) {
-                    *wanted.entry(good).or_default() += (rate * 600.0).ceil();
-                }
+        let mut wanted = project.map(|goal| p.project_costs(goal)).unwrap_or_default();
+        let fuel = p.fuel_target();
+        *wanted.entry(C::Fuel).or_default() += if p.fuel_critical() { fuel } else { fuel * 0.5 };
+        *wanted.entry(C::Provisions).or_default() += if p.stock(C::Provisions) < 10.0 { 40.0 } else { 20.0 };
+        if let Some(programme) = p.research.active.as_deref().and_then(sim::research::programme) {
+            for (good, rate) in sim::research::basket(programme.field, programme.tier) {
+                *wanted.entry(good).or_default() += (rate * 600.0).ceil();
             }
         }
         wanted
     }
 
     fn decide(&mut self, p: &Observation) -> Option<Command> {
-        self.waits.retain(|_, until| *until > p.now);
-        self.surveys.retain(|fleet, _| p.own().any(|g| g.id == *fleet));
-        let player_id = p.owner;
-        let system_id = p.home.system.id;
-        let home = p.home.system.pos;
-        // Rescue any reported stranded hull, including its escort; the normal
-        // paid Authority service travels physically and may itself be delayed.
-        for fleet in p.own().filter(|g| g.stalled && !g.rescue_inbound) {
-            let key = format!("fleet:{}", fleet.id);
-            if self.ready(&key, p.now) && self.ready("market", p.now)
-                && p.account.as_ref().is_some_and(|a| a.credits > 2_500.0) {
-                self.wait(key, p, fleet.pos);
-                self.wait("market".into(), p, p.hub);
-                return Some(Command::RequestFuelRescue { player_id, fleet_id: fleet.id });
-            }
-        }
-        // Restore staffing after construction. Spread the initial two workforce
-        // across food/extraction as the normal shared-workforce rules allow.
-        // Idle shipyards release their worker instead of permanently diluting mines.
-        if self.ready("staff", p.now) {
-            for body in &p.home.system.bodies {
-                for (&kind, &tier) in &body.structures {
-                    let wanted = match kind {
-                        K::MiningComplex | K::Bioharvester | K::Agroplex | K::Academy | K::Smelter => 1,
-                        K::Shipyard => u32::from(p.home.builds.iter().any(|job|
-                            job.body_id == body.id && matches!(job.what, BuildKind::Ship { .. }))),
-                        _ => continue,
-                    };
-                    let assigned = body.assignments.get(&kind).map_or(0, |a| a.workers);
-                    if tier > 0 && assigned != wanted {
-                        self.wait("staff".into(), p, home);
-                        return Some(Command::SetAssignment { player_id, system_id, structure: kind,
-                            workers: wanted, body_id: Some(body.id), specialists: BTreeMap::new(), refining_ore: None });
-                    }
-                }
-            }
-        }
-
-        // Guard orders are persistent. Confirm the escort assignment in the
-        // delayed picture BEFORE sending the first laden freighter into danger.
-        let freighters: Vec<_> = p.own().filter(|g| g.kind.is_player_freighter()).collect();
-        let guards: Vec<_> = p.own().filter(|g| g.kind == H::Raider).collect();
-        for (i, guard) in guards.iter().enumerate() {
-            let key = format!("fleet:{}", guard.id);
-            if !self.ready(&key, p.now) || p.fighting.contains(&guard.id) || guard.stalled { continue; }
-            if let Some(target) = freighters.get(i) {
-                if guard.guard_target != Some(target.id) {
-                    self.wait(key, p, guard.pos);
-                    return Some(Command::GuardFleet { player_id, interceptor_id: guard.id, target_id: target.id });
-                }
-            } else if guard.defend_system.is_none() {
-                self.wait(key, p, guard.pos);
-                return Some(Command::DefendSystem { player_id, fleet_id: guard.id, system_id, pursuit_radius: 20_000.0 });
-            }
-        }
-
+        self.refresh(p);
+        if let Some(cmd) = self.rescue(p).or_else(|| self.staff(p)).or_else(|| self.guards(p))
+            .or_else(|| self.scouts(p)).or_else(|| self.colonies(p)) { return Some(cmd); }
         let project = self.project(p);
+        let wanted = self.desired_stock(p, project);
+        if let Some(cmd) = self.routes(p, &wanted) { return Some(cmd); }
         if self.ready("build", p.now) && p.home.builds.is_empty() {
             if let Some(project) = project {
-                if p.project_costs(project).iter().all(|(c, need)| p.stock(*c) + 1e-9 >= *need) {
-                    self.wait("build".into(), p, home);
+                let essential = matches!(project.what, BuildKind::Upgrade { upgrade: K::MiningComplex });
+                if (essential || !self.recovering(p) && !p.fuel_critical())
+                    && p.project_costs(project).iter().all(|(c, n)| p.stock(*c) + 1e-9 >= *n) {
+                    self.wait("build".into(), p, p.home.system.pos);
+                    self.status = "building the next funded bottleneck improvement".into();
                     return Some(match project.what {
                         BuildKind::Upgrade { upgrade } => Command::DevelopSystem {
-                            player_id, system_id, upgrade, body_id: Some(project.body) },
+                            player_id: p.owner, system_id: p.home.system.id, upgrade, body_id: Some(project.body) },
                         BuildKind::Ship { ship } => Command::BuildShip {
-                            player_id, system_id, ship_kind: ship, join: None, loadout: Default::default() },
+                            player_id: p.owner, system_id: p.home.system.id, ship_kind: ship, join: None, loadout: Default::default() },
                         _ => unreachable!(),
                     });
                 }
             }
         }
         if self.ready("research", p.now) && p.home.system.tier(K::Academy) > 0
-            && p.research.active.is_none() && p.research.queue.is_empty() {
-            let first = match self.slot % 4 {
-                0 => "prop_freight_frames", 1 => "mat_enrichment",
-                2 => "prop_drive_tuning", _ => "mat_ore_recovery",
-            };
-            let priorities = [first, "mat_enrichment", "prop_freight_frames", "mat_ore_recovery",
-                "prop_bunkerage", "prop_efficient_burns", "comp_sensor_gain", "weap_fire_control"];
+            && p.research.active.is_none() && p.research.queue.is_empty() && !self.recovering(p) {
+            let bottleneck = if p.fuel_critical() { "prop_efficient_burns" }
+                else if p.own().all(|g| !g.kind.is_player_freighter() || capacity(g) <= 50) { "prop_freight_frames" }
+                else if self.slot % 4 == 2 { "comp_sensor_gain" } else { "mat_ore_recovery" };
+            let priorities = [bottleneck, "prop_efficient_burns", "prop_bunkerage", "prop_freight_frames",
+                "mat_enrichment", "mat_ore_recovery", "prop_drive_tuning", "comp_sensor_gain", "weap_fire_control"];
             if let Some(id) = priorities.iter().find(|id| p.available_research.iter().any(|s| s == **id)) {
-                self.wait("research".into(), p, home);
-                return Some(Command::SetResearchQueue { player_id, queue: vec![(*id).into()] });
+                self.wait("research".into(), p, p.home.system.pos);
+                self.status = "researching the reported operating bottleneck".into();
+                return Some(Command::SetResearchQueue { player_id: p.owner, queue: vec![(*id).into()] });
             }
         }
-
-        let wanted = self.desired_stock(p, project);
-        // Reserve known cargo already on its way home before placing another
-        // buy. One market decision at a time prevents overspending a stale wallet.
-        if self.ready("market", p.now) {
-            if let (Some(account), Some(ticker)) = (&p.account, &p.ticker) {
-                let budget = (account.credits - 300.0).max(0.0);
-                // A Tiny cannot carry all colony production. Book a normal,
-                // paid common carrier for surplus rather than letting a full
-                // stockpile deadlock returning imports. Keep a load for our hull.
-                for (&commodity, &stock) in &p.home.system.stockpile {
-                    let Some(reserve) = p.export_reserve(commodity, &wanted) else { continue; };
-                    let units = (stock - 100.0 - reserve)
-                        .floor().max(0.0).min(300.0) as u32;
-                    let price = ticker.prices.get(&commodity).copied().unwrap_or(0.0);
-                    if units >= 100 && budget >= sim::tca::freight_fee(units, price, home.distance(p.hub)) * 1.2 {
-                        self.wait("market".into(), p, p.hub);
-                        return Some(Command::BookFreightIn { player_id, system: system_id,
-                            commodity, units, sell_on_arrival: true });
-                    }
-                }
-                let project_goods = project.map(|goal| p.project_costs(goal)).unwrap_or_default();
-                let mut purchases: Vec<_> = wanted.iter().collect();
-                purchases.sort_by_key(|(good, _)| (!project_goods.contains_key(good), **good));
-                for (&good, &target) in purchases {
-                    let in_transit: u32 = freighters.iter().filter(|g|
-                        g.docked.as_deref() != Some(system_id.to_string().as_str())).map(|g| cargo(g, good)).sum();
-                    let stored = account.warehouse.get(&good).copied().unwrap_or(0);
-                    let needed = (target - p.stock(good) - in_transit as f64 - p.inbound(good) as f64)
-                        .ceil().max(0.0) as u32;
-                    let missing = needed.saturating_sub(stored);
-                    let Some(&price) = ticker.prices.get(&good) else { continue; };
-                    // Charter essential imports when our own hull is away. This
-                    // pays the normal freight fee, queues a real raidable carrier,
-                    // and counts only shipments already reported to the CC.
-                    let booked = needed.min(stored).min(100);
-                    if booked > 0 && !freighters.iter().any(|g| g.docked.as_deref() == Some("hub"))
-                        && budget >= sim::tca::freight_fee(booked, price, home.distance(p.hub)) * 1.2 {
-                        self.wait("market".into(), p, p.hub);
-                        return Some(Command::BookFreightOut { player_id, system: system_id, commodity: good, units: booked });
-                    }
-                    let ceiling = price * 1.20;
-                    let units = missing.min(50).min(ticker.available_buy.get(&good).copied().unwrap_or(0))
-                        .min((budget / (ceiling * 1.1)).floor() as u32);
-                    if units > 0 {
-                        self.wait("market".into(), p, p.hub);
-                        return Some(Command::MarketBuy { player_id, commodity: good, units, max_unit_price: Some(ceiling) });
-                    }
-                }
-            }
-        }
-
-        for fleet in &freighters {
-            let key = format!("fleet:{}", fleet.id);
-            if !self.ready(&key, p.now) || p.fighting.contains(&fleet.id) { continue; }
-            if fleet.stalled { continue; }
-            let used = cargo_used(fleet);
-            let dest = if fleet.docked.as_deref() == Some("hub") { home } else { p.hub };
-            let load_limit = p.freight_limit(fleet, dest);
-            let room = load_limit.saturating_sub(used);
-            if fleet.docked.as_deref() == Some(system_id.to_string().as_str()) {
-                // Failed automatic unload (full stockpile): retain useful goods
-                // for construction from the docked hold; never sell the imports.
-                if fleet.cargo_manifest.iter().any(|c| !c.commodity.is_ore() && c.commodity != C::Provisions) {
-                    self.wait(key, p, fleet.pos);
-                    return Some(Command::SystemUnload { player_id, fleet_id: fleet.id, system: system_id });
-                }
-                // Own haulers keep the opening raw-goods circuit; refined
-                // surplus uses the paid carrier above. A returned build-material
-                // manifest must never be mistaken for cargo to auto-sell.
-                let export = p.home.system.stockpile.keys().filter(|good| good.is_ore() || **good == C::Provisions).filter_map(|good|
-                    p.export_reserve(*good, &wanted).map(|reserve|
-                        (*good, (p.home.system.free_stock(*good) - reserve).floor().max(0.0) as u32)))
-                    .filter(|(_, n)| *n > 0).max_by(|(a, an), (b, bn)| {
-                        let value = |good, n: u32| p.ticker.as_ref().and_then(|m| m.prices.get(&good))
-                            .copied().unwrap_or(0.0) * n.min(room) as f64;
-                        value(*a, *an).total_cmp(&value(*b, *bn)).then(an.cmp(bn))
-                    });
-                if room > 0 {
-                    if let Some((commodity, available)) = export {
-                        self.wait(key, p, fleet.pos);
-                        return Some(Command::SystemLoad { player_id, fleet_id: fleet.id, system: system_id,
-                            commodity, units: room.min(available) });
-                    }
-                }
-                // Do not burn a whole trip for one unit just because a nearly
-                // empty tank can carry it. Wait for the booked fuel shipment.
-                if used >= (load_limit / 2).max(10) {
-                    if freighters.first().is_some_and(|g| g.id == fleet.id) && !guards.is_empty()
-                        && !guards.iter().any(|g| g.guard_target == Some(fleet.id)) { continue; }
-                    if !p.enough_fuel(fleet, p.hub) { continue; }
-                    self.wait(key, p, fleet.pos);
-                    return Some(Command::HaulToMarketHub { player_id, fleet_id: fleet.id, sell_on_arrival: true });
-                }
-            } else if fleet.docked.as_deref() == Some("hub") {
-                if let Some(account) = &p.account {
-                    if room > 0 {
-                        // The build recipe wins over optional reserve top-ups;
-                        // arriving Authority supplies are already accounted for.
-                        let mut goods: Vec<_> = wanted.iter().collect();
-                        let project_goods = project.map(|goal| p.project_costs(goal)).unwrap_or_default();
-                        goods.sort_by_key(|(good, _)| (!project_goods.contains_key(good), **good));
-                        for (&commodity, &target) in goods {
-                            let carried: u32 = freighters.iter().map(|g| cargo(g, commodity)).sum();
-                            let needed = (target - p.home.system.free_stock(commodity) - carried as f64 - p.inbound(commodity) as f64)
-                                .ceil().max(0.0) as u32;
-                            let units = room.min(needed).min(account.warehouse.get(&commodity).copied().unwrap_or(0));
-                            if units > 0 {
-                                self.wait(key, p, p.hub);
-                                return Some(Command::HubLoad { player_id, fleet_id: fleet.id, commodity, units });
-                            }
-                        }
-                    }
-                    if p.enough_fuel(fleet, home) {
-                        self.wait(key, p, p.hub);
-                        // HaulToSystem deliberately requires a nonempty hold.
-                        // A ballast return is an ordinary move, not a rejected haul.
-                        if used == 0 {
-                            return Some(Command::MoveShip { player_id, ship_id: fleet.id, dest: home });
-                        }
-                        return Some(Command::HaulToSystem { player_id, fleet_id: fleet.id, system: system_id });
-                    }
-                }
-            }
-        }
-
-        for scout in p.own().filter(|g| g.kind == H::Scout) {
-            let key = format!("fleet:{}", scout.id);
-            if !self.ready(&key, p.now) || p.fighting.contains(&scout.id) { continue; }
-            let threatened = p.ghosts.iter().any(|g| !g.own && !g.owner.is_tca()
-                && g.kind.is_combatant() && (g.pos - scout.pos).length() < 25_000.0);
-            if threatened || scout.damage.unwrap_or(0.0) > 0.35 {
-                if (scout.pos - home).length() > 1_000.0 {
-                    self.wait(key, p, scout.pos);
-                    self.surveys.remove(&scout.id);
-                    return Some(Command::MoveShip { player_id, ship_id: scout.id, dest: home });
-                }
-                continue;
-            }
-            if let Some(target) = self.surveys.get(&scout.id) {
-                if !p.surveyed.contains(target) && (scout.vel.length_sq() > 1.0 || scout.survey_progress.is_some()) { continue; }
-                self.surveys.remove(&scout.id);
-            }
-            let target = p.chart.iter().filter(|(id, pos)| !p.surveyed.contains(id)
-                && !self.surveys.values().any(|target| target == id)
-                && p.enough_fuel(scout, *pos)
-                && scout.fuel.unwrap_or(0.0) >= hull_mass(scout)
-                    * (p.fuel_per_mass(scout.pos, *pos) + p.fuel_per_mass(*pos, home)))
-                .min_by(|(_, a), (_, b)| ((*a - scout.pos).length()).total_cmp(&(*b - scout.pos).length()));
-            if let Some(&(system_id, _)) = target {
-                self.wait(key, p, scout.pos);
-                self.surveys.insert(scout.id, system_id);
-                return Some(Command::SurveySystem { player_id, fleet_id: scout.id, system_id });
-            } else if scout.docked.is_none() && p.enough_fuel(scout, home) {
-                self.wait(key, p, scout.pos);
-                return Some(Command::MoveShip { player_id, ship_id: scout.id, dest: home });
-            }
-        }
-        None
+        self.support_colonies(p).or_else(|| self.market(p, &wanted))
     }
 }
 
