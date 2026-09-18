@@ -603,47 +603,12 @@ impl World {
         dest: Vec2,
     ) -> Option<String> {
         let f = &self.fleets[&id];
-        // Price every intersected public gravity well, not just the endpoints.
-        // This uses static geography and onboard tanks/cargo, never a remote
-        // port's unarrived ownership/stock report. Leave a 15% travel margin.
-        let distance = f.pos.distance(dest);
-        let direction = if distance > 0.0 {
-            (dest - f.pos) / distance
-        } else {
-            Vec2::ZERO
-        };
-        let mut intervals = Vec::new();
-        for center in self
-            .systems
-            .iter()
-            .map(|s| s.pos)
-            .chain(std::iter::once(self.hub))
-        {
-            let d = center - f.pos;
-            let along = d.x * direction.x + d.y * direction.y;
-            let lateral2 = (d.x * d.x + d.y * d.y - along * along).max(0.0);
-            let radius = crate::transit::HYPERLIMIT;
-            if lateral2 < radius * radius {
-                let reach = (radius * radius - lateral2).sqrt();
-                let start = (along - reach).max(0.0);
-                let end = (along + reach).min(distance);
-                if end > start {
-                    intervals.push((start, end));
-                }
-            }
-        }
-        intervals.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let mut impulse = 0.0;
-        let mut end = 0.0_f64;
-        for (a, b) in intervals {
-            impulse += (b - a.max(end)).max(0.0);
-            end = end.max(b);
-        }
-        let budget = crate::fuel::fuel_cost(
-            impulse + (distance - impulse) / crate::transit::WARP_FACTOR,
-            f.mass(),
-        ) * 1.15
-            + route.fuel_reserve;
+        // Same public-geometry estimate as CC planning; onboard tank/cargo
+        // checks are local physical decisions, not remote information shortcuts.
+        let consumption = crate::research::mod_of(&self.players[&f.owner].research,
+            crate::research::ModKey::FuelConsumption);
+        let budget = crate::fuel::route_estimate(f.pos, dest, f.mass(), consumption,
+            self.systems.iter().map(|s| s.pos).chain(std::iter::once(self.hub))) + route.fuel_reserve;
         let reason = if budget > f.fuel_capacity() {
             "Leg exceeds tank range; shorten route or reduce cargo"
         } else if f.fuel + 1e-9 < budget {

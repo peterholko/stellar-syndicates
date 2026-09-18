@@ -92,3 +92,57 @@ pub fn fuel_tick(mass: f64, base_speed: f64, dt: f64) -> f64 {
 pub fn fuel_cost(distance: f64, mass: f64) -> f64 {
     FUEL_PER_MASS_DISTANCE * distance.max(0.0) * mass.max(0.0)
 }
+
+/// Conservative dispatch estimate, shared by onboard freight and CC planning.
+/// Inputs are public well positions and the caller's known mass/modifier; this
+/// never reads a remote fleet, depot or market. Include the hub in `wells`.
+/// Merge overlapping wells so they are charged once. A small transition budget
+/// covers spooling/turning; the 15% margin is an estimate, not extra physical burn.
+pub fn route_estimate(from: crate::Vec2, to: crate::Vec2, mass: f64,
+    consumption: f64, wells: impl IntoIterator<Item = crate::Vec2>) -> f64
+{
+    let distance = from.distance(to);
+    if distance < 1.0 { return 0.0; }
+    let direction = (to - from) / distance;
+    let radius = crate::transit::HYPERLIMIT;
+    let mut intervals = Vec::new();
+    for center in wells {
+        let offset = center - from;
+        let along = offset.dot(direction);
+        let across = (offset.length_sq() - along * along).max(0.0);
+        if across < radius * radius {
+            let half = (radius * radius - across).sqrt();
+            let a = (along - half).max(0.0);
+            let b = (along + half).min(distance);
+            if b > a { intervals.push((a, b)); }
+        }
+    }
+    intervals.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let (mut inside, mut end, mut crossings) = (0.0, -1.0_f64, 0);
+    for (a, b) in intervals {
+        if a > end { crossings += 1; }
+        inside += (b - a.max(end)).max(0.0);
+        end = end.max(b);
+    }
+    let engine_distance = inside + (distance - inside) / crate::transit::WARP_FACTOR
+        + 250.0 * (1 + crossings) as f64;
+    fuel_cost(engine_distance, mass) * consumption.max(0.0) * 1.15
+}
+
+#[cfg(test)]
+mod planning_tests {
+    use super::*;
+    use crate::Vec2;
+
+    #[test]
+    fn hub_well_and_cargo_are_in_the_dispatch_budget() {
+        let home = Vec2::new(70_000.0, 0.0);
+        let hub = Vec2::ZERO;
+        let one = route_estimate(home, hub, 1500.0, 1.0, [home]);
+        let both = route_estimate(home, hub, 1500.0, 1.0, [home, hub]);
+        assert!(both > one);
+        assert_eq!(both, route_estimate(home, hub, 1500.0, 1.0, [home, hub, hub]));
+        assert!(route_estimate(home, hub, 2000.0, 1.0, [home, hub]) > both);
+        assert_eq!(route_estimate(home, home, 1500.0, 1.0, [home]), 0.0);
+    }
+}
