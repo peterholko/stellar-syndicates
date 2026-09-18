@@ -1,0 +1,5 @@
+Generated with the built-in image generation tool.
+Use case: stylized-concept
+Asset type: transparent game UI site artwork
+A fortified pirate logistics depot for a dark sci-fi strategy game, Stellar Syndicates. A compact asymmetric armored orbital station built around three bulky stolen cargo containers, two clearly visible gun turrets, one open amber-lit cargo bay, angular graphite steel with restrained rusty red armor panels and small amber lights. Crisp professionally rendered 3D game concept icon, no painterly strokes. Centered in a square, slight top-down three-quarter view, whole station visible with 12% empty margin. Strong simple silhouette readable at 64px. Actual transparent background, no starfield, no fog, no text, no lettering, no border, no UI, no other ships. This asset represents an industrial pirate depot, not a city or a planet.
+Runtime derivative: 256px PNG, original alpha preserved with Sharp.

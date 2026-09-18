@@ -1,0 +1,112 @@
+/* The planet is the third rung of the map's zoom ladder (galaxy → system → planet).
+   Its scene covers the MAP AREA only — never the workspace, the command band or the
+   toast lane — so orders, founding steps and toasts stay live while a world is open.
+   Management for the same world is the `world` workspace route beside it. Only served
+   structures get footprints. */
+.deck-planet-stage { position: fixed; z-index: var(--z-planet); top: var(--deck-topbar-height); left: 0; right: var(--deck-workspace-inset, 0px); bottom: 0; display: grid; grid-template-rows: minmax(0, 1fr); min-width: 0; padding: var(--space-3) var(--space-4) calc(var(--deck-workbench-bottom-inset, 0px) + var(--space-3)); background: var(--bg); pointer-events: auto; }
+@media (prefers-reduced-motion: no-preference) {
+  .deck-planet-stage:not([hidden]) { animation: deck-planet-stage-in .28s ease-out; }
+  @keyframes deck-planet-stage-in { from { opacity: 0; } }
+}
+/* Stage body → one scene wrapper (strip above, artwork below). Every level is a
+   grid track so the artwork's container-size box stretches to the real remaining
+   height instead of collapsing around its absolutely positioned canvas. */
+.deck-planet-stage__body { display: grid; grid-template-rows: minmax(0, 1fr); height: 100%; min-height: 0; min-width: 0; }
+.deck-planet-scene { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; min-width: 0; gap: var(--space-3); }
+.deck-planet__worlds { display: flex; align-items: center; gap: var(--space-2); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+.deck-planet__worlds > span { flex: 0 0 auto; margin-right: var(--space-1); color: var(--dim); font-size: var(--fs-fine); text-transform: uppercase; letter-spacing: .06em; }
+.deck-planet__worlds > button { flex: 0 0 auto; white-space: nowrap; }
+.deck-planet__worlds > button[aria-current="page"] { border-color: var(--accent); background: var(--field-bg); color: var(--accent); }
+.deck-planet__worlds > .deck-planet__sites-toggle { margin-left: auto; }
+.deck-planet__sites-toggle[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.deck-planet__scene { container: planet-scene / size; position: relative; isolation: isolate; align-self: stretch; width: 100%; min-height: 0; box-sizing: border-box; border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--bg); }
+/* Landscape, structures and their badges use ONE fitted 16:9 image plane. Keep
+   the entire artwork visible: independently cropping it or reflowing footprints
+   would slide buildings across terrain when the window's aspect ratio changes.
+   Footprints are 8.625% of this plane (the anchor columns remain 12% apart),
+   25% smaller across the full size curve, capped at 150px. */
+.deck-planet__canvas { container: planet-canvas / inline-size; --planet-building: clamp(36px, 8.625cqw, 150px); position: absolute; left: 50%; top: 50%; width: min(100cqw, calc(100cqh * 16 / 9)); aspect-ratio: 16 / 9; transform: translate(-50%, -50%); border-radius: inherit; }
+.deck-planet__surface { width: 100%; height: 100%; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; }
+.deck-planet__globe { position: absolute; width: 80%; height: 90%; left: 10%; top: 5%; object-fit: contain; pointer-events: none; opacity: .85; }
+.deck .deck-planet__building { position: absolute; left: var(--planet-x); top: var(--planet-y); width: var(--planet-building); height: var(--planet-building); min-height: 0; padding: 0; transform: translate(-50%, -50%); border: 1px solid transparent; border-radius: var(--space-1); background: transparent; }
+.deck .deck-planet__building:hover { background: rgba(7, 15, 26, .25); border-color: var(--dim); }
+.deck .deck-planet__building[aria-pressed="true"] { border-color: var(--accent); background: rgba(7, 15, 26, .3); }
+.deck-planet__building > .icon { position: relative; width: 100%; height: 100%; object-fit: contain; filter: brightness(var(--planet-building-brightness, 1)) drop-shadow(0 0 1px rgba(228, 235, 242, .7)) drop-shadow(0 3px 3px rgba(0, 0, 0, .85)); pointer-events: none; }
+.deck-planet__building:is(:hover, :focus-visible) { --planet-building-brightness: 1.15; }
+.deck .deck-planet__site { position: absolute; left: var(--planet-x); top: var(--planet-y); transform: translate(-50%, -50%); width: var(--planet-building); height: var(--planet-building); min-height: 0; padding: var(--space-1); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-1); border: 1px dashed currentColor; border-radius: var(--space-1); background: rgba(7, 15, 26, .65); color: var(--accent); box-sizing: border-box; }
+.deck-planet__site.is-resource { color: var(--positive); }
+.deck-planet__site.is-industrial, .deck-planet__site.is-construction { color: var(--warn); }
+.deck-planet__site > b { font-size: var(--fs-page); line-height: 1; }
+.deck-planet__site > small { font-size: var(--fs-fine); }
+.deck .deck-planet__site:is(:hover, :focus-visible) { border-style: solid; background: var(--panel); }
+.deck-planet__site.is-construction { pointer-events: auto; }
+.deck-planet__site.is-construction > .icon { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .35; object-fit: contain; }
+.deck-planet__site.is-construction > small { position: relative; padding: var(--space-1); background: var(--panel); }
+.deck-planet__sites-empty { position: absolute; top: var(--space-3); left: var(--space-3); padding: var(--space-2); background: var(--panel); color: var(--dim); }
+.deck-planet__selection { position: absolute; inset: 0; pointer-events: none; }
+.deck .deck-planet__workforce-badge { position: absolute; left: clamp(110px, var(--planet-x), calc(100% - 110px)); top: calc(var(--planet-y) - var(--planet-building) / 2 - var(--space-1)); transform: translate(-50%, -100%); display: flex; align-items: center; gap: var(--space-2); max-width: min(220px, calc(100% - var(--space-4))); padding: var(--space-1) var(--space-2); min-height: var(--deck-control-height); border-color: var(--accent); background: var(--panel); pointer-events: auto; }
+.deck-planet__workforce-badge > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-fine); }
+.deck-planet__workforce-badge > b { padding-left: var(--space-2); border-left: 1px solid var(--border); }
+.deck-planet__workforce-icon { width: var(--deck-control-height); height: var(--space-6); object-fit: contain; flex: 0 0 auto; vertical-align: middle; }
+.deck-planet__output-badge { position: absolute; left: clamp(110px, var(--planet-x), calc(100% - 110px)); top: min(calc(var(--planet-y) + var(--planet-building) / 2 + var(--space-1)), calc(100% - var(--planet-output-height, 44px))); transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-1) var(--space-2); width: max-content; max-width: min(220px, calc(100% - var(--space-4))); padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--space-1); background: var(--panel); pointer-events: auto; }
+.deck-planet__rate { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
+.deck-planet__rate b, .deck-planet__good { color: var(--positive); font-variant-numeric: tabular-nums; }
+.deck-planet__rate small { color: var(--dim); font-size: var(--fs-fine); }
+.deck-planet__resource { display: inline-flex; align-items: center; }
+.deck .deck-planet__resource > .icon { width: var(--deck-control-height); height: var(--deck-control-height); object-fit: contain; }
+
+/* The management column: the `world` route in the workspace beside the scene. */
+.deck-planet__lead { grid-template-columns: calc(var(--space-6) * 3) minmax(0, 1fr); grid-template-rows: auto auto auto; column-gap: var(--space-3); align-items: center; }
+.deck-planet__art { grid-column: 1; grid-row: 1 / 4; width: calc(var(--space-6) * 3); height: calc(var(--space-6) * 3); object-fit: contain; }
+.deck-planet__lead > span, .deck-planet__lead > h2, .deck-planet__lead > p { grid-column: 2; min-width: 0; }
+.deck-planet__lead h2 { overflow-wrap: anywhere; }
+.deck-planet__lead p { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); font-size: var(--fs-fine); }
+.deck-planet__delay b { color: var(--warn); font-variant-numeric: tabular-nums; }
+.deck-planet__workforce-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2); background: var(--field-bg); border: 1px solid var(--border); border-radius: var(--space-1); }
+.deck-planet__workforce-summary > span { display: inline-flex; align-items: center; gap: var(--space-2); }
+.deck-planet__available { color: var(--positive); font-size: var(--fs-fine); }
+.deck-planet__tabs { flex-wrap: wrap; }
+.deck-planet__tabs small { color: var(--dim); }
+.deck-planet #planet-page { display: grid; gap: var(--space-3); }
+.deck-planet__management { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: var(--space-3); }
+.deck-planet__list { display: grid; min-width: 0; gap: var(--space-1); }
+.deck .deck-planet__row { width: 100%; display: grid; grid-template-columns: var(--deck-control-height) minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); padding: var(--space-2); text-align: left; }
+.deck .deck-planet__row[aria-pressed="true"] { border-color: var(--accent); background: var(--field-bg); }
+.deck-planet__row > .icon { width: var(--deck-control-height); height: var(--deck-control-height); object-fit: contain; }
+.deck-planet__row-name { display: grid; min-width: 0; gap: var(--space-1); overflow-wrap: anywhere; }
+.deck-planet__row-name small { color: var(--dim); font-size: var(--fs-fine); }
+.deck-planet__row-values { display: flex; flex-direction: column; align-items: end; gap: var(--space-1); font-variant-numeric: tabular-nums; }
+.deck-planet__staffed-value { display: inline-flex; align-items: center; gap: var(--space-1); }
+.deck .deck-planet__row-values .icon { width: var(--space-6); height: var(--space-6); }
+.deck-planet__detail { display: grid; min-width: 0; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
+.deck-planet__detail header { display: flex; align-items: center; gap: var(--space-2); }
+.deck-planet__detail header > .icon { width: calc(var(--space-6) * 2); height: calc(var(--space-6) * 2); object-fit: contain; }
+.deck-planet__detail header > div { display: grid; min-width: 0; gap: var(--space-1); }
+.deck-planet__detail h3 { font-size: var(--fs-em); margin: 0; overflow-wrap: anywhere; }
+.deck-planet__detail p { color: var(--dim); margin: 0; line-height: 1.45; }
+.deck-planet__detail small { color: var(--dim); font-size: var(--fs-fine); }
+.deck-planet__detail > button { padding: var(--space-2); }
+.deck-planet__assignment { display: grid; gap: var(--space-2); }
+.deck-planet__assignment > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.deck-planet__assignment .deck-stepper { display: grid; grid-template-columns: var(--deck-control-height) 1fr var(--deck-control-height); text-align: center; }
+.deck-planet__reported, .deck-planet__inputs { display: grid; gap: var(--space-1); }
+.deck-planet__reported > div, .deck-planet__inputs > div { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.deck-planet__confirm { display: grid; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--accent); border-radius: var(--space-1); }
+.deck-planet__confirm > span { color: var(--dim); font-size: var(--fs-fine); }
+.deck-planet__confirm > div { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.deck-planet__confirm button { flex: 1; padding: var(--space-1) var(--space-2); }
+.deck-planet__pending, .deck-planet__warning { color: var(--warn); font-size: var(--fs-fine); }
+.deck-planet__development { display: grid; gap: var(--space-3); border-top: 1px solid var(--border); padding-top: var(--space-3); }
+.deck-planet__development .deck-stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@container (max-width: 420px) {
+  .deck .deck-planet__row { grid-template-columns: var(--deck-control-height) minmax(0, 1fr); }
+  .deck-planet__row-values { grid-column: 2; flex-direction: row; flex-wrap: wrap; justify-content: start; }
+}
+@media (pointer: coarse) {
+  .deck .deck-planet button { min-height: 44px; }
+  .deck-planet__assignment .deck-stepper { grid-template-columns: 44px 1fr 44px; }
+}
+.deck-planet__refining { display: grid; gap: var(--space-2, 8px); }
+.deck-planet__ore-options { display: flex; flex-wrap: wrap; gap: var(--space-1, 4px); }
+.deck-planet__ore-options button { display: flex; align-items: center; gap: 4px; }
+.deck-planet__ore-options button[aria-pressed="true"] { border-color: #8fe3a0; color: #8fe3a0; }

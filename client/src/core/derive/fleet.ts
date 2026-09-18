@@ -1,6 +1,8 @@
 // Shared fleet derivations extracted from the desktop shell.
 
 import {
+  cargoUnitsPerHull,
+  isPlayerFreighter,
   fleetCargoManifest,
   fleetCargoUnits,
   type BattleRecordView,
@@ -18,13 +20,17 @@ import type { Net } from "../../net";
 import { state } from "../../state";
 import { recordForBattleReport, reportForBattleRecord } from "../../battlehistory";
 import { HYPERLIMIT_SU } from "./geo";
+import { cargoMultiplier, sensorMultiplier, tankMultiplier } from "./equipment";
 
 // Mirror of the sim's commodity value-rank (also in render.ts) — for flavor
 // text and the observed Fuel fallback. Client-only; no server data.
 export const COMMODITY_VALUE: Record<Commodity, number> = {
-  biomass: 5, silicates: 6, metallic_ore: 8, volatiles: 9, rare_elements: 22,
+  biomass: 5, silicates: 9, metallic_ore: 8, volatiles: 9, rare_elements: 100,
+  cuprite_ore: 24, titanium_ore: 110, crystalline_ore: 6, rare_metal_ore: 1700,
+  conductive_metals: 30, titanium: 60,
   provisions: 9, fuel: 14, polymers: 16, alloys: 26, electronics: 34,
-  machinery: 48, armaments: 56,
+  machinery: 62, armaments: 56,
+  composites: 50, hull_sections: 128, precision_components: 92, drive_assemblies: 215,
 };
 
 // Mirrors the sim's fuel-cost model (crates/sim/src/fuel.rs + ship.rs).
@@ -35,6 +41,7 @@ export const AAA_FUEL_PRICE_MULT = 3;
 export const AAA_SERVICE_FEE = 1_000;
 const AAA_RESERVE_FRAC = 0.10;
 export const HULL_MASS: Record<ShipKind, number> = {
+  tiny_freighter: 1500, small_freighter: 2500, large_freighter: 8000, heavy_freighter: 14000, bulk_freighter: 24000,
   convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80,
   destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
   transport: 7000, freighter: 6000, builder: 2500,
@@ -43,25 +50,31 @@ export const HULL_MASS: Record<ShipKind, number> = {
 // served composition and label the result as an estimate; the sim remains the
 // authority for drive transitions, wells, fuel, and future route changes.
 export const HULL_BASE_SPEED: Record<ShipKind, number> = {
+  tiny_freighter: 40, small_freighter: 40, large_freighter: 38, heavy_freighter: 34, bulk_freighter: 30,
   convoy: 40, builder: 35, raider: 100, corvette: 65, colony: 33, scout: 115,
   destroyer: 55, cruiser: 45, battleship: 36, dreadnought: 29, titan: 23,
   transport: 30, freighter: 32,
 };
 const CARGO_MASS_PER_UNIT = 28;
-const CARGO_UNITS_PER_FREIGHTER = 250;
+export const CARGO_UNITS_PER_FREIGHTER = 400; // legacy Medium hull; use cargoUnitsPerHull for a family member
 
 export const fleetHullMass = (g: GhostView): number => g.composition
   ? g.composition.reduce((mass, ship) => mass + HULL_MASS[ship.kind] * ship.count, 0)
   : HULL_MASS[g.kind];
 export const shipMass = (g: GhostView): number =>
   fleetHullMass(g) + (g.own ? fleetCargoUnits(g) * CARGO_MASS_PER_UNIT : 0);
-export const fleetBaseSpeed = (g: GhostView): number => g.composition?.length
-  ? Math.min(...g.composition.filter((stack) => stack.count > 0).map((stack) => HULL_BASE_SPEED[stack.kind]))
-  : HULL_BASE_SPEED[g.kind];
-export const fleetFuelCapacity = (g: GhostView): number => g.fuel_capacity ?? fleetHullMass(g) * FUEL_PER_HULL_MASS;
+export const fleetBaseSpeed = (g: GhostView): number => Math.min(...(g.composition?.length
+  ? g.composition : [{ kind: g.kind, count: 1 }]).filter(s => s.count > 0).map(stack => {
+    const fits = (g.loadouts ?? []).filter(f => f.kind === stack.kind && f.n > 0);
+    const unfitted = fits.reduce((n, f) => n + f.n, 0) < stack.count ? HULL_BASE_SPEED[stack.kind] : Infinity;
+    return Math.min(unfitted, ...fits.map(f => HULL_BASE_SPEED[stack.kind] * (f.modules.includes("survey_drive") ? 1.25 : 1)));
+  }));
+export const fleetFuelCapacity = (g: GhostView): number => g.fuel_capacity ?? (fleetHullMass(g)
+  + (g.loadouts ?? []).reduce((extra, s) => extra + HULL_MASS[s.kind] * s.n * (tankMultiplier(s.modules) - 1), 0)) * FUEL_PER_HULL_MASS;
 
 const SHIP_KIND_LABEL: Record<ShipKind, string> = {
-  convoy: "Freighter", raider: "Interceptor", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
+  tiny_freighter: "Tiny Freighter", small_freighter: "Small Freighter", large_freighter: "Large Freighter", heavy_freighter: "Heavy Freighter", bulk_freighter: "Bulk Freighter",
+  convoy: "Medium Freighter", raider: "Interceptor", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
   transport: "Troop Transport", builder: "Construction Ship", freighter: "Authority Freighter",
 };
@@ -81,10 +94,13 @@ export function bindFleetNet(source: () => Net | null): void {
 }
 
 export function fleetCargoCapacity(g: GhostView): number {
-  const freighters = g.composition
-    ? g.composition.reduce((count, ship) => count + (ship.kind === "convoy" ? ship.count : 0), 0)
-    : g.kind === "convoy" ? 1 : 0;
-  return freighters * CARGO_UNITS_PER_FREIGHTER;
+  const capacity = g.composition?.length
+    ? g.composition.reduce((units, ship) => units + cargoUnitsPerHull(ship.kind) * ship.count, 0)
+    : cargoUnitsPerHull(g.kind);
+  // Capacity follows only the arrived fit, never a refit preview or its ETA.
+  const extra = (g.loadouts ?? []).reduce((sum, s) => sum
+    + cargoUnitsPerHull(s.kind) * s.n * (cargoMultiplier(s.modules) - 1), 0);
+  return capacity + extra;
 }
 
 
@@ -120,7 +136,9 @@ export function jumpCapable(g: GhostView): boolean {
 
 
 export function guardCapable(g: GhostView): boolean {
-  return g.own && g.kind === "raider";
+  const combatants: ShipKind[] = ["raider", "corvette", "destroyer", "cruiser", "battleship", "dreadnought", "titan"];
+  return g.own && (combatants.includes(g.kind)
+    || !!g.composition?.some(s => s.count > 0 && combatants.includes(s.kind)));
 }
  // matches COLONY_CLAIM_RADIUS on the server
 export function coLocatedOwnFleet(g: GhostView): GhostView | null {
@@ -146,8 +164,8 @@ export function shipRoleLore(g: GhostView): string {
     return "A dedicated defender: any raid contact on one of your freighters within its protect radius must fight through this corvette first. Park it beside a freighter as an escort or at an owned system as a garrison; it cannot raid.";
   }
   if (g.kind === "scout") {
-    const mult = state.galaxy?.scout_sensor_mult ?? 1.5;
-    return `Projects a ×${mult} mobile sensor bubble. Sweep rival space to reveal dark contacts, cargo, and defense intel. It carries no cargo or weapons and dies if engaged.`;
+    const sensors = sensorMultiplier(g) * (state.galaxy?.sensor_range ?? 80_000);
+    return `Discovers sites and surveys worlds. ${sensors > 0 ? `Recon sensors: ${Math.round(sensors).toLocaleString()} su.` : "Fit a Recon Suite for mobile sensors."} Retreats from expedition threats.`;
   }
   return "";
 }
@@ -219,7 +237,7 @@ export function dockedFreighterStock(systemId: EntityId): Map<Commodity, number>
 }
 
 
-export function constructionStock(dyn: SystemStateView): {
+export function constructionStock(dyn: SystemStateView, projectKey?: string): {
   stockpile: Map<Commodity, number>;
   freighters: Map<Commodity, number>;
   available: Map<Commodity, number>;
@@ -227,6 +245,12 @@ export function constructionStock(dyn: SystemStateView): {
   const stockpile = new Map((dyn.stockpile ?? []).map((slot) => [slot.commodity, slot.units]));
   const freighters = dockedFreighterStock(dyn.id);
   const available = new Map(stockpile);
+  for (const r of dyn.industry?.reservations ?? []) {
+    // A matching recipe may spend its own reservation; every other build uses
+    // unreserved stock plus the same arrived docked-Freighter cargo as before.
+    if (r.target.kind === projectKey) continue;
+    for (const [c,n] of Object.entries(r.goods)) available.set(c as Commodity, Math.max(0,(available.get(c as Commodity) ?? 0)-(n ?? 0)));
+  }
   for (const [commodity, units] of freighters) {
     available.set(commodity, (available.get(commodity) ?? 0) + units);
   }
@@ -302,7 +326,7 @@ export function berthed(site: string): GhostView[] {
 /// convoy HULLS carry, and it never consults the flagship. An escorted lot whose
 /// flagship is a warship still hauls.
 export function hauls(g: GhostView): boolean {
-  return g.kind === "convoy" || !!g.composition?.some((c) => c.kind === "convoy" && c.count > 0);
+  return isPlayerFreighter(g.kind) || !!g.composition?.some((c) => isPlayerFreighter(c.kind) && c.count > 0);
 }
 
 export function dockLoadStock(g: GhostView): [Commodity, number][] {
@@ -314,6 +338,7 @@ export function dockLoadStock(g: GhostView): [Commodity, number][] {
     dockedAtSystem(g, candidate.id)
     && state.systems.find((served) => served.id === candidate.id)?.owner === state.playerId);
   if (!system) return [];
-  return (state.systems.find((entry) => entry.id === system.id)?.stockpile ?? [])
-    .map((slot) => [slot.commodity, slot.units]);
+  const report = state.systems.find(entry => entry.id === system.id);
+  return (report?.stockpile ?? []).map(slot => [slot.commodity,
+    Math.max(0, slot.units - (report?.industry?.reservations ?? []).reduce((n,r) => n+(r.goods[slot.commodity] ?? 0),0))]);
 }

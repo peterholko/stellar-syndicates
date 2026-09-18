@@ -37,7 +37,7 @@ export class DeckWorkspace {
   }
 
   toggleWidth(): void {
-    if (!this.route) return;
+    if (!this.route || this.route.name === "market" || this.route.name === "world") return;
     const next: DeckWidth = this.root.dataset.width === "wide" ? "standard" : "wide";
     this.root.dataset.width = next;
     try { localStorage.setItem(WIDTH_KEY + this.widthPreferenceKey(this.route), next); } catch { /* storage is optional */ }
@@ -58,7 +58,10 @@ export class DeckWorkspace {
           ...[strip, founding, zoom].filter((node) => this.visible(node)).map((node) => node!.getBoundingClientRect().top),
         )
       : window.innerHeight;
-    const workspaceLeft = !this.route || this.root.getAttribute("aria-hidden") === "true"
+    // The Market floats like the construction workbench; it is not a right
+    // rail. Reserving its left edge would both pan the galaxy and feed its own
+    // centered width back into --deck-workspace-inset on each layout pass.
+    const workspaceLeft = !this.route || this.route.name === "market" || this.root.getAttribute("aria-hidden") === "true"
       ? window.innerWidth
       : this.root.getBoundingClientRect().left;
     return { x: 0, y: top, w: Math.max(1, workspaceLeft), h: Math.max(1, bottom - top) };
@@ -67,6 +70,9 @@ export class DeckWorkspace {
   publishCameraRect(coalesceVertical = false): void {
     const rect = this.cameraRect();
     document.documentElement.style.setProperty("--deck-workspace-inset", `${Math.max(0, window.innerWidth - rect.w)}px`);
+    // Centered workbenches share a lower edge above the actual command/tutorial
+    // stack, which may be taller than one row. Keep their actions unobstructed.
+    document.documentElement.style.setProperty("--deck-workbench-bottom-inset", `${Math.max(0, window.innerHeight - rect.y - rect.h)}px`);
     if (coalesceVertical) {
       const current = this.renderer.cameraRect;
       const verticalChange = Math.max(
@@ -89,11 +95,17 @@ export class DeckWorkspace {
     this.route = null;
     this.root.setAttribute("aria-hidden", "true");
     document.documentElement.style.removeProperty("--deck-workspace-inset");
+    document.documentElement.style.removeProperty("--deck-workbench-bottom-inset");
     this.renderer.setCameraRect({ x: 0, y: 0, w: window.innerWidth, h: window.innerHeight });
   }
 
   private storedWidth(route: DeckRoute): DeckWidth {
-    if (route.name === "market" && route.query?.inspect === "map") return "standard";
+    // Every entry point uses the workbench size, including hub inspection and
+    // old saved standard-width preferences. Other routes keep their rail sizes.
+    if (route.name === "market") return "wide";
+    // A world's scene lives in the map area beside this column; a wide column
+    // would crush it, so the planet route always keeps the system rail width.
+    if (route.name === "world") return "standard";
     try {
       const stored = localStorage.getItem(WIDTH_KEY + this.widthPreferenceKey(route));
       if (stored === "standard" || stored === "wide") return stored;
@@ -134,6 +146,7 @@ export class DeckWorkspace {
   }
 
   private syncWidthButton(): void {
+    this.width.hidden = this.route?.name === "market" || this.route?.name === "world";
     const wide = this.root.dataset.width === "wide";
     this.width.textContent = wide ? "↤" : "↔";
     this.width.setAttribute("aria-label", wide ? "Use standard workspace width" : "Use wide workspace width");

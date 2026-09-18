@@ -6,6 +6,7 @@ import type {
   EmplacementView, AnchorView, CaptainRosterView, CharterView, FleetDoctrine, FoundingView, FreightView, GalaxyInfo, GhostView, JumpDepartureView, MarketView, PathPointView, PendingOrderView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
 import { defaultDoctrine } from "./protocol";
 import type { FleetCommand } from "./core/fleetorders";
+import { emptyTransactions, type TransactionHistoryState } from "./core/derive/transactions";
 
 export type LinkStatus = "connecting" | "reconnecting" | "online" | "offline";
 
@@ -146,6 +147,7 @@ export interface ViewState {
   /// Sim-time of the last price-history sample, to throttle accumulation.
   lastPriceSampleAt: number;
   wallet: WalletView | null;
+  transactions: TransactionHistoryState;
   /// §TCA: the Market Hub freight desk — timetable, per-destination terms, and
   /// the player's OWN shipment queue. Owner-only, fresh from the View.
   freight: FreightView | null;
@@ -183,6 +185,9 @@ export interface ViewState {
   syndicateInvites: import("./protocol").SyndicateInviteView[];
   /// Operations are already filtered to the latest report that has arrived.
   operations: import("./protocol").OperationView[];
+  explorationSites: import("./protocol").ExplorationSiteView[];
+  explorationJournal: import("./protocol").ExplorationJournalEntry[];
+  selectedExplorationSiteId: string | null;
   midgameStage: import("./protocol").MidgameStage;
   diplomacy: import("./protocol").DiplomacyView | null;
   /// §rankings: the PUBLISHED leaderboard (public snapshot on the ledger close).
@@ -256,6 +261,7 @@ export function initialState(): ViewState {
     priceHistory: {},
     lastPriceSampleAt: -1,
     wallet: null,
+    transactions: emptyTransactions(),
     freight: null,
     charter: null,
     founding: null,
@@ -272,6 +278,9 @@ export function initialState(): ViewState {
     syndicate: null,
     syndicateInvites: [],
     operations: [],
+    explorationSites: [],
+    explorationJournal: [],
+    selectedExplorationSiteId: null,
     midgameStage: "home_development",
     diplomacy: null,
     rankings: [],

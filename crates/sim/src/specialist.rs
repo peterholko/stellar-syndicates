@@ -72,10 +72,12 @@ impl SpecialistKind {
                 | (
                     SpecialistKind::IndustrialEngineer,
                     K::Smelter | K::ElectronicsFabricator | K::MachineWorks | K::ArmamentsComplex
+                    | K::CompositeWorks | K::HullFabricator | K::PrecisionWorks | K::DriveWorks
                 )
                 | (
                     SpecialistKind::NavalArchitect,
                     K::Shipyard | K::ArmamentsComplex
+                    | K::HullFabricator | K::DriveWorks
                 )
         )
     }
@@ -108,6 +110,11 @@ pub fn passenger_capacity(kind: ShipKind) -> u32 {
     match kind {
         ShipKind::Builder => 0, // work crew only — berths are shops
         ShipKind::Convoy => 4,
+        ShipKind::TinyFreighter => 1,
+        ShipKind::SmallFreighter => 2,
+        ShipKind::LargeFreighter => 6,
+        ShipKind::HeavyFreighter => 8,
+        ShipKind::BulkFreighter => 12,
         ShipKind::Colony => 8,
         // Warships carry crews, not passengers — capitals included (§ladder).
         // §TCA: Authority freighters haul GOODS, not people — personnel ride a

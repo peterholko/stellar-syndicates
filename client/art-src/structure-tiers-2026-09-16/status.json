@@ -1,0 +1,1052 @@
+[
+  {
+    "id": "mining-complex",
+    "title": "Mining Complex",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "warehouse",
+    "title": "Warehouse",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "bioharvester",
+    "title": "Bioharvester",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "agroplex",
+    "title": "Agroplex",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "shipyard",
+    "title": "Shipyard",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "habitat",
+    "title": "Habitat",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "academy",
+    "title": "Academy",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "volatile_harvester",
+    "title": "Volatile Harvester",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "smelter",
+    "title": "Smelter",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "electronics_fabricator",
+    "title": "Electronics Fabricator",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "chemical_works",
+    "title": "Chemical Works",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "fuel_refinery",
+    "title": "Fuel Refinery",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "machine_works",
+    "title": "Machine Works",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "armaments_complex",
+    "title": "Armaments Complex",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "composite_works",
+    "title": "Composite Works",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "hull_fabricator",
+    "title": "Hull Fabricator",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "precision_works",
+    "title": "Precision Works",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "drive_works",
+    "title": "Drive Works",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "naval_drydock",
+    "title": "Naval Drydock",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "capital_slipway",
+    "title": "Capital Slipway",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "ordnance_foundry",
+    "title": "Ordnance Foundry",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "orbital_warehouse",
+    "title": "Orbital Warehouse",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "sensor_array",
+    "title": "Sensor Array",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "defense_platform",
+    "title": "Defense Platform",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  },
+  {
+    "id": "garrison",
+    "title": "Garrison",
+    "tiers": [
+      {
+        "tier": 1,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 2,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 3,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 4,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 5,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      },
+      {
+        "tier": 6,
+        "status": "ready",
+        "width": 1254,
+        "height": 1254
+      }
+    ]
+  }
+]

@@ -1,0 +1,13 @@
+Battle marker V20 — user-supplied crossed-laser emblem
+
+Approved attachment: codex-clipboard-3a0d7c59-4987-4e1a-973d-134941a3b034.png
+Master: client/art-src/battle-marker-v20.png (unaltered 1254 × 1254 RGBA)
+Runtime: client/public/art/battle_in_progress_v20.png (256 × 256 RGBA)
+
+Preparation: downsample to 256 × 256 with Sharp's default Lanczos3 kernel;
+PNG compression level 9. Preserve the original canvas, framing and alpha.
+No regeneration, recoloring or background removal.
+
+Renderer: 72 × 72 screen-pixel base size; active battles breathe by 4% over
+2.2 seconds, concluded battles remain still. Selection-only corner brackets
+are independent of the red accents already present in the supplied artwork.

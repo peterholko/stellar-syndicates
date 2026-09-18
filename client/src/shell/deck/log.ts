@@ -8,6 +8,7 @@ import type { CoreEvent } from "../../core/events";
 import { icon, label, type IconKey } from "../../icons";
 import { countClassLabel, fleetCargoUnits, type FoundingStage, type TimelineEntry, type Vec2 } from "../../protocol";
 import { shipKindLabel } from "../../core/derive/fleet";
+import { pirateSite } from "../../core/derive/pirates";
 import { liveSimTime } from "../../state";
 import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
@@ -33,16 +34,18 @@ const MAX_HOSTILE_ITEMS = 4;
 const FOUNDING_DIRECTIVE: Record<FoundingStage, string> = {
   build_shipyard: "Build Shipyard I",
   build_mine: "Build and staff Mining Complex I",
-  build_convoy: "Build your first Freighter",
+  build_convoy: "Prepare a Freighter",
+  build_second_freighter: "Build a second Tiny Freighter",
+  grow_business: "Expand exports or start refining",
   export_production: "Dispatch the opening export",
   defeat_privateer: "Guard the Freighter",
   complete_export: "Complete the guarded export",
   build_academy: "Build and staff Academy I",
   first_research: "Choose your first programme",
   build_scout: "Build a Scout",
-  survey_candidates: "Survey both expansion prospects",
-  build_colony: "Build your first Colony Ship",
-  establish_colony: "Establish your second holding",
+  survey_candidates: "Survey two nearby systems",
+  build_colony: "Founding complete",
+  establish_colony: "Founding complete",
   complete: "Founding complete",
 };
 
@@ -283,8 +286,8 @@ export class DeckLogRoutes {
       if (tier <= 0) continue;
       const key = `enclave:${system.id}`;
       push({ key, weight: INBOX_W.enclave, tone: "warn", icon: "raider",
-        headline: `Pirate enclave at ${systemName(system.id)} — tier ${tier}`,
-        stakes: "It raids careless trade nearby and grows if ignored. Station an Interceptor fleet on it to destroy the base and seize its plunder.",
+        headline: `${pirateSite(tier)!.title} · ${systemName(system.id)}`,
+        stakes: pirateSite(tier)!.goal,
         age: system.intel?.observed_at, actions: [focusSystem(system.id), dismiss(key)] });
     }
 
@@ -470,7 +473,7 @@ export class DeckLogRoutes {
       const dynamic = state.systems.find((system) => system.id === systemId);
       const info = galaxy.systems.find((system) => system.id === systemId);
       if (!dynamic?.deposits || !info) continue;
-      const summary = dynamic.deposits.map((deposit) => `${label(deposit.resource)} ~${deposit.richness.toFixed(1)}/s`).join(" · ");
+      const summary = dynamic.deposits.map((deposit) => `${label(deposit.resource)} ×${deposit.richness.toFixed(2)}`).join(" · ");
       const roles = (dynamic.opportunities ?? []).slice(0, 3).map((opportunity) => `${opportunity.tier === "jackpot" ? "Jackpot · " : ""}${opportunity.title}${opportunity.body_name ? ` — ${opportunity.body_name}` : ""} ×${opportunity.score.toFixed(2)}`);
       const garden = [...dynamic.bodies].sort((a, b) => b.habitat_capacity_mult - a.habitat_capacity_mult)[0];
       const minerals = [...dynamic.bodies].filter((body) => body.geology !== null).sort((a, b) => (b.mineral_extraction_mult ?? 1) - (a.mineral_extraction_mult ?? 1))[0];

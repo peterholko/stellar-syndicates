@@ -1,0 +1,115 @@
+{
+  "version": "2026-09-08",
+  "generator": "built-in image_gen",
+  "modelVersion": "not exposed by the tool",
+  "runtimeStatus": "candidates; current game assets unchanged",
+  "ships": [
+    {
+      "slug": "interceptor",
+      "title": "Interceptor",
+      "file": "interceptor.png",
+      "originalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-01376c32-e571-48f6-8559-c6128c2df3a2.png",
+      "finalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-01376c32-e571-48f6-8559-c6128c2df3a2.png"
+    },
+    {
+      "slug": "freighter",
+      "title": "Freighter",
+      "file": "freighter.png",
+      "originalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-75a7486a-c07d-41ef-a778-76af4181d493.png",
+      "finalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-75a7486a-c07d-41ef-a778-76af4181d493.png"
+    },
+    {
+      "slug": "scout",
+      "title": "Scout",
+      "file": "scout.png",
+      "originalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-16dc0bff-5eb5-4ca8-9ca9-63e77c865933.png",
+      "finalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-16dc0bff-5eb5-4ca8-9ca9-63e77c865933.png"
+    },
+    {
+      "slug": "corvette",
+      "title": "Corvette",
+      "file": "corvette.png",
+      "originalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-3ba5f22e-03c0-4599-b2af-145c8f7a19e6.png",
+      "finalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-3ba5f22e-03c0-4599-b2af-145c8f7a19e6.png"
+    },
+    {
+      "slug": "colony_ship",
+      "title": "Colony Ship",
+      "file": "colony_ship.png",
+      "originalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-46c90a55-9170-4b15-a001-7d959972e7db.png",
+      "finalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-46c90a55-9170-4b15-a001-7d959972e7db.png"
+    },
+    {
+      "slug": "construction_ship",
+      "title": "Construction Ship",
+      "file": "construction_ship.png",
+      "originalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-23c7a54d-e3ed-4e7b-a817-a768ebfc7495.png",
+      "finalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-23c7a54d-e3ed-4e7b-a817-a768ebfc7495.png"
+    },
+    {
+      "slug": "troop_transport",
+      "title": "Troop Transport",
+      "file": "troop_transport.png",
+      "originalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-25ebf4ff-0d94-4126-a997-1c54c922183b.png",
+      "finalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-373048de-aada-44d4-9637-cd61a4cb3be5.png"
+    },
+    {
+      "slug": "destroyer",
+      "title": "Destroyer",
+      "file": "destroyer.png",
+      "originalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-c13b48c4-f17f-4ed6-a53a-b539ed7f90de.png",
+      "finalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-c13b48c4-f17f-4ed6-a53a-b539ed7f90de.png"
+    },
+    {
+      "slug": "cruiser",
+      "title": "Cruiser",
+      "file": "cruiser.png",
+      "originalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-e9cb5f97-fbca-4a90-96a2-2af5491a7508.png",
+      "finalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-e9cb5f97-fbca-4a90-96a2-2af5491a7508.png"
+    },
+    {
+      "slug": "battleship",
+      "title": "Battleship",
+      "file": "battleship.png",
+      "originalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-0d31731a-88b9-4ff7-9aca-6e4b5da4d5ef.png",
+      "finalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-0d31731a-88b9-4ff7-9aca-6e4b5da4d5ef.png"
+    },
+    {
+      "slug": "dreadnought",
+      "title": "Dreadnought",
+      "file": "dreadnought.png",
+      "originalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-3abc6df4-e38b-453a-96c0-6aeb047b6185.png",
+      "finalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-3abc6df4-e38b-453a-96c0-6aeb047b6185.png"
+    },
+    {
+      "slug": "titan",
+      "title": "Titan",
+      "file": "titan.png",
+      "originalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-5538e76d-0348-47a1-8ecd-189febd1798d.png",
+      "finalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-5538e76d-0348-47a1-8ecd-189febd1798d.png"
+    },
+    {
+      "slug": "authority_freighter",
+      "title": "Authority Freighter",
+      "file": "authority_freighter.png",
+      "originalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-d9b83e7e-16ab-471f-ae6f-c1e912665c7d.png",
+      "finalGeneration": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-d9b83e7e-16ab-471f-ae6f-c1e912665c7d.png"
+    }
+  ],
+  "edits": [
+    {
+      "slug": "troop_transport",
+      "prompt": "Use case: precise-object-edit. Input image 1 is the edit target: the new top-down Troop Transport sprite. Change ONLY the framing: show the entire same ship at a SMALLER SCALE inside the same square transparent canvas. Its nose and aft engines must be fully visible with a generous 15% EMPTY TRANSPARENT BORDER at BOTH the top and bottom; target ship height 70% of the canvas, not 95%. Restore the tiny forward prow cap if it is clipped. Preserve the exact ship design, four side landing-craft bays, armor arrangement, materials, colors, proportions, orientation (nose straight up), crisp hard-surface detail and compact cyan engine glow. Do not redesign it. Genuinely transparent PNG RGBA, all corners alpha 0. No ground, shadow rectangle, checkerboard, extra objects or text. Do not auto-crop or re-zoom to fill the square. This is a sprite with deliberate empty padding, not a close-up.",
+      "input": "drafts/troop_transport-tight.png",
+      "output": "drafts/troop_transport-padded-background.png",
+      "generation": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-8003e3d5-486d-48ed-becb-eb5f7c7e6dec.png"
+    },
+    {
+      "slug": "troop_transport",
+      "prompt": "Use case: background-extraction. Remove the entire grey checkerboard background from this spaceship sprite. Output a PNG with a genuine transparent RGBA alpha channel, NOT a picture of transparency. All space outside the ship and all gaps between the hull and its four side pods must be fully transparent. Keep the existing ship, colors, pixels/detail, top-down orientation, scale and centered composition, including the wide empty 15% margins. Do not zoom in or crop. This is an isolated game sprite cutout, not a scene. No new background of any kind.",
+      "input": "drafts/troop_transport-padded-background.png",
+      "output": "troop_transport.png",
+      "generation": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-373048de-aada-44d4-9637-cd61a4cb3be5.png"
+    }
+  ]
+}

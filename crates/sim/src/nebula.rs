@@ -283,7 +283,7 @@ mod tests {
             assert!(systems_in(NebulaKind::SupernovaRemnant).any(|system| {
                 system
                     .all_deposits()
-                    .any(|deposit| deposit.resource == crate::Commodity::RareElements)
+                    .any(|deposit| deposit.resource == crate::Commodity::RareMetalOre)
             }));
             assert!(systems_in(NebulaKind::PrecursorCloud).any(|system| {
                 system

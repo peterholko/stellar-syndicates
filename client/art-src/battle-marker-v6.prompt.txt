@@ -1,0 +1,28 @@
+Battle marker V6 — approved oversized explosion between two fleets
+
+Generation method: built-in image_gen (precise-object-edit).
+Approved result: exec-2b95c4bc-e1b2-4c77-92c0-c49c895465df.png
+Source copied to: client/art-src/battle-marker-v6-source.png
+Clean master: client/art-src/battle-marker-v6.png
+Runtime: client/public/art/battle_in_progress_v6.png (256 × 256 RGBA)
+
+Final approved generation prompt:
+
+Use case: precise-object-edit.
+Image 1 is the edit target: the approved six-ship battle-marker preview.
+Make ONLY the central explosion much bigger again: approximately 2.2 TIMES ITS CURRENT DIAMETER, spanning a little over HALF the width between the left and right red corner brackets. Keep its center fixed. The warm-ivory starburst should now be the dominant central feature, with a broad bright core and the same crisp angular radiating points.
+IMPORTANT: draw the enlarged explosion IN FRONT OF and visibly OVERLAPPING the two large lead ships in the middle. It should cover their noses and part of their forward hulls. This overlap is explicitly wanted. Do not shrink the burst to preserve ship visibility, and do not move the ships apart.
+Keep all six ships at exactly their existing positions, orientations, sizes and colors beneath the explosion. The four smaller escort ships remain visible around it. Keep all four red tactical brackets, the uniform opaque near-black #05070d preview background, canvas framing and existing mature tactical art style unchanged.
+No new ships, smoke, debris, extra laser effects, new frame, text, checkerboard or other changes. Single updated icon preview.
+
+Integration preparation:
+Built-in background-extraction attempts changed the approved artwork or painted a
+checkerboard. The user explicitly authorized local image processing instead.
+client/scripts/prepare-battle-marker.mjs removes the four baked selection brackets
+and outside-connected near-black background, preserving original foreground RGB
+and enclosed dark hull panels. It then trims, pads and downsamples the runtime PNG.
+No fleet or explosion artwork was regenerated during that cleanup.
+
+The renderer draws red corner brackets only for the selected engagement. The
+complete active sprite breathes by 4% over 2.2 seconds; arrived historical battles
+remain static. Neither selection nor animation is baked into the image.

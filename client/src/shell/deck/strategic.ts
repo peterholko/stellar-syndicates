@@ -1,3 +1,4 @@
+import { isPlayerFreighter } from "../../protocol";
 import {
   recordForReport,
   guardCapable,
@@ -44,6 +45,7 @@ import { sheetFingerprint } from "../signature";
 import type { CoreContext } from "../types";
 import type { DeckRoute } from "./router";
 import { handoffHtml, handleHandoffAction } from "./handoff";
+import { explorationHtml, explorationFocused, handleExplorationAction } from "../exploration";
 
 interface StrategicHooks {
   go(route: DeckRoute): void;
@@ -111,6 +113,8 @@ export class DeckStrategicRoutes {
       this.rankCategory,
       this.ctx.state.simTime,
       this.ctx.state.operations,
+      this.ctx.state.explorationSites, this.ctx.state.selectedExplorationSiteId,
+      this.ctx.state.explorationJournal,
       this.ctx.state.midgameStage,
       this.ctx.state.founding, this.ctx.state.systems, this.ctx.state.research,
       this.ctx.state.selectedShipId,
@@ -133,7 +137,8 @@ export class DeckStrategicRoutes {
     if (!force && signature === this.routeSignature) return true;
     if (renderDeferred(this.root.id, () => this.render(route, true))) return true;
     this.routeSignature = signature;
-    if (route.name === "operations") setHtml(this.root, this.operationsHtml(route.query?.contract));
+    if (route.name === "operations") setHtml(this.root, explorationHtml(this.ctx.state)
+      + (explorationFocused(this.ctx.state) ? "" : this.operationsHtml(route.query?.contract)));
     else if (route.name === "syndicate") setHtml(this.root, this.syndicateHtml());
     else if (route.name === "faction") setHtml(this.root, this.factionHtml());
     else if (route.name === "rankings") setHtml(this.root, this.rankingsHtml());
@@ -143,6 +148,9 @@ export class DeckStrategicRoutes {
 
   handleAction(button: HTMLButtonElement, route: DeckRoute | null): boolean {
     if (!route || !["operations", "syndicate", "faction", "rankings", "battle"].includes(route.name)) return false;
+    if (route.name === "operations" && handleExplorationAction(button, this.ctx)) {
+      this.invalidate(); this.render(route, true); return true;
+    }
     if (route.name === "operations" && handleHandoffAction(button, this.ctx, {
       go: this.hooks.go, openWorld: this.hooks.openWorld, selectFleet: id => this.hooks.selectFleets([id]),
     })) return true;
@@ -210,12 +218,14 @@ export class DeckStrategicRoutes {
   private operationsHtml(contract?: string): string {
     const [stage, stageCopy] = MIDGAME_COPY[this.ctx.state.midgameStage];
     const selected = this.ctx.state.operations.find(o => o.id === contract);
-    const others = this.ctx.state.operations.filter(o => o !== selected);
+    const counterRaids = this.ctx.state.operations.filter(o => o !== selected
+      && o.briefing?.follow_up.startsWith("counter_raid_") && ["offered", "active"].includes(o.state));
+    const others = this.ctx.state.operations.filter(o => o !== selected && !counterRaids.includes(o));
     const available = others.filter((o) => o.state === "offered" || (o.state === "active" && !o.joined));
     const active = others.filter((o) => o.state === "active" && o.joined);
     const history = others.filter((o) => !["offered", "active"].includes(o.state)).sort((a, b) => b.reported_at - a.reported_at).slice(0, 12);
     const group = (title: string, rows: OperationView[], empty = "") => `<section class="deck-section"><header><div><h3>${esc(title)}</h3>${rows.length ? `<p>${rows.length} arrived record${rows.length === 1 ? "" : "s"}.</p>` : ""}</div><b>${rows.length}</b></header>${rows.map((o) => this.operationCard(o)).join("") || `<div class="deck-empty-inline">${esc(empty)}</div>`}</section>`;
-    return `<section class="deck-page deck-operations"><header class="deck-page__lead"><span>Contracts · objectives · shared projects</span><h2>${esc(stage)}</h2><p>${esc(stageCopy)}</p></header>${selected ? group("Funding contract", [selected]) : ""}${handoffHtml()}${group("Active contracts", active, "No operation is currently assigned.")}${group("Available contracts", available, "No arrived offers. The board updates when fresh reports reach command.")}${history.length ? group("History", history) : ""}</section>`;
+    return `<section class="deck-page deck-operations"><header class="deck-page__lead"><span>Contracts · objectives · shared projects</span><h2>${esc(stage)}</h2><p>${esc(stageCopy)}</p></header>${selected ? group(selected.briefing?.follow_up.startsWith("counter_raid_") ? "Counterattack" : "Funding contract", [selected]) : ""}${counterRaids.length ? group("Defend home · strike back", counterRaids) : ""}${handoffHtml()}${group("Active contracts", active, "No operation is currently assigned.")}${group("Available contracts", available, "No arrived offers. The board updates when fresh reports reach command.")}${history.length ? group("History", history) : ""}</section>`;
   }
 
   private operationCard(operation: OperationView): string {
@@ -229,7 +239,7 @@ export class DeckStrategicRoutes {
       if (operation.briefing) actions.push(this.followUpControls(operation));
       else {
         if (selected) actions.push(actionButton("strategic-operation-assign", operation.assigned_fleet ? "Reassign selected fleet" : "Assign selected fleet", operation.id));
-        if (operation.kind.kind === "rescue_salvage" && selected) actions.push(actionButton("strategic-operation-recover", "Recover with selected fleet", operation.id, "is-primary"));
+        if (["rescue_salvage", "prize_recovery"].includes(operation.kind.kind) && selected) actions.push(actionButton("strategic-operation-recover", "Recover with selected fleet", operation.id, "is-primary"));
       }
       if (operation.kind.kind === "syndicate_megaproject") {
         const hostSystem = operation.kind.system;
@@ -246,8 +256,12 @@ export class DeckStrategicRoutes {
 
   private followUpControls(o: OperationView): string {
     const escort = o.kind.kind === "freight_escort";
+    const combat = escort || o.kind.kind === "privateer_patrol" || o.kind.kind === "pirate_bounty" || o.kind.kind === "combat_objective";
+    const survey = o.kind.kind === "survey_expedition";
+    const recovery = o.kind.kind === "rescue_salvage" || o.kind.kind === "prize_recovery";
     const own = this.ctx.state.ghosts.filter(g => g.own);
-    const fleets = own.filter(g => escort ? guardCapable(g) : fleetReadiness(g).cargoCapacity > 0);
+    const fleets = own.filter(g => survey ? (g.composition?.some(c => c.kind === "scout" && c.count > 0) ?? g.kind === "scout")
+      : combat ? guardCapable(g) : fleetReadiness(g).cargoCapacity > 0);
     const chosen = this.operationFleets.get(o.id) ?? o.assigned_fleet ?? "";
     const fleet = fleets.find(g => g.id === chosen);
     const charges = own.filter(g => fleetReadiness(g).cargoCapacity > 0 && g.id !== chosen);
@@ -259,9 +273,16 @@ export class DeckStrategicRoutes {
     if (charge) warnings.push(...dispatchWarnings(charge, o.target_pos).map(w => `Freighter: ${w}`));
     if (fleet && o.kind.kind === "rescue_salvage" && fleetReadiness(fleet).cargoFree < o.kind.units)
       warnings.push(`Recovery needs ${o.kind.units} free cargo. Unload first.`);
-    return `<div class="deck-operation-dispatch">${select(fleets, chosen, "operation-fleet", escort ? "Escort" : "Freighter")}${escort ? select(charges, chargeId, "operation-charge", "Protect") : ""}
+    if (fleet && o.kind.kind === "prize_recovery") {
+      // Mirrors MODULE_CONVOY_BERTHS: equipment uses crate berths, not bulk cargo.
+      const capacity = 12 * (fleet.composition?.filter(c => isPlayerFreighter(c.kind)).reduce((n, c) => n + c.count, 0) ?? (isPlayerFreighter(fleet.kind) ? 1 : 0));
+      const aboard = Object.values(fleet.modules ?? {}).reduce((n, count) => n + count, 0);
+      const needed = o.kind.prize === "breacher_cache" ? 4 : 8;
+      if (capacity - aboard < needed) warnings.push(`Needs ${needed} free module berths. Dock at an owned system to unload.`);
+    }
+    return `<div class="deck-operation-dispatch">${select(fleets, chosen, "operation-fleet", survey ? "Scout" : combat ? "Combat fleet" : "Freighter")}${escort ? select(charges, chargeId, "operation-charge", "Protect") : ""}
       ${warnings.length ? `<div class="deck-dispatch-warning" role="status">${warnings.map(esc).join("<br>")}</div>` : ""}
-      <div><button type="button" data-deck-act="strategic-operation-dispatch" data-operation="${escAttr(o.id)}" ${!fleet || (escort && !charge) ? "disabled" : ""}>${escort ? "Assign guard" : o.kind.kind === "rescue_salvage" ? "Plot recovery" : "Select Freighter"}</button>
+      <div><button type="button" data-deck-act="strategic-operation-dispatch" data-operation="${escAttr(o.id)}" ${!fleet || (escort && !charge) ? "disabled" : ""}>${escort ? "Assign guard" : survey ? "Plot survey" : combat ? "Plot assault" : recovery ? "Plot recovery" : "Select Freighter"}</button>
       <button type="button" data-deck-act="strategic-operation-locate" data-operation="${escAttr(o.id)}">${escort ? "Show home departure" : "Show destination"}</button></div>
       ${escort ? "<small>Meet at home, then dispatch the guarded Freighter to Market.</small>" : ""}</div>`;
   }
@@ -287,7 +308,12 @@ export class DeckStrategicRoutes {
         ]);
       } else {
         this.hooks.selectFleets([fleet.id]);
-        if (op.kind.kind === "rescue_salvage")
+        if (op.kind.kind === "survey_expedition")
+          this.ctx.intent.beginFleetCommand([
+            { type: "AssignOperationFleet", operation_id, fleet_id: fleet.id },
+            { type: "SurveySystem", fleet_id: fleet.id, system_id: op.kind.system },
+          ]);
+        else if (["rescue_salvage", "prize_recovery", "privateer_patrol", "pirate_bounty", "combat_objective"].includes(op.kind.kind))
           this.ctx.intent.beginFleetCommand([
             { type: "AssignOperationFleet", operation_id, fleet_id: fleet.id },
             { type: "MoveShip", ship_id: fleet.id, dest: op.target_pos },
@@ -561,7 +587,7 @@ function actionButton(action: string, text: string, operation: string, cls = "")
 }
 
 function forceChip(kind: ShipKind, count: string): string {
-  return `<span class="deck-force-chip">${icon(kind === "convoy" || kind === "freighter" ? "convoy" : "fleet", "sm")}<span>${esc(shipKindLabel(kind))}</span><b>${esc(count)}</b></span>`;
+  return `<span class="deck-force-chip">${icon(isPlayerFreighter(kind) || kind === "freighter" ? "convoy" : "fleet", "sm")}<span>${esc(shipKindLabel(kind))}</span><b>${esc(count)}</b></span>`;
 }
 
 function forceSide(side: string, chips: string): string {
@@ -574,7 +600,6 @@ function losses(rows: CompCount[]): string {
 
 function survivorIcon(kind: ShipKind): IconKey {
   if (kind === "freighter") return "authorityFreighter";
-  if (kind === "builder" || kind === "transport") return "fleet";
   return kind;
 }
 

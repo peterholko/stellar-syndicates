@@ -113,6 +113,8 @@ impl Sample {
 /// hull damage, cargo and orders must travel with the position they describe.
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 struct FleetFacts {
+    #[serde(default)]
+    defend_system: Option<sim::ship::SystemDefense>,
     owner: PlayerId,
     owner_name: String,
     captain_id: Option<u32>,
@@ -135,13 +137,23 @@ struct FleetFacts {
     ships: Vec<sim::ship::Ship>,
     marines: u32,
     posture: sim::EngagementPosture,
+    #[serde(default)]
+    mission: sim::doctrine::MissionProfile,
+    #[serde(default)]
+    industry: Option<sim::industry::FleetIndustry>,
+    #[serde(default)]
+    pirate_faction: Option<sim::pirate::PirateFaction>,
     transit: sim::ship::TransitMode,
     engage_freight: Option<bool>,
     garrison_host: Option<EntityId>,
     garrison_fed: bool,
     supplied: bool,
     rescue_inbound: bool,
+    #[serde(default)]
+    fuel_transfer: Option<sim::ship::FuelTransfer>,
     survey_progress: Option<f64>,
+    #[serde(default)]
+    expedition: Option<sim::sites::ExpeditionAssignment>,
     freight_run: Option<sim::tca::FreightRun>,
 }
 
@@ -590,6 +602,7 @@ impl PositionHistory {
             track.modules = ship.modules.clone();
             track.route = route_of(&ship.order);
             let facts = FleetFacts {
+                defend_system: ship.system_defense(),
                 owner: track.owner.clone(),
                 owner_name: track.owner_name.clone(),
                 captain_id: track.captain_id.clone(),
@@ -612,6 +625,9 @@ impl PositionHistory {
                 ships: ship.ships.clone(),
                 marines: ship.marines(),
                 posture: ship.posture,
+                mission: ship.mission_profile,
+                industry: ship.industry.clone(),
+                pirate_faction: ship.pirate_faction,
                 transit: ship.transit,
                 engage_freight: matches!(ship.order, FleetOrder::Blockade { .. })
                     .then_some(ship.engage_freight),
@@ -620,9 +636,19 @@ impl PositionHistory {
                 supplied: ship.supplied,
                 rescue_inbound: world.fuel_rescues.values()
                     .any(|run| run.customer == *id),
+                fuel_transfer: match ship.order {
+                    FleetOrder::Refuel { transfer, .. } => Some(transfer),
+                    _ => None,
+                },
                 survey_progress: match ship.order {
                     FleetOrder::Survey { dwell_since: Some(since), .. } =>
                         Some(((now - since) / sim::explore::SURVEY_SECS).clamp(0.0, 1.0)),
+                    FleetOrder::Expedition { dwell_since: Some(since), task, .. } =>
+                        Some(((now - since) / task.seconds()).clamp(0.0, 1.0)),
+                    _ => None,
+                },
+                expedition: match ship.order {
+                    FleetOrder::Expedition { site, task, .. } => Some(sim::sites::ExpeditionAssignment { site, task }),
                     _ => None,
                 },
                 freight_run: world.freight_runs.get(id).cloned(),
@@ -883,6 +909,7 @@ impl PositionHistory {
             job: Option<crate::protocol::JobView>,
             path: Vec<Vec2>,
             guard_target: Option<EntityId>,
+            defend_system: Option<sim::ship::SystemDefense>,
             composition: &'a BTreeMap<ShipKind, u32>,
             loadouts:
                 &'a std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>,
@@ -1015,6 +1042,7 @@ impl PositionHistory {
                     .rev()
                     .find(|(t, _)| *t <= sample.time)
                     .and_then(|(_, target)| *target),
+                defend_system: facts.defend_system,
                 composition: &facts.composition,
                 loadouts: &facts.loadouts,
                 sample,
@@ -1125,7 +1153,7 @@ impl PositionHistory {
             // sighting's drive state say the same thing without the lie, and the
             // intercept estimate answers the question the circle was reached for.
             let age = now - p.sample.time;
-            let is_convoy = p.flagship == ShipKind::Convoy;
+            let is_convoy = p.flagship.is_player_freighter();
             // Convoy fleets broadcast their route; cargo only within sensor
             // coverage (Tier 2), exactly as before.
             let route = if is_convoy { p.route.clone() } else { None };
@@ -1225,6 +1253,7 @@ impl PositionHistory {
                         .collect()
                 }),
                 guard_target: own.then_some(p.guard_target).flatten(),
+                defend_system: own.then_some(p.defend_system).flatten(),
                 drive: Some(p.sample.drive),
                 jump_spool: p.sample.jump_spool.map(|(started, waiting_for_fuel, spool_secs)| {
                     crate::protocol::JumpSpoolView {
@@ -1250,6 +1279,7 @@ impl PositionHistory {
                 fuel_capacity: own.then_some(p.fuel_capacity),
                 stalled: own && p.stalled,
                 rescue_inbound: own && p.facts.rescue_inbound,
+                fuel_transfer: own.then_some(p.facts.fuel_transfer).flatten(),
                 rescue_service: p.rescue_service,
                 id: p.id,
                 owner: p.owner,
@@ -1291,8 +1321,13 @@ impl PositionHistory {
                 // OWNER-ONLY per-fleet posture is filled in by the game loop from the
                 // authoritative fleet (this history-only view can't see it); None here.
                 posture: own.then_some(p.facts.posture),
-                // §explore: OWNER-ONLY survey progress — injected by the game loop.
+                mission_profile: own.then_some(p.facts.mission),
+                industry: own.then(|| p.facts.industry.clone()).flatten(),
+                pirate_faction: p.facts.pirate_faction,
+                // Own assignment and progress travel with these historical facts,
+                // not the current fleet order or a client completion clock.
                 survey_progress: own.then_some(p.facts.survey_progress).flatten(),
+                expedition: own.then_some(p.facts.expedition).flatten(),
                 // §syndicates: ally tint (Part 1) + garrison status (Part 3) are
                 // injected by the game loop from authoritative state (this
                 // history-only view can't see them).
@@ -1621,6 +1656,7 @@ pub fn filter_systems(
             };
             SystemStateView {
                 id: sys.id,
+                industry: own.then(|| sys.industry.clone()),
                 owner,
                 stockpile,
                 build,
@@ -1775,16 +1811,17 @@ pub fn filter_systems(
                 // §economy Part 6 SHOWN MATH: every line's resolved factor chain,
                 // owner-only (rivals: empty — production is private intel).
                 assignments: if own {
-                    assignment_views(sys)
+                    assignment_views(sys, Default::default())
                 } else {
                     Vec::new()
                 },
                 // §economy: idle-converter status for the system-view banner (owner-only).
                 converters: if own {
-                    converter_statuses(sys)
+                    converter_statuses(sys, Default::default())
                 } else {
                     Vec::new()
                 },
+                refining_sites: Vec::new(),
                 refinery_tier: if own {
                     sys.tier(sim::StructureKind::FuelRefinery)
                 } else {
@@ -1918,7 +1955,7 @@ pub fn filter_systems(
 /// §economy Part 6: resolve every production line's factor chain for the
 /// OWNER's view — the shown-math law: the client renders exactly these
 /// numbers; nothing is recomputed or hidden client-side. Pure read.
-fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentView> {
+fn assignment_views(sys: &sim::StarSystem, mods: sim::production::ProductionMods) -> Vec<crate::protocol::AssignmentView> {
     sys.bodies
         .iter()
         .flat_map(|b| b.assignments.iter().map(move |(k, a)| (b, *k, a)))
@@ -1929,7 +1966,7 @@ fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentVie
                 && body.deposits.iter().any(|d| {
                     sim::production::extraction_structure(d.resource) == Some(*kind)
                 });
-            let throughput = if deep_extraction {
+            let mut throughput = if deep_extraction {
                 sim::production::tier_throughput(tier.saturating_sub(1).max(1))
             } else {
                 sim::production::tier_throughput(tier)
@@ -1938,14 +1975,17 @@ fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentVie
             let skill = sys.skill_factor(body.id, *kind);
             let food = sim::production::food_factor(*kind, sys.food_state);
             let mut outputs: Vec<(Commodity, f64)> = Vec::new();
-            let site = if let Some(conv) = sim::production::converter_for(*kind) {
+            let recovery = mods.recovery(*kind);
+            let site = if let Some(conv) = sim::production::assigned_converter(*kind, Some(asg)) {
+                throughput *= mods.processing;
                 let site = sim::explore::converter_site_mult(body, *kind, sys.trait_);
-                outputs.push((
-                    conv.output,
-                    conv.rate * throughput * staffing * skill * food * site,
-                ));
+                outputs.extend(conv.outputs().map(|(c, units)|
+                    (c, units * conv.rate * throughput * staffing * skill * food * site * recovery)));
                 site
             } else {
+                if body.deposits.iter().any(|d| sim::production::extraction_structure(d.resource) == Some(*kind)) {
+                    throughput *= mods.extraction;
+                }
                 let mut first_site = 1.0;
                 for d in &body.deposits {
                     if sim::production::extraction_structure(d.resource) == Some(*kind) {
@@ -1960,6 +2000,7 @@ fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentVie
                         outputs.push((
                             d.resource,
                             sim::explore::natural_extraction_rate(body, d, sys.trait_)
+                                * sim::production::ore_bulk_ratio(d.resource)
                                 * throughput
                                 * staffing
                                 * skill
@@ -1975,6 +2016,7 @@ fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentVie
                 title: kind.title().to_string(),
                 tier,
                 workers: asg.workers,
+                refining_ore: asg.refining_ore,
                 specialists: asg.specialists.clone(),
                 suspended: asg.suspended.map(|r| r.slug().to_string()),
                 throughput,
@@ -1982,6 +2024,7 @@ fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentVie
                 skill,
                 food,
                 site,
+                recovery,
                 outputs,
             }
         })
@@ -1993,12 +2036,14 @@ fn assignment_views(sys: &sim::StarSystem) -> Vec<crate::protocol::AssignmentVie
 /// loop) EXACTLY: a built line with no crew reads `needs_crew`; a staffed line
 /// reports its latched suspend reason (`no_inputs` / `no_food` / `storage_full`)
 /// or `running`. Owner-gated by the caller (rivals get an empty list).
-fn converter_statuses(sys: &sim::StarSystem) -> Vec<crate::protocol::ConverterStatusView> {
+fn converter_statuses(sys: &sim::StarSystem, mods: sim::production::ProductionMods) -> Vec<crate::protocol::ConverterStatusView> {
     let line_spec = sys.effective_specialists();
     let mut out = Vec::new();
     for b in &sys.bodies {
         for conv in &sim::production::CONVERTERS {
             let kind = conv.structure;
+            let conv = sim::production::assigned_converter(kind, b.assignments.get(&kind))
+                .expect("validated standing recipe");
             let tier = b.tier(kind);
             if tier == 0 {
                 continue; // not built on this body — no line to report
@@ -2021,10 +2066,36 @@ fn converter_statuses(sys: &sim::StarSystem) -> Vec<crate::protocol::ConverterSt
                 title: kind.title().to_string(),
                 tier,
                 status: status.to_string(),
+                rated_output: conv.rate * sim::production::tier_throughput(tier)
+                    * sys.skill_factor(b.id,kind) * sim::production::food_factor(kind,sys.food_state)
+                    * sim::explore::converter_site_mult(b,kind,sys.trait_) * mods.processing * mods.recovery(kind),
+                site: sim::explore::converter_site_mult(b,kind,sys.trait_),
+                recovery: mods.recovery(kind),
             });
         }
     }
     out
+}
+
+/// Research modifiers travel WITH the inventory/assignment report. Reusing
+/// today's corporation research here would make yesterday's factory change
+/// before its light arrived. No current-world input is accepted by this helper.
+pub fn apply_production_report(view: &mut SystemStateView, report: &sim::information::SiteReport) {
+    let sys = &report.system;
+    let mods = report.production_mods;
+    view.assignments = assignment_views(sys, mods);
+    view.converters = converter_statuses(sys, mods);
+    view.refining_sites = sys.bodies.iter().map(|body| {
+        let kind = sim::StructureKind::Smelter;
+        let tier = body.tier(kind);
+        crate::protocol::RefiningSiteView {
+            body_id: body.id, tier: tier.max(1), built: tier > 0,
+            recovery: sim::explore::converter_site_mult(body, kind, sys.trait_) * mods.recovery(kind),
+            work_rate: sim::production::tier_throughput(tier.max(1)) * mods.processing
+                * sim::production::food_factor(kind, sys.food_state)
+                * if tier > 0 { sys.skill_factor(body.id, kind) } else { 1.0 },
+        }
+    }).collect();
 }
 
 // --- §battle-records Part A2: light-gated, fidelity-tiered replay views -------
@@ -2503,6 +2574,11 @@ pub fn visible_manifest(
 /// Stable key string for a buildable thing (matches the client's build commands).
 pub fn build_key(what: sim::BuildKind) -> &'static str {
     match what {
+        sim::BuildKind::Ship { ship: sim::ShipKind::TinyFreighter } => "tiny_freighter",
+        sim::BuildKind::Ship { ship: sim::ShipKind::SmallFreighter } => "small_freighter",
+        sim::BuildKind::Ship { ship: sim::ShipKind::LargeFreighter } => "large_freighter",
+        sim::BuildKind::Ship { ship: sim::ShipKind::HeavyFreighter } => "heavy_freighter",
+        sim::BuildKind::Ship { ship: sim::ShipKind::BulkFreighter } => "bulk_freighter",
         sim::BuildKind::Ship {
             ship: sim::ShipKind::Builder,
         } => "builder",
@@ -2633,6 +2709,7 @@ fn route_of(order: &FleetOrder) -> Option<Vec<Vec2>> {
 fn order_path(order: &FleetOrder, _pos: Vec2) -> Vec<Vec2> {
     match order {
         FleetOrder::MoveTo { dest } => vec![*dest],
+        FleetOrder::DefendSystem { assignment } => vec![assignment.station],
         FleetOrder::Patrol {
             waypoints, index, ..
         } if !waypoints.is_empty() => (0..waypoints.len())
@@ -2641,7 +2718,8 @@ fn order_path(order: &FleetOrder, _pos: Vec2) -> Vec<Vec2> {
         FleetOrder::Construct { site, .. }
         | FleetOrder::Demolish { site, .. }
         | FleetOrder::Blockade { station: site, .. }
-        | FleetOrder::Survey { station: site, .. } => vec![*site],
+        | FleetOrder::Survey { station: site, .. }
+        | FleetOrder::Expedition { station: site, .. } => vec![*site],
         // A moving guard charge has no fixed flight plan. Its served identity
         // is carried separately and the client joins the two served ghosts;
         // recording its true position as a "plan" every tick would retain an
@@ -2854,6 +2932,207 @@ mod tests {
     use super::*;
 
     #[test]
+    fn refining_estimates_use_reported_modifiers_and_hide_rival_capabilities() {
+        let mut world = World::new(sim::SimConfig::for_players(123,4));
+        let owner = PlayerId(901);
+        world.step(&[sim::Command::AddPlayer { id:owner, name:"Refinery reports".into() }]);
+        let sys = world.systems.iter_mut().find(|s| s.owner==Some(owner)).unwrap();
+        let id = sys.id;
+        let pos = sys.pos;
+        sys.set_tier(sim::StructureKind::Smelter,1);
+        sys.assign(sim::StructureKind::Smelter, sim::production::Assignment::crew(1));
+        world.record_information();
+        let mut report = world.information.site(id,pos,world.config.c,world.time).unwrap().clone();
+        let serve = |viewer| filter_systems(std::slice::from_ref(&report.system),viewer,pos,
+            world.config.c,world.time,&[],world.tick,sim::DT,&BTreeMap::new(),&[],&BTreeSet::new());
+        assert!(serve(PlayerId(902))[0].refining_sites.is_empty());
+        let mut view = serve(owner).remove(0);
+        apply_production_report(&mut view,&report);
+        let output = view.assignments.iter().find(|a| a.structure=="smelter").unwrap().outputs[0].1;
+        let rated = view.converters.iter().find(|a| a.structure=="smelter").unwrap().rated_output;
+        let site = view.refining_sites.iter().find(|s| s.built).unwrap();
+        let (work,recovery) = (site.work_rate,site.recovery);
+        assert!(output>0.0 && rated>0.0);
+        // Change only the supplied report. The helper has no live-world input.
+        report.production_mods.processing = 1.15;
+        report.production_mods.ore_recovery = 1.15;
+        apply_production_report(&mut view,&report);
+        let line = view.assignments.iter().find(|a| a.structure=="smelter").unwrap();
+        assert!((line.outputs[0].1-output*1.15*1.15).abs()<1e-9);
+        assert_eq!(line.recovery,1.15);
+        assert!((view.converters.iter().find(|a| a.structure=="smelter").unwrap().rated_output-rated*1.15*1.15).abs()<1e-9);
+        let site = view.refining_sites.iter().find(|s| s.built).unwrap();
+        assert!((site.work_rate-work*1.15).abs()<1e-9);
+        assert!((site.recovery-recovery*1.15).abs()<1e-9);
+    }
+
+    #[test]
+    fn utility_sensors_and_tanks_change_only_with_arrived_fitting_light() {
+        use sim::{Command, Fleet, FleetOrder, Loadout, ModuleKind as M, SimConfig};
+        let mut world = World::new(SimConfig::for_players(123, 4));
+        let owner = PlayerId(901);
+        world.step(&[Command::AddPlayer { id: owner, name: "Recon reports".into() }]);
+        let cc = world.players[&owner].command_center;
+        let pos = cc + Vec2::new(180_000.0, 0.0);
+        world.fleets.clear();
+        world.nebulas.clear();
+        let scout = EntityId(900_001);
+        let convoy = EntityId(900_002);
+        world.fleets.insert(scout, Fleet::single(scout, owner, ShipKind::Scout, pos, FleetOrder::Idle, None));
+        world.fleets.insert(convoy, Fleet::single(convoy, owner, ShipKind::Convoy, pos, FleetOrder::Idle, None));
+        let cap = world.fleets[&convoy].fuel_capacity();
+        let fuel = world.fleets[&convoy].fuel;
+        world.time = 0.0;
+        let mut history = PositionHistory::for_world(&world);
+        history.record(&world);
+        world.time = 1.0;
+        world.fleets.get_mut(&scout).unwrap().set_fitted(ShipKind::Scout, &Loadout::new(vec![M::ReconSuite]), 1);
+        world.fleets.get_mut(&convoy).unwrap().set_fitted(ShipKind::Convoy, &Loadout::new(vec![M::ExtendedTanks]), 1);
+        history.record(&world);
+        let delay = sim::transit::delay(pos, cc, world.config.c);
+        let before = history.view_for(owner, cc, world.config.c, delay + 0.5);
+        let old = before.iter().find(|g| g.id == convoy).unwrap();
+        assert_eq!(old.fuel_capacity, Some(cap));
+        let range = |now| history.coverage_for(owner, cc, world.config.c, now, &[])
+            .into_iter().filter(|(p, _)| p.distance(pos) < 1e-6).map(|(_, r)| r).fold(0.0_f64, f64::max);
+        assert_eq!(range(delay + 0.5), 20_000.0, "only the old Freighter sensors have arrived");
+        let after = history.view_for(owner, cc, world.config.c, delay + 1.0);
+        let new = after.iter().find(|g| g.id == convoy).unwrap();
+        assert!((new.fuel_capacity.unwrap() - cap * 1.75).abs() < 1e-9);
+        assert_eq!(new.fuel, Some(fuel), "a larger reported tank never creates fuel");
+        assert_eq!(range(delay + 1.0), 40_000.0, "Recon lights its own bubble only on the report wavefront");
+        let raw = &history.tracks[&scout];
+        assert!(!raw.facts_at(0.5).unwrap().projects_sensor);
+        assert!(raw.facts_at(1.0).unwrap().projects_sensor);
+    }
+
+    #[test]
+    fn cargo_pods_reach_the_capacity_display_only_on_arrived_fitting_light() {
+        use sim::{Command, Fleet, FleetOrder, Loadout, ModuleKind as M, SimConfig};
+        let mut world = World::new(SimConfig::for_players(124, 4));
+        let owner = PlayerId(902);
+        world.step(&[Command::AddPlayer { id: owner, name: "Hold reports".into() }]);
+        let cc = world.players[&owner].command_center;
+        let pos = cc + Vec2::new(180_000.0, 0.0);
+        world.fleets.clear();
+        world.nebulas.clear();
+        let id = EntityId(900_003);
+        let mut fleet = Fleet::single(id, owner, ShipKind::Convoy, pos, FleetOrder::Idle, None);
+        fleet.add(ShipKind::Convoy, 1);
+        world.fleets.insert(id, fleet);
+        world.time = 0.0;
+        let mut history = PositionHistory::for_world(&world);
+        history.record(&world);
+        world.time = 1.0;
+        world.fleets.get_mut(&id).unwrap().set_fitted(ShipKind::Convoy, &Loadout::new(vec![M::CargoPods]), 1);
+        history.record(&world);
+        assert_eq!(world.fleets[&id].cargo_capacity(), 3 * ShipKind::Convoy.cargo_units());
+        let delay = sim::transit::delay(pos, cc, world.config.c);
+        // The UI derives capacity from these served loadout counts, never truth.
+        let seen_pods = |now| history.view_for(owner, cc, world.config.c, now)
+            .into_iter().find(|g| g.id == id).unwrap().loadouts.unwrap()
+            .into_iter().filter(|s| s.modules.contains(&M::CargoPods)).map(|s| s.n).sum::<u32>();
+        assert_eq!(seen_pods(delay + 0.5), 0);
+        assert_eq!(seen_pods(delay + 1.0), 1);
+    }
+
+    #[test]
+    fn escort_datalink_is_reported_on_fitting_light_without_shortening_delay() {
+        use sim::{Command, Fleet, FleetOrder, Loadout, ModuleKind as M, SimConfig};
+        let mut world = World::new(SimConfig::for_players(124, 4));
+        let owner = PlayerId(903);
+        world.step(&[Command::AddPlayer { id: owner, name: "Escort reports".into() }]);
+        let cc = world.players[&owner].command_center;
+        let pos = cc + Vec2::new(180_000.0, 0.0);
+        world.fleets.clear();
+        world.nebulas.clear();
+        let id = EntityId(900_004);
+        let mut fleet = Fleet::single(id, owner, ShipKind::Corvette, pos, FleetOrder::Idle, None);
+        fleet.set_fitted(ShipKind::Corvette, &Loadout::new(vec![M::PointDefenseScreen]), 1);
+        world.fleets.insert(id, fleet);
+        world.time = 0.0;
+        let mut history = PositionHistory::for_world(&world);
+        history.record(&world);
+        world.time = 1.0;
+        world.fleets.get_mut(&id).unwrap().set_fitted(ShipKind::Corvette,
+            &Loadout::new(vec![M::PointDefenseScreen, M::EscortDatalink]), 1);
+        history.record(&world);
+        let delay = sim::transit::delay(pos, cc, world.config.c);
+        let has_link = |now| history.view_for(owner, cc, world.config.c, now)
+            .into_iter().find(|g| g.id == id).unwrap().loadouts.unwrap()
+            .iter().any(|s| s.modules.contains(&M::EscortDatalink));
+        assert!(!has_link(delay + 0.5), "true equipment cannot leak before the report");
+        assert!(has_link(delay + 1.0));
+        assert!(!history.tracks[&id].facts_at(1.0).unwrap().projects_sensor,
+            "datalink does not grant a sensor or a command-center comms shortcut");
+    }
+
+    #[test]
+    fn tender_progress_and_cargo_wait_for_the_same_arrived_report() {
+        use sim::{Command, Fleet, FleetOrder, Loadout, ModuleKind as M, SimConfig};
+        use sim::ship::{FuelTransfer, FuelTransferPhase as Phase};
+        let mut world = World::new(SimConfig::for_players(124, 4));
+        let owner = PlayerId(904);
+        world.step(&[Command::AddPlayer { id: owner, name: "Tender reports".into() }]);
+        let cc = world.players[&owner].command_center;
+        let pos = cc + Vec2::new(180_000.0, 0.0);
+        world.fleets.clear();
+        world.nebulas.clear();
+        let id = EntityId(900_005);
+        let mut fleet = Fleet::single(id, owner, ShipKind::Convoy, pos, FleetOrder::Idle, None);
+        fleet.set_fitted(ShipKind::Convoy, &Loadout::new(vec![M::FuelTransferRig]), 1);
+        fleet.add_cargo(sim::Commodity::Fuel, 40);
+        world.fleets.insert(id, fleet);
+        world.time = 0.0;
+        let mut history = PositionHistory::for_world(&world);
+        history.record(&world);
+        world.time = 1.0;
+        let fleet = world.fleets.get_mut(&id).unwrap();
+        fleet.remove_cargo(sim::Commodity::Fuel, 5);
+        let progress = FuelTransfer { target: EntityId(900_006), requested: 20, spent: 5,
+            delivered: 5.0, phase: Phase::Transferring };
+        fleet.order = FleetOrder::Refuel { transfer: progress, next_pump: 1.2 };
+        history.record(&world);
+        let delay = sim::transit::delay(pos, cc, world.config.c);
+        let before = history.view_for(owner, cc, world.config.c, delay + 0.5)
+            .into_iter().find(|g| g.id == id).unwrap();
+        assert_eq!(before.fuel_transfer, None);
+        assert_eq!(before.cargo.unwrap().units, 40);
+        let after = history.view_for(owner, cc, world.config.c, delay + 1.0)
+            .into_iter().find(|g| g.id == id).unwrap();
+        assert_eq!(after.fuel_transfer, Some(progress));
+        assert_eq!(after.cargo.unwrap().units, 35);
+        // A nearby rival may detect the hull/cargo, not its service assignment.
+        let rival = history.view_for(PlayerId(999), pos, world.config.c, 2.0);
+        assert!(rival.iter().all(|g| g.fuel_transfer.is_none()));
+    }
+
+    #[test]
+    fn industry_activity_and_harvested_cargo_share_the_fleet_light_wavefront() {
+        let mut world = World::new(sim::SimConfig::for_players(124,4));
+        let owner = PlayerId(904);
+        world.step(&[sim::Command::AddPlayer { id:owner,name:"Industry reports".into() }]);
+        let cc = world.players[&owner].command_center;
+        let pos = cc + Vec2::new(180_000.0,0.0);
+        let id = EntityId(900_005);
+        let system = world.systems[0].id;
+        world.fleets.clear(); world.nebulas.clear(); world.time = 0.0;
+        world.fleets.insert(id,sim::Fleet::single(id,owner,ShipKind::Convoy,pos,sim::FleetOrder::Idle,None));
+        let mut history = PositionHistory::for_world(&world); history.record(&world);
+        world.time = 1.0;
+        let f = world.fleets.get_mut(&id).unwrap();
+        f.add_cargo(sim::Commodity::Fuel,5);
+        let activity = sim::industry::FleetIndustry::Skim { system, harvested:5.0,cargo_fraction:0.0,status:"skimming".into() };
+        f.industry = Some(activity.clone()); history.record(&world);
+        let delay = sim::transit::delay(pos,cc,world.config.c);
+        let old = history.view_for(owner,cc,world.config.c,delay+0.5).into_iter().find(|g| g.id==id).unwrap();
+        assert!(old.industry.is_none()); assert!(old.cargo.is_none());
+        let new = history.view_for(owner,cc,world.config.c,delay+1.0).into_iter().find(|g| g.id==id).unwrap();
+        assert_eq!(new.industry,Some(activity)); assert_eq!(new.cargo.unwrap().units,5);
+        assert!(history.view_for(PlayerId(999),pos,world.config.c,2.0).iter().all(|g| g.industry.is_none()));
+    }
+
+    #[test]
     fn paused_ship_work_is_owner_only_and_comes_from_the_supplied_report() {
         let mut world = World::new(sim::SimConfig::for_players(123, 4));
         let owner = PlayerId(701);
@@ -2940,6 +3219,10 @@ mod tests {
     /// must append a new emission instead of silently changing the whole past.
     fn record_fixture_facts(track: &mut Track) {
         let facts = FleetFacts {
+            industry: None,
+            mission: Default::default(),
+            pirate_faction: None,
+            defend_system: None,
             owner: track.owner.clone(),
             owner_name: track.owner_name.clone(),
             captain_id: track.captain_id.clone(),
@@ -2963,7 +3246,7 @@ mod tests {
             posture: sim::EngagementPosture::Passive,
             transit: sim::ship::TransitMode::Full,
             engage_freight: None, garrison_host: None, garrison_fed: false,
-            supplied: true, rescue_inbound: false, survey_progress: None,
+            supplied: true, rescue_inbound: false, fuel_transfer: None, survey_progress: None, expedition: None,
             freight_run: None,
         };
         track.facts = VecDeque::from([(track.samples.front().map_or(0.0, |s| s.time), facts)]);
@@ -3734,6 +4017,7 @@ mod tests {
             owner,
             claimed_at,
             stockpile: stock.iter().copied().collect::<BTreeMap<_, _>>(),
+            industry: Default::default(),
             modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
@@ -4108,6 +4392,7 @@ mod tests {
             owner: o,
             claimed_at: Some(0.0),
             stockpile: BTreeMap::new(),
+            industry: Default::default(),
             modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
@@ -4408,6 +4693,7 @@ mod tests {
             owner: Some(owner),
             claimed_at: Some(0.0),
             stockpile: BTreeMap::new(),
+            industry: Default::default(),
             modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
@@ -4621,6 +4907,7 @@ mod tests {
                 owner: Some(owner),
                 claimed_at: Some(0.0),
                 stockpile: BTreeMap::new(),
+                industry: Default::default(),
                 modules: Default::default(),
                 legacy_extractor_tier: 0,
                 legacy_depot_tier: 0,
@@ -4701,6 +4988,7 @@ mod tests {
             owner: o,
             claimed_at: Some(0.0),
             stockpile: BTreeMap::new(),
+            industry: Default::default(),
             modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
@@ -4791,6 +5079,7 @@ mod tests {
             owner: Some(rival),
             claimed_at: Some(0.0),
             stockpile: BTreeMap::new(),
+            industry: Default::default(),
             modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
@@ -4916,6 +5205,7 @@ mod tests {
             owner: Some(rival),
             claimed_at: Some(0.0),
             stockpile: BTreeMap::new(),
+            industry: Default::default(),
             modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
@@ -5901,6 +6191,26 @@ mod tests {
         assert_eq!(before[0].guard_target, None);
         let arrived = hist.view_for(VIEWER, Vec2::ZERO, df(300.0), 36.7);
         assert_eq!(arrived[0].guard_target, Some(target));
+    }
+
+    #[test]
+    fn system_defense_assignment_and_release_share_the_sighting_wavefront_and_are_owner_only() {
+        let post = sim::ship::SystemDefense { system: EntityId(2), station: Vec2::ZERO, radius: 10_000.0 };
+        let mut track = fleet_track(VIEWER, Vec2::new(8_000.0, 0.0), &[(ShipKind::Corvette, 1)]);
+        let mut assigned = track.facts.front().unwrap().1.clone();
+        assigned.defend_system = Some(post);
+        track.facts.push_back((10.0, assigned.clone()));
+        assigned.defend_system = None;
+        track.facts.push_back((20.0, assigned));
+        let hist = history_of(vec![(EntityId(1), track)], 20_000.0);
+        let own = |now| hist.view_for(VIEWER, Vec2::ZERO, df(300.0), now)[0].defend_system;
+        assert_eq!(own(36.6), None);
+        assert_eq!(own(36.7), Some(post));
+        assert_eq!(own(46.6), Some(post));
+        assert_eq!(own(46.7), None);
+        let rival = hist.view_for(RIVAL, Vec2::ZERO, df(300.0), 40.0);
+        assert!(!rival.is_empty());
+        assert_eq!(rival[0].defend_system, None, "even close rivals cannot read standing orders");
     }
 
     /// A DARK fleet (raiders/scouts only) is omitted entirely outside coverage;

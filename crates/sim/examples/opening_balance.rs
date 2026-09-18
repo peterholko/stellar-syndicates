@@ -1,9 +1,9 @@
-//! Repeatable balance telemetry for the Academy → first-colony chapter.
+//! Repeatable balance telemetry for the Academy → two-survey chapter.
 //!
-//! The runner starts at the moment the founding Convoy's first sale report has
-//! reached home. Everything after that uses ordinary commands and `World::step`:
+//! The runner starts after the guarded export and second-Freighter chapter,
+//! at Academy imports. Everything after that uses commands and `World::step`:
 //! Authority freight, construction, Academy supply, research, movement, surveys,
-//! report light, and physical settlement. It deliberately clears ambient pirate
+//! and report light. It deliberately clears ambient pirate
 //! enclaves so the output measures the economic spine rather than combat RNG.
 //!
 //! Run, for example:
@@ -199,7 +199,7 @@ fn top_opportunity(world: &World, system: EntityId) -> Option<(ColonyRole, f64)>
         .map(|opportunity| (opportunity.role, opportunity.score))
 }
 
-fn choose_colony(
+fn choose_prospect(
     world: &World,
     home: EntityId,
     candidates: &[EntityId],
@@ -277,10 +277,10 @@ fn run(seed: u64, strategy: Strategy) -> Result<String, String> {
         .expect("new corp has home");
 
     // Deterministic post-import baseline. The earlier chapter consumed the
-    // starter kit on Shipyard I + Mining Complex I, exported both opening goods,
-    // then spent part of the privateer credits on Convoy, Academy, and Scout
+    // starter materials on Shipyard I + Mining Complex I, exported Ferrite Ore,
+    // reinvested in a yard and second Freighter, then bought Academy and Scout
     // materials. The example starts after that market/freight lesson so it can
-    // measure the slower research-and-expansion portion of the opening.
+    // measure the slower research-and-survey portion of the opening.
     {
         let system = world
             .systems
@@ -365,6 +365,7 @@ fn run(seed: u64, strategy: Strategy) -> Result<String, String> {
             .is_some_and(|system| system.tier(StructureKind::Academy) >= 1)
     })?;
     world.step(&[Command::SetAssignment {
+        refining_ore: None,
         player_id: owner,
         system_id: home,
         structure: StructureKind::Academy,
@@ -482,93 +483,20 @@ fn run(seed: u64, strategy: Strategy) -> Result<String, String> {
         }
     }
     step_until(&mut world, "two-report comparison", |world| {
-        world.players[&owner].founding.stage == FoundingStage::BuildColony
-    })?;
-
-    // The home has been producing throughout both survey sorties. Clear those
-    // whole-unit lots through the ordinary inbound Authority channel before the
-    // 125-unit Colony kit arrives; this makes storage a measured constraint
-    // instead of letting the harness write through the cap.
-    world.step(&[Command::ShipProduction {
-        player_id: owner,
-        system_id: home,
-    }]);
-    book_out(
-        &mut world,
-        owner,
-        home,
-        &[
-            (Commodity::Alloys, 45),
-            (Commodity::Machinery, 15),
-            (Commodity::Polymers, 20),
-            (Commodity::Provisions, 30),
-            (Commodity::Fuel, 15),
-        ],
-    );
-    step_until(&mut world, "Colony Ship kit delivery", |world| {
-        stock(world, home, Commodity::Alloys) >= 45.0
-            && stock(world, home, Commodity::Machinery) >= 15.0
-            && stock(world, home, Commodity::Polymers) >= 20.0
-            && stock(world, home, Commodity::Provisions) >= 30.0
-            && stock(world, home, Commodity::Fuel) >= 15.0
-    })
-    .map_err(|error| {
-        format!(
-            "{error}; home A/M/P/Pv/F={:.0}/{:.0}/{:.0}/{:.0}/{:.0} warehouse={:?} credits={:.0} queued={} runs={}",
-            stock(&world, home, Commodity::Alloys),
-            stock(&world, home, Commodity::Machinery),
-            stock(&world, home, Commodity::Polymers),
-            stock(&world, home, Commodity::Provisions),
-            stock(&world, home, Commodity::Fuel),
-            world.players[&owner].warehouse,
-            world.players[&owner].credits,
-            world.freight_queue.len(),
-            world.freight_runs.len(),
-        )
-    })?;
-    world.step(&[Command::BuildShip {
-        player_id: owner,
-        system_id: home,
-        ship_kind: ShipKind::Colony,
-        join: None,
-        loadout: Loadout::default(),
-    }]);
-    step_until(&mut world, "Colony Ship construction", |world| {
-        world.players[&owner].founding.stage == FoundingStage::EstablishColony
-    })?;
-    let colony = world
-        .fleets
-        .values()
-        .find(|fleet| fleet.owner == owner && fleet.contains(ShipKind::Colony))
-        .map(|fleet| fleet.id)
-        .ok_or("Colony build did not create a fleet")?;
-    let destination = choose_colony(&world, home, &candidates, strategy);
-    let destination_pos = world
-        .systems
-        .iter()
-        .find(|system| system.id == destination)
-        .expect("prospect exists")
-        .pos;
-    world.step(&[Command::MoveShip {
-        player_id: owner,
-        ship_id: colony,
-        dest: destination_pos,
-    }]);
-    step_until(&mut world, "first colony", |world| {
         world.players[&owner].founding.stage == FoundingStage::Complete
     })?;
 
+    // The preferred prospect is advice, not a required settlement or free kit.
+    let destination = choose_prospect(&world, home, &candidates, strategy);
     let (role, score) =
         top_opportunity(&world, destination).unwrap_or((ColonyRole::StrategicOutpost, 0.0));
     let m = |stage| milestone(&world, owner, stage, start) / 60.0;
     Ok(format!(
-        "{seed},{},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{},{},{:.2}",
+        "{seed},{},{:.2},{:.2},{:.2},{:.2},{},{},{:.2}",
         strategy.name,
         m(FoundingStage::FirstResearch),
         m(FoundingStage::BuildScout),
         m(FoundingStage::SurveyCandidates),
-        m(FoundingStage::BuildColony),
-        m(FoundingStage::EstablishColony),
         m(FoundingStage::Complete),
         destination.0,
         role.slug(),
@@ -598,7 +526,7 @@ fn main() {
     }
 
     println!(
-        "seed,strategy,academy_min,research_min,scout_min,two_surveys_min,colony_ship_min,established_min,destination,role,score"
+        "seed,strategy,academy_min,research_min,scout_min,two_surveys_min,preferred_prospect,role,score"
     );
     for seed in seed_start..seed_start + seeds {
         for strategy in STRATEGIES {

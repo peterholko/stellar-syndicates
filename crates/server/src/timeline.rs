@@ -43,6 +43,10 @@ pub struct Timeline {
     journal: BTreeMap<PlayerId, VecDeque<TimelineEntry>>,
     /// Last sim-time each player was online — the "while you were away" boundary.
     last_seen: BTreeMap<PlayerId, f64>,
+    /// Length stops changing once the journal is full. Use a persisted revision
+    /// so late-game raid warnings (and other fresh news) still reach live clients.
+    #[serde(default)]
+    revisions: BTreeMap<PlayerId, usize>,
 }
 
 impl Timeline {
@@ -318,6 +322,9 @@ impl Timeline {
                     units,
                     pos,
                 } => {
+                    // A home raid has one summary on break-off, not sixty
+                    // per-unit toasts. Inventory still updates on its own light.
+                    if by.is_pirate() { continue; }
                     let name = system_name(world, *system);
                     let good = commodity_name(*commodity);
                     // The VICTIM learns by light from the system, exactly as they
@@ -400,7 +407,7 @@ impl Timeline {
                             build_label(*what)
                         ),
                         sim::BuildRejectReason::NeedsResearch => format!(
-                            "Can't build {} at {name}: its hull hasn't been researched — complete the Line programme on the Hulls board.",
+                            "Can't build {} at {name}: research required.",
                             build_label(*what)
                         ),
                         sim::BuildRejectReason::TitanFielded => format!(
@@ -410,12 +417,16 @@ impl Timeline {
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);
                 }
+                EventPayload::IndustryRejected { owner, system, reason } => {
+                    self.push(*owner, e.time, TimelineSeverity::Warn,
+                        format!("{}: project refused — {reason}.", system_name(world,*system)));
+                }
                 // A soft-rejected fleet ORDER — owner-only, whether preflight
                 // refused it or receiver-side conditions changed before delivery.
                 // The order never installed, the fleet kept its current one, and
                 // nothing was spent. Without this line the refusal is invisible
                 // and the click just seems to do nothing.
-                EventPayload::OrderRejected { owner, reason, .. } => {
+                EventPayload::OrderRejected { owner, fleet, reason, .. } => {
                     let text = match reason {
                         sim::OrderRejectReason::InsideSovereignZone =>
                             "Order refused: the target shelters inside the Authority's sovereign zone at the hub — \
@@ -447,6 +458,8 @@ impl Timeline {
                         sim::OrderRejectReason::DeliveryConditionsChanged =>
                             "Order refused: conditions changed before the signal reached the fleet. Its previous instructions remain in force."
                                 .to_string(),
+                        sim::OrderRejectReason::ExplorationThreat =>
+                            format!("Exploration aborted: fleet {fleet} detected a nearby threat and is retreating away from the site."),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);
                 }
@@ -475,13 +488,15 @@ impl Timeline {
                     let name = system_name(world, *system);
                     if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
                         let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
-                        self.push(*owner, observe, TimelineSeverity::Bad, format!(
+                        self.push(*owner, observe, TimelineSeverity::Bad, if by.is_pirate() {
+                            format!("Pirates are raiding {name} — defend the stockpile or intercept their retreat.")
+                        } else { format!(
                             "{name} is under BLOCKADE — a rival fleet holds station; freighters in and out are cut off. Break the blockade (relief, a new defense tier) to restore your supply lines."
-                        ));
+                        ) });
                     }
-                    self.push(*by, e.time, TimelineSeverity::Good, format!(
+                    if !by.is_sentinel() { self.push(*by, e.time, TimelineSeverity::Good, format!(
                         "Your blockade of {name} is established — its logistics are strangled while you hold station."
-                    ));
+                    )); }
                 }
                 // A besieged system was CAPTURED (§contestable-territory Part 2).
                 // Both participants learn it light-delayed from the flip site: the
@@ -793,6 +808,25 @@ impl Timeline {
                         self.push(*owner, observe, sev, text);
                     }
                 }
+                EventPayload::PirateRaidInbound { owner, system, ships, pos, .. } => {
+                    if let Some(corp) = world.players.get(owner) {
+                        let observe = e.time + sim::transit::delay(*pos, corp.command_center, world.config.c);
+                        self.push(*owner, observe, TimelineSeverity::Bad, format!(
+                            "Pirate raid incoming: {} — {ships} raider{}. Assemble defenses or intercept the approach.",
+                            system_name(world, *system), if *ships == 1 { "" } else { "s" }));
+                    }
+                }
+                EventPayload::PirateRaidWithdrawn { owner, system, pos, plunder, .. } => {
+                    if let Some(corp) = world.players.get(owner) {
+                        let observe = e.time + sim::transit::delay(*pos, corp.command_center, world.config.c);
+                        let goods = plunder.iter().map(|(c, n)| format!("{n} {}", commodity_name(*c)))
+                            .collect::<Vec<_>>().join(", ");
+                        let result = if goods.is_empty() { "No stockpile goods taken.".to_string() }
+                            else { format!("Carrying {goods}; their return fleet can still be intercepted.") };
+                        self.push(*owner, observe, if goods.is_empty() { TimelineSeverity::Good } else { TimelineSeverity::Warn },
+                            format!("Pirates breaking off from {}. {result}", system_name(world, *system)));
+                    }
+                }
                 // §pirates: a player DESTROYED a pirate enclave — OWNER-ONLY (the
                 // victor), light-delayed from the base to their command center.
                 EventPayload::PirateEnclaveCleared {
@@ -806,11 +840,16 @@ impl Timeline {
                         let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         let loot: u32 = plunder.values().sum();
                         let tail = if loot > 0 {
-                            format!(" — {loot} units of plunder seized")
+                            format!(" {loot} units await Freighter recovery on-site.")
                         } else {
                             String::new()
                         };
-                        self.push(*owner, observe, TimelineSeverity::Good, format!("Pirate enclave at {name} CLEARED{tail}. It will lie dormant, then respawn weaker."));
+                        let aftermath = if world.enclaves.get(system).is_some_and(|e| sim::pirate::permanent_site(e.tier)) {
+                            "Site secured for settlement.".to_string()
+                        } else {
+                            format!("Raids from this source paused for {}m.", (sim::pirate::PIRATE_DORMANCY / 60.0).round())
+                        };
+                        self.push(*owner, observe, TimelineSeverity::Good, format!("Pirate hideout at {name} cleared. {aftermath}{tail}"));
                     }
                 }
                 // §node: an EXOTIC system AWAKENED — announced GALAXY-WIDE,
@@ -1150,7 +1189,17 @@ impl Timeline {
                         *recipient,
                         *arrive_at,
                         severity,
-                        format!("{text} [operation {operation}]"),
+                        // Immutable terms were frozen at this stage's event.
+                        // The title helps identify the next action; the notice
+                        // still uses the operation report's existing light gate.
+                        if let Some(title) = world.operations.get(operation)
+                            .filter(|o| o.counter_raid.is_some()).and_then(|o| o.briefing.as_ref()).map(|b| &b.title) {
+                            format!("{title} · {} [operation {operation}]", match state {
+                                sim::OperationState::Offered => "available",
+                                sim::OperationState::Completed => "completed",
+                                _ => text,
+                            })
+                        } else { format!("{text} [operation {operation}]") },
                     );
                 }
                 EventPayload::DiplomacyUpdated {
@@ -1246,6 +1295,8 @@ impl Timeline {
             if !p.promoted && p.observe_time <= now {
                 p.promoted = true;
                 let j = self.journal.entry(p.player).or_default();
+                let revision = self.revisions.entry(p.player).or_insert(j.len());
+                *revision = revision.wrapping_add(1);
                 j.push_back(TimelineEntry {
                     at_time: p.observe_time,
                     severity: p.severity,
@@ -1282,12 +1333,16 @@ impl Timeline {
     pub fn journal_len(&self, player: PlayerId) -> usize {
         self.journal.get(&player).map(|j| j.len()).unwrap_or(0)
     }
+
+    pub fn revision(&self, player: PlayerId) -> usize {
+        self.revisions.get(&player).copied().unwrap_or_else(|| self.journal_len(player))
+    }
 }
 
 fn commodity_name(c: Commodity) -> &'static str {
     // §economy: human names for the timeline prose (the wire uses `slug()`).
     match c {
-        Commodity::MetallicOre => "metallic ore",
+        Commodity::MetallicOre => "ferrite ore",
         Commodity::RareElements => "rare elements",
         Commodity::Silicates => "silicates",
         Commodity::Volatiles => "volatiles",
@@ -1299,6 +1354,16 @@ fn commodity_name(c: Commodity) -> &'static str {
         Commodity::Provisions => "provisions",
         Commodity::Machinery => "machinery",
         Commodity::Armaments => "armaments",
+        Commodity::Composites => "composites",
+        Commodity::HullSections => "hull sections",
+        Commodity::PrecisionComponents => "precision components",
+        Commodity::DriveAssemblies => "drive assemblies",
+        Commodity::CupriteOre => "cuprite ore",
+        Commodity::TitaniumOre => "titanium ore",
+        Commodity::CrystallineOre => "crystalline ore",
+        Commodity::RareMetalOre => "rare-metal ore",
+        Commodity::ConductiveMetals => "conductive metals",
+        Commodity::Titanium => "titanium",
     }
 }
 
@@ -1317,7 +1382,12 @@ fn fleet_label(world: &World, id: sim::EntityId) -> String {
         Some(f) => {
             let k = match f.flagship_kind() {
                 sim::ShipKind::Builder => "construction ship",
-                sim::ShipKind::Convoy => "freighter",
+                sim::ShipKind::Convoy => "medium freighter",
+                sim::ShipKind::TinyFreighter => "tiny freighter",
+                sim::ShipKind::SmallFreighter => "small freighter",
+                sim::ShipKind::LargeFreighter => "large freighter",
+                sim::ShipKind::HeavyFreighter => "heavy freighter",
+                sim::ShipKind::BulkFreighter => "bulk freighter",
                 sim::ShipKind::Raider => "interceptor",
                 sim::ShipKind::Corvette => "corvette",
                 sim::ShipKind::Colony => "colony",
@@ -1351,12 +1421,17 @@ fn fmt_wait(secs: f64) -> String {
 /// Human label for a build job, for the check-in timeline (§step1).
 fn build_label(what: sim::BuildKind) -> &'static str {
     match what {
+        sim::BuildKind::Ship { ship: sim::ShipKind::TinyFreighter } => "a Tiny Freighter",
+        sim::BuildKind::Ship { ship: sim::ShipKind::SmallFreighter } => "a Small Freighter",
+        sim::BuildKind::Ship { ship: sim::ShipKind::LargeFreighter } => "a Large Freighter",
+        sim::BuildKind::Ship { ship: sim::ShipKind::HeavyFreighter } => "a Heavy Freighter",
+        sim::BuildKind::Ship { ship: sim::ShipKind::BulkFreighter } => "a Bulk Freighter",
         sim::BuildKind::Ship {
             ship: sim::ShipKind::Builder,
         } => "a Construction Ship",
         sim::BuildKind::Ship {
             ship: sim::ShipKind::Convoy,
-        } => "a Freighter",
+        } => "a Medium Freighter",
         sim::BuildKind::Ship {
             ship: sim::ShipKind::Raider,
         } => "an Interceptor",
@@ -1409,6 +1484,14 @@ fn build_label(what: sim::BuildKind) -> &'static str {
             sim::ModuleKind::PointDefenseScreen => "a Point-Defense Screen",
             sim::ModuleKind::ReflectivePlating => "Reflective Plating",
             sim::ModuleKind::WhippleArmor => "Whipple Armor",
+            sim::ModuleKind::ExtendedTanks => "Extended Tanks",
+            sim::ModuleKind::ReconSuite => "Recon Suite",
+            sim::ModuleKind::CargoPods => "Cargo Pods",
+            sim::ModuleKind::EscortDatalink => "Escort Datalink",
+            sim::ModuleKind::FuelTransferRig => "Fuel Transfer Rig",
+            sim::ModuleKind::SurveyDrive => "Survey Drive",
+            sim::ModuleKind::NebulaSpectrometer => "Nebula Spectrometer",
+            sim::ModuleKind::PrismaticLance => "Prismatic Lance",
         },
     }
 }
@@ -1416,7 +1499,12 @@ fn build_label(what: sim::BuildKind) -> &'static str {
 fn kind_word(k: ShipKind) -> &'static str {
     match k {
         ShipKind::Builder => "construction ship",
-        ShipKind::Convoy => "freighter",
+        ShipKind::Convoy => "medium freighter",
+        ShipKind::TinyFreighter => "tiny freighter",
+        ShipKind::SmallFreighter => "small freighter",
+        ShipKind::LargeFreighter => "large freighter",
+        ShipKind::HeavyFreighter => "heavy freighter",
+        ShipKind::BulkFreighter => "bulk freighter",
         ShipKind::Raider => "interceptor",
         ShipKind::Corvette => "corvette",
         ShipKind::Colony => "colony ship",
@@ -1887,7 +1975,7 @@ mod tests {
             1,
             "own sale journals when its hub light arrives"
         );
-        assert!(entries[0].text.contains("Sold 12 metallic ore"));
+        assert!(entries[0].text.contains("Sold 12 ferrite ore"));
     }
 
     #[test]
@@ -1975,5 +2063,98 @@ mod tests {
             JOURNAL_CAP,
             "journal keeps only the most recent cap"
         );
+    }
+
+    #[test]
+    fn pirate_raid_notices_share_normal_light_delay_and_survive_reconnect() {
+        let (w, a, b) = world_with_two();
+        let pos = w.players[&a].command_center + Vec2::new(30_000.0, 0.0);
+        let system = w.players[&a].home_system.unwrap();
+        let at = w.time;
+        let arrived = at + sim::transit::delay(pos, w.players[&a].command_center, w.config.c);
+        let mut tl = Timeline::new();
+        tl.ingest(&[Event::new(at, EventPayload::PirateRaidInbound {
+            owner: a, system, fleet: EntityId(9000), ships: 2, pos,
+        })], &w);
+        tl.promote(arrived - 1e-6);
+        assert_eq!(tl.journal_len(a), 0, "warning is not an instant truth-side alert");
+        let mut tl: Timeline = serde_json::from_str(&serde_json::to_string(&tl).unwrap()).unwrap();
+        tl.promote(arrived);
+        assert_eq!(tl.journal_len(a), 1);
+        assert_eq!(tl.journal_len(b), 0, "a private threat is not broadcast to rivals");
+        let entries = tl.digest(a).0;
+        assert!(entries[0].text.starts_with("Pirate raid incoming:"));
+        assert_eq!(entries[0].at_time, arrived);
+        tl.ingest(&[Event::new(at + 60.0, EventPayload::PirateRaidWithdrawn {
+            owner: a, system, fleet: EntityId(9000), pos,
+            plunder: std::collections::BTreeMap::from([(Commodity::Electronics, 8)]),
+        })], &w);
+        tl.promote(arrived + 60.0 - 1e-6);
+        assert_eq!(tl.journal_len(a), 1, "the outcome has its own wavefront too");
+        tl.promote(arrived + 60.0);
+        assert!(tl.digest(a).0[1].text.contains("8 electronics"));
+        assert_eq!(tl.journal_len(b), 0);
+    }
+
+    #[test]
+    fn exploration_retreat_notice_waits_for_the_onboard_reports_light() {
+        let (w, owner, rival) = world_with_two();
+        let pos = w.players[&owner].command_center + Vec2::new(40_000.0, 0.0);
+        let arrival = w.time + sim::transit::delay(pos, w.players[&owner].command_center, w.config.c);
+        let mut tl = Timeline::new();
+        tl.ingest(&[Event::new(w.time, EventPayload::OrderRejected {
+            owner, fleet: EntityId(9900), target: Some(EntityId(9901)),
+            reason: sim::event::OrderRejectReason::ExplorationThreat,
+        }).at_origin(pos)], &w);
+        tl.promote(arrival - 1e-6);
+        assert_eq!(tl.journal_len(owner), 0);
+        tl.promote(arrival);
+        assert_eq!(tl.journal_len(owner), 1);
+        assert_eq!(tl.journal_len(rival), 0);
+        assert!(tl.digest(owner).0[0].text.contains("retreating"));
+    }
+
+    #[test]
+    fn cleared_hideout_news_promises_recovery_not_an_instant_stockpile_payout() {
+        let (w, owner, rival) = world_with_two();
+        let system = w.players[&owner].home_system.unwrap();
+        let pos = w.players[&owner].command_center + Vec2::new(30_000.0, 0.0);
+        let at = 100.0;
+        let arrival = at + sim::transit::delay(pos, w.players[&owner].command_center, w.config.c);
+        let mut tl = Timeline::new();
+        tl.ingest(&[Event::new(at, EventPayload::PirateEnclaveCleared {
+            owner, system, pos, plunder: std::collections::BTreeMap::from([(Commodity::Alloys, 16)]),
+        })], &w);
+        tl.promote(arrival - 1e-6);
+        assert_eq!(tl.journal_len(owner), 0);
+        tl.promote(arrival);
+        let notice = &tl.digest(owner).0[0].text;
+        assert!(notice.contains("16 units await Freighter recovery on-site"));
+        assert!(notice.contains("paused for 10m"));
+        assert!(!notice.contains("seized"));
+        assert_eq!(tl.journal_len(rival), 0);
+    }
+
+    #[test]
+    fn pirate_raid_warning_changes_revision_even_when_journal_is_full() {
+        let (w, a, _) = world_with_two();
+        let mut tl = Timeline::new();
+        for i in 0..JOURNAL_CAP {
+            tl.push(a, i as f64, TimelineSeverity::Info, format!("Old notice {i}"));
+        }
+        tl.promote(1000.0);
+        let before = tl.revision(a);
+        let pos = w.players[&a].command_center;
+        tl.ingest(&[Event::new(1001.0, EventPayload::PirateRaidInbound {
+            owner: a, system: w.players[&a].home_system.unwrap(), fleet: EntityId(9000), ships: 1, pos,
+        })], &w);
+        tl.promote(1000.0);
+        assert_eq!(tl.revision(a), before);
+        tl.promote(1001.0);
+        assert_eq!(tl.journal_len(a), JOURNAL_CAP);
+        assert_ne!(tl.revision(a), before, "live clients must receive the new warning after the cap");
+        assert!(tl.digest(a).0.last().unwrap().text.starts_with("Pirate raid incoming:"));
+        let restored: Timeline = serde_json::from_str(&serde_json::to_string(&tl).unwrap()).unwrap();
+        assert_eq!(restored.revision(a), tl.revision(a));
     }
 }

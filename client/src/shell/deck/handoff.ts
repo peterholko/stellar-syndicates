@@ -8,9 +8,9 @@ import type { DeckRoute } from "./router";
 export function handoffHtml(compact = false): string {
   const goals = postVictoryHandoff();
   if (!goals.length) return "";
-  return `<section class="deck-section deck-handoff"><header><div><h3>Your next chapter</h3><p>Explore, strengthen, settle · choose your next goal.</p></div></header>
+  return `<section class="deck-section deck-handoff"><header><div><h3>Your next chapter</h3><p>Explore and strengthen your fleet.</p></div></header>
     <div class="deck-handoff__goals${compact ? " is-compact" : ""}">${goals.map(g => `<article class="deck-handoff__goal${g.done ? " is-done" : ""}" data-handoff-goal="${g.id}">
-      <header>${icon(g.id === "explore" ? "scout" : g.id === "upgrade" ? "corvette" : "colony", "lg")}<div><h4>${esc(g.title)}</h4><small>${esc(g.status)}</small></div></header>
+      <header>${icon(g.id === "explore" ? "scout" : "corvette", "lg")}<div><h4>${esc(g.title)}</h4><small>${esc(g.status)}</small></div></header>
       ${compact ? "" : `<p>${esc(g.summary)}</p><ul aria-label="Requirements">${g.requirements.map(r => `<li class="${r.met ? "is-met" : ""}"><span aria-label="${r.met ? "Met" : "Needed"}">${r.met ? "✓" : "○"}</span>${esc(r.text)}</li>`).join("")}</ul>
       ${g.costs.length ? `<table><caption>Hull costs · local stock</caption><thead><tr><th>Resource</th><th>Cost</th><th>Stock</th></tr></thead><tbody>${g.costs.map(c => `<tr><th>${esc(label(c.commodity))}</th><td>${c.units}</td><td class="${c.stock < c.units ? "is-short" : ""}">${c.stock}</td></tr>`).join("")}</tbody></table>` : ""}
       <p class="deck-handoff__payoff"><b>${g.id === "explore" ? "Reward" : "Gain"}</b> ${esc(g.payoff)}</p>`}

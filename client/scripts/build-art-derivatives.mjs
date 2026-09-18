@@ -3,6 +3,10 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import sharp from "sharp";
 import { buildStarDerivatives } from "./build-star-derivatives.mjs";
+import { buildShipDerivatives } from "./build-ship-derivatives.mjs";
+import { buildPlanetDerivatives } from "./build-planet-derivatives.mjs";
+import { buildPlanetWorkbenchArt } from "./build-planet-workbench-art.mjs";
+import { buildStructureTierArt } from "./build-structure-tier-art.mjs";
 
 const clientRoot = fileURLToPath(new URL("..", import.meta.url));
 const publicArt = path.join(clientRoot, "public", "art");
@@ -123,16 +127,48 @@ async function buildStructureIcons() {
   const sources = (await readdir(sourceDir)).filter((name) => name.endsWith(".png")).sort();
   const transparent = { r: 0, g: 0, b: 0, alpha: 0 };
   let written = 0;
+  // 128px for panels and rows; a 256px twin (same 6/128 padding ratio) for the
+  // planet scene's footprints, which grow past 128 CSS pixels on large screens.
+  const variants = [{ suffix: "", inner: 116, pad: 6 }, { suffix: "-256", inner: 232, pad: 12 }];
+  for (const name of sources) {
+    const stem = path.basename(name, ".png");
+    for (const { suffix, inner, pad } of variants) {
+      written += Number(await derive(
+        path.join(sourceDir, name),
+        path.join(outputDir, `${stem}${suffix}.png`),
+        (image) => image
+          .trim({ background: transparent, threshold: 3 })
+          .resize(inner, inner, { fit: "contain", background: transparent })
+          .extend({ top: pad, bottom: pad, left: pad, right: pad, background: transparent })
+          .png({ compressionLevel: 9 }),
+      ));
+    }
+  }
+  return { sources: sources.length, written };
+}
+
+async function buildResourceIcons() {
+  const sourceDir = path.join(sourceArt, "ui-icons", "resources");
+  const outputDir = path.join(publicArt, "ui_icons", "resource");
+  await mkdir(outputDir, { recursive: true });
+  const sources = (await readdir(sourceDir)).filter((name) => name.endsWith(".png")).sort();
+  let written = 0;
   for (const name of sources) {
     written += Number(await derive(
-      path.join(sourceDir, name),
-      path.join(outputDir, name),
-      (image) => image
-        .trim({ background: transparent, threshold: 3 })
-        .resize(116, 116, { fit: "contain", background: transparent })
-        .extend({ top: 6, bottom: 6, left: 6, right: 6, background: transparent })
-        .png({ compressionLevel: 9 }),
+      path.join(sourceDir, name), path.join(outputDir, name),
+      (image) => image.resize(64, 64, { fit: "contain", background: "#0b1422" }).png({ compressionLevel: 9 }),
     ));
+  }
+  // New ore/material masters retain alpha; ship only inventory-sized variants.
+  const oreSource = path.join(sourceArt, "ores-2026-09-16");
+  const oreOutput = path.join(outputDir, "ores-2026-09-16");
+  await mkdir(oreOutput, { recursive: true });
+  for (const name of (await readdir(oreSource)).filter(n => n.endsWith(".png"))) {
+    for (const size of [64, 128]) {
+      written += Number(await derive(path.join(oreSource, name),
+        path.join(oreOutput, `${path.basename(name, ".png")}-${size}.png`),
+        image => image.resize(size, size, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } }).png({ compressionLevel: 9 })));
+    }
   }
   return { sources: sources.length, written };
 }
@@ -156,15 +192,22 @@ async function buildNebulas() {
   return { sources: sources.length, written };
 }
 
-const [captains, lore, pwa, structures, nebulas, login, stars] = await Promise.all([
-  buildCaptains(), buildLore(), buildPwaIcons(), buildStructureIcons(), buildNebulas(), buildLoginBackgrounds(), buildStarDerivatives(),
+const [captains, lore, pwa, structures, nebulas, login, resources, stars, ships, planets, planetWorkbench, structureTiers] = await Promise.all([
+  buildCaptains(), buildLore(), buildPwaIcons(), buildStructureIcons(), buildNebulas(), buildLoginBackgrounds(),
+  buildResourceIcons(), buildStarDerivatives(), buildShipDerivatives(), buildPlanetDerivatives(),
+  buildPlanetWorkbenchArt(), buildStructureTierArt(),
 ]);
 console.log(
   `art derivatives: ${captains.sources} captain portraits (${captains.written} written), ` +
   `${lore.sources} lore illustrations (${lore.written} written), ` +
   `${pwa.sources} PWA icons (${pwa.written} written), ` +
   `${structures.sources} structure icons (${structures.written} written), ` +
+  `${structureTiers.sources} structure tiers (${structureTiers.written} written), ` +
+  `${resources.sources} resource icons (${resources.written} written), ` +
   `${nebulas.sources} nebula textures (${nebulas.written} written), ` +
   `${login.sources} login backgrounds (${login.written} written), ` +
-  `${stars.sources} star masters / ${stars.variants} sizes (${stars.written} written)`,
+  `${stars.sources} star masters / ${stars.variants} sizes (${stars.written} written), ` +
+  `${ships.sources} ship masters (${ships.written} written), ` +
+  `${planets.sources} planet masters / ${planets.variants} sizes (${planets.written} written), ` +
+  `planet workbench (${planetWorkbench.written} written)`,
 );

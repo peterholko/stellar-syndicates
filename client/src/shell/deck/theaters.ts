@@ -44,6 +44,7 @@ interface TheaterHooks {
   go(route: DeckRoute): void;
   openDoctrine(): void;
   notice(html: string): void;
+  battleSelectionChanged?(): void;
 }
 
 type BattleOpenOptions = { semantic?: boolean };
@@ -96,6 +97,7 @@ export class DeckTheaters {
   }
 
   get isOpen(): boolean { return this.battleId !== null || this.groundId !== null; }
+  get activeBattleId(): string | null { return this.battleId; }
 
   openBattle(id: string, options: BattleOpenOptions = {}): boolean {
     const record = this.battleRecord(id);
@@ -107,6 +109,7 @@ export class DeckTheaters {
     this.battleClosing = false;
     this.battleSemantic = options.semantic === true;
     this.battleId = id;
+    this.hooks.battleSelectionChanged?.();
     const running = record.outcome === null;
     const frontier = record.rounds.length - 1;
     this.battleLive = running;
@@ -322,6 +325,7 @@ export class DeckTheaters {
     clearBattleCloseTimer();
     this.withdrawal.clear();
     this.battleId = null;
+    this.hooks.battleSelectionChanged?.();
     this.battlePlaying = false;
     this.battleLive = false;
     this.battleClosing = false;
@@ -466,7 +470,7 @@ export class DeckTheaters {
     // The Pixi holder is persistent while the card is morph-rendered. Reattach
     // on every render attempt so no chrome rebuild can strand its live canvas.
     const mount = this.battleCard.querySelector<HTMLElement>("[data-battle-theater-mount]");
-    if (mount && theaterAvailable()) theaterAttach(mount, record, this.ctx.state.galaxy?.pirate_id ?? null);
+    if (mount && theaterAvailable()) theaterAttach(mount, record, this.ctx.state.galaxy?.pirate_id ?? null, undefined, this.ctx.state);
     else theaterClose();
     theaterSetTime(this.battleRound, Math.min(1, this.battleAccum), this.battleLive);
   }

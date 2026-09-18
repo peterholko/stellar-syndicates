@@ -1,0 +1,24 @@
+.industry-panel { display: grid; gap: var(--space-3, 12px); padding: var(--space-4, 16px); }
+.industry-panel h3, .industry-panel h4, .industry-panel p { margin: 0; }
+.industry-panel small, .industry-status small { display: block; color: var(--muted, #91a3b7); }
+.industry-tabs, .industry-actions { display: flex; gap: var(--space-2, 8px); flex-wrap: wrap; }
+.industry-tabs { padding: var(--space-3, 12px); position: sticky; top: 0; background: var(--panel, #101a29); z-index: var(--z-sticky, 1); }
+.industry-tabs button[aria-pressed="true"] { border-color: var(--accent, #4fc3ff); color: var(--accent, #4fc3ff); }
+.industry-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: var(--space-3, 12px); }
+.industry-panel label { display: grid; gap: var(--space-1, 4px); min-width: 0; }
+.industry-panel input, .industry-panel select { width: 100%; min-width: 0; box-sizing: border-box; }
+.industry-panel .industry-check { display: flex; align-items: center; }
+.industry-check input { width: auto; }
+.industry-card { display: grid; gap: var(--space-2, 8px); padding: var(--space-3, 12px); border: 1px solid var(--border, #293c51); border-radius: var(--radius-md, 8px); }
+.industry-card header { display: flex; justify-content: space-between; gap: var(--space-2, 8px); align-items: center; flex-wrap: wrap; }
+.industry-card progress { width: 100%; accent-color: var(--accent, #4fc3ff); }
+.industry-manifest { display: grid; gap: var(--space-2, 8px); align-content: start; }
+.industry-manifest > div { display: grid; grid-template-columns: auto 1fr minmax(50px, 70px); gap: var(--space-1, 4px); align-items: center; }
+.industry-manifest img, .industry-card header img { width: 24px; height: 24px; object-fit: contain; }
+.industry-status, .industry-feedback { padding: var(--space-3, 12px); border-left: 2px solid var(--accent, #4fc3ff); }
+.industry-status { display: grid; gap: var(--space-1, 4px); }
+.refining-comparison { display: grid; gap: var(--space-2); margin-block: var(--space-3); padding: var(--space-3); border: 1px solid var(--border, #293c51); border-radius: var(--radius-md); }
+.refining-comparison small { color: var(--muted, #91a3b7); }
+.refining-comparison dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); margin: 0; }
+.refining-comparison dl > div { display: grid; gap: var(--space-1); }
+.refining-comparison dd { margin: 0; font-weight: 600; }

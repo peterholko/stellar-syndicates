@@ -2,10 +2,16 @@
 
 import type { Net } from "../../net";
 import {
+  cargoUnitsPerHull,
+  type ShipKind,
+  fleetCargoUnits,
   type BodyView,
+  type BuildOption,
   type Commodity,
+  type ConversionRecipe,
   type Deposit,
   type EntityId,
+  type GhostView,
   type ModuleKind,
   type Side,
   type StockSlot,
@@ -15,27 +21,34 @@ import {
 } from "../../protocol";
 import { label } from "../../icons";
 import { liveSimTime, state } from "../../state";
-import { COMMODITY_VALUE, constructionStock } from "./fleet";
+import { COMMODITY_VALUE, constructionStock, dockedAtSystem, fleetCargoCapacity, fleetFuelCapacity, HULL_MASS } from "./fleet";
+import { cargoMultiplier, hullUtilitySummary, isUtility, isBlueprintOnly, MODULES, moduleFitsHull, tankMultiplier, utilityProgramme } from "./equipment";
 
 const EMPLACE_KITS: Record<string, [Commodity, number][]> = {
   deep_space_sensor: [["alloys", 60], ["electronics", 120], ["fuel", 40]],
 };
 
 export const MODULE_SLOTS: Record<string, number> = {
-  corvette: 2, raider: 2, scout: 1, convoy: 0, colony: 0,
+  tiny_freighter: 1, small_freighter: 1, large_freighter: 1, heavy_freighter: 1, bulk_freighter: 1,
+  corvette: 2, raider: 2, scout: 1, convoy: 1, colony: 0,
   destroyer: 3, cruiser: 4, battleship: 4, dreadnought: 5, titan: 6,
 };
 const MODULE_FIT_COST: Record<ModuleKind, number> = {
   mass_driver: 2, torpedo_rack: 3, point_defense_screen: 2, reflective_plating: 2, whipple_armor: 3,
+  extended_tanks: 2, recon_suite: 2, cargo_pods: 2, escort_datalink: 2, fuel_transfer_rig: 2,
+  survey_drive: 2, nebula_spectrometer: 2, prismatic_lance: 3,
 };
 export const FITTING_POINTS: Record<string, number> = {
+  tiny_freighter: 2, small_freighter: 2, large_freighter: 2, heavy_freighter: 2, bulk_freighter: 2,
   corvette: 5, raider: 4, scout: 2, convoy: 2, colony: 2,
   destroyer: 8, cruiser: 12, battleship: 18, dreadnought: 28, titan: 45,
 };
 const fitCost = (mods: ModuleKind[]): number => mods.reduce((sum, module) => sum + (MODULE_FIT_COST[module] ?? 0), 0);
 
 export const SHIP_YARD: Record<string, { yard: string; tier: number }> = {
-  convoy: { yard: "shipyard", tier: 1 }, scout: { yard: "shipyard", tier: 1 }, colony: { yard: "shipyard", tier: 1 },
+  tiny_freighter: { yard: "shipyard", tier: 1 }, small_freighter: { yard: "shipyard", tier: 1 },
+  large_freighter: { yard: "shipyard", tier: 3 }, heavy_freighter: { yard: "shipyard", tier: 4 }, bulk_freighter: { yard: "shipyard", tier: 5 },
+  convoy: { yard: "shipyard", tier: 2 }, scout: { yard: "shipyard", tier: 1 }, colony: { yard: "shipyard", tier: 1 },
   raider: { yard: "shipyard", tier: 2 }, corvette: { yard: "shipyard", tier: 2 },
   destroyer: { yard: "naval_drydock", tier: 1 }, cruiser: { yard: "naval_drydock", tier: 2 }, battleship: { yard: "naval_drydock", tier: 3 },
   dreadnought: { yard: "capital_slipway", tier: 1 }, titan: { yard: "capital_slipway", tier: 2 }, transport: { yard: "garrison", tier: 1 },
@@ -51,6 +64,8 @@ export const YARD_TITLE: Record<string, string> = {
 };
 export const slipsFor = (tier: number): number => Math.max(0, tier);
 const HULL_PROGRAMME: Record<string, string> = {
+  small_freighter: "prop_freight_frames", convoy: "prop_heavy_lifters", large_freighter: "prop_line_express_charters",
+  heavy_freighter: "prop_line_bulk_charters", bulk_freighter: "prop_line_autonomous_freight",
   destroyer: "hull_line_iv_destroyer", cruiser: "hull_line_v_cruiser",
   battleship: "hull_line_vi_battleship", dreadnought: "hull_line_vii_dreadnought", titan: "hull_line_viii_titan",
 };
@@ -59,12 +74,14 @@ export const POOL_OF: Record<string, "resource" | "industrial" | "infrastructure
   mining_complex: "resource", volatile_harvester: "resource", bioharvester: "resource",
   smelter: "industrial", electronics_fabricator: "industrial", chemical_works: "industrial",
   fuel_refinery: "industrial", machine_works: "industrial", armaments_complex: "industrial",
+  composite_works: "industrial", hull_fabricator: "industrial", precision_works: "industrial", drive_works: "industrial",
   shipyard: "industrial", naval_drydock: "industrial", capital_slipway: "industrial", ordnance_foundry: "industrial",
   agroplex: "infrastructure", habitat: "infrastructure", orbital_warehouse: "infrastructure",
+  warehouse: "infrastructure",
   sensor_array: "infrastructure", defense_platform: "infrastructure", academy: "infrastructure", garrison: "infrastructure",
 };
 const EXTRACTION_OF: Record<string, Commodity[]> = {
-  mining_complex: ["metallic_ore", "silicates", "rare_elements"],
+  mining_complex: ["metallic_ore", "cuprite_ore", "titanium_ore", "crystalline_ore", "rare_metal_ore", "silicates", "rare_elements"],
   volatile_harvester: ["volatiles"],
   bioharvester: ["biomass"],
 };
@@ -72,7 +89,35 @@ export type Pool = "resource" | "industrial" | "infrastructure";
 export type PoolUse = Record<Pool, { used: number; total: number }>;
 export const POOL_LABEL: Record<Pool, string> = { resource: "Resource", industrial: "Industrial", infrastructure: "Infrastructure" };
 
-export type BuildOpt = { key: string; label: string; costs: { commodity: string; units: number }[]; build_secs: number };
+export type BuildOpt = BuildOption;
+export const MINERAL_DEPOSITS: Commodity[] = ["metallic_ore", "cuprite_ore", "titanium_ore", "crystalline_ore", "rare_metal_ore", "rare_elements", "silicates"];
+
+/** Recipe is chosen from the served assignment, never a pending UI draft. */
+export function assignedRecipe(option: BuildOpt | undefined, ore?: Commodity | null): ConversionRecipe | undefined {
+  return option?.refining_recipes?.find(r => r.inputs[0]?.[0] === (ore ?? "metallic_ore")) ?? option?.conversion;
+}
+
+export function recipeOutputs(recipe: ConversionRecipe): [Commodity, number][] {
+  return [[recipe.output, 1], ...(recipe.byproducts ?? [])];
+}
+
+export function commodityPurpose(commodity: Commodity, catalog: readonly BuildOpt[]): string {
+  const ore = catalog.find(o => o.key === "smelter")?.refining_recipes?.find(r => r.inputs[0]?.[0] === commodity);
+  if (ore) return `Sell raw or refine into ${recipeOutputs(ore).map(([c]) => label(c)).join(" + ")}.`;
+  if (commodity === "conductive_metals") return "Conductors for Electronics production.";
+  if (commodity === "titanium") return "Structural metal for heavy Hull Sections.";
+  return "";
+}
+
+/** Static recipe from Welcome, not a second client economy. Actual production
+ * still follows the delayed workforce/inputs/tier report. */
+export function conversionSummary(option: BuildOpt): string {
+  const recipe = option.conversion;
+  if (!recipe) return "";
+  const inputs = recipe.inputs.map(([commodity, units]) => `${units} ${label(commodity)}`).join(" + ");
+  const outputs = recipeOutputs(recipe).map(([c, n]) => `${n} ${label(c)}`).join(" + ");
+  return `${inputs} → ${outputs} · base ${Number((recipe.rate * 60).toFixed(2))}/min at tier I, fully staffed.${option.refining_recipes?.length ? " Choose ore on the planet's Smelter." : ""}`;
+}
 export interface StructOpt {
   o: BuildOpt; pool: Pool; currentTier: number; targetTier: number;
   foundsNew: boolean; tierUp: boolean; afford: boolean; poolFull: boolean; noDeposit: boolean;
@@ -88,8 +133,10 @@ export interface ShipOpt {
 export const buildOption = (key: string): BuildOpt | undefined => state.galaxy?.build_options.find((option) => option.key === key);
 
 export const COMMODITIES: Commodity[] = [
-  "metallic_ore", "rare_elements", "silicates", "volatiles", "biomass",
+  "metallic_ore", "cuprite_ore", "titanium_ore", "crystalline_ore", "rare_metal_ore", "volatiles", "biomass",
+  "rare_elements", "silicates", "conductive_metals", "titanium",
   "alloys", "electronics", "polymers", "fuel", "provisions", "machinery", "armaments",
+  "composites", "hull_sections", "precision_components", "drive_assemblies",
 ];
 
 export function ownedHaulDestinations(): { id: EntityId; name: string }[] {
@@ -171,7 +218,71 @@ export function systemFlavor(sys: SystemInfo, deps: Deposit[] | null): string {
 
 // §fitting: is (kind, mods) legal — both slots and budget? (mirrors Loadout::validate)
 export function fitLegal(kind: string, mods: ModuleKind[]): boolean {
-  return mods.length <= (MODULE_SLOTS[kind] ?? 0) && fitCost(mods) <= (FITTING_POINTS[kind] ?? 0);
+  return mods.length <= (MODULE_SLOTS[kind] ?? 0) && fitCost(mods) <= (FITTING_POINTS[kind] ?? 0)
+    && (!mods.includes("escort_datalink") || mods.includes("point_defense_screen"))
+    && mods.every(m => MODULES.some(entry => entry.kind === m) && moduleFitsHull(m, kind) && (!isUtility(m) || mods.filter(other => other === m).length === 1));
+}
+
+export function moduleBuildReason(dyn: SystemStateView, module: ModuleKind): string {
+  if (isBlueprintOnly(module) && !state.research?.blueprints?.includes(module)) return "Recover blueprint through exploration";
+  const programme = utilityProgramme(module);
+  if (programme && !state.research?.programmes.some(p => p.id === programme && p.state === "completed")) return "Research required";
+  const yard = isUtility(module) ? "shipyard" : "armaments_complex";
+  if (!(dyn.structures[yard] > 0)) return isUtility(module) ? "Needs Shipyard I" : "Needs Armaments Complex";
+  if (isUtility(module) && !dyn.bodies.some(body => shipyardBoost(dyn, body) > 0)) return "Assign Shipyard workforce";
+  // Module recipes draw on the local ledger, not docked commodity holds.
+  const stock = new Map((dyn.stockpile ?? []).map(s => [s.commodity, s.units]));
+  const recipe = buildOption(`module:${module}`);
+  return !recipe || recipe.costs.some(c => (stock.get(c.commodity as Commodity) ?? 0) < c.units) ? "Insufficient stock" : "";
+}
+
+export function refitFuelBlocked(g: GhostView, from: ModuleKind[], to: ModuleKind[]): boolean {
+  return typeof g.fuel === "number" && g.fuel / Math.max(fleetFuelCapacity(g), 1e-9) * tankMultiplier(from) > tankMultiplier(to) + 1e-9;
+}
+
+export function refitCargoCapacity(g: GhostView, hull: string, from: ModuleKind[], to: ModuleKind[], n: number): number {
+  return fleetCargoCapacity(g) + cargoUnitsPerHull(hull as ShipKind) * n * (cargoMultiplier(to) - cargoMultiplier(from));
+}
+
+export function refitCargoBlocked(g: GhostView, hull: string, from: ModuleKind[], to: ModuleKind[], n: number): boolean {
+  return fleetCargoUnits(g) > refitCargoCapacity(g, hull, from, to, n);
+}
+
+/** The pooled manifest can allow removing one set of pods but not a whole
+ * fitted stack. Clamp the selector to the actual arrived free hold space. */
+export function maxCargoRefitCount(g: GhostView, hull: string, from: ModuleKind[], to: ModuleKind[], available: number): number {
+  const loss = cargoUnitsPerHull(hull as ShipKind) * (cargoMultiplier(from) - cargoMultiplier(to));
+  return loss > 0 ? Math.max(0, Math.min(available, Math.floor((fleetCargoCapacity(g) - fleetCargoUnits(g)) / loss))) : available;
+}
+
+export function refitPreview(g: GhostView, hull: import("../../protocol").ShipKind, from: ModuleKind[], to: ModuleKind[], n: number): string {
+  const oldCap = fleetFuelCapacity(g);
+  const cap = oldCap + HULL_MASS[hull] * .035 * n * (tankMultiplier(to) - tankMultiplier(from));
+  const detail = hullUtilitySummary(hull, from, to);
+  const fuel = Math.abs(cap - oldCap) > 1e-9 ? ` · Fleet tank ${oldCap.toFixed(1)} → ${cap.toFixed(1)} Fuel · aboard ${g.fuel?.toFixed(1) ?? "unknown"} unchanged` : "";
+  const oldCargo = fleetCargoCapacity(g);
+  const newCargo = refitCargoCapacity(g, hull, from, to, n);
+  const cargo = oldCargo !== newCargo ? `Cargo ${oldCargo} → ${newCargo} · aboard ${fleetCargoUnits(g)} unchanged` : "";
+  return `${detail}${fuel}${cargo ? `${detail || fuel ? " · " : ""}${cargo}` : ""}${detail || fuel || cargo ? " · " : ""}Refit ${3 * n}s after receipt${refitFuelBlocked(g, from, to) ? " · Use fuel before removing tanks" : ""}${refitCargoBlocked(g, hull, from, to, n) ? " · Unload cargo before removing pods" : ""}`;
+}
+
+export function utilityRefitChoices(g: GhostView, dock: SystemStateView) {
+  if (!g.own || !dockedAtSystem(g, dock.id) || !dock.bodies.some(b => shipyardBoost(dock, b) > 0)) return [];
+  const ledger = moduleLedgerAt(dock.id);
+  const stacks = (g.composition ?? []).flatMap(stack => {
+    const fitted = (g.loadouts ?? []).filter(s => s.kind === stack.kind && s.n > 0);
+    const stock = stack.count - fitted.reduce((sum, s) => sum + s.n, 0);
+    return [...fitted, ...(stock > 0 ? [{ kind: stack.kind, modules: [] as ModuleKind[], n: stock }] : [])];
+  });
+  return stacks.flatMap(stack => MODULES.filter(m => isUtility(m.kind)).flatMap(module => {
+    const has = stack.modules.includes(module.kind);
+    let to = has ? stack.modules.filter(m => m !== module.kind) : [...stack.modules, module.kind];
+    if (!has && !fitLegal(stack.kind, to)) to = [...stack.modules.filter(m => !isUtility(m)), module.kind];
+    if (!fitLegal(stack.kind, to) || (!has && !(ledger[module.kind] > 0))) return [];
+    return [{ ship: stack.kind, from: stack.modules, to, module: module.kind,
+      name: `${has ? "Remove" : "Fit"} ${module.name}`, blocked: refitFuelBlocked(g, stack.modules, to) || refitCargoBlocked(g, stack.kind, stack.modules, to, 1),
+      preview: refitPreview(g, stack.kind, stack.modules, to, 1) }];
+  }));
 }
 
 // A module's goods VALUE = its recipe commodities priced at the observed hub
@@ -234,6 +345,14 @@ export function poolUsage(dyn: SystemStateView | undefined): PoolUse {
   return sum;
 }
 
+// Shared by catalogue visibility and build validation. Only a served completion
+// unlocks a structure; queued/active research (or its estimated end) never does.
+export function structureResearched(o: BuildOpt): boolean {
+  return !o.research_prerequisite || state.research?.programmes.some(
+    (entry) => entry.id === o.research_prerequisite && entry.state === "completed",
+  ) === true;
+}
+
 /// The sim-mirroring state for building `o` on `body` — current/target tier,
 /// whether it founds a NEW slot vs. deepens in place, and every precondition
 /// (afford / pool-full / matching-deposit). `buildable` = all pass (Queue is
@@ -245,7 +364,7 @@ export function structOption(o: BuildOpt, dyn: SystemStateView, body: BodyView, 
   const pendingAhead = (dyn.builds ?? []).filter((j) => j.body_id === body.id && j.key === o.key).length;
   const foundsNew = currentTier === 0 && pendingAhead === 0;
   const targetTier = currentTier + pendingAhead + 1;
-  const have = constructionStock(dyn).available;
+  const have = constructionStock(dyn, o.key).available;
   const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
   const poolFull = foundsNew && !!pool && pools[pool].used >= pools[pool].total;
   const extractsFrom = EXTRACTION_OF[o.key];
@@ -256,8 +375,17 @@ export function structOption(o: BuildOpt, dyn: SystemStateView, body: BodyView, 
   const pre = YARD_PREREQ[o.key];
   const preHave = pre ? (dyn.structures?.[pre.yard] ?? 0) : 0;
   const yardPrereq = pre && preHave < pre.tier ? { ...pre, have: preHave } : null;
-  const buildable = !poolFull && !noDeposit && !yardPrereq && afford;
-  const reason = noDeposit ? "No matching deposit on this body — a mine only works its own rock."
+  const research = o.research_prerequisite;
+  const programme = research ? state.research?.programmes.find((entry) => entry.id === research) : undefined;
+  const researchLocked = !structureResearched(o);
+  // The Welcome catalog names even still-locked research. Only the arrived
+  // completion state unlocks construction; an active/queued estimate never does.
+  const researchTitle = programme?.name
+    ?? state.researchCatalog?.find((entry) => entry.id === research)?.name
+    ?? label(research ?? "");
+  const buildable = !researchLocked && !poolFull && !noDeposit && !yardPrereq && afford;
+  const reason = researchLocked ? `Requires ${researchTitle} research.`
+    : noDeposit ? "No matching deposit on this body — a mine only works its own rock."
     : yardPrereq ? `Needs ${YARD_TITLE[yardPrereq.yard] ?? yardPrereq.yard} tier ${yardPrereq.tier} somewhere in this system (have ${yardPrereq.have}).`
     : poolFull ? `This body's ${POOL_LABEL[pool]} slots are full (${pools[pool].used}/${pools[pool].total}).`
       : !afford ? "Not enough goods available at this system." : "";
@@ -267,8 +395,8 @@ export function structOption(o: BuildOpt, dyn: SystemStateView, body: BodyView, 
 /// Ship gating mirrored from the sim: shipyard-tier gate (SHIP_REQ vs the system's
 /// shipyard tier — the same field the old inline rows read) + afford, plus the
 /// max affordable count for the quantity stepper. `buildable` = tier ok + affords 1.
-// §ladder: is this hull's Line programme completed? (Capitals only — the five
-// original hulls never need research. Mirrors the sim's NeedsResearch gate.)
+// Capitals and every freighter above Tiny need their own completed programme.
+// Queued/active research is not an unlock. Mirrors the sim's NeedsResearch gate.
 export function hullResearched(key: string): boolean {
   const prog = HULL_PROGRAMME[key];
   if (!prog) return true;
@@ -276,7 +404,7 @@ export function hullResearched(key: string): boolean {
 }
 
 export function shipOption(o: BuildOpt, dyn: SystemStateView): ShipOpt {
-  const have = constructionStock(dyn).available;
+  const have = constructionStock(dyn, o.key).available;
   // §yards: read the gating yard's tier from the owner-only structures map
   // (`shipyard_tier` only ever knew about the Shipyard).
   const gate = SHIP_YARD[o.key] ?? { yard: "shipyard", tier: 1 };
@@ -284,6 +412,10 @@ export function shipOption(o: BuildOpt, dyn: SystemStateView): ShipOpt {
   const needTier = gate.tier;
   const yardShort = yardTier < needTier;
   const unresearched = !hullResearched(o.key);
+  const programme = HULL_PROGRAMME[o.key];
+  const researchTitle = state.research?.programmes.find(p => p.id === programme)?.name
+    ?? state.researchCatalog?.find(p => p.id === programme)?.name
+    ?? label(programme ?? "");
   const foundingLocked = o.key === "colony" && !!state.founding && !state.founding.expansion_unlocked;
   const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
   const maxAff = o.costs.length
@@ -303,7 +435,7 @@ export function shipOption(o: BuildOpt, dyn: SystemStateView): ShipOpt {
   const reason = foundingLocked
     ? "Complete the Founding Programme to unlock expansion."
     : unresearched
-    ? "Requires its Line programme on the Hulls research board."
+    ? `Requires ${researchTitle} research.`
     : yardShort ? `Needs ${YARD_TITLE[gate.yard] ?? gate.yard} tier ${needTier} (have ${yardTier}).`
     : slipsFull ? `All ${slips} slipway${slips === 1 ? "" : "s"} busy — raise the ${YARD_TITLE[gate.yard] ?? gate.yard} or wait for a hull to launch.`
     : !afford ? "Not enough goods available at this system."
@@ -332,7 +464,8 @@ export function dispatchBuildKey(k: string, sid: string, bodyId?: number): void 
     // §modules Part B4: a warship build carries the composed FIT, clamped to this
     // hull's module slots (so a 2-module fit on a 1-slot scout sends just 1, not a
     // silent server reject). The ledger is debited server-side.
-    const fit = pendingFitSource().filter((m) => (moduleLedgerAt(sid)[m] ?? 0) > 0).slice(0, MODULE_SLOTS[k] ?? 0);
+    const fit = pendingFitSource().filter((m) => (moduleLedgerAt(sid)[m] ?? 0) > 0 && moduleFitsHull(m, k)).slice(0, MODULE_SLOTS[k] ?? 0);
+    if (!fitLegal(k, fit)) return;
     net.send({ type: "BuildShip", system_id: sid, ship_kind: k as import("../../protocol").ShipKind, loadout: fit.length ? fit : undefined });
   }
   // §modules Part B3: "module:<slug>" → manufacture into the system ledger.
@@ -417,12 +550,15 @@ export function recordPriceHistory(st = state): void {
   }
 }
 
-export function marketAverageQuote(mid: number, units: number, side: Side): number {
-  const x = units / MARKET_DEPTH;
+/** Average unit price of walking `units` along the exchange curve. `depth` is the
+ *  good's own book depth from the ticker (thin books for the rare goods); the bulk
+ *  default covers a ticker row that predates the field. */
+export function marketAverageQuote(mid: number, units: number, side: Side, depth: number = MARKET_DEPTH): number {
+  const x = units / depth;
   if (side === "buy") {
-    return mid * MARKET_DEPTH * Math.expm1(x) / units * (1 + MARKET_HALF_SPREAD);
+    return mid * depth * Math.expm1(x) / units * (1 + MARKET_HALF_SPREAD);
   }
-  return mid * MARKET_DEPTH * (1 - Math.exp(-x)) / units * (1 - MARKET_HALF_SPREAD);
+  return mid * depth * (1 - Math.exp(-x)) / units * (1 - MARKET_HALF_SPREAD);
 }
 
 export function freightDraftEntries(): { commodity: Commodity; units: number }[] {

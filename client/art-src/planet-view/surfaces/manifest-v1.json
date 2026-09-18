@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "generator": "built-in image_gen",
+  "composition": "empty partial-planet surface with curved horizon and space above",
+  "gas_giant_excluded": true,
+  "prompts": "generation-prompts-v1.md",
+  "assets": [
+    {
+      "kind": "terrestrial",
+      "file": "terrestrial-surface-v1.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 2759529,
+      "sha256": "2ef917eb9b6831de225298a779345c0b819ebd03aebf1f49e1ff0d5dfef06eed",
+      "generated_source": "/Users/peter/.codex/generated_images/01a07fc6-daf8-7bb0-997a-3ce6703aa795/exec-e1f78fb6-98b3-4361-9a71-041baee7c1d4.png",
+      "biome_reference": "client/public/art/celestial_sprites/planets/terrestrial.png"
+    },
+    {
+      "kind": "desert",
+      "file": "desert-surface-v1.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 2602938,
+      "sha256": "85d2f66c9c11b86a52e791a7106038c574479fd84edea6e7f7494a926922b8bc",
+      "generated_source": "/Users/peter/.codex/generated_images/01a07fc6-daf8-7bb0-997a-3ce6703aa795/exec-90be3877-95ba-4b16-ada3-0ededb322e87.png",
+      "biome_reference": "client/public/art/celestial_sprites/planets/desert.png"
+    },
+    {
+      "kind": "ocean",
+      "file": "ocean-surface-v1.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 2539823,
+      "sha256": "d03931f74fedddc68e97ae47232593a2e76aacf3b49b04183ec5bd3470bf46ff",
+      "generated_source": "/Users/peter/.codex/generated_images/01a07fc6-daf8-7bb0-997a-3ce6703aa795/exec-353bbc6d-7ebd-4c00-ad70-e956c844299b.png",
+      "biome_reference": "client/public/art/celestial_sprites/planets/ocean.png"
+    },
+    {
+      "kind": "ice",
+      "file": "ice-surface-v1.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 2362289,
+      "sha256": "97eb6ea555fa66284b40c544220e4c8ca5bf4cee4da5bb8971c0cce49897e4f3",
+      "generated_source": "/Users/peter/.codex/generated_images/01a07fc6-daf8-7bb0-997a-3ce6703aa795/exec-3c00b5f1-e74f-4129-a5d5-b3a628517dfe.png",
+      "biome_reference": "client/public/art/celestial_sprites/planets/ice.png"
+    },
+    {
+      "kind": "lava",
+      "file": "lava-surface-v1.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 2535201,
+      "sha256": "e6cf744c4d685943d4d0e98fcc635e2d59faf0605e22f1bee3b3ae2acd79cfb9",
+      "generated_source": "/Users/peter/.codex/generated_images/01a07fc6-daf8-7bb0-997a-3ce6703aa795/exec-a26cee56-43b2-466c-a4e5-425c7d9331af.png",
+      "biome_reference": "client/public/art/celestial_sprites/planets/lava.png"
+    }
+  ]
+}

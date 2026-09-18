@@ -7,6 +7,7 @@ import { guardCapable, jumpCapable, shipKindLabel } from "./derive/fleet";
 import { jumpRangeAt } from "./derive/nebula";
 import { armedSelection } from "./derive/orders";
 import { jumpDepartureKey } from "./session";
+import { siteTitle } from "./derive/exploration";
 
 export type EmplacementKind = EmplacementView["kind"];
 
@@ -25,6 +26,7 @@ export type SelectTarget = (
   | { type: "system"; id: string }
   | { type: "anchor"; readout: string }
   | { type: "hub" }
+  | { type: "exploration"; id: string }
   | { type: "ongoingBattle"; id: string }
   | { type: "aftermath"; id: number }
   | { type: "capture"; id: number }
@@ -156,7 +158,7 @@ export function resolveMapClick(
     const selF = state.selectedShipId
       ? state.ghosts.find((ghost) => ghost.id === state.selectedShipId)
       : undefined;
-    if (selF && selF.own && selF.kind === "raider" && state.galaxy) {
+    if (selF && guardCapable(selF) && state.galaxy) {
       let hitSys: SystemInfo | null = null;
       let bestD = Infinity;
       for (const sys of state.galaxy.systems) {
@@ -226,9 +228,8 @@ export function resolveMapClick(
     ? state.ghosts.find((ghost) => ghost.id === state.selectedShipId)
     : undefined;
   const haveOwn = !!selected && selected.own;
-  const haveRaider = haveOwn && selected!.kind === "raider";
-  const haveStrike = haveOwn
-    && !!selected!.composition?.some((stack) => stack.kind === "raider");
+  const haveRaider = haveOwn && guardCapable(selected!);
+  const haveStrike = haveRaider;
 
   for (const ghost of state.ghosts) {
     const battlePos = engagedIds.get(ghost.id);
@@ -347,7 +348,7 @@ export function resolveMapClick(
       const point = renderer.worldToScreen(system.pos);
       const distance = Math.hypot(point.x - sx, point.y - sy);
       const radius = Math.max(15, renderer.systemHitRadius(system));
-      if (distance < radius) {
+      if (distance < radius || renderer.pirateSiteHit(system.id, sx, sy)) {
         cands.push({
           key: `sys:${system.id}`,
           sortD: distance - SYSTEM_BIAS,
@@ -357,6 +358,14 @@ export function resolveMapClick(
         });
       }
     }
+  }
+
+  for (const site of state.explorationSites ?? []) {
+    const point = renderer.worldToScreen(site.pos);
+    const distance = Math.hypot(point.x - sx, point.y - sy);
+    if (distance <= 26) cands.push({ key: `site:${site.id}`, sortD: distance,
+      label: site.details?.name ?? "Unknown contact", target: { type: "exploration", id: site.id },
+      readout: "" });
   }
 
   if (cands.length) {
@@ -372,6 +381,17 @@ export function resolveMapClick(
     const index = same ? (previous!.index + 1) % cands.length : 0;
     clickCycle = { sx, sy, keys, index };
     const chosen = cands[index];
+    // An exploration object is a destination, not an operation to accept.
+    // The ordinary confirmed Move lets the sim choose safe arrival work. RMB
+    // (desktop) / Inspect (mobile) still opens the optional contact catalogue.
+    if (!inspect && chosen.target.type === "exploration" && haveOwn) {
+      const siteId = chosen.target.id;
+      const site = state.explorationSites.find(s => s.id === siteId);
+      if (site) return { kind: "intent",
+        intent: { shipId: selected!.id, verb: "move", targetId: site.id, dest: site.pos },
+        readout: `Move <b>${esc(shipKindLabel(selected!.kind))}</b> to <b>${esc(siteTitle(site))}</b>.`,
+      };
+    }
     // A selected fleet turns a star into a named movement target. This is the
     // core map gesture: clicking the destination means "go there", including
     // colony ships whose exact claim point sits under the star's hit circle.

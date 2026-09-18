@@ -89,8 +89,9 @@ class DeckShell implements Shell {
       () => this.workspace?.publishCameraRect(true),
       signal,
     );
-    this.empire = new DeckEmpireRoutes(byId("deck-workspace-body"), byId("deck-build-workbench-body"), byId("deck-world-workbench-body"), ctx, {
+    this.empire = new DeckEmpireRoutes(byId("deck-workspace-body"), byId("deck-build-workbench-body"), byId("deck-planet-stage-body"), ctx, {
       go: (route) => this.router?.go(route),
+      replace: (route) => this.router?.replace(route),
       openGroundViewer: (id) => this.theaters?.openGround(id),
       notice: (html) => this.setStatus(html),
       toast: (title, message, tone, destination) => this.toasts?.push({ title, message, tone, destination }),
@@ -148,6 +149,7 @@ class DeckShell implements Shell {
         go: (route) => this.router?.go(route),
         openDoctrine: () => this.router?.go({ name: "doctrine" }),
         notice: (html) => this.setStatus(html),
+        battleSelectionChanged: () => this.syncBattleSelection(),
       },
       signal,
     );
@@ -245,19 +247,29 @@ class DeckShell implements Shell {
       event.preventDefault();
       submit.click();
     }, { signal });
-    byId("deck-world-workbench").addEventListener("click", (event) => {
+    byId("deck-planet-stage").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
-      if (button) this.empire?.handleWorldWorkbenchAction(button, this.router?.current ?? null);
+      if (button) this.empire?.handleAction(button, this.router?.current ?? null);
     }, { signal });
+    // The planet is the deepest rung of the zoom ladder: wheeling out over its
+    // scene climbs back to the orrery, as the orrery's own scrub-out does.
+    let stageWheel = 0;
+    byId("deck-planet-stage").addEventListener("wheel", (event) => {
+      if (this.router?.current?.name !== "world") return;
+      stageWheel = event.deltaY < 0 ? 0 : stageWheel + event.deltaY;
+      if (stageWheel < 240) return;
+      stageWheel = 0;
+      this.router.back();
+    }, { passive: true, signal });
     byId("deck-founding").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
       if (button) this.command?.handleFoundingAction(button);
     }, { signal });
     byId("deck-zoom").addEventListener("click", (event) => {
       const action = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]")?.dataset.deckAct;
-      if (action === "zoom-in") this.map?.zoomIn();
-      else if (action === "zoom-out") this.map?.zoomOut();
-      else if (action === "zoom-fit") this.map?.fit();
+      if (action === "zoom-in") this.zoomIn();
+      else if (action === "zoom-out") this.zoomOut();
+      else if (action === "zoom-fit") this.zoomFit();
       else if (action === "help") this.setHelpOpen(true);
     }, { signal });
     byId("deck-overlays").addEventListener("click", (event) => {
@@ -323,11 +335,13 @@ class DeckShell implements Shell {
     this.log?.render(this.router?.current ?? null);
     this.strategic?.render(this.router?.current ?? null);
     this.theaters?.onViewTick();
+    this.syncBattleSelection();
   }
 
   framePolicy() {
-    // Only opaque Deck overlays may rest the galaxy ticker. Workspace and
-    // chrome leave it live; focused theaters and session overlays pause it.
+    // Only opaque Deck overlays may rest the galaxy ticker. Workspace, chrome
+    // and the planet stage (the orrery keeps running beneath it, ready for
+    // Back) leave it live; theaters and session overlays pause it.
     const join = document.getElementById("deck-join");
     const help = document.getElementById("deck-help");
     return { maxFps: 0, renderGalaxy: !this.overlayOpen(join, help) };
@@ -356,6 +370,7 @@ class DeckShell implements Shell {
     this.log?.invalidate();
     this.strategic?.invalidate();
     this.theaters?.teardown();
+    if (this.ctx) this.ctx.renderer.selectedBattleId = null;
     this.router = null;
     this.workspace = null;
     this.map = null;
@@ -394,7 +409,8 @@ class DeckShell implements Shell {
   }
 
   private keyDown(event: KeyboardEvent): void {
-    if (!this.ctx || this.editableTarget(event.target)) return;
+    if (!this.ctx || document.getElementById("deck-profile")?.hasAttribute("open")) return;
+    if (this.editableTarget(event.target)) return;
     const key = event.key;
     const overlayOpen = this.overlayOpen();
     if (key === "Enter" && this.ctx.state.pendingIntent && !overlayOpen) {
@@ -446,10 +462,10 @@ class DeckShell implements Shell {
       this.strip?.render(true);
     } else if (key === "+" || key === "=") {
       event.preventDefault();
-      this.map?.zoomIn();
+      this.zoomIn();
     } else if (key === "-" || key === "_") {
       event.preventDefault();
-      this.map?.zoomOut();
+      this.zoomOut();
     } else if (key === "?") {
       event.preventDefault();
       this.setHelpOpen(byId("deck-help").hasAttribute("hidden"));
@@ -468,6 +484,26 @@ class DeckShell implements Shell {
     this.router.go({ name: "system", params: { id: system.id, systemLabel: system.name } });
   }
 
+  /** The zoom cluster and +/- keys follow the ladder: on a planet, zooming out
+   * climbs to the orrery, and zooming in or fitting has nowhere deeper to go. */
+  private zoomIn(): void {
+    if (this.router?.current?.name === "world") return;
+    this.map?.zoomIn();
+  }
+
+  private zoomOut(): void {
+    if (this.router?.current?.name === "world") {
+      this.router.back();
+      return;
+    }
+    this.map?.zoomOut();
+  }
+
+  private zoomFit(): void {
+    if (this.router?.current?.name === "world") return;
+    this.map?.fit();
+  }
+
   private escapeOneLayer(): boolean {
     if (!this.ctx) return false;
     if (this.ctx.state.pendingIntent) {
@@ -478,8 +514,6 @@ class DeckShell implements Shell {
       this.ctx.intent.clearGuardAiming();
     } else if (!byId("deck-nav-overflow").hidden) {
       this.setNavOverflow(false);
-    } else if (this.empire?.closeWorldWorkbench()) {
-      // World details float above, without replacing, their originating workspace.
     } else if (this.empire?.closeBuildWorkbench(this.router?.current ?? null)) {
       // The central construction workbench is the topmost non-modal layer.
     } else if (this.ctx.renderer.isSystemScrubbing()) {
@@ -491,6 +525,10 @@ class DeckShell implements Shell {
     } else if (this.ctx.renderer.viewMode.type === "battle") {
       this.ctx.renderer.exitBattleView();
       if (this.router?.current) this.router.back();
+    } else if (this.router?.current?.name === "world") {
+      // The planet is the deepest rung: Esc climbs to the orrery and its
+      // system workspace before the orrery itself is left.
+      this.router.back();
     } else if (this.ctx.renderer.viewMode.type === "system") {
       // First Esc leaves the semantic orrery but preserves its workspace. A
       // second Esc walks the router, matching the visible layer stack.
@@ -546,6 +584,11 @@ class DeckShell implements Shell {
       case "hub":
         this.router.go({ name: "market", query: { inspect: "map" } });
         break;
+      case "exploration":
+        state.selectedExplorationSiteId = target.id;
+        this.ctx.renderer.stateVersion++;
+        this.router.go({ name: "operations", query: { site: target.id } });
+        break;
       case "ongoingBattle": {
         // One marker family: the id is a running engagement OR a concluded record.
         const running = state.battles.some((battle) => battle.id === target.id);
@@ -574,7 +617,7 @@ class DeckShell implements Shell {
         this.router.go({ name: "command" });
         break;
       case "clearSystemBody":
-        if (!this.empire?.closeWorldWorkbench() && this.router.current?.name === "world") this.router.back();
+        if (this.router.current?.name === "world") this.router.back();
         break;
     }
   }
@@ -582,12 +625,23 @@ class DeckShell implements Shell {
   private openWorldPanel(systemId: string, bodyId: number): void {
     if (!this.ctx || !this.router || !systemId || !Number.isFinite(bodyId)) return;
     const system = this.ctx.state.galaxy?.systems.find((entry) => entry.id === systemId);
-    if (!system) return;
-    if (!this.router.current) this.router.go({ name: "system", params: { id: system.id, systemLabel: system.name } });
-    this.empire?.openWorldWorkbench(systemId, bodyId, this.router.current);
+    const body = this.ctx.state.systems.find((entry) => entry.id === systemId)?.bodies.find((entry) => entry.id === bodyId);
+    if (!system || !body) return;
+    // A world sits beneath its system on the ladder: unless the current
+    // workspace already belongs to this system, Back must land on the system.
+    const current = this.router.current;
+    const sameSystem = (current?.name === "system" || current?.name === "build" || current?.name === "world")
+      && (current.params?.systemId ?? current.params?.id) === systemId;
+    if (!sameSystem) this.router.go({ name: "system", params: { id: system.id, systemLabel: system.name } });
+    this.router.go({ name: "world", params: { systemId: system.id, systemLabel: system.name, bodyId: String(body.id), worldLabel: body.name } });
   }
 
   private routeChanged(route: DeckRoute | null, stack: readonly DeckRoute[]): void {
+    this.syncBattleSelection(route);
+    if (this.ctx && route?.name !== "operations" && this.ctx.state.selectedExplorationSiteId) {
+      this.ctx.state.selectedExplorationSiteId = null;
+      this.ctx.renderer.stateVersion++;
+    }
     const semanticRoute = route?.name === "system" || route?.name === "world" || route?.name === "build";
     if (!semanticRoute && this.ctx?.renderer.viewMode.type === "system" && !this.ctx.renderer.isSystemScrubbing()) {
       this.ctx.renderer.exitSystemView();
@@ -595,8 +649,8 @@ class DeckShell implements Shell {
     }
     if (!route || !this.workspace || !this.router) {
       this.activeCrumbs = [];
-      this.empire?.closeBuildWorkbench(null);
-      this.empire?.closeWorldWorkbench();
+      // No route: the planet stage and any construction child go with the workspace.
+      this.empire?.render(null);
       this.workspace?.close();
       this.renderActiveNav(null);
       return;
@@ -612,7 +666,18 @@ class DeckShell implements Shell {
           dynamic?.habitat_fed ?? true,
         );
       }
-      if (route.name === "world" && route.params?.bodyId) this.ctx.renderer.pulseSystemBody(route.params.bodyId);
+      if (route.name === "world") {
+        // The planet rung implies the system rung beneath it: enter the
+        // orrery now so Back lands there rather than on the galaxy.
+        const system = this.ctx.state.galaxy?.systems.find((entry) => entry.id === systemId);
+        const mode = this.ctx.renderer.viewMode;
+        if (system && mode.type === "galaxy" && !this.ctx.renderer.isSystemScrubbing()) {
+          this.ctx.renderer.enterSystemView(system, dynamic?.bodies ?? []);
+        } else if (mode.type === "system" && mode.systemId !== systemId) {
+          this.ctx.renderer.exitSystemView();
+        }
+        if (route.params?.bodyId) this.ctx.renderer.pulseSystemBody(route.params.bodyId);
+      }
     }
     this.activeCrumbs = this.router.breadcrumbs(route);
     this.workspace.show(route, this.activeCrumbs, stack.length > 1);
@@ -628,6 +693,18 @@ class DeckShell implements Shell {
     const strategicHandled = this.strategic?.render(route, true) ?? false;
     if (!commandHandled && !empireHandled && !marketHandled && !policyHandled && !fleetHandled && !rosterHandled && !logHandled && !strategicHandled) this.renderPlaceholder(route);
     this.renderActiveNav(route.name);
+  }
+
+  private syncBattleSelection(route = this.router?.current ?? null): void {
+    if (!this.ctx) return;
+    // A viewer can open directly from the log without replacing its route.
+    // On close, selection returns to the underlying battle panel, if any.
+    const panelId = route?.name !== "battle" || route.params?.report === "capture"
+      ? null
+      : route.params?.report === "battle"
+        ? this.ctx.state.battleReports.find((report) => String(report.id) === route.params?.id)?.battle_id ?? null
+        : route.params?.id ?? null;
+    this.ctx.renderer.selectedBattleId = this.theaters?.activeBattleId ?? panelId;
   }
 
   private routeFocus(route: DeckRoute): { x: number; y: number } | null {
@@ -685,12 +762,13 @@ class DeckShell implements Shell {
     if (!this.ctx) return;
     const mode = this.ctx.renderer.viewMode.type;
     const zoom = this.ctx.renderer.zoomFactor();
-    const text = mode === "system" ? "SYSTEM" : mode === "battle" ? "BATTLE" : zoom < 10 ? `${zoom.toFixed(1)}×` : `${Math.round(zoom)}×`;
+    const planet = this.router?.current?.name === "world";
+    const text = planet ? "PLANET" : mode === "system" ? "SYSTEM" : mode === "battle" ? "BATTLE" : zoom < 10 ? `${zoom.toFixed(1)}×` : `${Math.round(zoom)}×`;
     if (text === this.zoomSignature) return;
     this.zoomSignature = text;
     const level = byId("deck-zoom-level");
     level.textContent = text;
-    level.setAttribute("aria-label", mode === "galaxy" ? `${zoom.toFixed(2)}× galaxy magnification relative to fit` : `${text.toLowerCase()} semantic view`);
+    level.setAttribute("aria-label", !planet && mode === "galaxy" ? `${zoom.toFixed(2)}× galaxy magnification relative to fit` : `${text.toLowerCase()} semantic view`);
   }
 
   private toastFor(event: CoreEvent): void {
@@ -746,6 +824,9 @@ class DeckShell implements Shell {
       });
     } else if (event.kind === "CommandRejected") {
       this.toasts.push({ title: "Command refused", message: event.message, tone: "bad", destination: { name: "log" } });
+    } else if (event.kind === "PirateRaidWarning") {
+      this.toasts.push({ title: "Pirates inbound", message: event.message, tone: "bad",
+        destination: { name: "log" }, durationMs: 20_000 });
     } else if (event.kind === "ReportArrived") {
       this.toasts.push({
         title: "Combat report arrived",

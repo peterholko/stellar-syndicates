@@ -13,9 +13,10 @@
 //! so their only counter is reflection. ECM is deliberately ABSENT from v1 so
 //! the counter matrix stays one-to-one (PD owns anti-torpedo alone).
 //!
-//! Modules are manufactured items (§Part B3): built from Armaments + Electronics
-//! (+ a real Silicates sink for the glass mirrors), shipped by raidable convoy,
-//! installed at Shipyards. This module owns the CATALOG + the damage-typing math
+//! Modules are physical manufactured items, shipped by raidable freighters.
+//! Military crates use an Armaments Complex and refit at an Ordnance Foundry;
+//! utilities manufacture and refit at a staffed Shipyard I. This module owns
+//! the CATALOG + the damage-typing math
 //! primitives; `combat.rs` folds them into the pooled Lanchester pipeline and
 //! `ship.rs` carries loadouts on fleets.
 
@@ -52,7 +53,7 @@ pub const MODULE_CONVOY_BERTHS: u32 = 12;
 
 /// §modules Part B3 (Sol hub): Sol SELLS modules to players at this multiple of
 /// the module's goods-recipe VALUE (its commodity cost priced at Sol's standing
-/// market). The 2× premium means local manufacture (an Armaments Complex) is
+/// market). The 2× premium means local manufacture at the module's workshop is
 /// always cheaper — Sol is the BOOTSTRAP / fallback, never the efficient path.
 /// Tunable.
 pub const MODULE_BUY_MULT: f64 = 2.0;
@@ -89,15 +90,39 @@ pub enum ModuleKind {
     ReflectivePlating,
     /// Armor: blunts incoming DRIVER into this ship (`WHIPPLE_BLUNT`).
     WhippleArmor,
+    /// Utility: additional tank volume on this hull, not free fuel.
+    ExtendedTanks,
+    /// Utility: better local contacts and expedition threat detection.
+    ReconSuite,
+    /// Utility: double the fitted player Freighter's commodity hold.
+    CargoPods,
+    /// Utility fire control: a Corvette's fitted PD screens its guarded fleet.
+    EscortDatalink,
+    /// Utility: pump physical Fuel cargo into another owned fleet's tanks.
+    FuelTransferRig,
+    /// Discovery blueprint: faster Scout travel at the expense of tank volume.
+    SurveyDrive,
+    /// Discovery blueprint: stationary-site sensing, no combat sensor bubble.
+    NebulaSpectrometer,
+    /// Discovery blueprint: powerful beam, three fitting points; mirrors counter it.
+    PrismaticLance,
 }
 
 /// Every module kind, in a fixed deterministic order (menus, iteration).
-pub const MODULE_KINDS: [ModuleKind; 5] = [
+pub const MODULE_KINDS: [ModuleKind; 13] = [
     ModuleKind::MassDriver,
     ModuleKind::TorpedoRack,
     ModuleKind::PointDefenseScreen,
     ModuleKind::ReflectivePlating,
     ModuleKind::WhippleArmor,
+    ModuleKind::ExtendedTanks,
+    ModuleKind::ReconSuite,
+    ModuleKind::CargoPods,
+    ModuleKind::EscortDatalink,
+    ModuleKind::FuelTransferRig,
+    ModuleKind::SurveyDrive,
+    ModuleKind::NebulaSpectrometer,
+    ModuleKind::PrismaticLance,
 ];
 
 impl ModuleKind {
@@ -109,6 +134,14 @@ impl ModuleKind {
             ModuleKind::PointDefenseScreen => "point_defense_screen",
             ModuleKind::ReflectivePlating => "reflective_plating",
             ModuleKind::WhippleArmor => "whipple_armor",
+            ModuleKind::ExtendedTanks => "extended_tanks",
+            ModuleKind::ReconSuite => "recon_suite",
+            ModuleKind::CargoPods => "cargo_pods",
+            ModuleKind::EscortDatalink => "escort_datalink",
+            ModuleKind::FuelTransferRig => "fuel_transfer_rig",
+            ModuleKind::SurveyDrive => "survey_drive",
+            ModuleKind::NebulaSpectrometer => "nebula_spectrometer",
+            ModuleKind::PrismaticLance => "prismatic_lance",
         }
     }
 
@@ -123,6 +156,14 @@ impl ModuleKind {
             ModuleKind::PointDefenseScreen => "Point-Defense Screen",
             ModuleKind::ReflectivePlating => "Reflective Plating",
             ModuleKind::WhippleArmor => "Whipple Armor",
+            ModuleKind::ExtendedTanks => "Extended Tanks",
+            ModuleKind::ReconSuite => "Recon Suite",
+            ModuleKind::CargoPods => "Cargo Pods",
+            ModuleKind::EscortDatalink => "Escort Datalink",
+            ModuleKind::FuelTransferRig => "Fuel Transfer Rig",
+            ModuleKind::SurveyDrive => "Survey Drive",
+            ModuleKind::NebulaSpectrometer => "Nebula Spectrometer",
+            ModuleKind::PrismaticLance => "Prismatic Lance",
         }
     }
 
@@ -130,8 +171,34 @@ impl ModuleKind {
     pub fn is_weapon(self) -> bool {
         matches!(
             self,
-            ModuleKind::MassDriver | ModuleKind::TorpedoRack | ModuleKind::PointDefenseScreen
+            ModuleKind::MassDriver | ModuleKind::TorpedoRack | ModuleKind::PointDefenseScreen | ModuleKind::PrismaticLance
         )
+    }
+
+    pub fn is_utility(self) -> bool {
+        matches!(self, Self::ExtendedTanks | Self::ReconSuite | Self::CargoPods | Self::EscortDatalink | Self::FuelTransferRig | Self::SurveyDrive | Self::NebulaSpectrometer)
+    }
+
+    pub fn blueprint_only(self) -> bool {
+        matches!(self, Self::SurveyDrive | Self::NebulaSpectrometer | Self::PrismaticLance)
+    }
+
+    pub fn fits_hull(self, kind: crate::ship::ShipKind) -> bool {
+        use crate::ship::ShipKind;
+        match self {
+            Self::ExtendedTanks => matches!(kind, ShipKind::Scout | ShipKind::Raider | ShipKind::Corvette) || kind.is_player_freighter(),
+            Self::ReconSuite => matches!(kind, ShipKind::Scout | ShipKind::Raider),
+            Self::CargoPods | Self::FuelTransferRig => kind.is_player_freighter(),
+            Self::EscortDatalink => kind == ShipKind::Corvette,
+            Self::SurveyDrive | Self::NebulaSpectrometer => kind == ShipKind::Scout,
+            // The player's freighter gains a utility berth, never a hardpoint.
+            _ => !kind.is_player_freighter(),
+        }
+    }
+
+    pub fn workshop(self) -> crate::build::StructureKind {
+        if self.is_utility() { crate::build::StructureKind::Shipyard }
+        else { crate::build::StructureKind::ArmamentsComplex }
     }
 
     /// §fitting: the module's FITTING-POINT cost — the capacity a hull spends to
@@ -146,6 +213,9 @@ impl ModuleKind {
             ModuleKind::PointDefenseScreen => 2,
             ModuleKind::ReflectivePlating => 2,
             ModuleKind::WhippleArmor => 3,
+            ModuleKind::PrismaticLance => 3,
+            ModuleKind::SurveyDrive | ModuleKind::NebulaSpectrometer => 2,
+            ModuleKind::ExtendedTanks | ModuleKind::ReconSuite | ModuleKind::CargoPods | ModuleKind::EscortDatalink | ModuleKind::FuelTransferRig => 2,
         }
     }
 
@@ -155,19 +225,22 @@ impl ModuleKind {
         match self {
             ModuleKind::MassDriver => Family::Driver,
             ModuleKind::TorpedoRack => Family::Torpedo,
+            ModuleKind::PrismaticLance => Family::Beam,
+            ModuleKind::SurveyDrive | ModuleKind::NebulaSpectrometer => Family::Utility,
             // PD is BOTH a (beam) weapon and the interception screen; its
             // affinity axis is the screening job — the weapon side rides the
             // Beam family through `Loadout::offense()`.
             ModuleKind::PointDefenseScreen => Family::Interception,
             ModuleKind::ReflectivePlating | ModuleKind::WhippleArmor => Family::Protection,
+            ModuleKind::ExtendedTanks | ModuleKind::ReconSuite | ModuleKind::CargoPods | ModuleKind::EscortDatalink | ModuleKind::FuelTransferRig => Family::Utility,
         }
     }
 }
 
 /// §fitting: module FAMILIES — the axes hull affinities scale. The three weapon
 /// families are the damage types; Interception is PD's screening contribution;
-/// Protection is the armor pair's mitigation. (A `Utility` family arrives with
-/// the utility-module pass — parked, no member exists yet.)
+/// Protection is the armor pair's mitigation; Utility supplies local support
+/// (exploration, tank/hold capacity or escort fire control), never faster reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Family {
@@ -176,6 +249,7 @@ pub enum Family {
     Torpedo,
     Interception,
     Protection,
+    Utility,
 }
 
 /// The weapon FAMILY of a damage type (for affinity lookups on the offense side).
@@ -241,7 +315,7 @@ impl Loadout {
     }
 
     /// The ship's OFFENSE: `(damage_type, multiplier)`. The WEAPON module
-    /// decides it (torpedo > driver > point-defense-beam), else a stock beam.
+    /// decides it (torpedo > driver > prismatic beam > point-defense beam), else a stock beam.
     /// Armor modules never change offense. §fitting: DUPLICATES of the chosen
     /// weapon stack LINEARLY (2× TorpedoRack fires at 2×TORP_MULT) — the
     /// fitting budget is the brake, not a uniqueness rule. A single copy is
@@ -258,6 +332,8 @@ impl Loadout {
                 DamageType::Driver,
                 DRIVER_MULT * count(ModuleKind::MassDriver),
             )
+        } else if self.0.contains(&ModuleKind::PrismaticLance) {
+            (DamageType::Beam, 1.45 * count(ModuleKind::PrismaticLance))
         } else if self.0.contains(&ModuleKind::PointDefenseScreen) {
             // PD's beam does NOT stack — extra screens add interception
             // presence, not gunnery (the weapon side is the trade-off).
@@ -282,8 +358,8 @@ impl Loadout {
         self.0.contains(&ModuleKind::PointDefenseScreen)
     }
 
-    /// §fitting: the loadout's total FITTING-POINT cost (duplicates stack —
-    /// the budget is the brake, not a uniqueness rule).
+    /// Total FITTING-POINT cost. Military duplicates can stack; each utility
+    /// is limited to one per hull as well as consuming slots and points.
     pub fn fitting_cost(&self) -> u32 {
         self.0.iter().map(|m| m.fitting_cost()).sum()
     }
@@ -296,6 +372,38 @@ impl Loadout {
     pub fn validate(&self, kind: crate::ship::ShipKind) -> bool {
         self.0.len() as u32 <= kind.module_slots()
             && self.fitting_cost() <= crate::ship::fitting_points(kind)
+            && (!self.has_datalink() || self.has_pd())
+            && self.0.iter().all(|m| m.fits_hull(kind)
+                && (!m.is_utility() || self.0.iter().filter(|other| *other == m).count() == 1))
+    }
+
+    pub fn has_recon(&self) -> bool { self.0.contains(&ModuleKind::ReconSuite) }
+
+    pub fn has_datalink(&self) -> bool { self.0.contains(&ModuleKind::EscortDatalink) }
+
+    /// Tunable: +75% on the equipped hull only. Identical duplicates cannot stack.
+    pub fn fuel_capacity_mult(&self) -> f64 {
+        let tanks = if self.0.contains(&ModuleKind::ExtendedTanks) { 1.75 } else { 1.0 };
+        tanks * if self.0.contains(&ModuleKind::SurveyDrive) { 0.6 } else { 1.0 }
+    }
+
+    pub fn speed_mult(&self) -> f64 {
+        if self.0.contains(&ModuleKind::SurveyDrive) { 1.25 } else { 1.0 }
+    }
+
+    pub fn has_spectrometer(&self) -> bool { self.0.contains(&ModuleKind::NebulaSpectrometer) }
+
+    /// Tunable: double commodity capacity on the fitted Freighter only. Its
+    /// single utility slot makes this a choice against Extended Tanks.
+    pub fn cargo_capacity_mult(&self) -> u32 {
+        if self.0.contains(&ModuleKind::CargoPods) { 2 } else { 1 }
+    }
+
+    /// Only changed modules determine the work: a utility swap may retain an
+    /// existing weapon, but cannot install/remove that weapon at a basic yard.
+    pub fn utility_change_to(&self, to: &Self) -> bool {
+        MODULE_KINDS.into_iter().filter(|m| !m.is_utility()).all(|m|
+            self.0.iter().filter(|v| **v == m).count() == to.0.iter().filter(|v| **v == m).count())
     }
 }
 

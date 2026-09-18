@@ -42,6 +42,7 @@ fn comp_to_view(comp: &std::collections::BTreeMap<sim::ShipKind, u32>) -> Vec<Co
 /// handed to `spawn_blocking` off the authoritative loop thread.
 pub struct EstimateInputs {
     setup: sim::tactical::ProjSetup,
+    missions: std::collections::BTreeMap<sim::EntityId, sim::doctrine::MissionProfile>,
     base_seed: u64,
     attacker: sim::EntityId,
     target: sim::EntityId,
@@ -229,6 +230,8 @@ pub fn prepare_estimate(
     let base_seed = world.config.seed ^ attacker.0.rotate_left(17) ^ target.0.rotate_left(41);
     Some(EstimateInputs {
         setup,
+        missions: own.mission_profile.map(|m| (attacker, m)).into_iter()
+            .chain(ghost.pirate_faction.map(|f| (target, f.mission()))).collect(),
         base_seed,
         attacker,
         target,
@@ -244,7 +247,7 @@ pub fn prepare_estimate(
 /// over the prepared inputs. Owns all its data (no borrows), so the server hands
 /// this to `spawn_blocking` — a burst of estimate clicks can't stall the tick.
 pub fn run_estimate(inp: EstimateInputs) -> EngagementEstimate {
-    let dist = sim::tactical::project_distribution(&inp.setup, inp.base_seed, 32);
+    let dist = sim::tactical::project_distribution_with_missions(&inp.setup, inp.base_seed, 32, &inp.missions);
     let band = |b: &[sim::tactical::LossBand]| -> Vec<crate::protocol::LossRange> {
         b.iter()
             .map(|x| crate::protocol::LossRange {

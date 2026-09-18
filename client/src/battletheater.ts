@@ -29,10 +29,12 @@
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import type { BattleRecordView, KeyframeView, PlayerId, ShipKind } from "./protocol";
 import { hashId, mulberry32 } from "./prng";
-import { starTypeFor, starConceptUrl } from "./stars";
-import { STAR_TINT } from "./systemview";
+import { starTypeFor, starIconUrl } from "./stars";
+import { SystemViewScene, type VisualSystem } from "./systemview";
+import { battleSceneryFrame, battleSystemScenery, type BattleScenerySource } from "./battlebackdrop";
 import { COL_OWN as TINT_OWN, COL_OTHER as TINT_FOE } from "./render";
 import { arrivedGunfire, matchBattleFrames, missedEndpoint } from "./battlefire";
+import { COMBAT_HULL_LENGTH_SCALE, shipArtwork, shipArtUrl } from "./shipart";
 
 // --- Geometry & scale ---------------------------------------------------------
 
@@ -62,6 +64,7 @@ export interface TheaterViewport {
 /// Client mirror of the sim's hull masses (also mirrored in main.ts — keep in
 /// step with crates/sim/src/ship.rs::hull_mass).
 const MASS: Record<ShipKind, number> = {
+  tiny_freighter: 1500, small_freighter: 2500, large_freighter: 8000, heavy_freighter: 14000, bulk_freighter: 24000,
   convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80,
   destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
   // §ground: the troop transport — a fat, unarmed hull.
@@ -71,16 +74,20 @@ const MASS: Record<ShipKind, number> = {
   freighter: 6000,
 };
 const KIND_LABEL: Record<ShipKind, string> = {
+  tiny_freighter: "Tiny Freighter", small_freighter: "Small Freighter", large_freighter: "Large Freighter", heavy_freighter: "Heavy Freighter", bulk_freighter: "Bulk Freighter",
   builder: "Construction Ship",
-  convoy: "Freighter", raider: "Interceptor", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
+  convoy: "Medium Freighter", raider: "Interceptor", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
   transport: "Troop Transport",
   freighter: "Authority Freighter",
 };
 
-/// Sprite size ∝ hull_mass^0.4 (log-ish: a 40× Titan reads huge without
-/// dwarfing the arena), clamped so a Corvette stays visibly a ship.
+/// The approved combat silhouette ladder is shared with galaxy close-ups.
+/// Noncombat hulls keep their old mass-based presentation; this changes no
+/// tactical positions, weapon ranges, hit rolls or collision geometry.
 function spritePx(kind: ShipKind): number {
+  const ratio = COMBAT_HULL_LENGTH_SCALE[kind];
+  if (ratio !== undefined) return 10 * ratio;
   return Math.max(10, Math.min(64, 7.0 * Math.pow((MASS[kind] ?? 800) / 100, 0.4)));
 }
 
@@ -89,27 +96,8 @@ function spritePx(kind: ShipKind): number {
 
 // --- Art: one resolver, art-or-fallback ---------------------------------------
 
-/// Per-kind single-ship art (the map-layer fleet_* composites are NOT used —
-/// the theater draws individuals). Every kind is mapped; a kind whose file is
-/// missing (or mid-load) renders the procedural silhouette until the texture
-/// resolves — dropping a future PNG at the mapped path lights it up with zero
-/// code change.
-const SHIP_ART: Record<ShipKind, string> = {
-  convoy: "corporate_freighter.png",
-  // §TCA: Authority freight keeps its own neutral bulk-hauler silhouette.
-  freighter: "cargo_freighter.png",
-  builder: "construction_tender.png",
-  raider: "raider_attack_ship.png",
-  corvette: "corvette_escort_ship.png",
-  colony: "colony_ship.png",
-  transport: "troop_transport.png",
-  scout: "scout_utility_ship.png",
-  destroyer: "destroyer_line_ship.png",
-  cruiser: "cruiser_line_ship.png",
-  battleship: "battleship_line_ship.png",
-  dreadnought: "dreadnought_line_ship.png",
-  titan: "titan_flagship.png",
-};
+/// Individual hulls use the same approved masters as the map and panels.
+/// The procedural fallback remains visible while a native texture is loading.
 const STATION_ART = "/art/celestial_sprites/mining_station.png";
 // Pirate hull culture: one deterministic silhouette per engagement. Tactical
 // keyframes carry a side and kind but no fleet id, so the battle id is the
@@ -127,11 +115,13 @@ const pirateRaiderArt = (battleId: string) =>
  * the force header, hover labels and canvas on the same deterministic art. */
 export function theaterShipAppearance(
   record: BattleRecordView, side: number, kind: ShipKind, pirateId: PlayerId | null,
-): { label: string; url: string; calib: number } {
+  canvasPx = 256, resolution = 1,
+): { label: string; url: string; calib: number; anchor?: readonly [number, number] } {
   const pirate = kind === "raider" && pirateId !== null && record.sides[side]?.corp === pirateId;
   return pirate
     ? { label: "Privateer", ...pirateRaiderArt(record.id) }
-    : { label: KIND_LABEL[kind], url: `/art/ship_sprites/${SHIP_ART[kind]}`, calib: 1 };
+    : { label: KIND_LABEL[kind], url: shipArtUrl(kind, canvasPx, resolution),
+      calib: shipArtwork(kind).calib, anchor: shipArtwork(kind).anchor };
 }
 
 const texCache = new Map<string, Texture | null>();
@@ -145,6 +135,8 @@ function resolveTexture(url: string): Texture | null {
     texPending.add(url);
     Assets.load(url).then(
       (t: Texture) => {
+        t.source.autoGenerateMipmaps = true;
+        t.source.scaleMode = "linear";
         texCache.set(url, t);
         // A paused replay / held light frontier may never advance a round.
         // Redress it when art lands instead of keeping the tiny placeholder.
@@ -242,6 +234,9 @@ let layers: {
 let st: TheaterState | null = null;
 let shipPool: ShipVis[] = [];
 let backdropKey = ""; // rebuilt only when the record changes
+let backdropSystem: SystemViewScene | null = null;
+let backdropVisual: VisualSystem | null = null; // frozen served astronomy, never live administration
+const SYSTEM_BACKDROP_ALPHA = 0.42; // Tunable: recognizable scenery below ships/weapon effects
 let sceneClock = 0; // seconds since open — drives idle drift only (cosmetic)
 // Persistent immediate-mode surfaces — cleared + redrawn each frame, never
 // re-allocated (the budget law: pooled surfaces, no per-frame objects).
@@ -488,6 +483,7 @@ export function theaterAttach(
   rec: BattleRecordView,
   pirateId: PlayerId | null = null,
   viewport: TheaterViewport = { width: DEFAULT_CANVAS_W, height: DEFAULT_CANVAS_H },
+  scenerySource?: BattleScenerySource,
 ): void {
   const gen = attachGen;
   const resized = configureViewport(viewport);
@@ -496,7 +492,7 @@ export function theaterAttach(
       // A close that landed while init was in flight wins: stay closed.
       if (gen !== attachGen || !holder || !app) return;
       if (holder.parentElement !== mount) mount.appendChild(holder);
-      bindRecord(rec, pirateId);
+      bindRecord(rec, pirateId, scenerySource);
       if (resized) buildBackdrop(rec);
       if (cameraHint) cameraHint.textContent = matchMedia("(pointer: coarse)").matches
         ? "pinch zoom · drag pan · Reset camera restores overview"
@@ -531,6 +527,8 @@ export function theaterResetCamera(): void {
 export function theaterClose(): void {
   attachGen++; // cancel any attach still awaiting init
   st = null;
+  backdropVisual = null;
+  backdropKey = "";
   activePointers.clear();
   pinchStart = null;
   dragging = false;
@@ -574,6 +572,14 @@ export function theaterDebug(): Record<string, unknown> | null {
     debris: debrisField.length,
     tier: perfTier,
     viewport: { width: CANVAS_W, height: CANVAS_H, scale: +SCALE.toFixed(4) },
+    backdrop: backdropVisual ? {
+      system: backdropVisual.systemId,
+      planets: backdropVisual.planets.length,
+      moons: backdropVisual.planets.reduce((n, p) => n + p.moons.length, 0),
+      belts: backdropVisual.asteroidBelts.length,
+      alpha: backdropSystem?.root.alpha,
+      star: backdropSystem?.starLayoutPosition(),
+    } : null,
     cam: { x: +camX.toFixed(1), y: +camY.toFixed(1), zoom: +camZoom.toFixed(3), withdrawFrom: st.withdrawFrom },
   };
 }
@@ -632,7 +638,7 @@ function scanWithdraw(rec: BattleRecordView): [number, number] {
   return w;
 }
 
-function bindRecord(rec: BattleRecordView, pirateId: PlayerId | null): void {
+function bindRecord(rec: BattleRecordView, pirateId: PlayerId | null, scenerySource?: BattleScenerySource): void {
   if (st && st.rec.id === rec.id) {
     // Same battle — but the View handler hands us a FRESH record object every
     // ~100 ms (decoded packet identity), so compare CONTENT, not identity. Only real
@@ -673,16 +679,23 @@ function bindRecord(rec: BattleRecordView, pirateId: PlayerId | null): void {
   camX = 0;
   camY = 0;
   camZoom = DEFAULT_ZOOM;
+  backdropVisual = battleSystemScenery(rec.system, scenerySource);
   buildBackdrop(rec);
 }
 
-/// System battles get the system's own visual identity — its star, faint and
-/// parallax-far behind the arena; deep-space battles get a seeded starfield.
+/// The real System View's static astronomy, captured from served knowledge at
+/// open. Resize re-lays out that SAME snapshot; incoming Views/rounds never feed
+/// dynamic system state into the replay. This screen-space layer is independent
+/// of tactical pan/zoom and sits below every ship, projectile and combat label.
 function buildBackdrop(rec: BattleRecordView): void {
   if (!layers) return;
   const key = `${rec.id}`;
   if (backdropKey === key) return;
   backdropKey = key;
+  // Reuse one scenery scene across battles/resizes, including its cached art.
+  // Detach before clearing the disposable starfield; don't destroy shared art
+  // or a scene whose asynchronous texture load is still in flight.
+  backdropSystem?.root.removeFromParent();
   layers.backdrop.removeChildren().forEach((c) => c.destroy({ children: true }));
   // Seeded starfield everywhere (deterministic per battle — the standing law).
   const rng = mulberry32(hashId(`${rec.id}:backdrop`));
@@ -696,31 +709,21 @@ function buildBackdrop(rec: BattleRecordView): void {
   layers.backdrop.addChild(field);
   // (The arena ring lives in drawDebris — it must move with the camera; the
   // starfield + star stay static, reading as far-parallax backdrop.)
-  // The host system's star, if the battle stood at one.
-  if (rec.system) {
-    const t = starTypeFor(rec.system);
-    const tint = STAR_TINT[t.slug] ?? 0xffe08a;
-    const glow = new Graphics();
-    glow.circle(CANVAS_W * 0.82, CANVAS_H * 0.2, 46).fill({ color: tint, alpha: 0.1 });
-    glow.circle(CANVAS_W * 0.82, CANVAS_H * 0.2, 22).fill({ color: tint, alpha: 0.16 });
-    layers.backdrop.addChild(glow);
-    const url = starConceptUrl(t.slug);
-    const tex = resolveTexture(url);
-    const spr = new Sprite(tex ?? Texture.EMPTY);
-    spr.anchor.set(0.5);
-    spr.position.set(CANVAS_W * 0.82, CANVAS_H * 0.2);
-    spr.alpha = 0.14; // parallax-faint — identity, not competition
-    spr.width = 120;
-    spr.height = 120;
-    layers.backdrop.addChild(spr);
-    if (!tex) {
-      const swap = () => {
-        const got = texCache.get(url);
-        if (got) { spr.texture = got; spr.width = 120; spr.height = 120; }
-        else if (got === undefined) setTimeout(swap, 300);
-      };
-      setTimeout(swap, 300);
-    }
+  const visual = backdropVisual;
+  if (!visual) return; // deep-space battles keep exactly their seeded starfield
+  const scenery = backdropSystem ??= new SystemViewScene({ sceneryOnly: true });
+  const url = starIconUrl(starTypeFor(visual.systemId));
+  scenery.root.visible = true;
+  scenery.root.alpha = SYSTEM_BACKDROP_ALPHA;
+  scenery.setSystem(visual, texCache.get(url) ?? null);
+  scenery.layout(CANVAS_W, CANVAS_H, battleSceneryFrame(CANVAS_W, CANVAS_H));
+  layers.backdrop.addChild(scenery.root);
+  if (!texCache.has(url)) {
+    // No timer polling, and late art cannot repaint a different/closed battle.
+    void Assets.load<Texture>(url).then((texture) => {
+      texCache.set(url, texture);
+      if (st?.rec.id === rec.id && backdropVisual === visual) scenery.setSystem(visual, texture);
+    }, () => texCache.set(url, null));
   }
 }
 
@@ -1108,13 +1111,18 @@ function dressShip(v: ShipVis): void {
   const own = st.rec.own_side;
   const mine = own !== null && v.side === own;
   const tint = mine ? TINT_OWN : TINT_FOE;
-  const appearance = theaterShipAppearance(st.rec, v.side, v.kind, st.pirateId);
+  // Preload enough native detail for the theater's inspection ceiling. The
+  // camera dampens hull magnification by ^0.85; match that AND framebuffer DPI.
+  const appearance = theaterShipAppearance(st.rec, v.side, v.kind, st.pirateId,
+    spritePx(v.kind) * Math.pow(CAM_ZOOM_MAX, 0.85), app?.renderer.resolution ?? 1);
   const px = v.plat ? 26 : spritePx(v.kind) * appearance.calib;
   const tex = v.plat
     ? resolveTexture(STATION_ART)
     : resolveTexture(appearance.url);
   if (tex) {
     v.sprite.texture = tex;
+    v.sprite.anchor.set(v.plat ? 0.5 : appearance.anchor?.[0] ?? 0.5,
+      v.plat ? 0.5 : appearance.anchor?.[1] ?? 0.5);
     v.sprite.visible = true;
     const ratio = tex.height > 0 ? tex.height / tex.width : 1;
     v.sprite.width = px;

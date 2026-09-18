@@ -30,10 +30,15 @@ export const jumpDepartureSelection: { key: string | null } = { key: null };
 // Per-hull stats mirror crates/sim/src/ship.rs. Shared by the build surface and
 // the armed-selection legality preview.
 export const SHIP_STATS: Record<string, { role: string; speed: number; hull: number; atk: number; def: number; slots: number; cap: string }> = {
-  scout: { role: "Eyes of the fleet — fastest hull, gathers intel; unarmed, dies if caught.", speed: 115, hull: 80, atk: 0, def: 0, slots: 1, cap: "No cargo · widest sensor bubble" },
+  scout: { role: "Discovers sites and surveys worlds. Fit a Recon Suite for mobile sensors.", speed: 115, hull: 80, atk: 0, def: 0, slots: 1, cap: "No cargo · 1 equipment slot" },
   corvette: { role: "Armored escort/garrison — built to be shot at; too slow to chase raiders.", speed: 65, hull: 800, atk: 1, def: 4, slots: 2, cap: "No cargo · screens freighters" },
   raider: { role: "Fast corporate interceptor — patrols, responds to threats, and can seize hostile cargo.", speed: 100, hull: 200, atk: 3, def: 2, slots: 2, cap: "No cargo · jump capable" },
-  convoy: { role: "Bulk freighter — carries goods to the hub; raidable, wants an escort.", speed: 40, hull: 4500, atk: 0, def: 1, slots: 0, cap: "Hauls cargo (raidable)" },
+  tiny_freighter: { role: "Low-cost hauler for small shipments and backup routes.", speed: 40, hull: 1500, atk: 0, def: 1, slots: 1, cap: "50 cargo · 1 utility slot" },
+  small_freighter: { role: "Three times a Tiny's cargo for growing trade routes.", speed: 40, hull: 2500, atk: 0, def: 1, slots: 1, cap: "150 cargo · 1 utility slot" },
+  convoy: { role: "Mixed-manifest hauler for established supply lines.", speed: 40, hull: 4500, atk: 0, def: 1, slots: 1, cap: "400 cargo · 1 utility slot" },
+  large_freighter: { role: "Bulk transport for protected industrial routes.", speed: 38, hull: 8000, atk: 0, def: 1, slots: 1, cap: "1,000 cargo · 1 utility slot" },
+  heavy_freighter: { role: "High-volume transport for major colony projects.", speed: 34, hull: 14000, atk: 0, def: 1, slots: 1, cap: "2,500 cargo · 1 utility slot" },
+  bulk_freighter: { role: "Maximum freight capacity; slow and costly to lose. Escort recommended.", speed: 30, hull: 24000, atk: 0, def: 1, slots: 1, cap: "6,000 cargo · 1 utility slot" },
   colony: { role: "Settlement ship — carries colonists to physically claim a system.", speed: 33, hull: 6000, atk: 0, def: 1, slots: 0, cap: "Carries a colony (one claim)" },
   destroyer: { role: "The first ship of the line — heavy beam broadsides (beam ×1.20).", speed: 55, hull: 2000, atk: 2.4, def: 2.6, slots: 3, cap: "Line IV research · 8 fit pts" },
   cruiser: { role: "The season's prestige warship — armored core (protection ×1.20); the efficiency peak.", speed: 45, hull: 4000, atk: 4.5, def: 5.5, slots: 4, cap: "Line V research · 12 fit pts" },
@@ -181,8 +186,13 @@ export function orderObject(p: PendingOrderView): string {
     }
     case "demolish": return `Demolish → ${emplacement ? label(emplacement.kind) : "rival structure"}`;
     case "blockade": return `Blockade → ${p.target_id ? systemName(p.target_id) : "rival system"}`;
-    case "survey": return `Survey → ${p.target_id ? systemName(p.target_id) : "system"}`;
+    case "survey": {
+      const site = state.explorationSites?.find(s => s.id === p.target_id);
+      return site ? `Expedition → ${site.details?.name ?? "Unknown contact"}` : `Survey → ${p.target_id ? systemName(p.target_id) : "system"}`;
+    }
     case "guard": return `Guard → ${target ? `your ${shipKindLabel(target.kind)} fleet` : "friendly fleet"}`;
+    case "refuel": return `Refuel → ${target ? shipKindLabel(target.kind) : "owned fleet"}`;
+    case "defend": return `Defend → ${p.target_id ? systemName(p.target_id) : "system"}`;
     case "recall": return "Recall → home";
     case "withdraw": return "Withdraw → home";
     case "load": return "Load cargo at dock";
@@ -190,6 +200,7 @@ export function orderObject(p: PendingOrderView): string {
     case "haul": return p.target_id ? `Haul → ${systemName(p.target_id)}` : "Haul → Market Hub";
     case "configure": {
       const configuration = p.configuration;
+      if (configuration?.kind === "mission") return `Mission → ${label(configuration.mission.priority)} · ${label(configuration.mission.screening)}`;
       if (configuration?.kind === "transit") {
         return `Transit → ${configuration.mode === "full" ? "Full speed" : "Stealth"}`;
       }
@@ -273,7 +284,8 @@ export function nextDecisionLabel(): string {
   // soonest thing worth waiting for (owner-only live progress, honest estimate).
   for (const g of state.ghosts) {
     if (g.own && g.survey_progress != null) {
-      consider(now + (1 - g.survey_progress) * SURVEY_SECS_UI, "a survey completes");
+      const seconds = g.expedition?.task === "restore" ? 60 : g.expedition?.task === "recover" ? 30 : SURVEY_SECS_UI;
+      consider(now + (1 - g.survey_progress) * seconds, g.expedition ? "an expedition completes" : "a survey completes");
     }
   }
   if (!isFinite(at)) return "All quiet — nothing scheduled needs you.";

@@ -1,0 +1,33 @@
+{
+  "mode": "built-in image_gen",
+  "assets": [
+    {
+      "key": "ferrite_ore",
+      "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A compact irregular cluster of angular iron-rich raw ore, dark charcoal rock with broad rusty reddish iron seams and silver-grey metallic fracture planes."
+    },
+    {
+      "key": "cuprite_ore",
+      "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A broad chunky copper ore rock with copper-orange mineral veins and a few turquoise oxidized facets; raw rough stone, not refined bars."
+    },
+    {
+      "key": "titanium_ore",
+      "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. Two interlocking jagged dark slate-grey titanium-bearing ore chunks with blue-grey metallic seams and pale cool silvery facets; raw rock, not bars."
+    },
+    {
+      "key": "crystalline_ore",
+      "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A compact asymmetrical cluster of translucent pale cyan quartz crystals emerging from dark stone; several large clear facets, no magical glow."
+    },
+    {
+      "key": "rare_metal_ore",
+      "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A rugged dark raw ore nugget split to reveal rich violet mineral facets and a few pale gold metallic veins; valuable mineral sample, not a jewel or an ingot."
+    },
+    {
+      "key": "conductive_metals",
+      "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. Three neatly stacked refined copper conductor bars, warm copper-orange surfaces, clean beveled ends and a few machined channels; manufactured metal, no raw rock."
+    },
+    {
+      "key": "titanium",
+      "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. Three clean flat brushed titanium plates stacked with offset edges, cool silver-blue metal, a simple hexagonal corner bolt-hole and crisp broad beveled surfaces; no ore rock."
+    }
+  ]
+}

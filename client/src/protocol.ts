@@ -90,14 +90,24 @@ export type ShipKind =
   | "transport"
   | "builder"
   // §TCA: the Authority's common carrier — never buildable by a corporation.
-  | "freighter";
+  | "freighter"
+  | "tiny_freighter" | "small_freighter" | "large_freighter" | "heavy_freighter" | "bulk_freighter";
+
+// Mirrors ShipKind::cargo_units. "convoy" is the save-compatible Medium hull;
+// "freighter" is Authority-only and never belongs to this player cargo family.
+export const PLAYER_FREIGHTERS: ShipKind[] = ["tiny_freighter", "small_freighter", "convoy", "large_freighter", "heavy_freighter", "bulk_freighter"];
+export const isPlayerFreighter = (kind: ShipKind): boolean => PLAYER_FREIGHTERS.includes(kind);
+export const cargoUnitsPerHull = (kind: ShipKind): number => ({
+  tiny_freighter: 50, small_freighter: 150, convoy: 400,
+  large_freighter: 1000, heavy_freighter: 2500, bulk_freighter: 6000,
+} as Partial<Record<ShipKind, number>>)[kind] ?? 0;
 
 // A resource deposit on a system. §explore: NO LONGER public — the exact geology
 // is CORP KNOWLEDGE (surveyed-or-owner), delivered per-player in
 // `SystemStateView.deposits`; the public spectral read is the `band` below.
 export interface Deposit {
   resource: Commodity;
-  richness: number; // units/sec at full extraction
+  richness: number; // content rate (bulk-equivalent units/sec) at full extraction — the survey × scale; dense ores extract fewer units
   reserves: number | null; // null = renewable
 }
 
@@ -195,6 +205,7 @@ export interface ColonyOpportunityView {
 /// §economy Part 6: one production line with its resolved factor chain
 /// (output = base · throughput · staffing · skill · food — shown math).
 export interface AssignmentView {
+  refining_ore?: Commodity | null;
   /// §bodies: the body whose line this is.
   body_id: number;
   structure: string;
@@ -208,6 +219,7 @@ export interface AssignmentView {
   skill: number;
   food: number;
   site: number;
+  recovery?: number;
   /// (commodity, units/s) at the factors above.
   outputs: [Commodity, number][];
 }
@@ -220,10 +232,44 @@ export interface ConverterStatusView {
   tier: number;
   /// running | needs_crew | no_inputs | no_food | storage_full
   status: string;
+  rated_output?: number;
+  site?: number;
+  recovery?: number;
+}
+
+export interface RefiningSiteView {
+  body_id: number;
+  tier: number;
+  built: boolean;
+  recovery: number;
+  work_rate: number;
+}
+
+export type FreightPort = { kind: "system"; id: EntityId } | { kind: "hub" };
+export type Manifest = Partial<Record<Commodity, number>>;
+export interface RouteStop { port: FreightPort; load: Manifest; unload: Manifest; sell: boolean }
+export interface FreightRoute { name: string; stops: RouteStop[]; fuel_reserve: number; escort: EntityId | null; repeat: boolean }
+export type OutpostKind = "extraction" | "research";
+export type ColonyProjectKind = "orbital_assembly" | "agricultural_export" | "deep_extraction";
+export type ProjectTarget = { kind: "cruiser" | "academy" | "colony" } | { kind: "development"; project: ColonyProjectKind };
+export interface ColonyProject { kind: ColonyProjectKind; body: number; commodity: Commodity; work: number; active: boolean; supplied: boolean; outputs: [Commodity, number][] }
+export interface SiteIndustry {
+  reservations: { target: ProjectTarget; goods: Manifest }[];
+  outpost: { kind: OutpostKind; body: number; commodity: Commodity; supplied: boolean; rate: number } | null;
+  projects: ColonyProject[];
+}
+export type FleetIndustry =
+  | { kind: "route"; run: { route: FreightRoute; stop: number; phase: string; remaining_load: Manifest; remaining_unload: Manifest; visits: number; hold?: string | null } }
+  | { kind: "deploy"; system: EntityId; body: number; outpost: OutpostKind; commodity: Commodity; work: number }
+  | { kind: "skim"; system: EntityId; harvested: number; cargo_fraction: number; status: string };
+export interface IndustryCatalog {
+  projects: { kind: ColonyProjectKind; costs: [Commodity, number][]; inputs: [Commodity, number][]; outputs: [Commodity, number][]; workers: number; build_secs: number }[];
+  outpost_costs: [Commodity, number][]; outpost_build_secs: number; skim_fuel_per_s: number; max_stops: number;
 }
 
 export interface SystemStateView {
   id: EntityId;
+  industry?: SiteIndustry | null;
   owner: PlayerId | null;
   stockpile: StockSlot[] | null;
   /// Owner-only in-progress build (§step1) — null for rivals (never leaks).
@@ -262,7 +308,7 @@ export interface SystemStateView {
   /// Orbital Warehouse tiers built here (§buildings step 2) — owner-only; rivals see 0.
   orbital_warehouse_tier: number;
   /// Shipyard upgrades built here (§buildings step 3) — owner-only; rivals see 0.
-  /// Gates ship construction: Convoy needs ≥ 1, Raider ≥ 2.
+  /// Gates ship construction: Tiny/Small Freighter need ≥ 1, Medium/Interceptor ≥ 2.
   shipyard_tier: number;
   /// Sensor Array upgrades built here (§buildings step 2b) — owner-only; rivals
   /// see 0. Projects a standing sensor bubble for the owner.
@@ -301,6 +347,7 @@ export interface SystemStateView {
   assignments: AssignmentView[];
   /// Idle-converter status for the system-view banner — owner-only; rivals see [].
   converters?: ConverterStatusView[];
+  refining_sites?: RefiningSiteView[];
   /// Fuel Refinery tiers here (§buildings step 3b) — owner-only; rivals see 0.
   refinery_tier: number;
   /// Development slots used/total (§buildings step 1) — owner-only; rivals see 0/0.
@@ -375,6 +422,9 @@ export interface BuildOption {
   label: string;
   costs: StockSlot[];
   build_secs: number;
+  research_prerequisite?: string;
+  conversion?: ConversionRecipe;
+  refining_recipes?: ConversionRecipe[];
 }
 
 export interface GalaxyInfo {
@@ -429,6 +479,7 @@ export interface GalaxyInfo {
   node_region_radius?: number;
   systems: SystemInfo[];
   build_options: BuildOption[]; // §step1 — what can be built + recipe costs/time
+  industry_catalog?: IndustryCatalog;
 }
 
 export type NebulaKind =
@@ -451,11 +502,19 @@ export interface NebulaInfo {
   jump_range_mult: number;
 }
 
-// §economy: the 12-commodity industrial web (5 raw · 5 processed · 2 advanced).
+// §economy: the industrial web (5 raw · 5 processed · 6 advanced).
+export interface ConversionRecipe {
+  output: Commodity; rate: number; inputs: [Commodity, number][];
+  byproducts?: [Commodity, number][];
+}
+
 export type Commodity =
-  | "metallic_ore" | "rare_elements" | "silicates" | "volatiles" | "biomass"      // raw
+  | "cuprite_ore" | "titanium_ore" | "crystalline_ore" | "rare_metal_ore"
+  | "conductive_metals" | "titanium"
+  | "metallic_ore" | "rare_elements" | "silicates" | "volatiles" | "biomass" // historical slugs; metallic_ore displays as Ferrite Ore
   | "alloys" | "electronics" | "polymers" | "fuel" | "provisions"                 // processed
-  | "machinery" | "armaments";                                                    // advanced
+  | "machinery" | "armaments" | "composites" | "hull_sections"
+  | "precision_components" | "drive_assemblies";                                // advanced
 
 export interface CargoView {
   commodity: Commodity;
@@ -467,6 +526,8 @@ export interface PriceView {
   price: number;
   available_buy: number;
   available_sell: number;
+  /** Units of flow that move the price by ~e× — this good's book depth (thin for rares). */
+  depth: number;
 }
 
 // The hub ticker, light-delayed from the hub (§9). `staleness` = how old.
@@ -595,6 +656,21 @@ export type TradeEvent =
   | { event: "Unloaded"; player: PlayerId; commodity: Commodity; units: number; system: EntityId | null }
   | { event: "CharterReinstated"; player: PlayerId; points: number; cost: number; before: number; after: number };
 
+/** Received market evidence only; not part of the 10 Hz View. */
+export type TransactionDetails =
+  | { kind: "trade"; trade: TradeEvent }
+  | { kind: "purchase"; item: string; units: number; unit_price: number; fees: number; system: EntityId | null; fleet: EntityId | null }
+  | { kind: "sale"; item: string; units: number; unit_price: number }
+  | { kind: "service"; name: string; cost: number; fleet: EntityId }
+  | { kind: "earlier_report"; text: string };
+
+export interface TransactionEntry {
+  id: number;
+  occurred_at: number | null;
+  reported_at: number;
+  details: TransactionDetails;
+}
+
 /// Why an Exchange order or freight booking was soft-rejected (free, owner-only).
 export type TradeRejectReason =
   | { reason: "insufficient_warehouse_stock"; have: number }
@@ -655,6 +731,13 @@ export interface StandingOrder {
 export type EngagementPolicy = "avoid" | "defensive_only" | "engage_weaker" | "engage_any";
 // §offensive-orders Part 2: the per-fleet engagement POSTURE (mirrors the sim enum).
 export type EngagementPosture = "passive" | "defensive" | "weapons_free";
+export interface MissionProfile {
+  priority: "balanced" | "missile_ships" | "installations" | "transports";
+  screening: "automatic" | "protect_transports";
+  withdrawal: "never" | "hull30" | "hull50" | "hull70";
+}
+export type PirateFaction = "ashwake" | "ironclad" | "rift";
+export type CombatObjective = "disable_fire_control" | "disable_supply" | "hold_extraction" | "break_blockade" | "protect_evacuation";
 export type RetreatThreshold = "quarter" | "half" | "three_quarter" | "never";
 export type EscortPolicy = "guard_nearest" | "guard_richest" | "hold_station";
 export type DestinationInvalidPolicy = "drop" | "return_home" | "sell_at_hub";
@@ -730,7 +813,15 @@ export type ModuleKind =
   | "torpedo_rack"
   | "point_defense_screen"
   | "reflective_plating"
-  | "whipple_armor";
+  | "whipple_armor"
+  | "extended_tanks"
+  | "recon_suite"
+  | "cargo_pods"
+  | "escort_datalink"
+  | "fuel_transfer_rig"
+  | "survey_drive"
+  | "nebula_spectrometer"
+  | "prismatic_lance";
 
 // §modules Part B: one FITTED stack of a fleet — `n` ships of `kind` all carrying
 // `modules` (sorted; never empty). Revealed under the same rule as CompCount.
@@ -895,6 +986,9 @@ export interface GhostView {
   stalled?: boolean;
   /** AAA has accepted this fleet's callout and its tender is outbound. */
   rescue_inbound?: boolean;
+  /** Owner-only, emission-stamped with cargo. Never projected on the client. */
+  fuel_transfer?: { target: EntityId; requested: number; spent: number; delivered: number;
+    phase: "rendezvous" | "waiting" | "transferring" | "complete" | "empty" | "unsafe" | "unavailable" } | null;
   /** This Authority hull is an Authority Astral Assistance rescue tender. */
   rescue_service?: boolean;
   // Convoys broadcast a route (waypoints); raiders don't (null).
@@ -903,6 +997,8 @@ export interface GhostView {
   path?: PathPointView[] | null;
   /** Owner-only, served identity of the fleet this Interceptor is guarding. */
   guard_target?: EntityId | null;
+  /** Standing system post in this OWN served frame, including defensive sorties. */
+  defend_system?: { system: EntityId; station: Vec2; radius: number } | null;
   /// §emplacements: own fleets only — the timed job this hull is holding
   /// station to finish (raising a structure, or wrecking a rival's) and how far
   /// along it is. Absent when neither. Drives the progress bar and the order
@@ -940,9 +1036,13 @@ export interface GhostView {
   // §offensive-orders Part 2 engagement posture — OWNER-ONLY (present for your own
   // fleets, null for every rival; a private standing policy that never leaks).
   posture: EngagementPosture | null;
+  mission_profile?: MissionProfile | null;
+  industry?: FleetIndustry | null;
+  pirate_faction?: PirateFaction | null;
   // §explore Part 2: SURVEY DWELL progress (0..1) — OWNER-ONLY (your fleet's own
   // order state); null/absent when not dwelling. Drives the progress ring.
   survey_progress?: number | null;
+  expedition?: { site: EntityId; task: ExpeditionTask } | null;
   // §syndicates Part 1: this fleet's owner is a SYNDICATE ally as WE know it
   // (light-delayed membership) — drives the friendly ally tint/pip.
   ally?: boolean;
@@ -1003,6 +1103,12 @@ export function formatId(id: PlayerId): string {
 
 // Client → server.
 export type ClientMsg =
+  | { type: "SetFreightRoute"; fleet_id: EntityId; route: FreightRoute | null }
+  | { type: "DeployOutpost"; fleet_id: EntityId; system_id: EntityId; body_id: number; outpost: OutpostKind; commodity: Commodity }
+  | { type: "SkimFuel"; fleet_id: EntityId; system_id: EntityId }
+  | { type: "ReserveProject"; system_id: EntityId; target: ProjectTarget; reserve: boolean }
+  | { type: "StartColonyProject"; system_id: EntityId; body_id: number; project: ColonyProjectKind; commodity: Commodity }
+  | { type: "SetColonyProjectActive"; system_id: EntityId; project: ColonyProjectKind; active: boolean }
   | { type: "Join"; name: string; view_hz?: 5 | 10 }
   | { type: "MoveShip"; ship_id: EntityId; dest: Vec2 }
   | { type: "HoldFleet"; ship_id: EntityId }
@@ -1015,6 +1121,7 @@ export type ClientMsg =
   | { type: "DemolishEmplacement"; fleet: EntityId; target: EntityId }
   | { type: "CommitRaid"; raider_id: EntityId; target_id: EntityId }
   | { type: "GuardFleet"; interceptor_id: EntityId; target_id: EntityId }
+  | { type: "DefendSystem"; fleet_id: EntityId; system_id: EntityId; pursuit_radius: number }
   | { type: "RecallRaid"; raider_id: EntityId }
   | { type: "MarketBuy"; commodity: Commodity; units: number; max_unit_price?: number | null }
   // §TCA: book Authority freight, and the player-convoy logistics verbs.
@@ -1027,6 +1134,7 @@ export type ClientMsg =
   | { type: "HaulToMarketHub"; fleet_id: EntityId; sell_on_arrival: boolean }
   | { type: "HaulToSystem"; fleet_id: EntityId; system: EntityId }
   | { type: "RequestFuelRescue"; fleet_id: EntityId }
+  | { type: "RefuelFleet"; fleet_id: EntityId; target_id: EntityId }
   | { type: "SetEngageFreight"; fleet_id: EntityId; on: boolean }
   | { type: "PayReinstatement"; points: number }
   | { type: "MarketSell"; commodity: Commodity; units: number; min_unit_price?: number | null }
@@ -1053,7 +1161,7 @@ export type ClientMsg =
   | { type: "SellModule"; module: ModuleKind; n: number; from_system: EntityId }
   // §economy: the 16 structure slugs (the server accepts legacy slugs via alias).
   | { type: "DevelopSystem"; system_id: EntityId; upgrade: string; body_id?: number }
-  | { type: "SetAssignment"; system_id: EntityId; structure: string; workers: number; specialists?: Record<string, number>; body_id?: number }
+  | { type: "SetAssignment"; system_id: EntityId; structure: string; workers: number; specialists?: Record<string, number>; body_id?: number; refining_ore?: Commodity }
   | { type: "SetMigrationPolicy"; system_id: EntityId; body_id: number; policy: MigrationPolicy }
   | { type: "RelocateMigrants"; from_system: EntityId; from_body: number; to_system: EntityId; to_body: number }
   | { type: "HireSpecialist"; specialist: string; dest_system: EntityId }
@@ -1072,9 +1180,12 @@ export type ClientMsg =
   | { type: "BlockadeSystem"; fleet_id: EntityId; system_id: EntityId }
   // §explore Part 2 — order a scout-carrying fleet to SURVEY a system's geology.
   | { type: "SurveySystem"; fleet_id: EntityId; system_id: EntityId }
+  | { type: "ExploreSite"; fleet_id: EntityId; site_id: EntityId; task: ExpeditionTask }
+  | { type: "AnnotateExploration"; entry: ExplorationJournalEntry }
   // §offensive-orders — attack a rival fleet (destroy); set a fleet's posture.
   | { type: "AttackFleet"; fleet_id: EntityId; target_id: EntityId }
   | { type: "SetFleetPosture"; fleet_id: EntityId; posture: EngagementPosture }
+  | { type: "SetFleetMission"; fleet_id: EntityId; mission: MissionProfile }
   | { type: "RecruitCaptain"; system_id: EntityId }
   | { type: "AssignCaptain"; captain_id: number; fleet_id: EntityId }
   | { type: "ReserveCaptain"; captain_id: number }
@@ -1102,6 +1213,7 @@ export type ClientMsg =
   | { type: "SaveFit"; name: string; ship: ShipKind; loadout: ModuleKind[] }
   | { type: "DeleteFit"; name: string }
   | { type: "NameFlagship"; name: string }
+  | { type: "RequestTransactions"; before: number | null; request_id: number }
   | { type: "Ping" };
 
 // §syndicates Part 1: an alliance id (opaque decimal string on the wire).
@@ -1130,10 +1242,13 @@ export type OperationScope =
   | { scope: "public" }
   | { scope: "syndicate"; syndicate: SyndicateId };
 export type OperationKind =
+  | { kind: "combat_objective"; objective: CombatObjective; site: EntityId; pos: Vec2; destination: Vec2 | null }
+  | { kind: "privateer_patrol"; pos: Vec2 }
   | { kind: "pirate_bounty"; system: EntityId; tier: number }
   | { kind: "survey_expedition"; system: EntityId }
   | { kind: "market_delivery"; commodity: Commodity; units: number }
   | { kind: "rescue_salvage"; pos: Vec2; commodity: Commodity; units: number; source_fleet: EntityId }
+  | { kind: "prize_recovery"; pos: Vec2; system: EntityId; prize: "breacher_cache" | "screen_cache" }
   | { kind: "convoy_escort"; protected_fleet: EntityId; destination: Vec2 }
   | { kind: "freight_escort"; origin: Vec2; destination: Vec2 }
   | { kind: "authority_enforcement"; target: PlayerId }
@@ -1163,11 +1278,44 @@ export interface OperationView {
   expires_at: number;
   target_pos: Vec2;
   reward: OperationRewardView;
-  briefing?: { follow_up: "escort" | "salvage" | "production"; title: string;
-    difficulty: string; suitable_fleets: string; summary: string };
+  briefing?: { follow_up: "escort" | "salvage" | "production" | "patrol" | "dangerous_freight" | "guarded_salvage" | "depot" | "stronghold" | "counter_raid_trace" | "counter_raid_assault" | "counter_raid_recovery" | "site_recovery" | "combat_preparation"; title: string;
+    difficulty: string; suitable_fleets: string; summary: string; variant?: number };
   joined: boolean;
   assigned_fleet?: EntityId | null;
   winner?: PlayerId | null;
+}
+
+export type ExplorationKind = "derelict" | "station" | "asteroids" | "anomaly" | "precursor";
+export type ExpeditionTask = "investigate" | "recover" | "restore" | "study" | "extract";
+export interface ExplorationJournalEntry { id: EntityId; kind: "site" | "system"; pinned: boolean; note: string }
+export interface SiteOpportunity {
+  task: "study" | "extract";
+  requirement: "scout" | "research_team" | "fuelled_freighter" | "shielded_freighter";
+  seconds: number;
+  costs: Partial<Record<Commodity, number>>;
+  cargo: Partial<Record<Commodity, number>>;
+  blueprint?: ModuleKind | null;
+  has_lead: boolean;
+}
+export interface ExplorationSiteView {
+  id: EntityId;
+  pos: Vec2;
+  reported_at: number;
+  /** Unknown contacts carry no kind, contents, ownership or depletion state. */
+  details?: {
+    kind: ExplorationKind;
+    name: string;
+    cargo: Partial<Record<Commodity, number>>;
+    modules: Partial<Record<ModuleKind, number>>;
+    programme: string;
+    research_fraction: number;
+    restored_by?: PlayerId | null;
+    environment?: NebulaKind | null;
+    opportunity?: SiteOpportunity | null;
+    studied?: boolean;
+    lead?: { site: EntityId; pos: Vec2; clue: string } | null;
+    guarded?: boolean;
+  } | null;
 }
 
 export type MidgameStage = "home_development" | "exploration" | "specialization" | "first_colony" | "trade_network" | "contested_expansion" | "regional_power";
@@ -1214,6 +1362,7 @@ export interface SyndicateInviteView {
 // This is the client-side MERGED shape the panel reads — the wire now carries
 // only the dynamic slice (ResearchDynView); the static catalog rides Welcome.
 export interface ResearchView {
+  blueprints?: ModuleKind[];
   active: ActiveResearchView | null;
   queue: string[];
   rate: number;
@@ -1225,12 +1374,13 @@ export interface ResearchView {
 // §perf Part B: the wire's research payload — dynamic slice only. The client
 // joins `programmes` onto the static catalog (Welcome's research_catalog) by id.
 export interface ResearchDynView {
+  blueprints?: ModuleKind[];
   active: ActiveResearchView | null;
   queue: string[];
   rate: number;
   stalled: boolean;
   academies: AcademyRow[];
-  programmes: { id: string; state: string; gate?: GateProgressView | null }[];
+  programmes: { id: string; state: string; gate?: GateProgressView | null; recovered_data?: number }[];
 }
 
 // §perf Part B: one programme's STATIC catalog entry (Welcome.research_catalog).
@@ -1272,6 +1422,7 @@ export interface ProgrammeView {
   state: string;
   cost: number;
   gate: GateProgressView | null;
+  recovered_data?: number;
 }
 export interface GateProgressView {
   label: string;
@@ -1366,7 +1517,7 @@ export interface LossRange {
 }
 
 // §order-lifecycle: the flavor of a light-delayed order (mirrors sim OrderKind).
-export type OrderKind = "move" | "hold" | "jump" | "construct" | "demolish" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey" | "guard" | "load" | "unload" | "haul" | "configure" | "refit" | "reorganize" | "assign";
+export type OrderKind = "move" | "hold" | "jump" | "construct" | "demolish" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey" | "guard" | "defend" | "load" | "unload" | "haul" | "configure" | "refit" | "reorganize" | "assign" | "refuel";
 
 // §battles-take-time: an ongoing battle as this player perceives it, light-gated.
 // ONE battle entity = ONE map icon at `pos`; `participants` are the fleet ids
@@ -1545,6 +1696,7 @@ export interface PendingOrderView {
   configuration?:
     | { kind: "transit"; mode: TransitMode }
     | { kind: "posture"; posture: EngagementPosture }
+    | { kind: "mission"; mission: MissionProfile }
     | { kind: "engage_freight"; on: boolean };
   /// Owner-only intended route from the served sighting to a fixed destination.
   /// Positions only: this line never claims the fleet advanced along it.
@@ -1568,7 +1720,9 @@ export type FoundingStage =
   | "survey_candidates"
   | "build_colony"
   | "establish_colony"
-  | "complete";
+  | "complete"
+  | "build_second_freighter"
+  | "grow_business";
 
 export interface FoundingView {
   stage: FoundingStage;
@@ -1642,6 +1796,7 @@ export type ServerMsg =
       /// §syndicates Part 1: pending invitations the viewer may accept.
       syndicate_invites?: SyndicateInviteView[];
       operations?: OperationView[];
+      exploration_sites?: ExplorationSiteView[];
       midgame_stage: MidgameStage;
       diplomacy?: DiplomacyView | null;
       /// §research R6: the viewer's OWN corporation research picture. Present
@@ -1655,6 +1810,7 @@ export type ServerMsg =
       // §perf Part B: the slow-moving sections, sent only when their content
       // changed. A present field REPLACES the held copy; absent = unchanged.
       type: "Sections";
+      exploration_journal?: ExplorationJournalEntry[];
       standing_orders?: StandingOrder[];
       battle_reports?: BattleReportView[];
       capture_reports?: CaptureReportView[];
@@ -1679,6 +1835,8 @@ export type ServerMsg =
   | { type: "Report"; report: RaidReport }
   | { type: "Timeline"; entries: TimelineEntry[]; away_since: number }
   | { type: "Trade"; trade: TradeEvent }
+  | { type: "Transactions"; player_id: PlayerId; request_id: number; before: number | null; entries: TransactionEntry[]; next_before: number | null; since: number }
+  | { type: "TransactionRecorded"; player_id: PlayerId; entry: TransactionEntry }
   | {
       // OUTBOUND order feedback: the violet comet, command center → ship, over
       // [depart, arrive]. The server owns the clock-times; the client interpolates.

@@ -1,0 +1,10 @@
+Generated with the built-in image-generation tool; edit target: battle-marker-v3.png.
+Source: battle-marker-v4.png.
+Galaxy-map derivative: public/art/battle_in_progress_v4.png (256x256 transparent PNG).
+
+Use case: precise-object-edit.
+Image 1 is the edit target: the current crossed-bolt galaxy-map battle symbol.
+Request: add a moderate amount of purposeful detail so it reads as a polished sci-fi battle emblem, while remaining an ICON at 52 pixels. Keep the centered crossed composition, warm coral/orange palette, clear negative space and genuine transparent background.
+Refine the two crossed bolts into stylized energy blades: broad angular upper blade tips, compact geometric emitter guards and short recognizable grips at the lower ends. Add one wide pale-ivory inset along each blade and one dark warm-red edge panel for definition. The grips have at most two broad divisions, not fine grooves. At the crossing, replace the plain diamond with a SMALL sharp four-point ivory clash spark.
+Style: clean flat-to-cel-shaded raster HUD icon with crisp shapes, limited to coral-orange, dark red and warm ivory. The requested detail should come from these few large shape divisions, not realistic materials or miniature painting. Match the original visual weight and broad diagonal silhouette, with clear transparent padding.
+Do not add spacecraft, background scenery, smoke, fire, debris, grain, brush texture, photorealistic metal, complex bevels, gradients, broad glow halos, outer circle, badge frame, text or watermark. No medieval decoration. One finished transparent PNG symbol, not a mockup or alternatives sheet.

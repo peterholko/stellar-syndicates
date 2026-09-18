@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use super::v1::{RosterDelta, SideMods, TacticalState};
 use crate::combat::{KEYFRAME_DEATH_CAP, Keyframe};
 
-pub const RULES_VERSION: u32 = 3;
+pub const RULES_VERSION: u32 = 6;
 /// A cold seek does at most this many extra tactical steps before its slice.
 pub const CHECKPOINT_STEPS: usize = 64;
 
@@ -29,6 +29,8 @@ enum Input {
     Roster(Vec<RosterDelta>),
     Controls(Controls),
     Withdraw(u8),
+    Escorts(std::collections::BTreeMap<crate::EntityId, crate::EntityId>),
+    Missions(std::collections::BTreeMap<crate::EntityId, crate::doctrine::MissionProfile>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -126,6 +128,11 @@ pub fn state_checksum(state: &TacticalState) -> u64 {
                 Titan => 10,
                 Transport => 11,
                 Freighter => 12,
+                TinyFreighter => 13,
+                SmallFreighter => 14,
+                LargeFreighter => 15,
+                HeavyFreighter => 16,
+                BulkFreighter => 17,
             });
         }
     }
@@ -133,7 +140,17 @@ pub fn state_checksum(state: &TacticalState) -> u64 {
     // Preserve historical v1/v2 fingerprints. New archives also cover the
     // private maneuver seed: changing future steering must invalidate a checkpoint.
     if state.rules_version() > 1 { h.u(u64::from(state.rules_version())); }
-    if let super::Rules::V3 { maneuver_seed } = state.rules { h.u(maneuver_seed); }
+    if let super::Rules::V3 { maneuver_seed } | super::Rules::V4 { maneuver_seed } | super::Rules::V5 { maneuver_seed } | super::Rules::V6 { maneuver_seed } = state.rules { h.u(maneuver_seed); }
+    if matches!(state.rules, super::Rules::V4 { .. } | super::Rules::V5 { .. } | super::Rules::V6 { .. }) {
+        h.u(state.escorts.len() as u64);
+        for (escort, charge) in &state.escorts { h.u(escort.0); h.u(charge.0); }
+    }
+    if matches!(state.rules, super::Rules::V6 { .. }) {
+        h.u(state.missions.len() as u64);
+        for (id, m) in &state.missions { h.u(id.0); h.u(m.priority as u64); h.u(m.screening as u64); h.u(m.withdrawal as u64); }
+        h.u(state.mission_retreats.len() as u64);
+        for id in &state.mission_retreats { h.u(id.0); }
+    }
     h.u(state.rng.state_bits());
     h.u(state.step);
     h.u(u64::from(state.next_cid));
@@ -226,6 +243,13 @@ impl BattleReplay {
         self.input(tick, Input::Withdraw(side));
     }
 
+    pub(crate) fn escorts(&mut self, tick: u64, guards: std::collections::BTreeMap<crate::EntityId, crate::EntityId>) {
+        self.input(tick, Input::Escorts(guards));
+    }
+    pub(crate) fn missions(&mut self, tick: u64, missions: std::collections::BTreeMap<crate::EntityId, crate::doctrine::MissionProfile>) {
+        self.input(tick, Input::Missions(missions));
+    }
+
     pub(crate) fn stepped(&mut self, tick: u64, round: usize, state: &TacticalState) {
         self.steps.push(Step {
             tick,
@@ -284,6 +308,16 @@ impl BattleReplay {
                     return Err(ReplayError::InvalidArchive);
                 }
                 state.order_withdraw(*side);
+            }
+            Input::Escorts(guards) => {
+                if !matches!(state.rules, super::Rules::V4 { .. } | super::Rules::V5 { .. } | super::Rules::V6 { .. }) {
+                    return Err(ReplayError::InvalidArchive);
+                }
+                state.set_escorts(guards.clone());
+            }
+            Input::Missions(missions) => {
+                if !matches!(state.rules, super::Rules::V6 { .. }) { return Err(ReplayError::InvalidArchive); }
+                state.set_missions(missions.clone());
             }
         }
         Ok(())
@@ -659,11 +693,105 @@ mod tests {
         maneuver_replay_roundtrip(true);
     }
 
+    #[test]
+    fn datalink_assignments_replay_through_reinforcements_retargeting_and_restart() {
+        datalink_replay_roundtrip(false);
+    }
+
+    #[test]
+    fn discovery_weapons_replay_through_reinforcements_retargeting_and_restart() {
+        datalink_replay_roundtrip(true);
+    }
+
+    #[test]
+    fn mission_profiles_replay_sparse_changes_and_damage_retreats_across_checkpoints() {
+        use crate::doctrine::{MissionProfile, TargetPriority, ScreeningRole, DamageWithdrawal};
+        let mut a = fleet(1, ShipKind::Raider, "torpedo_rack", 4);
+        let mut d = fleet(2, ShipKind::Corvette, "point_defense_screen+escort_datalink", 4);
+        d.extend(fleet(3, ShipKind::Convoy, "", 2));
+        let mut live = TacticalState::open_current(191, 77, &a, &d, 0, 0.0, Vec2::new(1.0, 0.0));
+        let mut record = BattleRecord::open(EntityId(77), Vec2::ZERO, None, false, 0, sides());
+        for i in 0..96 {
+            let tick = (i + 1) * 15;
+            record.sync_tactical(tick - 3, &mut live, [&a, &d]);
+            let profiles = std::collections::BTreeMap::from([
+                (EntityId(1), MissionProfile { priority: if i < 20 { TargetPriority::Balanced } else { TargetPriority::Transports },
+                    withdrawal: DamageWithdrawal::Hull70, ..Default::default() }),
+                (EntityId(2), MissionProfile { screening: ScreeningRole::ProtectTransports, ..Default::default() }),
+            ]);
+            record.sync_missions(tick - 2, &mut live, profiles.clone());
+            let inputs = record.tactical_replay().unwrap().input_count();
+            record.sync_missions(tick - 1, &mut live, profiles);
+            assert_eq!(record.tactical_replay().unwrap().input_count(), inputs);
+            let out = record.step_tactical(tick, &mut live, false, [SideMods::default(); 2]);
+            record.accumulate(out.dealt[0], out.dealt[1], &out.losses[0], &out.losses[1]);
+            record.flush_step(tick, live.step_keyframe(out), Default::default());
+            writeback(&live, &mut a); writeback(&live, &mut d);
+            assert_eq!(record.tactical_replay().unwrap().reconstruct().unwrap(), live);
+            if i == 40 {
+                live = serde_json::from_slice(&serde_json::to_vec(&live).unwrap()).unwrap();
+                record = serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+            }
+        }
+        assert_eq!(live.rules_version(), 6);
+        let replay = record.tactical_replay().unwrap();
+        assert!(!replay.checkpoints.is_empty());
+        let mut changed = replay.clone();
+        changed.initial.missions.insert(EntityId(1), MissionProfile { priority: TargetPriority::Installations, ..Default::default() });
+        assert!(changed.reconstruct().is_err(), "mission policies are checkpoint-integrity inputs");
+    }
+
+    fn datalink_replay_roundtrip(discovery: bool) {
+        let mut a = fleet(1, ShipKind::Raider, "torpedo_rack", 8);
+        if discovery { a.extend(fleet(6, ShipKind::Destroyer, "prismatic_lance", 2)); }
+        let mut d = fleet(2, ShipKind::Corvette, "point_defense_screen+escort_datalink", 8);
+        d.extend(fleet(3, ShipKind::Convoy, "cargo_pods", 4));
+        d.extend(fleet(4, ShipKind::Convoy, "", 4));
+        let mut live = if discovery { TacticalState::open_v5(191, 77, &a, &d, 0, 0.0, Vec2::new(1.0, 0.0)) }
+            else { TacticalState::open_v4(191, 77, &a, &d, 0, 0.0, Vec2::new(1.0, 0.0)) };
+        let mut record = BattleRecord::open(EntityId(77), Vec2::ZERO, None, false, 0, sides());
+        for i in 0..80 {
+            let tick = (i + 1) * 15;
+            if i == 17 { d.extend(fleet(5, ShipKind::Corvette, "point_defense_screen+escort_datalink", 2)); }
+            if i == 60 { d.retain(|(id, _)| *id != EntityId(3)); }
+            record.sync_tactical(tick - 3, &mut live, [&a, &d]);
+            let mut guards = std::collections::BTreeMap::new();
+            if i < 70 {
+                guards.insert(EntityId(2), EntityId(if i < 40 { 3 } else { 4 }));
+                if i >= 17 { guards.insert(EntityId(5), EntityId(4)); }
+            }
+            record.sync_escorts(tick - 2, &mut live, guards.clone());
+            let count = record.tactical_replay().unwrap().input_count();
+            record.sync_escorts(tick - 1, &mut live, guards);
+            assert_eq!(record.tactical_replay().unwrap().input_count(), count, "unchanged guard costs no archive input");
+            if i == 72 { record.withdraw_tactical(tick - 1, &mut live, 1); }
+            let out = record.step_tactical(tick, &mut live, false, [SideMods::default(); 2]);
+            record.accumulate(out.dealt[0], out.dealt[1], &out.losses[0], &out.losses[1]);
+            record.flush_step(tick, live.step_keyframe(out), Default::default());
+            writeback(&live, &mut a);
+            writeback(&live, &mut d);
+            assert_eq!(record.tactical_replay().unwrap().reconstruct().unwrap(), live);
+            if i == 31 {
+                record = serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+                live = serde_json::from_slice(&serde_json::to_vec(&live).unwrap()).unwrap();
+            }
+        }
+        assert_eq!(live.rules_version(), if discovery { 5 } else { 4 });
+        let replay = record.tactical_replay().unwrap();
+        assert!(!replay.checkpoints.is_empty());
+        let restored: BattleRecord = serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+        assert_eq!(restored.frames_range(64, 80).unwrap(), record.frames_range(64, 80).unwrap());
+        let mut tampered = replay.clone();
+        tampered.initial.escorts.insert(EntityId(2), EntityId(4));
+        assert_ne!(state_checksum(&tampered.initial), replay.initial_checksum);
+        assert!(tampered.reconstruct().is_err(), "guard assignments are part of checkpoint integrity");
+    }
+
     fn maneuver_replay_roundtrip(current: bool) {
         let mut a = fleet(1, ShipKind::Raider, "", 12);
         let mut d = fleet(2, ShipKind::Raider, "mass_driver", 12);
         let mut live = if current {
-            TacticalState::open_current(191, 77, &a, &d, 0, 0.0, Vec2::new(1.0, 0.0))
+            TacticalState::open_v3(191, 77, &a, &d, 0, 0.0, Vec2::new(1.0, 0.0))
         } else {
             let mut state = TacticalState::open(191, 77, &a, &d, 0, 0.0, Vec2::new(1.0, 0.0));
             state.rules = super::super::Rules::V2;

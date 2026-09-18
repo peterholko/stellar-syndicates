@@ -8,6 +8,12 @@ use serde::{Deserialize, Serialize};
 pub fn hull_mass(kind: ShipKind) -> f64 {
     match kind {
         ShipKind::Convoy => 4500.0,
+        // New hull tags cannot occur in old archives; old entries stay frozen.
+        ShipKind::TinyFreighter => 1500.0,
+        ShipKind::SmallFreighter => 2500.0,
+        ShipKind::LargeFreighter => 8000.0,
+        ShipKind::HeavyFreighter => 14000.0,
+        ShipKind::BulkFreighter => 24000.0,
         ShipKind::Builder => 2500.0,
         ShipKind::Raider => 200.0,
         ShipKind::Corvette => 800.0,
@@ -26,6 +32,10 @@ pub fn hull_mass(kind: ShipKind) -> f64 {
 pub fn max_speed(kind: ShipKind) -> f64 {
     match kind {
         ShipKind::Convoy => 40.0,
+        ShipKind::TinyFreighter | ShipKind::SmallFreighter => 40.0,
+        ShipKind::LargeFreighter => 38.0,
+        ShipKind::HeavyFreighter => 34.0,
+        ShipKind::BulkFreighter => 30.0,
         ShipKind::Builder => 35.0,
         ShipKind::Raider => 100.0,
         ShipKind::Corvette => 65.0,

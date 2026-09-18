@@ -3,12 +3,14 @@ import type { BodyView, ColonyOpportunityView, Commodity, SystemStateView } from
 // Mirrors production.rs::CONVERTERS' input identities (not rates). Used only to
 // explain supply chains; actual output and colony-role scores come from reports.
 export const PRODUCTION_INPUTS: Record<string, Commodity[]> = {
-  smelter: ["metallic_ore", "fuel"], electronics_fabricator: ["rare_elements", "silicates"],
+  smelter: ["metallic_ore", "fuel"], electronics_fabricator: ["conductive_metals", "rare_elements", "silicates"],
   chemical_works: ["volatiles", "biomass"], fuel_refinery: ["volatiles"], agroplex: ["biomass"],
   machine_works: ["alloys", "electronics", "fuel"], armaments_complex: ["alloys", "electronics", "polymers"],
+  composite_works: ["alloys", "polymers", "silicates"], hull_fabricator: ["composites", "machinery", "titanium"],
+  precision_works: ["electronics", "machinery", "rare_elements"], drive_works: ["precision_components", "composites", "fuel"],
 };
 const ROLE_PRODUCT: Record<ColonyOpportunityView["role"], Commodity[]> = {
-  mining_world: ["metallic_ore", "rare_elements"], fuel_complex: ["fuel"],
+  mining_world: ["metallic_ore", "cuprite_ore", "titanium_ore", "crystalline_ore", "rare_metal_ore", "rare_elements", "silicates"], fuel_complex: ["fuel"],
   electronics_center: ["electronics"], agricultural_exporter: ["provisions"],
   population_world: [], shipbuilding_center: [], strategic_outpost: [],
 };
@@ -52,7 +54,7 @@ export function colonyPurpose(candidate: SystemStateView, home?: SystemStateView
   const systemFeedstock = new Set(candidate.bodies.flatMap(b => b.deposits ?? [])
     .filter(d => d.reserves !== 0).map(d => d.resource));
   const potentialExports = role ? ROLE_PRODUCT[role.role].filter(g =>
-    !["metallic_ore", "rare_elements"].includes(g) || available.has(g))
+    role.role !== "mining_world" || available.has(g))
     : [...available].slice(0, 2);
   const imports = new Set<Commodity>();
   if (!systemFeedstock.has("biomass")) imports.add("provisions");
@@ -65,8 +67,11 @@ export function colonyPurpose(candidate: SystemStateView, home?: SystemStateView
   let advantages = "";
   if (home) {
     const stock = (g: Commodity) => home.stockpile?.find(s => s.commodity === g)?.units;
-    const stalled = home.converters?.find(c => c.status === "no_inputs"
-      && (PRODUCTION_INPUTS[c.structure] ?? []).some(input => potentialExports.includes(input) && (stock(input) ?? Infinity) < 1));
+    const stalled = home.converters?.find(c => {
+      const ore = home.assignments?.find(a => a.body_id === c.body_id && a.structure === c.structure)?.refining_ore;
+      const inputs = c.structure === "smelter" && ore ? [ore, "fuel" as Commodity] : PRODUCTION_INPUTS[c.structure] ?? [];
+      return c.status === "no_inputs" && inputs.some(input => potentialExports.includes(input) && (stock(input) ?? Infinity) < 1);
+    });
     const foodNeed = potentialExports.includes("provisions") && !!home.food_state && home.food_state !== "well_supplied";
     if (foodNeed) homeNeed = "Can relieve home Provisions shortages.";
     else if (stalled) homeNeed = `Can feed the home ${stalled.title}'s missing inputs.`;
@@ -74,6 +79,7 @@ export function colonyPurpose(candidate: SystemStateView, home?: SystemStateView
       homeNeed = "Room for another workforce; staffing is tight at home.";
     else if (role?.role === "shipbuilding_center" && (home.builds ?? []).some(b =>
       ["builder", "convoy", "raider", "corvette", "colony", "transport", "scout", "destroyer",
+        "tiny_freighter", "small_freighter", "large_freighter", "heavy_freighter", "bulk_freighter",
         "cruiser", "battlecruiser", "battleship", "carrier", "titan"].includes(b.key)))
       homeNeed = "Adds a second shipbuilding site while home yards are busy.";
     else homeNeed = potentialExports.length ? "Adds a specialist supply line for home industry." : "Adds capacity or reach beyond home.";

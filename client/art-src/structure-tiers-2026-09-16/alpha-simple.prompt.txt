@@ -1,0 +1,1 @@
+Remove the background of this building completely. Return a transparent-background PNG cutout, with an alpha channel. Keep only the building and its machinery. Keep its original design, colors, angle, position and square canvas dimensions. The space around and between the machinery must be invisible/zero opacity, so I can place this directly over a planet image.

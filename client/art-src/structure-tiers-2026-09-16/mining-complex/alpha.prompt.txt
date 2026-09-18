@@ -1,0 +1,4 @@
+Use case: background-extraction
+Image 1: EDIT TARGET, a Mining Complex tier I game sprite.
+Remove the entire baked grey-and-white checker pattern surrounding the building AND in gaps between its machinery. Replace these background pixels with actual zero-opacity transparency in the PNG alpha channel. This is not a request to DRAW transparency as a pattern: do not leave any checkerboard or grey/white background visible in the output pixels.
+Preserve the mining building itself exactly: same silhouette, every excavator arm and conveyor, same metal/yellow/cyan colors, same lighting, same camera angle, same scale and position on the square canvas, same 1254x1254 framing if supported. No redesign, no new floor, no halo or shadow outside the object, no text. Only isolate the object. Return a real RGBA transparent cutout.

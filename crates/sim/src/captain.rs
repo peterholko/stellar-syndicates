@@ -77,6 +77,10 @@ impl CaptainTitle {
 pub fn command_weight(kind: ShipKind) -> u32 {
     match kind {
         ShipKind::Scout | ShipKind::Convoy | ShipKind::Builder | ShipKind::Freighter => 1,
+        ShipKind::TinyFreighter | ShipKind::SmallFreighter => 1,
+        ShipKind::LargeFreighter => 2,
+        ShipKind::HeavyFreighter => 4,
+        ShipKind::BulkFreighter => 8,
         ShipKind::Raider => 2,
         ShipKind::Corvette | ShipKind::Colony | ShipKind::Transport => 4,
         ShipKind::Destroyer => 8,

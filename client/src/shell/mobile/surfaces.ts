@@ -1,3 +1,4 @@
+import { isPlayerFreighter } from "../../protocol";
 import {
   COMMODITIES,
   marketAverageQuote,
@@ -11,11 +12,18 @@ import {
   kitAffordable,
   kitCostLabel,
   warehouseUnits,
+  utilityRefitChoices,
 } from "../../core/derive/market";
-import { fleetCargoCapacity, guardCapable, jumpCapable, shipKindLabel, shipRoleLore } from "../../core/derive/fleet";
+import { dockedAtSystem, fleetCargoCapacity, guardCapable, jumpCapable, shipKindLabel, shipRoleLore } from "../../core/derive/fleet";
+import { tenderStatus } from "../../core/derive/tenders";
+import { fuelTransferHtml } from "../fueltransfer";
+import { missionCommand, missionHtml, pirateFactionHtml } from "../mission";
+import { fleetIndustryHtml } from "../industry";
 import { fleetReadiness, dispatchWarnings } from "../../core/derive/readiness";
+import { pirateSite } from "../../core/derive/pirates";
 import { foundingHomeSystemId } from "../../core/derive/geo";
 import { postVictoryHandoff } from "../../core/derive/handoff";
+import { FOUNDING_STEP, FOUNDING_TOTAL, foundingBusinessGoals, foundingScoutGoal } from "../../core/derive/founding";
 import { jumpRangeAt } from "../../core/derive/nebula";
 import {
   countClassLabel,
@@ -35,8 +43,13 @@ import type { CoreContext } from "../types";
 import type { SheetEntry, SheetView } from "./sheets";
 import { SheetStack } from "./sheets";
 import { sheetFingerprint } from "../signature";
+import { requestTransactions } from "../../core/derive/transactions";
+import { transactionsHtml } from "../transactions";
+import { DEFAULT_DEFENSE_RADIUS, DEFENSE_RADII } from "../../core/derive/defense";
+import { stageDefenseAction, systemDefenseHtml } from "../systemdefense";
+import "../../styles/system-defense.css";
 
-type MarketTab = "exchange" | "warehouse" | "specialists" | "modules";
+type MarketTab = "exchange" | "warehouse" | "specialists" | "modules" | "transactions";
 
 interface SurfaceHooks {
   openSheet(entry: SheetEntry): void;
@@ -53,27 +66,21 @@ const MODULE_BUY_MULT = 2;
 const MODULE_SELL_MULT = 0.5;
 const FOUNDING_MINIMIZED_KEY = "stellar-syndicates:founding-guide-mobile-minimized";
 
-const MODULES: { kind: ModuleKind; name: string; role: string }[] = [
-  { kind: "mass_driver", name: "Mass Driver", role: "Kinetic weapon" },
-  { kind: "torpedo_rack", name: "Torpedo Rack", role: "Heavy strike weapon" },
-  { kind: "point_defense_screen", name: "Point-Defense", role: "Torpedo interception" },
-  { kind: "reflective_plating", name: "Reflective Plating", role: "Beam protection" },
-  { kind: "whipple_armor", name: "Whipple Armor", role: "Kinetic protection" },
-];
+import { MODULES, isBlueprintOnly } from "../../core/derive/equipment";
 
 const SPECIALISTS = [
   ["geologist", "Geologist", "mineral extraction"],
   ["petrochemical_engineer", "Petrochemical Engineer", "volatiles and fuel"],
   ["xenobiologist", "Xenobiologist", "biomass and provisions"],
   ["industrial_engineer", "Industrial Engineer", "heavy industry"],
-  ["naval_architect", "Naval Architect", "shipbuilding and armaments"],
+  ["naval_architect", "Naval Architect", "shipyards, hulls, drives and armaments"],
 ] as const;
 
 const esc = (value: string): string => value.replace(
   /[&<>\"]/g,
   (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '\"': "&quot;" })[character]!,
 );
-const human = (value: string): string => value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+const human = (value: string): string => value === "metallic_ore" ? "Ferrite Ore" : value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 const safeId = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/g, "_");
 const fmt = (value: number, digits = 0): string => Number.isFinite(value)
   ? value.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits })
@@ -82,6 +89,8 @@ const element = <T extends HTMLElement>(id: string): T | null => document.getEle
 const propsOf = <T extends object>(entry: SheetEntry): Partial<T> => (entry.props && typeof entry.props === "object" ? entry.props : {}) as Partial<T>;
 
 export class MobileSurfaces {
+  private readonly defenseRadius = new Map<string, number>();
+  private readonly defenseAssigning = new Set<string>();
   private readonly renderSignatures = new Map<SheetEntry["id"], string>();
   private marketTab: MarketTab = "exchange";
   private marketCommodity: Commodity = "fuel";
@@ -167,18 +176,20 @@ export class MobileSurfaces {
     }
     root.hidden = false;
     root.classList.toggle("is-minimized", this.foundingMinimized);
-    const step = FOUNDING_STEPS[founding.stage];
+    const step = FOUNDING_STEP[founding.stage];
     const shield = founding.protected
       ? founding.protection_min_until > this.ctx.state.simTime
         ? `shield ${fmt(founding.protection_min_until - this.ctx.state.simTime)}s`
         : "shield active"
       : "shield ended";
-    const content = foundingCopy(founding.stage);
+    const content = founding.stage === "build_scout" ? foundingScoutGoal(this.homeSystem()) : foundingCopy(founding.stage);
+    const home = this.ctx.state.systems.find(s => s.id === this.homeSystemId());
+    const goals = founding.stage === "grow_business" ? foundingBusinessGoals(this.ctx.state, home) : [content];
     setHtml(root,
-      `<header><span>Founding ${step}/12 · ${shield}</span>` +
+      `<header><span>Founding ${step}/${FOUNDING_TOTAL} · ${shield}</span>` +
       `<button type="button" data-mobile-act="founding-toggle" aria-label="${this.foundingMinimized ? "Expand" : "Minimize"} tutorial">${this.foundingMinimized ? "+" : "−"}</button></header>` +
       `<div class="m-founding__body"><b>${esc(content.title)}</b><p>${esc(content.copy)}</p>` +
-      `<button type="button" class="m-primary" data-mobile-act="founding-action" data-kind="${content.action}">${esc(content.label)}</button>${founding.bounty_received ? `<button type="button" data-mobile-act="next-objectives">Next objectives &amp; rewards</button>` : ""}</div>`,
+      goals.map(goal => `<button type="button" class="m-primary" data-mobile-act="founding-action" data-kind="${goal.action}">${founding.stage === "grow_business" ? `${esc(goal.title)} · ` : ""}${esc(goal.label)}</button>`).join("") + `${founding.bounty_received ? `<button type="button" data-mobile-act="next-objectives">Next objectives &amp; rewards</button>` : ""}</div>`,
     );
   }
 
@@ -187,11 +198,46 @@ export class MobileSurfaces {
     if (!button) return false;
     const action = button.dataset.mobileAct;
     if (!action || action === "confirm-intent" || action === "cancel-intent") return false;
+    if (action.startsWith("defense-")) {
+      const system = button.dataset.system ?? "";
+      if (!this.ctx.state.systems.some(s => s.id === system && s.owner === this.ctx.state.playerId)) return true;
+      if (action === "defense-toggle") {
+        if (this.defenseAssigning.has(system)) this.defenseAssigning.delete(system);
+        else this.defenseAssigning.add(system);
+        this.sheets.refresh();
+      } else if (action === "defense-radius") {
+        const radius = Number(button.dataset.radius);
+        if (DEFENSE_RADII.some(r => r === radius)) this.defenseRadius.set(system, radius);
+        this.sheets.refresh();
+      } else if (action === "defense-open" && button.dataset.fleet) this.hooks.focusFleet(button.dataset.fleet);
+      else if (action === "defense-log") this.hooks.openSheet({ id: "log" });
+      else if (action === "defense-build") this.hooks.openSheet({ id: "build", props: { systemId: system } });
+      else if (action === "defense-doctrine") this.hooks.openSheet({ id: "doctrine" });
+      else stageDefenseAction(this.ctx, action, system, button.dataset.fleet ?? "", this.defenseRadius.get(system) ?? DEFAULT_DEFENSE_RADIUS);
+      return true;
+    }
 
     switch (action) {
+      case "fleet-utility-refit": {
+        const fleet = this.ctx.state.ghosts.find(g => g.id === button.dataset.id && g.own);
+        const dock = fleet && this.ctx.state.systems.find(s => dockedAtSystem(fleet, s.id) && (s.owner === this.ctx.state.playerId || s.ally));
+        const choice = fleet && dock ? utilityRefitChoices(fleet, dock).find(c =>
+          c.ship === button.dataset.ship && c.from.join(",") === button.dataset.from && c.to.join(",") === button.dataset.to) : undefined;
+        if (fleet && choice && !choice.blocked && !(this.ctx.state.pendingOrders.get(fleet.id)?.length)) {
+          this.ctx.intent.beginFleetCommand({ type: "RefitShips", fleet_id: fleet.id,
+            ship: choice.ship, from: choice.from, to: choice.to, n: 1 });
+        }
+        break;
+      }
       case "fleet-select":
         if (button.dataset.id) this.hooks.focusFleet(button.dataset.id);
         break;
+      case "fleet-mission": {
+        const fleet = this.ownFleet(button.dataset.id);
+        const command = fleet ? missionCommand(fleet, button.dataset.field, button.dataset.value) : null;
+        if (command) this.ctx.intent.beginFleetCommand(command);
+        break;
+      }
       case "fleet-move":
         if (button.dataset.id) this.hooks.armMove(button.dataset.id);
         break;
@@ -227,6 +273,11 @@ export class MobileSurfaces {
       case "fleet-rescue":
         if (button.dataset.id) this.ctx.intent.beginFleetCommand({ type: "RequestFuelRescue", fleet_id: button.dataset.id });
         break;
+      case "fleet-refuel": {
+        const target = button.closest("[data-fuel-transfer]")?.querySelector<HTMLSelectElement>("[data-tender-target]")?.value;
+        if (button.dataset.id && target) this.ctx.intent.beginFleetCommand({ type: "RefuelFleet", fleet_id: button.dataset.id, target_id: target });
+        break;
+      }
       case "fleet-estimate": {
         const target = button.dataset.target;
         const attacker = target ? element<HTMLSelectElement>(`m-estimate-attacker-${safeId(target)}`)?.value : undefined;
@@ -264,6 +315,12 @@ export class MobileSurfaces {
           this.marketTab = button.dataset.tab;
           this.sheets.refresh();
         }
+        break;
+      case "transactions-older":
+      case "transactions-newer":
+      case "transactions-latest":
+        requestTransactions(this.ctx, button.dataset.mobileAct === "transactions-older" ? "older" : button.dataset.mobileAct === "transactions-newer" ? "newer" : "latest");
+        this.sheets.refresh();
         break;
       case "market-commodity":
         if (isCommodity(button.dataset.commodity)) {
@@ -377,9 +434,11 @@ export class MobileSurfaces {
     const composition = fleet.composition?.map((stack) => `${stack.count} × ${shipKindLabel(stack.kind)}`).join(" · ")
       ?? `Estimated ${countClassLabel(fleet.count_class)} ships`;
     const manifest = fleetCargoManifest(fleet);
-    const cargo = manifest.length
+    const crates = Object.entries(fleet.modules ?? {}).filter(([, n]) => n > 0);
+    const cargo = (manifest.length
       ? manifest.map((slot) => `<span>${esc(human(slot.commodity))}<b>${slot.units}</b></span>`).join("")
-      : `<span class="m-muted">Hold empty</span>`;
+      : `<span class="m-muted">Hold empty</span>`) + (crates.length
+        ? `<span>Module crates · store at an owned dock</span>${crates.map(([kind, n]) => `<span>${esc(human(kind))}<b>${n}</b></span>`).join("")}` : "");
     const orders = this.ctx.state.pendingOrders.get(fleet.id) ?? [];
     const orderRows = orders.length
       ? orders.map((order) => {
@@ -408,12 +467,23 @@ export class MobileSurfaces {
         `<span><small>Drive</small><b>${esc(this.driveLabel(fleet))}</b></span>` +
         `<span><small>Fuel</small><b>${fleet.fuel == null ? "—" : `${fmt(fleet.fuel)}/${fmt(fleet.fuel_capacity ?? 0)}`}</b></span></div>` +
         `<section class="m-section"><h3>Formation</h3><p>${esc(composition)}</p>${roleLore ? `<details class="m-details m-help"><summary>Fleet role</summary><div><p>${esc(roleLore)}</p></div></details>` : ""}</section>` +
-        ready + supply +
+        ready + supply + fleetIndustryHtml(fleet, this.ctx.state) + this.utilityEquipment(fleet) + pirateFactionHtml(fleet, true) + missionHtml(fleet, orders, true) +
         `<section class="m-section"><h3>Cargo</h3><div class="m-ledger">${cargo}</div></section>` +
         engagement +
-        ownControls +
+        ownControls + (fleet.own ? fuelTransferHtml(fleet, this.ctx.state, "", true) : "") +
         `<section class="m-section"><h3>Orders</h3>${orderRows}</section>`,
     };
+  }
+
+  private utilityEquipment(fleet: GhostView): string {
+    if (!fleet.own) return "";
+    const dock = this.ctx.state.systems.find(s => dockedAtSystem(fleet, s.id) && (s.owner === this.ctx.state.playerId || s.ally));
+    const choices = dock ? utilityRefitChoices(fleet, dock) : [];
+    const busy = (this.ctx.state.pendingOrders.get(fleet.id)?.length ?? 0) > 0 || !!fleet.path?.length || Math.hypot(fleet.vel.x, fleet.vel.y) >= .5;
+    const installed = (fleet.loadouts ?? []).map(s => `${s.n}× ${shipKindLabel(s.kind)} · ${s.modules.map(human).join(" + ")}`).join(" · ");
+    return `<section class="m-section"><h3>Equipment</h3>${installed ? `<p>${esc(installed)}</p>` : ""}${choices.map(c =>
+      `<div class="m-service-row"><span><b>${shipKindLabel(c.ship)} · ${esc(c.name)}</b><small>${esc(c.preview)}</small></span><button type="button" data-mobile-act="fleet-utility-refit" data-id="${fleet.id}" data-ship="${c.ship}" data-from="${c.from.join(",")}" data-to="${c.to.join(",")}" ${busy || c.blocked ? "disabled" : ""}>Refit 1</button></div>`
+    ).join("") || `<small class="m-muted">Utilities need a stocked, staffed Shipyard I.</small>`}</section>`;
   }
 
   private engagementSection(target: GhostView): string {
@@ -475,13 +545,13 @@ export class MobileSurfaces {
       }
       case "system": {
         const id = propsOf<{ id: string }>(entry).id ?? state.selectedSystemId ?? "";
-        return sheetFingerprint([clock, props, state.systems.find((system) => system.id === id), state.ghosts.filter((fleet) => fleet.docked === id)]);
+        return sheetFingerprint([clock, props, state.systems.find((system) => system.id === id), state.ghosts, state.pendingOrders, state.battles, this.defenseRadius.get(id)]);
       }
       case "market":
         return sheetFingerprint([
           clock, this.marketTab, this.marketCommodity, this.marketSide,
           state.market, state.wallet, state.freight, state.systems, state.ghosts.filter((fleet) => fleet.own && fleet.docked === "hub"),
-          marketReservations, recentMarketOrders,
+          marketReservations, recentMarketOrders, state.transactions,
         ]);
       case "log":
         return sheetFingerprint([
@@ -561,10 +631,11 @@ export class MobileSurfaces {
       fleet.docked === fixed.id || (!fleet.docked && Math.hypot(fleet.pos.x - fixed.pos.x, fleet.pos.y - fixed.pos.y) <= (this.ctx.state.galaxy?.hyperlimit ?? 900))
     ));
     const fleetRows = nearby.map((fleet) => this.fleetRow(fleet)).join("");
+    const pirate = pirateSite(dynamic?.intel?.enclave_tier ?? 0);
     return {
       title: fixed.name,
       eyebrow: `${fixed.band.toUpperCase()} band · ${mine ? "your holding" : dynamic?.owner ? "rival holding" : "unclaimed"}`,
-      html: `<div class="m-action-grid m-action-grid--top">` +
+      html: (pirate ? `<article class="m-trade-card">${pirate.art ? `<img src="${pirate.art}" alt="" width="64" height="64">` : ""}<b>${pirate.title}</b><p>${pirate.goal}</p></article>` : "") + `<div class="m-action-grid m-action-grid--top">` +
         (semantic
           ? `<button type="button" class="m-primary" data-mobile-act="semantic-exit">Back to galaxy</button>`
           : `<button type="button" class="m-primary" data-mobile-act="system-enter" data-id="${esc(fixed.id)}">Enter system</button>`) +
@@ -573,6 +644,7 @@ export class MobileSurfaces {
           `<span><small>Workforce</small><b>${dynamic.workforce ? `${dynamic.workforce.posted}/${dynamic.workforce.units}` : "—"}</b></span>` +
           `<span><small>Storage</small><b>${dynamic.storage_used}/${dynamic.storage_cap}</b></span>` +
           `<span><small>Slots</small><b>${dynamic.slots_used}/${dynamic.slots_total}</b></span></div>` : "") +
+        (mine && dynamic ? systemDefenseHtml(this.ctx.state, fixed, dynamic, this.defenseRadius.get(fixed.id) ?? DEFAULT_DEFENSE_RADIUS, "mobile", this.defenseAssigning.has(fixed.id)) : "") +
         `<section class="m-section"><h3>Stockpile</h3><div class="m-ledger">${stock}</div></section>` +
         `<section class="m-section"><h3>Worlds</h3>${bodies || `<div class="m-muted">No body report.</div>`}</section>` +
         (fleetRows ? `<section class="m-section"><h3>Fleets here</h3><div class="m-list">${fleetRows}</div></section>` : ""),
@@ -580,17 +652,19 @@ export class MobileSurfaces {
   }
 
   private renderMarket(): SheetView {
-    const tabs = (["exchange", "warehouse", "specialists", "modules"] as MarketTab[]).map((tab) =>
+    if (this.marketTab === "transactions") requestTransactions(this.ctx);
+    const tabs = (["exchange", "warehouse", "specialists", "modules", "transactions"] as MarketTab[]).map((tab) =>
       `<button type="button" data-act="mtab:${tab}" data-mobile-act="market-tab" data-tab="${tab}" aria-selected="${this.marketTab === tab}">${human(tab)}</button>`,
     ).join("");
-    const body = this.marketTab === "exchange" ? this.renderExchange()
+    const body = this.marketTab === "transactions" ? transactionsHtml(this.ctx.state)
+      : this.marketTab === "exchange" ? this.renderExchange()
       : this.marketTab === "warehouse" ? this.renderWarehouse()
         : this.marketTab === "specialists" ? this.renderSpecialists()
           : this.renderModules();
     return {
       title: "Market Hub",
       eyebrow: `Observed ${fmt(this.ctx.state.market?.staleness ?? 0, 1)}s delayed`,
-      html: `<div class="m-subtabs" role="tablist">${tabs}</div>${body}`,
+      html: `<div class="m-subtabs m-market-tabs" role="tablist">${tabs}</div>${body}`,
     };
   }
 
@@ -648,10 +722,10 @@ export class MobileSurfaces {
     const held = home?.modules ?? {};
     return `<div class="m-list">${MODULES.map((module) => {
       const value = moduleRecipeValue(module.kind);
-      const buy = value === null ? null : value * MODULE_BUY_MULT;
+      const buy = value === null || isBlueprintOnly(module.kind) ? null : value * MODULE_BUY_MULT;
       const sell = value === null ? null : value * MODULE_SELL_MULT;
       return `<div class="m-service-row"><span><b>${module.name}</b><small>${module.role} · held ${held[module.kind] ?? 0}</small></span>` +
-        `<div><button type="button" data-mobile-act="module-buy" data-module="${module.kind}" ${buy !== null && spendableMarketCredits() >= buy && home ? "" : "disabled"}>Buy ${buy === null ? "—" : `~${fmt(buy)}`}</button>` +
+        `<div><button type="button" data-mobile-act="module-buy" data-module="${module.kind}" ${buy !== null && spendableMarketCredits() >= buy && home ? "" : "disabled"}>${isBlueprintOnly(module.kind) ? "Blueprint only" : `Buy ${buy === null ? "—" : `~${fmt(buy)}`}`}</button>` +
         `<button type="button" data-mobile-act="module-sell" data-module="${module.kind}" ${(held[module.kind] ?? 0) > 0 ? "" : "disabled"}>Sell ${sell === null ? "—" : `~${fmt(sell)}`}</button></div></div>`;
     }).join("")}</div><p class="m-hint">Sol modules ship as physical crates; local manufacture remains cheaper.</p>`;
   }
@@ -739,7 +813,7 @@ export class MobileSurfaces {
     const qty = Math.max(1, Math.floor(Number(element<HTMLInputElement>("m-market-qty")?.value) || 0));
     const quote = this.ctx.state.market?.prices.find((row) => row.commodity === this.marketCommodity);
     if (!quote) return;
-    const average = marketAverageQuote(quote.price, qty, this.marketSide);
+    const average = marketAverageQuote(quote.price, qty, this.marketSide, quote.depth);
     const protection = average * (this.marketSide === "buy" ? 1 + MARKET_PROTECTION_FRAC : 1 - MARKET_PROTECTION_FRAC);
     if (this.marketSide === "buy") {
       this.ctx.send({ type: "MarketBuy", commodity: this.marketCommodity, units: qty, max_unit_price: protection });
@@ -766,6 +840,7 @@ export class MobileSurfaces {
   }
 
   private tradeModule(module: string | undefined, buy: boolean): void {
+    if (buy && module && isBlueprintOnly(module as ModuleKind)) return;
     if (!MODULES.some((candidate) => candidate.kind === module)) return;
     const kind = module as ModuleKind;
     const home = this.homeSystemId();
@@ -797,7 +872,7 @@ export class MobileSurfaces {
       this.hooks.openSheet({ id: "market" });
       return;
     }
-    if (action === "research") {
+    if (action === "research" || action === "research-enrichment") {
       this.hooks.openSheet({ id: "research" });
       return;
     }
@@ -816,24 +891,36 @@ export class MobileSurfaces {
     }
     if (["freighter", "scout", "colony"].includes(action)) {
       const kind = action === "freighter" ? "convoy" : action;
-      const fleet = this.ctx.state.ghosts.find((ghost) => ghost.own && ghost.composition?.some((stack) => stack.kind === kind));
+      const fleet = this.ctx.state.ghosts.find((ghost) => ghost.own && ghost.composition?.some((stack) => (kind === "convoy" ? isPlayerFreighter(stack.kind) : stack.kind === kind)));
       if (fleet) this.hooks.focusFleet(fleet.id);
       return;
     }
-    const home = foundingHomeSystemId() ?? this.homeSystemId();
-    if (home) this.hooks.focusSystem(home);
+    const home = this.homeSystem();
+    if (!home) return;
+    if (action.startsWith("build-")) {
+      const structure = action.slice(6);
+      const ships = ["convoy", "scout"].includes(structure);
+      const body = ships ? home.bodies.find(b => (b.structures.shipyard ?? 0) > 0)
+        : [...home.bodies].sort((a,b) => (structure === "academy" ? (b.infrastructure_slots ?? 0) - (a.infrastructure_slots ?? 0) : (b.industrial_slots ?? 0) - (a.industrial_slots ?? 0)))[0];
+      if (body) this.hooks.openSheet({ id: ships ? "shipyard" : "build", props: { systemId: home.id, bodyId: body.id } });
+    } else if (["academy", "shipyard", "smelter"].includes(action)) {
+      const body = home.bodies.find(b => (b.structures[action] ?? 0) > 0);
+      if (body) this.hooks.openSheet({ id: "planet", props: { systemId: home.id, bodyId: body.id } });
+    } else this.hooks.focusSystem(home.id);
   }
 
   private fleetStatus(fleet: GhostView): string {
     if (fleet.docked === "hub") return "docked · Market Hub";
     if (fleet.docked) {
       const name = this.ctx.state.galaxy?.systems.find((system) => system.id === fleet.docked)?.name ?? fleet.docked;
-      return `docked · ${name}`;
+      return `${fleet.defend_system ? "defending · " : ""}docked · ${name}`;
     }
     if (fleet.rescue_inbound) return "AAA rescue inbound";
     if (fleet.stalled) return "out of fuel";
+    if (fleet.fuel_transfer) return tenderStatus(fleet);
     if (fleet.jump_spool) return fleet.jump_spool.waiting_for_fuel ? "jump waiting for fuel" : `jump spooling ${fmt(fleet.jump_spool.remaining)}s`;
     if (fleet.guard_target) return "guarding";
+    if (fleet.defend_system) return "defending system";
     return Math.hypot(fleet.vel.x, fleet.vel.y) < 0.5 ? "holding" : "under way";
   }
 
@@ -860,28 +947,23 @@ export class MobileSurfaces {
   }
 }
 
-const FOUNDING_STEPS = {
-  build_shipyard: 1, build_mine: 2, build_convoy: 3, export_production: 4,
-  defeat_privateer: 5, complete_export: 6, build_academy: 7, first_research: 8,
-  build_scout: 9, survey_candidates: 10, build_colony: 11, establish_colony: 12,
-  complete: 12,
-} as const;
-
-function foundingCopy(stage: keyof typeof FOUNDING_STEPS): { title: string; copy: string; action: string; label: string } {
+function foundingCopy(stage: keyof typeof FOUNDING_STEP): { title: string; copy: string; action: string; label: string } {
   switch (stage) {
-    case "build_shipyard": return { title: "Build Shipyard I", copy: "Open your home system and establish orbital shipbuilding.", action: "home", label: "Open home" };
-    case "build_mine": return { title: "Build and staff a Mining Complex", copy: "Mine Metallic Ore on the designated world, then assign workforce.", action: "home", label: "Open home" };
-    case "build_convoy": return { title: "Build your first Freighter", copy: "Assign workforce to the Shipyard, then build a Freighter.", action: "home", label: "Open home" };
-    case "export_production": return { title: "Dispatch the opening export", copy: "Load Provisions and Metallic Ore, then send the Freighter.", action: "freighter", label: "Select Freighter" };
+    case "grow_business": return { title: "Grow your business", copy: "Expand exports or start refining. Either advances the tutorial; both remain open.", action: "home", label: "Open home" };
+    case "build_shipyard": return { title: "Build Shipyard I", copy: "Import Alloys, Machinery and Electronics with your export earnings.", action: "home", label: "Open home" };
+    case "build_mine": return { title: "Build and staff a Mining Complex", copy: "Mine Ferrite Ore on the designated world, then assign workforce.", action: "home", label: "Open home" };
+    case "build_convoy": return { title: "Prepare a Freighter", copy: "Assign workforce to the Shipyard, then build a Tiny Freighter.", action: "home", label: "Open home" };
+    case "build_second_freighter": return { title: "Build a second Tiny Freighter", copy: "Import its materials and staff the Shipyard to expand your trade capacity.", action: "home", label: "Open home" };
+    case "export_production": return { title: "Dispatch the opening export", copy: "Load Ferrite Ore, then send the Freighter.", action: "freighter", label: "Select Freighter" };
     case "defeat_privateer": return { title: "Guard the Freighter", copy: "Intercept the Rogue Privateer before it reaches the civilian hull.", action: "privateer", label: "Select Privateer" };
-    case "complete_export": return { title: "Complete the export", copy: "Deliver and sell both opening goods at the Market Hub.", action: "freighter", label: "Select Freighter" };
+    case "complete_export": return { title: "Complete the export", copy: "Sell Ferrite Ore at the Market Hub.", action: "freighter", label: "Select Freighter" };
     case "build_academy": return { title: "Establish and staff Academy I", copy: "Import its kit, build it at home, and assign workforce.", action: "market", label: "Open Warehouse" };
     case "first_research": return { title: "Choose a first programme", copy: "Complete any Tier I corporate research programme.", action: "research", label: "Open Research" };
     case "build_scout": return { title: "Build a Scout", copy: "Import its kit and construct the exploration hull.", action: "market", label: "Open Warehouse" };
-    case "survey_candidates": return { title: "Survey both prospects", copy: "Use the Scout to reveal their economic specialities.", action: "scout", label: "Select Scout" };
-    case "build_colony": return { title: "Build a Colony Ship", copy: "Compare the reports, import the kit, and construct the hull.", action: "market", label: "Open Warehouse" };
-    case "establish_colony": return { title: "Establish your second holding", copy: "Choose a prospect and send the Colony Ship.", action: "candidate", label: "Compare prospects" };
-    case "complete": return { title: "Founding complete", copy: "Your corporation is ready for independent expansion.", action: "home", label: "Open home" };
+    case "survey_candidates": return { title: "Survey two nearby systems", copy: "Receive both reports to complete the tutorial.", action: "scout", label: "Select Scout" };
+    case "build_colony":
+    case "establish_colony":
+    case "complete": return { title: "Founding complete", copy: "Develop home and grow your trade routes.", action: "home", label: "Open home" };
   }
 }
 
@@ -890,5 +972,5 @@ function isCommodity(value: string | undefined): value is Commodity {
 }
 
 function isMarketTab(value: string | undefined): value is MarketTab {
-  return value === "exchange" || value === "warehouse" || value === "specialists" || value === "modules";
+  return value === "exchange" || value === "warehouse" || value === "specialists" || value === "modules" || value === "transactions";
 }

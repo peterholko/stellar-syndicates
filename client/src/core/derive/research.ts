@@ -76,7 +76,7 @@ export function mergeResearch(dyn: ResearchDynView, st = state): ResearchView {
   for (const d of dyn.programmes) {
     const p = cat.get(d.id);
     if (!p) continue;
-    programmes.push({ ...p, state: d.state, gate: d.gate ?? null });
+    programmes.push({ ...p, state: d.state, gate: d.gate ?? null, recovered_data: d.recovered_data });
   }
-  return { active: dyn.active, queue: dyn.queue, rate: dyn.rate, stalled: dyn.stalled, academies: dyn.academies, programmes };
+  return { active: dyn.active, queue: dyn.queue, rate: dyn.rate, stalled: dyn.stalled, academies: dyn.academies, programmes, blueprints: dyn.blueprints ?? [] };
 }

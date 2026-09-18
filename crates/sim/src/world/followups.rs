@@ -32,9 +32,17 @@ impl World {
             Commodity::Volatiles => (Commodity::Fuel, "Volatiles → Fuel Refinery → Fuel"),
             Commodity::RareElements | Commodity::Silicates => (Commodity::Electronics,
                 "Rare Elements + Silicates → Electronics Fabricator → Electronics"),
-            _ => (Commodity::Alloys, "Metallic Ore + Fuel → Smelter → Alloys"),
+            _ => (Commodity::Alloys, "Ferrite Ore + Fuel → Smelter → Alloys"),
         };
-        for chapter in [FollowUpKind::Escort, FollowUpKind::Salvage, FollowUpKind::Production] {
+        for chapter in [FollowUpKind::Patrol, FollowUpKind::Escort, FollowUpKind::Salvage, FollowUpKind::Production,
+            FollowUpKind::DangerousFreight, FollowUpKind::GuardedSalvage] {
+            let prerequisite = match chapter {
+                FollowUpKind::DangerousFreight => Some(FollowUpKind::Escort),
+                FollowUpKind::GuardedSalvage => Some(FollowUpKind::Salvage), _ => None,
+            };
+            if prerequisite.is_some_and(|before| !self.operations.values().any(|o|
+                o.briefing.as_ref().is_some_and(|b| b.follow_up == before)
+                && o.known.get(&player).is_some_and(|k| k.state == OperationState::Completed))) { continue; }
             // Do not renew on an unseen completion/failure; even the appearance
             // of the next offer would otherwise disclose the previous outcome.
             if self.operations.values().any(|o|
@@ -44,12 +52,44 @@ impl World {
                     || self.time < o.completed_at.unwrap_or(o.expires_at) + crate::operation::FOLLOW_UP_COOLDOWN_S)) {
                 continue;
             }
+            // Advance only on arrived success, not on time or fleet strength.
+            // Existing survivors retain the fitting advertised by their offer.
+            let previous = self.operations.values().filter(|o|
+                matches!(o.scope, OperationScope::Private { player: p } if p == player)
+                && o.briefing.as_ref().is_some_and(|b| b.follow_up == chapter));
+            let last_win = previous.clone().filter(|o| o.known.get(&player)
+                .is_some_and(|k| k.state == OperationState::Completed)).max_by_key(|o| o.id);
+            let survivors_from = previous.filter(|o| o.encounter.as_ref()
+                .is_some_and(|e| e.pirates.iter().any(|id| self.fleets.contains_key(id)))).max_by_key(|o| o.id);
+            let variant = survivors_from.and_then(|o| o.briefing.as_ref()).map(|b| b.variant)
+                .unwrap_or(if chapter == FollowUpKind::Patrol { last_win.and_then(|o| o.briefing.as_ref()).map_or(0, |b| (b.variant + 1) % 3) }
+                    else { u8::from(matches!(chapter, FollowUpKind::DangerousFreight | FollowUpKind::GuardedSalvage)) });
             let (issuer, kind, goal, reward, title, difficulty, suitable, summary) = match chapter {
+                FollowUpKind::Patrol => (OperationIssuer::Authority,
+                    OperationKind::PrivateerPatrol { pos: site }, 1,
+                    OperationReward { credits: 750.0, captain_xp: 70, authority_standing: 1.0, research_insight: 10.0 },
+                    match variant { 0 => "Driver patrol", 1 => "Torpedo patrol", _ => "Mirror patrol" },
+                    "Moderate · fitted opponent",
+                    if variant == 2 { "2 Interceptors · Reflective Plating recommended" } else { "1 fitted Interceptor · inspect before engaging" },
+                    match variant { 0 => "One mass-driver privateer. Whipple Armor protects your Interceptor while its beams return fire.",
+                        1 => "One torpedo privateer. A Point-Defense Screen helps; a screening Corvette adds insurance.",
+                        _ => "One reflective-plated privateer. Bring a wingmate and beam protection for a sustained fight." }.into()),
+                FollowUpKind::DangerousFreight => (OperationIssuer::Authority,
+                    OperationKind::FreightEscort { origin, destination: self.hub }, 1,
+                    OperationReward { credits: 1_800.0, captain_xp: 140, authority_standing: 3.0, research_insight: 10.0 },
+                    "Dangerous freight", "High · torpedo ambush", "Interceptor + Corvette (Point-Defense Screen + Escort Datalink); 1 Freighter",
+                    "Guard the Freighter to Market. Datalink escorts prioritize its incoming torpedoes; keep an Interceptor for the enemy screen. Cargo arrival wins; kills are optional.".into()),
                 FollowUpKind::Escort => (OperationIssuer::Authority,
                     OperationKind::FreightEscort { origin, destination: self.hub }, 1,
                     OperationReward { credits: 900.0, captain_xp: 80, authority_standing: 2.0, research_insight: 0.0 },
                     "Guarded market run", "Moderate", "1 healthy Interceptor + 1 Freighter",
                     "Guard a Freighter from home to the Market Hub. Expect a slow two-ship pirate pack.".to_string()),
+                FollowUpKind::GuardedSalvage => (OperationIssuer::SalvageOffice,
+                    OperationKind::RescueSalvage { pos: site + across * 12_000.0, commodity: Commodity::Electronics,
+                        units: 60, source_fleet: EntityId(0) }, 60,
+                    OperationReward { credits: 1_200.0, captain_xp: 90, authority_standing: 0.0, research_insight: 35.0 },
+                    "Guarded salvage", "High · extraction objective", "Freighter · 60 free cargo; mixed Corvette/Interceptor escort",
+                    "Recover 60 Electronics from a guarded wreck. A driver raider and screening Corvette defend it. Extract the goods; destroying both is not required.".into()),
                 FollowUpKind::Salvage => (OperationIssuer::SalvageOffice,
                     OperationKind::RescueSalvage { pos: site, commodity: Commodity::Alloys, units: 24,
                         source_fleet: EntityId(0) }, 24,
@@ -61,12 +101,15 @@ impl World {
                     OperationReward { credits: 800.0, captain_xp: 40, authority_standing: 1.0, research_insight: 0.0 },
                     "First specialist export", "Low", "1 Freighter · 40 free cargo",
                     format!("Home opportunity: {chain}. Deliver 40 to the Market Hub; selling is separate.")),
+                FollowUpKind::Depot | FollowUpKind::Stronghold | FollowUpKind::CounterRaidTrace
+                | FollowUpKind::CounterRaidAssault | FollowUpKind::CounterRaidRecovery | FollowUpKind::SiteRecovery | FollowUpKind::CombatPreparation =>
+                    unreachable!("discovered-site offers are separate"),
             };
             let id = self.insert_operation(issuer, OperationScope::Private { player }, kind, goal,
                 reward, self.hub, crate::operation::PRIVATE_OFFER_LIFETIME_S, events);
             let operation = self.operations.get_mut(&id).unwrap();
             operation.briefing = Some(OperationBriefing { follow_up: chapter, title: title.into(),
-                difficulty: difficulty.into(), suitable_fleets: suitable.into(), summary });
+                difficulty: difficulty.into(), suitable_fleets: suitable.into(), summary, variant });
             operation.encounter = Some(FollowUpEncounter::default());
             // A renewed contract reuses surviving opponents, in place. Neither
             // acceptance nor expiry despawns a visible ship, and repeated offers
@@ -93,7 +136,9 @@ impl World {
     }
 
     pub(super) fn tick_followup_encounters(&mut self, events: &mut Vec<Event>) {
-        let ids: Vec<_> = self.operations.values().filter(|o| o.briefing.is_some()
+        // A briefing also describes real hideout loot. Only authored encounters
+        // own spawn state; recovering a defeated base must not spawn a new guard.
+        let ids: Vec<_> = self.operations.values().filter(|o| o.encounter.is_some()
             && o.state == OperationState::Active && self.time <= o.expires_at).map(|o| o.id).collect();
         for id in ids {
             let op = self.operations[&id].clone();
@@ -101,7 +146,21 @@ impl World {
             let Some(assigned) = op.assigned_fleets.get(&player).copied() else { continue; };
             let Some(ship) = self.fleets.get(&assigned).filter(|f| f.owner == player) else { continue; };
             let encounter = op.encounter.unwrap_or_default();
+            let variant = op.briefing.as_ref().map_or(0, |b| b.variant);
             match op.kind {
+                OperationKind::PrivateerPatrol { pos } => {
+                    let ship_pos = ship.pos;
+                    if !encounter.launched && ship_pos.distance(pos) <= 25_000.0 {
+                        let pirate = encounter.pirates.iter().find(|id| self.fleets.contains_key(id)).copied()
+                            .unwrap_or_else(|| self.spawn_fixed_pirates(vec![(ShipKind::Raider,
+                                pirate::patrol_fitting(variant), 1)], pos, FleetOrder::Idle));
+                        let e = self.operations.get_mut(&id).unwrap().encounter.as_mut().unwrap();
+                        e.launched = true;
+                        e.pirates = vec![pirate];
+                    }
+                    // A local sensor encounter, not a galaxy-wide homing missile.
+                    self.engage_contract_guard(id, assigned, ship_pos, 12_000.0);
+                }
                 OperationKind::FreightEscort { origin, destination } => {
                     let Some(charge_id) = encounter.protected_fleet else { continue; };
                     let Some(charge) = self.fleets.get(&charge_id).filter(|f| f.owner == player) else { continue; };
@@ -124,8 +183,13 @@ impl World {
                             self.fleets.get_mut(&existing).unwrap().order = FleetOrder::Intercept { target: charge_id };
                             existing
                         } else {
-                            self.contract_pirates(ShipKind::Raider, 2, pos,
-                                FleetOrder::Intercept { target: charge_id }, events)
+                            if variant > 0 {
+                                self.spawn_fixed_pirates(Self::escort_opposition(true), pos,
+                                    FleetOrder::Intercept { target: charge_id })
+                            } else {
+                                self.contract_pirates(ShipKind::Raider, 2, pos,
+                                    FleetOrder::Intercept { target: charge_id }, events)
+                            }
                         };
                         let e = self.operations.get_mut(&id).unwrap().encounter.as_mut().unwrap();
                         e.launched = true;
@@ -141,20 +205,41 @@ impl World {
                     }
                 }
                 OperationKind::RescueSalvage { pos, .. } => {
+                    let ship_pos = ship.pos;
                     if !encounter.launched && ship.pos.distance(pos) <= 25_000.0 {
                         // The optional opponent holds OFF the salvage approach.
                         // It does not intercept the cargo ship or gate recovery.
                         let approach = (pos - self.players[&player].home).normalized();
                         let pirate = encounter.pirates.iter().find(|id| self.fleets.contains_key(id))
-                            .copied().unwrap_or_else(|| self.contract_pirates(ShipKind::Corvette, 1,
-                                pos + Vec2::new(-approach.y, approach.x) * 14_000.0,
-                                FleetOrder::Idle, events));
+                            .copied().unwrap_or_else(|| if variant > 0 {
+                                self.spawn_fixed_pirates(Self::escort_opposition(false),
+                                    pos + Vec2::new(-approach.y, approach.x) * 5_000.0, FleetOrder::Idle)
+                            } else { self.contract_pirates(ShipKind::Corvette, 1,
+                                pos + Vec2::new(-approach.y, approach.x) * 14_000.0, FleetOrder::Idle, events) });
                         let e = self.operations.get_mut(&id).unwrap().encounter.as_mut().unwrap();
                         e.launched = true;
                         e.pirates = vec![pirate];
                     }
+                    if variant > 0 { self.engage_contract_guard(id, assigned, ship_pos, 8_000.0); }
                 }
                 _ => {}
+            }
+        }
+    }
+
+    fn escort_opposition(torpedoes: bool) -> Vec<(ShipKind, crate::module::Loadout, u32)> {
+        use crate::module::{Loadout, ModuleKind::*};
+        vec![(ShipKind::Raider, Loadout::new(vec![if torpedoes { TorpedoRack } else { MassDriver }]), 1),
+            (ShipKind::Corvette, Loadout::new(vec![PointDefenseScreen, ReflectivePlating]), 1)]
+    }
+
+    fn engage_contract_guard(&mut self, id: OperationId, target: EntityId, target_pos: Vec2, radius: f64) {
+        let pirates = self.operations[&id].encounter.as_ref().map(|e| e.pirates.clone()).unwrap_or_default();
+        for pirate in pirates {
+            if let Some(fleet) = self.fleets.get_mut(&pirate)
+                && matches!(fleet.order, FleetOrder::Idle)
+                && fleet.pos.distance(target_pos) <= radius {
+                fleet.order = FleetOrder::Intercept { target };
             }
         }
     }
@@ -198,7 +283,7 @@ mod tests {
             "true combat progress alone must not unlock the board");
         w.players.get_mut(&p).unwrap().founding.reward_granted = true;
         w.refresh_followup_operations(p, &mut Vec::new());
-        assert_eq!(w.operations.values().filter(|o| o.briefing.is_some()).count(), 3);
+        assert_eq!(w.operations.values().filter(|o| o.briefing.is_some()).count(), 4);
         for o in w.operations.values().filter(|o| o.briefing.is_some()) {
             assert!(!o.is_visible_to(p), "hub's offer is still in flight");
             assert!(o.reward.credits > 0.0);
@@ -207,7 +292,7 @@ mod tests {
         assert!(!w.fleets.values().any(|f| f.operation_privateer));
         unlock(&mut w, p);
         w.refresh_followup_operations(p, &mut Vec::new());
-        assert_eq!(w.operations.values().filter(|o| o.briefing.is_some()).count(), 3);
+        assert_eq!(w.operations.values().filter(|o| o.briefing.is_some()).count(), 4);
         let serialized = serde_json::to_string(&w).unwrap();
         let mut restored: World = serde_json::from_str(&serialized).unwrap();
         restored.refresh_followup_operations(p, &mut Vec::new());
@@ -328,5 +413,123 @@ mod tests {
         w.pending_operation_reports.clear();
         w.refresh_followup_operations(p, &mut Vec::new());
         assert_eq!(w.operations[&job(&w, FollowUpKind::Production)].briefing.as_ref().unwrap().summary, before);
+    }
+
+    #[test]
+    fn patrol_spawns_its_advertised_fit_and_pays_only_after_battle_light() {
+        let (mut w, p) = setup();
+        unlock(&mut w, p);
+        let id = job(&w, FollowUpKind::Patrol);
+        let pos = w.operations[&id].kind.target_pos(&w.operation_system_positions(), w.hub);
+        let fleet = hull(&mut w, p, ShipKind::Raider, pos);
+        w.fleets.get_mut(&fleet).unwrap().add(ShipKind::Raider, 3);
+        w.apply_accept_operation(p, id);
+        w.apply_assign_operation_fleet(p, id, fleet, None);
+        let mut events = Vec::new();
+        w.tick_followup_encounters(&mut events);
+        let pirate = w.operations[&id].encounter.as_ref().unwrap().pirates[0];
+        assert_eq!(w.fleets[&pirate].ships[0].loadout, pirate::patrol_fitting(0));
+        assert_eq!(w.fleets[&pirate].ships[0].hp, w.fleets[&pirate].ships[0].max_hp());
+        assert!(!w.fleets[&pirate].operation_privateer);
+        let before = w.players[&p].credits;
+        // Use the actual engagement pipeline, not a fabricated kill receipt.
+        w.fleets.get_mut(&fleet).unwrap().order = FleetOrder::Attack { target: pirate };
+        let mut completed = false;
+        for _ in 0..(300 * TICK_HZ) {
+            w.step(&[]);
+            if w.operations[&id].state == OperationState::Completed { completed = true; break; }
+        }
+        assert!(completed, "real patrol battle completes its contract");
+        assert!(!w.fleets.contains_key(&pirate));
+        assert_ne!(w.operations[&id].known[&p].state, OperationState::Completed);
+        assert!(w.players[&p].credits <= before, "no early payout (upkeep can debit)");
+        let after_battle = w.players[&p].credits;
+        w.time = w.pending_operation_reports.iter().map(|r| r.arrive_at).fold(w.time, f64::max);
+        w.deliver_operation_reports();
+        assert_eq!(w.players[&p].credits, after_battle + 750.0);
+        w.deliver_operation_reports();
+        assert_eq!(w.players[&p].credits, after_battle + 750.0);
+        w.time += crate::operation::FOLLOW_UP_COOLDOWN_S + 1.0;
+        w.refresh_followup_operations(p, &mut Vec::new());
+        let next = w.operations.values().filter(|o| o.briefing.as_ref().is_some_and(|b| b.follow_up == FollowUpKind::Patrol))
+            .max_by_key(|o| o.id).unwrap();
+        assert_eq!(next.briefing.as_ref().unwrap().variant, 1, "next public fitting, not fleet-sized opposition");
+    }
+
+    #[test]
+    fn advanced_jobs_unlock_on_success_news_and_corvettes_can_really_guard() {
+        let (mut w, p) = setup();
+        unlock(&mut w, p);
+        for chapter in [FollowUpKind::Escort, FollowUpKind::Salvage] {
+            let id = job(&w, chapter);
+            w.complete_operation(id, Some(p), w.hub, &mut Vec::new());
+        }
+        w.refresh_followup_operations(p, &mut Vec::new());
+        assert!(!w.operations.values().any(|o| o.briefing.as_ref().is_some_and(|b|
+            matches!(b.follow_up, FollowUpKind::DangerousFreight | FollowUpKind::GuardedSalvage))));
+        unlock(&mut w, p); // deliver the success wavefront
+        w.refresh_followup_operations(p, &mut Vec::new());
+        unlock(&mut w, p); // then deliver the new offers
+        let id = job(&w, FollowUpKind::DangerousFreight);
+        let home = w.players[&p].home;
+        let charge = hull(&mut w, p, ShipKind::Convoy, home);
+        let guard = hull(&mut w, p, ShipKind::Corvette, home);
+        w.apply_accept_operation(p, id);
+        w.apply_assign_operation_fleet(p, id, guard, Some(charge));
+        assert_eq!(w.operations[&id].assigned_fleets[&p], guard);
+        w.step(&[Command::GuardFleet { player_id: p, interceptor_id: guard, target_id: charge }]);
+        assert!(matches!(w.fleets[&guard].order, FleetOrder::Guard { target } if target == charge));
+        w.tick_followup_encounters(&mut Vec::new());
+        assert!(w.operations[&id].encounter.as_ref().unwrap().staged_at_home);
+        let pos = home + (w.hub - home).normalized() * 6000.0;
+        for ship in [guard, charge] { w.fleets.get_mut(&ship).unwrap().pos = pos; }
+        w.tick_followup_encounters(&mut Vec::new());
+        let pirate = w.operations[&id].encounter.as_ref().unwrap().pirates[0];
+        assert_eq!(w.fleets[&pirate].count(ShipKind::Corvette), 1);
+        assert_eq!(w.fleets[&pirate].count(ShipKind::Raider), 1);
+        assert!(!w.fleets[&pirate].operation_privateer);
+        for ship in [guard, charge] { w.fleets.get_mut(&ship).unwrap().pos = w.hub; }
+        w.tick_followup_encounters(&mut Vec::new());
+        assert_eq!(w.operations[&id].state, OperationState::Completed);
+        assert!(w.fleets.contains_key(&pirate), "delivery, not kills, is the objective");
+
+        let salvage = job(&w, FollowUpKind::GuardedSalvage);
+        let OperationKind::RescueSalvage { pos, .. } = w.operations[&salvage].kind else { panic!() };
+        w.fleets.get_mut(&charge).unwrap().pos = pos;
+        w.apply_accept_operation(p, salvage);
+        w.apply_assign_operation_fleet(p, salvage, charge, None);
+        w.tick_operations(&mut Vec::new());
+        assert_eq!(w.operations[&salvage].state, OperationState::Completed);
+        assert_eq!(w.fleets[&charge].cargo_amount(Commodity::Electronics), 60);
+        assert!(w.operations[&salvage].encounter.as_ref().unwrap().pirates.iter().all(|id| w.fleets.contains_key(id)));
+    }
+
+    #[test]
+    fn history_pruning_preserves_unlocks_and_the_patrol_variant() {
+        let (mut w, p) = setup();
+        unlock(&mut w, p);
+        let escort = job(&w, FollowUpKind::Escort);
+        let patrol = job(&w, FollowUpKind::Patrol);
+        for id in [escort, patrol] { w.complete_operation(id, Some(p), w.hub, &mut Vec::new()); }
+        unlock(&mut w, p);
+        let template = w.operations[&patrol].clone();
+        for _ in 0..520 {
+            let id = w.alloc_operation_id();
+            let mut old = template.clone();
+            old.id = id;
+            old.briefing = None;
+            old.kind = OperationKind::MarketDelivery { commodity: Commodity::Alloys, units: 1 };
+            old.rewards_paid.insert(p);
+            w.operations.insert(id, old);
+        }
+        w.tick_operations(&mut Vec::new());
+        assert!(w.operations.contains_key(&escort) && w.operations.contains_key(&patrol));
+        assert!(w.operations.len() <= 512);
+        w.time += crate::operation::FOLLOW_UP_COOLDOWN_S + 1.0;
+        w.refresh_followup_operations(p, &mut Vec::new());
+        let latest = w.operations.values().filter(|o| o.briefing.as_ref().is_some_and(|b| b.follow_up == FollowUpKind::Patrol))
+            .max_by_key(|o| o.id).unwrap();
+        assert_eq!(latest.briefing.as_ref().unwrap().variant, 1);
+        assert!(w.operations.values().any(|o| o.briefing.as_ref().is_some_and(|b| b.follow_up == FollowUpKind::DangerousFreight)));
     }
 }

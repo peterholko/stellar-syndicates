@@ -16,6 +16,15 @@ use crate::standing::StandingOrder;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Command {
+    SetFreightRoute { player_id: PlayerId, fleet_id: EntityId, route: Option<crate::industry::FreightRoute> },
+    DeployOutpost { player_id: PlayerId, fleet_id: EntityId, system_id: EntityId, body_id: u32,
+        outpost: crate::industry::OutpostKind, commodity: crate::Commodity },
+    SkimFuel { player_id: PlayerId, fleet_id: EntityId, system_id: EntityId },
+    ReserveProject { player_id: PlayerId, system_id: EntityId, target: crate::industry::ProjectTarget, reserve: bool },
+    StartColonyProject { player_id: PlayerId, system_id: EntityId, body_id: u32,
+        project: crate::industry::ColonyProjectKind, commodity: crate::Commodity },
+    SetColonyProjectActive { player_id: PlayerId, system_id: EntityId,
+        project: crate::industry::ColonyProjectKind, active: bool },
     /// Register (or re-attach) a player's corporation. Idempotent: issuing it
     /// for an existing `id` does not duplicate or reset the corporation, so a
     /// reconnecting player keeps their state (M6).
@@ -68,6 +77,21 @@ pub enum Command {
         player_id: PlayerId,
         interceptor_id: EntityId,
         target_id: EntityId,
+    },
+    /// Delayed instruction to a fitted player Freighter, never a remote tank edit.
+    RefuelFleet {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        target_id: EntityId,
+    },
+
+    /// Light-delayed standing local defense; the pursuit limit is centered on
+    /// the system, not the fleet. Existing guards continue until this arrives.
+    DefendSystem {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        system_id: EntityId,
+        pursuit_radius: f64,
     },
 
     /// Recall a raider (break off, return home). Also light-delayed — it may
@@ -444,6 +468,9 @@ pub enum Command {
         /// `default` empty keeps pre-specialist clients/commands parsing.
         #[serde(default)]
         specialists: std::collections::BTreeMap<crate::specialist::SpecialistKind, u32>,
+        /// Smelter feedstock. Omitted preserves the existing standing recipe.
+        #[serde(default)]
+        refining_ore: Option<crate::cargo::Commodity>,
     },
 
     /// Set one body's civilian immigration policy. This is private local
@@ -612,6 +639,16 @@ pub enum Command {
         fleet_id: EntityId,
         system_id: EntityId,
     },
+    ExploreSite {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        site_id: EntityId,
+        task: crate::sites::ExpeditionTask,
+    },
+    AnnotateExploration {
+        player_id: PlayerId,
+        entry: crate::sites::JournalEntry,
+    },
 
     /// ATTACK a rival fleet (§offensive-orders Part 1) — the targeted DESTROY verb.
     /// Orderable on ANY rival fleet (not just convoys). The attacking fleet must
@@ -636,6 +673,11 @@ pub enum Command {
         player_id: PlayerId,
         fleet_id: EntityId,
         posture: EngagementPosture,
+    },
+    SetFleetMission {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        mission: crate::doctrine::MissionProfile,
     },
 
     // ---- SYNDICATES (§syndicates Part 1) -------------------------------------

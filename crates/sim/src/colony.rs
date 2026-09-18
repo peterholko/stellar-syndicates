@@ -74,7 +74,7 @@ impl FoodState {
 
 /// Provisions drawn per second per MILLION population. Population now starts
 /// in thousands rather than millions, so this rate is intentionally high in
-/// the internal "millions" unit: a 3,000-person home still eats 0.12/s and the
+/// the internal "millions" unit: a 2,000-person home still eats 0.08/s and the
 /// food chain remains an opening concern instead of disappearing in rounding.
 /// Tunable.
 pub const PROVISIONS_PER_MILLION_PER_S: f64 = 40.0;
@@ -93,11 +93,11 @@ pub const POP_GROWTH_PER_S: f64 = 0.0;
 /// A colony ship plants one 1,000-person workforce cohort.
 pub const COLONY_FOUNDING_POP: f64 = 0.001;
 
-/// A new corporation begins with 3,000 people: three legible workforce cohorts,
+/// A new corporation begins with 2,000 people: two legible workforce cohorts,
 /// not an already-developed multi-million-person colony.
-pub const HOME_FOUNDING_POP: f64 = 0.003;
+pub const HOME_FOUNDING_POP: f64 = 0.002;
 
-/// Opening food buffer. At 3,000 people this is roughly two minutes of demand,
+/// Opening food buffer. At 2,000 people this is roughly three minutes of demand,
 /// enough for the staffed Bioharvester→Agroplex chain to establish itself.
 pub const HOME_PROVISIONS_SEED: f64 = 15.0;
 

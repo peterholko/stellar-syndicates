@@ -1,0 +1,3211 @@
+{
+  "version": "2026-09-16",
+  "recipe": "transparent-tier-contain-padding-v1",
+  "sizes": [
+    128,
+    256,
+    512
+  ],
+  "structures": {
+    "mining_complex": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/mining-complex/tier-1.png",
+        "sourceSha256": "42639682aeae8ae8fb6eb8435af13fbdeb66605c32d5145979abe167da111388",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7950,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 22572,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 68326,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/mining-complex/tier-2.png",
+        "sourceSha256": "ede1b3cd5629c04ab46f6875cdd0e26dbaadc4e8521d5537d0548fa1a46e7bd4",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7948,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23432,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 72562,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/mining-complex/tier-3.png",
+        "sourceSha256": "8d04aff19d3af48cf771875a421b90f5a64aa995f8c44e1d0094058cd47d9985",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8204,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23762,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 71276,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/mining-complex/tier-4.png",
+        "sourceSha256": "dba71f92aabd54acb648ec558ed4273d282a4d1cc5698fb6d10470df3c9d4a06",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 10198,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 30562,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 94396,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/mining-complex/tier-5.png",
+        "sourceSha256": "10f12ee0138b61ff693b4d5822a6e55cb74d3fd913c1cfe17cbab411dd3d2283",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9506,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 27704,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 85792,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/mining-complex/tier-6.png",
+        "sourceSha256": "ba1fb6344b3c92d1f3d830a6c5ed4ccd4cdf2762598412f5ba3b40157e3c6ae8",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 11874,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 33886,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 104714,
+            "url": "/art/derived/structures/2026-09-16/mining_complex/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "warehouse": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/warehouse/tier-1.png",
+        "sourceSha256": "3f85ff5de3e9fd63bb68696845fb56a4ba78d254c82151f222bd8867648e8489",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7162,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 20434,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 58922,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/warehouse/tier-2.png",
+        "sourceSha256": "924f50bc16c5909a388f9ac9be80051f640efa26a3667450b1c673eaaf7e1c99",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7962,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 22654,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 65358,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/warehouse/tier-3.png",
+        "sourceSha256": "a1cf5e46cd903d847bc2113b0a3297e89c4498b97836b41a576f9615ab5b4e1c",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8482,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24858,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 73420,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/warehouse/tier-4.png",
+        "sourceSha256": "4ad9d57e5089fc09abbe76c00f59ad47d66da29011c775af3339faaadc6a1c4f",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8162,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23608,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 69450,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/warehouse/tier-5.png",
+        "sourceSha256": "6571f1c448f6beec63943b4bfb20d11b7dfb6d1d1d945f1f6356c55f41b91e40",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9040,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 25120,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 74528,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/warehouse/tier-6.png",
+        "sourceSha256": "3ab651dd4607ad265a9d706ed9857619db2ec31763f590e935df818b2a00e2a7",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 10204,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 28952,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 86940,
+            "url": "/art/derived/structures/2026-09-16/warehouse/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "bioharvester": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/bioharvester/tier-1.png",
+        "sourceSha256": "dd8f18d4578343b2e48f9c90276072b4674cfe61f205496b864ebfa17afdf0ee",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8084,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23040,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 70696,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/bioharvester/tier-2.png",
+        "sourceSha256": "724277c8916568ba71506e8a87d7e588130b667f61f83dd48132a0610ccad1e5",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7582,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23052,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 70632,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/bioharvester/tier-3.png",
+        "sourceSha256": "7691fb12ef47c2405fa4b664a5fe4bd7417c6a4c54a82f6a8a65e4bf1b775797",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9058,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26068,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 82244,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/bioharvester/tier-4.png",
+        "sourceSha256": "065934d6222f0244194d69ffd47cc6c006e3982cec890444165082e2c3c0e2e2",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9416,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 28242,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 87708,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/bioharvester/tier-5.png",
+        "sourceSha256": "d0b67612e6fecd337dfadede801e5e2962c4ec5abd50b83eb0b04900db766c7e",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8232,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24574,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 77452,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/bioharvester/tier-6.png",
+        "sourceSha256": "247fc5f860d296d8c20186c8e95b616f43dad575e6441667ea7792737ca09cda",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8600,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26216,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 83740,
+            "url": "/art/derived/structures/2026-09-16/bioharvester/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "agroplex": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/agroplex/tier-1.png",
+        "sourceSha256": "96e0a67002ea8ceecc19ecf58316a042c257f8f5ccc88324e1ef5cd71c754694",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 6592,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 19458,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 58788,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/agroplex/tier-2.png",
+        "sourceSha256": "fd7e0707fe688257e148d410f3a823d76428491b2f1651707b9a961a6168e373",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 6878,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 20608,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 64288,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/agroplex/tier-3.png",
+        "sourceSha256": "c7c0654d7ab8a625ee308f22b584267b3b64a62ceeaaf2e10793e4ffeeb2f79f",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 6888,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 20254,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 61956,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/agroplex/tier-4.png",
+        "sourceSha256": "8468395a7559cbbd6326ceb5978e141755bba2d0b9904890615f5c2f5d9115ad",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7656,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 22554,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 69990,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/agroplex/tier-5.png",
+        "sourceSha256": "ea8bc2dea9b272c15630f8f3b9c0cd45cf0733b7f3afbf9c2837c81705a7d043",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7858,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24018,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 75746,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/agroplex/tier-6.png",
+        "sourceSha256": "1c3eb5c8e256099b98130e0f33b32466e7623189e23a9cdf974dbd1bf65ac99c",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7586,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 22300,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 69824,
+            "url": "/art/derived/structures/2026-09-16/agroplex/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "shipyard": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/shipyard/tier-1.png",
+        "sourceSha256": "f5b993910b818adb5205aef2ba4611310cfac75de73b8e8ef23b735f00729820",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7512,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 22200,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 67298,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/shipyard/tier-2.png",
+        "sourceSha256": "c565cafd0840c957fdf6017a7d587a9b4066c460017f3177c721795b899ba4d2",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8364,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24090,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 74614,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/shipyard/tier-3.png",
+        "sourceSha256": "c5624350b5ff2f78a39e04215761b63407f6964fe007ac44e9981cdc6345348c",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8512,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26178,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 82666,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/shipyard/tier-4.png",
+        "sourceSha256": "75db8a14d6684c3fe56f52c555298761865c30120a7554f28d10ee519ba197bc",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8500,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24824,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 76660,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/shipyard/tier-5.png",
+        "sourceSha256": "d523b2ebf13c97d1e73861f9369ccb692e7f6af42047acedbfae640a18b5fd7c",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8738,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26402,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 82248,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/shipyard/tier-6.png",
+        "sourceSha256": "212fb0dec397e63009b16224678586eb4b5afc3bbdbfe38e7751bb7c194fbd0d",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9522,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 28156,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 87736,
+            "url": "/art/derived/structures/2026-09-16/shipyard/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "habitat": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/habitat/tier-1.png",
+        "sourceSha256": "94d69a4b3157c35175d961cc87f7edbf6d5a4919b26c9e50d7d3b965c5907d9b",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7432,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 21702,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 67542,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/habitat/tier-2.png",
+        "sourceSha256": "0efac639cbd1d7a8d718b89b92907bfb0360377ab3be0c34de5c7732441e1d87",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8408,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 25300,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 79890,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/habitat/tier-3.png",
+        "sourceSha256": "7a92b08014e361d86e6b118bbbcdb68c483aad8ddf73a2d976b79224dc7104e3",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9536,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 28800,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 91992,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/habitat/tier-4.png",
+        "sourceSha256": "13b9d86c2e53d82bc5486cb38bf377fafc1a3bff8156b8f5d2bedbf59ce37fbb",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9890,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 29838,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 93528,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/habitat/tier-5.png",
+        "sourceSha256": "f1060f2ec2cb878163b27a2df399563bb6b4e4f9d63dbfd4d9bf36bb58d62de6",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 10316,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 31062,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 94932,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/habitat/tier-6.png",
+        "sourceSha256": "dd95a5918a08e12020cfa5741293658625b72a6e865a8b66f6bdbc17242ebcea",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 10546,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 30248,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 93444,
+            "url": "/art/derived/structures/2026-09-16/habitat/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "academy": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/academy/tier-1.png",
+        "sourceSha256": "1fc067ee895674b49de430be85ec3819b1301a5f7c499f1dfec087be9d55982f",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7652,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 21644,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 65386,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/academy/tier-2.png",
+        "sourceSha256": "8723e84acbab20f06991dff4e6fa43abdaa1efecfc45e128d8b61f440775adce",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7808,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23070,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 70354,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/academy/tier-3.png",
+        "sourceSha256": "8044dc5351ed1b0df01d3123cac96666748b647941c23affe647b3eee40f2a4b",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8398,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24900,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 77684,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/academy/tier-4.png",
+        "sourceSha256": "29c6b1ced3c6a2e65aba374bb769d9eaea66ec8cfc7a54c3d935e388516dacbb",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9100,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 27274,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 83250,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/academy/tier-5.png",
+        "sourceSha256": "edbd54a328c60afc31d1bf0eb82f9411a9dafe6c8be2df05a5649c95459f276e",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8870,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26512,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 82192,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/academy/tier-6.png",
+        "sourceSha256": "e96513d5632dacda062f7acfc7772bb362ccdc69bd46caa36f5f64f35014ba12",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8692,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26658,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 84270,
+            "url": "/art/derived/structures/2026-09-16/academy/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "volatile_harvester": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/volatile_harvester/tier-1.png",
+        "sourceSha256": "bcc0a79eaa4c71236f71de75fc516dfdcef5bfb2f65a1190f8c3d3a068048b08",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7702,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 22416,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 67826,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/volatile_harvester/tier-2.png",
+        "sourceSha256": "6dc912dc3211931863d43fd6b45b765e9f38955c079df17c82d7647c79ff0e42",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8986,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 25766,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 84138,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/volatile_harvester/tier-3.png",
+        "sourceSha256": "b1ba3b3cc5ce6e3d4ac6d753b9842bdb2f0613087dc347cabb36c8b15d64eb6a",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8538,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24594,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 77536,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/volatile_harvester/tier-4.png",
+        "sourceSha256": "c78d806938a7ac797b16e349e8a0f0e3dc4d7c724d1d7aed22ac05b8e450dc33",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8514,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 25678,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 78882,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/volatile_harvester/tier-5.png",
+        "sourceSha256": "c7c541a7323e0e3c40278ca0c4e8516154232a6e36d01ba2c40888203c813c0e",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8538,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 25444,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 81508,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/volatile_harvester/tier-6.png",
+        "sourceSha256": "578dec8b7fa0a259007f580ee7f5456ef08f16a50715aca0afe1ec3c40054411",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9298,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 28026,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 88270,
+            "url": "/art/derived/structures/2026-09-16/volatile_harvester/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "smelter": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/smelter/tier-1.png",
+        "sourceSha256": "2636d7589f345ee0e2de40e7359637a1f9c24eea5b782680f8d7dc3d620917d9",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7252,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 21210,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 62682,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/smelter/tier-2.png",
+        "sourceSha256": "f0e63566571bbc5172fc878083072af8695f195601b3d31f4cd84be8bebb147a",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8514,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 25178,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 77368,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/smelter/tier-3.png",
+        "sourceSha256": "55c9f2ff1f5b7ae66cca82a79484af51df98c00e78410525fb738808b1ca810a",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9720,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 29576,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 90414,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/smelter/tier-4.png",
+        "sourceSha256": "d128130d3b9215ef87efaa81ee25d46ec9cad10374442d32b9a65cbd3cc85766",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8908,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26664,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 79244,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/smelter/tier-5.png",
+        "sourceSha256": "25ee318f65eb373de3ac85d6845194d11d2dfa9d2cb68fbb293ed7bd9a42be57",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8940,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26972,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 86988,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/smelter/tier-6.png",
+        "sourceSha256": "529cfa58e167fcaa2ccd775f223f81403ad61b6997b312c7c490e807e29bf77c",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9314,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26264,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 83174,
+            "url": "/art/derived/structures/2026-09-16/smelter/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "electronics_fabricator": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/electronics_fabricator/tier-1.png",
+        "sourceSha256": "32782aa4cc06011d5d05aa00f58140c149d2bcad19bed4f7a6c93cf5ddcf276a",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7344,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 21026,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 62058,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/electronics_fabricator/tier-2.png",
+        "sourceSha256": "eeb6bf73b356b69cf494667ecb93b96e05e005b703441685c36fa7948f474333",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8524,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24526,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 75118,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/electronics_fabricator/tier-3.png",
+        "sourceSha256": "a15d1315f74aa8286945a4701f5d8f1815501143f285856e0dda33a860233845",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9348,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 27460,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 83416,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/electronics_fabricator/tier-4.png",
+        "sourceSha256": "335175961755e8129607e06c3dc225c9e438f93d41314130be496626a0acc0a1",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8058,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24016,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 71718,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/electronics_fabricator/tier-5.png",
+        "sourceSha256": "99f28edac965c7d3df32911a3ae634f1237c13b04691928fa51bd4237e85f5b0",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9192,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 27282,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 85084,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/electronics_fabricator/tier-6.png",
+        "sourceSha256": "e1fdff10ac7b58bc9d76b4c6514cfcfb70201c9d2a62f5a90dce8bbaaeed60ca",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9398,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 27190,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 81930,
+            "url": "/art/derived/structures/2026-09-16/electronics_fabricator/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "chemical_works": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/chemical_works/tier-1.png",
+        "sourceSha256": "673633a675f9d3135fb8a5549e31f270710dd88ecb4b8c2af2462f79b117d987",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7868,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 22992,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 67428,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/chemical_works/tier-2.png",
+        "sourceSha256": "94f0baa5e00b790a165a17ebd3af0a61931f1b3a26defba62336ef6736952f6e",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9200,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26346,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 78660,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/chemical_works/tier-3.png",
+        "sourceSha256": "d45073aac64b92c76dae8fd31382fcc4439c89eaf54ed463c97cf1c1a975ccc6",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9228,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 27162,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 82912,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/chemical_works/tier-4.png",
+        "sourceSha256": "0c31114c528df1705fd92d990516c4b406628bb6805b0236541099ba7d30dfef",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9532,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 27686,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 87258,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/chemical_works/tier-5.png",
+        "sourceSha256": "20125191b594166e19ebd4421ee597052cd8f193bf541c52b8504daf72c8a10c",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9758,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 29142,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 91100,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/chemical_works/tier-6.png",
+        "sourceSha256": "aed9a7309e2c492179b808fa7b67ce2fd5397e8b13047ac7b2f0d2ad51ecdd7e",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9288,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 27150,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 85120,
+            "url": "/art/derived/structures/2026-09-16/chemical_works/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "fuel_refinery": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/fuel_refinery/tier-1.png",
+        "sourceSha256": "c70c030632291a5a81eaecaf2e8e5f33604558ac86771c1051c5dedece612d1a",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7138,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 20346,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 59190,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/fuel_refinery/tier-2.png",
+        "sourceSha256": "5bb5eddff3e58fb210083574f778763743f76af1b78162549e23a1d88bc06558",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8622,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24632,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 73370,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/fuel_refinery/tier-3.png",
+        "sourceSha256": "96b7b6f8ff757694e6c60cb97586f17e435de70c7c6b350ccddf6229e698cba8",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8560,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 25136,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 78014,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/fuel_refinery/tier-4.png",
+        "sourceSha256": "cdbb32bd332d47ab5b21bc3e1b9c64331fcbe1af40f816b7617ad82d7a281704",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8390,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24782,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 77024,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/fuel_refinery/tier-5.png",
+        "sourceSha256": "ba8c405ac2a63f460bcc99023ca2bae5e8c0e3906bd45809a64ddf0b5b10f706",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9318,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26626,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 82048,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/fuel_refinery/tier-6.png",
+        "sourceSha256": "a4f947bf6a319d777d1685bc9e7e11c62f5ea19db80679dd2febd31bb7db347c",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8178,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24012,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 74746,
+            "url": "/art/derived/structures/2026-09-16/fuel_refinery/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "machine_works": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/machine_works/tier-1.png",
+        "sourceSha256": "43262495f065dd13eb47192e1e17b9dd8d3095a223292d5e1b8bbc956e48232e",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7454,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 22128,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 66166,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/machine_works/tier-2.png",
+        "sourceSha256": "b59e0d1f3e5d222fcaca1f3386477c160d1e7f961d94a7a3e10cc5288a341b82",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7830,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23430,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 71110,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/machine_works/tier-3.png",
+        "sourceSha256": "f2509d7e4bf2a8294d51534a7a37f8ec887c6e87e737984702f7d4844232dfe7",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8016,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24184,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 75268,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/machine_works/tier-4.png",
+        "sourceSha256": "a1615f7d8f97121d9ab8db6f10c7c7770d31e2dfbdcfd383dec3b94289030a28",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8698,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26536,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 82332,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/machine_works/tier-5.png",
+        "sourceSha256": "0cf1445f0ccd019fe37dfa1b23017b0b8f3f1fa7228596e644f45404eeca0b5b",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7802,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23974,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 75000,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/machine_works/tier-6.png",
+        "sourceSha256": "82b1c59dd930971c5ff1ea9bb35083b634252cac27d9ab9ad7b2f70908e85ce9",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9524,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 28320,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 88488,
+            "url": "/art/derived/structures/2026-09-16/machine_works/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "armaments_complex": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/armaments_complex/tier-1.png",
+        "sourceSha256": "a4a6ba6a0890f6e325b709817fbc806ad6008d74bb9ab87e2a25f3f81335b7b6",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7138,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 21606,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 65564,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/armaments_complex/tier-2.png",
+        "sourceSha256": "a9c89e75098efddc6574a94f1028021c68f75e0c5971778d8099ed4fe1c45c68",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7758,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23504,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 72530,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/armaments_complex/tier-3.png",
+        "sourceSha256": "ff6a47a3c860d5f49e8c7f2d8aa500e9176e22c1a555480c67318d578a307b4a",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7454,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 22280,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 68972,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/armaments_complex/tier-4.png",
+        "sourceSha256": "8fca3746333e0ac7cceb420040dcf33da352d489f620027ec50d9826281d82cb",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7558,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 22460,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 69384,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/armaments_complex/tier-5.png",
+        "sourceSha256": "b4794bf7f3ef32927667f81489d44d705d1a7fa7ed3d622af2978fa712496d4e",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7962,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24228,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 75740,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/armaments_complex/tier-6.png",
+        "sourceSha256": "583c770aeb60af0fd00854b554da6b6c2dcabda99b96424db063a02e2fc28192",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8080,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24382,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 76796,
+            "url": "/art/derived/structures/2026-09-16/armaments_complex/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "composite_works": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/composite_works/tier-1.png",
+        "sourceSha256": "b0b1f007a1c946a66a1ef4248a63e84ffc6efdabe76744c5033fb250411a13e4",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7862,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23400,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 74438,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/composite_works/tier-2.png",
+        "sourceSha256": "fc01854a7d47bb77d9eadccaf5f2efff3a228f8ecdc77c368c07bde415eee88d",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8698,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 25044,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 78270,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/composite_works/tier-3.png",
+        "sourceSha256": "d8878edda9a2c99ee85f4d905e6f17ff9800011c19c9b173b490bc534ccac7aa",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9792,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 28606,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 88666,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/composite_works/tier-4.png",
+        "sourceSha256": "533ce52e14aa81d99922ff02b1d7bb8bb91cad4be1e8ebf56a90be915b344002",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9350,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26678,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 81584,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/composite_works/tier-5.png",
+        "sourceSha256": "c881b270c3bd9ccba5dfff65237370c9c0a6a6d50acb5933bff8bf8dc84c6710",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8442,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24912,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 78088,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/composite_works/tier-6.png",
+        "sourceSha256": "b02a27cd93bb78abdc12e17035c159601fd4efe1da032f448a92e1bd590f86d8",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9066,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 27742,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 87986,
+            "url": "/art/derived/structures/2026-09-16/composite_works/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "hull_fabricator": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/hull_fabricator/tier-1.png",
+        "sourceSha256": "fab478decc9c657813bcdcd648004b89dd1563bc04f5bd9767b13e63fc234bb7",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8246,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23868,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 73142,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/hull_fabricator/tier-2.png",
+        "sourceSha256": "817534b8ffb7d5d46cc513b7561ddbd05ca4066f5869bfdb254e2b08407f6a74",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9488,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 27412,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 87458,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/hull_fabricator/tier-3.png",
+        "sourceSha256": "d25fae04a41387a9607eaf17ccbe0501a61cfd341207fabe003661f4ca940d96",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9416,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 28414,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 88976,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/hull_fabricator/tier-4.png",
+        "sourceSha256": "f7c8b2590c98965ee2e155e346214cc727af094632138aaa9082a25b25282afd",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9522,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 28694,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 87304,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/hull_fabricator/tier-5.png",
+        "sourceSha256": "68009c099b92fe4b20ab6768e713229b2851352945a7ed020cfd3962d22be015",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9696,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 29268,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 90716,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/hull_fabricator/tier-6.png",
+        "sourceSha256": "0859ae63e12ff54123a25313219d75626d719616d157935cb4328b54f09ee129",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9760,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 28434,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 87412,
+            "url": "/art/derived/structures/2026-09-16/hull_fabricator/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "precision_works": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/precision_works/tier-1.png",
+        "sourceSha256": "7cd513e9e9faf6400f727cb78984e39f5da198d0a08e6ee5d70a901aebbfaedc",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8460,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24808,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 78428,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/precision_works/tier-2.png",
+        "sourceSha256": "ded0496dd21ffbf807aa92b44b4e681bb2c242c16020bf92e36310662aef29bb",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8712,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26292,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 85520,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/precision_works/tier-3.png",
+        "sourceSha256": "57c9d57934a4a5fce012ceb0ab1854d6f5b3b6faa52bdd54168b98ce712c6407",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8600,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26658,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 88134,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/precision_works/tier-4.png",
+        "sourceSha256": "94d4302f23cd28f327b97063f2864a585003025e45d827408f61ca974f8a507c",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 10024,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 29728,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 92488,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/precision_works/tier-5.png",
+        "sourceSha256": "676c69b11f549c0235280366824dc09c3cd67d9f9c014251cc87e8c684070c42",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9144,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 28338,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 91278,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/precision_works/tier-6.png",
+        "sourceSha256": "e0ad0a2551a029a80e861aa494fcb82a4531d633c4bd4121ead0ccb465f60ab5",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9550,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 29616,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 92354,
+            "url": "/art/derived/structures/2026-09-16/precision_works/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "drive_works": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/drive_works/tier-1.png",
+        "sourceSha256": "42ca7f756600bf6ea96f10645a71d91ec13b1605fe8cc3e499aabcef4de9e08b",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8790,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26648,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 84766,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/drive_works/tier-2.png",
+        "sourceSha256": "074c267d4d160c53ed5f32e83b6696eca0aeca6f622b45ac5b391806b0f676a0",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8880,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 27736,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 88348,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/drive_works/tier-3.png",
+        "sourceSha256": "086e865b5c61381f75290f05a789679d7422ce70e0ede7ced280703955a4070d",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9344,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 29252,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 91898,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/drive_works/tier-4.png",
+        "sourceSha256": "014724a7c73b224a562160a4632bb2f07540547272d66da67682565c18d4a2f3",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8808,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 27640,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 88092,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/drive_works/tier-5.png",
+        "sourceSha256": "9c815cf0eafff0efed7d1847bf2214513edae6367d320a4f9c462babb97d54b0",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9646,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 31372,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 101348,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/drive_works/tier-6.png",
+        "sourceSha256": "c0084a5170bd36ef497a445e1e1db5be6a30de19e38a17e6bf7384b0b189b83e",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8658,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26506,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 85934,
+            "url": "/art/derived/structures/2026-09-16/drive_works/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "naval_drydock": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/naval_drydock/tier-1.png",
+        "sourceSha256": "e34150e60c7aa49aa6fadf3ddf84865e8b007baaa9c166df4efa4b324df23fb1",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7008,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 20810,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 63426,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/naval_drydock/tier-2.png",
+        "sourceSha256": "3daf1baed4aaa1c9da33e32c76d8f4ecb02fd6da0cc2f5c4c8ba5e4233a07f62",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7456,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 22060,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 67926,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/naval_drydock/tier-3.png",
+        "sourceSha256": "22238f59cb4e7b134e08fb79a6fea15fff2961e398c4fd8bc67ce45d09efaefd",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8434,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26094,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 81740,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/naval_drydock/tier-4.png",
+        "sourceSha256": "0c2a05d641dd022645fdbc37a3b4e17037f940e6a8424c3a2afb31e5b4d8165a",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7746,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23576,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 73230,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/naval_drydock/tier-5.png",
+        "sourceSha256": "32682b1f47f2c3739f2887540304cb1966727005c5b5d1d5fcf1a61e794c0301",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7548,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23176,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 73056,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/naval_drydock/tier-6.png",
+        "sourceSha256": "3cec09560b61851d02b3c756bf6d58fb937835582895cd0312167c1c208e37bc",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7418,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 22164,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 69618,
+            "url": "/art/derived/structures/2026-09-16/naval_drydock/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "capital_slipway": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/capital_slipway/tier-1.png",
+        "sourceSha256": "1372d0f72ef02343749f67c8f0dde47cf2e967e040029de49d05d176b7023f06",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 11330,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 33088,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 97924,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/capital_slipway/tier-2.png",
+        "sourceSha256": "c91dcabdea06a4b722cc2226f82a7f733228e7dae7559cf574f5254f10412675",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 11190,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 32696,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 101850,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/capital_slipway/tier-3.png",
+        "sourceSha256": "dca37792520fdb27295934eaae8bcfb9baace20cfc6ee9d3423f3cbfb38d25e9",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 11282,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 33458,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 103886,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/capital_slipway/tier-4.png",
+        "sourceSha256": "a44d83517f545c6306324cb3decce5343cf246b7c8cf4ac8de03c943d4e53ee1",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 11874,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 35026,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 108718,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/capital_slipway/tier-5.png",
+        "sourceSha256": "34bc6defe9ebeb7c63e9a74b397d9695f10b2fca3b65bdcf7571faab561f04cd",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 11480,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 33874,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 106276,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/capital_slipway/tier-6.png",
+        "sourceSha256": "3df6c0f855b9a8fb36635652fcbfbc78ed39c9c228e88f1082d2d4e31b4bd693",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 11028,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 34106,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 105790,
+            "url": "/art/derived/structures/2026-09-16/capital_slipway/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "ordnance_foundry": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/ordnance_foundry/tier-1.png",
+        "sourceSha256": "eb39e865a18d0415727da3a956bb60c76257fc29815b56546f5bc44ccb8f1157",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8454,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 25440,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 82012,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/ordnance_foundry/tier-2.png",
+        "sourceSha256": "6593b5ef4d744767094b4eefae533f1e676d13f576b3d6a1188d047bb3cf9a3e",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8326,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 25552,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 79136,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/ordnance_foundry/tier-3.png",
+        "sourceSha256": "b132111837b8d3350da444afb8e1f3bf63d604e9319a26a043d1fff701fbe149",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9342,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 28550,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 89460,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/ordnance_foundry/tier-4.png",
+        "sourceSha256": "5731deaaf1e728205a018f2529f83347f3bf0b7967d74dc958de907360fa20b1",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9852,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 29328,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 92388,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/ordnance_foundry/tier-5.png",
+        "sourceSha256": "676461a41114a1e871997785081db43b8b1202f720c1daa4e219937f9ca7ca1e",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 10036,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 29860,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 94072,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/ordnance_foundry/tier-6.png",
+        "sourceSha256": "33a999b4ed57813349e229b7d3402b1c650e2dfdabc05b66b33fa506b3f7b7a0",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9810,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 29738,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 94578,
+            "url": "/art/derived/structures/2026-09-16/ordnance_foundry/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "orbital_warehouse": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/orbital_warehouse/tier-1.png",
+        "sourceSha256": "c766db50cc4d1256b8cce5726af1ad9eee73bb36c3e64a76bb925a0e9a8bad33",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8322,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23688,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 72318,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/orbital_warehouse/tier-2.png",
+        "sourceSha256": "a7299c46a96056a7cc06e78b12ac777b2d4288db303ce292a063ed243ed1350d",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9644,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 27970,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 84328,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/orbital_warehouse/tier-3.png",
+        "sourceSha256": "e1de76aaa3260da8253970157b31753798d31856faaf44f4573e7dfbceeb6021",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9472,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 27964,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 85182,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/orbital_warehouse/tier-4.png",
+        "sourceSha256": "78f282590ccfe66503ab8369db465e0759e7a75008634b2dc5d81f7351cd89e5",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 10894,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 31670,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 95806,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/orbital_warehouse/tier-5.png",
+        "sourceSha256": "c8ffcd9e9c9fedef047a60099d93cea7e0173234ce703444a7e2e0f3eec9e510",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 10656,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 31534,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 98014,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/orbital_warehouse/tier-6.png",
+        "sourceSha256": "241d8c8884a8100faeb6ff3bab0716834f3b16277014f13fa7ecaba489db3b05",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 10624,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 31938,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 99234,
+            "url": "/art/derived/structures/2026-09-16/orbital_warehouse/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "sensor_array": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/sensor_array/tier-1.png",
+        "sourceSha256": "cc64a2fd369d13c77abfc55286875f366044d2d5bce0a231b5c1de13875fdcac",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9036,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24456,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 70958,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/sensor_array/tier-2.png",
+        "sourceSha256": "3daa2b29d1dbcd2fa0a271f2d23a7576288fe4a70d328c49a5e285fc74946256",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9210,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26132,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 77564,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/sensor_array/tier-3.png",
+        "sourceSha256": "02570bec88de001a3a0d8eca00f763945424290f40bed3302361de51f2f32fb4",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9976,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 28536,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 84246,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/sensor_array/tier-4.png",
+        "sourceSha256": "563b8f527a4c1da1a35b0dc9d5b786b1777a0bf9b83e8a04ee37ea8506d73eb3",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 10780,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 30830,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 93132,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/sensor_array/tier-5.png",
+        "sourceSha256": "f08a56efe24a1862ee4ff7104d6e606d1a26f6ed6ab17126527eb02ee86f566d",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 10168,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 28654,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 86352,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/sensor_array/tier-6.png",
+        "sourceSha256": "f2a077b4bcd5785f4b735c6fcd2d2916d5fe866b1e095bc8cfe23b1219a7cf1b",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9864,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 28126,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 84420,
+            "url": "/art/derived/structures/2026-09-16/sensor_array/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "defense_platform": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/defense_platform/tier-1.png",
+        "sourceSha256": "9e89513b83076edf0f7a523e418c9c34a1a2d657abccbc87f5aa81487f43f8b1",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7248,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 19720,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 57886,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/defense_platform/tier-2.png",
+        "sourceSha256": "b02790dacd2804d92092074d8014aacc83b62277905c9d2b5992f1fe0971bc15",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9132,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 25376,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 71670,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/defense_platform/tier-3.png",
+        "sourceSha256": "7aa6e4f8061c9a1e7119b909009fd36a58f1d6bf53337ad2408f204f1913c5e6",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8790,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 25224,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 72478,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/defense_platform/tier-4.png",
+        "sourceSha256": "d4997387792f3cefbebf89b7a093eb709f480b24ca2c9ff080ecc95844c5600a",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8882,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 25708,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 76406,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/defense_platform/tier-5.png",
+        "sourceSha256": "838fc9225f9a4ab3edbbcb1e8c1c7c477811bad0eb06c7c33b2b5ee0a65ed66b",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9324,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 26560,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 77986,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/defense_platform/tier-6.png",
+        "sourceSha256": "59869eaad8f9f2194c4dcda521fa3e49686e1475a4ddf35781b6523e73370f8a",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 9868,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 27680,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 81690,
+            "url": "/art/derived/structures/2026-09-16/defense_platform/tier-6-512.webp"
+          }
+        ]
+      }
+    },
+    "garrison": {
+      "1": {
+        "source": "art-src/structure-tiers-2026-09-16/garrison/tier-1.png",
+        "sourceSha256": "0bde69578472af01a80d32087992c8c3f06f1830ff2d05b9bd7273d483dc3cd2",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7006,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-1-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 19662,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-1-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 59294,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-1-512.webp"
+          }
+        ]
+      },
+      "2": {
+        "source": "art-src/structure-tiers-2026-09-16/garrison/tier-2.png",
+        "sourceSha256": "56fe85ff1ec5c62cffd0f9741eaddf82a6738e076cb07af6d25b7350e10da456",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 7698,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-2-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 21976,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-2-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 65634,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-2-512.webp"
+          }
+        ]
+      },
+      "3": {
+        "source": "art-src/structure-tiers-2026-09-16/garrison/tier-3.png",
+        "sourceSha256": "048b7d58e2ebcc4231a8720f86f41551999fc0cb42b4e0027739102c31d0e2c4",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8362,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-3-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23966,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-3-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 71116,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-3-512.webp"
+          }
+        ]
+      },
+      "4": {
+        "source": "art-src/structure-tiers-2026-09-16/garrison/tier-4.png",
+        "sourceSha256": "67faa82130223be7c2e1975cebf3a1ff785c80358df31b150c56a1d4144f0001",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8484,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-4-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 24096,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-4-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 72190,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-4-512.webp"
+          }
+        ]
+      },
+      "5": {
+        "source": "art-src/structure-tiers-2026-09-16/garrison/tier-5.png",
+        "sourceSha256": "ff73969d785b5fa0b141bbea8ac590eb89113bf354ec3318190ee3c0e88eae8f",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8332,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-5-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23958,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-5-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 72434,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-5-512.webp"
+          }
+        ]
+      },
+      "6": {
+        "source": "art-src/structure-tiers-2026-09-16/garrison/tier-6.png",
+        "sourceSha256": "3c48202285286ce532537eeeb48398d2be83a8c1e1247f0249bd7503a9b14571",
+        "levels": [
+          {
+            "size": 128,
+            "bytes": 8106,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-6-128.webp"
+          },
+          {
+            "size": 256,
+            "bytes": 23336,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-6-256.webp"
+          },
+          {
+            "size": 512,
+            "bytes": 70550,
+            "url": "/art/derived/structures/2026-09-16/garrison/tier-6-512.webp"
+          }
+        ]
+      }
+    }
+  }
+}

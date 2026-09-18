@@ -1,0 +1,22 @@
+Battle marker V8 — approved flat explosion
+
+Generation method: built-in image_gen; approved preview reused without regeneration.
+Generated original: exec-17714297-c071-4b14-90d3-ed666dbc42ef.png (1254 × 1254 RGBA)
+Master: client/art-src/battle-marker-v8.png
+Runtime: client/public/art/battle_in_progress_v8.png (256 × 256 RGBA)
+Preparation: preserve generated alpha; trim transparent padding, downsample to
+244 × 244 contained, then add 6 transparent pixels per side. No artwork edits.
+
+The renderer retains its red selection brackets, active-battle pulse, and
+full-radius hit target. None of those behaviors is baked into the image.
+
+Generation prompt:
+
+Use case: logo-brand.
+Asset type: flat raster battle-location icon for a dark sci-fi strategy galaxy map.
+Create ONE simple, bold, entirely FLAT explosion symbol. Use exactly three solid fills: a burnt-orange outer blast silhouette, a smaller golden-amber blast nested inside it, and a compact warm-ivory central burst. Broad irregular flame lobes with a few short sharp blast points, an asymmetric energetic outline, and a substantial filled center. It must read as a detonation at 52 pixels, not a star, sun, fire emoji, flower, or spiky outline with an empty center.
+Style: crisp precision-cut 2D shapes, minimal modern tactical UI icon, completely uniform flat color fields. ZERO texture, ZERO gradients, ZERO lighting, ZERO shading, ZERO photorealism, ZERO glow, ZERO brush strokes, ZERO fine debris.
+Composition: one centered explosion on a square canvas, occupying about 80% of the canvas with transparent padding on every side.
+Background: genuine transparent PNG alpha, NOT a checkerboard painted into the image and NOT a solid backdrop.
+No ships, fleets, weapons, text, letters, badge, border, circle, shadow, selection brackets, or watermark. The game's red selection brackets remain a separate UI layer and must NOT be baked into this image.
+Output: one flat explosion icon, not a contact sheet or UI mockup.

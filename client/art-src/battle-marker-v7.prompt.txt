@@ -1,0 +1,15 @@
+Battle marker V7 — explosion-only map icon
+
+Generation method: built-in image_gen.
+Generated original: exec-d6ee55bc-8424-4282-a459-f5199c4e4df7.png (1254 × 1254 RGBA)
+Master: client/art-src/battle-marker-v7.png
+Runtime: client/public/art/battle_in_progress_v7.png (256 × 256 RGBA)
+Preparation: preserve generated alpha; trim transparent padding, downsample to
+244 × 244 contained, then add 6 transparent pixels per side. No artwork edits.
+
+The renderer retains its red selection brackets, active-battle pulse, and
+full-radius hit target. None of those behaviors is baked into the image.
+
+Generation prompt:
+
+undefined

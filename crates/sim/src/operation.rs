@@ -26,9 +26,19 @@ pub const FOLLOW_UP_COOLDOWN_S: f64 = 10.0 * 60.0;
 pub const FOLLOW_UP_PIRATE_SPEED_MULT: f64 = 0.50;
 pub const FOLLOW_UP_PIRATE_DAMAGE_MULT: f64 = 0.10;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum FollowUpKind { Escort, Salvage, Production }
+pub enum FollowUpKind { Escort, Salvage, Production, Patrol, DangerousFreight, GuardedSalvage, Depot, Stronghold,
+    CounterRaidTrace, CounterRaidAssault, CounterRaidRecovery, SiteRecovery, CombatPreparation }
+
+/// Private linkage, not a new intelligence channel. Each stage publishes an
+/// immutable offer only through its own report from the physical event site.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct CounterRaid {
+    pub raid: EntityId,
+    pub home: EntityId,
+    pub source: EntityId,
+}
 
 /// Published contract terms, not a reading of unseen enemy strength. Immutable
 /// after posting; actual progress and enemy sightings use their usual light.
@@ -39,6 +49,9 @@ pub struct OperationBriefing {
     pub difficulty: String,
     pub suitable_fleets: String,
     pub summary: String,
+    /// Fixed public contract variant, not a reading of the player's strength.
+    #[serde(default)]
+    pub variant: u8,
 }
 
 /// Physical encounter bookkeeping, deliberately NOT included in OperationView.
@@ -92,6 +105,10 @@ pub enum OperationScope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OperationKind {
+    /// Frozen scout/Authority report. Progress is still served from KnownOperation.
+    CombatObjective { objective: crate::pirate::CombatObjective, site: EntityId, pos: Vec2,
+        destination: Option<Vec2> },
+    PrivateerPatrol { pos: Vec2 },
     PirateBounty {
         system: EntityId,
         tier: u32,
@@ -109,6 +126,9 @@ pub enum OperationKind {
         units: u32,
         source_fleet: EntityId,
     },
+    /// Immutable terms of a finite cache at a cleared permanent pirate site.
+    /// Equipment is loaded on the recovering hull; only its data can radio home.
+    PrizeRecovery { pos: Vec2, system: EntityId, prize: crate::pirate::SitePrize },
     ConvoyEscort {
         protected_fleet: EntityId,
         destination: Vec2,
@@ -141,12 +161,13 @@ impl OperationKind {
                 .unwrap_or(hub)
         };
         match *self {
+            Self::CombatObjective { pos, .. } => pos,
             Self::PirateBounty { system, .. }
             | Self::SurveyExpedition { system }
             | Self::StrategicControl { system }
             | Self::SyndicateMegaproject { system, .. } => system_pos(system),
             Self::MarketDelivery { .. } => hub,
-            Self::RescueSalvage { pos, .. } => pos,
+            Self::RescueSalvage { pos, .. } | Self::PrizeRecovery { pos, .. } | Self::PrivateerPatrol { pos } => pos,
             Self::ConvoyEscort { destination, .. } | Self::FreightEscort { destination, .. } => destination,
             Self::AuthorityEnforcement { .. } => hub,
             Self::RegionalMandate { region, .. } => region,
@@ -208,6 +229,8 @@ pub struct Operation {
     pub briefing: Option<OperationBriefing>,
     #[serde(default)]
     pub encounter: Option<FollowUpEncounter>,
+    #[serde(default)]
+    pub counter_raid: Option<CounterRaid>,
     #[serde(default)]
     pub participants: BTreeSet<PlayerId>,
     #[serde(default)]

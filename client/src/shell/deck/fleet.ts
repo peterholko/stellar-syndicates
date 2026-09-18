@@ -1,4 +1,7 @@
+import { isPlayerFreighter } from "../../protocol";
 import { captainTitle, captainXpFloor, fleetCommandLoad } from "../../core/derive/captains";
+import { missionCommand, missionHtml, pirateFactionHtml } from "../mission";
+import { fleetIndustryHtml } from "../industry";
 import { dispatchWarnings, fleetReadiness } from "../../core/derive/readiness";
 import {
   AAA_SERVICE_FEE,
@@ -20,7 +23,10 @@ import {
 } from "../../core/derive/fleet";
 import { fmt, fmtEta, informationDelay } from "../../core/derive/format";
 import { emplacementLabel, gravityWellAt, nearestKnownDock, systemName } from "../../core/derive/geo";
-import { fitLegal, kitAffordable, kitCostLabel, MODULE_SLOTS, moduleLedgerAt, ownedHaulDestinations } from "../../core/derive/market";
+import { fitLegal, kitAffordable, kitCostLabel, maxCargoRefitCount, MODULE_SLOTS, moduleLedgerAt, ownedHaulDestinations, refitCargoBlocked, refitFuelBlocked, refitPreview, shipyardBoost } from "../../core/derive/market";
+import { MODULES, utilityChange } from "../../core/derive/equipment";
+import { tenderStatus } from "../../core/derive/tenders";
+import { fuelTransferHtml } from "../fueltransfer";
 import { orderEtaRange, orderObject, orderPoint } from "../../core/derive/orders";
 import { jumpRangeAt } from "../../core/derive/nebula";
 import type { CoreEvent } from "../../core/events";
@@ -54,10 +60,8 @@ interface FleetHooks {
 
 type FleetConfirm = "flagship";
 
-const REFIT_MODULES: ModuleKind[] = [
-  "mass_driver", "torpedo_rack", "point_defense_screen", "reflective_plating", "whipple_armor",
-];
-const FLAGSHIP_ORDER: ShipKind[] = ["titan", "dreadnought", "battleship", "cruiser", "destroyer", "colony", "convoy", "corvette", "raider", "scout"];
+const REFIT_MODULES = MODULES.map(module => module.kind);
+const FLAGSHIP_ORDER: ShipKind[] = ["titan", "dreadnought", "battleship", "cruiser", "destroyer", "colony", "bulk_freighter", "heavy_freighter", "large_freighter", "convoy", "small_freighter", "tiny_freighter", "corvette", "raider", "scout"];
 const POSTURES: { key: EngagementPosture; label: string; copy: string }[] = [
   { key: "passive", label: "Passive", copy: "Fight only when engaged." },
   { key: "defensive", label: "Defensive", copy: "Defend guarded assets and stations." },
@@ -76,8 +80,10 @@ export class DeckFleetRoutes {
   private readonly loadCommodity = new Map<string, Commodity>();
   private readonly loadQuantity = new Map<string, number>();
   private readonly haulDestination = new Map<string, string>();
+  private readonly tenderTarget = new Map<string, string>();
   private readonly estimates = new Map<string, EngagementEstimate>();
   private readonly estimateAttacker = new Map<string, string>();
+  private readonly refitChoices = new Map<string, { to: string; n: number }>();
 
   constructor(
     private readonly root: HTMLElement,
@@ -140,7 +146,10 @@ export class DeckFleetRoutes {
     const action = button.dataset.deckAct;
     if (!action?.startsWith("fleet-")) return false;
     const command = action.slice(6);
-    if (command === "select-order") {
+    if (command === "mission" && fleet.own) {
+      const order = missionCommand(fleet, button.dataset.field, button.dataset.value);
+      if (order) this.ctx.intent.beginFleetCommand(order);
+    } else if (command === "select-order") {
       const id = Number(button.dataset.order);
       this.ctx.state.selectedOrderId = this.ctx.state.selectedOrderId === id ? null : id;
     } else if (command === "dismiss-order") {
@@ -191,7 +200,13 @@ export class DeckFleetRoutes {
       else if (!kitAffordable("deep_space_sensor")) this.hooks.notice(`<span class="deck-command-status__error"><b>Kit unavailable</b> · ${esc(kitCostLabel("deep_space_sensor"))}</span>`);
       else this.ctx.intent.beginFleetCommand({ type: "BuildEmplacement", builder: fleet.id, emplacement: "deep_space_sensor" });
     } else if (command === "fuel-rescue" && fleet.own) {
-      this.ctx.intent.beginFleetCommand({ type: "RequestFuelRescue", fleet_id: fleet.id });
+        this.ctx.intent.beginFleetCommand({ type: "RequestFuelRescue", fleet_id: fleet.id });
+    } else if (command === "refuel" && fleet.own) {
+      const target = this.root.querySelector<HTMLSelectElement>("[data-tender-target]")?.value;
+      if (target) {
+        this.tenderTarget.set(fleet.id, target);
+        this.ctx.intent.beginFleetCommand({ type: "RefuelFleet", fleet_id: fleet.id, target_id: target });
+      }
     } else if (command === "unload" && fleet.own) {
       this.unload(fleet);
     } else if (command === "load" && fleet.own) {
@@ -232,6 +247,7 @@ export class DeckFleetRoutes {
     if (input.matches("[data-fleet-load-commodity]")) this.loadCommodity.set(id, input.value as Commodity);
     else if (input.matches("[data-fleet-load-quantity]")) this.loadQuantity.set(id, Math.max(1, Math.floor(Number(input.value) || 1)));
     else if (input.matches("[data-fleet-haul-destination]")) this.haulDestination.set(id, input.value);
+    else if (input.matches("[data-tender-target]")) this.tenderTarget.set(id, input.value);
     else if (input.matches("[data-fleet-estimate-attacker]")) this.estimateAttacker.set(id, input.value);
     else if (input instanceof HTMLSelectElement && input.matches("[data-refit-target]")) {
       const option = input.selectedOptions[0];
@@ -241,7 +257,23 @@ export class DeckFleetRoutes {
         count.max = option?.dataset.max ?? "1";
         count.value = String(Math.min(Number(count.value) || 1, Number(count.max) || 1));
       }
+      const g = this.ctx.state.ghosts.find(ghost => ghost.id === id);
+      const preview = row?.querySelector<HTMLElement>("[data-refit-preview]");
+      if (g && row && preview) preview.textContent = refitPreview(g, row.dataset.ship as ShipKind, parseModules(row.dataset.from), parseModules(input.value), Number(count?.value) || 1);
+    } else if (input.matches("[data-refit-count]")) {
+      const row = input.closest<HTMLElement>("[data-refit-row]");
+      const g = this.ctx.state.ghosts.find(ghost => ghost.id === id);
+      const preview = row?.querySelector<HTMLElement>("[data-refit-preview]");
+      const n = Math.max(1, Math.min(Number((input as HTMLInputElement).max) || 1, Math.floor(Number(input.value) || 1)));
+      if (g && row && preview) preview.textContent = refitPreview(g, row.dataset.ship as ShipKind, parseModules(row.dataset.from), parseModules(row.querySelector<HTMLSelectElement>("[data-refit-target]")?.value), n);
     } else return false;
+    const row = input.matches("[data-refit-target], [data-refit-count]") ? input.closest<HTMLElement>("[data-refit-row]") : null;
+    if (row) {
+      const to = row.querySelector<HTMLSelectElement>("[data-refit-target]")?.value ?? "";
+      const count = row.querySelector<HTMLInputElement>("[data-refit-count]");
+      const n = Math.max(1, Math.min(Number(count?.max) || 1, Math.floor(Number(count?.value) || 1)));
+      this.refitChoices.set(`${id}/${row.dataset.ship}/${row.dataset.from}`, { to, n });
+    }
     return true;
   }
 
@@ -278,7 +310,7 @@ export class DeckFleetRoutes {
     const command = this.commandHtml(g);
     const payload = this.compositionHtml(g) + this.fuelHtml(g) + this.refitHtml(g);
     const cargo = hauls(g) ? `<section class="deck-section" aria-label="Cargo and hauling">${this.cargoHtml(g)}${this.logisticsHtml(g)}</section>` : "";
-    return `${this.readinessHtml(g)}${this.jobHtml(g)}${command}${orders}${cargo}<section class="deck-section"><header><h3>Fleet</h3></header>${payload}${this.mergeHtml(g)}</section>${this.policyHtml(g)}${this.captainHtml(g)}`;
+    return `${this.readinessHtml(g)}${fleetIndustryHtml(g, this.ctx.state)}${this.jobHtml(g)}${command}${fuelTransferHtml(g, this.ctx.state, this.tenderTarget.get(g.id))}${orders}${cargo}<section class="deck-section"><header><h3>Fleet</h3></header>${payload}${this.mergeHtml(g)}</section>${this.policyHtml(g)}${this.captainHtml(g)}`;
   }
 
   private readinessHtml(g: GhostView): string {
@@ -314,7 +346,7 @@ export class DeckFleetRoutes {
     }).join("");
     const local = this.ctx.state.orders[g.id];
     const served = (local || queue.some((entry) => entry.kind === "move")) && g.path?.length ? g.path.at(-1)?.pos : undefined;
-    const current = served ?? local;
+    const current = g.fuel_transfer ? undefined : served ?? local;
     const represented = current && queue.some((entry) => entry.kind === "move" && entry.dest && Math.hypot(entry.dest.x - current.x, entry.dest.y - current.y) < 1);
     const eta = current ? this.servedFlightEta(g, current) : "";
     const currentRow = current && !represented
@@ -327,8 +359,8 @@ export class DeckFleetRoutes {
     let transit = "";
     const queue = this.ctx.state.pendingOrders.get(g.id) ?? [];
     const pending = (kind: (typeof queue)[number]["kind"]) => queue.some((order) => !order.lost && order.kind === kind);
-    const movingOrder = queue.some((order) => !order.lost && ["move", "jump", "guard", "raid", "attack", "recall", "withdraw", "haul"].includes(order.kind));
-    const hasCourse = !!this.ctx.state.orders[g.id] || !!g.path?.length || Math.hypot(g.vel.x, g.vel.y) >= .5 || movingOrder;
+    const movingOrder = queue.some((order) => !order.lost && ["move", "jump", "guard", "defend", "raid", "attack", "recall", "withdraw", "haul"].includes(order.kind));
+    const hasCourse = !!g.fuel_transfer || !!this.ctx.state.orders[g.id] || !!g.path?.length || Math.hypot(g.vel.x, g.vel.y) >= .5 || movingOrder;
     items.push(commandButton("fleet-move", "Move", "Choose a destination on the map.", "is-primary", pending("move") ? "Move order already in flight." : ""));
     const jumpReason = !jumpCapable(g)
       ? "All hulls must carry compatible jump drives."
@@ -348,7 +380,7 @@ export class DeckFleetRoutes {
     const dock = nearestKnownDock(g);
     if (!g.docked) items.push(commandButton("fleet-dock", "Initiate docking", dock ? `${dock.name} · ${fmt(dock.distance)} su` : "Nearest known friendly berth.", "is-primary", pending("move") ? "Move or docking order already in flight." : !dock ? "No known friendly berth." : ""));
     const guardReason = !guardCapable(g)
-      ? "Requires an Interceptor fleet."
+      ? "Requires a combat fleet."
       : !this.ctx.state.ghosts.some((candidate) => candidate.own && candidate.id !== g.id && !candidate.docked)
         ? "No undocked friendly fleet to guard."
         : pending("guard") ? "Guard order already in flight." : "";
@@ -406,29 +438,41 @@ export class DeckFleetRoutes {
     const capable = (g.composition ?? []).some((stack) => stack.count > 0 && (MODULE_SLOTS[stack.kind] ?? 0) > 0);
     if (!capable) return "";
     const dock = g.docked && g.docked !== "hub" ? this.ctx.state.systems.find((system) => dockedAtSystem(g, system.id)) : undefined;
-    const foundry = !!dock && (dock.owner === this.ctx.state.playerId || dock.ally) && (dock.structures.ordnance_foundry ?? 0) > 0;
-    if (!foundry) return `<div class="deck-subhead"><b>Refit</b><span>Requires an owned/allied Ordnance Foundry.</span></div>`;
+    const friendly = !!dock && (dock.owner === this.ctx.state.playerId || dock.ally);
+    const foundry = friendly && (dock.structures.ordnance_foundry ?? 0) > 0;
+    const utilityYard = friendly && dock.bodies.some(body => shipyardBoost(dock, body) > 0);
+    if (!foundry && !utilityYard) return `<div class="deck-subhead"><b>Equipment</b><span>Utilities: staffed Shipyard I · Military: Ordnance Foundry</span></div>`;
     const ledger = moduleLedgerAt(dock!.id);
     const stacks = refitStacks(g);
     const busy = Math.hypot(g.vel.x, g.vel.y) >= .5 || !!g.path?.length || (this.ctx.state.pendingOrders.get(g.id)?.length ?? 0) > 0;
     const rows = stacks.map((stack) => {
-      const targets = refitTargets(stack.kind, stack.modules, ledger, this.ctx.state.syndicate?.fits ?? []);
+      const maxFor = (to: ModuleKind[]) => maxCargoRefitCount(g, stack.kind, stack.modules, to, maxRefitCount(stack.modules, to, ledger, stack.n));
+      const targets = refitTargets(stack.kind, stack.modules, ledger, this.ctx.state.syndicate?.fits ?? [])
+        .filter(to => (utilityChange(stack.modules, to) ? utilityYard : foundry) && !refitFuelBlocked(g, stack.modules, to) && maxFor(to) > 0);
+      const remembered = this.refitChoices.get(`${g.id}/${stack.kind}/${fitKey(stack.modules)}`);
+      const selected = targets.find(to => fitKey(to) === remembered?.to) ?? targets[0];
+      const maximum = selected ? maxFor(selected) : 1;
+      const quantity = Math.max(1, Math.min(remembered?.n ?? 1, maximum));
       const options = targets.map((target) => {
-        const max = maxRefitCount(stack.modules, target, ledger, stack.n);
-        return `<option value="${escAttr(fitKey(target))}" data-max="${max}">${esc(fitName(target))} · up to ${max}</option>`;
+        const max = maxFor(target);
+        return `<option value="${escAttr(fitKey(target))}" data-max="${max}" ${target === selected ? "selected" : ""}>${esc(fitName(target))} · up to ${max}</option>`;
       }).join("");
-      const initial = targets.length ? maxRefitCount(stack.modules, targets[0], ledger, stack.n) : 1;
-      return `<div class="deck-refit-row" data-refit-row data-ship="${stack.kind}" data-from="${escAttr(fitKey(stack.modules))}"><span><b>${stack.n}× ${esc(shipKindLabel(stack.kind))}</b><small>${esc(fitName(stack.modules))}</small></span>${options ? `<select data-refit-target>${options}</select><input data-refit-count type="number" min="1" max="${initial}" value="1"><button type="button" data-deck-act="fleet-refit" ${busy ? "disabled" : ""}>Refit</button>` : `<em>No stocked legal change</em>`}</div>`;
+      const preview = selected ? refitPreview(g, stack.kind, stack.modules, selected, quantity)
+        : stack.modules.includes("extended_tanks") && refitFuelBlocked(g, stack.modules, []) ? "Use fuel before removing tanks"
+        : stack.modules.includes("cargo_pods") && refitCargoBlocked(g, stack.kind, stack.modules, [], 1) ? "Unload cargo before removing pods" : "";
+      return `<div class="deck-refit-row" data-refit-row data-ship="${stack.kind}" data-from="${escAttr(fitKey(stack.modules))}"><span><b>${stack.n}× ${esc(shipKindLabel(stack.kind))}</b><small>${esc(fitName(stack.modules))}</small></span>${options ? `<select data-refit-target>${options}</select><input data-refit-count type="number" min="1" max="${maximum}" value="${quantity}"><button type="button" data-deck-act="fleet-refit" ${busy ? "disabled" : ""}>Refit</button>` : `<em>No stocked legal change</em>`}<small data-refit-preview style="grid-column:1/-1">${esc(preview)}</small></div>`;
     }).join("");
     const stock = REFIT_MODULES.filter((module) => (ledger[module] ?? 0) > 0).map((module) => `${label(module)} ${ledger[module]}`).join(" · ") || "ledger empty";
-    return `<div class="deck-subhead"><b>Refit · ${esc(systemName(dock!.id))}</b><span>${esc(stock)}</span></div><div class="deck-refit-list">${rows}</div>${busy ? `<p class="deck-warning">Fleet must be idle with no command in flight.</p>` : ""}`;
+    return `<div class="deck-subhead"><b>Equipment · ${esc(systemName(dock!.id))}</b><span>${esc(stock)}</span></div><div class="deck-refit-list">${rows}</div>${busy ? `<p class="deck-warning">Fleet must be idle with no command in flight.</p>` : ""}`;
   }
 
   private cargoHtml(g: GhostView): string {
     const manifest = fleetCargoManifest(g);
     const used = fleetCargoUnits(g);
     const capacity = fleetCargoCapacity(g);
-    return `<div class="deck-subhead"><b>${icon("cargo", "sm")} Cargo</b><span>${fmt(used)} / ${fmt(capacity)} units</span></div><div class="deck-fleet-cargo">${manifest.length ? manifest.map((entry) => `<span>${commodityIcon(entry.commodity)}<b>${fmt(entry.units)}</b> ${esc(label(entry.commodity))}</span>`).join("") : `<span class="deck-muted">Empty hold</span>`}</div>`;
+    const crates = Object.entries(g.modules ?? {}).filter(([, n]) => n > 0);
+    const equipment = crates.length ? `<div class="deck-subhead"><b>Module crates</b><span>Stored on docking at an owned system</span></div><div class="deck-fleet-cargo">${crates.map(([kind, n]) => `<span><b>${n}</b> ${esc(label(kind))}</span>`).join("")}</div>` : "";
+    return `<div class="deck-subhead"><b>${icon("cargo", "sm")} Cargo</b><span>${fmt(used)} / ${fmt(capacity)} units</span></div><div class="deck-fleet-cargo">${manifest.length ? manifest.map((entry) => `<span>${commodityIcon(entry.commodity)}<b>${fmt(entry.units)}</b> ${esc(label(entry.commodity))}</span>`).join("") : `<span class="deck-muted">Empty hold</span>`}</div>${equipment}`;
   }
 
   private logisticsHtml(g: GhostView): string {
@@ -448,7 +492,7 @@ export class DeckFleetRoutes {
     const load = stocks.length && free > 0 ? `<div class="deck-inline-form"><select data-fleet-load-commodity ${loadQueued ? "disabled" : ""}>${stocks.map(([commodity, units]) => `<option value="${commodity}" ${commodity === selected ? "selected" : ""}>${esc(label(commodity))} (${fmt(units)})</option>`).join("")}</select><input data-fleet-load-quantity type="number" min="1" max="${free}" value="${qty}" ${loadQueued ? "disabled" : ""}><button type="button" data-deck-act="fleet-load" ${loadQueued ? "disabled" : ""}>${loadQueued ? "Load in flight" : "Load"}</button></div>` : "";
     const unload = manifest.length ? `<button type="button" data-deck-act="fleet-unload" ${unloadQueued ? "disabled" : ""}>${unloadQueued ? "Unload queued" : "Unload all"}</button>` : "";
     const haul = manifest.length && system ? `<button type="button" class="is-primary" data-deck-act="fleet-haul-hub" ${haulQueued ? "disabled" : ""}>${haulQueued ? "Haul order in flight" : "Haul to Market Hub"}</button><label class="deck-check"><input type="checkbox" data-fleet-sell ${haulQueued ? "disabled" : ""}> Sell on arrival</label>` : "";
-    const destinations = g.docked === "hub" && manifest.length ? ownedHaulDestinations() : [];
+    const destinations = g.docked === "hub" && (manifest.length || Object.values(g.modules ?? {}).some(n => n > 0)) ? ownedHaulDestinations() : [];
     const remembered = this.haulDestination.get(g.id);
     const destination = destinations.find((entry) => entry.id === remembered) ?? destinations[0];
     if (destination) this.haulDestination.set(g.id, destination.id);
@@ -462,7 +506,7 @@ export class DeckFleetRoutes {
       .reverse()
       .find((order) => !order.lost && order.kind === "configure")?.configuration;
     const waiting = !!pendingConfiguration;
-    if ((g.composition ?? []).some((entry) => entry.kind === "raider")) {
+    if (guardCapable(g)) {
       const requested = pendingConfiguration?.kind === "posture" ? pendingConfiguration.posture : undefined;
       const current = requested ?? this.posture.get(g.id) ?? g.posture ?? "passive";
       rows.push(`<div class="deck-command-block${waiting ? " is-pending" : ""}"${waiting ? ' title="Requested setting awaits a served fleet report."' : ""}><b>Engagement posture${waiting ? " · signal in flight" : ""}</b><div class="deck-segment">${POSTURES.map((entry) => `<button type="button" data-deck-act="fleet-posture" data-posture="${entry.key}" title="${escAttr(waiting ? "Requested setting awaits a served fleet report." : entry.copy)}" aria-pressed="${current === entry.key}" ${waiting ? "disabled" : ""}>${entry.label}</button>`).join("")}</div></div>`);
@@ -472,7 +516,8 @@ export class DeckFleetRoutes {
       const hint = waiting ? "Requested setting awaits a served fleet report." : "Local blockade policy; changing it is information-delayed.";
       rows.push(`<div class="deck-command-block${waiting ? " is-pending" : ""}" title="${escAttr(hint)}"><b>Authority freight${waiting ? " · signal in flight" : ""}</b><button type="button" data-deck-act="fleet-authority" data-on="${current ? "0" : "1"}" title="${escAttr(hint)}" aria-pressed="${current}" ${waiting ? "disabled" : ""}>${current ? "Engaging" : "Ignoring"} arriving Authority freighters</button></div>`);
     }
-    return rows.length ? `<section class="deck-section"><header><h3>Standing policy</h3></header>${rows.join("")}</section>` : "";
+    return (rows.length ? `<section class="deck-section"><header><h3>Standing policy</h3></header>${rows.join("")}</section>` : "")
+      + missionHtml(g, this.ctx.state.pendingOrders.get(g.id) ?? []);
   }
 
   private mergeHtml(g: GhostView): string {
@@ -487,7 +532,7 @@ export class DeckFleetRoutes {
   }
 
   private rivalHtml(g: GhostView): string {
-    const parts: string[] = [this.rivalComposition(g), this.rivalPayload(g), this.estimateHtml(g)];
+    const parts: string[] = [pirateFactionHtml(g), this.rivalComposition(g), this.rivalPayload(g), this.estimateHtml(g)];
     return `<section class="deck-section"><header><div><h3>Observed contact</h3><p>Fog removes internal state, intent, fuel and unarrived cargo reports.</p></div></header>${parts.join("")}</section>`;
   }
 
@@ -497,7 +542,7 @@ export class DeckFleetRoutes {
   }
 
   private rivalPayload(g: GhostView): string {
-    if (g.kind === "convoy") {
+    if (isPlayerFreighter(g.kind)) {
       const manifest = fleetCargoManifest(g);
       return `<div class="deck-subhead"><b>Convention broadcast</b><span>${g.route?.length ? `${g.route.length} route legs` : "route unavailable"}</span></div><div class="deck-fleet-cargo">${manifest.length ? manifest.map((entry) => `<span>${commodityIcon(entry.commodity)}<b>${fmt(entry.units)}</b> ${esc(label(entry.commodity))}</span>`).join("") : `<span class="deck-muted">Cargo unknown outside sensor coverage.</span>`}</div>`;
     }
@@ -512,7 +557,7 @@ export class DeckFleetRoutes {
 
   private estimateHtml(target: GhostView): string {
     if (target.tca) return "";
-    const attackers = this.ctx.state.ghosts.filter((fleet) => fleet.own && (fleet.kind === "raider" || fleet.composition?.some((entry) => entry.kind === "raider" && entry.count > 0)));
+    const attackers = this.ctx.state.ghosts.filter(guardCapable);
     if (!attackers.length) return "";
     const selected = attackers.some((entry) => entry.id === this.estimateAttacker.get(target.id)) ? this.estimateAttacker.get(target.id)! : attackers[0].id;
     this.estimateAttacker.set(target.id, selected);
@@ -547,6 +592,11 @@ export class DeckFleetRoutes {
     if (g.jump_presumed) return "Presumed at jump destination";
     if (g.jump_spool) return g.jump_spool.waiting_for_fuel ? "Jump ready · awaiting fuel" : "Jump drive spooling";
     if (g.rescue_inbound) return "AAA rescue active";
+    if (g.fuel_transfer) return tenderStatus(g);
+    if (g.defend_system) {
+      const system = this.ctx.state.galaxy?.systems.find(s => s.id === g.defend_system!.system);
+      return `Defending ${system?.name ?? "system"} · ${g.defend_system.radius.toLocaleString()} su limit`;
+    }
     if (g.guard_target) {
       const target = this.ctx.state.ghosts.find(f => f.id === g.guard_target);
       return `Guarding ${target ? shipKindLabel(target.kind) : "fleet"} · ${g.guard_target}`;
@@ -616,7 +666,7 @@ export class DeckFleetRoutes {
     const to = parseModules(target?.value);
     const count = row?.querySelector<HTMLInputElement>("[data-refit-count]");
     const n = Math.max(1, Math.min(Number(count?.max) || 1, Math.floor(Number(count?.value) || 1)));
-    if (ship && fitLegal(ship, to)) this.ctx.intent.beginFleetCommand({ type: "RefitShips", fleet_id: g.id, ship, from, to, n });
+    if (ship && fitLegal(ship, to) && !refitFuelBlocked(g, from, to) && !refitCargoBlocked(g, ship, from, to, n)) this.ctx.intent.beginFleetCommand({ type: "RefitShips", fleet_id: g.id, ship, from, to, n });
   }
 
   private setConfirm(id: string, kind: FleetConfirm): void { this.confirms.set(id, kind); this.signature = ""; }
@@ -766,7 +816,10 @@ function shipKindIcon(kind: ShipKind): IconKey {
     raider: "raider",
     corvette: "corvette",
     convoy: "convoy",
+    tiny_freighter: "tiny_freighter", small_freighter: "small_freighter", large_freighter: "large_freighter", heavy_freighter: "heavy_freighter", bulk_freighter: "bulk_freighter",
     colony: "colony",
+    builder: "builder",
+    transport: "transport",
     destroyer: "destroyer",
     cruiser: "cruiser",
     battleship: "battleship",

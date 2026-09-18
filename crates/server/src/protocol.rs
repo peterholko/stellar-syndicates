@@ -19,15 +19,24 @@ use sim::{
     TradeEvent, TransitMode, Vec2,
 };
 
-/// v32: binary MessagePack transport. Bump the WebSocket subprotocol and the
+/// v34: advanced industry goods and static factory recipes/research prerequisites.
+/// Binary MessagePack transport: bump the WebSocket subprotocol and the
 /// client's wire version together; old text clients must refresh, not silently
 /// misinterpret binary data. Welcome retains the version for the UI contract.
-pub const PROTOCOL_VERSION: u32 = 32;
+pub const PROTOCOL_VERSION: u32 = 38;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientMsg {
+    SetFreightRoute { fleet_id: EntityId, route: Option<sim::industry::FreightRoute> },
+    DeployOutpost { fleet_id: EntityId, system_id: EntityId, body_id: u32,
+        outpost: sim::industry::OutpostKind, commodity: Commodity },
+    SkimFuel { fleet_id: EntityId, system_id: EntityId },
+    ReserveProject { system_id: EntityId, target: sim::industry::ProjectTarget, reserve: bool },
+    StartColonyProject { system_id: EntityId, body_id: u32,
+        project: sim::industry::ColonyProjectKind, commodity: Commodity },
+    SetColonyProjectActive { system_id: EntityId, project: sim::industry::ColonyProjectKind, active: bool },
     /// First application message: ready to receive the game. Identity comes
     /// exclusively from the authenticated HTTP handshake; `name` is retained
     /// for wire compatibility but cannot select or rename a corporation.
@@ -84,6 +93,15 @@ pub enum ClientMsg {
     GuardFleet {
         interceptor_id: EntityId,
         target_id: EntityId,
+    },
+    RefuelFleet {
+        fleet_id: EntityId,
+        target_id: EntityId,
+    },
+    DefendSystem {
+        fleet_id: EntityId,
+        system_id: EntityId,
+        pursuit_radius: f64,
     },
 
     /// Recall a raider (break off, return home). May arrive too late (§8).
@@ -267,6 +285,8 @@ pub enum ClientMsg {
         /// §bodies: the body whose line this staffs; omitted targets the holder.
         #[serde(default)]
         body_id: Option<u32>,
+        #[serde(default)]
+        refining_ore: Option<Commodity>,
     },
 
     /// Owner-only civilian immigration policy for one inhabited body.
@@ -306,7 +326,8 @@ pub enum ClientMsg {
     },
 
     /// §modules Part B3: manufacture one module into the system's ledger (needs an
-    /// Armaments Complex ≥ 1). Costs goods; rides the build queue.
+    /// Armaments Complex ≥ 1; basic utilities use a staffed Shipyard I and their
+    /// manufacturing research). Costs goods; rides the build queue.
     BuildModule {
         system_id: EntityId,
         module: sim::ModuleKind,
@@ -396,6 +417,14 @@ pub enum ClientMsg {
         fleet_id: EntityId,
         system_id: EntityId,
     },
+    ExploreSite {
+        fleet_id: EntityId,
+        site_id: EntityId,
+        task: sim::sites::ExpeditionTask,
+    },
+    AnnotateExploration {
+        entry: sim::sites::JournalEntry,
+    },
 
     /// ATTACK a rival fleet (§offensive-orders Part 1) — the targeted destroy verb.
     /// Orderable on any rival fleet; the attacker must contain a raider. Light-
@@ -413,6 +442,7 @@ pub enum ClientMsg {
         fleet_id: EntityId,
         posture: EngagementPosture,
     },
+    SetFleetMission { fleet_id: EntityId, mission: sim::doctrine::MissionProfile },
     RecruitCaptain {
         system_id: EntityId,
     },
@@ -522,6 +552,12 @@ pub enum ClientMsg {
 
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
+    /// Page through this authenticated owner's already-received market ledger.
+    RequestTransactions {
+        #[serde(default)]
+        before: Option<u64>,
+        request_id: u32,
+    },
 }
 
 /// One of the player's own resting limit orders.
@@ -543,6 +579,10 @@ pub struct PriceView {
     pub available_buy: u32,
     /// Delayed ticker view of Sol demand available for an immediate corp sell.
     pub available_sell: u32,
+    /// Units of flow that move this good's price by ~e× — the depth of its book
+    /// (§9 thin books for the scarce goods). Static per commodity; the client's
+    /// quote preview walks the same curve with it.
+    pub depth: f64,
 }
 
 /// The hub Exchange as the player sees it — prices **light-delayed** from the
@@ -868,7 +908,9 @@ pub struct TimelineEntry {
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct DepositView {
     pub resource: Commodity,
-    /// Units produced per second at full extraction.
+    /// Content rate in BULK-equivalent units per second at full extraction — the
+    /// survey's `×` scale. A dense ore (§ore-density) leaves the ground in
+    /// fewer, richer units than this.
     pub richness: f64,
     /// Remaining reserves; `null` = renewable.
     pub reserves: Option<f64>,
@@ -978,6 +1020,7 @@ pub struct GalaxyInfo {
     /// What a player can BUILD at an owned system + each recipe's cost/time (§step1).
     /// Static (const recipes), sent once so the client renders costs without re-tx.
     pub build_options: Vec<BuildOptionView>,
+    pub industry_catalog: sim::industry::IndustryCatalog,
 }
 
 /// A buildable thing and its recipe (§step1 growth sink), for the System-view UI.
@@ -988,6 +1031,22 @@ pub struct BuildOptionView {
     pub label: String,
     pub costs: Vec<StockSlot>,
     pub build_secs: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub research_prerequisite: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversion: Option<ConversionRecipeView>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub refining_recipes: Vec<ConversionRecipeView>,
+}
+
+/// Static factory recipe, sent once with Welcome. Fractional inputs are per
+/// one base output; actual throughput still depends on served staffing/tier.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConversionRecipeView {
+    pub output: Commodity,
+    pub rate: f64,
+    pub inputs: Vec<(Commodity, f64)>,
+    pub byproducts: Vec<(Commodity, f64)>,
 }
 
 /// One commodity in a system's stockpile (whole units), shown only to the owner.
@@ -1122,6 +1181,8 @@ pub struct IntelView {
 #[derive(Debug, Clone, Serialize)]
 pub struct SystemStateView {
     pub id: EntityId,
+    /// Owner-only; the SAME arrived site report as stockpile, never live truth.
+    pub industry: Option<sim::industry::SiteIndustry>,
     pub owner: Option<PlayerId>,
     pub stockpile: Option<Vec<StockSlot>>,
     /// Owner-only: the SOONEST in-progress build at this system (§step1), if
@@ -1191,6 +1252,9 @@ pub struct SystemStateView {
     /// clients parsing.
     #[serde(default)]
     pub converters: Vec<ConverterStatusView>,
+    /// Arrived local refining capability, including a tier-I preview before
+    /// construction. Empty for rivals; never filled from current research.
+    pub refining_sites: Vec<RefiningSiteView>,
     /// Number of Fuel Refinery tiers here (§buildings step 3b) — owner-only.
     pub refinery_tier: u32,
     /// BLOCKADE state (§contestable-territory Part 1), if this system is under
@@ -1396,6 +1460,7 @@ pub struct SyndicateInviteView {
 /// queue, and the per-Academy contribution table (shown math, law 2).
 #[derive(Debug, Clone, Serialize)]
 pub struct ResearchView {
+    pub blueprints: Vec<sim::ModuleKind>,
     /// The programme the clock is accruing into, if any.
     pub active: Option<ActiveResearchView>,
     /// The queue-ahead ids (front is the active once promoted).
@@ -1466,6 +1531,9 @@ pub struct ProgrammeDynView {
     /// For a LOCKED node whose tier carries a verb/metric gate: the progress bar.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate: Option<GateProgressView>,
+    /// Arrived dossier work banked for this specific programme; never truth-side loot.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovered_data: Option<f64>,
 }
 
 /// §research R6: a gate progress bar for a sealed tier.
@@ -1541,6 +1609,7 @@ pub struct AssignmentView {
     pub title: String,
     pub tier: u32,
     pub workers: u32,
+    pub refining_ore: Option<Commodity>,
     /// Specialists posted to this line (kind → n).
     pub specialists: BTreeMap<sim::SpecialistKind, u32>,
     /// Why the line is stopped (`no_food` / `no_inputs` / `storage_full`), if it is.
@@ -1552,6 +1621,7 @@ pub struct AssignmentView {
     pub food: f64,
     /// Planetary geology/special factor. Age/crew thresholds never enter it.
     pub site: f64,
+    pub recovery: f64,
     /// Net output lines at those factors (commodity, units/s) — extraction
     /// lists each deposit's commodity; a converter lists its output.
     pub outputs: Vec<(Commodity, f64)>,
@@ -1570,6 +1640,21 @@ pub struct ConverterStatusView {
     pub tier: u32,
     /// running | needs_crew | no_inputs | no_food | storage_full
     pub status: String,
+    /// Owner's arrived rated capacity, even before workers are assigned.
+    pub rated_output: f64,
+    pub site: f64,
+    pub recovery: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RefiningSiteView {
+    pub body_id: u32,
+    pub tier: u32,
+    pub built: bool,
+    /// Output per base input basket, including geology and recovery research.
+    pub recovery: f64,
+    /// Fully staffed work multiplier, before the chosen ore recipe's base rate.
+    pub work_rate: f64,
 }
 
 /// A convoy's cargo manifest, as revealed to a player whose sensors are within
@@ -2092,6 +2177,9 @@ pub struct GhostView {
     /// callout and its physical tender is outbound.
     #[serde(default)]
     pub rescue_inbound: bool,
+    /// Owner-only ledger carried by the same arrived sample as fuel/cargo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fuel_transfer: Option<sim::ship::FuelTransfer>,
     /// Public role identity for an Authority Astral Assistance tender.
     #[serde(default)]
     pub rescue_service: bool,
@@ -2108,6 +2196,10 @@ pub struct GhostView {
     /// appears before the served fleet picture reaches it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guard_target: Option<EntityId>,
+    /// Owner-only standing post, captured at this ghost's emission time, also
+    /// present during sorties. Never projected from issued/pending commands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defend_system: Option<sim::ship::SystemDefense>,
     /// §emplacements: OWN fleets only — the timed job this hull is holding
     /// station to finish (raising a structure, or tearing a rival's down) and
     /// how far along it is. Absent when it is doing neither. Rivals never get
@@ -2161,12 +2253,21 @@ pub struct GhostView {
     /// `Some(..)` for your own fleets and `None` for every rival (a standing
     /// per-fleet policy is private, like the corp doctrine; never leaks).
     pub posture: Option<EngagementPosture>,
+    #[serde(default)]
+    pub mission_profile: Option<sim::doctrine::MissionProfile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub industry: Option<sim::industry::FleetIndustry>,
+    #[serde(default)]
+    pub pirate_faction: Option<sim::pirate::PirateFaction>,
     /// §explore Part 2: SURVEY DWELL progress (0..1) — OWNER-ONLY (your own
     /// fleet's live order state, like `posture`; a rival never sees it — they
     /// see only the louder signature under the normal detection rules). `None`
     /// when not dwelling.
     #[serde(default)]
     pub survey_progress: Option<f64>,
+    /// Arrived owner-only site assignment; never synthesized from a pending order.
+    #[serde(default)]
+    pub expedition: Option<sim::sites::ExpeditionAssignment>,
     /// True if this fleet's owner is a SYNDICATE ally as the viewer KNOWS it
     /// (§syndicates Part 1) — light-delayed membership (`World::known_ally`), so a
     /// fresh join/leave isn't seen early. Drives the friendly ally tint/pip.
@@ -2325,6 +2426,9 @@ pub enum ServerMsg {
         /// that has actually reached this corporation.
         #[serde(default)]
         operations: Vec<OperationView>,
+        /// Arrived site snapshots only; never the procedural hidden-site table.
+        #[serde(default)]
+        exploration_sites: Vec<sim::sites::SiteReport>,
         /// Capability-derived chapter: guidance, not a hard level gate.
         midgame_stage: sim::MidgameStage,
         /// Bilateral relations and arrived treaty offers. Boxed for View size.
@@ -2338,14 +2442,16 @@ pub enum ServerMsg {
     },
 
     /// §perf Part B: the SLOW-MOVING per-player sections that used to ride every
-    /// 10 Hz View — standing orders, retained battle/capture reports, and the
-    /// published rankings. Sent per connection ONLY when a section's content
+    /// 10 Hz View — standing orders, retained battle/capture reports, private
+    /// discovery notes and published rankings. Sent ONLY when a section's content
     /// changed (signature-gated, the timeline_sent pattern), on the RELIABLE
     /// discrete lane (the View's watch channel may drop frames for a slow
     /// client, which would lose a once-per-change section forever). A present
     /// field REPLACES the client's copy; an absent field means "unchanged". A
-    /// fresh connection's first broadcast carries all four (empty signatures).
+    /// fresh connection's first broadcast carries every section (empty signatures).
     Sections {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exploration_journal: Option<Vec<sim::sites::JournalEntry>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         standing_orders: Option<Vec<StandingOrder>>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -2402,6 +2508,18 @@ pub enum ServerMsg {
     /// Economy news for this player (§9): a buy settled, a delivery arrived, a
     /// sell was dispatched or cleared.
     Trade { trade: TradeEvent },
+    Transactions {
+        player_id: PlayerId,
+        request_id: u32,
+        before: Option<u64>,
+        entries: Vec<crate::transactions::TransactionEntry>,
+        next_before: Option<u64>,
+        since: f64,
+    },
+    TransactionRecorded {
+        player_id: PlayerId,
+        entry: crate::transactions::TransactionEntry,
+    },
 
     /// Feedback for an order the player just issued — the OUTBOUND command in
     /// flight (§6, "commanding into the past"). Sent immediately to the issuing

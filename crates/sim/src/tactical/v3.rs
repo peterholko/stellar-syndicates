@@ -6,7 +6,9 @@ use super::{Rules, rules_v1::Rng, v1, v2};
 use crate::module::{DamageType, Loadout};
 use crate::ship::Ship;
 use crate::{EntityId, ShipKind, Vec2};
-use v1::{Distribution, ProjSetup, Role, SimOutcome, TacticalState};
+use v1::{Role, TacticalState};
+#[cfg(test)]
+use v1::{Distribution, ProjSetup, SimOutcome};
 
 const GUN_STANDOFF: f64 = 220.0; // Retain v2's close-fighting center, not weapon reach.
 const PASS_MIN_STEPS: u64 = 14;
@@ -14,7 +16,7 @@ const PASS_STEP_SPREAD: u64 = 9;
 const TURN_BLEND_STEPS: u64 = 6;
 const MANEUVER_SALT: u64 = 0x4D41_4E45_5556_4552;
 
-fn rules(world_seed: u64, battle_id: u64) -> Rules {
+pub(super) fn rules(world_seed: u64, battle_id: u64) -> Rules {
     // Independent stream: steering never spends a targeting/damage/world roll.
     Rules::V3 {
         maneuver_seed: v1::battle_rng(world_seed ^ MANEUVER_SALT, battle_id).next_u64(),
@@ -22,10 +24,10 @@ fn rules(world_seed: u64, battle_id: u64) -> Rules {
 }
 
 impl TacticalState {
-    /// Select current rules only when opening a NEW engagement. Persisted v1/v2
-    /// states, including fights still in progress, keep their original motion.
+    /// Frozen v3 constructor. V4 preserves this maneuver seed and movement for
+    /// every hull except the new datalink screen; saved v3 fights remain v3.
     #[allow(clippy::too_many_arguments)]
-    pub fn open_current(
+    pub(crate) fn open_v3(
         world_seed: u64,
         battle_id: u64,
         a: &[(EntityId, Ship)],
@@ -106,10 +108,12 @@ pub(super) fn desired_point(state: &TacticalState, i: usize, seed: u64) -> Vec2 
     v1::inside_ring_point(near, ahead, ring, if pass.lead >= 0.0 { 1.0 } else { -1.0 })
 }
 
+#[cfg(test)]
 pub fn simulate_engagement(setup: &ProjSetup, seed: u64) -> SimOutcome {
     v1::simulate_engagement_with_rules(setup, seed, rules(seed, v1::PROJECTION_BATTLE_ID))
 }
 
+#[cfg(test)]
 pub fn project_distribution(setup: &ProjSetup, base_seed: u64, k: u32) -> Distribution {
     v1::project_distribution_using(setup, base_seed, k, simulate_engagement)
 }
@@ -125,7 +129,7 @@ mod tests {
     }
 
     fn duel(seed: u64) -> TacticalState {
-        TacticalState::open_current(
+        TacticalState::open_v3(
             seed,
             99,
             &fleet(1, ShipKind::Raider, ""),
@@ -134,6 +138,17 @@ mod tests {
             0.0,
             Vec2::new(1.0, 0.0),
         )
+    }
+
+    #[test]
+    fn archived_v3_escort_fixture() {
+        let a = fleet(1, ShipKind::Raider, "torpedo_rack");
+        let mut d = fleet(2, ShipKind::Corvette, "point_defense_screen");
+        d.extend(fleet(3, ShipKind::Convoy, ""));
+        let mut state = TacticalState::open_v3(98123, 27, &a, &d, 0, 0.0, Vec2::new(0.8, 0.6));
+        for _ in 0..40 { state.step(false, [SideMods::default(); 2]); }
+        // Captured before datalinks. Do not rebaseline historical rules.
+        assert_eq!(crate::tactical::replay::state_checksum(&state), 8_041_580_474_454_380_878);
     }
 
     #[test]
@@ -274,7 +289,7 @@ mod tests {
             (ShipKind::Battleship, ""),
             (ShipKind::Convoy, ""),
         ] {
-            let state = TacticalState::open_current(
+            let state = TacticalState::open_v3(
                 1,
                 99,
                 &fleet(1, kind, fit),
@@ -300,7 +315,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            crate::tactical::project_distribution(&setup, 55, 1).median,
+            project_distribution(&setup, 55, 1).median,
             simulate_engagement(&setup, 55)
         );
         assert_eq!(
@@ -309,7 +324,7 @@ mod tests {
         );
         let a = duel(1);
         let b =
-            TacticalState::open_current(1, 100, &setup.a, &setup.d, 0, 0.0, Vec2::new(1.0, 0.0));
+            TacticalState::open_v3(1, 100, &setup.a, &setup.d, 0, 0.0, Vec2::new(1.0, 0.0));
         assert_ne!(
             a.rules, b.rules,
             "a new battle gets a different maneuver pattern"

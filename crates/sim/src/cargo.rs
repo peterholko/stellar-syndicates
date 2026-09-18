@@ -3,12 +3,9 @@
 //! revealed to a player whose sensors are within range of the convoy (the
 //! two-tier information model).
 //!
-//! §economy: the INDUSTRIAL WEB — 12 commodities in three tiers. Five RAWS occur
-//! naturally as deposits (the frontier value gradient draws only from these);
-//! five PROCESSED goods are made from raws in processing structures; two
-//! ADVANCED goods cap the chains. Every processed/advanced good's base price
-//! clears its input basket (test-enforced), so industry beats raw-selling
-//! without making raw-selling worthless.
+//! The industrial web separates five mineable ore families from their refined
+//! materials. Raw exports need no refinery; refining consumes fuel and staffed
+//! capacity. Legacy Silicates/Rare Elements deposits remain mineable in saves.
 
 use serde::{Deserialize, Serialize};
 
@@ -19,15 +16,16 @@ pub enum CommodityTier {
     Raw,
     /// Made from raws in processing structures.
     Processed,
-    /// Caps the chains (Machinery, Armaments).
+    /// Manufactured equipment and the hull/drive component chains.
     Advanced,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Commodity {
-    // ── Raw (occur naturally as deposits) ────────────────────────────────────
-    /// Rename of the old `Ore` — the alias keeps old snapshots + wire compat.
+    // Historical ordering is stable. RareElements/Silicates now classify as
+    // refined goods, but direct deposits in older saves remain extractable.
+    /// Ferrite Ore in the UI. Retain both historical wire names and cargo.
     #[serde(alias = "ore")]
     MetallicOre,
     RareElements,
@@ -46,10 +44,21 @@ pub enum Commodity {
     // ── Advanced ─────────────────────────────────────────────────────────────
     Machinery,
     Armaments,
+    Composites,
+    HullSections,
+    PrecisionComponents,
+    DriveAssemblies,
+    // Append only: preserve historical enum ordering as well as wire slugs.
+    CupriteOre,
+    TitaniumOre,
+    CrystallineOre,
+    RareMetalOre,
+    ConductiveMetals,
+    Titanium,
 }
 
 impl Commodity {
-    pub const ALL: [Commodity; 12] = [
+    pub const ALL: [Commodity; 22] = [
         Commodity::MetallicOre,
         Commodity::RareElements,
         Commodity::Silicates,
@@ -62,13 +71,25 @@ impl Commodity {
         Commodity::Provisions,
         Commodity::Machinery,
         Commodity::Armaments,
+        Commodity::Composites,
+        Commodity::HullSections,
+        Commodity::PrecisionComponents,
+        Commodity::DriveAssemblies,
+        Commodity::CupriteOre,
+        Commodity::TitaniumOre,
+        Commodity::CrystallineOre,
+        Commodity::RareMetalOre,
+        Commodity::ConductiveMetals,
+        Commodity::Titanium,
     ];
 
-    /// The five RAWS — deposit generation draws ONLY from these.
-    pub const RAW: [Commodity; 5] = [
+    /// New deposits contain ores, not already-separated refined materials.
+    pub const RAW: [Commodity; 7] = [
         Commodity::MetallicOre,
-        Commodity::RareElements,
-        Commodity::Silicates,
+        Commodity::CupriteOre,
+        Commodity::TitaniumOre,
+        Commodity::CrystallineOre,
+        Commodity::RareMetalOre,
         Commodity::Volatiles,
         Commodity::Biomass,
     ];
@@ -77,16 +98,24 @@ impl Commodity {
     pub fn tier(self) -> CommodityTier {
         match self {
             Commodity::MetallicOre
-            | Commodity::RareElements
-            | Commodity::Silicates
+            | Commodity::CupriteOre
+            | Commodity::TitaniumOre
+            | Commodity::CrystallineOre
+            | Commodity::RareMetalOre
             | Commodity::Volatiles
             | Commodity::Biomass => CommodityTier::Raw,
             Commodity::Alloys
+            | Commodity::RareElements
+            | Commodity::Silicates
+            | Commodity::ConductiveMetals
+            | Commodity::Titanium
             | Commodity::Electronics
             | Commodity::Polymers
             | Commodity::Fuel
             | Commodity::Provisions => CommodityTier::Processed,
-            Commodity::Machinery | Commodity::Armaments => CommodityTier::Advanced,
+            Commodity::Machinery | Commodity::Armaments | Commodity::Composites
+            | Commodity::HullSections | Commodity::PrecisionComponents
+            | Commodity::DriveAssemblies => CommodityTier::Advanced,
         }
     }
 
@@ -105,7 +134,36 @@ impl Commodity {
             Commodity::Provisions => "provisions",
             Commodity::Machinery => "machinery",
             Commodity::Armaments => "armaments",
+            Commodity::Composites => "composites",
+            Commodity::HullSections => "hull_sections",
+            Commodity::PrecisionComponents => "precision_components",
+            Commodity::DriveAssemblies => "drive_assemblies",
+            Commodity::CupriteOre => "cuprite_ore",
+            Commodity::TitaniumOre => "titanium_ore",
+            Commodity::CrystallineOre => "crystalline_ore",
+            Commodity::RareMetalOre => "rare_metal_ore",
+            Commodity::ConductiveMetals => "conductive_metals",
+            Commodity::Titanium => "titanium",
         }
+    }
+
+    pub fn is_ore(self) -> bool {
+        matches!(self, Self::MetallicOre | Self::CupriteOre | Self::TitaniumOre
+            | Self::CrystallineOre | Self::RareMetalOre)
+    }
+
+    /// Prose only: stored orders, stockpiles and network identifiers use slug().
+    pub fn display_name(self) -> String {
+        match self {
+            Self::MetallicOre => "ferrite ore".into(),
+            Self::RareMetalOre => "rare-metal ore".into(),
+            _ => self.slug().replace('_', " "),
+        }
+    }
+
+    /// Includes legacy direct-mineral deposits; never treats refined metals as ore.
+    pub fn is_mineable_mineral(self) -> bool {
+        self.is_ore() || matches!(self, Self::Silicates | Self::RareElements)
     }
 }
 
@@ -138,10 +196,10 @@ mod tests {
         }
     }
 
-    /// The tier classification partitions all 12 exactly (5 raw / 5 processed /
-    /// 2 advanced), and RAW matches the Raw tier.
+    /// The tier classification partitions all 22 exactly (7 raw / 9 processed /
+    /// 6 advanced), and RAW matches the Raw tier.
     #[test]
-    fn tiers_partition_the_twelve() {
+    fn tiers_partition_the_catalog() {
         let raw = Commodity::ALL
             .iter()
             .filter(|c| c.tier() == CommodityTier::Raw)
@@ -154,7 +212,7 @@ mod tests {
             .iter()
             .filter(|c| c.tier() == CommodityTier::Advanced)
             .count();
-        assert_eq!((raw, processed, advanced), (5, 5, 2));
+        assert_eq!((raw, processed, advanced), (7, 9, 6));
         for c in Commodity::RAW {
             assert_eq!(c.tier(), CommodityTier::Raw);
         }

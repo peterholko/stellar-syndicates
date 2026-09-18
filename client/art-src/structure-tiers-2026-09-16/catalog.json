@@ -1,0 +1,343 @@
+{
+  "mode": "built-in image_gen",
+  "scope": "Preview artwork only; game untouched",
+  "existing": "mining-complex",
+  "families": [
+    {
+      "id": "warehouse",
+      "title": "Warehouse",
+      "group": "Civilian storage",
+      "palette": "Cream steel, dark ribs, amber loading stripes and cyan service lights.",
+      "tiers": [
+        "ONE low barrel-vault steel storage hall, one loading door, short ramp, two cargo crates. Plain starter store, no tower.",
+        "Two joined low barrel-vault storage halls, two loading doors and a narrow covered transfer corridor. Add a small cargo lift.",
+        "Two ribbed storage halls with a raised central sorting block and rooftop cargo crane. Three clearly separated loading bays.",
+        "A compact two-storey automated warehouse, four large loading doors, overhead yellow cargo rail and vertical container racks.",
+        "A tall three-storey cargo depot with two vertical lift towers, stacked storage modules and a broad central sorting hall.",
+        "A major vertical logistics warehouse: stepped five-storey container storage stack, two tall external freight elevators and an overhead bridge crane above four lower loading bays. Dense upward development, not a whole city."
+      ]
+    },
+    {
+      "id": "bioharvester",
+      "title": "Bioharvester",
+      "group": "Extraction",
+      "palette": "Green living biomass under clear glass, pale steel ribs and small cyan lights.",
+      "tiers": [
+        "One small hemispherical glass biodome containing visible green plant beds, a squat cylindrical biomass collector and a short output conveyor. Simple low shape.",
+        "Two small hemispherical biodomes connected to a central biomass collection hut. Add paired green storage cylinders.",
+        "One larger central glass biodome and two small side cultivation pods, a tall green growth column behind, one front conveyor.",
+        "A two-level cultivation biodome with visible stacked growing beds, two side processing vessels and an elevated harvesting arm.",
+        "Three vertically stacked transparent growth chambers in a terraced greenhouse tower, paired collection domes and sealed conveyors at ground level.",
+        "A tall multi-level biomass harvesting core surrounded by four smaller glass cultivation domes, heavy silver ribbing and two enclosed harvesting arms. Recognizably biomass extraction, not a food factory."
+      ]
+    },
+    {
+      "id": "agroplex",
+      "title": "Agroplex",
+      "group": "Food production",
+      "palette": "Emerald greenhouse glazing, cream structural ribs, dark grey base machinery.",
+      "tiers": [
+        "One low rectangular greenhouse with broad glass roof showing orderly green crop rows, a small food-packing hut and a short conveyor.",
+        "Two parallel low crop greenhouses with a connected packing shed and one cylindrical water tank.",
+        "A central glass growing dome with two low greenhouse wings and a small packing conveyor in front.",
+        "A terraced three-level greenhouse with two growing wings, a taller central environmental tower and twin packing bays.",
+        "A compact stepped vertical farm with four broad glass growing terraces, two silver water-recycling cylinders and an automated packaging hall.",
+        "A grand six-level agricultural tower with wide stepped green terraces, two smaller greenhouse wings and a prominent food-processing hall. The silhouette reads as a sophisticated vertical farm, not an industrial mine."
+      ]
+    },
+    {
+      "id": "shipyard",
+      "title": "Shipyard",
+      "group": "Ship construction",
+      "palette": "Steel grey, blue service lighting, yellow gantry cranes.",
+      "tiers": [
+        "One short U-shaped open shipbuilding cradle with a tiny unfinished civilian hull, a SINGLE modest side crane and a low engineering hut. Starter light-hull yard.",
+        "Two short parallel assembly cradles, small unfinished hull ribs, one overhead bridge crane and a low control cabin.",
+        "Three compact side-by-side shipbuilding bays beneath a stronger double-sided overhead gantry, one unfinished light hull in the center.",
+        "Four stacked-height assembly berths beneath a broad rectangular gantry roof, two yellow manipulator arms, a raised control block.",
+        "A substantial multi-bay shipyard with a tall twin gantry, two tiers of assembly berths and a large central unfinished freighter frame.",
+        "A dense advanced light-and-freight shipyard with six organized berths inside a stepped gantry superstructure, paired cranes and upper control bridge. Preserve open cradles and blue work lights; not a flying ship itself."
+      ]
+    },
+    {
+      "id": "habitat",
+      "title": "Habitat",
+      "group": "Population",
+      "palette": "Warm white housing panels, teal windows, restrained green planted terraces.",
+      "tiers": [
+        "One low round residential dome with a short entrance and two small curved housing wings. Welcoming compact starter housing.",
+        "A central residential dome and two attached two-storey housing blocks, small green roof terrace and a wider entrance.",
+        "A three-storey terraced residence with a glass central atrium, two curved housing wings and a small rooftop garden.",
+        "A compact four-storey arcology with stepped green terraces, a tall glass atrium and two side residential towers.",
+        "Twin six-storey residential towers joined by a skybridge above a rounded glass atrium, planted roof terraces and visible warm windows.",
+        "A graceful compact high-rise arcology: three stepped residential towers of differing heights, skybridges and broad green terraces around a luminous central atrium. Dense vertical home, not a military bunker or sprawling city."
+      ]
+    },
+    {
+      "id": "academy",
+      "title": "Academy",
+      "group": "Training",
+      "palette": "Pale steel and cream institutional walls, blue glass, modest gold trim.",
+      "tiers": [
+        "A compact two-storey science-fiction training academy, a central blue-glass lecture hall, one modest observatory dome and a simple front entrance.",
+        "Two connected training wings around a blue-glass central lecture hall, one observatory dome and a small antenna.",
+        "A three-storey central academy tower, two lecture wings, a larger observatory dome and an enclosed simulator room.",
+        "A broad academy with four-storey central training tower, twin blue-glass lecture wings and a visible ring-shaped simulator on the roof.",
+        "A stepped higher academy with tall central command-training tower, two observatory domes and elevated enclosed links to training wings.",
+        "An advanced officer-and-specialist academy with a tall elegant spire, twin simulator domes, three stepped lecture wings and a central blue-glass command hall. Institutional architecture, no guns, no spaceship."
+      ]
+    },
+    {
+      "id": "volatile_harvester",
+      "title": "Volatile Harvester",
+      "group": "Extraction",
+      "palette": "Violet gas in transparent pressure vessels, steel cages and amber piping clamps.",
+      "tiers": [
+        "ONE stout spherical violet pressure vessel, a short collection pump and a low service hut linked by thick pipes. Modest gas extractor, not refinery.",
+        "Two spherical violet collection vessels of equal size, one short suction tower and a shared low pump house.",
+        "Two spherical pressure vessels with a taller central vertical gas collector, large intake pipes and one low service module.",
+        "Three caged gas vessels clustered around a tall twin-intake collection tower and reinforced pipe manifolds.",
+        "A deep-extraction volatile plant with a tall multi-stage intake tower, three thick violet pressure cylinders and twin large compressor housings.",
+        "A sophisticated volatile extraction station: paired tall multi-stage collection towers, four caged violet gas vessels and a central compressor hall. No flames; contained vapor only, strong compact silhouette."
+      ]
+    },
+    {
+      "id": "smelter",
+      "title": "Smelter",
+      "group": "Processing",
+      "palette": "Dark steel furnace casings, orange molten-metal channels, yellow crane details.",
+      "tiers": [
+        "One short cylindrical electric furnace with an orange mouth, a single ore chute, compact casting block and one low exhaust vent.",
+        "Twin compact furnaces feeding one orange casting channel, a thicker ore chute and paired short exhaust stacks.",
+        "A large central furnace, two side induction vats, a taller exhaust stack and a yellow ladle arm over the casting channel.",
+        "Twin tall blast furnaces with shared front casting floor, two glowing metal channels and an overhead ladle crane.",
+        "A heavy three-furnace smelting complex with tall rectangular heat-recovery tower, overhead bridge crane and two large casting bays.",
+        "An advanced stacked smelting installation with three armored furnace towers, huge central induction collar, paired overhead ladle cranes and three orange casting mouths. Molten glow stays contained; no smoke backdrop."
+      ]
+    },
+    {
+      "id": "electronics_fabricator",
+      "title": "Electronics Fabricator",
+      "group": "Processing",
+      "palette": "Pale titanium cleanrooms, cyan glazing, blue circuit service lights.",
+      "tiers": [
+        "One low sealed cleanroom with cyan observation window, a single broad circuit fabrication chamber and a small filtered-air unit.",
+        "Two linked cleanroom modules, paired fabrication chambers with blue windows and a small central ventilation tower.",
+        "A two-storey fabrication hall with three cyan-glass processing chambers and a raised silver filtration tower.",
+        "A taller cleanroom tower joined to two stacked fabrication wings, a distinctive circular wafer-transfer chamber at the front.",
+        "A dense four-storey electronics factory with tiered cyan-windowed fabrication pods and two large roof filtration cylinders.",
+        "A premium advanced electronics fab: stepped cleanroom tower, six clearly organized cyan-glazed fabrication modules, twin tall filtration towers and a front circular wafer-exchange chamber. No weapons or satellites."
+      ]
+    },
+    {
+      "id": "chemical_works",
+      "title": "Chemical Works",
+      "group": "Processing",
+      "palette": "Dark steel pipework, violet and teal reaction chambers, muted amber safety accents.",
+      "tiers": [
+        "One stout vertical violet reaction vessel, one small horizontal mixing drum and a low control hut, linked by two broad pipes.",
+        "Two vertical reaction vessels of different heights, one horizontal mixing drum and a shared low processing hall.",
+        "A tall central reactor column between two spherical mixing tanks, a double-height process hall and visible thick pipe loops.",
+        "Three vertically stepped reactor columns with a raised pipe rack and twin horizontal polymer-mixing drums.",
+        "A multi-stage chemical reactor with four large caged columns, an elevated pipe bridge and two enclosed finishing modules.",
+        "An advanced compact chemical works with paired tall reaction towers, three lower mixing vessels and a wide enclosed polymer-processing hall beneath an organized pipe network. No toxic cloud or atmospheric scenery."
+      ]
+    },
+    {
+      "id": "fuel_refinery",
+      "title": "Fuel Refinery",
+      "group": "Processing",
+      "palette": "Steel and copper distillation piping, warm amber fluids, cyan status strips.",
+      "tiers": [
+        "One short copper distillation column, a horizontal fuel tank and a low refining shed linked by chunky pipes.",
+        "Two copper distillation columns of unequal height, two horizontal tanks and one compact separator block.",
+        "Three vertical refinery columns with connecting pipe bridge, one spherical separator and two horizontal fuel tanks.",
+        "A tall central fractionation tower with two side distillation columns, paired rounded fuel tanks and a broad refining block.",
+        "Twin tall fractionation towers with heavy copper pipework, four organized tank modules and one raised separator.",
+        "A mature compact fuel refinery with three high fractionation towers, stepped heat-exchanger banks, paired large fuel tanks and an integrated pumping hall. No fire plume or exterior smoke."
+      ]
+    },
+    {
+      "id": "machine_works",
+      "title": "Machine Works",
+      "group": "Advanced industry",
+      "palette": "Gunmetal workshops, orange robotic arms, yellow gantry beams and small cyan indicators.",
+      "tiers": [
+        "One open-front machine shop with a single orange industrial robot assembling a large gear block, low roof and one storage cabinet.",
+        "Two visible orange assembly robots in a wider open workshop, a short overhead rail and paired output machinery crates.",
+        "A two-level assembly hall with three robot arms, a strong overhead yellow gantry and a visible heavy gearbox on the front line.",
+        "Twin assembly bays beneath a tall yellow bridge crane, four clearly spaced orange robots and a raised control room.",
+        "A multi-level machinery factory with two overhead cranes, paired heavy assembly lines and visible turbine-and-gearbox modules.",
+        "A sophisticated dense automated machine works with three stacked assembly bays, tall traveling gantry and six major robotic arms assembling broad machinery units. Keep large readable parts, no scattered micro-detail."
+      ]
+    },
+    {
+      "id": "armaments_complex",
+      "title": "Armaments Complex",
+      "group": "Advanced industry",
+      "palette": "Armored gunmetal halls, muted red-orange safety lights, yellow lifting equipment.",
+      "tiers": [
+        "One armored ordnance manufacturing hall with a short assembly bench holding a compact cannon module and one small orange robot.",
+        "Two enclosed assembly bays producing cannon and missile modules, paired robot arms and a reinforced materials locker.",
+        "A two-storey armored weapons factory with a central assembly gantry, visible missile tube rack and one cannon cradle.",
+        "Three weapons-assembly bays under a high protected roof, twin gantries, separate cannon and missile-module lines.",
+        "A tall stepped armaments plant with reinforced blast partitions, multiple robotic assembly stations and an elevated ammunition-handling rail.",
+        "A high-tier armaments complex with a central armored production tower, paired heavy weapon assembly halls and three protected loading bays. Factory machinery only; no firing, explosions or battlefield."
+      ]
+    },
+    {
+      "id": "composite_works",
+      "title": "Composite Works",
+      "group": "Advanced industry",
+      "palette": "Graphite fiber rolls, silver press frames, amber manipulator details and teal status lights.",
+      "tiers": [
+        "One horizontal laminating press fed by two large dark fiber reels, a short stack of broad composite sheets and a low control cabin.",
+        "Two side-by-side laminating presses with three large fiber reels and one amber handling arm.",
+        "A tall central compression press, twin fiber-feed racks and two output stacks of curved composite panels.",
+        "Two heavy vertical curing presses joined by an overhead sheet-handling gantry, four fiber reels and a sealed curing chamber.",
+        "A stepped composite plant with three press stations, large enclosed autoclave and two robotic sheet manipulators.",
+        "An advanced composite works with a tall twin-press frame, stacked horizontal autoclaves, large organized fiber reel banks and an overhead material-transfer bridge. Distinct broad armor sheets, not tiny electronics."
+      ]
+    },
+    {
+      "id": "hull_fabricator",
+      "title": "Hull Fabricator",
+      "group": "Advanced industry",
+      "palette": "Silver spacecraft hull plates, dark support ribs, yellow welding gantries.",
+      "tiers": [
+        "One open steel frame holding a single broad curved spacecraft hull plate, a small yellow welding arm and a low workshop module.",
+        "A wider open frame holding two curved hull sections, paired welding arms and a short overhead rail.",
+        "A tall gantry spanning a ribbed partial hull shell, two strong welding arms and a side plate-cutting module.",
+        "Twin hull-section fabrication cradles under a large rectangular gantry, four manipulators and a raised control room.",
+        "A two-level hull fabrication hall with a massive arched shell on the lower line, stacked panel racks and twin overhead cranes.",
+        "An advanced hull-section factory with three tall gantry frames around a broad segmented hull shell, multiple robotic welders and stacked curved armor panels. An industrial building manufacturing hulls, never a complete ship."
+      ]
+    },
+    {
+      "id": "precision_works",
+      "title": "Precision Works",
+      "group": "Advanced industry",
+      "palette": "Clean silver machining pods, cyan observation glass, small gold instrument details.",
+      "tiers": [
+        "One small cleanroom machining pod with a large cyan window showing a single precise manipulator holding a gold gyroscope core.",
+        "Two cyan-glass machining pods with paired fine manipulator arms and a shared low cleanroom support block.",
+        "Three transparent precision assembly cells around a two-storey cleanroom tower, central gyroscope test chamber visible.",
+        "Twin tall precision cleanroom blocks over four organized assembly cells, a circular instrument-calibration chamber at the front.",
+        "A stepped four-storey precision factory with two large circular calibration drums and rows of enclosed robotic assembly cells.",
+        "An advanced microengineering complex with a tall cleanroom core, six distinct cyan-glass assembly pods, twin gold-ring calibration instruments and an elevated sealed transfer corridor. Precision factory, not general machine shop."
+      ]
+    },
+    {
+      "id": "drive_works",
+      "title": "Drive Works",
+      "group": "Advanced industry",
+      "palette": "Titanium drive nozzles, copper coolant plumbing, graphite housings and cyan engine rings.",
+      "tiers": [
+        "One low open assembly cradle holding a single silver spaceship engine nozzle, small coolant cabinet and one yellow crane arm.",
+        "Two parallel engine assembly cradles with silver nozzles, a central crane and a low coolant block.",
+        "A larger central engine test cradle with bright restrained cyan inner ring, two small assembly pods and an overhead gantry.",
+        "Twin large drive-engine cradles beneath a heavy gantry, copper coolant towers and two articulated handling arms.",
+        "A multi-level engine plant with a large central drive assembly, two secondary nozzle cradles and twin cooling towers.",
+        "An advanced compact drive works with three massive engine assembly rings in separate cradles, an elevated crane bridge, paired copper coolant towers and an enclosed control block. No thrust flames or free-flying ships."
+      ]
+    },
+    {
+      "id": "naval_drydock",
+      "title": "Naval Drydock",
+      "group": "Ship construction",
+      "palette": "Long steel warship cradles, blue work lights, yellow cranes and armored control cabins.",
+      "tiers": [
+        "One long deep rectangular naval construction cradle with tall side trusses, a partial unarmed warship frame and one overhead crane.",
+        "Two long parallel warship cradles with shared tall truss supports and two overhead cranes.",
+        "A long central warship cradle and two shorter side bays, tall twin gantry towers joined by an overhead service bridge.",
+        "A compact naval dock complex with three deep assembly channels, twin high gantries and a raised armored control block.",
+        "A heavy multi-level naval yard, four deep construction berths, massive traveling cranes and an elevated engineering bridge.",
+        "A premier naval drydock with six organized line-warship berths in a tiered truss structure, tall twin gantries and broad blue-lit service channels. Read as industrial dock, not a starship or weapons platform."
+      ]
+    },
+    {
+      "id": "capital_slipway",
+      "title": "Capital Slipway",
+      "group": "Ship construction",
+      "palette": "Massive pale steel truss arches, gold crane joints and small cyan construction lights.",
+      "tiers": [
+        "One massive open U-shaped capital-ship construction frame, twin tall skeletal pylons and a short partial ship spine supported in the center.",
+        "A taller capital slipway with two pairs of skeletal pylons, one curved overhead arch and a partial heavy ship spine below.",
+        "A giant central arched construction gantry with four tall pylons, two overhead cranes and a short side assembly berth.",
+        "Twin towering curved gantry arches over a broad capital-hull cradle, stacked side service galleries and raised control tower.",
+        "A heavy capital construction cradle surrounded by three tall ring-like gantries, multiple overhead cranes and two smaller service berths.",
+        "A monumental but compact super-capital slipway with four interlinked tall gantry arches, layered service galleries and multiple cranes surrounding a broad unfinished capital hull frame. Entire silhouette visible; never crop the arches."
+      ]
+    },
+    {
+      "id": "ordnance_foundry",
+      "title": "Ordnance Foundry",
+      "group": "Fleet maintenance",
+      "palette": "Gunmetal service bays, amber repair gantries, cyan diagnostic lights.",
+      "tiers": [
+        "One open repair bay with a small damaged hull panel under a single yellow service crane, repair tool module and a low workshop.",
+        "Twin repair bays, paired yellow cranes, central spare-parts rack and a small diagnostic mast.",
+        "Three repair stations under one tall gantry, an enclosed refit workshop and visible broad engine module being serviced.",
+        "Twin high service gantries above four organized maintenance bays, raised diagnostics room and a large parts-handling rail.",
+        "A stacked fleet-service facility with two tall repair towers, four enclosed refit bays and paired overhead lifting cranes.",
+        "An advanced maintenance foundry with three tall gantries, six protected refit berths, central diagnostics tower and broad visible repair machinery. This repairs and fits ships; do not turn it into a furnace or gun turret."
+      ]
+    },
+    {
+      "id": "orbital_warehouse",
+      "title": "Orbital Warehouse",
+      "group": "Orbital infrastructure",
+      "palette": "Steel cargo pods, pale docking collars, blue lights and restrained yellow cranes.",
+      "tiers": [
+        "A compact orbital storage station: one sealed cargo spine with two large rectangular cargo pods and a single docking collar. Clearly free-floating infrastructure, no thruster engines or ground legs.",
+        "A central storage spine with four rectangular cargo pods and two docking collars, one small handling crane.",
+        "A compact cross-shaped orbital depot with six cargo pods around a taller central service tower and two docking collars.",
+        "A two-level orbital warehouse with eight stacked cargo pods, paired docking arms and one prominent central logistics tower.",
+        "A large vertical orbital cargo depot with twelve organized pod modules, three docking collars and twin external cargo cranes.",
+        "A dense orbital logistics citadel with stacked modular cargo banks surrounding a tall central spine, four large docking arms and multiple enclosed transfer bridges. No planet, stars, scene or thrust; isolated station only."
+      ]
+    },
+    {
+      "id": "sensor_array",
+      "title": "Sensor Array",
+      "group": "Sensors",
+      "palette": "Silver dish reflectors, graphite mounts, small blue electronic lights.",
+      "tiers": [
+        "One modest tilted silver parabolic sensor dish on a squat pedestal, a small signal cabin and a short antenna.",
+        "Two silver parabolic dishes of different sizes on a shared signal-processing building with a taller antenna mast.",
+        "One large central parabolic dish flanked by two smaller dishes, a two-storey electronics block and a slim antenna.",
+        "Twin large dish reflectors with one central tall antenna tower, three smaller reception panels and a stepped processing building.",
+        "A high-sensitivity array with three large dishes at stepped heights, paired tall antenna masts and a compact layered electronics core.",
+        "A sophisticated deep-space sensor array with one huge central reflector, four smaller dishes arranged around it, twin tall phased-array panels and a substantial processing core. Solid readable dish silhouette, no beams or radiating circles."
+      ]
+    },
+    {
+      "id": "defense_platform",
+      "title": "Defense Platform",
+      "group": "Defense",
+      "palette": "Armored graphite hull, steel barrels, blue capacitor lights, restrained red caution markings.",
+      "tiers": [
+        "One compact armored circular gun emplacement with a single medium cannon, low turret base and two small support vents.",
+        "A twin-barrel cannon turret on a reinforced low armored base, paired side missile boxes and blue capacitors.",
+        "A larger twin heavy cannon turret with two secondary short defensive guns and a taller armored central drum.",
+        "A stepped armored battery with twin main cannons, four small close-defense turrets and large side missile pods.",
+        "A heavy defense installation with three major cannon barrels, layered armor rings and two elevated missile batteries.",
+        "A formidable compact defense platform with twin massive railgun turrets, four smaller defensive mounts, two large missile pods and a reinforced command core. Static structure, no firing beams, explosions, troops or battlefield."
+      ]
+    },
+    {
+      "id": "garrison",
+      "title": "Garrison",
+      "group": "Ground defense",
+      "palette": "Matte grey fortified walls, muted olive doors, amber safety lights.",
+      "tiers": [
+        "One low fortified barracks with a single squat watchtower, reinforced entry door and a small communications mast.",
+        "Two connected barracks blocks behind a low armored wall, two squat watchtowers and a central gate.",
+        "A compact fortified compound with two higher watchtowers, central two-storey barracks and a reinforced gate.",
+        "A three-level armored garrison block with four corner watchtowers, enclosed training courtyard and prominent fortified entry.",
+        "A stepped ground-defense fortress with tall central command block, four reinforced towers and two protected vehicle-bay doors.",
+        "A major compact garrison citadel with layered armored walls, six organized watchtowers, a tall command keep and broad reinforced troop-transport bay. Ground defense architecture, no people, no battlefield, no huge ground slab."
+      ]
+    }
+  ]
+}

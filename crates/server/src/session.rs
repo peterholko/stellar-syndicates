@@ -30,6 +30,10 @@ use crate::protocol::{ClientMsg, ServerMsg};
 pub struct ServerStatus {
     pub online_players: usize,
     pub connections: usize,
+    pub bot_players: usize,
+    pub bot_commands: u64,
+    pub corporations: usize,
+    pub galaxy_systems: usize,
     pub tick: u64,
     pub sim_time: f64,
 }
@@ -78,6 +82,8 @@ pub struct ConnSentState {
     pub captures_sig: Option<u64>,
     /// Signature of the published rankings as last sent.
     pub rankings_sig: Option<u64>,
+    /// Private annotations change only on edits, not on simulation ticks.
+    pub exploration_journal_version: Option<u64>,
 }
 
 /// Everything the loop needs to know about one live connection.

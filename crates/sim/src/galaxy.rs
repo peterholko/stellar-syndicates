@@ -26,7 +26,8 @@ pub struct Deposit {
     /// Units produced per second at full extraction.
     pub richness: f64,
     /// Remaining reserves; `None` = renewable (never depletes). Finite deposits
-    /// run dry — kept simple for the alpha by generating renewable deposits.
+    /// run dry: §ore-ladder rolls the two scarce ores finite (`roll_reserves`)
+    /// so a rim claim is a rush, not a permanent faucet; bulk ores renew.
     pub reserves: Option<f64>,
     /// 0..1 difficulty (deeper = harder). A field for later extractor-tier
     /// gating; it does NOT gate anything yet.
@@ -75,6 +76,8 @@ pub struct StarSystem {
     /// Production accumulated at the system, awaiting a convoy to the hub.
     #[serde(default)]
     pub stockpile: BTreeMap<Commodity, f64>,
+    #[serde(default)]
+    pub industry: crate::industry::SiteIndustry,
     /// §modules Part B3: the MODULE ledger — manufactured modules pooled at this
     /// system (crates in the yard's warehouse, not per-body). Fitted onto ships
     /// at build/refit, shipped by convoy, traded at Sol. `#[serde(default)]` so
@@ -86,13 +89,14 @@ pub struct StarSystem {
     #[serde(default, rename = "extractor_tier")]
     pub legacy_extractor_tier: u32,
     /// Number of Orbital Warehouse tiers built here (§buildings step 2). Each tier raises
-    /// the system's storage cap by `STORAGE_PER_WAREHOUSE_TIER`. `default` = 0 on old
-    /// snapshots (they get the base cap; oversize stockpiles are grandfathered —
+    /// the system's storage cap by `STORAGE_PER_ORBITAL_WAREHOUSE_TIER`. `default` = 0 on old
+    /// snapshots (migration grants Warehouse I; oversize stockpiles are grandfathered —
     /// the cap blocks NEW inflow only, it never destroys what's stored).
     #[serde(default, rename = "depot_tier")]
     pub legacy_depot_tier: u32,
     /// Number of Shipyard upgrades built here (§buildings step 3). Gates ship
-    /// construction: Convoy needs tier ≥ 1, Raider ≥ 2 (`required_shipyard_tier`).
+    /// construction: Tiny/Small Freighter need tier ≥ 1, Medium/Interceptor ≥ 2
+    /// (`required_shipyard_tier`).
     /// HOME systems generate at tier 1 (the turn-one convoy bootstrap).
     #[serde(default, rename = "shipyard_tier")]
     pub legacy_shipyard_tier: u32,
@@ -212,6 +216,15 @@ pub struct Blockade {
 }
 
 impl StarSystem {
+    /// Physical goods remain in storage. Earmarks protect them from exports,
+    /// factory inputs and competing projects. Population life support and
+    /// hostile plunder still access physical stock, rather than this budget.
+    pub fn free_stock(&self, c: Commodity) -> f64 {
+        self.project_stock(c, None)
+    }
+    pub fn project_stock(&self, c: Commodity, target: Option<crate::industry::ProjectTarget>) -> f64 {
+        (self.stockpile.get(&c).copied().unwrap_or(0.0) - self.industry.reserved(c, target)).max(0.0)
+    }
     /// Whether this system can be claimed (no current owner).
     pub fn is_unclaimed(&self) -> bool {
         self.owner.is_none()
@@ -353,7 +366,28 @@ impl StarSystem {
             // §ground: the garrison sits where the people are — you defend a
             // populated world, not a bare rock.
             K::Habitat | K::Agroplex | K::Academy | K::Garrison => habitable_body,
-            K::Smelter | K::ElectronicsFabricator | K::MachineWorks | K::ArmamentsComplex => {
+            K::Warehouse => {
+                if let Some(b) = self.bodies.iter().filter(|b| b.tier(K::Warehouse) > 0)
+                    .max_by_key(|b| b.tier(K::Warehouse)) {
+                    return Some(b.id); // unspecified tier-ups stay at the existing store
+                }
+                // Ground storage needs a surface and should not overfill the
+                // founding food world's Infrastructure pool. Existing full
+                // colonies may be grandfathered during the one-time migration.
+                let ground: Vec<_> = self.bodies.iter().filter(|b|
+                    b.kind != crate::body::BodyKind::GasGiant).collect();
+                ground.iter().find(|b| b.pool_slots_built(crate::build::SlotPool::Infrastructure)
+                    < b.pool_slots(crate::build::SlotPool::Infrastructure))
+                    .or_else(|| ground.first()).map(|b| b.id).or(primary)
+            }
+            K::Smelter
+            | K::ElectronicsFabricator
+            | K::MachineWorks
+            | K::ArmamentsComplex
+            | K::CompositeWorks
+            | K::HullFabricator
+            | K::PrecisionWorks
+            | K::DriveWorks => {
                 industrial_body
             }
             // §yards: the whole yard family auto-sites with the Shipyard, on the
@@ -620,10 +654,7 @@ impl StarSystem {
     /// free functioning colony.
     pub fn guarantee_industrial_world(&mut self) {
         let mineral = |d: &&Deposit| {
-            matches!(
-                d.resource,
-                Commodity::MetallicOre | Commodity::Silicates | Commodity::RareElements
-            )
+            d.resource.is_mineable_mineral()
         };
         let target = self
             .bodies
@@ -681,7 +712,7 @@ impl StarSystem {
             .iter()
             .flat_map(|b| b.assignments.values())
             .map(|a| a.workers)
-            .sum()
+            .sum::<u32>() + self.industry.workforce()
     }
 
     /// §economy Part 3: the SYSTEM-wide staffing share — the one workforce
@@ -789,15 +820,26 @@ impl StarSystem {
         crate::build::sensor_array_radius(self.tier(crate::build::StructureKind::SensorArray))
     }
 
-    /// This system's TOTAL storage capacity (§buildings step 2): a base every
-    /// system has, plus a chunk per Orbital Warehouse tier. New inflow is capped at this;
-    /// what's already stored is never destroyed.
+    /// Founding supplies include one ground Warehouse I, not an invisible base
+    /// allowance. Buildings on every body share this single system stockpile.
+    /// Losing capacity blocks new inflow; it never deletes stored goods.
     pub fn storage_cap(&self) -> f64 {
-        // §bodies: warehouses STACK — every warehouse tier on every body raises
-        // the one pooled cap (tier_sum, not the best single warehouse).
-        crate::build::STORAGE_BASE_CAP
-            + crate::build::STORAGE_PER_WAREHOUSE_TIER
+        let ground: f64 = if self.bodies.is_empty() {
+            crate::build::warehouse_capacity(self.tier(crate::build::StructureKind::Warehouse))
+        } else {
+            self.bodies.iter().map(|b| crate::build::warehouse_capacity(
+                b.tier(crate::build::StructureKind::Warehouse))).sum()
+        };
+        ground + crate::build::STORAGE_PER_ORBITAL_WAREHOUSE_TIER
                 * self.tier_sum(crate::build::StructureKind::OrbitalWarehouse) as f64
+    }
+
+    /// Founding kit / old-save migration only, never a per-tick repair. A lost
+    /// warehouse is not silently rebuilt. Keep any existing tiers and inventory.
+    pub(crate) fn seed_warehouse(&mut self) {
+        if self.tier(crate::build::StructureKind::Warehouse) == 0 {
+            self.set_tier(crate::build::StructureKind::Warehouse, 1);
+        }
     }
 
     /// Total units currently stored (summed across commodities) — what the cap
@@ -838,17 +880,114 @@ pub struct HomeSlot {
     pub founding_opportunities: Vec<EntityId>,
 }
 
-/// §economy: the RAW commodity ladder, cheapest → frontier-most (by base
-/// price). Deposits are drawn ONLY from raws (processed/advanced goods are
-/// MADE, never mined), biased by distance from the hub — near-hub systems hold
-/// common/cheap raws, the frontier holds Rare Elements and rich Volatiles (§4).
-const RAW_VALUE_TIER: [Commodity; 5] = [
-    Commodity::Biomass,
-    Commodity::Silicates,
-    Commodity::MetallicOre,
-    Commodity::Volatiles,
-    Commodity::RareElements,
+/// §ore-ladder: the RAW deposit table — what a system's deposits can be, how
+/// often, and where. Deposits are drawn ONLY from raws (processed/advanced
+/// goods are MADE, never mined). Each row is `(commodity, weight, lo, hi)`: the
+/// commodity is eligible while the system's frontier factor lies in `[lo, hi]`,
+/// and its draw weight ramps in over [`RAW_RAMP`] past `lo` and out over the
+/// same distance before `hi`, so borders are soft. Rarity comes from the
+/// WEIGHTS and WINDOWS together, never from the price ladder alone: the bulk
+/// ores are common everywhere, Titanium ore opens in the outer half, Rare-metal
+/// ore only past the pirate ring. Galaxy-wide deposit shares this produces
+/// (area-uniform stars, rim systems rolling more deposits): Ferrite ~26%,
+/// Volatiles ~15%, Crystalline ~16%, Biomass ~8%, Cuprite ~18%, Titanium ~11%,
+/// Rare-metal ~6% — a default four-player galaxy holds about five Rare-metal
+/// deposits in total. The ordering is test-pinned. Tunable.
+pub const RAW_DEPOSIT_TABLE: [(Commodity, f64, f64, f64); 7] = [
+    (Commodity::MetallicOre, 1.00, 0.00, 1.00),
+    (Commodity::Volatiles, 0.55, 0.00, 1.00),
+    (Commodity::CrystallineOre, 1.70, 0.00, 0.80),
+    (Commodity::Biomass, 0.70, 0.00, 0.85),
+    (Commodity::CupriteOre, 0.72, 0.20, 1.00),
+    (Commodity::TitaniumOre, 0.48, TITANIUM_MIN_FRONTIER, 1.00),
+    (Commodity::RareMetalOre, 0.40, RARE_METAL_MIN_FRONTIER, 1.00),
 ];
+/// Titanium ore opens in the outer half of the disk.
+pub const TITANIUM_MIN_FRONTIER: f64 = 0.45;
+/// Rare-metal ore lies beyond the pirate ring ([`crate::pirate::PIRATE_RING_HI`]
+/// is 0.72), so every haul home crosses hunted space.
+pub const RARE_METAL_MIN_FRONTIER: f64 = 0.70;
+/// Width of the soft border at each window edge.
+const RAW_RAMP: f64 = 0.15;
+
+/// A commodity's draw weight at a frontier factor (0 outside its window).
+pub fn raw_deposit_weight(resource: Commodity, frontier: f64) -> f64 {
+    let Some(&(_, weight, lo, hi)) = RAW_DEPOSIT_TABLE.iter().find(|row| row.0 == resource)
+    else {
+        return 0.0;
+    };
+    if frontier < lo || frontier > hi {
+        return 0.0;
+    }
+    let ramp_in = if lo > 0.0 { ((frontier - lo) / RAW_RAMP).min(1.0) } else { 1.0 };
+    let ramp_out = if hi < 1.0 { ((hi - frontier) / RAW_RAMP).min(1.0) } else { 1.0 };
+    weight * ramp_in * ramp_out
+}
+
+/// Draw one raw deposit commodity for a system at `frontier` from the rows
+/// `eligible` admits (one RNG draw). Ferrite is eligible everywhere, so the
+/// ore-only draw the sparse stars use can never come up empty.
+pub fn roll_raw_deposit_where(
+    rng: &mut Rng,
+    frontier: f64,
+    eligible: impl Fn(Commodity) -> bool,
+) -> Commodity {
+    let frontier = frontier.clamp(0.0, 1.0);
+    let weight = |c: Commodity| if eligible(c) { raw_deposit_weight(c, frontier) } else { 0.0 };
+    let total: f64 = RAW_DEPOSIT_TABLE.iter().map(|row| weight(row.0)).sum();
+    let mut pick = rng.next_f64() * total;
+    for &(resource, ..) in &RAW_DEPOSIT_TABLE {
+        pick -= weight(resource);
+        if pick <= 0.0 && weight(resource) > 0.0 {
+            return resource;
+        }
+    }
+    Commodity::MetallicOre
+}
+
+/// Draw one raw deposit commodity for a system at `frontier` (one RNG draw).
+pub fn roll_raw_deposit(rng: &mut Rng, frontier: f64) -> Commodity {
+    roll_raw_deposit_where(rng, frontier, |_| true)
+}
+
+/// §ore-ladder: the two scarce ores are FINITE — a rim claim is a rush, not a
+/// permanent faucet. Sized in BULK-equivalent units and scaled by the ore's
+/// unit ratio (§ore-density), so at a base worker's ~0.45/s content rate a
+/// seam lasts twelve to twenty-five hours of extraction before staffing, tiers
+/// and geology shorten it. Bulk ores stay renewable. Tunable.
+pub const FINITE_RESERVES_LO: f64 = 20_000.0;
+pub const FINITE_RESERVES_HI: f64 = 40_000.0;
+
+/// §ore-ladder: the scarce ores' seams run RICHER than the bulk ores' (they are
+/// rare, finite and far — the find has to be worth the trip). This also holds
+/// the organic survey pacing where the old tier ladder left it: the pinned
+/// 10–15% build-order-changing target lost about a point when Rare-metal ore
+/// stopped being half the rim, and the richer seam gives it back. Tunable.
+pub const SCARCE_VEIN_MULT: f64 = 1.20;
+
+/// The richness premium a freshly rolled deposit of `resource` carries.
+pub fn vein_mult(resource: Commodity) -> f64 {
+    match resource {
+        Commodity::TitaniumOre | Commodity::RareMetalOre => SCARCE_VEIN_MULT,
+        _ => 1.0,
+    }
+}
+
+/// Reserves for a freshly rolled deposit: finite for the scarce ores, `None`
+/// (renewable) for everything else. `vein` is the deposit's richness roll
+/// normalised to `0..1` — a richer seam is also a deeper one — so sizing the
+/// reserve costs no RNG draw of its own and the generator's stream (and every
+/// seeded star position after it) stays exactly where it was.
+pub fn reserves_for(resource: Commodity, vein: f64) -> Option<f64> {
+    match resource {
+        Commodity::TitaniumOre | Commodity::RareMetalOre => {
+            let vein = vein.clamp(0.0, 1.0);
+            let bulk_units = FINITE_RESERVES_LO + (FINITE_RESERVES_HI - FINITE_RESERVES_LO) * vein;
+            Some((bulk_units * crate::production::ore_bulk_ratio(resource)).round())
+        }
+        _ => None,
+    }
+}
 
 /// Base extraction rate (units/sec) a deposit produces; scaled up toward the
 /// frontier. Tunable — balance is not the goal, a working loop is.
@@ -886,49 +1025,64 @@ pub fn generate_systems(
         // Frontier factor in [0,1]: 0 at the inner margin, 1 at the rim.
         let frontier = u; // == (r/radius - 0.12) / 0.84, monotonic in distance
         let deposits = generate_deposits(rng, frontier);
-        let claim_cost = claim_cost_for(&deposits);
         // §bodies: NEW systems are born with their roster — deposits are
         // rolled first (the frontier gradient is untouched), then placed onto
         // affinity-correct bodies by the shared generator.
         let bodies = crate::body::generate_bodies(&id.0.to_string(), &name, &deposits);
-        systems.push(StarSystem {
-            id,
-            pos,
-            name,
-            bodies,
-            legacy_deposits: Vec::new(),
-            claim_cost,
-            owner: None,
-            claimed_at: None,
-            stockpile: BTreeMap::new(),
-            modules: BTreeMap::new(),
-            legacy_extractor_tier: 0,
-            legacy_depot_tier: 0,
-            legacy_shipyard_tier: 0, // frontier systems must EARN their shipyards
-            legacy_sensor_tier: 0,
-            legacy_defense_tier: 0,
-            defense_pool: 0.0,
-            legacy_habitat_tier: 0,
-            food_state: crate::colony::FoodState::default(),
-            legacy_refinery_tier: 0,
-            blockade: None,
-            garrison_fed: true,
-            garrison_suppression: 0.0,
-            blockade_prev: None,
-            trait_: None,
-            cache_claimed: false,
-            legacy_structures: BTreeMap::new(),
-            legacy_population: 0.0,
-            legacy_assignments: BTreeMap::new(),
-            specialists: BTreeMap::new(),
-        });
+        systems.push(unowned_system(id, pos, name, bodies, claim_cost_for(&deposits)));
     }
     systems
 }
 
+/// Shared empty administration for both full colony systems and sparse
+/// exploration systems. The caller owns the body roster; no filler planets or
+/// hidden resource rolls occur here.
+pub(crate) fn unowned_system(
+    id: EntityId,
+    pos: Vec2,
+    name: String,
+    bodies: Vec<crate::body::Body>,
+    claim_cost: f64,
+) -> StarSystem {
+    StarSystem {
+        id,
+        pos,
+        name,
+        bodies,
+        legacy_deposits: Vec::new(),
+        claim_cost,
+        owner: None,
+        claimed_at: None,
+        stockpile: BTreeMap::new(),
+        industry: Default::default(),
+        modules: BTreeMap::new(),
+        legacy_extractor_tier: 0,
+        legacy_depot_tier: 0,
+        legacy_shipyard_tier: 0, // frontier systems must EARN their shipyards
+        legacy_sensor_tier: 0,
+        legacy_defense_tier: 0,
+        defense_pool: 0.0,
+        legacy_habitat_tier: 0,
+        food_state: crate::colony::FoodState::default(),
+        legacy_refinery_tier: 0,
+        blockade: None,
+        garrison_fed: true,
+        garrison_suppression: 0.0,
+        blockade_prev: None,
+        trait_: None,
+        cache_claimed: false,
+        legacy_structures: BTreeMap::new(),
+        legacy_population: 0.0,
+        legacy_assignments: BTreeMap::new(),
+        specialists: BTreeMap::new(),
+    }
+}
+
 /// Deterministically generate a system's deposits from its frontier factor:
-/// more deposits, richer, and skewed toward valuable commodities the farther out
-/// it sits. Renewable (no depletion) for the alpha.
+/// more deposits, richer, and drawn from the rarity table at that distance —
+/// the scarce ores only open toward the rim, and carry FINITE reserves. Two
+/// draws per deposit, as the tier ladder took, so a seed's star chart is
+/// unchanged by the table: only what lies under each star moved.
 fn generate_deposits(rng: &mut Rng, frontier: f64) -> Vec<Deposit> {
     // 1 deposit near the hub, up to 3 at the rim.
     let n = (1.0 + frontier * 2.0 + rng.range(0.0, 0.9))
@@ -936,36 +1090,38 @@ fn generate_deposits(rng: &mut Rng, frontier: f64) -> Vec<Deposit> {
         .clamp(1.0, 3.0) as usize;
     let mut deposits = Vec::with_capacity(n);
     for _ in 0..n {
-        // Pick a commodity tier centred on the frontier (cheap near hub, valuable
-        // at the rim) with seeded spread.
-        let center = frontier * (RAW_VALUE_TIER.len() - 1) as f64;
-        let idx = (center + rng.range(-1.1, 1.1))
-            .round()
-            .clamp(0.0, (RAW_VALUE_TIER.len() - 1) as f64) as usize;
-        let resource = RAW_VALUE_TIER[idx];
+        let resource = roll_raw_deposit(rng, frontier);
         // Richness rises toward the frontier, but remains a SITE advantage
         // rather than a universal frontier jackpot. Extra deposits and rarer
         // commodities already make the rim valuable; this narrower band leaves
         // Rich/Ultra Rich geology and matching specials room to create the
         // memorable ×1.8–3 specialty discoveries.
-        let richness = DEPOSIT_BASE_RICHNESS * (0.70 + 0.55 * frontier) * rng.range(0.80, 1.20);
+        let vein = rng.range(0.80, 1.20);
+        let richness =
+            DEPOSIT_BASE_RICHNESS * (0.70 + 0.55 * frontier) * vein * vein_mult(resource);
+        let reserves = reserves_for(resource, (vein - 0.80) / 0.40);
         deposits.push(Deposit {
             resource,
             richness,
-            reserves: None, // renewable for the alpha
+            reserves,
             accessibility: frontier,
         });
     }
     deposits
 }
 
+/// A deposit's VALUE RATE: credits per second at full natural extraction —
+/// richness (the content rate) × the ore's unit ratio (§ore-density) × its
+/// reference price. The single scalar behind claim costs, survey bands and
+/// system worth, so a dense ore is valued by what it earns, not by its price tag.
+pub fn deposit_value_rate(d: &Deposit) -> f64 {
+    d.richness * crate::production::ore_bulk_ratio(d.resource) * base_price(d.resource)
+}
+
 /// The credit cost to claim a system, from the total value-rate of its deposits
-/// (Σ richness·base_price). Richer/more-valuable frontier systems cost more.
+/// (Σ [`deposit_value_rate`]). Richer/more-valuable frontier systems cost more.
 pub fn claim_cost_for(deposits: &[Deposit]) -> f64 {
-    let value_rate: f64 = deposits
-        .iter()
-        .map(|d| d.richness * base_price(d.resource))
-        .sum();
+    let value_rate: f64 = deposits.iter().map(deposit_value_rate).sum();
     CLAIM_BASE + CLAIM_VALUE_K * value_rate
 }
 
@@ -1031,6 +1187,16 @@ fn generate_home_deposits(rng: &mut Rng) -> Vec<Deposit> {
     ]
 }
 
+/// Starting construction supplies, shared by fresh generation and first join
+/// into an unused home slot from an older galaxy. Fuel is added on join.
+pub(crate) fn home_starting_stockpile() -> BTreeMap<Commodity, f64> {
+    [
+        (Commodity::Provisions, crate::colony::HOME_PROVISIONS_SEED),
+        (Commodity::Machinery, 15.0),
+        (Commodity::Alloys, 30.0),
+    ].into_iter().collect()
+}
+
 /// One developed home star system, co-located at `pos`, with modest seeded
 /// geology keyed by home `index` (so it's reproducible and independent of the
 /// frontier stream). `owner`/`claimed_at` are left `None` — ownership is granted
@@ -1080,19 +1246,11 @@ pub fn generate_home_system(
         claim_cost,
         owner: None,
         claimed_at: None,
-        // The local founding kit pays exactly for Shipyard I, Mining Complex I,
-        // and the first Convoy. That hull must exist before the guarded-export
-        // lesson, so the player's first market import waits until the privateer
-        // bounty funds an Academy instead of interrupting the opening with freight.
-        stockpile: [
-            (Commodity::Provisions, crate::colony::HOME_PROVISIONS_SEED),
-            (Commodity::Machinery, 42.0),
-            (Commodity::Alloys, 90.0),
-            (Commodity::Electronics, 15.0),
-            (Commodity::Polymers, 10.0),
-        ]
-        .into_iter()
-        .collect(),
+        // Enough for Mining Complex I plus a small buffer. The granted Tiny
+        // Freighter earns the manufactured imports for a Shipyard and more hulls;
+        // their construction materials are not prepaid in the founding stockpile.
+        stockpile: home_starting_stockpile(),
+        industry: Default::default(),
         modules: BTreeMap::new(),
         legacy_extractor_tier: 0,
         legacy_depot_tier: 0,
@@ -1115,12 +1273,13 @@ pub fn generate_home_system(
         specialists: BTreeMap::new(),
     };
     // HOME BOOTSTRAP (§buildings step 3 → §economy Part 3 → §bodies): a home
-    // begins as a small food-secure settlement. The Shipyard and ore mine are
-    // the player's first construction lessons, not pre-granted infrastructure.
+    // begins as a small food-secure settlement. The ore mine starts the export
+    // loop; the Shipyard is a later reinvestment, not pre-granted infrastructure.
     let bootstrap = [
         (crate::build::StructureKind::Bioharvester, 1),
         (crate::build::StructureKind::Agroplex, 1),
         (crate::build::StructureKind::Habitat, 1),
+        (crate::build::StructureKind::Warehouse, 1),
     ];
     for (kind, tier) in bootstrap {
         let target = sys.site_for(kind).unwrap_or(0);
@@ -1129,8 +1288,9 @@ pub fn generate_home_system(
         }
     }
     sys.seed_population(crate::colony::HOME_FOUNDING_POP);
-    // Two cohorts staff the food chain; the third begins unassigned so the
-    // workforce control is meaningful immediately.
+    // Both starting cohorts staff the food chain. Posting a mining job shares
+    // that workforce under the normal staffing rule and attracts Managed migrants;
+    // it does not require a third, silently granted cohort.
     for kind in [
         crate::build::StructureKind::Bioharvester,
         crate::build::StructureKind::Agroplex,
@@ -1566,5 +1726,105 @@ mod name_tests {
         let next = pick_unused_name(9, &taken);
         assert_ne!(next, a);
         assert!(!taken.contains(&next));
+    }
+}
+
+#[cfg(test)]
+mod deposit_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    /// Area-uniform stars, each rolled by the live generator: the galaxy-wide
+    /// deposit shares the table actually produces.
+    fn galaxy_shares(seed: u64) -> (BTreeMap<Commodity, f64>, Vec<(f64, Deposit)>) {
+        let mut rng = Rng::new(seed);
+        let mut count: BTreeMap<Commodity, f64> = BTreeMap::new();
+        let mut rolled = Vec::new();
+        let mut total = 0.0;
+        for _ in 0..20_000 {
+            let frontier = rng.next_f64().sqrt();
+            for d in generate_deposits(&mut rng, frontier) {
+                *count.entry(d.resource).or_default() += 1.0;
+                total += 1.0;
+                rolled.push((frontier, d));
+            }
+        }
+        for v in count.values_mut() {
+            *v /= total;
+        }
+        (count, rolled)
+    }
+
+    /// §ore-ladder: scarcity is REAL in the generator — the price ladder and
+    /// the deposit shares point the same way, and can never silently invert.
+    #[test]
+    fn rarer_ores_are_rarer_deposits() {
+        let (share, _) = galaxy_shares(11);
+        let s = |c: Commodity| share.get(&c).copied().unwrap_or(0.0);
+        assert!(s(Commodity::RareMetalOre) < s(Commodity::TitaniumOre));
+        assert!(s(Commodity::TitaniumOre) < s(Commodity::CupriteOre));
+        assert!(s(Commodity::CupriteOre) < s(Commodity::MetallicOre));
+        assert!(s(Commodity::RareMetalOre) < 0.08, "rare metal {:.3}", s(Commodity::RareMetalOre));
+        assert!(s(Commodity::CrystallineOre) > 0.10, "crystalline {:.3}", s(Commodity::CrystallineOre));
+        assert!(s(Commodity::MetallicOre) > 0.22, "ferrite {:.3}", s(Commodity::MetallicOre));
+        for c in Commodity::RAW {
+            assert!(s(c) > 0.03, "{c:?} must still occur: {:.3}", s(c));
+        }
+    }
+
+    /// The scarce ores are gated to the rim: no Titanium ore inside the inner
+    /// half, no Rare-metal ore short of the pirate ring.
+    #[test]
+    fn scarce_ores_only_open_toward_the_rim() {
+        let (_, rolled) = galaxy_shares(12);
+        for (frontier, d) in &rolled {
+            match d.resource {
+                Commodity::RareMetalOre => assert!(*frontier >= RARE_METAL_MIN_FRONTIER),
+                Commodity::TitaniumOre => assert!(*frontier >= TITANIUM_MIN_FRONTIER),
+                _ => {}
+            }
+        }
+        assert!(rolled.iter().any(|(f, d)| d.resource == Commodity::RareMetalOre && *f > 0.9));
+        assert_eq!(raw_deposit_weight(Commodity::RareMetalOre, 0.5), 0.0);
+        assert!(raw_deposit_weight(Commodity::RareMetalOre, 1.0) > 0.0);
+        assert!(raw_deposit_weight(Commodity::MetallicOre, 0.0) > 0.0);
+        assert!(raw_deposit_weight(Commodity::MetallicOre, 1.0) > 0.0);
+    }
+
+    /// The two scarce ores carry finite reserves in the tuned band, deeper for
+    /// a richer vein; everything else stays renewable. Sparse stars share the
+    /// ore-only draw.
+    #[test]
+    fn scarce_ores_are_finite_and_bulk_ores_renew() {
+        let (_, rolled) = galaxy_shares(13);
+        for (_, d) in &rolled {
+            match d.resource {
+                Commodity::TitaniumOre | Commodity::RareMetalOre => {
+                    let r = d.reserves.expect("scarce ore is finite");
+                    let ratio = crate::production::ore_bulk_ratio(d.resource);
+                    let (lo, hi) = (FINITE_RESERVES_LO * ratio, FINITE_RESERVES_HI * ratio);
+                    assert!((lo - 1.0..=hi + 1.0).contains(&r), "{r} outside {lo}..{hi}");
+                }
+                _ => assert_eq!(d.reserves, None, "{:?} renews", d.resource),
+            }
+        }
+        let ratio = crate::production::ore_bulk_ratio;
+        assert_eq!(
+            reserves_for(Commodity::RareMetalOre, 0.0),
+            Some((FINITE_RESERVES_LO * ratio(Commodity::RareMetalOre)).round())
+        );
+        assert_eq!(
+            reserves_for(Commodity::TitaniumOre, 1.0),
+            Some((FINITE_RESERVES_HI * ratio(Commodity::TitaniumOre)).round())
+        );
+        // A dense seam holds the same HOURS of extraction in fewer, richer units.
+        assert!(reserves_for(Commodity::RareMetalOre, 1.0) < reserves_for(Commodity::TitaniumOre, 1.0));
+        assert_eq!(reserves_for(Commodity::MetallicOre, 0.5), None);
+        let mut rng = Rng::new(14);
+        for _ in 0..500 {
+            let frontier = rng.next_f64();
+            let ore = roll_raw_deposit_where(&mut rng, frontier, |c| c.is_ore());
+            assert!(ore.is_ore(), "{ore:?}");
+        }
     }
 }

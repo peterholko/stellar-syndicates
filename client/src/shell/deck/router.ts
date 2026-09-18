@@ -44,7 +44,7 @@ export const DECK_ROUTES: Record<DeckRouteName, DeckRouteMeta> = {
   fleets: { title: "Fleets", width: "standard" },
   logistics: { title: "Logistics", width: "standard" },
   doctrine: { title: "Doctrine", width: "standard" },
-  market: { title: "Market", width: "wide" },
+  market: { title: "Market Hub", width: "wide" },
   research: { title: "Research", width: "wide" },
   officers: { title: "Officers", width: "wide" },
   operations: { title: "Operations", width: "standard" },
@@ -93,6 +93,18 @@ export class DeckRouter {
       ...(typeof history.state === "object" && history.state ? history.state : {}),
       [HISTORY_KEY]: this.marker(),
     }, "");
+    this.emit();
+  }
+
+  /** Swap the current entry for a sibling (a world switch inside one system)
+   * without growing the stack, so Back still returns to the parent. */
+  replace(route: DeckRoute): void {
+    if (!this.entries.length) {
+      this.go(route);
+      return;
+    }
+    this.entries[this.entries.length - 1] = cloneRoute(route);
+    this.replaceMarker();
     this.emit();
   }
 

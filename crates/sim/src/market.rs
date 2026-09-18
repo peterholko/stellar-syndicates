@@ -20,8 +20,6 @@ use crate::cargo::Commodity;
 use crate::ids::PlayerId;
 use crate::rng::Rng;
 
-/// Units of flow that move the price by ~100% (the elasticity depth / liquidity).
-const DEPTH: f64 = 1600.0;
 /// Half of the Exchange's total round-trip spread. A buy pays above the walked
 /// mid and a sell receives below it; the two-percent round trip is the minimum
 /// price of immediacy and the hard anti-churn invariant. Tunable.
@@ -30,38 +28,103 @@ const HALF_SPREAD: f64 = 0.01;
 /// wildly stale or manipulative order. Tunable; protection is symmetric around
 /// the current global reference.
 const LIMIT_PRICE_COLLAR_FRAC: f64 = 0.25;
-/// How many units Sol's external market will buy or sell immediately in one
-/// commodity before that side must replenish. Player-to-player limit matches do
-/// not consume this pool. Tunable; deliberately tied to the curve depth so the
-/// last immediately available unit is already expensive.
-const EXTERNAL_LIQUIDITY_CAP: f64 = DEPTH;
-/// Units restored to each depleted external side on every one-second market
-/// update. Counter-flow restores liquidity immediately; this slow refill is the
-/// off-map economy recovering between shocks. Tunable.
-const EXTERNAL_LIQUIDITY_REPLENISH: f64 = 8.0;
 /// Prices never fall below this.
 const PRICE_FLOOR: f64 = 0.5;
-/// How strongly prices revert toward their base each drift step.
-const REVERSION: f64 = 0.02;
+
+/// A commodity's LIQUIDITY PROFILE (§9 thin books): how deep Sol's book is,
+/// how much it absorbs at once, how fast it refills, and how hard the price is
+/// pulled back to its reference. One profile per commodity, so the scarce goods
+/// trade on a visibly thinner book than the bulk ores.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Liquidity {
+    /// Units of flow that move the price by ~e× (the elasticity depth).
+    pub depth: f64,
+    /// How many units Sol's external market will buy or sell immediately in one
+    /// commodity before that side must replenish. Player-to-player limit matches
+    /// do not consume this pool. Tied to the curve depth so the last immediately
+    /// available unit is already expensive.
+    pub external_cap: f64,
+    /// Units restored to each depleted external side on every one-second market
+    /// update. Counter-flow restores liquidity immediately; this slow refill is
+    /// the off-map economy recovering between shocks.
+    pub replenish: f64,
+    /// How strongly the price reverts toward its base each drift step.
+    pub reversion: f64,
+}
+
+/// The bulk book: every ordinary good, the common ores included. Tunable.
+pub const BULK_LIQUIDITY: Liquidity = Liquidity {
+    depth: 1600.0,
+    external_cap: 1600.0,
+    replenish: 8.0,
+    reversion: 0.02,
+};
+
+/// The THIN book for the scarce goods (§ore-ladder): one convoy load visibly
+/// moves the price, Sol absorbs far less at once and refills slowly, and a
+/// shock takes minutes rather than seconds to fade — so the light-delayed
+/// ticker finally carries information worth racing for. Tunable.
+pub const THIN_LIQUIDITY: Liquidity = Liquidity {
+    depth: 600.0,
+    external_cap: 600.0,
+    replenish: 2.0,
+    reversion: 0.005,
+};
+
+/// Which book a commodity trades on. Rare-metal ore and the rare elements it
+/// refines into are the scarce goods; everything else is bulk. A DENSE ore's
+/// book refills per unit of CONTENT, not per unit of ore (§ore-density): its
+/// units are thirty times bigger, so Sol's appetite for them regrows thirty
+/// times more slowly. A galaxy's whole rare-ore output can then actually
+/// saturate Sol, and the players' own book takes over the price.
+pub fn liquidity(c: Commodity) -> Liquidity {
+    match c {
+        Commodity::RareMetalOre => Liquidity {
+            replenish: THIN_LIQUIDITY.replenish * crate::production::ore_bulk_ratio(c),
+            ..THIN_LIQUIDITY
+        },
+        Commodity::RareElements => THIN_LIQUIDITY,
+        _ => BULK_LIQUIDITY,
+    }
+}
 
 /// The long-run base price of a commodity (what it reverts toward). Also the
-/// canonical "how valuable is this good" ranking used by galaxy generation to
-/// place richer/more-valuable deposits toward the frontier (§4).
+/// canonical "how valuable is this good" scalar behind claim costs, survey value
+/// bands and freight fees (§4). Deposit PLACEMENT follows
+/// [`crate::galaxy::RAW_DEPOSIT_TABLE`], never this ladder.
 ///
-/// §economy: the 12-commodity ladder (all Tunable), chosen so every PROCESSED
-/// good clears its input basket at base prices and every ADVANCED good clears
-/// its own (test-enforced: `processed_prices_clear_their_input_baskets`) —
-/// industry is worth doing without making raw-selling worthless. Note Volatiles
-/// dropped 18 → 9: it is a common raw now, not a frontier prize; RARE ELEMENTS
-/// takes that role at the rim.
+/// Tunable reference prices: each recipe's combined primary + secondary yields
+/// clear its fuel-inclusive basket at base prices (test-enforced). This is not
+/// a guaranteed refining profit: live prices, finite demand, freight and staffing
+/// still matter. Raw exports retain the same external-market buyers as materials.
+///
+/// §ore-ladder: the five ores span a TWO-HUNDREDFOLD per-unit ladder (6 / 8 /
+/// 24 / 110 / 1,700) that tracks their real scarcity in the generator
+/// (`galaxy::RAW_DEPOSIT_TABLE`), not their names — Crystalline and Ferrite are
+/// the bulk ores, Cuprite the mid-ring ore, Titanium the outer-half ore,
+/// Rare-metal the past-the-pirate-ring prize. The steep part is DENSITY
+/// (`production::ore_bulk_ratio`): a unit of Rare-metal ore refines into
+/// twenty Rare Elements and fourteen Conductive Metals and leaves the ground
+/// at a thirtieth of the unit rate, so income per mining hour stays within a
+/// handful of the bulk ores' while a single unit is worth two hundred Ferrite.
+/// A raw ore sells for roughly 70% of its refined content (46% for Ferrite:
+/// the starter smelter is where its value is), so refining always pays but a
+/// raw haul is real income. The dear refined goods are needed in TENTHS of a
+/// unit downstream, which is what keeps every end product at its old reference.
 pub fn base_price(c: Commodity) -> f64 {
     match c {
         // Raw
         Commodity::Biomass => 5.0,
-        Commodity::Silicates => 6.0,
+        Commodity::Silicates => 9.0,
         Commodity::MetallicOre => 8.0,
         Commodity::Volatiles => 9.0,
-        Commodity::RareElements => 22.0,
+        Commodity::RareElements => 100.0,
+        Commodity::CupriteOre => 24.0,
+        Commodity::TitaniumOre => 110.0,
+        Commodity::CrystallineOre => 6.0,
+        Commodity::RareMetalOre => 1700.0,
+        Commodity::ConductiveMetals => 30.0,
+        Commodity::Titanium => 60.0,
         // Processed
         Commodity::Provisions => 9.0,
         Commodity::Fuel => 14.0,
@@ -71,9 +134,14 @@ pub fn base_price(c: Commodity) -> f64 {
         // Advanced
         // (Machinery raised from the handoff's suggested 48: its input basket —
         // 1.2 Alloys + 0.6 Electronics + 0.4 Fuel = 57.2 — didn't clear. 62
-        // clears with margin; nothing consumes Machinery in a chain, no cascade.)
+        // clears with margin. The component chains now consume Machinery too.)
         Commodity::Machinery => 62.0,
         Commodity::Armaments => 56.0,
+        // §industry-chains: ~20% value added over each unbonused input basket.
+        Commodity::Composites => 50.0,
+        Commodity::HullSections => 128.0,
+        Commodity::PrecisionComponents => 92.0,
+        Commodity::DriveAssemblies => 215.0,
     }
 }
 
@@ -95,7 +163,7 @@ pub struct Market {
 fn default_external_liquidity() -> BTreeMap<Commodity, f64> {
     Commodity::ALL
         .into_iter()
-        .map(|c| (c, EXTERNAL_LIQUIDITY_CAP))
+        .map(|c| (c, liquidity(c).external_cap))
         .collect()
 }
 
@@ -115,6 +183,41 @@ impl Default for Market {
 }
 
 impl Market {
+    /// Saved markets keep their existing prices and depleted liquidity. Seed
+    /// ONLY missing catalog entries when new goods land; never reprice trades
+    /// or grant their cargo to warehouses/colonies during migration. The one
+    /// exception is the REFERENCE LADDER itself (§ore-ladder): when a saved
+    /// base differs from the catalog, the live price rides along at the same
+    /// ratio so a stale snapshot never opens an arbitrage window against the
+    /// new ladder, and each external pool is clamped to its good's book.
+    /// Returns the commodities whose reference moved (empty on a current save).
+    pub fn ensure_catalog(&mut self) -> Vec<Commodity> {
+        let mut rebased = Vec::new();
+        for c in Commodity::ALL {
+            let catalog = base_price(c);
+            let cap = liquidity(c).external_cap;
+            match self.base.get(&c).copied() {
+                Some(old) if (old - catalog).abs() > 1e-9 => {
+                    let ratio = if old > 0.0 { catalog / old } else { 1.0 };
+                    self.base.insert(c, catalog);
+                    let live = self.prices.entry(c).or_insert(old);
+                    *live = (*live * ratio).max(PRICE_FLOOR);
+                    rebased.push(c);
+                }
+                Some(_) => {}
+                None => {
+                    self.base.insert(c, catalog);
+                }
+            }
+            self.prices.entry(c).or_insert(catalog);
+            let supply = self.external_supply.entry(c).or_insert(cap);
+            *supply = supply.min(cap);
+            let demand = self.external_demand.entry(c).or_insert(cap);
+            *demand = demand.min(cap);
+        }
+        rebased
+    }
+
     pub fn new() -> Self {
         let base: BTreeMap<Commodity, f64> = Commodity::ALL
             .into_iter()
@@ -145,7 +248,7 @@ impl Market {
         self.external_supply
             .get(&c)
             .copied()
-            .unwrap_or(EXTERNAL_LIQUIDITY_CAP)
+            .unwrap_or(liquidity(c).external_cap)
             .floor()
             .max(0.0) as u32
     }
@@ -155,7 +258,7 @@ impl Market {
         self.external_demand
             .get(&c)
             .copied()
-            .unwrap_or(EXTERNAL_LIQUIDITY_CAP)
+            .unwrap_or(liquidity(c).external_cap)
             .floor()
             .max(0.0) as u32
     }
@@ -171,10 +274,11 @@ impl Market {
                 next_price: self.price(c),
             };
         }
+        let depth = liquidity(c).depth;
         let p = self.price(c);
-        let x = units as f64 / DEPTH;
+        let x = units as f64 / depth;
         let next_price = p * x.exp();
-        let unspread_total = p * DEPTH * x.exp_m1();
+        let unspread_total = p * depth * x.exp_m1();
         let total = unspread_total * (1.0 + HALF_SPREAD);
         MarketQuote {
             unit_price: total / units as f64,
@@ -195,14 +299,15 @@ impl Market {
                 next_price: self.price(c),
             };
         }
+        let depth = liquidity(c).depth;
         let p = self.price(c).max(PRICE_FLOOR);
         let units_f = units as f64;
-        let to_floor = (DEPTH * (p / PRICE_FLOOR).ln()).max(0.0);
+        let to_floor = (depth * (p / PRICE_FLOOR).ln()).max(0.0);
         let (unspread_total, next_price) = if units_f <= to_floor + 1e-9 {
-            let x = units_f / DEPTH;
-            (p * DEPTH * (-x).exp_m1().abs(), p * (-x).exp())
+            let x = units_f / depth;
+            (p * depth * (-x).exp_m1().abs(), p * (-x).exp())
         } else {
-            let curved = DEPTH * (p - PRICE_FLOOR);
+            let curved = depth * (p - PRICE_FLOOR);
             let flat = (units_f - to_floor) * PRICE_FLOOR;
             (curved + flat, PRICE_FLOOR)
         };
@@ -222,16 +327,11 @@ impl Market {
         );
         let quote = self.quote_buy(c, units);
         self.prices.insert(c, quote.next_price);
-        let supply = self
-            .external_supply
-            .entry(c)
-            .or_insert(EXTERNAL_LIQUIDITY_CAP);
+        let cap = liquidity(c).external_cap;
+        let supply = self.external_supply.entry(c).or_insert(cap);
         *supply = (*supply - units as f64).max(0.0);
-        let demand = self
-            .external_demand
-            .entry(c)
-            .or_insert(EXTERNAL_LIQUIDITY_CAP);
-        *demand = (*demand + units as f64).min(EXTERNAL_LIQUIDITY_CAP);
+        let demand = self.external_demand.entry(c).or_insert(cap);
+        *demand = (*demand + units as f64).min(cap);
         quote.unit_price
     }
 
@@ -243,37 +343,28 @@ impl Market {
         );
         let quote = self.quote_sell(c, units);
         self.prices.insert(c, quote.next_price);
-        let demand = self
-            .external_demand
-            .entry(c)
-            .or_insert(EXTERNAL_LIQUIDITY_CAP);
+        let cap = liquidity(c).external_cap;
+        let demand = self.external_demand.entry(c).or_insert(cap);
         *demand = (*demand - units as f64).max(0.0);
-        let supply = self
-            .external_supply
-            .entry(c)
-            .or_insert(EXTERNAL_LIQUIDITY_CAP);
-        *supply = (*supply + units as f64).min(EXTERNAL_LIQUIDITY_CAP);
+        let supply = self.external_supply.entry(c).or_insert(cap);
+        *supply = (*supply + units as f64).min(cap);
         quote.unit_price
     }
 
     /// Slow seeded drift: mean-revert toward base with a little noise. Called on
     /// a slow cadence so the market is alive and the price *lag* is visible.
+    /// Each good reverts and refills at its own book's pace.
     pub fn drift(&mut self, rng: &mut Rng) {
         for (c, base) in &self.base {
+            let book = liquidity(*c);
             let p = self.prices[c];
             let noise = p * rng.range(-0.015, 0.015);
-            let np = (p + (base - p) * REVERSION + noise).max(PRICE_FLOOR);
+            let np = (p + (base - p) * book.reversion + noise).max(PRICE_FLOOR);
             self.prices.insert(*c, np);
-            let supply = self
-                .external_supply
-                .entry(*c)
-                .or_insert(EXTERNAL_LIQUIDITY_CAP);
-            *supply = (*supply + EXTERNAL_LIQUIDITY_REPLENISH).min(EXTERNAL_LIQUIDITY_CAP);
-            let demand = self
-                .external_demand
-                .entry(*c)
-                .or_insert(EXTERNAL_LIQUIDITY_CAP);
-            *demand = (*demand + EXTERNAL_LIQUIDITY_REPLENISH).min(EXTERNAL_LIQUIDITY_CAP);
+            let supply = self.external_supply.entry(*c).or_insert(book.external_cap);
+            *supply = (*supply + book.replenish).min(book.external_cap);
+            let demand = self.external_demand.entry(*c).or_insert(book.external_cap);
+            *demand = (*demand + book.replenish).min(book.external_cap);
         }
     }
 
@@ -286,7 +377,7 @@ impl Market {
             return;
         }
         let p = self.price(c);
-        let next = p * (signed as f64 / DEPTH).exp();
+        let next = p * (signed as f64 / liquidity(c).depth).exp();
         self.prices.insert(c, next.max(PRICE_FLOOR));
     }
 }
@@ -437,27 +528,54 @@ pub fn clear_call_auction(orders: &[LimitOrder], reference: f64) -> Option<Clear
 mod economy_price_tests {
     use super::*;
 
-    /// §economy BALANCE INVARIANT: every PROCESSED/ADVANCED good's base price
-    /// clears its per-unit input basket at base prices — industry is worth doing
-    /// (without making raw-selling worthless, which the raw ladder itself keeps).
+    #[test]
+    fn catalog_migration_adds_only_missing_goods_and_preserves_the_live_market() {
+        let mut market = Market::new();
+        market.execute_buy(Commodity::Alloys, 100);
+        let old_price = market.price(Commodity::Alloys);
+        let old_supply = market.available_to_buy(Commodity::Alloys);
+        let goods = [Commodity::Composites, Commodity::HullSections,
+            Commodity::PrecisionComponents, Commodity::DriveAssemblies];
+        for good in goods {
+            market.base.remove(&good);
+            market.prices.remove(&good);
+            market.external_supply.remove(&good);
+            market.external_demand.remove(&good);
+        }
+        let mut loaded: Market = serde_json::from_str(&serde_json::to_string(&market).unwrap()).unwrap();
+        loaded.ensure_catalog();
+        assert_eq!(loaded.price(Commodity::Alloys), old_price);
+        assert_eq!(loaded.available_to_buy(Commodity::Alloys), old_supply);
+        for good in goods {
+            assert_eq!(loaded.price(good), base_price(good));
+            assert!(loaded.available_to_buy(good) > 0);
+        }
+        loaded.execute_buy(Commodity::DriveAssemblies, 10);
+        let before = serde_json::to_string(&loaded).unwrap();
+        loaded.ensure_catalog();
+        assert_eq!(serde_json::to_string(&loaded).unwrap(), before, "migration is idempotent");
+    }
+
+    /// Combined recipe yields clear the base input basket; no claim about the
+    /// current live market or profit after staffing and hauling overhead.
     /// Reads the LIVE converter table (`production::CONVERTERS`) — one source of
     /// truth, so recipes and prices can never drift apart.
     #[test]
     fn processed_prices_clear_their_input_baskets() {
         let mut covered = std::collections::BTreeSet::new();
-        for conv in &crate::production::CONVERTERS {
+        for conv in crate::production::CONVERTERS.iter().chain(crate::production::ORE_REFINING.iter()) {
             let input_cost: f64 = conv
                 .inputs
                 .iter()
                 .map(|(c, per_unit)| base_price(*c) * per_unit)
                 .sum();
             assert!(
-                base_price(conv.output) > input_cost,
+                conv.outputs().map(|(c, units)| base_price(c) * units).sum::<f64>() > input_cost,
                 "{:?} base {} must clear its input basket {input_cost:.2}",
                 conv.output,
                 base_price(conv.output)
             );
-            covered.insert(conv.output);
+            covered.extend(conv.outputs().map(|(c, _)| c));
         }
         // Every non-raw commodity must be REACHABLE by some converter.
         for c in Commodity::ALL {
@@ -508,7 +626,7 @@ mod economy_price_tests {
     fn external_liquidity_is_finite_and_counterflow_restores_it() {
         let mut market = Market::new();
         let cap = market.available_to_buy(Commodity::Fuel);
-        assert_eq!(cap, EXTERNAL_LIQUIDITY_CAP as u32);
+        assert_eq!(cap, BULK_LIQUIDITY.external_cap as u32);
 
         market.execute_buy(Commodity::Fuel, 400);
         assert_eq!(market.available_to_buy(Commodity::Fuel), cap - 400);
@@ -517,6 +635,74 @@ mod economy_price_tests {
         market.execute_sell(Commodity::Fuel, 150);
         assert_eq!(market.available_to_buy(Commodity::Fuel), cap - 250);
         assert_eq!(market.available_to_sell(Commodity::Fuel), cap - 150);
+    }
+
+    /// §ore-ladder: the scarce goods trade on a thinner book — the same convoy
+    /// load moves their price further, Sol absorbs less of it at once, the
+    /// external side refills more slowly, and the dent fades more slowly.
+    #[test]
+    fn rare_goods_trade_on_a_thinner_book_than_bulk_ores() {
+        let mut market = Market::new();
+        assert_eq!(market.available_to_sell(Commodity::RareMetalOre), THIN_LIQUIDITY.external_cap as u32);
+        assert_eq!(market.available_to_sell(Commodity::MetallicOre), BULK_LIQUIDITY.external_cap as u32);
+        let bulk0 = market.price(Commodity::MetallicOre);
+        let rare0 = market.price(Commodity::RareMetalOre);
+        market.execute_sell(Commodity::MetallicOre, 400);
+        market.execute_sell(Commodity::RareMetalOre, 400);
+        let bulk_drop = 1.0 - market.price(Commodity::MetallicOre) / bulk0;
+        let rare_drop = 1.0 - market.price(Commodity::RareMetalOre) / rare0;
+        assert!(
+            rare_drop > bulk_drop * 2.0,
+            "one convoy of rare ore must dent its price far harder: bulk {bulk_drop:.3} rare {rare_drop:.3}"
+        );
+        assert!((rare_drop - (1.0 - (-400.0f64 / THIN_LIQUIDITY.depth).exp())).abs() < 1e-9);
+
+        let rare_before = market.available_to_sell(Commodity::RareMetalOre);
+        let bulk_before = market.available_to_sell(Commodity::MetallicOre);
+        let mut rng = Rng::new(5);
+        market.drift(&mut rng);
+        assert_eq!(
+            market.available_to_sell(Commodity::MetallicOre) - bulk_before,
+            BULK_LIQUIDITY.replenish as u32
+        );
+        // A minute later the bulk dent has mostly healed; the rare one lingers,
+        // and Sol's appetite for the dense ore has regrown by only a few units.
+        for _ in 0..59 {
+            market.drift(&mut rng);
+        }
+        let rare_refill = liquidity(Commodity::RareMetalOre).replenish;
+        assert!(rare_refill < THIN_LIQUIDITY.replenish, "dense ore refills per unit of content");
+        let regrown = market.available_to_sell(Commodity::RareMetalOre) - rare_before;
+        assert!(regrown.abs_diff((rare_refill * 60.0).round() as u32) <= 1, "regrown {regrown}");
+        let bulk_left = (1.0 - market.price(Commodity::MetallicOre) / bulk0) / bulk_drop;
+        let rare_left = (1.0 - market.price(Commodity::RareMetalOre) / rare0) / rare_drop;
+        assert!(
+            rare_left > bulk_left + 0.2,
+            "the rare shock must outlast the bulk one: bulk {bulk_left:.2} rare {rare_left:.2} of the dent remain"
+        );
+    }
+
+    /// §ore-ladder migration: a snapshot saved under an older reference ladder
+    /// is rebased on load — the live price rides along at the same ratio, the
+    /// external pools are clamped to the (possibly thinner) new book, and the
+    /// pass is idempotent.
+    #[test]
+    fn catalog_migration_rebases_a_stale_reference_ladder() {
+        let mut market = Market::new();
+        let catalog = base_price(Commodity::RareMetalOre);
+        market.base.insert(Commodity::RareMetalOre, 19.0);
+        market.prices.insert(Commodity::RareMetalOre, 20.9);
+        market.external_supply.insert(Commodity::RareMetalOre, 1600.0);
+        let rebased = market.ensure_catalog();
+        assert_eq!(rebased, vec![Commodity::RareMetalOre]);
+        assert!((market.price(Commodity::RareMetalOre) - 20.9 * catalog / 19.0).abs() < 1e-9);
+        assert_eq!(
+            market.available_to_buy(Commodity::RareMetalOre),
+            THIN_LIQUIDITY.external_cap as u32
+        );
+        let before = serde_json::to_string(&market).unwrap();
+        assert!(market.ensure_catalog().is_empty());
+        assert_eq!(serde_json::to_string(&market).unwrap(), before, "rebase is idempotent");
     }
 
     fn limit(id: u64, player: u64, side: Side, units: u32, price: f64) -> LimitOrder {

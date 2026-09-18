@@ -13,10 +13,12 @@ pub(crate) struct GalaxyCheckpoint {
     pub world: World,
     reporting: ReportingCheckpoint,
     pending: Vec<Command>,
+    #[serde(default)]
+    bots: BTreeMap<PlayerId, bots::Bot>,
 }
 
 impl GameLoop {
-    fn durable_checkpoint(&self) -> GalaxyCheckpoint {
+    pub(super) fn durable_checkpoint(&self) -> GalaxyCheckpoint {
         // Only this consistent clone runs on the game task, once per 15 minutes.
         // Serialization, compression, checksumming and all disk I/O run off it.
         GalaxyCheckpoint {
@@ -27,6 +29,7 @@ impl GameLoop {
                 prices: self.prices.clone(),
                 market_accounts: self.market_accounts.clone(),
                 trade_reports: self.trade_reports.clone(),
+                transactions: self.transactions.clone(),
                 reports: self.reports.clone(),
                 timeline: self.timeline.clone(),
                 concluded_battles: self.concluded_battles.clone(),
@@ -37,10 +40,11 @@ impl GameLoop {
                     .collect(),
             },
             pending: self.pending.clone(),
+            bots: self.bots.clone(),
         }
     }
 
-    fn restore(
+    pub(super) fn restore(
         saved: GalaxyCheckpoint,
         pacing_scale: f64,
         status: watch::Sender<ServerStatus>,
@@ -58,6 +62,7 @@ impl GameLoop {
         game.prices = r.prices;
         game.market_accounts = r.market_accounts;
         game.trade_reports = r.trade_reports;
+        game.transactions = r.transactions;
         game.reports = r.reports;
         game.timeline = r.timeline;
         game.concluded_battles = r.concluded_battles;
@@ -67,6 +72,8 @@ impl GameLoop {
             .map(|(p, id, plan)| ((p, id), plan))
             .collect();
         game.pending = saved.pending;
+        game.bots = saved.bots;
+        game.transactions.initialize(&game.world, &game.timeline);
         game
     }
 }
@@ -94,6 +101,8 @@ impl GalaxyCheckpoint {
             "checkpoint lacks galaxy identity"
         );
         ensure!(self.world.time.is_finite(), "invalid checkpoint clock");
+        ensure!(self.bots.iter().all(|(owner, bot)| self.world.players.contains_key(owner)
+            && bot.valid(*owner, self.world.time)), "invalid saved bot roster");
         Ok(())
     }
 }
@@ -112,6 +121,7 @@ pub(crate) async fn run(
     storage: Storage,
     checkpoint: Option<GalaxyCheckpoint>,
     pacing_scale: f64,
+    requested_bots: Option<u32>,
     status_tx: watch::Sender<ServerStatus>,
     mut rx: mpsc::UnboundedReceiver<GameInput>,
     mut shutdown: watch::Receiver<bool>,
@@ -147,6 +157,7 @@ pub(crate) async fn run(
         }
     })
     .await??;
+    game.configure_bots(requested_bots)?;
 
     // Persist a new galaxy/import before accepting players. Loading an existing
     // save does not need another write and must not churn its backup generations.

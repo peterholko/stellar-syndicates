@@ -67,7 +67,7 @@ export function armGuardAiming(ship: GhostView): void {
   emitIntentChanged({
     refreshShip: true,
     readout: `<b>Choose a fleet to guard.</b> Click another one of your fleet markers. ` +
-      `<span class="dim">The Interceptor will form up, engage local threats, then resume its station.</span>`,
+      `<span class="dim">The fleet will form up, engage local threats, then resume its station.</span>`,
   });
 }
 

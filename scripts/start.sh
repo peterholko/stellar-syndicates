@@ -3,6 +3,7 @@
 #
 #   scripts/start.sh                  # ordinary safe restart
 #   scripts/start.sh --reset-galaxy   # explicit new galaxy; old files archived
+#   BOT_PLAYERS=8 MAX_PLAYERS=8 scripts/start.sh --reset-galaxy  # eight bots
 #
 # Full galaxy checkpoints run every 15 wall minutes and on clean shutdown.
 # A hard crash resumes the last successful save; intervening progress is lost.
@@ -12,7 +13,8 @@
 #
 # Accounts: ACCOUNTS_DATABASE_URL (falls back to DATABASE_URL), APP_ORIGIN.
 # Local development starts scripts/devdb.sh if neither DB URL is set.
-# Env: PORT (8080), SIM_PACING (1), GALAXY_SEED, MAX_PLAYERS, RUST_LOG.
+# Env: PORT (8080), SIM_PACING (1), GALAXY_SEED, MAX_PLAYERS, BOT_PLAYERS, RUST_LOG.
+# Bots are saved with the galaxy; ordinary restarts need no BOT_PLAYERS override.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

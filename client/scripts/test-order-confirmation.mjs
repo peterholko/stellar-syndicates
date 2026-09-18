@@ -15,6 +15,7 @@ const compile = (path, deps = {}, extra = {}) => {
 };
 const plain = value => JSON.parse(JSON.stringify(value));
 const icons = compile("icons.ts");
+const equipment = compile("core/derive/equipment.ts");
 const protocol = compile("protocol.ts");
 let tests = 0;
 const test = (name, fn) => { fn(); tests++; console.log(`PASS ${name}`); };
@@ -39,7 +40,8 @@ function fixture() {
   const renderer = { stateVersion: 0, siteError: () => null };
   const fleets = compile("core/derive/fleet.ts", { "../../state": clock, "../../protocol": protocol,
     "./geo": { HYPERLIMIT_SU: 900 } });
-  const commands = compile("core/fleetorders.ts", { "../icons": icons, "./derive/fleet": fleets });
+  const tenders = compile("core/derive/tenders.ts", { "../../protocol": protocol, "./fleet": fleets });
+  const commands = compile("core/fleetorders.ts", { "../icons": icons, "./derive/fleet": fleets, "./derive/tenders": tenders });
   const readiness = compile("core/derive/readiness.ts", { "../../protocol": protocol, "./fleet": fleets });
   const orders = compile("core/derive/orders.ts", { "../../state": clock,
     "./fleet": fleets, "../fleetorders": commands, "../../icons": icons,
@@ -55,6 +57,8 @@ function fixture() {
   const root = { id: "test", innerHTML: "", addEventListener() {}, querySelector: () => null };
   const ctx = { state, renderer, net, intent, send: msg => sent.push(structuredClone(msg)) };
   const deps = { "../../state": clock, "../../core/derive/fleet": fleets,
+    "../mission": compile("shell/mission.ts"),
+    "../../core/derive/equipment": equipment,
     "../../core/derive/orders": orders, "../../core/derive/readiness": readiness,
     "../../core/derive/format": { informationDelay: age => `${age}s information delay` },
     "../../core/derive/nebula": { jumpRangeAt: () => 50_000 },
@@ -77,8 +81,40 @@ function fixture() {
   const stripClick = (action, fields = {}) => strip.activate({ target: { closest: () => ({ dataset: { deckCommand: action, ...fields } }) } });
   const mobileClick = (action, fields = {}) => mobile.handleClick({ target: { closest: () => ({ dataset: { mobileAct: action, id: "101", ...fields } }) } });
   return { state, sent, events, notices, net, intent, commands, orders, readiness, ctx, deps,
-    fleet, strip, root, fleetClick, stripClick, mobileClick };
+    fleet, strip, mobile, root, fleetClick, stripClick, mobileClick };
 }
+
+test("tender orders freeze the selected recipient and require Confirm on both shells", () => {
+  for (const mobile of [false, true]) {
+    const f = fixture();
+    const tender = f.state.ghosts.find(g => g.id === "103");
+    tender.kind = "convoy";
+    tender.loadouts = [{ kind: "convoy", n: 1, modules: ["fuel_transfer_rig"] }];
+    tender.cargo_manifest = [{ commodity: "fuel", units: 40 }];
+    let selected = "101";
+    const form = { querySelector: () => ({ value: selected }) };
+    f.root.querySelector = form.querySelector;
+    const click = () => mobile ? f.mobile.handleClick({ target: { closest: () => ({
+      dataset: { mobileAct: "fleet-refuel", id: "103" }, closest: () => form,
+    }) } }) : f.fleetClick("refuel", {}, "103");
+    const before = JSON.stringify(f.state.ghosts);
+    click();
+    assert.equal(f.sent.length, 0);
+    assert.equal(f.state.pendingIntent.commands[0].type, "RefuelFleet");
+    f.intent.clearPendingIntent();
+    assert.equal(f.sent.length, 0);
+    click();
+    selected = "102";
+    f.intent.confirmPendingIntent();
+    f.intent.confirmPendingIntent();
+    assert.deepEqual(plain(f.sent), [{ type: "RefuelFleet", fleet_id: "103", target_id: "101" }]);
+    assert.equal(JSON.stringify(f.state.ghosts), before, "no optimistic fuel or cargo changes");
+    assert.equal(f.commands.fleetCommandsValid([{ type: "RefuelFleet", fleet_id: "103", target_id: "103" }], f.state), false);
+    assert.equal(f.commands.fleetCommandsValid([{ type: "RefuelFleet", fleet_id: "101", target_id: "103" }], f.state), false);
+    tender.cargo_manifest = [];
+    assert.equal(f.commands.fleetCommandsValid([{ type: "RefuelFleet", fleet_id: "103", target_id: "101" }], f.state), false);
+  }
+});
 
 test("Stealth on the fleet panel previews; Cancel changes nothing; Confirm sends exactly once", () => {
   const f = fixture();
@@ -117,6 +153,7 @@ test("bottom strip and mobile Stealth/Recall also wait for Confirm", () => {
 test("fleet-panel action family never transmits on first click", () => {
   for (const [action, fields, id] of [
     ["hold"], ["recall"], ["withdraw"], ["posture", { posture: "weapons_free" }],
+    ["mission", { field: "priority", value: "missile_ships" }],
     ["authority", { on: "1" }], ["authority", { on: "0" }], ["fuel-rescue"],
     ["split", { kind: "raider" }], ["merge", { from: "102" }],
     ["unload", {}, "102"], ["unload", {}, "103"], ["haul-hub", {}, "103"],
@@ -191,6 +228,7 @@ test("system cargo confirmation still rejects departure, another berth or lost o
 
 test("all command payload families freeze, stage and dispatch through one gate", () => {
   const payloads = [
+    { type: "SetFleetMission", fleet_id: "101", mission: { priority: "missile_ships", screening: "protect_transports", withdrawal: "hull50" } },
     { type: "HubLoad", fleet_id: "102", commodity: "fuel", units: 12 },
     { type: "SystemLoad", fleet_id: "103", system: "home", commodity: "alloys", units: 25 },
     { type: "HaulToSystem", fleet_id: "102", system: "home" },

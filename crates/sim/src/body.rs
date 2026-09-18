@@ -231,10 +231,10 @@ impl BodySpecial {
         match self {
             Self::LowGravity => "Ship construction time −20%",
             Self::VolcanicMantle => {
-                "Metallic Ore and Rare Elements extraction ×1.20; Smelter yield ×1.20"
+                "Metal-bearing ore extraction ×1.20; Smelter yield ×1.20"
             }
             Self::HydrocarbonSeas => "Volatiles extraction ×1.35; Fuel and Polymer yield ×1.20",
-            Self::CrystallineCrust => "Silicates and Rare Elements extraction ×1.35",
+            Self::CrystallineCrust => "Crystalline and Rare-metal ores (or legacy minerals) extraction ×1.35",
             Self::FertileBiosphere => "Biomass extraction ×1.35; Provisions yield ×1.20",
             Self::PrecursorRuins => "Electronics yield ×1.25",
         }
@@ -511,10 +511,7 @@ impl Body {
     }
 
     pub fn extraction_mult(&self, resource: Commodity) -> f64 {
-        let mineral = matches!(
-            resource,
-            Commodity::MetallicOre | Commodity::Silicates | Commodity::RareElements
-        );
+        let mineral = resource.is_mineable_mineral();
         let geology = if mineral {
             self.profile.geology.mineral_extraction_mult()
         } else {
@@ -523,12 +520,14 @@ impl Body {
         let special = match (self.profile.special, resource) {
             (
                 Some(BodySpecial::VolcanicMantle),
-                Commodity::MetallicOre | Commodity::RareElements,
+                Commodity::MetallicOre | Commodity::RareElements | Commodity::CupriteOre
+                | Commodity::TitaniumOre | Commodity::RareMetalOre,
             ) => 1.20,
             (Some(BodySpecial::HydrocarbonSeas), Commodity::Volatiles) => 1.35,
             (
                 Some(BodySpecial::CrystallineCrust),
-                Commodity::Silicates | Commodity::RareElements,
+                Commodity::Silicates | Commodity::RareElements | Commodity::CrystallineOre
+                | Commodity::RareMetalOre,
             ) => 1.35,
             (Some(BodySpecial::FertileBiosphere), Commodity::Biomass) => 1.35,
             _ => 1.0,
@@ -681,6 +680,10 @@ fn dep_kinds(c: Commodity) -> &'static [VisualKind] {
     use VisualKind as V;
     match c {
         Commodity::MetallicOre => &[V::Barren, V::Desert, V::Terrestrial],
+        Commodity::CupriteOre => &[V::Barren, V::Desert],
+        Commodity::TitaniumOre | Commodity::RareMetalOre => &[V::Lava, V::Barren],
+        Commodity::CrystallineOre => &[V::Desert, V::Barren],
+        Commodity::ConductiveMetals | Commodity::Titanium => &[V::Barren],
         Commodity::RareElements => &[V::Lava, V::Barren],
         Commodity::Silicates => &[V::Desert, V::Barren],
         Commodity::Volatiles => &[V::Ice],
@@ -691,7 +694,11 @@ fn dep_kinds(c: Commodity) -> &'static [VisualKind] {
         Commodity::Fuel => &[V::GasGiant],
         Commodity::Provisions => &[V::Ocean, V::Terrestrial],
         Commodity::Machinery => &[V::Barren],
-        Commodity::Armaments => &[V::Barren],
+        Commodity::Armaments
+        | Commodity::Composites
+        | Commodity::HullSections
+        | Commodity::PrecisionComponents
+        | Commodity::DriveAssemblies => &[V::Barren],
     }
 }
 

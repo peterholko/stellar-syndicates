@@ -58,8 +58,15 @@ pub struct SimConfig {
     /// the physical home ring stable even when player count changes the radius.
     pub home_ring_frac: f64,
 
-    /// Number of procedurally-placed star systems (M2).
+    /// Number of full frontier systems, excluding homes and exploration stars.
+    /// This is the established colony/habitable-world budget, not total stars.
     pub system_count: u32,
+
+    /// Additional sparse, non-habitable exploration systems. Generated AFTER
+    /// the established galaxy so homes and habitable worlds never get rerolled.
+    /// Old saves default to zero; loading a galaxy never inserts new geography.
+    #[serde(default)]
+    pub exploration_system_count: u32,
 
     /// Sensor detection radius (sim units) projected by each of a player's
     /// assets — their command center and every one of their ships. The player's
@@ -129,6 +136,9 @@ impl SimConfig {
                 / (1.0 + crate::galaxy::HOME_SLOT_RADIAL_JITTER_FRAC)
                 / galaxy_radius,
             system_count: 12 + player_count * 4,
+            // Double the chart's stars, not its habitable planets: 32 → 64 in
+            // the default four-player galaxy (28 frontier + 4 home + 32 sparse).
+            exploration_system_count: 12 + player_count * 5,
             // Local sensor bubbles are 80,000 su (20% of a four-player galaxy
             // radius): coverage remains islands around the command center and
             // Raider pickets. Convoys carry only a 0.25× local traffic sensor,

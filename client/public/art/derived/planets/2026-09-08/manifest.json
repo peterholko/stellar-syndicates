@@ -1,0 +1,503 @@
+{
+  "version": "2026-09-08",
+  "recipe": "full-canvas-mitchell-rgba-v1",
+  "sizes": [
+    32,
+    64,
+    128,
+    256,
+    512,
+    1024,
+    1254
+  ],
+  "planets": [
+    {
+      "slug": "terrestrial",
+      "source": "art-src/planets-2026-09-08/terrestrial.png",
+      "sourceSha256": "a59a594e47519bcb6fc1b0b20f938d17b0be56db1c26981a275a4ff6373b36ea",
+      "anchor": [
+        0.5,
+        0.4996012759170654
+      ],
+      "visualRatio": 0.9393939393939394,
+      "levels": [
+        {
+          "size": 32,
+          "file": "terrestrial-32.png",
+          "bytes": 3058,
+          "sha256": "ab77cf5845712bf8bc6fcde114d12df6c5f16b3bf4eaabf42b6e163bdc7158fe",
+          "url": "/art/derived/planets/2026-09-08/terrestrial-32.png?v=ab77cf584571"
+        },
+        {
+          "size": 64,
+          "file": "terrestrial-64.png",
+          "bytes": 10599,
+          "sha256": "37e5fc2f73620452cf59cb4c32f71c82f6372432d47fb0ddf0ba1e6c03f8a289",
+          "url": "/art/derived/planets/2026-09-08/terrestrial-64.png?v=37e5fc2f7362"
+        },
+        {
+          "size": 128,
+          "file": "terrestrial-128.png",
+          "bytes": 39059,
+          "sha256": "4c3ac35e286bae2f47a3eb291036c8767a98448d0e1c803a2c635615774fd427",
+          "url": "/art/derived/planets/2026-09-08/terrestrial-128.png?v=4c3ac35e286b"
+        },
+        {
+          "size": 256,
+          "file": "terrestrial-256.png",
+          "bytes": 146182,
+          "sha256": "341f02801d77dd6cb5d5ffb4f18eacf51a06abac4f87eb198e3a52e6c2a9c599",
+          "url": "/art/derived/planets/2026-09-08/terrestrial-256.png?v=341f02801d77"
+        },
+        {
+          "size": 512,
+          "file": "terrestrial-512.png",
+          "bytes": 550692,
+          "sha256": "de0db197a588765bb88d724170eb55f05e166e8a27feb4cc4ef22fd87388dfb6",
+          "url": "/art/derived/planets/2026-09-08/terrestrial-512.png?v=de0db197a588"
+        },
+        {
+          "size": 1024,
+          "file": "terrestrial-1024.png",
+          "bytes": 2149881,
+          "sha256": "094e297c07e7d7cec66f69fe249570a9c76ce3a43ffaa46d4db116011473bfcc",
+          "url": "/art/derived/planets/2026-09-08/terrestrial-1024.png?v=094e297c07e7"
+        },
+        {
+          "size": 1254,
+          "file": "terrestrial-1254.png",
+          "bytes": 2341490,
+          "sha256": "a59a594e47519bcb6fc1b0b20f938d17b0be56db1c26981a275a4ff6373b36ea",
+          "url": "/art/derived/planets/2026-09-08/terrestrial-1254.png?v=a59a594e4751"
+        }
+      ]
+    },
+    {
+      "slug": "desert",
+      "source": "art-src/planets-2026-09-08/desert.png",
+      "sourceSha256": "c9ab029ffefa76013ca0592421c8c35bed5ca5211b669de975821f83b4da7307",
+      "anchor": [
+        0.5,
+        0.49681020733652315
+      ],
+      "visualRatio": 0.9457735247208932,
+      "levels": [
+        {
+          "size": 32,
+          "file": "desert-32.png",
+          "bytes": 2983,
+          "sha256": "625d34de26ba04197c89100bd28c4714cd057dbeb281e7218f208660255d2dda",
+          "url": "/art/derived/planets/2026-09-08/desert-32.png?v=625d34de26ba"
+        },
+        {
+          "size": 64,
+          "file": "desert-64.png",
+          "bytes": 10010,
+          "sha256": "0e4f07fc9117ed3c66a0fec57ce784e898594e4f28d1ed76f9086fd7a1bcb877",
+          "url": "/art/derived/planets/2026-09-08/desert-64.png?v=0e4f07fc9117"
+        },
+        {
+          "size": 128,
+          "file": "desert-128.png",
+          "bytes": 35465,
+          "sha256": "c91e490fc3020168ed8672e2ea2b087fb077c3cde669a67012a9cbfdf0f4c921",
+          "url": "/art/derived/planets/2026-09-08/desert-128.png?v=c91e490fc302"
+        },
+        {
+          "size": 256,
+          "file": "desert-256.png",
+          "bytes": 127374,
+          "sha256": "c9422b2e1f7530a9e265db26085c09aafd1602eca316a7d93a98ada5b7d0e938",
+          "url": "/art/derived/planets/2026-09-08/desert-256.png?v=c9422b2e1f75"
+        },
+        {
+          "size": 512,
+          "file": "desert-512.png",
+          "bytes": 466908,
+          "sha256": "16197233ff79a6b40f0ed19df3c37c119ab9dfe816e8cf1028fea23f40411241",
+          "url": "/art/derived/planets/2026-09-08/desert-512.png?v=16197233ff79"
+        },
+        {
+          "size": 1024,
+          "file": "desert-1024.png",
+          "bytes": 1795056,
+          "sha256": "b290ca6c48301a4fa6de98c0c7ab92900d86d873eb9362429a0fc16a6169c7c8",
+          "url": "/art/derived/planets/2026-09-08/desert-1024.png?v=b290ca6c4830"
+        },
+        {
+          "size": 1254,
+          "file": "desert-1254.png",
+          "bytes": 3283325,
+          "sha256": "c9ab029ffefa76013ca0592421c8c35bed5ca5211b669de975821f83b4da7307",
+          "url": "/art/derived/planets/2026-09-08/desert-1254.png?v=c9ab029ffefa"
+        }
+      ]
+    },
+    {
+      "slug": "ocean",
+      "source": "art-src/planets-2026-09-08/ocean.png",
+      "sourceSha256": "ab935e48cdb4f903e1021fbd003c1266a2b72e4bcbf7baa89828361cbc2c7cf4",
+      "anchor": [
+        0.49920255183413076,
+        0.49800637958532695
+      ],
+      "visualRatio": 0.9457735247208932,
+      "levels": [
+        {
+          "size": 32,
+          "file": "ocean-32.png",
+          "bytes": 3008,
+          "sha256": "3fb1f5f07b57690cd7a08f5b72a2cf637342a9075b2f9b6005799e90f884aafd",
+          "url": "/art/derived/planets/2026-09-08/ocean-32.png?v=3fb1f5f07b57"
+        },
+        {
+          "size": 64,
+          "file": "ocean-64.png",
+          "bytes": 10333,
+          "sha256": "2be3c0e112ffdb9e0a964b2ce9d10f8e0352a448f8903f602fa9c38c8145595b",
+          "url": "/art/derived/planets/2026-09-08/ocean-64.png?v=2be3c0e112ff"
+        },
+        {
+          "size": 128,
+          "file": "ocean-128.png",
+          "bytes": 37566,
+          "sha256": "92eea149122041b7b75161f5435c8d70d9bd11d299e98fa894168107fd384b54",
+          "url": "/art/derived/planets/2026-09-08/ocean-128.png?v=92eea1491220"
+        },
+        {
+          "size": 256,
+          "file": "ocean-256.png",
+          "bytes": 136348,
+          "sha256": "86139641406761628a100aff9d204e6e60970b3eb67162403e9c6c516a1897df",
+          "url": "/art/derived/planets/2026-09-08/ocean-256.png?v=861396414067"
+        },
+        {
+          "size": 512,
+          "file": "ocean-512.png",
+          "bytes": 505280,
+          "sha256": "c8cbfe2814d5b1d93a9901a693585162866600e169070b7fa65310e023e4020b",
+          "url": "/art/derived/planets/2026-09-08/ocean-512.png?v=c8cbfe2814d5"
+        },
+        {
+          "size": 1024,
+          "file": "ocean-1024.png",
+          "bytes": 1917534,
+          "sha256": "63dbe86673a60693b43bdd1c44b1f602e6857b052be71d10ffbb0501b78e4e92",
+          "url": "/art/derived/planets/2026-09-08/ocean-1024.png?v=63dbe86673a6"
+        },
+        {
+          "size": 1254,
+          "file": "ocean-1254.png",
+          "bytes": 3436386,
+          "sha256": "ab935e48cdb4f903e1021fbd003c1266a2b72e4bcbf7baa89828361cbc2c7cf4",
+          "url": "/art/derived/planets/2026-09-08/ocean-1254.png?v=ab935e48cdb4"
+        }
+      ]
+    },
+    {
+      "slug": "ice",
+      "source": "art-src/planets-2026-09-08/ice.png",
+      "sourceSha256": "d291755cad0463771d4d9fe107e2c8b6a445ed5c47889358b0e04a0e0924addb",
+      "anchor": [
+        0.5007974481658692,
+        0.4996012759170654
+      ],
+      "visualRatio": 0.9441786283891547,
+      "levels": [
+        {
+          "size": 32,
+          "file": "ice-32.png",
+          "bytes": 3092,
+          "sha256": "529523ad6a41edbef53fa1d9333e759be45955b1d28768d4468dd7b2c6ba8044",
+          "url": "/art/derived/planets/2026-09-08/ice-32.png?v=529523ad6a41"
+        },
+        {
+          "size": 64,
+          "file": "ice-64.png",
+          "bytes": 10830,
+          "sha256": "921a7cfcb3d6890099b4a9e073229541cafb8387d664387aa236c4b65476adda",
+          "url": "/art/derived/planets/2026-09-08/ice-64.png?v=921a7cfcb3d6"
+        },
+        {
+          "size": 128,
+          "file": "ice-128.png",
+          "bytes": 39352,
+          "sha256": "41d8d0016bc5faa85d88b7d30c5c114d7bd7b14871dc513167da0c34d0f7da37",
+          "url": "/art/derived/planets/2026-09-08/ice-128.png?v=41d8d0016bc5"
+        },
+        {
+          "size": 256,
+          "file": "ice-256.png",
+          "bytes": 145187,
+          "sha256": "678d9223ff1858106fa45508e2cb738f98e4edd30e4bf90330729758124545f9",
+          "url": "/art/derived/planets/2026-09-08/ice-256.png?v=678d9223ff18"
+        },
+        {
+          "size": 512,
+          "file": "ice-512.png",
+          "bytes": 551954,
+          "sha256": "5fea98adc98240490609c8a09f328a95883b69538ce8f70be317bb4c39325b9f",
+          "url": "/art/derived/planets/2026-09-08/ice-512.png?v=5fea98adc982"
+        },
+        {
+          "size": 1024,
+          "file": "ice-1024.png",
+          "bytes": 2176653,
+          "sha256": "5dd7ba36fd012ad455733b0a8fe704d91a64f23aa464d9aa21dba437f3352c62",
+          "url": "/art/derived/planets/2026-09-08/ice-1024.png?v=5dd7ba36fd01"
+        },
+        {
+          "size": 1254,
+          "file": "ice-1254.png",
+          "bytes": 2367439,
+          "sha256": "d291755cad0463771d4d9fe107e2c8b6a445ed5c47889358b0e04a0e0924addb",
+          "url": "/art/derived/planets/2026-09-08/ice-1254.png?v=d291755cad04"
+        }
+      ]
+    },
+    {
+      "slug": "gas_giant",
+      "source": "art-src/planets-2026-09-08/gas_giant.png",
+      "sourceSha256": "a779ed012da88ded20003a77ecb804cbe763ffb80286f590c562d7f54abc0b66",
+      "anchor": [
+        0.5007974481658692,
+        0.49920255183413076
+      ],
+      "visualRatio": 0.9409888357256778,
+      "levels": [
+        {
+          "size": 32,
+          "file": "gas_giant-32.png",
+          "bytes": 3012,
+          "sha256": "7d96dda423083035ce82a985fc66603ac6028afdca9860ef34f95ce19072d0df",
+          "url": "/art/derived/planets/2026-09-08/gas_giant-32.png?v=7d96dda42308"
+        },
+        {
+          "size": 64,
+          "file": "gas_giant-64.png",
+          "bytes": 10445,
+          "sha256": "50b5cbfa3a76ea0beb3252974a90eb38446d49995d67fa1511e1ba811ac71dd8",
+          "url": "/art/derived/planets/2026-09-08/gas_giant-64.png?v=50b5cbfa3a76"
+        },
+        {
+          "size": 128,
+          "file": "gas_giant-128.png",
+          "bytes": 37619,
+          "sha256": "68b8be41f1ced19608aa5bea5314fe47a427b9dc3b86b601648e67758d6638a9",
+          "url": "/art/derived/planets/2026-09-08/gas_giant-128.png?v=68b8be41f1ce"
+        },
+        {
+          "size": 256,
+          "file": "gas_giant-256.png",
+          "bytes": 136096,
+          "sha256": "4e14b61850db65998c54e1bf5374d54b01d76ddf9ca20a4cf663284ee641d0e8",
+          "url": "/art/derived/planets/2026-09-08/gas_giant-256.png?v=4e14b61850db"
+        },
+        {
+          "size": 512,
+          "file": "gas_giant-512.png",
+          "bytes": 481394,
+          "sha256": "3d3e427f013c3bcb23e92864dfe4a8d9197b6b60c23c073d6d59fe7dcb0eda18",
+          "url": "/art/derived/planets/2026-09-08/gas_giant-512.png?v=3d3e427f013c"
+        },
+        {
+          "size": 1024,
+          "file": "gas_giant-1024.png",
+          "bytes": 1743063,
+          "sha256": "922192871c5284f727d19111f02b96253c75e87e637a633622c5b9c02cb2fdb0",
+          "url": "/art/derived/planets/2026-09-08/gas_giant-1024.png?v=922192871c52"
+        },
+        {
+          "size": 1254,
+          "file": "gas_giant-1254.png",
+          "bytes": 3373283,
+          "sha256": "a779ed012da88ded20003a77ecb804cbe763ffb80286f590c562d7f54abc0b66",
+          "url": "/art/derived/planets/2026-09-08/gas_giant-1254.png?v=a779ed012da8"
+        }
+      ]
+    },
+    {
+      "slug": "lava",
+      "source": "art-src/planets-2026-09-08/lava.png",
+      "sourceSha256": "c4513b31a09e2a2713a8c271b1594fb072761d4310215da5b141cc78a9d2cd7a",
+      "anchor": [
+        0.4984051036682616,
+        0.49760765550239233
+      ],
+      "visualRatio": 0.9409888357256778,
+      "levels": [
+        {
+          "size": 32,
+          "file": "lava-32.png",
+          "bytes": 2995,
+          "sha256": "cef3f9d7e47e4fd39be28525f6bfc79fadb6432aee33c81f4defe7a6c9712ac7",
+          "url": "/art/derived/planets/2026-09-08/lava-32.png?v=cef3f9d7e47e"
+        },
+        {
+          "size": 64,
+          "file": "lava-64.png",
+          "bytes": 10341,
+          "sha256": "fb29f5b5ee1e0ace518bdbbcf1adc5d91fce3ebd60619d840f4a29157c6864fd",
+          "url": "/art/derived/planets/2026-09-08/lava-64.png?v=fb29f5b5ee1e"
+        },
+        {
+          "size": 128,
+          "file": "lava-128.png",
+          "bytes": 37711,
+          "sha256": "7fb8c0b9964bf8471c089aabd281ec85b057ca3ba4c39b56520069ce6f04b68a",
+          "url": "/art/derived/planets/2026-09-08/lava-128.png?v=7fb8c0b9964b"
+        },
+        {
+          "size": 256,
+          "file": "lava-256.png",
+          "bytes": 141767,
+          "sha256": "ed16e9ace82021fee5c29da86dead46b2ca426f40c048231a1123c72e5d23a83",
+          "url": "/art/derived/planets/2026-09-08/lava-256.png?v=ed16e9ace820"
+        },
+        {
+          "size": 512,
+          "file": "lava-512.png",
+          "bytes": 536753,
+          "sha256": "8a69a46536cba7a31bc7346b01393315690e2d730634efc8ba3f0add6ace3442",
+          "url": "/art/derived/planets/2026-09-08/lava-512.png?v=8a69a46536cb"
+        },
+        {
+          "size": 1024,
+          "file": "lava-1024.png",
+          "bytes": 2074662,
+          "sha256": "b6888ae1c98c89c102efe9f8b2f726311c502aed4dcdc7270cdf05428a7903d2",
+          "url": "/art/derived/planets/2026-09-08/lava-1024.png?v=b6888ae1c98c"
+        },
+        {
+          "size": 1254,
+          "file": "lava-1254.png",
+          "bytes": 2174772,
+          "sha256": "c4513b31a09e2a2713a8c271b1594fb072761d4310215da5b141cc78a9d2cd7a",
+          "url": "/art/derived/planets/2026-09-08/lava-1254.png?v=c4513b31a09e"
+        }
+      ]
+    },
+    {
+      "slug": "barren",
+      "source": "art-src/planets-2026-09-08/barren.png",
+      "sourceSha256": "d688135785cbe46f2999bc18b36703c07f69ed4272ad0300ef0cd72774f5dc78",
+      "anchor": [
+        0.5,
+        0.4984051036682616
+      ],
+      "visualRatio": 0.9425837320574163,
+      "levels": [
+        {
+          "size": 32,
+          "file": "barren-32.png",
+          "bytes": 2885,
+          "sha256": "aa3aa1ad17fe470ab4a1d2504a3d00d3e4214e5168aa31ac9d54e7deb2102436",
+          "url": "/art/derived/planets/2026-09-08/barren-32.png?v=aa3aa1ad17fe"
+        },
+        {
+          "size": 64,
+          "file": "barren-64.png",
+          "bytes": 9516,
+          "sha256": "4ebc85bd92c2c8cb03ed772dacc1528f568a42e7636f11b1b6409275cea31e97",
+          "url": "/art/derived/planets/2026-09-08/barren-64.png?v=4ebc85bd92c2"
+        },
+        {
+          "size": 128,
+          "file": "barren-128.png",
+          "bytes": 32206,
+          "sha256": "41dbd00b5e851b58234851acd676679bb604a2bfc799f98f3b864bf12bedbed8",
+          "url": "/art/derived/planets/2026-09-08/barren-128.png?v=41dbd00b5e85"
+        },
+        {
+          "size": 256,
+          "file": "barren-256.png",
+          "bytes": 115747,
+          "sha256": "7136a1645a657321aefe9d6f8942b839edc94a2f343d6ece6390b1fb9988053e",
+          "url": "/art/derived/planets/2026-09-08/barren-256.png?v=7136a1645a65"
+        },
+        {
+          "size": 512,
+          "file": "barren-512.png",
+          "bytes": 445701,
+          "sha256": "0390f2434d9bd3e4adf32cdb7dc131817030afe0877b0dc7aef0e0114584baf7",
+          "url": "/art/derived/planets/2026-09-08/barren-512.png?v=0390f2434d9b"
+        },
+        {
+          "size": 1024,
+          "file": "barren-1024.png",
+          "bytes": 1797255,
+          "sha256": "abd1271ebfe523eece020877b16a8aa2684dbe59f748a09079deecfae940c93d",
+          "url": "/art/derived/planets/2026-09-08/barren-1024.png?v=abd1271ebfe5"
+        },
+        {
+          "size": 1254,
+          "file": "barren-1254.png",
+          "bytes": 3522585,
+          "sha256": "d688135785cbe46f2999bc18b36703c07f69ed4272ad0300ef0cd72774f5dc78",
+          "url": "/art/derived/planets/2026-09-08/barren-1254.png?v=d688135785cb"
+        }
+      ]
+    },
+    {
+      "slug": "moon",
+      "source": "art-src/planets-2026-09-08/moon.png",
+      "sourceSha256": "60e2b12db9599c653f3973dfb0f188786f989ec5d6bdf2516ed8a9038f227875",
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "visualRatio": 0.9409888357256778,
+      "levels": [
+        {
+          "size": 32,
+          "file": "moon-32.png",
+          "bytes": 2694,
+          "sha256": "1e297f716577d5755320912126f4d6575142d40efd3137d662a005bc7c6a21ce",
+          "url": "/art/derived/planets/2026-09-08/moon-32.png?v=1e297f716577"
+        },
+        {
+          "size": 64,
+          "file": "moon-64.png",
+          "bytes": 8373,
+          "sha256": "5cef934c489c64034d9c9692cb9e3fdbc2300a3646506c6c4802860a13ab5607",
+          "url": "/art/derived/planets/2026-09-08/moon-64.png?v=5cef934c489c"
+        },
+        {
+          "size": 128,
+          "file": "moon-128.png",
+          "bytes": 27188,
+          "sha256": "99c959ce105b4f2b3a300a5fbfb57b5a93a839d28de00948dc24abf9dfbcb5e8",
+          "url": "/art/derived/planets/2026-09-08/moon-128.png?v=99c959ce105b"
+        },
+        {
+          "size": 256,
+          "file": "moon-256.png",
+          "bytes": 96440,
+          "sha256": "848e41c35de811c8efb41bdebb44d487b68d8c7d0bd7a7bdda9b6c67ee7d46ae",
+          "url": "/art/derived/planets/2026-09-08/moon-256.png?v=848e41c35de8"
+        },
+        {
+          "size": 512,
+          "file": "moon-512.png",
+          "bytes": 370706,
+          "sha256": "879922f8789275c4eb50aae27ffcadc62a6c6a2f789dbc61492b857e83207118",
+          "url": "/art/derived/planets/2026-09-08/moon-512.png?v=879922f87892"
+        },
+        {
+          "size": 1024,
+          "file": "moon-1024.png",
+          "bytes": 1491312,
+          "sha256": "5b83ff7cbf2f3a21e1de27182fa5b760b03659fce472ffc765ffb5291ddc3449",
+          "url": "/art/derived/planets/2026-09-08/moon-1024.png?v=5b83ff7cbf2f"
+        },
+        {
+          "size": 1254,
+          "file": "moon-1254.png",
+          "bytes": 3155473,
+          "sha256": "60e2b12db9599c653f3973dfb0f188786f989ec5d6bdf2516ed8a9038f227875",
+          "url": "/art/derived/planets/2026-09-08/moon-1254.png?v=60e2b12db959"
+        }
+      ]
+    }
+  ]
+}

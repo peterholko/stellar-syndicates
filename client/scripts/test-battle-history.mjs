@@ -82,6 +82,7 @@ const deps = {
   "../battlehistory": { loadBattleMarks: (st) => loadBattleMarks(st, storage) },
   "../state": { syncRenderClock() {} },
   "./derive/market": { marketReservations: [], recentMarketOrders: [] },
+  "./derive/transactions": compile(readFileSync(new URL("../src/core/derive/transactions.ts", import.meta.url), "utf8"), { require: () => ({}) }),
   "../wire.mjs": { PROTOCOL_VERSION: 1 },
 };
 const { applyServerMessage } = compile(sessionSource, { require: (name) => deps[name] ?? {} });

@@ -27,6 +27,28 @@ mod tests {
     use super::*;
     use crate::{Command, Commodity, SimConfig};
 
+    #[test]
+    fn production_modifiers_arrive_with_the_factory_report_and_survive_save() {
+        let (mut w, owner, id, cc, delay) = remote();
+        let changed = w.time + delay + 1.0;
+        w.time = changed;
+        w.players.get_mut(&owner).unwrap().research.completed.insert("mat_ore_recovery".into());
+        w.players.get_mut(&owner).unwrap().research.completed.insert("mat_enrichment".into());
+        w.record_information();
+        let w: World = serde_json::from_value(serde_json::to_value(&w).unwrap()).unwrap();
+        let before = w.information.site(id,cc,w.config.c,changed+delay-0.001).unwrap();
+        assert_eq!(before.production_mods,crate::production::ProductionMods::default(),
+            "current corporate research cannot upgrade a still-old factory report");
+        let after = w.information.site(id,cc,w.config.c,changed+delay).unwrap();
+        assert_eq!(after.production_mods.processing,1.15);
+        assert_eq!(after.production_mods.ore_recovery,1.15);
+        assert_eq!(after.at,changed);
+        let mut legacy = serde_json::to_value(after).unwrap();
+        legacy.as_object_mut().unwrap().remove("production_mods");
+        let restored: SiteReport = serde_json::from_value(legacy).unwrap();
+        assert_eq!(restored.production_mods,crate::production::ProductionMods::default());
+    }
+
     fn remote() -> (World, PlayerId, EntityId, Vec2, f64) {
         let mut w = World::new(SimConfig::for_players(71, 4));
         let owner = PlayerId(71);
@@ -68,6 +90,7 @@ mod tests {
         body.assignments.insert(
             crate::StructureKind::MiningComplex,
             crate::production::Assignment {
+                refining_ore: None,
                 workers: 3,
                 specialists: Default::default(),
                 suspended: None,
@@ -239,6 +262,8 @@ pub struct SiteReport {
     pub garrison: Option<(u32, bool)>,
     pub node_fed: bool,
     pub academies: Vec<crate::world::AcademyContribution>,
+    #[serde(default)]
+    pub production_mods: crate::production::ProductionMods,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -277,6 +302,16 @@ pub struct FleetAssets {
 }
 
 impl InformationHistory {
+    /// Re-express only the old report's own base storage as a building. Do not
+    /// copy current inventory, ownership, queues or timestamps into delayed light.
+    pub(crate) fn migrate_ground_storage(&mut self) {
+        for report in self.sites.values_mut().flat_map(|reports| reports.iter_mut()) {
+            if report.system.owner.is_some() {
+                report.system.seed_warehouse();
+            }
+        }
+    }
+
     pub fn report_fact(&mut self, arrival: f64, owner: PlayerId, fact: LearnedFact) {
         self.facts
             .entry(arrival.max(0.0).to_bits())
@@ -623,6 +658,7 @@ impl InformationHistory {
             }
         }
         for system in &world.systems {
+            let production_mods = system.owner.map(|owner| world.production_mods(owner)).unwrap_or_default();
             let mut system = system.clone();
             // Only whole inventory units go onto the wire. Quantize before
             // change compression, not the physical stockpile: fractional mine
@@ -650,6 +686,7 @@ impl InformationHistory {
                     || last.garrison != garrison
                     || last.node_fed != node_fed
                     || last.academies != academies
+                    || last.production_mods != production_mods
             }) {
                 history.push_back(SiteReport {
                     at: world.time,
@@ -659,6 +696,7 @@ impl InformationHistory {
                     garrison,
                     node_fed,
                     academies,
+                    production_mods,
                 });
             }
             // Retain the predecessor of the horizon, including its old flag.

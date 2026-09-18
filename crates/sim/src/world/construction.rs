@@ -105,7 +105,7 @@ mod tests {
         let (mut w, owner, home, body) = planet_queue();
         let yard = queue(&mut w, owner, home, body, K::Shipyard);
         let mine = queue(&mut w, owner, home, body, K::MiningComplex);
-        let store = queue(&mut w, owner, home, body, K::OrbitalWarehouse);
+        let store = queue(&mut w, owner, home, body, K::Warehouse);
         let due = job(&w, yard).complete_tick;
         assert!(!job(&w, yard).is_queued_structure());
         assert!(job(&w, mine).is_queued_structure());
@@ -138,7 +138,7 @@ mod tests {
         assert!(w.build_queue.is_empty());
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
         let planet = sys.bodies.iter().find(|b| b.id == body).unwrap();
-        for kind in [K::Shipyard, K::MiningComplex, K::OrbitalWarehouse] { assert_eq!(planet.tier(kind), 1); }
+        for kind in [K::Shipyard, K::MiningComplex, K::Warehouse] { assert_eq!(planet.tier(kind), 1); }
         assert_eq!(sys.stockpile[&Commodity::Alloys], paid_alloys, "activation never charges again");
     }
 
@@ -176,14 +176,14 @@ mod tests {
         let first = queue(&mut w, owner, home, body, K::MiningComplex);
         let second = queue(&mut w, owner, home, body, K::MiningComplex);
         w.step(&[Command::BuildShip { player_id: owner, system_id: home,
-            ship_kind: ShipKind::Convoy, join: None, loadout: Default::default() }]);
+            ship_kind: ShipKind::TinyFreighter, join: None, loadout: Default::default() }]);
         let hull = w.build_queue.last().unwrap().id;
         assert!(job(&w, hull).ship_work.is_some());
         assert!(job(&w, hull).complete_tick < job(&w, first).complete_tick);
         let hull_due = job(&w, hull).complete_tick;
         advance(&mut w, hull_due);
         assert!(w.step(&[]).iter().any(|e| matches!(e.payload,
-            EventPayload::ShipSpawned { kind: ShipKind::Convoy, .. })));
+            EventPayload::ShipSpawned { kind: ShipKind::TinyFreighter, .. })));
         assert!(!job(&w, first).is_queued_structure());
         assert!(job(&w, second).is_queued_structure());
         let first_due = job(&w, first).complete_tick;

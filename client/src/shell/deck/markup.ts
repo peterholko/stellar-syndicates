@@ -33,6 +33,9 @@ export function mountDeckMarkup(root: HTMLElement): void {
         ${overflowButton("faction", "Faction")}
         ${overflowButton("log", "Log")}
       </div>
+      <section id="deck-planet-stage" class="deck-planet-stage" aria-label="Planet view" hidden>
+        <div id="deck-planet-stage-body" class="deck-planet-stage__body"></div>
+      </section>
       <aside id="deck-workspace" class="deck-workspace" aria-hidden="true">
         <header class="deck-workspace__header">
           <button type="button" data-deck-act="back" aria-label="Back">←</button>
@@ -52,19 +55,6 @@ export function mountDeckMarkup(root: HTMLElement): void {
           <button type="button" data-deck-act="build-workbench-close" aria-label="Close construction workbench">✕</button>
         </header>
         <div id="deck-build-workbench-body" class="deck-build-workbench__body"></div>
-      </section>
-      <section id="deck-world-workbench" class="deck-build-workbench deck-world-workbench" aria-labelledby="deck-world-workbench-title" tabindex="-1" hidden>
-        <header class="deck-build-workbench__header">
-          <div class="deck-world-workbench__identity">
-            <img id="deck-world-workbench-art" class="deck-world-workbench__art" alt="" hidden>
-            <div>
-              <span>World details</span>
-              <h2 id="deck-world-workbench-title">World</h2>
-            </div>
-          </div>
-          <button type="button" data-deck-act="world-workbench-close" aria-label="Close world details">✕</button>
-        </header>
-        <div id="deck-world-workbench-body" class="deck-build-workbench__body"></div>
       </section>
       <section id="deck-toast-lane" class="deck-toast-lane" aria-live="polite"></section>
       <div id="deck-bottom-band" class="deck-bottom-band">

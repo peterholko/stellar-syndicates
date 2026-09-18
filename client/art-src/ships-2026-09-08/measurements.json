@@ -1,0 +1,213 @@
+{
+  "alphaThreshold": 16,
+  "ships": [
+    {
+      "slug": "interceptor",
+      "file": "interceptor.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 82,
+        "top": 24,
+        "width": 1090,
+        "height": 1147
+      },
+      "transparentFraction": 0.6530788875916048,
+      "sha256": "9ec558450b895d9c54a2120f060ee3ae49c7f3906edd323341bdec9f16993bf4"
+    },
+    {
+      "slug": "freighter",
+      "file": "freighter.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 239,
+        "top": 24,
+        "width": 777,
+        "height": 1169
+      },
+      "transparentFraction": 0.6313799032887424,
+      "sha256": "1f5830b612952f40d510f4ee4f3827c3ed2af2b85d56325b2df8922b436431a0"
+    },
+    {
+      "slug": "scout",
+      "file": "scout.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 461,
+        "top": 53,
+        "width": 333,
+        "height": 1105
+      },
+      "transparentFraction": 0.8910135095604751,
+      "sha256": "2e89e3fff3ac351e221ab06a396603706b12fc36d3a0c48db82717230ab08ad8"
+    },
+    {
+      "slug": "corvette",
+      "file": "corvette.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 141,
+        "top": 55,
+        "width": 973,
+        "height": 1119
+      },
+      "transparentFraction": 0.6436640390304454,
+      "sha256": "890acda8a33888b6dee46f03f3d4b08e8b3c8bb2f26006ddf58270a9e117d504"
+    },
+    {
+      "slug": "colony_ship",
+      "file": "colony_ship.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 282,
+        "top": 9,
+        "width": 695,
+        "height": 1208
+      },
+      "transparentFraction": 0.6991750799355937,
+      "sha256": "c4045b1a6968bf32a026222f54b7b1163b497afcd6aab71557848b2cce6a4806"
+    },
+    {
+      "slug": "construction_ship",
+      "file": "construction_ship.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 313,
+        "top": 47,
+        "width": 628,
+        "height": 1139
+      },
+      "transparentFraction": 0.7004787232689524,
+      "sha256": "034b261bfac341c810c7ac63e0db41c1006a2971eaa51818f37d980803b8d495"
+    },
+    {
+      "slug": "troop_transport",
+      "file": "troop_transport.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 328,
+        "top": 160,
+        "width": 599,
+        "height": 907
+      },
+      "transparentFraction": 0.7509170017983918,
+      "sha256": "d55429d3e76a4e694ea476c3d3eb3421419029cfd65fee2d4c7de7d98d235b7e"
+    },
+    {
+      "slug": "destroyer",
+      "file": "destroyer.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 407,
+        "top": 18,
+        "width": 441,
+        "height": 1198
+      },
+      "transparentFraction": 0.806966034049892,
+      "sha256": "7f9e8148823bb4943f02ce3a7ec095dbee30ae64291ba1d9c90f479c1e738ef2"
+    },
+    {
+      "slug": "cruiser",
+      "file": "cruiser.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 271,
+        "top": 32,
+        "width": 712,
+        "height": 1157
+      },
+      "transparentFraction": 0.689321444106133,
+      "sha256": "9bbb1f64623c76cae4cde0f8bb2fdc15a13d0c2d33d6c101e7ea057f9b1e2b36"
+    },
+    {
+      "slug": "battleship",
+      "file": "battleship.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 274,
+        "top": 2,
+        "width": 707,
+        "height": 1225
+      },
+      "transparentFraction": 0.656597452744519,
+      "sha256": "6d89ef9855b686a92c94edd729db06d456dfd8c7a1ca544faf07f15b34725f6d"
+    },
+    {
+      "slug": "dreadnought",
+      "file": "dreadnought.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 224,
+        "top": 20,
+        "width": 807,
+        "height": 1202
+      },
+      "transparentFraction": 0.5450647243016923,
+      "sha256": "9467c1a62aca0ae6f735d2e06e44411ac818e48f4036fc52b1f80b06b25cc267"
+    },
+    {
+      "slug": "titan",
+      "file": "titan.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 296,
+        "top": 23,
+        "width": 663,
+        "height": 1189
+      },
+      "transparentFraction": 0.6792757593563435,
+      "sha256": "9d00bb76e92c3a4600c5cc17ba90457827fc81d4ed0dabd9024eadf826e01ff6"
+    },
+    {
+      "slug": "authority_freighter",
+      "file": "authority_freighter.png",
+      "canvas": [
+        1254,
+        1254
+      ],
+      "bbox": {
+        "left": 210,
+        "top": 33,
+        "width": 834,
+        "height": 1129
+      },
+      "transparentFraction": 0.49022712646484995,
+      "sha256": "d71451399dda994e85e5cfcf8817cc88dbf3440fd9aaa02d85f0835445964f60"
+    }
+  ]
+}

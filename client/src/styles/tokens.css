@@ -36,6 +36,7 @@
   --space-4: 16px;
   --space-6: 24px;
   --z-map: 0;
+  --z-planet: 5; /* The planet scene covers the map area beneath every piece of chrome. */
   --z-chrome: 10;
   --z-workspace: 20;
   --z-command: 30;

@@ -1,0 +1,9 @@
+Generated with the built-in image-generation tool. Source: battle-marker-v3.png.
+Galaxy-map derivative: public/art/battle_in_progress_v3.png (256x256 transparent PNG).
+
+Use case: logo-brand.
+Asset type: a single flat raster PNG battle symbol for the galaxy map in Stellar Syndicates, displayed at only 52 screen pixels.
+Primary request: a minimal sci-fi COMBAT pictogram, NOT an illustration. Two bold, solid geometric energy-bolt shapes cross diagonally in the recognizable composition of a crossed-weapons battle icon. Use broad angular shapes with short tapered points, generous open gaps, and one small pale diamond at their crossing to suggest a clash. The silhouette must remain immediately readable at 32–52 pixels.
+Style: absolutely FLAT, precise clean-edged pictogram; only two solid colors, warm coral-orange (#ff7750) for both crossed bolts and pale warm ivory (#ffe5bd) for the small center. Uniform solid fills, no shading, no texture, no gradients, no metallic materials, no bevels, no 3D, no light bloom, no tiny lines or decorative details.
+Composition: one centered balanced symbol occupying about 84% of a square canvas, consistent transparent margin. No outer circle, shield, border, badge plate, text, lettering or numbers. No spaceships, actual guns, smoke, flames, debris, background scene, checkerboard or watermark.
+Background: genuinely transparent alpha everywhere outside the symbol and in its gaps. Deliver one crisp finished PNG symbol, not a mockup, alternatives grid, or artwork presentation. 1024 by 1024 pixels.

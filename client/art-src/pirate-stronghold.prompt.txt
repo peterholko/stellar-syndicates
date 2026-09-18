@@ -1,0 +1,5 @@
+Generated with the built-in image generation tool.
+Use case: stylized-concept
+Asset type: transparent game UI site artwork
+A regional pirate stronghold for a dark sci-fi strategy game, Stellar Syndicates. A formidable triangular armored space fortress with a heavy central command citadel, three distinct bastions connected by massive structural arms, visible long gun batteries and two recessed docking bays. Purpose-built militarized silhouette, graphite steel and desaturated oxblood red plating with small orange warning lights. Crisp professionally rendered 3D game concept icon, no painterly strokes. Centered square, slight top-down three-quarter view, entire fortress with 12% empty margin. Simple bold silhouette readable at 64px, visually heavier and more imposing than a small cargo depot. Actual transparent background, no starfield, no fog, no text, no lettering, no border, no UI, no other ships.
+Runtime derivative: 256px PNG, original alpha preserved with Sharp.

@@ -1,0 +1,759 @@
+{
+  "version": "2026-09-08",
+  "recipe": "native-rgba-visible-length-v1",
+  "sizes": [
+    128,
+    256,
+    512,
+    1024,
+    1254
+  ],
+  "ships": {
+    "raider": {
+      "source": "art-src/ships-2026-09-08/interceptor.png",
+      "sourceSha256": "9ec558450b895d9c54a2120f060ee3ae49c7f3906edd323341bdec9f16993bf4",
+      "anchor": [
+        0.5,
+        0.47647527910685805
+      ],
+      "lengthRatio": 0.9130781499202552,
+      "referenceRatio": 0.77734375,
+      "calib": 0.8513441593886463,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 19588,
+          "url": "/art/derived/ships/2026-09-08/raider-128.png?v=76264a2f78bf"
+        },
+        {
+          "size": 256,
+          "bytes": 68662,
+          "url": "/art/derived/ships/2026-09-08/raider-256.png?v=0e6d6b6a007d"
+        },
+        {
+          "size": 512,
+          "bytes": 259643,
+          "url": "/art/derived/ships/2026-09-08/raider-512.png?v=9d2c6284c16d"
+        },
+        {
+          "size": 1024,
+          "bytes": 1048893,
+          "url": "/art/derived/ships/2026-09-08/raider-1024.png?v=0e1982eb3376"
+        },
+        {
+          "size": 1254,
+          "bytes": 1235708,
+          "url": "/art/derived/ships/2026-09-08/raider-1254.png?v=9ec558450b89"
+        }
+      ]
+    },
+    "scout": {
+      "source": "art-src/ships-2026-09-08/scout.png",
+      "sourceSha256": "2e89e3fff3ac351e221ab06a396603706b12fc36d3a0c48db82717230ab08ad8",
+      "anchor": [
+        0.5,
+        0.47926634768740034
+      ],
+      "lengthRatio": 0.8740031897926634,
+      "referenceRatio": 0.83203125,
+      "calib": 0.9519773608576643,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7953,
+          "url": "/art/derived/ships/2026-09-08/scout-128.png?v=bb0a9c9f4f39"
+        },
+        {
+          "size": 256,
+          "bytes": 27434,
+          "url": "/art/derived/ships/2026-09-08/scout-256.png?v=a39b1357876a"
+        },
+        {
+          "size": 512,
+          "bytes": 99677,
+          "url": "/art/derived/ships/2026-09-08/scout-512.png?v=0b51cd187aef"
+        },
+        {
+          "size": 1024,
+          "bytes": 382134,
+          "url": "/art/derived/ships/2026-09-08/scout-1024.png?v=843782ad44e6"
+        },
+        {
+          "size": 1254,
+          "bytes": 409176,
+          "url": "/art/derived/ships/2026-09-08/scout-1254.png?v=2e89e3fff3ac"
+        }
+      ]
+    },
+    "corvette": {
+      "source": "art-src/ships-2026-09-08/corvette.png",
+      "sourceSha256": "890acda8a33888b6dee46f03f3d4b08e8b3c8bb2f26006ddf58270a9e117d504",
+      "anchor": [
+        0.5003987240829346,
+        0.4904306220095694
+      ],
+      "lengthRatio": 0.8915470494417863,
+      "referenceRatio": 0.77734375,
+      "calib": 0.8719043492844365,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 19595,
+          "url": "/art/derived/ships/2026-09-08/corvette-128.png?v=02973b708de8"
+        },
+        {
+          "size": 256,
+          "bytes": 69569,
+          "url": "/art/derived/ships/2026-09-08/corvette-256.png?v=70cb861f53f0"
+        },
+        {
+          "size": 512,
+          "bytes": 265257,
+          "url": "/art/derived/ships/2026-09-08/corvette-512.png?v=da36a37d8f19"
+        },
+        {
+          "size": 1024,
+          "bytes": 1069596,
+          "url": "/art/derived/ships/2026-09-08/corvette-1024.png?v=8303da5000b3"
+        },
+        {
+          "size": 1254,
+          "bytes": 1291263,
+          "url": "/art/derived/ships/2026-09-08/corvette-1254.png?v=890acda8a338"
+        }
+      ]
+    },
+    "colony": {
+      "source": "art-src/ships-2026-09-08/colony_ship.png",
+      "sourceSha256": "c4045b1a6968bf32a026222f54b7b1163b497afcd6aab71557848b2cce6a4806",
+      "anchor": [
+        0.501993620414673,
+        0.48843700159489634
+      ],
+      "lengthRatio": 0.9609250398724083,
+      "referenceRatio": 0.875,
+      "calib": 0.9105809128630705,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 19467,
+          "url": "/art/derived/ships/2026-09-08/colony-128.png?v=1a2cf4c8f556"
+        },
+        {
+          "size": 256,
+          "bytes": 70997,
+          "url": "/art/derived/ships/2026-09-08/colony-256.png?v=803c316394a3"
+        },
+        {
+          "size": 512,
+          "bytes": 269306,
+          "url": "/art/derived/ships/2026-09-08/colony-512.png?v=092da8651d16"
+        },
+        {
+          "size": 1024,
+          "bytes": 1059747,
+          "url": "/art/derived/ships/2026-09-08/colony-1024.png?v=6f8df6de5e7c"
+        },
+        {
+          "size": 1254,
+          "bytes": 1228216,
+          "url": "/art/derived/ships/2026-09-08/colony-1254.png?v=c4045b1a6968"
+        }
+      ]
+    },
+    "builder": {
+      "source": "art-src/ships-2026-09-08/construction_ship.png",
+      "sourceSha256": "034b261bfac341c810c7ac63e0db41c1006a2971eaa51818f37d980803b8d495",
+      "anchor": [
+        0.5,
+        0.4916267942583732
+      ],
+      "lengthRatio": 0.9066985645933014,
+      "referenceRatio": 0.875,
+      "calib": 0.9650395778364116,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 18608,
+          "url": "/art/derived/ships/2026-09-08/builder-128.png?v=938c6bbfe259"
+        },
+        {
+          "size": 256,
+          "bytes": 66178,
+          "url": "/art/derived/ships/2026-09-08/builder-256.png?v=97b3c113f14f"
+        },
+        {
+          "size": 512,
+          "bytes": 251687,
+          "url": "/art/derived/ships/2026-09-08/builder-512.png?v=cdf248dc2eea"
+        },
+        {
+          "size": 1024,
+          "bytes": 997253,
+          "url": "/art/derived/ships/2026-09-08/builder-1024.png?v=bbf802341550"
+        },
+        {
+          "size": 1254,
+          "bytes": 1143796,
+          "url": "/art/derived/ships/2026-09-08/builder-1254.png?v=034b261bfac3"
+        }
+      ]
+    },
+    "transport": {
+      "source": "art-src/ships-2026-09-08/troop_transport.png",
+      "sourceSha256": "d55429d3e76a4e694ea476c3d3eb3421419029cfd65fee2d4c7de7d98d235b7e",
+      "anchor": [
+        0.5003987240829346,
+        0.4892344497607656
+      ],
+      "lengthRatio": 0.7216905901116427,
+      "referenceRatio": 0.8203125,
+      "calib": 1.136654005524862,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 15340,
+          "url": "/art/derived/ships/2026-09-08/transport-128.png?v=9cf4c0adc5d4"
+        },
+        {
+          "size": 256,
+          "bytes": 54555,
+          "url": "/art/derived/ships/2026-09-08/transport-256.png?v=c42a5764a364"
+        },
+        {
+          "size": 512,
+          "bytes": 203199,
+          "url": "/art/derived/ships/2026-09-08/transport-512.png?v=4630a0cc4d3f"
+        },
+        {
+          "size": 1024,
+          "bytes": 784315,
+          "url": "/art/derived/ships/2026-09-08/transport-1024.png?v=57c608805d9b"
+        },
+        {
+          "size": 1254,
+          "bytes": 812682,
+          "url": "/art/derived/ships/2026-09-08/transport-1254.png?v=d55429d3e76a"
+        }
+      ]
+    },
+    "destroyer": {
+      "source": "art-src/ships-2026-09-08/destroyer.png",
+      "sourceSha256": "7f9e8148823bb4943f02ce3a7ec095dbee30ae64291ba1d9c90f479c1e738ef2",
+      "anchor": [
+        0.5003987240829346,
+        0.48843700159489634
+      ],
+      "lengthRatio": 0.9465709728867624,
+      "referenceRatio": 0.77734375,
+      "calib": 0.8212207771693344,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 12225,
+          "url": "/art/derived/ships/2026-09-08/destroyer-128.png?v=916910ba1dbc"
+        },
+        {
+          "size": 256,
+          "bytes": 43580,
+          "url": "/art/derived/ships/2026-09-08/destroyer-256.png?v=e6c07b89571e"
+        },
+        {
+          "size": 512,
+          "bytes": 166822,
+          "url": "/art/derived/ships/2026-09-08/destroyer-512.png?v=2cfdc490c066"
+        },
+        {
+          "size": 1024,
+          "bytes": 663212,
+          "url": "/art/derived/ships/2026-09-08/destroyer-1024.png?v=3f4137eccb2f"
+        },
+        {
+          "size": 1254,
+          "bytes": 751275,
+          "url": "/art/derived/ships/2026-09-08/destroyer-1254.png?v=7f9e8148823b"
+        }
+      ]
+    },
+    "cruiser": {
+      "source": "art-src/ships-2026-09-08/cruiser.png",
+      "sourceSha256": "9bbb1f64623c76cae4cde0f8bb2fdc15a13d0c2d33d6c101e7ea057f9b1e2b36",
+      "anchor": [
+        0.5,
+        0.4864433811802233
+      ],
+      "lengthRatio": 0.9218500797448166,
+      "referenceRatio": 0.77734375,
+      "calib": 0.8432431336505191,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 17702,
+          "url": "/art/derived/ships/2026-09-08/cruiser-128.png?v=7b4b91fc2a3d"
+        },
+        {
+          "size": 256,
+          "bytes": 63197,
+          "url": "/art/derived/ships/2026-09-08/cruiser-256.png?v=cdefa3505c94"
+        },
+        {
+          "size": 512,
+          "bytes": 243071,
+          "url": "/art/derived/ships/2026-09-08/cruiser-512.png?v=b2ee83337480"
+        },
+        {
+          "size": 1024,
+          "bytes": 974119,
+          "url": "/art/derived/ships/2026-09-08/cruiser-1024.png?v=f6f5bad7e767"
+        },
+        {
+          "size": 1254,
+          "bytes": 1123981,
+          "url": "/art/derived/ships/2026-09-08/cruiser-1254.png?v=9bbb1f64623c"
+        }
+      ]
+    },
+    "battleship": {
+      "source": "art-src/ships-2026-09-08/battleship.png",
+      "sourceSha256": "6d89ef9855b686a92c94edd729db06d456dfd8c7a1ca544faf07f15b34725f6d",
+      "anchor": [
+        0.5003987240829346,
+        0.4904306220095694
+      ],
+      "lengthRatio": 0.9760765550239234,
+      "referenceRatio": 0.77734375,
+      "calib": 0.7963962928921569,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 19412,
+          "url": "/art/derived/ships/2026-09-08/battleship-128.png?v=96eedf0042e7"
+        },
+        {
+          "size": 256,
+          "bytes": 70358,
+          "url": "/art/derived/ships/2026-09-08/battleship-256.png?v=ea811c2cbbad"
+        },
+        {
+          "size": 512,
+          "bytes": 274570,
+          "url": "/art/derived/ships/2026-09-08/battleship-512.png?v=8ee8cda2e7b9"
+        },
+        {
+          "size": 1024,
+          "bytes": 1107141,
+          "url": "/art/derived/ships/2026-09-08/battleship-1024.png?v=0b2ba470bc99"
+        },
+        {
+          "size": 1254,
+          "bytes": 1290383,
+          "url": "/art/derived/ships/2026-09-08/battleship-1254.png?v=6d89ef9855b6"
+        }
+      ]
+    },
+    "dreadnought": {
+      "source": "art-src/ships-2026-09-08/dreadnought.png",
+      "sourceSha256": "9467c1a62aca0ae6f735d2e06e44411ac818e48f4036fc52b1f80b06b25cc267",
+      "anchor": [
+        0.5003987240829346,
+        0.4956140350877193
+      ],
+      "lengthRatio": 0.9577352472089314,
+      "referenceRatio": 0.77734375,
+      "calib": 0.8116478455453788,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 26475,
+          "url": "/art/derived/ships/2026-09-08/dreadnought-128.png?v=cf70c0d23681"
+        },
+        {
+          "size": 256,
+          "bytes": 94644,
+          "url": "/art/derived/ships/2026-09-08/dreadnought-256.png?v=4ffd7ac12c88"
+        },
+        {
+          "size": 512,
+          "bytes": 362302,
+          "url": "/art/derived/ships/2026-09-08/dreadnought-512.png?v=682b5041635d"
+        },
+        {
+          "size": 1024,
+          "bytes": 1449980,
+          "url": "/art/derived/ships/2026-09-08/dreadnought-1024.png?v=92a3accbd7b4"
+        },
+        {
+          "size": 1254,
+          "bytes": 1626240,
+          "url": "/art/derived/ships/2026-09-08/dreadnought-1254.png?v=9467c1a62aca"
+        }
+      ]
+    },
+    "titan": {
+      "source": "art-src/ships-2026-09-08/titan.png",
+      "sourceSha256": "9d00bb76e92c3a4600c5cc17ba90457827fc81d4ed0dabd9024eadf826e01ff6",
+      "anchor": [
+        0.5003987240829346,
+        0.49242424242424243
+      ],
+      "lengthRatio": 0.9465709728867624,
+      "referenceRatio": 0.77734375,
+      "calib": 0.8212207771693344,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 19601,
+          "url": "/art/derived/ships/2026-09-08/titan-128.png?v=92d59a62e663"
+        },
+        {
+          "size": 256,
+          "bytes": 70161,
+          "url": "/art/derived/ships/2026-09-08/titan-256.png?v=3136cc76033b"
+        },
+        {
+          "size": 512,
+          "bytes": 269835,
+          "url": "/art/derived/ships/2026-09-08/titan-512.png?v=58213cfc985b"
+        },
+        {
+          "size": 1024,
+          "bytes": 1082288,
+          "url": "/art/derived/ships/2026-09-08/titan-1024.png?v=f7171e1ae67b"
+        },
+        {
+          "size": 1254,
+          "bytes": 1296927,
+          "url": "/art/derived/ships/2026-09-08/titan-1254.png?v=9d00bb76e92c"
+        }
+      ]
+    },
+    "freighter": {
+      "source": "art-src/ships-2026-09-08/authority_freighter.png",
+      "sourceSha256": "d71451399dda994e85e5cfcf8817cc88dbf3440fd9aaa02d85f0835445964f60",
+      "anchor": [
+        0.5003987240829346,
+        0.47647527910685805
+      ],
+      "lengthRatio": 0.8987240829346093,
+      "referenceRatio": 0.82421875,
+      "calib": 0.9170987688553682,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 27702,
+          "url": "/art/derived/ships/2026-09-08/freighter-128.png?v=6fc7f4a24eb0"
+        },
+        {
+          "size": 256,
+          "bytes": 100591,
+          "url": "/art/derived/ships/2026-09-08/freighter-256.png?v=6a7b3157081f"
+        },
+        {
+          "size": 512,
+          "bytes": 391240,
+          "url": "/art/derived/ships/2026-09-08/freighter-512.png?v=62f28babeb14"
+        },
+        {
+          "size": 1024,
+          "bytes": 1569083,
+          "url": "/art/derived/ships/2026-09-08/freighter-1024.png?v=9ab2041049b0"
+        },
+        {
+          "size": 1254,
+          "bytes": 1718930,
+          "url": "/art/derived/ships/2026-09-08/freighter-1254.png?v=d71451399dda"
+        }
+      ]
+    },
+    "tiny_freighter": {
+      "source": "art-src/freighters-2026-09-16/tiny-freighter-alpha.png",
+      "sourceSha256": "0261c7eee5443c7cf6dc43b760a143aa406ea3f523ec3a7ec6ed4c1eea0e85cd",
+      "anchor": [
+        0.5003987240829346,
+        0.49681020733652315
+      ],
+      "lengthRatio": 0.8708133971291866,
+      "referenceRatio": 0.8515625,
+      "calib": 0.9778932005494505,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 15036,
+          "url": "/art/derived/ships/2026-09-08/tiny_freighter-128.png?v=161e8b5007d7"
+        },
+        {
+          "size": 256,
+          "bytes": 53313,
+          "url": "/art/derived/ships/2026-09-08/tiny_freighter-256.png?v=4cc316ec2e9f"
+        },
+        {
+          "size": 512,
+          "bytes": 192322,
+          "url": "/art/derived/ships/2026-09-08/tiny_freighter-512.png?v=6cfe81b5d5f3"
+        },
+        {
+          "size": 1024,
+          "bytes": 728125,
+          "url": "/art/derived/ships/2026-09-08/tiny_freighter-1024.png?v=c28a39372bd1"
+        },
+        {
+          "size": 1254,
+          "bytes": 761773,
+          "url": "/art/derived/ships/2026-09-08/tiny_freighter-1254.png?v=0261c7eee544"
+        }
+      ]
+    },
+    "small_freighter": {
+      "source": "art-src/freighters-2026-09-16/small-freighter-alpha.png",
+      "sourceSha256": "ce715b8b5481044658e94456636bc228e341c11a7704f88104ed20b6d6f1ff80",
+      "anchor": [
+        0.5003987240829346,
+        0.48963317384370014
+      ],
+      "lengthRatio": 0.9521531100478469,
+      "referenceRatio": 0.8515625,
+      "calib": 0.8943545854271358,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 20193,
+          "url": "/art/derived/ships/2026-09-08/small_freighter-128.png?v=6ec70beb744b"
+        },
+        {
+          "size": 256,
+          "bytes": 71012,
+          "url": "/art/derived/ships/2026-09-08/small_freighter-256.png?v=3ab3f90ab0df"
+        },
+        {
+          "size": 512,
+          "bytes": 260523,
+          "url": "/art/derived/ships/2026-09-08/small_freighter-512.png?v=18b422b796d2"
+        },
+        {
+          "size": 1024,
+          "bytes": 987657,
+          "url": "/art/derived/ships/2026-09-08/small_freighter-1024.png?v=34d8fabf8bd6"
+        },
+        {
+          "size": 1254,
+          "bytes": 957487,
+          "url": "/art/derived/ships/2026-09-08/small_freighter-1254.png?v=ce715b8b5481"
+        }
+      ]
+    },
+    "convoy": {
+      "source": "art-src/freighters-2026-09-16/medium-freighter-alpha.png",
+      "sourceSha256": "8f70abf9762d182ad276624242a2285317896f7e5b7b7e548b4b7bf90d7cc73b",
+      "anchor": [
+        0.5,
+        0.49003189792663476
+      ],
+      "lengthRatio": 0.9465709728867624,
+      "referenceRatio": 0.8515625,
+      "calib": 0.8996287910699241,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 21320,
+          "url": "/art/derived/ships/2026-09-08/convoy-128.png?v=1ce0c506c81f"
+        },
+        {
+          "size": 256,
+          "bytes": 76345,
+          "url": "/art/derived/ships/2026-09-08/convoy-256.png?v=e22e177fc2e9"
+        },
+        {
+          "size": 512,
+          "bytes": 272528,
+          "url": "/art/derived/ships/2026-09-08/convoy-512.png?v=7291af77928a"
+        },
+        {
+          "size": 1024,
+          "bytes": 1013093,
+          "url": "/art/derived/ships/2026-09-08/convoy-1024.png?v=50cbb75d1d22"
+        },
+        {
+          "size": 1254,
+          "bytes": 1022755,
+          "url": "/art/derived/ships/2026-09-08/convoy-1254.png?v=8f70abf9762d"
+        }
+      ]
+    },
+    "large_freighter": {
+      "source": "art-src/freighters-2026-09-16/large-freighter-alpha.png",
+      "sourceSha256": "fbe9b66fea67e5676803d0b81373cfa6d24b87468e9fe2231388c6da4a1a724a",
+      "anchor": [
+        0.5007974481658692,
+        0.4880382775119617
+      ],
+      "lengthRatio": 0.9569377990430622,
+      "referenceRatio": 0.8515625,
+      "calib": 0.8898828125,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 20272,
+          "url": "/art/derived/ships/2026-09-08/large_freighter-128.png?v=df7c618b9254"
+        },
+        {
+          "size": 256,
+          "bytes": 72220,
+          "url": "/art/derived/ships/2026-09-08/large_freighter-256.png?v=0fe64f544f76"
+        },
+        {
+          "size": 512,
+          "bytes": 264823,
+          "url": "/art/derived/ships/2026-09-08/large_freighter-512.png?v=0b3a60eea791"
+        },
+        {
+          "size": 1024,
+          "bytes": 1011918,
+          "url": "/art/derived/ships/2026-09-08/large_freighter-1024.png?v=02893cdae7c6"
+        },
+        {
+          "size": 1254,
+          "bytes": 1045571,
+          "url": "/art/derived/ships/2026-09-08/large_freighter-1254.png?v=fbe9b66fea67"
+        }
+      ]
+    },
+    "heavy_freighter": {
+      "source": "art-src/freighters-2026-09-16/heavy-freighter-alpha.png",
+      "sourceSha256": "5b30bb27942a90abe21756453d87c9e8c7c8bc771633acbf59b2bb1739410ff8",
+      "anchor": [
+        0.5003987240829346,
+        0.48484848484848486
+      ],
+      "lengthRatio": 0.9585326953748007,
+      "referenceRatio": 0.8515625,
+      "calib": 0.8884021422628952,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 19814,
+          "url": "/art/derived/ships/2026-09-08/heavy_freighter-128.png?v=d01e70a992b7"
+        },
+        {
+          "size": 256,
+          "bytes": 71306,
+          "url": "/art/derived/ships/2026-09-08/heavy_freighter-256.png?v=7901c276c7f6"
+        },
+        {
+          "size": 512,
+          "bytes": 266987,
+          "url": "/art/derived/ships/2026-09-08/heavy_freighter-512.png?v=d6ecd124b97e"
+        },
+        {
+          "size": 1024,
+          "bytes": 1031059,
+          "url": "/art/derived/ships/2026-09-08/heavy_freighter-1024.png?v=673416ef8c36"
+        },
+        {
+          "size": 1254,
+          "bytes": 1069246,
+          "url": "/art/derived/ships/2026-09-08/heavy_freighter-1254.png?v=5b30bb27942a"
+        }
+      ]
+    },
+    "bulk_freighter": {
+      "source": "art-src/freighters-2026-09-16/bulk-freighter-alpha.png",
+      "sourceSha256": "798ee113f2d5d375ad75ad8ad30b7ded2d67af66113b1782702869e917113a9e",
+      "anchor": [
+        0.5003987240829346,
+        0.49282296650717705
+      ],
+      "lengthRatio": 0.960127591706539,
+      "referenceRatio": 0.8515625,
+      "calib": 0.8869263911960134,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 20606,
+          "url": "/art/derived/ships/2026-09-08/bulk_freighter-128.png?v=4d15ec4026f7"
+        },
+        {
+          "size": 256,
+          "bytes": 73073,
+          "url": "/art/derived/ships/2026-09-08/bulk_freighter-256.png?v=c6b0d8c94103"
+        },
+        {
+          "size": 512,
+          "bytes": 264939,
+          "url": "/art/derived/ships/2026-09-08/bulk_freighter-512.png?v=7810f6e3d4e0"
+        },
+        {
+          "size": 1024,
+          "bytes": 998106,
+          "url": "/art/derived/ships/2026-09-08/bulk_freighter-1024.png?v=9934c24aeb68"
+        },
+        {
+          "size": 1254,
+          "bytes": 1091862,
+          "url": "/art/derived/ships/2026-09-08/bulk_freighter-1254.png?v=798ee113f2d5"
+        }
+      ]
+    }
+  },
+  "formations": {
+    "raider_wing": {
+      "sourceSha256": "9ec558450b895d9c54a2120f060ee3ae49c7f3906edd323341bdec9f16993bf4",
+      "bytes": 286305,
+      "url": "/art/derived/ships/2026-09-08/fleet_raider_wing.png?v=6aff8f3d7a74"
+    },
+    "raider_squadron": {
+      "sourceSha256": "9ec558450b895d9c54a2120f060ee3ae49c7f3906edd323341bdec9f16993bf4",
+      "bytes": 309897,
+      "url": "/art/derived/ships/2026-09-08/fleet_raider_squadron.png?v=f5099dd80fa8"
+    },
+    "raider_armada": {
+      "sourceSha256": "9ec558450b895d9c54a2120f060ee3ae49c7f3906edd323341bdec9f16993bf4",
+      "bytes": 322056,
+      "url": "/art/derived/ships/2026-09-08/fleet_raider_armada.png?v=7db0e6619057"
+    },
+    "scout_wing": {
+      "sourceSha256": "2e89e3fff3ac351e221ab06a396603706b12fc36d3a0c48db82717230ab08ad8",
+      "bytes": 110483,
+      "url": "/art/derived/ships/2026-09-08/fleet_scout_wing.png?v=42fa596780be"
+    },
+    "scout_squadron": {
+      "sourceSha256": "2e89e3fff3ac351e221ab06a396603706b12fc36d3a0c48db82717230ab08ad8",
+      "bytes": 120412,
+      "url": "/art/derived/ships/2026-09-08/fleet_scout_squadron.png?v=1f93a1eb38a6"
+    },
+    "scout_armada": {
+      "sourceSha256": "2e89e3fff3ac351e221ab06a396603706b12fc36d3a0c48db82717230ab08ad8",
+      "bytes": 129776,
+      "url": "/art/derived/ships/2026-09-08/fleet_scout_armada.png?v=ce4c31942fce"
+    },
+    "corvette_wing": {
+      "sourceSha256": "890acda8a33888b6dee46f03f3d4b08e8b3c8bb2f26006ddf58270a9e117d504",
+      "bytes": 287932,
+      "url": "/art/derived/ships/2026-09-08/fleet_corvette_wing.png?v=39f42a3d3c08"
+    },
+    "corvette_squadron": {
+      "sourceSha256": "890acda8a33888b6dee46f03f3d4b08e8b3c8bb2f26006ddf58270a9e117d504",
+      "bytes": 305111,
+      "url": "/art/derived/ships/2026-09-08/fleet_corvette_squadron.png?v=78a6216107b1"
+    },
+    "corvette_armada": {
+      "sourceSha256": "890acda8a33888b6dee46f03f3d4b08e8b3c8bb2f26006ddf58270a9e117d504",
+      "bytes": 327216,
+      "url": "/art/derived/ships/2026-09-08/fleet_corvette_armada.png?v=00f613083ecb"
+    },
+    "freighter_wing": {
+      "sourceSha256": "8f70abf9762d182ad276624242a2285317896f7e5b7b7e548b4b7bf90d7cc73b",
+      "bytes": 302341,
+      "url": "/art/derived/ships/2026-09-08/fleet_freighter_wing.png?v=3e689c57cb29"
+    },
+    "freighter_squadron": {
+      "sourceSha256": "8f70abf9762d182ad276624242a2285317896f7e5b7b7e548b4b7bf90d7cc73b",
+      "bytes": 328867,
+      "url": "/art/derived/ships/2026-09-08/fleet_freighter_squadron.png?v=30ddb934e76b"
+    },
+    "freighter_armada": {
+      "sourceSha256": "8f70abf9762d182ad276624242a2285317896f7e5b7b7e548b4b7bf90d7cc73b",
+      "bytes": 355406,
+      "url": "/art/derived/ships/2026-09-08/fleet_freighter_armada.png?v=3fe04aa3e409"
+    }
+  }
+}

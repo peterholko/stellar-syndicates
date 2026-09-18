@@ -85,9 +85,13 @@ pub enum StructureKind {
     MachineWorks,
     /// Alloys + Electronics + Polymers → Armaments.
     ArmamentsComplex,
-    /// GATES the LIGHT hulls (`yard_for`): Convoy/Scout/Colony at tier 1,
-    /// Raider/Corvette at tier 2. Its tier is also its SLIPWAY COUNT — how many
-    /// of those hulls it can lay down at once (§yards M1).
+    CompositeWorks,
+    HullFabricator,
+    PrecisionWorks,
+    DriveWorks,
+    /// GATES the LIGHT hulls (`yard_for`): Tiny/Small Freighter, Scout/Colony at tier 1,
+    /// Medium Freighter/Raider/Corvette at tier 2, larger freight at tiers 3–5.
+    /// Its tier is also its SLIPWAY COUNT — concurrent hulls (§yards M1).
     Shipyard,
     /// §yards: the LINE-WARSHIP yard — Destroyer/Cruiser/Battleship. Needs a
     /// Shipyard ≥ 2 on the same system ([`yard_prereq`]): you learn to build
@@ -109,9 +113,8 @@ pub enum StructureKind {
     /// Population capacity + workforce slots (§economy Part 2 — the boost/upkeep
     /// semantics retire; capacity is the Habitat's value now).
     Habitat,
-    /// Raises the system's storage cap — and ONLY that. (Renamed from `Depot`; the
-    /// alias keeps old snapshots, in-flight build jobs, and old client commands
-    /// parsing, exactly as `extractor` does for MiningComplex.)
+    /// Late-game bulk storage, unlocked by Orbital Yards. The old `Depot`
+    /// alias still loads existing buildings and paid jobs without re-gating them.
     #[serde(alias = "depot")]
     OrbitalWarehouse,
     /// Standing sensor bubble (unchanged semantics).
@@ -131,11 +134,38 @@ pub enum StructureKind {
     /// different thing entirely — an ALLY FLEET stationed at a host system. This
     /// is ground troops on a planet.
     Garrison,
+    /// Ground storage. A founding Warehouse I replaces the old invisible base
+    /// allowance; all warehouses still contribute to one system stockpile.
+    Warehouse,
 }
 
 impl StructureKind {
+    /// Corporation research unlocks construction, not the operation of already
+    /// built/captured structures. The founding shipyard, mine, food chain,
+    /// housing, storage and Academy stay available so research cannot lock its
+    /// own prerequisites. Advanced recipes may use imported goods; researching
+    /// their factories opens local production, rather than gating the market.
+    pub fn research_prerequisite(self) -> Option<&'static str> {
+        match self {
+            Self::VolatileHarvester | Self::FuelRefinery => Some("prop_bunkerage"),
+            Self::Smelter | Self::ChemicalWorks => Some("mat_enrichment"),
+            Self::ElectronicsFabricator => Some("comp_signal_libraries"),
+            Self::MachineWorks | Self::PrecisionWorks | Self::DriveWorks => Some("mat_autoforges"),
+            Self::ArmamentsComplex => Some("weap_munitions_lines"),
+            Self::CompositeWorks | Self::HullFabricator => Some("mat_prefab_construction"),
+            Self::NavalDrydock => Some("hull_modular_berths"),
+            Self::CapitalSlipway => Some("hull_line_vii_dreadnought"),
+            Self::OrdnanceFoundry => Some("hull_drydock_efficiency"),
+            Self::OrbitalWarehouse => Some("mat_foundry_iv_orbital_yards"),
+            Self::SensorArray => Some("comp_sensor_gain"),
+            Self::DefensePlatform | Self::Garrison => Some("weap_fire_control"),
+            Self::MiningComplex | Self::Bioharvester | Self::Agroplex | Self::Shipyard
+            | Self::Habitat | Self::Warehouse | Self::Academy => None,
+        }
+    }
+
     /// Every kind, in display order.
-    pub const ALL: [StructureKind; 20] = [
+    pub const ALL: [StructureKind; 25] = [
         StructureKind::MiningComplex,
         StructureKind::VolatileHarvester,
         StructureKind::Bioharvester,
@@ -146,6 +176,10 @@ impl StructureKind {
         StructureKind::Agroplex,
         StructureKind::MachineWorks,
         StructureKind::ArmamentsComplex,
+        StructureKind::CompositeWorks,
+        StructureKind::HullFabricator,
+        StructureKind::PrecisionWorks,
+        StructureKind::DriveWorks,
         StructureKind::Shipyard,
         StructureKind::NavalDrydock,
         StructureKind::CapitalSlipway,
@@ -156,6 +190,7 @@ impl StructureKind {
         StructureKind::DefensePlatform,
         StructureKind::Academy,
         StructureKind::Garrison,
+        StructureKind::Warehouse,
     ];
 
     /// Which slot pool a built tier of this kind consumes.
@@ -170,6 +205,10 @@ impl StructureKind {
             | StructureKind::FuelRefinery
             | StructureKind::MachineWorks
             | StructureKind::ArmamentsComplex
+            | StructureKind::CompositeWorks
+            | StructureKind::HullFabricator
+            | StructureKind::PrecisionWorks
+            | StructureKind::DriveWorks
             // §yards: the whole yard family is INDUSTRIAL. That pool is already
             // the tightest one (base 2 per body + population tier), which is the
             // point: a shipbuilding world visibly gives up its other industry.
@@ -186,6 +225,7 @@ impl StructureKind {
             // Shipyard-tier-2 requirement now, not industrial-slot scarcity.
             StructureKind::Agroplex
             | StructureKind::Habitat
+            | StructureKind::Warehouse
             | StructureKind::OrbitalWarehouse
             | StructureKind::SensorArray
             | StructureKind::DefensePlatform
@@ -209,11 +249,16 @@ impl StructureKind {
             StructureKind::Agroplex => "agroplex",
             StructureKind::MachineWorks => "machine_works",
             StructureKind::ArmamentsComplex => "armaments_complex",
+            StructureKind::CompositeWorks => "composite_works",
+            StructureKind::HullFabricator => "hull_fabricator",
+            StructureKind::PrecisionWorks => "precision_works",
+            StructureKind::DriveWorks => "drive_works",
             StructureKind::Shipyard => "shipyard",
             StructureKind::NavalDrydock => "naval_drydock",
             StructureKind::CapitalSlipway => "capital_slipway",
             StructureKind::OrdnanceFoundry => "ordnance_foundry",
             StructureKind::Habitat => "habitat",
+            StructureKind::Warehouse => "warehouse",
             StructureKind::OrbitalWarehouse => "orbital_warehouse",
             StructureKind::SensorArray => "sensor_array",
             StructureKind::DefensePlatform => "defense_platform",
@@ -235,11 +280,16 @@ impl StructureKind {
             StructureKind::Agroplex => "Agroplex",
             StructureKind::MachineWorks => "Machine Works",
             StructureKind::ArmamentsComplex => "Armaments Complex",
+            StructureKind::CompositeWorks => "Composite Works",
+            StructureKind::HullFabricator => "Hull Fabricator",
+            StructureKind::PrecisionWorks => "Precision Works",
+            StructureKind::DriveWorks => "Drive Works",
             StructureKind::Shipyard => "Shipyard",
             StructureKind::NavalDrydock => "Naval Drydock",
             StructureKind::CapitalSlipway => "Capital Slipway",
             StructureKind::OrdnanceFoundry => "Ordnance Foundry",
             StructureKind::Habitat => "Habitat",
+            StructureKind::Warehouse => "Warehouse",
             StructureKind::OrbitalWarehouse => "Orbital Warehouse",
             StructureKind::SensorArray => "Sensor Array",
             StructureKind::DefensePlatform => "Defense Platform",
@@ -279,7 +329,7 @@ pub struct BuildJob {
     /// Estimated completion tick; u64::MAX while waiting/paused. For work-based
     /// jobs this is derived from their work, never an independent completion clock.
     pub complete_tick: u64,
-    /// Absent for non-ship jobs and old saves. Legacy ships migrate from their
+    /// Staffed hull/utility work; absent for other jobs and old saves. Legacy ships migrate from their
     /// recorded span on the next step, never from today's recipe or research.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ship_work: Option<BuildWork>,
@@ -349,14 +399,13 @@ impl BuildWork {
     }
 }
 
-/// §modules Part B4: a queued REFIT — `n` ships of `ship` were pulled OUT of a
-/// docked fleet (so they're safely out of combat while in the yard), their fit
-/// swapped to `to`, and they rejoin on completion. The module delta was already
-/// reconciled against the system ledger at ENQUEUE (added modules debited, removed
-/// modules returned), so completion is pure: re-add the fitted hulls. Rides its
+/// A queued REFIT. Military work pulls hulls into the foundry and returns them
+/// on completion; basic utility work retains the berthed formation and identity.
+/// Added crates are reserved at enqueue. In-place removals return their crates
+/// only at completion, never while the module is still installed. Rides its
 /// OWN small queue parallel to `build_queue`; `#[serde(default)]` empties on the
-/// World = zero migration. Ownership of the hulls follows the FLEET OWNER, never
-/// the yard's system — so a capture mid-refit still returns them to their owner.
+/// World = zero migration. Detached military hulls remain their fleet owner's
+/// property; in-place utility work is cancelled if the fleet loses its dock.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RefitJob {
     /// Monotonic id (shares `World.next_build_id`) — stable iteration.
@@ -384,6 +433,16 @@ pub struct RefitJob {
     /// falls back to `n` fresh hulls, the old behaviour, exactly once).
     #[serde(default)]
     pub hulls: Vec<crate::ship::Ship>,
+    /// Basic utility work leaves hulls berthed under their existing fleet id.
+    /// Their old fitting remains observable until completion emits the new one.
+    /// This also preserves the captain, manifest and sensor history.
+    #[serde(default)]
+    pub in_place: bool,
+    #[serde(default)]
+    pub work: Option<BuildWork>,
+    /// Fuel accompanies hulls removed for military work; a refit never refuels.
+    #[serde(default)]
+    pub fuel: f64,
     /// Absolute sim tick of completion.
     pub complete_tick: u64,
 }
@@ -399,20 +458,46 @@ pub struct Recipe {
 use crate::config::TICK_HZ;
 const HZ: u64 = TICK_HZ as u64;
 
-// Note on the distribution: Ore (core) and Alloys (frontier) rarely co-occur in a
-// single system, so a recipe needing BOTH can only be built by SHIPPING materials
-// between systems (logistics depth). The entry builds therefore use Ore ALONE (any
-// ore system — incl. your home — can build them); the advanced Raider needs frontier
-// **Alloys + Fuel** (gather them across systems, the §step1 "spread of systems matters").
+// Freight progression: early ore sales pay for imported Alloys, Machinery and
+// Polymers. Tiny remains the cheapest replacement/secondary-route hull; research
+// unlocks larger holds, never an automatic replacement of existing ships.
+// Medium introduces Electronics, then Large/Heavy/Bulk introduce Hull Sections,
+// Precision Components and Drive Assemblies. These replace some bulk basics;
+// at reference market prices each step costs more outright but less per cargo
+// unit. Savings assume useful loads: a half-empty giant is not a free upgrade.
+// Capacities, fuel, upkeep and slower heavy-hull speeds live in ship.rs. Tunable.
 
-/// Convoy (bulk hauler): plain **Ore** — cheap, the workhorse you build at home.
+/// Opening freight hull; the first export fits into its 50-unit mixed hold.
+pub const TINY_FREIGHTER_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 20.0), (Commodity::Machinery, 8.0), (Commodity::Polymers, 8.0)],
+    build_ticks: 12 * HZ,
+};
+pub const SMALL_FREIGHTER_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 45.0), (Commodity::Machinery, 16.0), (Commodity::Polymers, 16.0)],
+    build_ticks: 24 * HZ,
+};
+pub const LARGE_FREIGHTER_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 180.0), (Commodity::Machinery, 45.0), (Commodity::Electronics, 25.0), (Commodity::HullSections, 12.0)],
+    build_ticks: 100 * HZ,
+};
+pub const HEAVY_FREIGHTER_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 320.0), (Commodity::Machinery, 70.0), (Commodity::HullSections, 30.0), (Commodity::PrecisionComponents, 15.0)],
+    build_ticks: 180 * HZ,
+};
+pub const BULK_FREIGHTER_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 520.0), (Commodity::Machinery, 100.0), (Commodity::HullSections, 60.0),
+        (Commodity::PrecisionComponents, 25.0), (Commodity::DriveAssemblies, 16.0)],
+    build_ticks: 300 * HZ,
+};
+/// Legacy Convoy identifier now names the Medium Freighter.
 pub const CONVOY_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 25.0),
-        (Commodity::Machinery, 10.0),
-        (Commodity::Polymers, 10.0),
+        (Commodity::Alloys, 90.0),
+        (Commodity::Machinery, 28.0),
+        (Commodity::Polymers, 20.0),
+        (Commodity::Electronics, 10.0),
     ],
-    build_ticks: 12 * HZ,
+    build_ticks: 50 * HZ,
 };
 /// Raider: **Alloys** + **Fuel** — costlier, needs the good frontier materials.
 pub const RAIDER_RECIPE: Recipe = Recipe {
@@ -456,62 +541,74 @@ pub const COLONY_RECIPE: Recipe = Recipe {
     build_ticks: 30 * HZ,
 };
 // §ladder: CAPITAL recipes — Rare-Elements-and-Machinery-heavy by design (the
-// deep-crust economy is the capital economy), and build TIMES measured in
+// deep-crust economy is the capital economy; §ore-ladder prices rare elements
+// at 100 and sizes these draws in the same credit share as before), and build
+// TIMES measured in
 // hours-to-days: a capital under construction is a season event and a siege
 // target. Combat weight per Armaments spent peaks at Destroyer/Cruiser and
 // declines up the ladder (the efficiency invariant, pinned by test). Tunable.
 const HOUR_TICKS: u64 = 3600 * HZ;
 pub const DESTROYER_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 60.0),
+        (Commodity::Alloys, 40.0),
         (Commodity::Electronics, 25.0),
         (Commodity::Armaments, 30.0),
-        (Commodity::Machinery, 20.0),
+        (Commodity::Machinery, 10.0),
         (Commodity::Fuel, 15.0),
+        (Commodity::HullSections, 6.0),
+        (Commodity::PrecisionComponents, 4.0),
     ],
     build_ticks: 8 * HOUR_TICKS,
 };
 pub const CRUISER_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 120.0),
-        (Commodity::Electronics, 50.0),
+        (Commodity::Alloys, 60.0),
+        (Commodity::Electronics, 35.0),
         (Commodity::Armaments, 55.0),
-        (Commodity::Machinery, 45.0),
-        (Commodity::RareElements, 12.0),
+        (Commodity::Machinery, 20.0),
+        (Commodity::RareElements, 3.0),
         (Commodity::Fuel, 30.0),
+        (Commodity::HullSections, 16.0),
+        (Commodity::DriveAssemblies, 7.0),
     ],
     build_ticks: 18 * HOUR_TICKS,
 };
 pub const BATTLESHIP_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 260.0),
-        (Commodity::Electronics, 100.0),
+        (Commodity::Alloys, 140.0),
+        (Commodity::Electronics, 60.0),
         (Commodity::Armaments, 120.0),
-        (Commodity::Machinery, 100.0),
-        (Commodity::RareElements, 35.0),
+        (Commodity::Machinery, 40.0),
+        (Commodity::RareElements, 9.0),
         (Commodity::Fuel, 60.0),
+        (Commodity::HullSections, 40.0),
+        (Commodity::DriveAssemblies, 14.0),
     ],
     build_ticks: 48 * HOUR_TICKS,
 };
 pub const DREADNOUGHT_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 520.0),
-        (Commodity::Electronics, 210.0),
+        (Commodity::Alloys, 280.0),
+        (Commodity::Electronics, 130.0),
         (Commodity::Armaments, 230.0),
-        (Commodity::Machinery, 220.0),
-        (Commodity::RareElements, 90.0),
+        (Commodity::Machinery, 90.0),
+        (Commodity::RareElements, 22.0),
         (Commodity::Fuel, 120.0),
+        (Commodity::HullSections, 80.0),
+        (Commodity::DriveAssemblies, 31.0),
     ],
     build_ticks: 96 * HOUR_TICKS,
 };
 pub const TITAN_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 1100.0),
-        (Commodity::Electronics, 450.0),
+        (Commodity::Alloys, 600.0),
+        (Commodity::Electronics, 250.0),
         (Commodity::Armaments, 480.0),
-        (Commodity::Machinery, 500.0),
-        (Commodity::RareElements, 220.0),
+        (Commodity::Machinery, 200.0),
+        (Commodity::RareElements, 55.0),
         (Commodity::Fuel, 260.0),
+        (Commodity::HullSections, 180.0),
+        (Commodity::DriveAssemblies, 70.0),
     ],
     build_ticks: 192 * HOUR_TICKS,
 };
@@ -519,7 +616,7 @@ pub const TITAN_RECIPE: Recipe = Recipe {
 // advanced needs MACHINERY, and early Machinery comes from Sol — the intended
 // loop is extract → sell raws → buy Machinery → build industry → make your own.
 // they need Machinery/Electronics, purchasable at the hub (Sol's off-map
-// industry lists all 12 from day one).
+// industry lists every good from day one).
 pub const MINING_COMPLEX_RECIPE: Recipe = Recipe {
     costs: &[(Commodity::Machinery, 12.0), (Commodity::Alloys, 25.0)],
     build_ticks: 18 * HZ,
@@ -572,6 +669,25 @@ pub const ARMAMENTS_COMPLEX_RECIPE: Recipe = Recipe {
     ],
     build_ticks: 22 * HZ,
 };
+// §industry-chains: factory bootstrap uses only the existing economy. Component
+// costs substitute for heavy-hull bulk inputs at roughly equal base-market
+// value, rather than adding a new tax to every ship. All values are tunable.
+pub const COMPOSITE_WORKS_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Machinery, 30.0), (Commodity::Alloys, 45.0), (Commodity::Polymers, 20.0)],
+    build_ticks: 30 * HZ,
+};
+pub const HULL_FABRICATOR_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Machinery, 40.0), (Commodity::Alloys, 60.0), (Commodity::Electronics, 20.0)],
+    build_ticks: 40 * HZ,
+};
+pub const PRECISION_WORKS_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Machinery, 30.0), (Commodity::Alloys, 35.0), (Commodity::Electronics, 25.0), (Commodity::RareElements, 3.0)],
+    build_ticks: 35 * HZ,
+};
+pub const DRIVE_WORKS_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Machinery, 45.0), (Commodity::Alloys, 60.0), (Commodity::Electronics, 30.0), (Commodity::Fuel, 20.0)],
+    build_ticks: 45 * HZ,
+};
 pub const SHIPYARD_RECIPE: Recipe = Recipe {
     costs: &[
         (Commodity::Machinery, 20.0),
@@ -599,7 +715,7 @@ pub const CAPITAL_SLIPWAY_RECIPE: Recipe = Recipe {
         (Commodity::Alloys, 150.0),
         (Commodity::Electronics, 55.0),
         (Commodity::Armaments, 40.0),
-        (Commodity::RareElements, 15.0),
+        (Commodity::RareElements, 4.0),
     ],
     build_ticks: 45 * HZ,
 };
@@ -619,9 +735,15 @@ pub const HABITAT_RECIPE: Recipe = Recipe {
     ],
     build_ticks: 20 * HZ,
 };
-pub const ORBITAL_WAREHOUSE_RECIPE: Recipe = Recipe {
+pub const WAREHOUSE_RECIPE: Recipe = Recipe {
     costs: &[(Commodity::Alloys, 30.0), (Commodity::Machinery, 8.0)],
     build_ticks: 15 * HZ,
+};
+/// Bulk orbital storage is a late industrial investment. Tunable.
+pub const ORBITAL_WAREHOUSE_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 120.0), (Commodity::Machinery, 40.0),
+        (Commodity::Electronics, 30.0)],
+    build_ticks: 80 * HZ,
 };
 pub const SENSOR_ARRAY_RECIPE: Recipe = Recipe {
     costs: &[(Commodity::Electronics, 18.0), (Commodity::Machinery, 10.0)],
@@ -717,6 +839,40 @@ pub const WHIPPLE_ARMOR_RECIPE: Recipe = Recipe {
     costs: &[(Commodity::Armaments, 12.0), (Commodity::Machinery, 2.0)],
     build_ticks: MODULE_BUILD_TICKS,
 };
+pub const EXTENDED_TANKS_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 12.0), (Commodity::Polymers, 8.0), (Commodity::Machinery, 4.0)],
+    build_ticks: MODULE_BUILD_TICKS,
+};
+pub const RECON_SUITE_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Electronics, 12.0), (Commodity::Silicates, 8.0), (Commodity::Machinery, 4.0)],
+    build_ticks: MODULE_BUILD_TICKS,
+};
+pub const CARGO_PODS_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 18.0), (Commodity::Polymers, 12.0), (Commodity::Machinery, 6.0)],
+    build_ticks: MODULE_BUILD_TICKS,
+};
+pub const ESCORT_DATALINK_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Electronics, 16.0), (Commodity::Alloys, 12.0), (Commodity::Machinery, 6.0)],
+    build_ticks: MODULE_BUILD_TICKS,
+};
+
+pub const FUEL_TRANSFER_RIG_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Machinery, 12.0), (Commodity::Alloys, 18.0), (Commodity::Polymers, 10.0)],
+    build_ticks: MODULE_BUILD_TICKS,
+};
+
+pub const SURVEY_DRIVE_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::DriveAssemblies, 2.0), (Commodity::Alloys, 12.0)],
+    build_ticks: 2 * MODULE_BUILD_TICKS,
+};
+pub const NEBULA_SPECTROMETER_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::PrecisionComponents, 4.0), (Commodity::Electronics, 12.0)],
+    build_ticks: 2 * MODULE_BUILD_TICKS,
+};
+pub const PRISMATIC_LANCE_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::PrecisionComponents, 4.0), (Commodity::Armaments, 12.0), (Commodity::Silicates, 8.0)],
+    build_ticks: 2 * MODULE_BUILD_TICKS,
+};
 
 /// The recipe for one module of `kind`.
 pub fn module_recipe(kind: ModuleKind) -> &'static Recipe {
@@ -726,6 +882,14 @@ pub fn module_recipe(kind: ModuleKind) -> &'static Recipe {
         ModuleKind::PointDefenseScreen => &POINT_DEFENSE_RECIPE,
         ModuleKind::ReflectivePlating => &REFLECTIVE_PLATING_RECIPE,
         ModuleKind::WhippleArmor => &WHIPPLE_ARMOR_RECIPE,
+        ModuleKind::ExtendedTanks => &EXTENDED_TANKS_RECIPE,
+        ModuleKind::ReconSuite => &RECON_SUITE_RECIPE,
+        ModuleKind::CargoPods => &CARGO_PODS_RECIPE,
+        ModuleKind::EscortDatalink => &ESCORT_DATALINK_RECIPE,
+        ModuleKind::FuelTransferRig => &FUEL_TRANSFER_RIG_RECIPE,
+        ModuleKind::SurveyDrive => &SURVEY_DRIVE_RECIPE,
+        ModuleKind::NebulaSpectrometer => &NEBULA_SPECTROMETER_RECIPE,
+        ModuleKind::PrismaticLance => &PRISMATIC_LANCE_RECIPE,
     }
 }
 
@@ -763,6 +927,11 @@ pub fn emplacement_recipe(kind: crate::emplace::EmplacementKind) -> &'static Rec
 
 pub fn recipe_for(what: BuildKind) -> &'static Recipe {
     match what {
+        BuildKind::Ship { ship: ShipKind::TinyFreighter } => &TINY_FREIGHTER_RECIPE,
+        BuildKind::Ship { ship: ShipKind::SmallFreighter } => &SMALL_FREIGHTER_RECIPE,
+        BuildKind::Ship { ship: ShipKind::LargeFreighter } => &LARGE_FREIGHTER_RECIPE,
+        BuildKind::Ship { ship: ShipKind::HeavyFreighter } => &HEAVY_FREIGHTER_RECIPE,
+        BuildKind::Ship { ship: ShipKind::BulkFreighter } => &BULK_FREIGHTER_RECIPE,
         BuildKind::Ship {
             ship: ShipKind::Builder,
         } => &BUILDER_RECIPE,
@@ -822,11 +991,16 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
             StructureKind::Agroplex => &AGROPLEX_RECIPE,
             StructureKind::MachineWorks => &MACHINE_WORKS_RECIPE,
             StructureKind::ArmamentsComplex => &ARMAMENTS_COMPLEX_RECIPE,
+            StructureKind::CompositeWorks => &COMPOSITE_WORKS_RECIPE,
+            StructureKind::HullFabricator => &HULL_FABRICATOR_RECIPE,
+            StructureKind::PrecisionWorks => &PRECISION_WORKS_RECIPE,
+            StructureKind::DriveWorks => &DRIVE_WORKS_RECIPE,
             StructureKind::Shipyard => &SHIPYARD_RECIPE,
             StructureKind::NavalDrydock => &NAVAL_DRYDOCK_RECIPE,
             StructureKind::CapitalSlipway => &CAPITAL_SLIPWAY_RECIPE,
             StructureKind::OrdnanceFoundry => &ORDNANCE_FOUNDRY_RECIPE,
             StructureKind::Habitat => &HABITAT_RECIPE,
+            StructureKind::Warehouse => &WAREHOUSE_RECIPE,
             StructureKind::OrbitalWarehouse => &ORBITAL_WAREHOUSE_RECIPE,
             StructureKind::SensorArray => &SENSOR_ARRAY_RECIPE,
             StructureKind::DefensePlatform => &DEFENSE_PLATFORM_RECIPE,
@@ -930,7 +1104,11 @@ pub fn yard_for(kind: ShipKind) -> (StructureKind, u32) {
     match kind {
         // Light + civilian — the Shipyard, exactly as before.
         ShipKind::Builder => (StructureKind::Shipyard, 1),
-        ShipKind::Convoy => (StructureKind::Shipyard, 1),
+        ShipKind::TinyFreighter | ShipKind::SmallFreighter => (StructureKind::Shipyard, 1),
+        ShipKind::Convoy => (StructureKind::Shipyard, 2),
+        ShipKind::LargeFreighter => (StructureKind::Shipyard, 3),
+        ShipKind::HeavyFreighter => (StructureKind::Shipyard, 4),
+        ShipKind::BulkFreighter => (StructureKind::Shipyard, 5),
         ShipKind::Scout => (StructureKind::Shipyard, 1),
         ShipKind::Colony => (StructureKind::Shipyard, 1), // civilian settlement
         ShipKind::Raider => (StructureKind::Shipyard, 2), // military industry is earned
@@ -1004,12 +1182,12 @@ pub const HOME_SHIPYARD_TIER: u32 = 1;
 
 // --- STRUCTURE TIER CEILING (§industrial-headroom) -------------------------------
 
-/// The highest tier ANY structure is freely buildable to (cost + slots
-/// permitting) with no research. This is where an unresearched colony tops out —
-/// exactly where every colony tops out today. Tunable.
+/// The ordinary structure ceiling (cost + slots permitting). Research-gated
+/// structures require their initial unlock before using this ladder.
+/// Tunable.
 pub const BASE_MAX_STRUCTURE_TIER: u32 = 4;
 /// The ceiling once the owning corporation has researched this structure's
-/// Tier-IV/V unlock (any `UnlockStructureTier` effect for the kind): the two
+/// Tier-IV/V unlock (`UnlockStructureTier` >= 4 for the kind): the two
 /// superlinear prize tiers (5, 6 in `production::TIER_THROUGHPUT`) open up.
 /// Tunable.
 pub const RESEARCHED_MAX_STRUCTURE_TIER: u32 = 6;
@@ -1020,9 +1198,11 @@ pub const RESEARCHED_MAX_STRUCTURE_TIER: u32 = 6;
 /// for the kind (0 = none, from `research::unlocked_structure_tier`). Without
 /// that Tier-IV/V unlock the ceiling is [`BASE_MAX_STRUCTURE_TIER`]; with it,
 /// the prize tiers open to [`RESEARCHED_MAX_STRUCTURE_TIER`]. The `kind` arg is
-/// carried for future per-kind ceilings; today the gate is uniform.
+/// used to keep gated structures locked until their first research unlock.
 pub fn max_buildable_tier(kind: StructureKind, research_unlocked_tier: u32) -> u32 {
-    let _ = kind; // uniform across kinds today — wired once, shared by all
+    if kind.research_prerequisite().is_some() && research_unlocked_tier == 0 {
+        return 0;
+    }
     if research_unlocked_tier >= BASE_MAX_STRUCTURE_TIER {
         RESEARCHED_MAX_STRUCTURE_TIER
     } else {
@@ -1050,19 +1230,82 @@ pub const DEV_SLOTS_MAX: u32 = 5;
 // A system's stockpile has a TOTAL capacity (summed across commodities). NEW
 // inflow (production accrual, seeds, deliveries) is capped — production simply
 // IDLES at the cap; nothing already stored is ever destroyed (async-fair, and
-// oversize pre-cap stockpiles are grandfathered). Orbital Warehouse tiers raise the cap.
+// oversize pre-cap stockpiles are grandfathered). Capacity belongs to actual
+// structures, not an invisible allowance added on top of the founding Warehouse.
 
-/// Base storage capacity of every system (no Orbital Warehouse). Chosen comfortably above the
-/// home's 300-unit fuel seed so a fresh corporation starts with headroom, while
-/// still filling within minutes of idle production — the "ship it or lose the
-/// flow" pressure that gives standing orders a real job. Tunable.
-pub const STORAGE_BASE_CAP: f64 = 700.0;
-/// Extra capacity per Orbital Warehouse tier. Tunable.
+/// Warehouse I's capacity; preserves the former opening allowance. Tunable.
+pub const STORAGE_WAREHOUSE_INITIAL: f64 = 700.0;
+/// Each additional ground Warehouse tier adds this much (I–VI). Tunable.
 pub const STORAGE_PER_WAREHOUSE_TIER: f64 = 400.0;
+/// Late-game orbital bulk storage, additional to ground warehouses. Tunable.
+pub const STORAGE_PER_ORBITAL_WAREHOUSE_TIER: f64 = 2_000.0;
+
+pub fn warehouse_capacity(tier: u32) -> f64 {
+    if tier == 0 { 0.0 } else {
+        STORAGE_WAREHOUSE_INITIAL + STORAGE_PER_WAREHOUSE_TIER * (tier - 1) as f64
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ground_and_orbital_storage_have_separate_progression() {
+        use crate::research::{self, ResearchState};
+        let mut research = ResearchState::default();
+        assert_eq!(warehouse_capacity(0), 0.0);
+        for (tier, cap) in [700.0, 1100.0, 1500.0, 1900.0, 2300.0, 2700.0].into_iter().enumerate() {
+            assert_eq!(warehouse_capacity(tier as u32 + 1), cap);
+        }
+        let cap = |state: &ResearchState, kind| max_buildable_tier(kind,
+            research::unlocked_structure_tier(state, kind));
+        assert_eq!(cap(&research, StructureKind::Warehouse), 4);
+        assert_eq!(cap(&research, StructureKind::OrbitalWarehouse), 0);
+        research.completed.insert("mat_foundry_iv_arcology_frames".into());
+        assert_eq!(cap(&research, StructureKind::Warehouse), 6);
+        assert_eq!(cap(&research, StructureKind::OrbitalWarehouse), 0);
+        research.completed.insert("mat_foundry_iv_orbital_yards".into());
+        assert_eq!(cap(&research, StructureKind::OrbitalWarehouse), 4);
+        assert!(STORAGE_PER_ORBITAL_WAREHOUSE_TIER > STORAGE_PER_WAREHOUSE_TIER);
+    }
+
+    #[test]
+    fn structures_have_research_unlocks_without_locking_the_founding_loop() {
+        use StructureKind::*;
+        use crate::research::{self, Effect, ResearchState};
+        let starter = [MiningComplex, Bioharvester, Agroplex, Shipyard, Habitat,
+            Warehouse, Academy];
+        let gated = [
+            (VolatileHarvester, "prop_bunkerage"), (FuelRefinery, "prop_bunkerage"),
+            (Smelter, "mat_enrichment"), (ChemicalWorks, "mat_enrichment"),
+            (ElectronicsFabricator, "comp_signal_libraries"),
+            (MachineWorks, "mat_autoforges"),
+            (ArmamentsComplex, "weap_munitions_lines"),
+            (CompositeWorks, "mat_prefab_construction"), (HullFabricator, "mat_prefab_construction"),
+            (PrecisionWorks, "mat_autoforges"), (DriveWorks, "mat_autoforges"),
+            (NavalDrydock, "hull_modular_berths"), (CapitalSlipway, "hull_line_vii_dreadnought"),
+            (OrdnanceFoundry, "hull_drydock_efficiency"), (SensorArray, "comp_sensor_gain"),
+            (OrbitalWarehouse, "mat_foundry_iv_orbital_yards"),
+            (DefensePlatform, "weap_fire_control"), (Garrison, "weap_fire_control"),
+        ];
+        assert_eq!(starter.len() + gated.len(), StructureKind::ALL.len());
+        for kind in starter {
+            assert_eq!(kind.research_prerequisite(), None, "{kind:?}: no bootstrap loop");
+            assert_eq!(max_buildable_tier(kind, 0), BASE_MAX_STRUCTURE_TIER);
+        }
+        for (kind, id) in gated {
+            assert_eq!(kind.research_prerequisite(), Some(id), "{kind:?}");
+            let programme = research::programme(id).expect("real research, not a client-only gate");
+            assert!(!programme.hidden, "{id} must be researchable");
+            assert!(programme.effects.contains(&Effect::UnlockStructureTier(kind, 1)));
+            assert_eq!(max_buildable_tier(kind, 0), 0, "{kind:?} starts locked");
+            let mut state = ResearchState::default();
+            state.completed.insert(id.into());
+            assert_eq!(max_buildable_tier(kind, research::unlocked_structure_tier(&state, kind)),
+                BASE_MAX_STRUCTURE_TIER, "{kind:?}: completion unlocks the ordinary tier ladder");
+        }
+    }
 
     /// The Depot → Orbital Warehouse rename keeps OLD snapshots parsing: the
     /// legacy `"depot"` slug still deserialises onto the renamed variant (in the
@@ -1189,7 +1432,8 @@ mod tests {
             max_buildable_tier(StructureKind::MiningComplex, 0),
             BASE_MAX_STRUCTURE_TIER
         );
-        assert_eq!(max_buildable_tier(StructureKind::Smelter, 0), 4);
+        assert_eq!(max_buildable_tier(StructureKind::Smelter, 0), 0);
+        assert_eq!(max_buildable_tier(StructureKind::Smelter, 1), 4);
         // A Tier-IV or Tier-V unlock lifts the ceiling to 6 (the two superlinear
         // prize tiers) — for every kind, uniformly.
         assert_eq!(
@@ -1198,11 +1442,38 @@ mod tests {
         );
         assert_eq!(max_buildable_tier(StructureKind::Habitat, 5), 6);
         assert_eq!(max_buildable_tier(StructureKind::Shipyard, 4), 6);
-        // The prize only ever RAISES the ceiling — never below the free base.
+        // Starter structures retain the free base. Gated structures first
+        // require their initial research unlock, then use the same ladder.
         for kind in StructureKind::ALL {
             for unlocked in 0..=5u32 {
-                assert!(max_buildable_tier(kind, unlocked) >= BASE_MAX_STRUCTURE_TIER);
+                if kind.research_prerequisite().is_some() && unlocked == 0 {
+                    assert_eq!(max_buildable_tier(kind, unlocked), 0);
+                } else {
+                    assert!(max_buildable_tier(kind, unlocked) >= BASE_MAX_STRUCTURE_TIER);
+                }
             }
+        }
+    }
+
+    #[test]
+    fn component_chains_feed_heavy_hulls_but_leave_opening_hulls_alone() {
+        use Commodity as C;
+        let components = [C::Composites, C::HullSections, C::PrecisionComponents, C::DriveAssemblies];
+        for ship in [ShipKind::Raider, ShipKind::Scout, ShipKind::Corvette, ShipKind::Convoy,
+            ShipKind::Colony, ShipKind::Builder, ShipKind::Transport] {
+            assert!(recipe_for(BuildKind::Ship { ship }).costs.iter()
+                .all(|(good, _)| !components.contains(good)), "{ship:?} stays on the opening economy");
+        }
+        // Substitutions create demand for a supply network, not a hidden large
+        // price increase on top of the same old recipe. Base values stay ±1%.
+        for (ship, previous) in [(ShipKind::Destroyer, 5540.0), (ShipKind::Cruiser, 11374.0),
+            (ShipKind::Battleship, 24690.0), (ShipKind::Dreadnought, 50840.0), (ShipKind::Titan, 110260.0)] {
+            let costs = recipe_for(BuildKind::Ship { ship }).costs;
+            assert!(costs.iter().any(|(good, units)| *good == C::HullSections && *units > 0.0));
+            let core = if ship == ShipKind::Destroyer { C::PrecisionComponents } else { C::DriveAssemblies };
+            assert!(costs.iter().any(|(good, units)| *good == core && *units > 0.0));
+            let value: f64 = costs.iter().map(|(good, units)| crate::market::base_price(*good) * units).sum();
+            assert!((value / previous - 1.0).abs() < 0.01, "{ship:?}: {value} vs {previous}");
         }
     }
 }

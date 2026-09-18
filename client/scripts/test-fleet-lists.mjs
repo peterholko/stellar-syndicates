@@ -32,6 +32,7 @@ const state = { playerId: "1", galaxy: { systems: [system, { id: "9", name: "Veg
   battles: [], commandSignals: [], orders: {}, raids: {}, syndicate: { flagship_name: "North Star" } };
 dependencies["../../state"] = { state, liveSimTime: () => 100 };
 dependencies["../../protocol"] = compile("protocol.ts");
+dependencies["./equipment"] = dependencies["../../core/derive/equipment"] = compile("core/derive/equipment.ts");
 dependencies["../../icons"] = compile("icons.ts");
 dependencies["../../core/derive/fleet"] = compile("core/derive/fleet.ts");
 dependencies["../../core/derive/format"] = compile("core/derive/format.ts");

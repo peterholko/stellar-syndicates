@@ -1,0 +1,26 @@
+.exploration-panel { display: grid; gap: 1rem; min-width: 0; padding: 1rem; }
+.exploration-panel header, .exploration-actions, .exploration-fleet > div { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.exploration-panel h3, .exploration-panel h4, .exploration-panel p { margin: 0; }
+.exploration-panel small { display: block; color: var(--muted, #97a9bb); }
+.exploration-panel button { min-height: 2.75rem; cursor: pointer; }
+.exploration-panel button:disabled { cursor: default; opacity: .45; }
+.exploration-list, .exploration-fleets { display: grid; gap: .5rem; }
+.exploration-row { display: flex; gap: .75rem; align-items: center; text-align: left; width: 100%; padding: .5rem; }
+.exploration-row > span:nth-child(2) { flex: 1; min-width: 0; }
+.exploration-row img, .exploration-row .exploration-unknown { width: 3rem; height: 3rem; flex-shrink: 0; object-fit: contain; }
+.exploration-unknown { display: grid; place-items: center; color: #d2bd85; font-size: 2rem; }
+.exploration-hero img, .exploration-hero > .exploration-unknown { width: 7rem; height: 7rem; object-fit: contain; flex-shrink: 0; }
+.exploration-hero > div { flex: 1; min-width: 0; }
+.exploration-cargo { display: grid; gap: .35rem; margin-block: .5rem; }
+.exploration-cargo > div { display: flex; justify-content: space-between; gap: 1rem; }
+.exploration-fleet { display: grid; gap: .5rem; padding: .75rem; border: 1px solid var(--line, #263343); border-radius: .35rem; }
+.exploration-fleet > div { justify-content: flex-start; flex-wrap: wrap; }
+.exploration-tabs { display: flex; flex-wrap: wrap; gap: .4rem; padding: .5rem 1rem; }
+.exploration-tabs button { min-height: 2.75rem; padding: .4rem .75rem; }
+.exploration-tabs button[aria-pressed="true"] { border-color: #d2bd85; color: #f0ddaa; }
+.exploration-note, .exploration-deep, .exploration-lead { display: grid; gap: .65rem; min-width: 0; padding: .8rem; border: 1px solid var(--line, #263343); border-radius: .35rem; }
+.exploration-note textarea { box-sizing: border-box; width: 100%; resize: vertical; min-height: 5rem; padding: .65rem; font: inherit; color: inherit; background: #0c1620; border: 1px solid var(--line, #263343); border-radius: .3rem; }
+.exploration-preview-note { white-space: pre-wrap; overflow-wrap: anywhere; }
+.exploration-warning { color: #efbe86; }
+.exploration-lead { border-color: #716348; }
+@media (max-width: 600px) { .exploration-hero { align-items: flex-start; } .exploration-hero img { width: 5rem; height: 5rem; } }

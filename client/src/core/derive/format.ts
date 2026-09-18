@@ -29,10 +29,13 @@ export function operationTitle(o: import("../../protocol").OperationView): strin
   if (o.briefing) return o.briefing.title;
   const k = o.kind;
   switch (k.kind) {
+    case "combat_objective": return label(k.objective);
+    case "privateer_patrol": return "Privateer patrol";
     case "pirate_bounty": return `Suppress ${operationSystemName(k.system)} enclave`;
     case "survey_expedition": return `Survey ${operationSystemName(k.system)}`;
     case "market_delivery": return `Deliver ${k.units} ${label(k.commodity)}`;
     case "rescue_salvage": return "Recover a distress site";
+    case "prize_recovery": return k.prize === "breacher_cache" ? "Recover Breacher cache" : "Recover Fleet-screen cache";
     case "convoy_escort": return "Escort an Authority freighter";
     case "freight_escort": return "Guard a market run";
     case "authority_enforcement": return `Authority enforcement · ${formatId(k.target)}`;
@@ -58,10 +61,14 @@ export function operationHullArt(o: import("../../protocol").OperationView): str
   const pick = (names: string[]): string => names[hashId(o.id) % names.length];
   switch (o.kind.kind) {
     case "pirate_bounty":
+      if (o.kind.tier >= 4) return `/art/pirate-sites/${o.kind.tier >= 5 ? "stronghold" : "depot"}.png`;
+      return `${NPC_HULL_ROOT}/${pick(["pirate_corsair.png", "pirate_boarding_raider.png"])}`;
+    case "privateer_patrol":
       return `${NPC_HULL_ROOT}/${pick(["pirate_corsair.png", "pirate_boarding_raider.png"])}`;
     case "survey_expedition":
       return `${NPC_HULL_ROOT}/survey_vessel.png`;
     case "rescue_salvage":
+    case "prize_recovery":
       return `${NPC_HULL_ROOT}/${pick(["rescue_cutter.png", "salvage_tug.png", "salvage_carrier.png"])}`;
     case "market_delivery":
       return `${NPC_HULL_ROOT}/${o.kind.units >= 80 ? "salvage_carrier.png" : "contract_courier.png"}`;
@@ -79,10 +86,13 @@ export function operationCopy(o: import("../../protocol").OperationView): string
   if (o.briefing) return o.briefing.summary;
   const k = o.kind;
   switch (k.kind) {
+    case "combat_objective": return "Complete the objective on-site. Reports and rewards arrive after their information delay.";
+    case "privateer_patrol": return "Engage the reported patrol. Completion follows the battle report.";
     case "pirate_bounty": return `Tier ${k.tier} enclave. Destroy its base; confirmation follows the battle report.`;
     case "survey_expedition": return "Send a Scout, complete the on-site dwell, and wait for the survey report.";
     case "market_delivery": return "Physically deliver or sell this commodity at the Market Hub.";
     case "rescue_salvage": return `${k.units} ${label(k.commodity)} remain at the reported wreck position. A cargo fleet must recover them.`;
+    case "prize_recovery": return "Recover with a Freighter. Dock at an owned system to store the equipment; data reports home separately.";
     case "convoy_escort": return "Assign a fleet and remain close when the protected freighter reaches its destination.";
     case "freight_escort": return "Guard your Freighter from home to the Market Hub.";
     case "authority_enforcement": return "Join the public response against a proscribed corporation.";
@@ -98,6 +108,8 @@ export function operationCopy(o: import("../../protocol").OperationView): string
 
 export function operationReward(o: import("../../protocol").OperationView): string {
   const bits: string[] = [];
+  if (o.kind.kind === "prize_recovery") bits.push(o.kind.prize === "breacher_cache"
+    ? "4 module crates · Cruiser Hull dossier" : "8 module crates · Battleship dossier");
   if (o.reward.credits) bits.push(`${Math.round(o.reward.credits).toLocaleString()} cr`);
   if (o.reward.authority_standing) bits.push(`+${o.reward.authority_standing} standing`);
   if (o.reward.captain_xp) bits.push(`${o.reward.captain_xp} Captain XP`);
@@ -219,4 +231,9 @@ export function rejectText(t: Extract<TradeEvent, { event: "Rejected" }>): strin
     case "market_liquidity":
       return `The Global Market can clear only ${t.reason.available} units immediately. Nothing traded — reduce the lot or place a limit order.`;
   }
+}
+
+/** Production rates arrive per sim-second; every surface shows them per minute. */
+export function fmtRatePerMin(perSecond: number): string {
+  return `+${Number((perSecond * 60).toFixed(2)).toLocaleString("en-US", { maximumFractionDigits: 2 })}/min`;
 }

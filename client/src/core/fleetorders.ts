@@ -1,20 +1,25 @@
 import type { ClientMsg, GhostView } from "../protocol";
 import type { PendingIntent, ViewState } from "../state";
 import { label } from "../icons";
-import { dockedAtSystem, shipKindLabel, WARP_FACTOR } from "./derive/fleet";
+import { dockedAtSystem, guardCapable, shipKindLabel, WARP_FACTOR } from "./derive/fleet";
+import { expeditionCapable, deepExpeditionReason } from "./derive/exploration";
+import { tenderCapable, tenderFuel } from "./derive/tenders";
+import { freightRouteReason } from "./derive/industry";
 
 /** Fleet controls stage the exact payload, never an optimistic order. Map
  * destinations and settings share the same Confirm/Cancel surface; only the
  * confirmation path may transmit. No callback reads a changed dropdown later. */
 export type FleetCommand = Extract<ClientMsg, { type:
   | "MoveShip" | "JumpShip" | "HoldFleet" | "RecallRaid" | "Withdraw"
-  | "CommitRaid" | "AttackFleet" | "GuardFleet" | "BlockadeSystem" | "SurveySystem"
-  | "SetFleetTransit" | "SetFleetPosture" | "SetEngageFreight" | "SetFleetDoctrine"
+  | "CommitRaid" | "AttackFleet" | "GuardFleet" | "DefendSystem" | "BlockadeSystem" | "SurveySystem"
+  | "SetFleetTransit" | "SetFleetPosture" | "SetFleetMission" | "SetEngageFreight" | "SetFleetDoctrine"
   | "HubLoad" | "SystemLoad" | "HubUnload" | "SystemUnload"
-  | "HaulToMarketHub" | "HaulToSystem" | "RequestFuelRescue"
+  | "HaulToMarketHub" | "HaulToSystem" | "RequestFuelRescue" | "RefuelFleet"
   | "SplitFleet" | "MergeFleets" | "RefitShips" | "BuildEmplacement" | "DemolishEmplacement"
   | "AssignCaptain" | "ReserveCaptain" | "TrainCaptain"
   | "AssignOperationFleet" | "RecoverOperation"
+  | "ExploreSite"
+  | "SetFreightRoute" | "DeployOutpost" | "SkimFuel"
 }>;
 
 function recipient(command: FleetCommand): string | undefined {
@@ -37,10 +42,27 @@ export function fleetCommandsValid(commands: FleetCommand[], st: ViewState): boo
     const id = recipient(command);
     const fleet = id ? own(id) : undefined;
     if (id && !fleet) return false;
+    if (command.type === "SetFreightRoute") return !!fleet && (!command.route || !freightRouteReason(st, fleet, command.route));
+    if (command.type === "SkimFuel") return !!fleet && !fleet.tca
+      && st.research?.programmes.some(p => p.id === "prop_expedition_v_ramscoop" && p.state === "completed") === true
+      && st.systems.some(s => s.id === command.system_id && s.bodies.some(b => b.kind === "gas_giant"));
+    if (command.type === "DeployOutpost") return !!fleet && st.systems.some(s => s.id === command.system_id
+      && s.owner === null && !s.bodies.some(b => b.habitable) && s.bodies.some(b => b.id === command.body_id && b.deposits !== null));
     if (command.type === "MergeFleets" && (!own(command.from) || command.from === command.into)) return false;
     if (command.type === "GuardFleet" && (!own(command.target_id) || command.target_id === id)) return false;
+    if (command.type === "RefuelFleet") return !!fleet && tenderCapable(fleet) && tenderFuel(fleet) > 0
+      && !!own(command.target_id) && !own(command.target_id)?.tca && command.target_id !== id;
+    if (command.type === "DefendSystem") return !!fleet && guardCapable(fleet)
+      && st.systems.some(s => s.id === command.system_id && s.owner === st.playerId)
+      && Number.isFinite(command.pursuit_radius) && command.pursuit_radius >= 5_000 && command.pursuit_radius <= 20_000;
     if (command.type === "Withdraw") return st.battles.some(b => b.own && b.participants.includes(id!)
       && !st.battleRecords.some(r => r.id === b.id && r.outcome !== null));
+    if (command.type === "ExploreSite") {
+      const site = st.explorationSites.find(s => s.id === command.site_id);
+      return !!site && !!fleet && expeditionCapable(fleet, command.task)
+        && (command.task === "investigate" || !!site.details)
+        && (!['study', 'extract'].includes(command.task) || !deepExpeditionReason(site, fleet));
+    }
     if (command.type === "HubLoad" || command.type === "HubUnload") return fleet?.docked === "hub";
     // Match the cargo panel: served berths use E29 while command IDs use 29.
     if (command.type === "SystemLoad" || command.type === "SystemUnload") return !!fleet && dockedAtSystem(fleet, command.system);
@@ -61,16 +83,26 @@ export function fleetCommandIntent(input: FleetCommand | FleetCommand[], st: Vie
   if (commands.length === 1 && fleet && (
     (first.type === "SetFleetTransit" && (fleet.transit ?? "full") === first.mode)
     || (first.type === "SetFleetPosture" && (fleet.posture ?? "passive") === first.posture)
+    || (first.type === "SetFleetMission" && Object.entries(first.mission).every(([key, value]) =>
+      (fleet.mission_profile ?? { priority: "balanced", screening: "automatic", withdrawal: "never" })[key as keyof typeof first.mission] === value))
   )) return null;
   const move = commands.find(c => c.type === "MoveShip");
-  return { verb: "command", shipId, commands, commander: st.playerId, dest: move?.dest };
+  const defend = commands.find(c => c.type === "DefendSystem");
+  const expedition = commands.find(c => c.type === "ExploreSite");
+  return { verb: "command", shipId, commands, commander: st.playerId,
+    dest: move?.dest ?? (expedition ? st.explorationSites.find(s => s.id === expedition.site_id)?.pos : undefined)
+      ?? (defend ? st.galaxy?.systems.find(s => s.id === defend.system_id)?.pos : undefined) };
 }
 
 function commandLabel(command: FleetCommand, st: ViewState): string {
   const system = (id: string) => st.galaxy?.systems.find(s => s.id === id)?.name ?? id;
   switch (command.type) {
     case "SetFleetTransit": return `Transit → ${command.mode === "stealth" ? "Stealth" : "Full speed"}`;
+    case "SetFreightRoute": return command.route ? `Route: ${command.route.name} · ${command.route.stops.length} stops · ${command.route.fuel_reserve} Fuel reserve` : "Stop freight route";
+    case "DeployOutpost": return `Establish ${command.outpost} outpost → ${system(command.system_id)}`;
+    case "SkimFuel": return `Harvest gas-giant Fuel → ${system(command.system_id)}`;
     case "SetFleetPosture": return `Posture → ${label(command.posture)}`;
+    case "SetFleetMission": return `Mission: ${label(command.mission.priority)} · ${label(command.mission.screening)} · ${command.mission.withdrawal === "never" ? "no damage retreat" : `withdraw below ${command.mission.withdrawal.slice(4)}% hull`}`;
     case "SetEngageFreight": return command.on ? "Engage Authority freight" : "Stop engaging Authority freight";
     case "SetFleetDoctrine": {
       const changes = Object.entries(command.doctrine).filter(([key, value]) => st.doctrine[key as keyof typeof st.doctrine] !== value);
@@ -85,6 +117,7 @@ function commandLabel(command: FleetCommand, st: ViewState): string {
     case "HaulToMarketHub": return `Haul → Market Hub${command.sell_on_arrival ? " · sell on arrival" : " · unload on arrival"}`;
     case "HaulToSystem": return `Haul → ${system(command.system)}`;
     case "RequestFuelRescue": return "Call AAA fuel rescue";
+    case "RefuelFleet": return `Refuel ${shipKindLabel(st.ghosts.find(g => g.id === command.target_id)?.kind ?? "raider")} · ${command.target_id}`;
     case "SplitFleet": return `Split ${Object.entries(command.counts).map(([kind, n]) => `${n}× ${shipKindLabel(kind as GhostView["kind"])}`).join(", ")}`;
     case "MergeFleets": return `Merge fleet ${command.from} into ${command.into}`;
     case "RefitShips": return `Refit ${command.n}× ${shipKindLabel(command.ship)} → ${command.to.map(label).join(", ") || "unfitted"}`;
@@ -96,9 +129,11 @@ function commandLabel(command: FleetCommand, st: ViewState): string {
       return `Guard ${target ? shipKindLabel(target.kind) : "fleet"} · ${command.target_id}`;
     }
     case "AttackFleet": return `Attack fleet ${command.target_id}`;
+    case "DefendSystem": return `Defend ${system(command.system_id)} · pursuit limit ${command.pursuit_radius.toLocaleString()} su`;
     case "CommitRaid": return `Raid fleet ${command.target_id}`;
     case "BlockadeSystem": return `Blockade ${system(command.system_id)}`;
     case "SurveySystem": return `Survey ${system(command.system_id)}`;
+    case "ExploreSite": return `${({ investigate: "Investigate", restore: "Restore", recover: "Recover", study: "Deep investigation", extract: "Prepared extraction" })[command.task]} → ${st.explorationSites.find(s => s.id === command.site_id)?.details?.name ?? "Unknown contact"}`;
     case "AssignCaptain": return `Assign officer #${command.captain_id}`;
     case "ReserveCaptain": return `Return officer #${command.captain_id} to reserve`;
     case "TrainCaptain": return `Train officer #${command.captain_id}: ${label(command.attribute)}`;

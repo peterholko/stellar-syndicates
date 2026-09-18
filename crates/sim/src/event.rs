@@ -42,6 +42,7 @@ pub enum OrderKind {
     /// A GUARD order — an Interceptor shadows a named friendly fleet and
     /// autonomously breaks off to engage threats before resuming formation.
     Guard,
+    Defend,
     /// Load cargo into a fleet at its present dock.
     Load,
     /// Unload a fleet's cargo at its present dock.
@@ -56,6 +57,7 @@ pub enum OrderKind {
     Reorganize,
     /// Assign a captain or an operation to a fleet.
     Assign,
+    Refuel,
 }
 
 impl OrderKind {
@@ -74,6 +76,7 @@ impl OrderKind {
             OrderKind::Attack => "attack",
             OrderKind::Survey => "survey",
             OrderKind::Guard => "guard",
+            OrderKind::Defend => "defend",
             OrderKind::Load => "load",
             OrderKind::Unload => "unload",
             OrderKind::Haul => "haul",
@@ -81,6 +84,7 @@ impl OrderKind {
             OrderKind::Refit => "refit",
             OrderKind::Reorganize => "reorganize",
             OrderKind::Assign => "assign",
+            OrderKind::Refuel => "refuel",
         }
     }
 }
@@ -270,6 +274,8 @@ pub enum EventPayload {
         what: crate::build::BuildKind,
         reason: BuildRejectReason,
     },
+    /// A delayed local project instruction failed; private site-origin news.
+    IndustryRejected { owner: PlayerId, system: EntityId, reason: String },
     /// A COLONY SHIP arrived at a system that was ALREADY claimed (§ships
     /// part 3 — you lost the race, or it flipped en route). SOFT: the ship
     /// holds position, fully intact and redirectable; nothing is destroyed.
@@ -515,6 +521,24 @@ pub enum EventPayload {
         pos: crate::math::Vec2,
         plunder: std::collections::BTreeMap<crate::cargo::Commodity, u32>,
     },
+    /// A pirate pack deliberately broadcasts its threat from `pos`. The target
+    /// hears it only after normal propagation; this is not a truth-side alert.
+    PirateRaidInbound {
+        owner: PlayerId,
+        system: EntityId,
+        fleet: EntityId,
+        ships: u32,
+        pos: crate::math::Vec2,
+    },
+    /// The raid has broken off (not necessarily escaped). Stolen goods remain
+    /// on the physical pack, so the defender can still intercept its return.
+    PirateRaidWithdrawn {
+        owner: PlayerId,
+        system: EntityId,
+        fleet: EntityId,
+        pos: crate::math::Vec2,
+        plunder: std::collections::BTreeMap<crate::cargo::Commodity, u32>,
+    },
     /// An operation report was emitted at `pos`. The operation's own known-copy
     /// queue controls its panel state; this event supplies timeline/history copy
     /// on the same positioned wavefront.
@@ -623,6 +647,16 @@ pub enum EventPayload {
         owner: PlayerId,
         needed: f64,
         kind: crate::fuel::ShortfallKind,
+    },
+
+    /// Actual automatic Market Hub bunker purchase. Separate from warehouse
+    /// Bought: this fuel goes into a fleet's tank, not its cargo or warehouse.
+    HubFuelPurchased {
+        owner: PlayerId,
+        fleet: EntityId,
+        units: u32,
+        unit_price: f64,
+        penalty: f64,
     },
 
     /// Authority Astral Assistance accepted an emergency call and dispatched a
@@ -1158,6 +1192,8 @@ pub enum OrderRejectReason {
     /// were no longer true when the signal arrived (for example, a fleet had left
     /// its berth or a refit no longer had the required modules).
     DeliveryConditionsChanged,
+    /// Local safety cancelled site work; the refusal itself still rides light.
+    ExplorationThreat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1191,6 +1227,7 @@ impl Event {
             | AssaultBegan { pos, .. } | AssaultRepulsed { pos, .. }
             | SystemPlundered { pos, .. } | ModulesLost { pos, .. }
             | SpecialistsLost { pos, .. } | PirateEnclaveCleared { pos, .. }
+            | PirateRaidInbound { pos, .. } | PirateRaidWithdrawn { pos, .. }
             | NodeAwakened { pos, .. } | NodeCaptured { pos, .. }
             | SurveyCompleted { pos, .. } | TraitRevealed { pos, .. }
             | PlatformEngaged { pos, .. } | FuelRescueCompleted { pos, .. }
@@ -1199,7 +1236,7 @@ impl Event {
             | Citation { pos, .. } | EnforcementDispatched { pos, .. }
             | EnforcementWithdrawn { pos, .. } | JumpFailed { pos, .. } => Some(*pos),
             BuildStarted { system, .. } | SystemUpgraded { system, .. }
-            | BuildRejected { system, .. } | SpecialistTrained { system, .. }
+            | BuildRejected { system, .. } | IndustryRejected { system, .. } | SpecialistTrained { system, .. }
             | ModuleBuilt { system, .. } | ShipsRefitted { system, .. }
             | GarrisonSupplyStateChanged { system, .. } | FleetRepaired { system, .. }
             | ModulesDelivered { system, .. } | SpecialistsDelivered { system, .. }
@@ -1210,7 +1247,7 @@ impl Event {
             ShipSpawned { id: fleet, .. } | FleetSupplyChanged { fleet, .. }
             | OrderRejected { fleet, .. } | OrderDelivered { fleet, .. }
                 => world.fleets.get(fleet).map(|f| f.pos),
-            SpecialistHired { .. } | ModulesPurchased { .. } | ModulesSold { .. }
+            SpecialistHired { .. } | ModulesPurchased { .. } | ModulesSold { .. } | HubFuelPurchased { .. }
             | FuelRescueDispatched { .. } | FuelRescueRejected { .. } => Some(world.hub),
             // These are either local intentions, or notifications which already
             // name their arrival (confirmation, diplomacy, operation reports).

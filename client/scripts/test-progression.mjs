@@ -11,6 +11,7 @@ import ts from "typescript";
 const src = path => readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
 const state = { playerId: "1", simTime: 60, midgameStage: "home_development",
   selectedShipId: null, pendingOrders: new Map(), orders: {}, raids: {}, operations: [],
+  explorationSites: [], selectedExplorationSiteId: null,
   battleViewed: new Set(), battleDismissed: new Set(),
   commandCenter: { x: 0, y: 0 }, galaxy: { hub: { x: 70_000, y: 0 },
     systems: [{ id: "home", pos: { x: 0, y: 0 } }] }, systems: [], ghosts: [] };
@@ -24,19 +25,53 @@ function compile(path, extra = {}) {
   return exports;
 }
 const protocol = deps["../../protocol"] = compile("protocol.ts");
+const founding = deps["../../core/derive/founding"] = compile("core/derive/founding.ts");
+assert.equal(founding.FOUNDING_TOTAL, 9);
+assert.deepEqual(["build_mine", "export_production", "defeat_privateer", "complete_export",
+  "grow_business", "build_academy", "first_research", "build_scout",
+  "survey_candidates"].map(stage => founding.FOUNDING_STEP[stage]), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+assert.equal(founding.FOUNDING_STEP.complete, 9);
+{
+  const st = { research: { programmes: [] } };
+  const home = { bodies: [{id:1,structures:{}}], assignments:[] };
+  const next = () => [...founding.foundingBusinessGoals(st,home)].map(g=>g.action);
+  assert.deepEqual(next(),["build-shipyard","build-academy"]);
+  home.bodies[0].structures = {shipyard:1,academy:1};
+  assert.deepEqual(next(),["shipyard","academy"]);
+  home.assignments = ["shipyard","academy"].map(structure=>({body_id:1,structure,workers:1,specialists:{}}));
+  assert.deepEqual(next(),["build-convoy","research-enrichment"]);
+  st.research.programmes = [{id:"mat_enrichment",state:"queued"}];
+  assert.equal(next()[1],"research-enrichment","a queued tech is not an arrived unlock");
+  st.research.programmes[0].state="completed";
+  assert.equal(next()[1],"build-smelter");
+  home.bodies[0].structures.smelter=1;
+  assert.equal(next()[1],"smelter");
+  assert.equal(founding.foundingScoutGoal(home).action,"build-scout");
+  home.assignments=[];
+  assert.equal(founding.foundingScoutGoal(home).action,"shipyard");
+  delete home.bodies[0].structures.shipyard;
+  assert.equal(founding.foundingScoutGoal(home).action,"build-shipyard","refiners receive the missing Scout prerequisite");
+}
+deps["./equipment"] = deps["../../core/derive/equipment"] = compile("core/derive/equipment.ts");
 deps["../../core/derive/construction"] = compile("core/derive/construction.ts");
 const icons = deps["../../icons"] = compile("icons.ts");
 deps["./format"] = { fmtDur: n => `${Math.round(n)}s` };
 deps["./geo"] = { HYPERLIMIT_SU: 900, operationSystemName: () => "Freya" };
 const fleets = deps["./fleet"] = deps["../../core/derive/fleet"] = compile("core/derive/fleet.ts");
+const pirateSites = deps["../../core/derive/pirates"] = compile("core/derive/pirates.ts");
 const readiness = deps["../../core/derive/readiness"] = compile("core/derive/readiness.ts");
 const colony = deps["../../core/derive/colony"] = compile("core/derive/colony.ts");
 deps["../../prng"] = { hashId: () => 0 };
 deps["../../core/derive/format"] = compile("core/derive/format.ts");
-deps["../../core/derive/captains"] = { captainTitle: () => "Lieutenant" };
+deps["../../core/derive/captains"] = { captainTitle: () => "Lieutenant", officerFleetName: g => g.kind };
 deps["../signature"] = { sheetFingerprint: x => JSON.stringify(x) };
 deps["../dom"] = { renderDeferred: () => false, setHtml(root, html) { root.innerHTML = html; } };
 deps["../battlewithdraw"] = compile("shell/battlewithdraw.ts");
+deps["../core/derive/exploration"] = compile("core/derive/exploration.ts");
+deps["../icons"] = icons;
+deps["../core/derive/fleet"] = fleets;
+deps["../exploration"] = compile("shell/exploration.ts");
+deps["../industry"] = compile("shell/industry.ts");
 
 const ghost = (id, kind, extra = {}) => ({ id, kind, own: true, owner: "1",
   pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, age: 8, damage: .04,
@@ -47,7 +82,7 @@ const freighter = ghost("102", "convoy", { fuel: 12, cargo_manifest: [
 const guard = ghost("101", "raider", { damage: .74, fuel: 2, guard_target: "102" });
 state.ghosts = [guard, freighter];
 const r = readiness.fleetReadiness(freighter);
-assert.equal(r.cargoFree, 150, "mixed manifests share one hold");
+assert.equal(r.cargoFree, 300, "mixed manifests share one Medium hold");
 assert.equal(r.fuel, 12);
 assert.equal(readiness.fleetReadiness(ghost("3", "raider", { damage: undefined })).hull, null);
 assert.match(readiness.dispatchWarnings(guard, state.galaxy.hub).join(" "), /26% hull.*Fuel short/);
@@ -81,7 +116,7 @@ assert.doesNotMatch(colony.colonyPurpose(prospect, { ...home, converters: [] }).
   "do not fabricate a home bottleneck");
 const electronics = { ...prospect, bodies: [{ id: 0, deposits: [{ resource: "rare_elements", reserves: 100 }] }],
   opportunities: [{ role: "electronics_center", score: 2, body_id: 0 }] };
-assert.deepEqual([...colony.colonyPurpose(electronics, home).imports], ["provisions", "silicates"]);
+assert.deepEqual([...colony.colonyPurpose(electronics, home).imports], ["provisions", "conductive_metals", "silicates"]);
 const depleted = { ...prospect, bodies: [{ id: 0, deposits: [{ resource: "metallic_ore", reserves: 0 }] }], opportunities: [] };
 assert.equal(colony.colonyPurpose(depleted, home).exports.length, 0);
 const mixed = { ...prospect, bodies: [...prospect.bodies, { id: 1, deposits: [{ resource: "biomass", reserves: 100 }] }] };
@@ -153,9 +188,102 @@ assert.equal(rendered, previous, "view refresh does not replace an open selector
 document.activeElement = null;
 assert.equal(ui.operationFleets.get("11"), "101", "selection survives subsequent refreshes");
 
+// Combat progression uses the same confirmation and served-data surface.
+const corvette = ghost("103", "corvette");
+const cruiser = ghost("104", "cruiser");
+assert.equal(fleets.guardCapable(corvette), true);
+assert.equal(fleets.guardCapable(cruiser), true);
+assert.equal(fleets.guardCapable(freighter), false);
+assert.equal(fleets.guardCapable({ ...cruiser, own: false }), false);
+assert.equal(pirateSites.pirateSite(0), null, "no hidden-site inference");
+assert.match(pirateSites.pirateSite(5).title, /stronghold/);
+state.ghosts.push(corvette, cruiser);
+for (const [id, kind, chapter] of [
+  ["patrol", { kind: "privateer_patrol", pos: { x: 40000, y: 10000 } }, "patrol"],
+  ["depot", { kind: "pirate_bounty", tier: 4, system: "site" }, "depot"],
+  ["stronghold", { kind: "pirate_bounty", tier: 5, system: "site" }, "stronghold"],
+]) {
+  const o = { ...operation(id, kind, chapter, chapter), state: "active", joined: true };
+  state.operations.push(o);
+  ui.operationFleets.set(id, cruiser.id);
+  const card = ui.operationCard(o);
+  assert.match(card, /Cruiser/);
+  assert.match(card, /Plot assault/);
+  assert.doesNotMatch(card, /value="102"/, "cargo hull isn't an assault selection");
+  if (id !== "patrol") assert.match(card, new RegExp(`/art/pirate-sites/${id}.png`));
+  const sentBefore = sent.length;
+  ui.operationAction("strategic-operation-dispatch", { dataset: { operation: id } });
+  assert.equal(sent.length, sentBefore, "assault is a preview, never a surprise dispatch");
+  assert.equal(previews.at(-1).commands[0].type, "AssignOperationFleet");
+  assert.equal(previews.at(-1).commands[1].type, "MoveShip");
+  state.operations.pop();
+}
+state.ghosts.splice(-2);
+
+// The home-raid chain is a served offer, not a client-side truth detector.
+{
+const scout = ghost("scout", "scout");
+state.ghosts.push(scout);
+const trace = { ...operation("trace", { kind: "survey_expedition", system: "hideout" },
+  "counter_raid_trace", "1/3 · Trace the home raiders"), state: "active", joined: true };
+state.operations.push(trace);
+ui.operationFleets.set(trace.id, scout.id);
+const traceCard = ui.operationCard(trace);
+assert.match(traceCard, /Plot survey/);
+assert.match(traceCard, /value="scout"/);
+assert.doesNotMatch(traceCard, /value="101"|value="102"/, "neither an Interceptor nor a Freighter can survey");
+const ordersBeforeTrace = sent.length;
+ui.operationAction("strategic-operation-dispatch", { dataset: { operation: trace.id } });
+assert.equal(sent.length, ordersBeforeTrace, "survey must wait for the ordinary confirmation");
+assert.deepEqual(JSON.parse(JSON.stringify(previews.at(-1).commands)), [
+  { type: "AssignOperationFleet", operation_id: "trace", fleet_id: "scout" },
+  { type: "SurveySystem", fleet_id: "scout", system_id: "hideout" },
+]);
+const recovery = { ...operation("recovery", { kind: "rescue_salvage", units: 11, commodity: "electronics", pos: { x: 80_000, y: 0 } },
+  "counter_raid_recovery", "3/3 · Recover electronics"), state: "active", joined: true };
+state.operations.push(recovery);
+ui.operationFleets.set(recovery.id, freighter.id);
+assert.match(ui.operationCard(recovery), /Plot recovery/);
+assert.doesNotMatch(ui.operationCard(recovery), /value="scout"|value="101"/);
+ui.operationAction("strategic-operation-dispatch", { dataset: { operation: recovery.id } });
+assert.equal(sent.length, ordersBeforeTrace);
+assert.equal(previews.at(-1).commands[1].type, "MoveShip");
+assert.match(ui.operationsHtml(), /Defend home · strike back/);
+state.operations.splice(-2);
+state.ghosts.pop();
+}
+
 const { DeckFleetRoutes } = compile("shell/deck/fleet.ts");
 const fleetUi = new DeckFleetRoutes(root, ctx, { go() {}, notice() {} });
-assert.match(fleetUi.readinessHtml(guard), /Guarding Freighter/);
+{
+  const prize = { ...operation("prize", { kind: "prize_recovery", prize: "breacher_cache", system: "hideout", pos: { x: 80_000, y: 0 } },
+    "site_recovery", "Recover Breacher cache"), state: "active", joined: true };
+  state.operations.push(prize);
+  ui.operationFleets.set(prize.id, freighter.id);
+  const html = ui.operationCard(prize);
+  assert.match(html, /Plot recovery/);
+  assert.match(html, /4 module crates · Cruiser Hull dossier/);
+  assert.doesNotMatch(html, /value="101"/, "equipment requires a Freighter, not the Interceptor");
+  const before = sent.length;
+  ui.operationAction("strategic-operation-dispatch", { dataset: { operation: prize.id } });
+  assert.equal(sent.length, before, "prize recovery dispatch still needs order confirmation");
+  assert.deepEqual(JSON.parse(JSON.stringify(previews.at(-1).commands)), [
+    { type: "AssignOperationFleet", operation_id: prize.id, fleet_id: freighter.id },
+    { type: "MoveShip", ship_id: freighter.id, dest: prize.target_pos },
+  ]);
+  freighter.modules = { torpedo_rack: 12 };
+  assert.match(ui.operationCard(prize), /Needs 4 free module berths/);
+  delete freighter.modules;
+  assert.match(fleetUi.cargoHtml({ ...freighter, modules: { mass_driver: 2, whipple_armor: 2 } }),
+    /Module crates.*Stored on docking.*Mass Driver.*Whipple Armor/);
+  state.operations.pop();
+  const research = compile("core/derive/research.ts");
+  const merged = research.mergeResearch({ active: null, queue: [], rate: 0, stalled: false, academies: [],
+    programmes: [{ id: "cruiser", state: "locked", recovered_data: 300 }] },
+    { researchCatalog: [{ id: "cruiser", name: "Cruiser Hull", cost: 1000 }] });
+  assert.equal(merged.programmes[0].recovered_data, 300, "catalog merging must retain arrived, earmarked data");
+}
+assert.match(fleetUi.readinessHtml(guard), /Guarding Medium Freighter/);
 assert.match(fleetUi.readinessHtml(guard), /26%/);
 assert.match(readiness.intentReadinessWarnings(state, { verb: "command", shipId: "102",
   commands: [{ type: "HaulToMarketHub", fleet_id: "102", sell_on_arrival: false }] }).join(" "), /Fuel short/,
@@ -240,7 +368,8 @@ const yardWorld = { ...home, structures: { shipyard: 2 }, builds: [],
   bodies: [{ id: 0, name: "First", structures: { shipyard: 1 } },
     { id: 1, name: "Second", structures: { shipyard: 2 } }],
   assignments: [{ body_id: 0, structure: "shipyard", staffing: 1, skill: 1 }] };
-const hullOption = { key: "convoy", label: "Freighter", build_secs: 12, costs: [] };
+const hullOption = { key: "convoy", label: "Medium Freighter", build_secs: 50, costs: [] };
+state.research = { programmes: [{ id: "prop_heavy_lifters", state: "completed" }] };
 let hullQuote = deps["./market"].shipOption(hullOption, yardWorld);
 assert.equal(hullQuote.buildRate, 0, "workers on another planet do not staff the actual yard");
 assert.equal(hullQuote.buildable, true, "an unstaffed hull may queue but cannot progress");
@@ -254,7 +383,46 @@ assert.equal(deps["./market"].shipOption(hullOption, yardWorld).buildRate, 1.125
 yardWorld.assignments[1].staffing = 0;
 assert.equal(deps["./market"].shipOption(hullOption, yardWorld).buildRate, 0,
   "a nominal assignment with no effective workforce is still paused");
+delete state.research;
 renderNow = 60;
+
+// All six freight choices use the same arrived research/recipe checks on both
+// shells. Learning a larger hull never removes Tiny as a backup-route option.
+{
+  const market = deps["./market"];
+  const hulls = ["tiny_freighter", "small_freighter", "convoy", "large_freighter", "heavy_freighter", "bulk_freighter"];
+  const programmes = [null, "prop_freight_frames", "prop_heavy_lifters", "prop_line_express_charters", "prop_line_bulk_charters", "prop_line_autonomous_freight"];
+  const names = [null, "Freight Frames", "Heavy Lifters", "Express Charters", "Bulk Charters", "Autonomous Freight"];
+  const oldCatalog = state.researchCatalog;
+  state.researchCatalog = programmes.slice(1).map((id, i) => ({ id, name: names[i + 1] }));
+  state.research = { programmes: [] };
+  const freightYard = { ...yardWorld, structures: { shipyard: 5 },
+    bodies: [{ id: 0, name: "Freight Yard", structures: { shipyard: 5 } }],
+    assignments: [{ body_id: 0, structure: "shipyard", staffing: 1, skill: 1 }],
+    stockpile: [{ commodity: "alloys", units: 200 }] };
+  assert.deepEqual(hulls.filter(market.hullResearched), ["tiny_freighter"]);
+  for (let i = 1; i < hulls.length; i++) {
+    const option = { key: hulls[i], build_secs: 24, costs: [{ commodity: "alloys", units: 45 }] };
+    for (const status of ["locked", "available", "active"]) {
+      state.research.programmes = [{ id: programmes[i], state: status }];
+      assert.equal(market.hullResearched(hulls[i]), false, `${hulls[i]}: ${status} is not completed`);
+      const quote = market.shipOption(option, freightYard);
+      assert.equal(quote.buildable, false);
+      assert.equal(quote.reason, `Requires ${names[i]} research.`);
+    }
+    state.research.programmes[0].state = "completed";
+    assert.deepEqual(hulls.filter(market.hullResearched), ["tiny_freighter", hulls[i]],
+      "only this hull unlocks; its predecessors and successors are not free");
+    const quote = market.shipOption(option, freightYard);
+    assert.equal(quote.buildable, true);
+    assert.equal(quote.maxAff, 4, "affordability reads the served recipe, not a stale hull cost");
+    const shortage = market.shipOption({ ...option, costs: [{ commodity: "alloys", units: 201 }] }, freightYard);
+    assert.equal(shortage.buildable, false);
+    assert.equal(shortage.maxAff, 0);
+  }
+  state.researchCatalog = oldCatalog;
+  delete state.research;
+}
 
 // Post-victory advice is assembled from the same received picture as the panels.
 // Exercise the real derivation + both routed consumers, not an imitation checklist.
@@ -278,14 +446,19 @@ state.founding = { stage: "complete_export", bounty_received: false, expansion_u
 assert.equal(handoff.postVictoryHandoff().length, 0, "a true/unreported victory must not expose the handoff");
 assert.equal(handoffUi.handoffHtml(), "");
 state.founding.bounty_received = true;
+for (const stage of ["complete_export", "build_shipyard", "build_second_freighter", "grow_business"]) {
+  state.founding.stage = stage;
+  assert.equal(handoff.postVictoryHandoff().length, 0, "trade expansion precedes research advice");
+}
+state.founding.stage = "build_academy";
 let goals = handoff.postVictoryHandoff();
 const goal = id => handoff.postVictoryHandoff().find(g => g.id === id);
-assert.deepEqual([...goals.map(g => g.id)], ["explore", "upgrade", "colony"]);
+assert.deepEqual([...goals.map(g => g.id)], ["explore", "upgrade"], "a second colony is not a tutorial or handoff requirement");
 assert.equal(goal("explore").action.select, "academy");
 assert.equal(goal("upgrade").action.select, "shipyard");
 assert.equal(goal("upgrade").action.mode, "structures");
-assert.equal(goal("colony").done, false);
-assert.doesNotMatch(goal("colony").summary, /Excellent mining|Ore Haven/, "unarrived surveys cannot advertise a hidden jackpot");
+assert.doesNotMatch(handoffUi.handoffHtml(), /Excellent mining|colony kit|Found a specialist colony/,
+  "unarrived surveys cannot advertise a hidden jackpot or promise a colony grant");
 assert.equal(goal("upgrade").costs[0].stock, 2);
 home.stockpile.at(-1).units = 45;
 assert.equal(goal("upgrade").costs[0].stock, 45, "stock updates with the received inventory");
@@ -308,46 +481,38 @@ state.ghosts.pop(); state.ghosts.push(scout); home.builds = [];
 assert.equal(goal("explore").action.id, "103");
 prospect.bodies[0].geology = "ultra_rich";
 assert.equal(goal("explore").status, "1/2 reports");
-assert.match(goal("colony").summary, /Ore Haven: Excellent mining/);
 assert.equal(goal("explore").prospect, "garden");
 garden.bodies[0].geology = "average";
-assert.equal(goal("explore").done, false, "received reports do not invent the server's grant/unlock event");
-state.founding.expansion_unlocked = true; state.founding.stage = "build_colony";
+assert.equal(goal("explore").done, false, "received reports do not invent the server's completion milestone");
+state.founding.expansion_unlocked = true; state.founding.stage = "complete";
 assert.equal(goal("explore").done, true);
-assert.equal(goal("explore").action.kind, "warehouse");
-assert.equal(goal("colony").action.select, "colony");
-assert.match(goal("colony").payoff, /Smelter.*provisions/);
+assert.equal(goal("explore").action.kind, "system");
+assert.equal(goal("explore").action.id, "home");
+assert.equal(goal("explore").actionLabel, "Develop home");
 home.structures.shipyard = 2; home.bodies[0].structures.shipyard = 2;
 assert.equal(goal("upgrade").action.select, "corvette");
 state.ghosts.push(ghost("104", "corvette"));
 assert.equal(goal("upgrade").done, true);
-state.ghosts.push(ghost("105", "colony"));
-assert.equal(goal("colony").action.id, "105");
-prospect.owner = "1";
-assert.equal(goal("colony").done, false, "only the arrived founding milestone graduates the colony goal");
-state.founding.stage = "complete";
-assert.equal(goal("colony").done, true);
-assert.equal(goal("colony").action.id, "prospect");
-state.founding.stage = "build_colony"; prospect.owner = null;
 state.ghosts = [guard, freighter, scout];
-production.expires_at = state.simTime - 1;
-assert.equal(goal("colony").funding, null, "expired offers are not offered as attainable funding");
-production.expires_at = 900;
-assert.equal(goal("colony").funding.id, "13");
+escort.state = "offered"; escort.joined = false;
+escort.expires_at = state.simTime - 1;
+assert.equal(goal("upgrade").funding, null, "expired offers are not offered as attainable funding");
+escort.expires_at = 900;
+assert.equal(goal("upgrade").funding.id, "11");
 
 const routes = [], worlds = [], focused = [];
 const hooks = { go: r => routes.push(r), selectFleet: id => focused.push(id), openWorld: (...args) => worlds.push(args) };
 const navigate = (act, id) => handoffUi.handleHandoffAction({ dataset: { deckAct: act, goal: id } }, ctx, hooks);
 const sentBeforeNavigation = sent.length;
 navigate("handoff-open", "explore");
-assert.equal(routes.at(-1).name, "market"); assert.equal(routes.at(-1).query.tab, "warehouse");
+assert.equal(routes.at(-1).name, "system"); assert.equal(routes.at(-1).params.id, "home");
 navigate("handoff-open", "upgrade");
 assert.equal(routes.at(-1).name, "build"); assert.equal(routes.at(-1).query.select, "corvette");
 assert.equal(routes.at(-1).query.body, "4");
-navigate("handoff-prospect", "colony");
+navigate("handoff-prospect", "explore");
 assert.equal(routes.at(-1).params.id, "prospect");
-navigate("handoff-contract", "colony");
-assert.equal(routes.at(-1).query.contract, "13");
+navigate("handoff-contract", "upgrade");
+assert.equal(routes.at(-1).query.contract, "11");
 assert.equal(sent.length, sentBeforeNavigation, "handoff navigation never sends an order, accepts a job or pays a reward");
 const withHandoff = new DeckStrategicRoutes(root, ctx, { ...hooks, openWorld: hooks.openWorld, selectFleets() {}, notice() {} });
 const chosenContract = withHandoff.operationsHtml("13");
@@ -358,18 +523,42 @@ assert.match(chosenContract, /900 cr/);
 const { DeckCommandRoutes } = compile("shell/deck/command.ts");
 const guide = { id: "guide", hidden: true, classList: { toggle() {} }, innerHTML: "" };
 const command = new DeckCommandRoutes(root, guide, ctx, { ...hooks, focusFleet: hooks.selectFleet, inbox: () => [], notice() {} });
+assert.equal(command.foundingContent({ ...state.founding, stage: "export_production" }).copy,
+  "Load Ferrite Ore, then send the Freighter.");
+assert.equal(command.foundingContent({ ...state.founding, stage: "complete_export" }).copy,
+  "Sell Ferrite Ore at the Market Hub.", "the guide must match the Ore-only completion rule");
+assert.equal(command.foundingContent({ ...state.founding, stage: "survey_candidates" }).copy,
+  "Receive both reports to complete the tutorial.");
+assert.match(command.foundingContent({ ...state.founding, stage: "build_shipyard" }).copy, /Import.*export earnings/);
+assert.equal(command.foundingContent({ ...state.founding, stage: "build_second_freighter" }).title,
+  "Build a second Tiny Freighter");
+assert.equal(command.foundingContent({ ...state.founding, stage: "build_second_freighter" }).action, "build-convoy");
 assert.match(command.commandHtml(), /Requirements &amp; contract rewards/);
+state.founding.stage = "grow_business";
+command.renderFounding(true);
+assert.match(guide.innerHTML,/Expand exports/);
+assert.match(guide.innerHTML,/Start refining/);
+assert.equal((guide.innerHTML.match(/data-deck-act="founding-action"/g)??[]).length,2);
+const beforeResearchNavigation=sent.length;
+command.runFoundingAction("research-enrichment",state.founding);
+assert.equal(routes.at(-1).name,"research");
+assert.equal(routes.at(-1).query.programme,"mat_enrichment");
+assert.equal(sent.length,beforeResearchNavigation,"business goals navigate; they never dispatch or lock a profession");
+state.founding.stage = "survey_candidates";
 command.renderFounding(true);
 assert.match(guide.innerHTML, /Next objectives &amp; rewards/);
+assert.match(guide.innerHTML, /Founding 9\/9/);
+assert.doesNotMatch(guide.innerHTML, /colony kit|Colony Ship|\/12/);
 state.founding.stage = "complete"; state.founding.protected = false;
 command.renderFounding(true);
 assert.equal(guide.hidden, false, "unfinished optional goals survive tutorial completion");
 state.ghosts.push(ghost("104", "corvette"));
 command.renderFounding(true);
 assert.equal(guide.hidden, true, "a finished handoff does not leave a permanent floating checklist");
-state.founding.stage = "build_colony"; state.ghosts = [guard, freighter, scout];
+state.ghosts = [guard, freighter, scout];
 const handoffPage = handoffUi.handoffHtml();
-const { MobileParitySurfaces } = compile("shell/mobile/parity.ts");
+const mobileInputs = new Map();
+const { MobileParitySurfaces } = compile("shell/mobile/parity.ts", { document: { getElementById: id => mobileInputs.get(id) } });
 const sheetsOpened = []; let refreshes = 0;
 const mobile = new MobileParitySurfaces(ctx, { refresh() { refreshes++; } }, {
   openSheet: s => sheetsOpened.push(s), focusFleet: id => focused.push(id), focusSystem: id => located.push(id),
@@ -379,14 +568,53 @@ assert.match(mobileQueue, /<h4>Freya I<\/h4>.*Shipyard.*Mining Complex.*Queued.*
 assert.doesNotMatch(mobileQueue, /Paused · needs workforce/,
   "mobile also distinguishes a waiting structure from an unstaffed hull");
 assert.match(mobile.handoffHtml(), /Your next chapter/);
-assert.match(mobile.handoffHtml(), /data-kind="market"/, "the kit uses the existing Warehouse opener on mobile");
+assert.match(mobile.handoffHtml(), /Develop home/);
+assert.doesNotMatch(mobile.handoffHtml(), /colony kit|Found a specialist colony/);
+mobile.openHandoffGoal("next-goal", "explore");
+assert.equal(located.at(-1), "home");
 mobile.openHandoffGoal("next-goal", "upgrade");
 assert.equal(sheetsOpened.at(-1).id, "shipyard"); assert.equal(mobile.selectedHull, "corvette");
 assert.equal(sheetsOpened.at(-1).props.bodyId, 4);
-mobile.openHandoffGoal("next-funding", "colony");
-assert.equal(mobile.handoffContract, "13"); assert.equal(refreshes, 1);
+mobile.openHandoffGoal("next-funding", "upgrade");
+assert.equal(mobile.handoffContract, "11"); assert.equal(refreshes, 1);
 assert.equal(sent.length, sentBeforeNavigation, "mobile handoff is navigation-only too");
-console.log("Progression fixtures: contracts, readiness, colony advice, actual build progress, post-victory gates/requirements/stock/rewards/navigation pass.");
+{
+  const trace = { ...operation("countertrace", { kind: "survey_expedition", system: "hideout" },
+    "counter_raid_trace", "1/3 · Trace the home raiders"), state: "active", joined: true };
+  state.operations.push(trace);
+  const card = mobile.operationCard(trace);
+  assert.match(card, /Plot survey/);
+  assert.match(card, /value="103"/);
+  assert.doesNotMatch(card, /value="101"|value="102"/);
+  mobileInputs.set("m-op-fleet-countertrace", { value: "103" });
+  const sentBefore = sent.length;
+  mobile.handleClick({ target: { closest: () => ({ dataset: { mobileAct: "operation-assign", id: trace.id } }) } });
+  assert.equal(sent.length, sentBefore);
+  assert.deepEqual(JSON.parse(JSON.stringify(previews.at(-1).commands)), [
+    { type: "AssignOperationFleet", operation_id: trace.id, fleet_id: "103" },
+    { type: "SurveySystem", fleet_id: "103", system_id: "hideout" },
+  ]);
+  assert.match(mobile.renderOperations().html, /Defend home · strike back/);
+  state.operations.pop();
+}
+{
+  const prize = { ...operation("prize", { kind: "prize_recovery", prize: "screen_cache", system: "hideout", pos: { x: 80_000, y: 0 } },
+    "site_recovery", "Recover Fleet-screen cache"), state: "active", joined: true };
+  state.operations.push(prize);
+  const card = mobile.operationCard(prize);
+  assert.match(card, /Plot recovery.*Recover now/);
+  assert.match(card, /8 module crates · Battleship dossier/);
+  assert.doesNotMatch(card, /value="101"|value="103"/, "only the Freighter can recover equipment");
+  mobileInputs.set("m-op-fleet-prize", { value: freighter.id });
+  const before = sent.length;
+  mobile.handleClick({ target: { closest: () => ({ dataset: { mobileAct: "operation-assign", id: prize.id } }) } });
+  assert.equal(sent.length, before);
+  assert.equal(previews.at(-1).commands[1].type, "MoveShip");
+  assert.match(mobile.programmeCard({ id: "cruiser", name: "Cruiser Hull", blurb: "", tier: 5,
+    state: "locked", cost: 1000, recovered_data: 300 }), /30% research work banked/);
+  state.operations.pop();
+}
+console.log("Progression fixtures: contracts, physical pirate prizes, banked dossiers, readiness, colony advice, build progress and post-victory navigation pass.");
 
 if (process.argv.includes("--serve")) {
   const page = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

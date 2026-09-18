@@ -18,7 +18,7 @@ use serde::{
 
 use crate::protocol::{ClientMsg, PROTOCOL_VERSION, ServerMsg};
 
-pub const SUBPROTOCOL: &str = "stellar.msgpack.v32";
+pub const SUBPROTOCOL: &str = "stellar.msgpack.v38";
 pub const PROTOCOL_CLOSE_CODE: u16 = 4002;
 pub const MAX_CLIENT_FRAME: usize = 64 * 1024;
 const MAX_DEPTH: usize = 32;

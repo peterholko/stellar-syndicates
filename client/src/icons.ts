@@ -21,8 +21,9 @@ export type IconKey =
   | "structureMiningComplex" | "structureVolatileHarvester" | "structureBioharvester"
   | "structureSmelter" | "structureElectronicsFabricator" | "structureChemicalWorks" | "structureFuelRefinery"
   | "structureAgroplex" | "structureMachineWorks" | "structureArmamentsComplex"
+  | "structureCompositeWorks" | "structureHullFabricator" | "structurePrecisionWorks" | "structureDriveWorks"
   | "structureShipyard" | "structureNavalDrydock" | "structureCapitalSlipway" | "structureOrdnanceFoundry"
-  | "structureHabitat" | "structureOrbitalWarehouse" | "structureSensorArray" | "structureDefensePlatform"
+  | "structureHabitat" | "structureWarehouse" | "structureOrbitalWarehouse" | "structureSensorArray" | "structureDefensePlatform"
   | "structureAcademy" | "structureGarrison"
   // planetary profile / colony identity
   | "planetHabitable" | "planetHostile" | "planetUninhabitable"
@@ -30,7 +31,8 @@ export type IconKey =
   | "featureFertile" | "featureLowGravity" | "featurePrecursor"
   | "roleAgriculture" | "roleMining" | "roleFuel" | "roleElectronics" | "roleShipbuilding" | "rolePopulation" | "roleOutpost"
   // fleets / ship kinds
-  | "fleet" | "scout" | "raider" | "corvette" | "convoy" | "colony"
+  | "fleet" | "scout" | "raider" | "corvette" | "convoy" | "colony" | "builder" | "transport"
+  | "tiny_freighter" | "small_freighter" | "large_freighter" | "heavy_freighter" | "bulk_freighter"
   | "destroyer" | "cruiser" | "battleship" | "dreadnought" | "titan"
   // verbs / orders
   | "move" | "attack" | "raid" | "withdraw" | "reinforce" | "recall" | "blockade" | "siege"
@@ -44,14 +46,17 @@ export type IconKey =
   | "commandCenter" | "uncertainty" | "hub" | "success" | "info" | "home" | "mouse" | "shift" | "time"
   | "population" | "workforce" | "food" | "upkeep"
   // combat modules
-  | "moduleMassDriver" | "moduleTorpedoRack" | "modulePointDefense" | "moduleReflectivePlating" | "moduleWhippleArmor"
+  | "moduleMassDriver" | "moduleTorpedoRack" | "modulePointDefense" | "moduleReflectivePlating" | "moduleWhippleArmor" | "moduleExtendedTanks" | "moduleReconSuite" | "moduleCargoPods" | "moduleEscortDatalink" | "moduleFuelTransferRig"
+  | "moduleSurveyDrive" | "moduleNebulaSpectrometer" | "modulePrismaticLance"
   // syndicates (§syndicates)
   | "syndicate" | "ally" | "garrison";
 
-/** Wire slug → display label: "metallic_ore" → "Metallic Ore". Display-only —
+/** Wire slug → display label: "metallic_ore" → "Ferrite Ore". Display-only —
  * never feed the result back into commands; attributes that round-trip to
  * `net.send` (data-resource / data-hire / option values …) stay raw. */
 export function label(slug: string): string {
+  if (slug === "metallic_ore" || slug === "ore") return "Ferrite Ore";
+  if (slug === "rare_metal_ore") return "Rare-metal Ore";
   return slug.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
 }
 
@@ -63,9 +68,9 @@ interface IconDef {
   png128?: string;
   /** Generated 64px transparent panel PNG under /art/ui_icons/panel/. */
   panel?: string;
-  /** Dedicated 128px transparent ship-builder art under /art/ui_icons/hulls/. */
+  /** Approved hull master, downsampled to 128/256px for all fleet/build panels. */
   hull?: string;
-  /** Dedicated 128px transparent structure-builder art. */
+  /** Tiered transparent structure art, shared by builders and the planet scene. */
   structure?: string;
   /** Bundled SVG slug (art-backed) — takes precedence over `glyph`. */
   art?: string;
@@ -90,7 +95,7 @@ const P = (glyph: string, tip: string): IconDef => ({ glyph, tip, placeholder: t
 export const ICONS: Record<IconKey, IconDef> = {
   // resources — dedicated downscaled PNG art (source-of-truth 1254px; UI loads 64px)
   fuel: R("fuel", "Fuel"),
-  ore: R("ore", "Ore"),
+  ore: R("ores-2026-09-16/ferrite_ore-128", "Ferrite Ore"),
   alloys: R("alloys", "Alloys"),
   provisions: R("provisions", "Provisions"),
   volatiles: R("volatiles", "Volatiles"),
@@ -112,7 +117,7 @@ export const ICONS: Record<IconKey, IconDef> = {
   warehouse: N("concept-warehouse", "Market Warehouse"),
   manifest: N("concept-manifest", "Cargo manifest"),
   freightRoute: N("concept-freight-route", "Freight route"),
-  authorityFreighter: N("concept-authority-freighter", "Authority freighter"),
+  authorityFreighter: H("freighter", "Authority freighter"),
   // structure builder — one purpose-built installation per buildable structure
   structureMiningComplex: S("mining_complex", "Mining Complex"),
   structureVolatileHarvester: S("volatile_harvester", "Volatile Harvester"),
@@ -124,12 +129,17 @@ export const ICONS: Record<IconKey, IconDef> = {
   structureAgroplex: S("agroplex", "Agroplex"),
   structureMachineWorks: S("machine_works", "Machine Works"),
   structureArmamentsComplex: S("armaments_complex", "Armaments Complex"),
+  structureCompositeWorks: S("composite_works", "Composite Works"),
+  structureHullFabricator: S("hull_fabricator", "Hull Fabricator"),
+  structurePrecisionWorks: S("precision_works", "Precision Works"),
+  structureDriveWorks: S("drive_works", "Drive Works"),
   structureShipyard: S("shipyard", "Shipyard"),
   structureNavalDrydock: S("naval_drydock", "Naval Drydock"),
   structureCapitalSlipway: S("capital_slipway", "Capital Slipway"),
   structureOrdnanceFoundry: S("ordnance_foundry", "Ordnance Foundry"),
   structureHabitat: S("habitat", "Habitat"),
   structureOrbitalWarehouse: S("orbital_warehouse", "Orbital Warehouse"),
+  structureWarehouse: S("warehouse", "Warehouse"),
   structureSensorArray: S("sensor_array", "Sensor Array"),
   structureDefensePlatform: S("defense_platform", "Defense Platform"),
   structureAcademy: S("academy", "Academy"),
@@ -156,8 +166,15 @@ export const ICONS: Record<IconKey, IconDef> = {
   scout: H("scout", "Scout"),
   raider: H("raider", "Interceptor"),
   corvette: H("corvette", "Corvette"),
-  convoy: H("convoy", "Freighter"),
+  convoy: H("convoy", "Medium Freighter"),
+  tiny_freighter: H("tiny_freighter", "Tiny Freighter"),
+  small_freighter: H("small_freighter", "Small Freighter"),
+  large_freighter: H("large_freighter", "Large Freighter"),
+  heavy_freighter: H("heavy_freighter", "Heavy Freighter"),
+  bulk_freighter: H("bulk_freighter", "Bulk Freighter"),
   colony: H("colony", "Colony ship"),
+  builder: H("builder", "Construction Ship"),
+  transport: H("transport", "Troop Transport"),
   destroyer: H("destroyer", "Destroyer"),
   cruiser: H("cruiser", "Cruiser"),
   battleship: H("battleship", "Battleship"),
@@ -221,6 +238,14 @@ export const ICONS: Record<IconKey, IconDef> = {
   modulePointDefense: N("module-point-defense", "Point-Defense Screen"),
   moduleReflectivePlating: N("module-reflective-plating", "Reflective Plating"),
   moduleWhippleArmor: N("module-whipple-armor", "Whipple Armor"),
+  moduleExtendedTanks: R("fuel", "Extended Tanks"),
+  moduleReconSuite: N("concept-sensor-range", "Recon Suite"),
+  moduleCargoPods: N("concept-manifest", "Cargo Pods"),
+  moduleEscortDatalink: N("action-escort", "Escort Datalink"),
+  moduleFuelTransferRig: N("role-fuel-production", "Fuel Transfer Rig"),
+  moduleSurveyDrive: N("action-jump", "Survey Drive"),
+  moduleNebulaSpectrometer: N("concept-sensor-range", "Nebula Spectrometer"),
+  modulePrismaticLance: A("action-attack-raid", "Prismatic Lance"),
   // syndicates
   syndicate: P("🤝", "Syndicate (alliance)"),
   ally: P("🟢", "Syndicate ally"),
@@ -231,8 +256,8 @@ const ART_BASE = "/art/ui_icons/svg/";
 const PNG_BASE = "/art/ui_icons/resource/"; // downscaled 64px resource PNGs
 const PNG_128_BASE = "/art/ui_icons/png/128/"; // high-DPI general UI PNGs
 const PANEL_BASE = "/art/ui_icons/panel/"; // generated transparent 64px panel PNGs
-const HULL_BASE = "/art/ui_icons/hulls/"; // generated transparent 128px builder hulls
-const STRUCTURE_BASE = "/art/ui_icons/structures/"; // generated transparent 128px builder structures
+const HULL_BASE = "/art/derived/ships/2026-09-08/panels/"; // same hulls as map/battle; CSS sizes stay fixed
+const STRUCTURE_BASE = "/art/derived/structures/2026-09-16/";
 const escAttr = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
 /** ICON SIZE TOKENS — the ONE source of truth for icon dimensions (mapped to the
@@ -254,7 +279,7 @@ const RESOURCE_KEYS = new Set<IconKey>(["fuel", "ore", "alloys", "provisions", "
  *  registry default; `cls` adds classes. Art → crisp <img>; placeholder → an
  *  emoji <span>. Both carry `.icon.icon--<size>`, so CSS drives the dimensions
  *  and the surrounding flex row centers them. Resource keys use `.icon--resource`. */
-export function icon(key: IconKey, size: IconSize = "sm", tip?: string, cls = ""): string {
+export function icon(key: IconKey, size: IconSize = "sm", tip?: string, cls = "", sizes?: string, structureTier = 1): string {
   const def = ICONS[key];
   const t = escAttr(tip ?? def.tip);
   const sizeCls = RESOURCE_KEYS.has(key) ? "icon--resource" : `icon--${size}`;
@@ -269,10 +294,15 @@ export function icon(key: IconKey, size: IconSize = "sm", tip?: string, cls = ""
     return `<img class="${c}" src="${PANEL_BASE}${def.panel}.png" alt="" title="${t}" />`;
   }
   if (def.hull) {
-    return `<img class="${c}" src="${HULL_BASE}${def.hull}.png" alt="" title="${t}" />`;
+    return `<img class="${c}" src="${HULL_BASE}${def.hull}-128.png" srcset="${HULL_BASE}${def.hull}-128.png 1x, ${HULL_BASE}${def.hull}-256.png 2x" alt="" title="${t}" />`;
   }
   if (def.structure) {
-    return `<img class="${c}" src="${STRUCTURE_BASE}${def.structure}.png" alt="" title="${t}" />`;
+    // Only the asset lookup is bounded: this never changes a gameplay tier.
+    // 512px keeps the planet footprints sharp on high-DPI screens without
+    // enlarging their CSS footprint or loading the full-resolution masters.
+    const tier = Number.isFinite(structureTier) ? Math.max(1, Math.min(6, Math.floor(structureTier))) : 1;
+    const base = `${STRUCTURE_BASE}${def.structure}/tier-${tier}`;
+    return `<img class="${c}" src="${base}-128.webp" srcset="${base}-128.webp 128w, ${base}-256.webp 256w, ${base}-512.webp 512w" sizes="${escAttr(sizes ?? "48px")}" alt="" title="${t}" />`;
   }
   if (def.art) {
     return `<img class="${c}" src="${ART_BASE}${def.art}.svg" alt="" title="${t}" />`;
@@ -280,9 +310,20 @@ export function icon(key: IconKey, size: IconSize = "sm", tip?: string, cls = ""
   return `<span class="${c}" title="${t}" role="img" aria-label="${t}">${def.glyph}</span>`;
 }
 
+/** Built structures pass their ARRIVED tier; builders pass the proposed target
+ * tier for the upgrade preview. A queued upgrade must not change the built art. */
+export function structureImage(key: string, tier: number, size: IconSize = "sm", tip?: string, cls = "", sizes?: string): string {
+  return icon(structureIcon(key), size, tip, cls, sizes, tier);
+}
+
 /** Commodity wire slugs are not always asset filenames: metallic_ore uses ore,
  * and biomass has panel art. Keep every cargo/stockpile panel on the same map. */
 export function commodityIcon(commodity: Commodity): string {
+  const oreArt = commodity === "metallic_ore" ? "ferrite_ore" : commodity;
+  if (["ferrite_ore", "cuprite_ore", "titanium_ore", "crystalline_ore", "rare_metal_ore", "conductive_metals", "titanium"].includes(oreArt)) {
+    const src = `${PNG_BASE}ores-2026-09-16/${oreArt}`;
+    return `<img class="icon icon--resource" src="${src}-64.png" srcset="${src}-128.png 2x" alt="${escAttr(label(commodity))}" title="${escAttr(label(commodity))}">`;
+  }
   const keys: Partial<Record<Commodity, IconKey>> = {
     metallic_ore: "ore", alloys: "alloys", fuel: "fuel", provisions: "provisions",
     volatiles: "volatiles", biomass: "biomass",
@@ -326,12 +367,17 @@ export function structureIcon(key: string): IconKey {
     agroplex: "structureAgroplex",
     machine_works: "structureMachineWorks",
     armaments_complex: "structureArmamentsComplex",
+    composite_works: "structureCompositeWorks",
+    hull_fabricator: "structureHullFabricator",
+    precision_works: "structurePrecisionWorks",
+    drive_works: "structureDriveWorks",
     shipyard: "structureShipyard",
     naval_drydock: "structureNavalDrydock",
     capital_slipway: "structureCapitalSlipway",
     ordnance_foundry: "structureOrdnanceFoundry",
     habitat: "structureHabitat",
     orbital_warehouse: "structureOrbitalWarehouse",
+    warehouse: "structureWarehouse",
     sensor_array: "structureSensorArray",
     defense_platform: "structureDefensePlatform",
     academy: "structureAcademy",

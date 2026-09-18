@@ -3,6 +3,7 @@ import { agoLabel, fmt, fmtDur, informationDelay, rejectText, trend } from "../.
 import { systemName } from "../../core/derive/geo";
 import {
   COMMODITIES,
+  commodityPurpose,
   freightDraft,
   freightDraftEntries,
   marketAverageQuote,
@@ -18,6 +19,7 @@ import {
   warehouseUnits,
 } from "../../core/derive/market";
 import { projectedBand } from "../../core/derive/research";
+import { requestTransactions } from "../../core/derive/transactions";
 import type { CoreEvent } from "../../core/events";
 import { commodityIcon, icon, label, type IconKey } from "../../icons";
 import {
@@ -27,7 +29,6 @@ import {
   freightFee,
   type Commodity,
   type EntityId,
-  type ModuleKind,
   type ShipmentDir,
   type Side,
   type TradeEvent,
@@ -37,8 +38,9 @@ import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext } from "../types";
 import type { DeckRoute } from "./router";
+import { transactionsHtml } from "../transactions";
 
-export type DeckMarketTab = "exchange" | "warehouse" | "specialists" | "modules";
+export type DeckMarketTab = "exchange" | "warehouse" | "specialists" | "modules" | "transactions";
 
 export interface DeckTradeNotice {
   title: string;
@@ -61,16 +63,10 @@ const SPECIALISTS: { slug: string; icon: IconKey; blurb: string }[] = [
   { slug: "petrochemical_engineer", icon: "refinery", blurb: "volatiles, fuel and chemicals" },
   { slug: "xenobiologist", icon: "provisions", blurb: "biomass and agroplex production" },
   { slug: "industrial_engineer", icon: "build", blurb: "heavy industry" },
-  { slug: "naval_architect", icon: "shipyard", blurb: "shipyards and armaments" },
+  { slug: "naval_architect", icon: "shipyard", blurb: "shipyards, hulls, drives and armaments" },
 ];
 
-const MODULES: { kind: ModuleKind; name: string; icon: IconKey; role: string }[] = [
-  { kind: "mass_driver", name: "Mass Driver", icon: "moduleMassDriver", role: "kinetic broadside" },
-  { kind: "torpedo_rack", name: "Torpedo Rack", icon: "moduleTorpedoRack", role: "heavy strike" },
-  { kind: "point_defense_screen", name: "Point-Defense Screen", icon: "modulePointDefense", role: "fleet interception" },
-  { kind: "reflective_plating", name: "Reflective Plating", icon: "moduleReflectivePlating", role: "beam protection" },
-  { kind: "whipple_armor", name: "Whipple Armor", icon: "moduleWhippleArmor", role: "kinetic protection" },
-];
+import { MODULES, isBlueprintOnly } from "../../core/derive/equipment";
 
 /** The routed Market is one served picture: the board, ticket, warehouse,
  * contracts and freight desk all read the same delayed View. Local reservations
@@ -91,6 +87,7 @@ export class DeckMarketRoutes {
   private feedback = "";
   private appliedRouteTab = "";
   private signature = "";
+  private reportReadiness = "";
 
   constructor(
     private readonly root: HTMLElement,
@@ -101,8 +98,10 @@ export class DeckMarketRoutes {
   render(route: DeckRoute | null, force = false): boolean {
     if (route?.name !== "market") return false;
     this.applyRouteTab(route);
+    if (this.tab === "transactions") requestTransactions(this.ctx);
     this.repairFreightSystem();
     const state = this.ctx.state;
+    const readiness = `${!!this.accountReport()}:${!!state.market?.prices.length}`;
     const signature = sheetFingerprint([
       route, this.tab, this.side, this.commodity, this.quantity, this.limitOn, this.limitPrice,
       this.freightDirection, this.freightSystem, this.freightCommodity, this.freightQuantity,
@@ -110,13 +109,16 @@ export class DeckMarketRoutes {
       state.market, state.wallet, state.charter, state.freight,
       state.priceHistory, state.systems.map((system) => [system.id, system.owner, system.stockpile, system.storage_used, system.storage_cap, system.modules]),
       hubDockedFleets().map((fleet) => [fleet.id, fleet.kind, fleet.count_class, fleet.composition, fleet.cargo, fleet.cargo_manifest, state.pendingOrders.get(fleet.id)]),
-      marketReservations, recentMarketOrders,
+      marketReservations, recentMarketOrders, state.transactions,
     ]);
     if (!force && signature === this.signature) return true;
     const active = document.activeElement;
-    if (!force && active && this.root.contains(active) && (active instanceof HTMLInputElement || active instanceof HTMLSelectElement)) return true;
+    // Receiving the first report must unlock the panel even while the player
+    // prepares a quantity. setHtml reconciles the input without losing the edit.
+    if (!force && readiness === this.reportReadiness && active && this.root.contains(active) && (active instanceof HTMLInputElement || active instanceof HTMLSelectElement)) return true;
     if (renderDeferred(this.root.id, () => this.render(route, true))) return true;
     this.signature = signature;
+    this.reportReadiness = readiness;
     setHtml(this.root, this.marketHtml());
     return true;
   }
@@ -124,12 +126,20 @@ export class DeckMarketRoutes {
   handleAction(button: HTMLButtonElement, route: DeckRoute | null): boolean {
     if (route?.name !== "market") return false;
     const action = button.dataset.deckAct;
+    if (!this.accountReport() && ["market-submit", "market-cancel", "market-hire", "market-module-buy", "market-module-sell", "freight-submit"].includes(action ?? "")) {
+      this.render(route, true);
+      return true;
+    }
     if (action === "market-tab") {
       const tab = button.dataset.tab;
       if (isMarketTab(tab)) {
         this.tab = tab;
-        this.appliedRouteTab = "";
+        // A receipt may have opened a specific route tab. Honour this local
+        // click rather than immediately reapplying that older route parameter.
+        this.appliedRouteTab = route.query?.tab ?? "";
       }
+    } else if (action === "transactions-older" || action === "transactions-newer" || action === "transactions-latest") {
+      requestTransactions(this.ctx, action === "transactions-older" ? "older" : action === "transactions-newer" ? "newer" : "latest");
     } else if (action === "market-commodity") {
       if (isCommodity(button.dataset.commodity)) this.commodity = button.dataset.commodity;
     } else if (action === "market-side") {
@@ -198,6 +208,7 @@ export class DeckMarketRoutes {
   onCore(events: readonly CoreEvent[], route: DeckRoute | null): void {
     let changed = false;
     for (const event of events) {
+      if (event.kind === "TransactionsApplied") { changed = true; continue; }
       if (event.kind !== "TradeSettled") continue;
       // The delayed Trade event is the sole receipt: release exactly one matching
       // local reservation and only then promote an execution into Recent Orders.
@@ -216,81 +227,95 @@ export class DeckMarketRoutes {
     this.signature = "";
   }
 
+  private accountReport() {
+    const wallet = this.ctx.state.wallet;
+    return wallet && !wallet.report_pending ? wallet : null;
+  }
+
   private marketHtml(): string {
     const state = this.ctx.state;
-    if (!state.market || !state.wallet || state.wallet.report_pending) return emptyState("Market report unavailable", "Waiting for light from the Market Hub.");
-    const stale = state.market.staleness;
+    const account = this.accountReport();
+    const stale = state.market?.staleness ?? 0;
     const reserved = reservedMarketCredits();
-    const tabs = (["exchange", "warehouse", "specialists", "modules"] as DeckMarketTab[])
+    const tabs = (["exchange", "warehouse", "specialists", "modules", "transactions"] as DeckMarketTab[])
       .map((tab) => `<button type="button" data-deck-act="market-tab" data-tab="${tab}" aria-selected="${this.tab === tab}">${esc(label(tab))}</button>`).join("");
-    const body = this.tab === "exchange" ? this.exchangeHtml()
+    // Ticker, account and fleet reports arrive independently. A missing account
+    // hides only its values and spending actions, never the entire Market. No
+    // current truth or zero-filled pending wallet is used to fill the gaps.
+    const body = this.tab === "transactions" ? transactionsHtml(state)
+      : this.tab === "exchange" ? this.exchangeHtml()
       : this.tab === "warehouse" ? this.warehouseHtml()
         : this.tab === "specialists" ? this.specialistsHtml()
           : this.modulesHtml();
-    return `<section class="deck-page deck-market"><header class="deck-page__lead"><span>the shared commons · light-delayed</span><h2>Market Hub</h2><p>The Exchange, your Market Warehouse and the Authority freight desk share one served account picture.</p></header>` +
-      `<div class="deck-stat-grid deck-market__stats">${stat("Spendable credits", `${reserved > 0 ? "~" : ""}${fmt(spendableMarketCredits())} Cr`)}${stat("Reserved in flight", `${fmt(reserved)} Cr`, reserved > 0 ? "warn" : "")}${stat("Equity", `${fmt(state.wallet.valuation)} Cr`)}${stat("Market report", informationDelay(stale), stale > 0.5 ? "stale" : "")}</div>` +
-      `<nav class="deck-tabs" aria-label="Market sections">${tabs}</nav>${this.feedback ? `<div class="deck-market-feedback">${esc(this.feedback)}</div>` : ""}${body}</section>`;
+    return `<section class="deck-page deck-market">` +
+      `<div class="deck-stat-grid deck-market__stats">${stat("Spendable credits", account ? `${reserved > 0 ? "~" : ""}${fmt(spendableMarketCredits())} Cr` : "—")}${stat("Reserved in flight", `${fmt(reserved)} Cr`, reserved > 0 ? "warn" : "")}${stat("Equity", account ? `${fmt(account.valuation)} Cr` : "—")}${stat("Market report", state.market ? informationDelay(stale) : "—", stale > 0.5 ? "stale" : "")}</div>` +
+      `<nav class="deck-tabs" aria-label="Market sections">${tabs}</nav>${!account ? `<div class="deck-market-feedback" role="status">Account report pending · balances and trading unlock when its light arrives.</div>` : ""}${this.feedback ? `<div class="deck-market-feedback">${esc(this.feedback)}</div>` : ""}${body}</section>`;
   }
 
   private exchangeHtml(): string {
-    const market = this.ctx.state.market!;
-    const stale = market.staleness > 0.5;
+    const market = this.ctx.state.market;
+    const account = this.accountReport();
+    const stale = (market?.staleness ?? 0) > 0.5;
     const board = COMMODITIES.map((commodity) => {
-      const quote = market.prices.find((entry) => entry.commodity === commodity);
+      const quote = market?.prices.find((entry) => entry.commodity === commodity);
       const history = this.ctx.state.priceHistory[commodity] ?? [];
       const price = quote?.price;
       const movement = trend(history);
       return `<button type="button" class="deck-market-row${this.commodity === commodity ? " is-selected" : ""}" data-deck-act="market-commodity" data-commodity="${commodity}">` +
-        `<span>${commodityIcon(commodity)}<span><b>${esc(label(commodity))}</b><small>warehouse ${warehouseUnits(commodity)}</small></span></span>` +
+        `<span>${commodityIcon(commodity)}<span><b>${esc(label(commodity))}</b><small>warehouse ${account ? warehouseUnits(commodity) : "—"}</small></span></span>` +
         spark(history.length ? history : price === undefined ? [0, 0] : [price, price]) +
         `<em class="is-${movement.tone}">${price === undefined ? "—" : `${stale ? "~" : ""}${price.toFixed(2)}`} ${movement.glyph}</em>` +
         `<small>${quote ? quote.available_buy === quote.available_sell ? `depth ${quote.available_buy}` : `buy depth ${quote.available_buy} · sell depth ${quote.available_sell}` : "no arrived quote"}</small></button>`;
     }).join("");
-    return `<div class="deck-market-layout"><section class="deck-section deck-market-board"><header><div><h3>Observed prices</h3><p>Sparklines are arrived history, never a forecast. Liquidity and prices may already have moved.</p></div><b class="deck-stale-value">${esc(informationDelay(market.staleness))}</b></header><div class="deck-market-board__head"><span>Commodity</span><span>History</span><span>Price</span><span>Observed liquidity</span></div>${board}</section>` +
-      `<div class="deck-market-side">${this.ticketHtml()}${this.ordersHtml()}</div></div>`;
+    return `<div class="deck-market-layout"><section class="deck-section deck-market-board"><header><div><h3>Observed prices</h3></div><b class="deck-stale-value">${market ? esc(informationDelay(market.staleness)) : "Awaiting quotes"}</b></header><div class="deck-market-board__head"><span>Commodity</span><span>History</span><span>Price</span><span>Liquidity</span></div>${board}</section>` +
+      `${this.ticketHtml()}</div><div class="deck-market-orders">${this.ordersHtml()}</div>`;
   }
 
   private ticketHtml(): string {
+    const account = this.accountReport();
     const quote = this.ctx.state.market?.prices.find((entry) => entry.commodity === this.commodity);
-    const average = quote ? marketAverageQuote(quote.price, this.quantity, this.side) : null;
-    const penalty = average === null ? 0 : this.quantity * average * (this.ctx.state.charter?.market_penalty_frac ?? 0);
+    const average = quote ? marketAverageQuote(quote.price, this.quantity, this.side, quote.depth) : null;
+    const penalty = !account || average === null ? 0 : this.quantity * average * (this.ctx.state.charter?.market_penalty_frac ?? 0);
     const held = warehouseUnits(this.commodity);
     const liquidity = quote ? (this.side === "buy" ? quote.available_buy : quote.available_sell) : 0;
     const warnings: string[] = [];
     if (!quote) warnings.push("No observed quote yet.");
     if (quote && this.quantity > liquidity) warnings.push(`Observed ${this.side === "buy" ? "supply" : "demand"} is ${liquidity}.`);
-    if (this.side === "sell" && held < this.quantity) warnings.push(`Warehouse holds ${held} — ${this.quantity - held} short.`);
+    if (account && this.side === "sell" && held < this.quantity) warnings.push(`Warehouse holds ${held} — ${this.quantity - held} short.`);
     if (penalty > 0.005) warnings.push(`${fmt(penalty)} Cr charter penalty ${this.side === "buy" ? "included" : "deducted"}.`);
     const limitReady = !this.limitOn || this.limitPrice > 0;
     const stockReady = this.side === "buy" || held >= this.quantity;
-    const canSubmit = !!quote && limitReady && stockReady;
-    const total = average === null ? null : this.quantity * average * (1 + (this.side === "buy" ? 1 : -1) * (this.ctx.state.charter?.market_penalty_frac ?? 0));
+    const canSubmit = !!account && !!quote && limitReady && stockReady;
+    const total = !account || average === null ? null : this.quantity * average * (1 + (this.side === "buy" ? 1 : -1) * (this.ctx.state.charter?.market_penalty_frac ?? 0));
     const button = this.limitOn
       ? `Place limit ${this.side}`
       : `${label(this.side)} ${this.quantity} ${label(this.commodity)}${total === null ? "" : ` · ~${fmt(total)} Cr`}`;
-    return `<section class="deck-section deck-trade-ticket"><header><div><h3>Trade ticket</h3><p>Settlement draws from your Market Warehouse; the account receipt returns light-delayed.</p></div></header>` +
+    return `<section class="deck-section deck-trade-ticket"><header><h3>Trade ticket</h3></header>` +
       `<div class="deck-segment"><button type="button" data-deck-act="market-side" data-side="buy" aria-pressed="${this.side === "buy"}">Buy</button><button type="button" data-deck-act="market-side" data-side="sell" aria-pressed="${this.side === "sell"}">Sell</button></div>` +
       `<div class="deck-trade-ticket__commodity">${commodityIcon(this.commodity)}<span><small>Selected commodity</small><b>${esc(label(this.commodity))}</b></span></div>` +
-      `<div class="deck-form-grid"><label>Quantity<input id="deck-market-quantity" data-market-input="trade-quantity" type="number" min="1" step="1" value="${this.quantity}"></label><label class="deck-check"><input data-market-input="trade-limit-on" type="checkbox" ${this.limitOn ? "checked" : ""}> Limit order</label><label>Limit price<input data-market-input="trade-limit" type="number" min="0" step="0.1" value="${this.limitPrice || ""}" placeholder="market" ${this.limitOn ? "" : "disabled"}></label></div>` +
-      `<div class="deck-ticket-quote">${average === null ? "Waiting for a light-delayed quote." : `Estimated average ${average.toFixed(2)} Cr/u · quantity impact included · protection ±${Math.round(MARKET_PROTECTION_FRAC * 100)}%`}</div>` +
+      `${commodityPurpose(this.commodity, this.ctx.state.galaxy?.build_options ?? []) ? `<small>${esc(commodityPurpose(this.commodity, this.ctx.state.galaxy?.build_options ?? []))}</small>` : ""}` +
+      `<div class="deck-form-grid"><label>Quantity<input id="deck-market-quantity" data-market-input="trade-quantity" type="number" min="1" step="1" value="${this.quantity}"></label><label class="deck-check"><input data-market-input="trade-limit-on" type="checkbox" ${this.limitOn ? "checked" : ""}> Limit order</label>${this.limitOn ? `<label>Limit price<input data-market-input="trade-limit" type="number" min="0" step="0.1" value="${this.limitPrice || ""}"></label>` : ""}</div>` +
+      `<div class="deck-ticket-quote">${average === null ? "Waiting for a delayed quote." : `Est. ${average.toFixed(2)} Cr/u · protection ±${Math.round(MARKET_PROTECTION_FRAC * 100)}%`}</div>` +
       `${warnings.length ? `<div class="deck-ticket-warnings">${warnings.map((warning) => `<span>${esc(warning)}</span>`).join("")}</div>` : ""}` +
       `<button type="button" class="is-primary" data-deck-act="market-submit" ${canSubmit ? "" : "disabled"}>${esc(button)}</button>` +
-      `<small class="deck-muted">Limit orders clear in periodic uniform-price batches; reacting fastest confers no edge.</small></section>`;
+      `<small class="deck-muted">${this.limitOn ? "Limit orders fill in batches. " : ""}Receipts arrive after the information delay.</small></section>`;
   }
 
   private ordersHtml(): string {
     pruneMarketReservations();
-    const open = this.ctx.state.wallet?.orders ?? [];
+    const account = this.accountReport();
+    const open = account?.orders ?? [];
     const openRows = open.map((order) => `<div class="deck-order-row"><span><b>${esc(label(order.side))} ${order.units} ${esc(label(order.commodity))}</b><small>resting @ ${order.limit_price.toFixed(2)}</small></span><button type="button" data-deck-act="market-cancel" data-order="${order.id}">Cancel</button></div>`).join("");
     const incoming = marketReservations.map((order) => `<div class="deck-order-row"><span>${icon("inTransit", "sm")}<span><b>${esc(label(order.side))} ${order.orderUnits} ${esc(label(order.commodity))}${order.limitPrice === undefined ? "" : ` @ ${order.limitPrice.toFixed(2)}`}</b><small>sent · awaiting Market Hub</small></span></span></div>`).join("");
     const recent = recentMarketOrders.map((order) => `<div class="deck-order-row"><span>${icon("confirmed", "sm")}<span><b>${order.side === "buy" ? "Bought" : "Sold"} ${order.units} ${esc(label(order.commodity))} @ ${order.unitPrice.toFixed(2)}</b><small>${order.limitFill ? "limit fill · " : ""}${esc(agoLabel(order.observedAt))}</small></span></span></div>`).join("");
-    return `<section class="deck-section"><header><div><h3>Open orders</h3><p>The arrived resting book.</p></div><b>${open.length}</b></header>${openRows || `<div class="deck-empty-inline">No resting limit orders.</div>`}</section>` +
-      `<section class="deck-section"><header><div><h3>Incoming orders</h3><p>Commands sent; no execution receipt has reached command.</p></div><b>${marketReservations.length}</b></header>${incoming || `<div class="deck-empty-inline">No orders in flight.</div>`}</section>` +
-      `<section class="deck-section"><header><div><h3>Recent orders</h3><p>Observed executions only.</p></div><b>${recentMarketOrders.length}</b></header>${recent || `<div class="deck-empty-inline">No execution receipts yet.</div>`}</section>`;
+    return `<section class="deck-section"><header><h3>Open orders</h3><b>${account ? open.length : "—"}</b></header>${openRows || `<div class="deck-empty-inline">${account ? "No resting limit orders." : "Awaiting account report."}</div>`}</section>` +
+      `<section class="deck-section"><header><h3>Incoming orders</h3><b>${marketReservations.length}</b></header>${incoming || `<div class="deck-empty-inline">No orders in flight.</div>`}</section>` +
+      `<section class="deck-section"><header><h3>Recent orders</h3><b>${recentMarketOrders.length}</b></header>${recent || `<div class="deck-empty-inline">No execution receipts yet.</div>`}</section>`;
   }
 
   private warehouseHtml(): string {
-    const holdings = COMMODITIES.map((commodity) => ({ commodity, units: warehouseUnits(commodity) })).filter((row) => row.units > 0);
+    const account = this.accountReport();
+    const holdings = account ? COMMODITIES.map((commodity) => ({ commodity, units: warehouseUnits(commodity) })).filter((row) => row.units > 0) : [];
     const ledger = holdings.map((row) => `<span>${commodityIcon(row.commodity)}<small>${esc(label(row.commodity))}</small><b>${row.units}</b></span>`).join("");
     const berths = hubDockedFleets().map((fleet) => {
       const manifest = fleetCargoManifest(fleet);
@@ -301,14 +326,15 @@ export class DeckMarketRoutes {
       return `<article class="deck-berth"><button type="button" data-deck-act="market-hub-fleet" data-fleet="${esc(fleet.id)}">${icon("manifest", "md")}<span><b>${esc(shipKindLabel(fleet.kind))} fleet</b><small>${esc(count)} · ${esc(cargo)}</small></span><em>›</em></button>${manifest.length ? `<button type="button" data-deck-act="market-hub-unload" data-fleet="${esc(fleet.id)}" ${unloadQueued ? "disabled" : ""}>${icon("unload", "sm")} ${unloadQueued ? "Unload queued" : "Unload all"}</button>` : ""}</article>`;
     }).join("");
     const shipments = (this.ctx.state.freight?.shipments ?? []).map((shipment) => `<div class="deck-order-row"><span>${icon("authorityFreighter", "sm")}<span><b>${shipment.units} ${esc(label(shipment.commodity))} ${shipment.direction === "outbound" ? "→" : "←"} ${esc(systemName(shipment.system))}</b><small>${shipment.aboard ? "aboard" : "awaiting departure"}${shipment.direction === "inbound" && shipment.sell_on_arrival ? " · sells on arrival" : ""}</small></span></span></div>`).join("");
-    return `<section class="deck-section deck-market-hub"><img src="/art/wormhole_hub_concept.png" alt=""/><div><h3>Authority market station</h3><p>The wormhole terminus to Sol. Exchange trades settle against your private warehouse here.</p><p>Move goods through scheduled Authority freight or command an owned Freighter from its fleet route.</p></div></section>` +
-      `<section class="deck-section"><header><div><h3>Market Warehouse</h3><p>The only inventory Exchange orders can buy into or sell from.</p></div><b>${holdings.reduce((sum, row) => sum + row.units, 0)}</b></header><div class="deck-ledger">${ledger || `<span><small>Warehouse</small><b>empty</b></span>`}</div></section>` +
-      `<section class="deck-section"><header><div><h3>Market Hub berths</h3><p>Served reports for owned fleets docked at the Authority station.</p></div><b>${hubDockedFleets().length}</b></header><div class="deck-berth-list">${berths || `<div class="deck-empty-inline">No fleets reported berthed at the Market Hub.</div>`}</div></section>` +
-      this.freightHtml() +
-      `<section class="deck-section"><header><div><h3>Shipments in hand</h3><p>Booked lots waiting for a departure or already aboard.</p></div><b>${this.ctx.state.freight?.shipments.length ?? 0}</b></header>${shipments || `<div class="deck-empty-inline">No freight booked.</div>`}</section>`;
+    return `<section class="deck-section deck-market-hub"><img src="/art/wormhole_hub_concept.png" alt=""/><div><h3>Authority market station</h3><p>Your goods and docked fleets at the wormhole terminus.</p></div></section>` +
+      `<div class="deck-market-warehouse"><div class="deck-market-column"><section class="deck-section"><header><h3>Market Warehouse</h3><b>${account ? holdings.reduce((sum, row) => sum + row.units, 0) : "—"}</b></header><div class="deck-ledger">${ledger || (account ? `<span><small>Warehouse</small><b>empty</b></span>` : `<span>Awaiting account report.</span>`)}</div></section>` +
+      `<section class="deck-section"><header><h3>Shipments</h3><b>${this.ctx.state.freight?.shipments.length ?? 0}</b></header>${shipments || `<div class="deck-empty-inline">No freight booked.</div>`}</section></div>` +
+      `<div class="deck-market-column"><section class="deck-section"><header><h3>Docked fleets</h3><b>${hubDockedFleets().length}</b></header><div class="deck-berth-list">${berths || `<div class="deck-empty-inline">No fleets reported docked.</div>`}</div></section>` +
+      `${this.freightHtml()}</div></div>`;
   }
 
   private freightHtml(): string {
+    if (!this.accountReport()) return emptyState("Book Authority freight", "Awaiting account report.");
     const freight = this.ctx.state.freight;
     if (!freight) return emptyState("Freight desk unavailable", "Waiting for the Authority timetable.");
     const terms = freight.terms;
@@ -348,21 +374,22 @@ export class DeckMarketRoutes {
 
   private specialistsHtml(): string {
     const cost = this.ctx.state.galaxy?.specialist_hire_cost ?? 800;
-    const home = this.homeSystemId();
+    const home = this.accountReport() ? this.homeSystemId() : undefined;
     const rows = SPECIALISTS.map((specialist) => `<article class="deck-service-row"><span>${icon(specialist.icon, "md")}<span><b>${esc(label(specialist.slug))}</b><small>${esc(specialist.blurb)}</small></span></span><button type="button" data-deck-act="market-hire" data-specialist="${specialist.slug}" ${home && spendableMarketCredits() >= cost ? "" : "disabled"}>Hire · ${fmt(cost)} Cr</button></article>`).join("");
-    return `<section class="deck-section"><header><div><h3>Available specialists</h3><p>Standing Sol contracts ship to your home on a sub-light, raidable personnel liner.</p></div></header><div class="deck-service-list">${rows}</div><div class="deck-ticket-quote">A posted specialist multiplies matching production lines ×1.75.</div></section>`;
+    return `<section class="deck-section"><header><div><h3>Available specialists</h3><p>Standing Sol contracts ship to your home on a sub-light, raidable personnel liner.</p></div></header><div class="deck-service-list deck-market-services">${rows}</div><div class="deck-ticket-quote">A posted specialist multiplies matching production lines ×1.75.</div></section>`;
   }
 
   private modulesHtml(): string {
+    const account = this.accountReport();
     const home = this.homeSystem();
     const held = home?.modules ?? {};
     const rows = MODULES.map((module) => {
       const value = moduleRecipeValue(module.kind);
-      const buy = value === null ? null : value * MODULE_BUY_MULT;
+      const buy = value === null || isBlueprintOnly(module.kind) ? null : value * MODULE_BUY_MULT;
       const sell = value === null ? null : value * MODULE_SELL_MULT;
-      return `<article class="deck-service-row"><span>${icon(module.icon, "md")}<span><b>${esc(module.name)}</b><small>${esc(module.role)} · held ${held[module.kind] ?? 0}</small></span></span><div><button type="button" data-deck-act="market-module-buy" data-module="${module.kind}" ${home && buy !== null && spendableMarketCredits() >= buy ? "" : "disabled"}>Buy ${buy === null ? "—" : `~${fmt(buy)} Cr`}</button><button type="button" data-deck-act="market-module-sell" data-module="${module.kind}" ${(held[module.kind] ?? 0) > 0 ? "" : "disabled"}>Sell ${sell === null ? "—" : `~${fmt(sell)} Cr`}</button></div></article>`;
+      return `<article class="deck-service-row"><span>${icon(module.icon, "md")}<span><b>${esc(module.name)}</b><small>${esc(module.role)} · held ${held[module.kind] ?? 0}</small></span></span><div><button type="button" data-deck-act="market-module-buy" data-module="${module.kind}" ${account && home && buy !== null && spendableMarketCredits() >= buy ? "" : "disabled"}>${isBlueprintOnly(module.kind) ? "Blueprint only" : `Buy ${buy === null ? "—" : `~${fmt(buy)} Cr`}`}</button><button type="button" data-deck-act="market-module-sell" data-module="${module.kind}" ${account && (held[module.kind] ?? 0) > 0 ? "" : "disabled"}>Sell ${sell === null ? "—" : `~${fmt(sell)} Cr`}</button></div></article>`;
     }).join("");
-    return `<section class="deck-section"><header><div><h3>Combat modules</h3><p>Sol modules ship as physical crates. Local manufacture at an Armaments Complex remains cheaper.</p></div></header><div class="deck-service-list">${rows}</div></section>`;
+    return `<section class="deck-section"><header><div><h3>Combat modules</h3><p>Sol modules ship as physical crates. Local manufacture at an Armaments Complex remains cheaper.</p></div></header><div class="deck-service-list deck-market-services">${rows}</div></section>`;
   }
 
   private submitTrade(): void {
@@ -378,7 +405,7 @@ export class DeckMarketRoutes {
         limitPrice: this.limitPrice,
       });
     } else {
-      const average = marketAverageQuote(quote.price, quantity, this.side);
+      const average = marketAverageQuote(quote.price, quantity, this.side, quote.depth);
       const protection = average * (this.side === "buy" ? 1 + MARKET_PROTECTION_FRAC : 1 - MARKET_PROTECTION_FRAC);
       this.ctx.send(this.side === "buy"
         ? { type: "MarketBuy", commodity: this.commodity, units: quantity, max_unit_price: protection }
@@ -421,6 +448,7 @@ export class DeckMarketRoutes {
     const module = MODULES.find((entry) => entry.kind === value);
     const home = this.homeSystemId();
     if (!module || !home) return;
+    if (buy && isBlueprintOnly(module.kind)) return;
     this.ctx.send(buy
       ? { type: "BuyModule", module: module.kind, n: 1, dest_system: home }
       : { type: "SellModule", module: module.kind, n: 1, from_system: home });
@@ -578,7 +606,7 @@ export function deckTradeNotice(trade: TradeEvent): DeckTradeNotice {
 }
 
 function isMarketTab(value?: string): value is DeckMarketTab {
-  return value === "exchange" || value === "warehouse" || value === "specialists" || value === "modules";
+  return value === "exchange" || value === "warehouse" || value === "specialists" || value === "modules" || value === "transactions";
 }
 
 function isCommodity(value?: string): value is Commodity {

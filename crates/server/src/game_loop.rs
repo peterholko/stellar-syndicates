@@ -19,6 +19,7 @@ use tracing::{debug, info};
 
 use sim::{Command, DT, PlayerId, TICK_HZ, World};
 
+mod bots;
 mod durability;
 pub(crate) use durability::{GalaxyCheckpoint, run};
 use crate::protocol::{
@@ -29,6 +30,7 @@ use crate::protocol::{
 use crate::reports::ReportScheduler;
 use crate::session::{ConnId, ConnInfo, GameInput, ServerStatus, Sessions};
 use crate::timeline::Timeline;
+use crate::transactions::{PendingTransaction, TransactionDetails, TransactionHistory};
 use crate::view::{self, PositionHistory, PriceHistory};
 
 /// Push a per-player message every N sim ticks. At 30 Hz, N=3 → ~10 Hz network
@@ -295,7 +297,10 @@ impl MarketAccountHistory {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct ScheduledTradeReport {
     arrives_at: f64,
-    trade: sim::TradeEvent,
+    #[serde(default)]
+    trade: Option<sim::TradeEvent>,
+    #[serde(default)]
+    transaction: Option<PendingTransaction>,
 }
 
 /// Where the fact represented by an economy receipt physically occurred. Most
@@ -330,6 +335,8 @@ struct ReportingCheckpoint {
     prices: PriceHistory,
     market_accounts: MarketAccountHistory,
     trade_reports: Vec<ScheduledTradeReport>,
+    #[serde(default)]
+    transactions: TransactionHistory,
     reports: ReportScheduler,
     timeline: Timeline,
     concluded_battles: Vec<ConcludedBattle>,
@@ -338,6 +345,7 @@ struct ReportingCheckpoint {
 
 struct GameLoop {
     world: World,
+    bots: BTreeMap<PlayerId, bots::Bot>,
     /// UI-history namespace, outside deterministic simulation state. A fresh
     /// game (even with the same seed) cannot inherit another game's dismissals.
     galaxy_instance_id: String,
@@ -354,13 +362,14 @@ struct GameLoop {
     /// Owner-facing economy receipts travel from the physical event site rather
     /// than being pushed straight from simulation truth.
     trade_reports: Vec<ScheduledTradeReport>,
+    transactions: TransactionHistory,
     /// Delayed delivery of discrete reports (raid outcomes) — each player learns
     /// them on their own clock (§8).
     reports: ReportScheduler,
     /// Per-player retained check-in timeline (§16, Layer 3) — what became
     /// observable, buffered across disconnects, for the "welcome back" digest.
     timeline: Timeline,
-    /// Last timeline length pushed to each player, so we only re-send when it grows.
+    /// Last journal revision sent; the retained length eventually stops growing.
     timeline_sent: HashMap<PlayerId, usize>,
     /// Battles that have concluded but whose conclusion light is still in flight
     /// to some viewer — kept so the in-progress icon lingers until the aftermath
@@ -399,6 +408,7 @@ impl GameLoop {
             "history": &self.history, "prices": &self.prices,
             "market_accounts": &self.market_accounts,
             "trade_reports": &self.trade_reports, "reports": &self.reports,
+            "transactions": &self.transactions,
             "timeline": &self.timeline, "concluded_battles": &self.concluded_battles,
             "observed_order_plans": self.observed_order_plans.iter()
                 .map(|((player, id), plan)| (player, id, plan)).collect::<Vec<_>>(),
@@ -433,11 +443,13 @@ impl GameLoop {
                 .filter(|id| !id.is_empty()).cloned()
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             world,
+            bots: BTreeMap::new(),
             sessions: Sessions::new(),
             history,
             prices,
             market_accounts,
             trade_reports: Vec::new(),
+            transactions: TransactionHistory::default(),
             reports: ReportScheduler::new(),
             timeline: Timeline::new(),
             timeline_sent: HashMap::new(),
@@ -455,12 +467,14 @@ impl GameLoop {
             game.prices = saved.prices;
             game.market_accounts = saved.market_accounts;
             game.trade_reports = saved.trade_reports;
+            game.transactions = saved.transactions;
             game.reports = saved.reports;
             game.timeline = saved.timeline;
             game.concluded_battles = saved.concluded_battles;
             game.observed_order_plans = saved.observed_order_plans.into_iter()
                 .map(|(player, id, plan)| ((player, id), plan)).collect();
         }
+        game.transactions.initialize(&game.world, &game.timeline);
         game
     }
 
@@ -576,6 +590,10 @@ impl GameLoop {
         let _ = self.status_tx.send(ServerStatus {
             online_players: self.sessions.online_player_count(),
             connections: self.sessions.connection_count(),
+            bot_players: self.bots.len(),
+            bot_commands: self.bots.values().map(|bot| bot.commands_sent).sum(),
+            corporations: self.world.players.len(),
+            galaxy_systems: self.world.systems.len(),
             tick: self.world.tick,
             sim_time: self.world.time,
         });
@@ -583,17 +601,19 @@ impl GameLoop {
 
     fn schedule_trade_reports(&mut self, events: &[sim::Event]) {
         for event in events {
-            let sim::EventPayload::Trade(trade) = &event.payload else {
+            let Some(transaction) = PendingTransaction::from_event(event) else {
                 continue;
             };
-            let Some(corp) = self.world.players.get(&trade.player()) else {
+            let Some(corp) = self.world.players.get(&transaction.owner) else {
                 continue;
             };
-            let origin = event.origin.unwrap_or_else(|| trade_report_origin(&self.world, trade));
+            let origin = event.origin.or_else(|| event.physical_origin(&self.world))
+                .expect("market transaction has a physical origin");
             let delay = sim::transit::delay(origin, corp.command_center, self.world.config.c);
             self.trade_reports.push(ScheduledTradeReport {
                 arrives_at: event.time + delay,
-                trade: *trade,
+                trade: match event.payload { sim::EventPayload::Trade(trade) => Some(trade), _ => None },
+                transaction: Some(transaction),
             });
         }
     }
@@ -603,12 +623,20 @@ impl GameLoop {
         let mut waiting = Vec::with_capacity(self.trade_reports.len());
         for report in self.trade_reports.drain(..) {
             if report.arrives_at <= now + 1e-9 {
-                self.sessions.send_to_player(
-                    report.trade.player(),
-                    ServerMsg::Trade {
-                        trade: report.trade,
-                    },
-                );
+                // One wavefront: append even while offline, but ONLY when the
+                // original receipt arrives. History queries never price truth.
+                // Legacy pending receipts did not retain their emission time.
+                let details = report.transaction.map(|entry|
+                    (entry.owner, Some(entry.occurred_at), entry.details))
+                    .or_else(|| report.trade.map(|trade|
+                        (trade.player(), None, TransactionDetails::Trade { trade })));
+                if let Some((owner, occurred_at, details)) = details {
+                    let entry = self.transactions.record(owner, occurred_at, report.arrives_at, details);
+                    self.sessions.send_to_player(owner, ServerMsg::TransactionRecorded { player_id: owner, entry });
+                }
+                if let Some(trade) = report.trade {
+                    self.sessions.send_to_player(trade.player(), ServerMsg::Trade { trade });
+                }
             } else {
                 waiting.push(report);
             }
@@ -722,6 +750,7 @@ impl GameLoop {
                             systems: system_infos(&self.world),
                             // What can be built + each recipe's cost/time (§step1).
                             build_options: build_options(),
+                            industry_catalog: sim::industry::catalog(),
                         },
                         // §perf Part B: the two static tables that used to ride
                         // every 10 Hz View — sent once here instead.
@@ -733,7 +762,7 @@ impl GameLoop {
                 // away (§16, Layer 3). `away_since` is their last-online time, so the
                 // client can mark entries newer than it as "while you were away".
                 let (entries, away_since) = self.timeline.digest(player_id);
-                self.timeline_sent.insert(player_id, entries.len());
+                self.timeline_sent.insert(player_id, self.timeline.revision(player_id));
                 self.sessions.send_to_conn(
                     conn_id,
                     ServerMsg::Timeline {
@@ -779,6 +808,17 @@ impl GameLoop {
             } {
                 ClientMsg::Ping => {
                     debug!(conn_id, "ping");
+                }
+                ClientMsg::RequestTransactions { before, request_id } => {
+                    // Reading the CC's already-received records is local, not a
+                    // new hub order. Page size is bounded; no per-View history.
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        let (entries, next_before) = self.transactions.page(player_id, before);
+                        self.sessions.send_to_conn(conn_id, ServerMsg::Transactions {
+                            player_id, request_id, before, entries, next_before,
+                            since: self.transactions.since(),
+                        });
+                    }
                 }
                 ClientMsg::MoveShip { ship_id, dest } => {
                     // Attach the issuing player (the sim enforces ownership).
@@ -856,6 +896,11 @@ impl GameLoop {
                         });
                     }
                 }
+                ClientMsg::RefuelFleet { fleet_id, target_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::RefuelFleet { player_id, fleet_id, target_id });
+                    }
+                }
                 ClientMsg::BlockadeSystem {
                     fleet_id,
                     system_id,
@@ -867,6 +912,21 @@ impl GameLoop {
                             fleet_id,
                             system_id,
                         });
+                    }
+                }
+                ClientMsg::DefendSystem { fleet_id, system_id, pursuit_radius } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::DefendSystem { player_id, fleet_id, system_id, pursuit_radius });
+                    }
+                }
+                ClientMsg::ExploreSite { fleet_id, site_id, task } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::ExploreSite { player_id, fleet_id, site_id, task });
+                    }
+                }
+                ClientMsg::AnnotateExploration { entry } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::AnnotateExploration { player_id, entry });
                     }
                 }
                 ClientMsg::SurveySystem {
@@ -894,6 +954,29 @@ impl GameLoop {
                             target_id,
                         });
                     }
+                }
+                ClientMsg::SetFleetMission { fleet_id, mission } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetFleetMission { player_id, fleet_id, mission });
+                    }
+                }
+                ClientMsg::SetFreightRoute { fleet_id, route } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) { self.pending.push(Command::SetFreightRoute { player_id, fleet_id, route }); }
+                }
+                ClientMsg::DeployOutpost { fleet_id, system_id, body_id, outpost, commodity } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) { self.pending.push(Command::DeployOutpost { player_id, fleet_id, system_id, body_id, outpost, commodity }); }
+                }
+                ClientMsg::SkimFuel { fleet_id, system_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) { self.pending.push(Command::SkimFuel { player_id, fleet_id, system_id }); }
+                }
+                ClientMsg::ReserveProject { system_id, target, reserve } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) { self.pending.push(Command::ReserveProject { player_id, system_id, target, reserve }); }
+                }
+                ClientMsg::StartColonyProject { system_id, body_id, project, commodity } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) { self.pending.push(Command::StartColonyProject { player_id, system_id, body_id, project, commodity }); }
+                }
+                ClientMsg::SetColonyProjectActive { system_id, project, active } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) { self.pending.push(Command::SetColonyProjectActive { player_id, system_id, project, active }); }
                 }
                 ClientMsg::SetFleetPosture { fleet_id, posture } => {
                     // Fleet-local policy is delivered through the ordinary order queue.
@@ -1452,6 +1535,7 @@ impl GameLoop {
                     workers,
                     specialists,
                     body_id,
+                    refining_ore,
                 } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::SetAssignment {
@@ -1461,6 +1545,7 @@ impl GameLoop {
                             workers,
                             specialists,
                             body_id,
+                            refining_ore,
                         });
                     }
                 }
@@ -1731,6 +1816,7 @@ impl GameLoop {
             }
         }
 
+        self.think_bots();
         if self.world.tick.is_multiple_of(self.broadcast_every) {
             self.broadcast();
             self.publish_status();
@@ -1992,6 +2078,8 @@ impl GameLoop {
                     reports_sig,
                     captures: capture_reports,
                     captures_sig,
+                    exploration_journal: self.world.exploration.journal_for(player_id),
+                    exploration_journal_version: self.world.exploration.journal_version_for(player_id),
                 },
             );
             let anchors = view::filter_anchors(&self.world.home_slots, player_id, cc, c, now);
@@ -2028,6 +2116,11 @@ impl GameLoop {
             // known) owner is a syndicate member as THIS viewer knows it. Composes
             // both light-gates; grants no owner-only data (Part 1 is tint only).
             for sv in systems.iter_mut() {
+                if sv.owner == Some(player_id)
+                    && let Some(report) = self.world.information.site(sv.id, cc, c, now)
+                {
+                    view::apply_production_report(sv, report);
+                }
                 sv.ally = sv
                     .owner
                     .is_some_and(known_ally);
@@ -2330,6 +2423,7 @@ impl GameLoop {
                             price: *price,
                             available_buy: m.available_buy.get(commodity).copied().unwrap_or(0),
                             available_sell: m.available_sell.get(commodity).copied().unwrap_or(0),
+                            depth: sim::market::liquidity(*commodity).depth,
                         })
                         .collect()
                 })
@@ -2527,6 +2621,7 @@ impl GameLoop {
                     syndicate,
                     syndicate_invites,
                     operations,
+                    exploration_sites: self.world.exploration.reports_for(player_id),
                     midgame_stage: corp.midgame_stage,
                     diplomacy,
                     research,
@@ -2546,7 +2641,7 @@ impl GameLoop {
             // check-in timeline gained entries since we last pushed (e.g. an
             // auto-dispatch or a battle whose light just arrived), re-send the digest.
             self.timeline.mark_seen(player_id, now);
-            let jlen = self.timeline.journal_len(player_id);
+            let jlen = self.timeline.revision(player_id);
             if self.timeline_sent.get(&player_id).copied().unwrap_or(0) != jlen {
                 self.timeline_sent.insert(player_id, jlen);
                 let (entries, away_since) = self.timeline.digest(player_id);
@@ -2600,7 +2695,7 @@ impl GameLoop {
             self.timeline.ingest(&confirmation_events, &self.world);
             self.timeline.promote(now);
             for owner in confirmed_by_owner.keys().copied() {
-                let jlen = self.timeline.journal_len(owner);
+                let jlen = self.timeline.revision(owner);
                 if self.timeline_sent.get(&owner).copied().unwrap_or(0) != jlen {
                     self.timeline_sent.insert(owner, jlen);
                     let (entries, away_since) = self.timeline.digest(owner);
@@ -2660,6 +2755,8 @@ struct SectionData {
     reports_sig: u64,
     captures: Vec<crate::protocol::CaptureReportView>,
     captures_sig: u64,
+    exploration_journal: Vec<sim::sites::JournalEntry>,
+    exploration_journal_version: u64,
 }
 
 /// §perf Part B: a cheap content signature — the serialized JSON hashed. Used on
@@ -2687,7 +2784,8 @@ fn send_sections(
     let send_reports = sent.reports_sig != Some(sec.reports_sig);
     let send_captures = sent.captures_sig != Some(sec.captures_sig);
     let send_ranks = sent.rankings_sig != Some(rankings_sig);
-    if !(send_standing || send_reports || send_captures || send_ranks) {
+    let send_journal = sent.exploration_journal_version != Some(sec.exploration_journal_version);
+    if !(send_standing || send_reports || send_captures || send_ranks || send_journal) {
         return;
     }
     let msg = ServerMsg::Sections {
@@ -2695,6 +2793,7 @@ fn send_sections(
         battle_reports: send_reports.then(|| sec.reports.clone()),
         capture_reports: send_captures.then(|| sec.captures.clone()),
         rankings: send_ranks.then(|| rankings.to_vec()),
+        exploration_journal: send_journal.then(|| sec.exploration_journal.clone()),
     };
     if info.outbound.try_send(msg).is_ok() {
         if send_standing {
@@ -2708,6 +2807,9 @@ fn send_sections(
         }
         if send_ranks {
             info.sent.rankings_sig = Some(rankings_sig);
+        }
+        if send_journal {
+            info.sent.exploration_journal_version = Some(sec.exploration_journal_version);
         }
     }
 }
@@ -2917,9 +3019,14 @@ fn build_options() -> Vec<BuildOptionView> {
     // Structures come from `StructureKind::ALL`, so a new one appears here for
     // free — a new SHIP does not, and has to be listed below.
     let ships = [
+        ("tiny_freighter", "Tiny Freighter", BuildKind::Ship { ship: ShipKind::TinyFreighter }),
+        ("small_freighter", "Small Freighter", BuildKind::Ship { ship: ShipKind::SmallFreighter }),
+        ("large_freighter", "Large Freighter", BuildKind::Ship { ship: ShipKind::LargeFreighter }),
+        ("heavy_freighter", "Heavy Freighter", BuildKind::Ship { ship: ShipKind::HeavyFreighter }),
+        ("bulk_freighter", "Bulk Freighter", BuildKind::Ship { ship: ShipKind::BulkFreighter }),
         (
             "convoy",
-            "Freighter",
+            "Medium Freighter",
             BuildKind::Ship {
                 ship: ShipKind::Convoy,
             },
@@ -3010,7 +3117,7 @@ fn build_options() -> Vec<BuildOptionView> {
         // §ground: the troopship. Gated by a Garrison rather than a yard, but it
         // is an ordinary ship job otherwise.
     ];
-    // §modules Part B3: the 5 modules, keyed `module:<slug>` so the client routes
+    // Equipment catalog, keyed `module:<slug>` so the client routes
     // them to BuildModule (not BuildShip/DevelopSystem) while reusing the same
     // recipe-cost channel. They hold no slot and gate on an Armaments Complex.
     let modules = sim::module::MODULE_KINDS.map(|m| {
@@ -3045,6 +3152,26 @@ fn build_options() -> Vec<BuildOptionView> {
                     })
                     .collect(),
                 build_secs: r.build_ticks as f64 / TICK_HZ as f64,
+                research_prerequisite: match what {
+                    BuildKind::Upgrade { upgrade } => upgrade.research_prerequisite(),
+                    _ => None,
+                },
+                conversion: match what {
+                    BuildKind::Upgrade { upgrade } => sim::production::CONVERTERS.iter()
+                        .find(|converter| converter.structure == upgrade)
+                        .map(|converter| crate::protocol::ConversionRecipeView {
+                            output: converter.output,
+                            rate: converter.rate,
+                            inputs: converter.inputs.to_vec(),
+                            byproducts: converter.byproducts().to_vec(),
+                        }),
+                    _ => None,
+                },
+                refining_recipes: if matches!(what, BuildKind::Upgrade { upgrade: sim::build::StructureKind::Smelter }) {
+                    sim::production::ORE_REFINING.iter().map(|r| crate::protocol::ConversionRecipeView {
+                        output: r.output, rate: r.rate, inputs: r.inputs.to_vec(), byproducts: r.byproducts().to_vec(),
+                    }).collect()
+                } else { Vec::new() },
             }
         })
         .collect()
@@ -3095,13 +3222,20 @@ fn research_catalog() -> Vec<crate::protocol::ProgrammeInfo> {
     sim::research::visible_ids()
         .filter_map(|id| {
             let p = sim::research::programme(id)?;
+            // Derive the research reward copy from the same gate sent to the
+            // builder. No second handwritten list of unlocks can drift from it.
+            let structures = sim::build::StructureKind::ALL.into_iter()
+                .filter(|kind| kind.research_prerequisite() == Some(id))
+                .map(|kind| kind.title())
+                .collect::<Vec<_>>();
             Some(crate::protocol::ProgrammeInfo {
                 id: id.to_string(),
                 field: p.field.slug().to_string(),
                 school: p.school.map(|s| s.slug().to_string()),
                 tier: p.tier,
                 name: p.name.to_string(),
-                blurb: p.blurb.to_string(),
+                blurb: if structures.is_empty() { p.blurb.to_string() }
+                    else { format!("Unlocks {}. {}", structures.join(", "), p.blurb) },
                 cost: sim::research::cost_of(id),
             })
         })
@@ -3180,11 +3314,13 @@ fn research_view(world: &sim::World, owner: sim::PlayerId) -> crate::protocol::R
                 id: id.to_string(),
                 state: state.to_string(),
                 gate,
+                recovered_data: rs.recovered_data.get(id).copied(),
             })
         })
         .collect();
 
     ResearchView {
+        blueprints: rs.blueprints.iter().copied().collect(),
         active,
         queue: rs.queue.clone(),
         rate,
@@ -3263,10 +3399,179 @@ mod tests {
     use super::*;
     use sim::Vec2;
 
+    #[test]
+    fn every_freighter_quote_uses_its_authoritative_construction_manifest() {
+        let options = build_options();
+        for (kind, key) in sim::ship::PLAYER_FREIGHTERS.into_iter().zip([
+            "tiny_freighter", "small_freighter", "convoy", "large_freighter",
+            "heavy_freighter", "bulk_freighter",
+        ]) {
+            let option = options.iter().find(|o| o.key == key).unwrap();
+            let recipe = sim::build::recipe_for(sim::build::BuildKind::Ship { ship: kind });
+            let served: Vec<_> = option.costs.iter()
+                .map(|slot| (slot.commodity, slot.units as f64)).collect();
+            assert_eq!(served, recipe.costs, "{key}: menus and reserved projects price the sim recipe");
+            assert_eq!(option.build_secs, recipe.build_ticks as f64 / sim::config::TICK_HZ as f64);
+        }
+    }
+
+    #[test]
+    fn ore_recipes_are_served_from_the_sim_catalog_with_secondary_yields() {
+        let options = build_options();
+        let smelter = options.iter().find(|o| o.key == "smelter").unwrap();
+        assert_eq!(smelter.refining_recipes.len(), 5);
+        assert_eq!(smelter.research_prerequisite, Some("mat_enrichment"));
+        for (served, recipe) in smelter.refining_recipes.iter().zip(sim::production::ORE_REFINING) {
+            assert_eq!(served.inputs, recipe.inputs);
+            assert_eq!(served.byproducts, recipe.byproducts());
+            assert_eq!((served.output,served.rate),(recipe.output,recipe.rate));
+        }
+        assert!(options.iter().filter(|o| o.key != "smelter").all(|o| o.refining_recipes.is_empty()));
+    }
+
+    #[test]
+    fn discovery_notes_retry_on_backpressure_and_only_resend_on_edit_or_reconnect() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let (view_tx, _) = watch::channel(None);
+        let (replace_tx, _) = watch::channel(false);
+        let mut conn = ConnInfo { player_id: PlayerId(80), name: "Journal".into(), outbound: tx,
+            view_tx, replace_tx, view_divisor: 1, last_view_broadcast: None, sent: Default::default() };
+        let mut section = SectionData { standing: vec![], standing_sig: 0, reports: vec![], reports_sig: 0,
+            captures: vec![], captures_sig: 0, exploration_journal_version: 1,
+            exploration_journal: vec![sim::sites::JournalEntry { id: sim::EntityId(42),
+                kind: sim::sites::JournalKind::Site, pinned: true, note: "Return with escorts".into() }] };
+        conn.outbound.try_send(ServerMsg::Error { message: "occupy queue".into() }).unwrap();
+        send_sections(&section, 0, &[], &mut conn);
+        assert!(conn.sent.exploration_journal_version.is_none(), "failed enqueue must retry");
+        rx.try_recv().unwrap();
+        send_sections(&section, 0, &[], &mut conn);
+        assert!(matches!(rx.try_recv().unwrap(), ServerMsg::Sections { exploration_journal: Some(j), .. } if j == section.exploration_journal));
+        send_sections(&section, 0, &[], &mut conn);
+        assert!(rx.try_recv().is_err(), "never retransmit notes at 10 Hz");
+        conn.sent = Default::default();
+        send_sections(&section, 0, &[], &mut conn);
+        assert!(matches!(rx.try_recv().unwrap(), ServerMsg::Sections { exploration_journal: Some(j), .. } if j.len() == 1));
+        section.exploration_journal.clear(); section.exploration_journal_version += 1;
+        send_sections(&section, 0, &[], &mut conn);
+        assert!(matches!(rx.try_recv().unwrap(), ServerMsg::Sections { exploration_journal: Some(j), standing_orders: None, .. } if j.is_empty()),
+            "clearing the journal sends an empty section, not an absent one");
+    }
+
     fn reporting_game(world: World) -> GameLoop {
         let (status, _) = watch::channel(ServerStatus::default());
         let (estimate, _) = mpsc::unbounded_channel();
         GameLoop::new(world, 1.0, status, estimate)
+    }
+
+    #[tokio::test]
+    async fn market_history_waits_for_light_and_survives_offline_restart() {
+        let owner = PlayerId(801);
+        let mut world = World::new(sim::SimConfig::for_players(801, 2));
+        world.step(&[Command::AddPlayer { id: owner, name: "Ledger".into() }]);
+        let start = world.time;
+        let arrival = start + sim::transit::delay(world.hub, world.players[&owner].command_center, world.config.c);
+        assert!(arrival > start + 1.0);
+        let mut game = reporting_game(world);
+        let trade = sim::TradeEvent::Sold { player: owner, commodity: sim::Commodity::MetallicOre,
+            units: 150, unit_price: 8.22, penalty: 1.25 };
+        game.schedule_trade_reports(&[sim::Event::new(start, sim::EventPayload::Trade(trade))]);
+        game.world.time = arrival - 0.001;
+        game.deliver_trade_reports();
+        assert!(game.transactions.page(owner, None).0.is_empty(), "no count, ID or receipt before its light");
+
+        let bytes = crate::persistence::store::encode(&game.durable_checkpoint()).unwrap();
+        let (status, _) = watch::channel(ServerStatus::default());
+        let (estimates, _) = mpsc::unbounded_channel();
+        let mut restored = GameLoop::restore(crate::persistence::store::decode(&bytes).unwrap(), 1.0, status, estimates);
+        restored.world.time = arrival;
+        restored.deliver_trade_reports();
+        let rows = restored.transactions.page(owner, None).0;
+        assert_eq!(rows.len(), 1, "offline receipts are retained");
+        assert_eq!(rows[0].occurred_at, Some(start));
+        assert!((rows[0].reported_at - arrival).abs() < 1e-9);
+        assert!(matches!(rows[0].details, TransactionDetails::Trade { trade: sim::TradeEvent::Sold {
+            units: 150, unit_price, penalty, .. } } if unit_price == 8.22 && penalty == 1.25));
+        restored.deliver_trade_reports();
+        assert_eq!(restored.transactions.page(owner, None).0.len(), 1, "exactly one entry, not once per view");
+        let reopened = reporting_game(serde_json::from_value(restored.checkpoint_snapshot()).unwrap());
+        assert_eq!(reopened.transactions.page(owner, None).0.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn transaction_pages_are_authenticated_local_reads_not_hub_orders() {
+        let owner = PlayerId(801);
+        let rival = PlayerId(802);
+        let mut world = World::new(sim::SimConfig::for_players(801, 2));
+        world.step(&[Command::AddPlayer { id: owner, name: "Ledger".into() }]);
+        let mut game = reporting_game(world);
+        for id in [owner, rival] {
+            game.transactions.record(id, Some(0.0), 0.0, TransactionDetails::EarlierReport {
+                text: if id == owner { "own receipt" } else { "private rival receipt" }.into(),
+            });
+        }
+        let (outbound, mut rx) = mpsc::channel(16);
+        let (view_tx, _) = watch::channel(None);
+        let (replace_tx, _) = watch::channel(false);
+        game.handle_input(GameInput::Connect { conn_id: 91, player_id: owner, name: "Ledger".into(),
+            outbound, view_tx, replace_tx, view_divisor: 1 });
+        while rx.try_recv().is_ok() {}
+        let pending = game.pending.len();
+        game.handle_input(GameInput::Intent { conn_id: 91,
+            msg: ClientMsg::RequestTransactions { before: None, request_id: 7 } });
+        let ServerMsg::Transactions { player_id, request_id, entries, next_before, .. } = rx.try_recv().unwrap()
+            else { panic!("history request must not issue a comet or hub command") };
+        assert_eq!(player_id, owner);
+        assert_eq!(request_id, 7);
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(&entries[0].details, TransactionDetails::EarlierReport { text } if text == "own receipt"));
+        assert!(next_before.is_none());
+        assert_eq!(pending, game.pending.len());
+        assert!(rx.try_recv().is_err());
+        game.handle_input(GameInput::Intent { conn_id: 999,
+            msg: ClientMsg::RequestTransactions { before: None, request_id: 8 } });
+        assert!(rx.try_recv().is_err(), "no client-selected owner or unauthenticated page");
+    }
+
+    #[tokio::test]
+    async fn legacy_market_history_recovers_only_arrived_reports_without_inventing_times() {
+        let owner = PlayerId(801);
+        let mut world = World::new(sim::SimConfig::for_players(801, 2));
+        world.step(&[Command::AddPlayer { id: owner, name: "Ledger".into() }]);
+        let mut game = reporting_game(world);
+        let trade = sim::TradeEvent::Sold { player: owner, commodity: sim::Commodity::MetallicOre,
+            units: 150, unit_price: 8.22, penalty: 0.0 };
+        let event = sim::Event::new(game.world.time, sim::EventPayload::Trade(trade));
+        game.timeline.ingest(&[event.clone()], &game.world);
+        game.schedule_trade_reports(&[event]);
+        let arrival = game.trade_reports[0].arrives_at;
+        let old_save = |game: &GameLoop| -> World {
+            let mut snapshot = game.checkpoint_snapshot();
+            let mut report: serde_json::Value = serde_json::from_str(snapshot["reporting_checkpoint"].as_str().unwrap()).unwrap();
+            report.as_object_mut().unwrap().remove("transactions");
+            for pending in report["trade_reports"].as_array_mut().unwrap() {
+                pending.as_object_mut().unwrap().remove("transaction");
+            }
+            snapshot["reporting_checkpoint"] = serde_json::Value::String(report.to_string());
+            serde_json::from_value(snapshot).unwrap()
+        };
+        let mut restored = reporting_game(old_save(&game));
+        assert!(restored.transactions.page(owner, None).0.is_empty());
+        restored.world.time = arrival;
+        restored.deliver_trade_reports();
+        let rows = restored.transactions.page(owner, None).0;
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].occurred_at.is_none(), "old pending receipt lacks exact event time");
+
+        game.world.time = arrival;
+        game.trade_reports.clear();
+        game.timeline.promote(arrival + 1e-6);
+        let imported = reporting_game(old_save(&game));
+        let rows = imported.transactions.page(owner, None).0;
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(&rows[0].details, TransactionDetails::EarlierReport { text }
+            if text.contains("Sold 150 ferrite ore")));
+        let reopened = reporting_game(serde_json::from_value(imported.checkpoint_snapshot()).unwrap());
+        assert_eq!(reopened.transactions.page(owner, None).0.len(), 1, "legacy import happens once");
     }
 
     #[tokio::test]
@@ -3644,6 +3949,26 @@ mod tests {
     #[test]
     fn every_buildable_hull_and_structure_is_offered() {
         let opts = build_options();
+        let research = research_catalog();
+        for kind in sim::build::StructureKind::ALL {
+            let option = opts.iter().find(|o| o.key == kind.slug()).unwrap();
+            assert_eq!(option.research_prerequisite, kind.research_prerequisite());
+            if let Some(id) = option.research_prerequisite {
+                let programme = research.iter().find(|p| p.id == id).expect("unlock is visible in Research");
+                assert!(programme.blurb.starts_with("Unlocks "));
+                assert!(programme.blurb.contains(kind.title()), "{} advertises {}", id, kind.title());
+            }
+        }
+        // The UI reads the live recipe and research gate, including fractional
+        // inputs; no parallel client conversion table can silently disagree.
+        for converter in &sim::production::CONVERTERS {
+            let option = opts.iter().find(|o| o.key == converter.structure.slug()).unwrap();
+            let recipe = option.conversion.as_ref().expect("factory has a production recipe");
+            assert_eq!(recipe.output, converter.output);
+            assert_eq!(recipe.rate, converter.rate);
+            assert_eq!(recipe.inputs, converter.inputs);
+            assert_eq!(option.research_prerequisite, converter.structure.research_prerequisite());
+        }
         let keys: std::collections::BTreeSet<&str> = opts.iter().map(|o| o.key.as_str()).collect();
 
         // The hull slug is whatever the WIRE calls it — derived from serde, not

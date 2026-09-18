@@ -174,6 +174,10 @@ class MobileShell implements Shell {
       else if (action === "cancel-intent") ctx.intent.clearPendingIntent();
     }, { signal });
     byId("m-founding").addEventListener("click", (event) => { this.surfaces?.handleClick(event); }, { signal });
+    for (const kind of ["input", "change"] as const) byId("m-sheet-body").addEventListener(kind, event => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement) this.parity?.handleInput(target);
+    }, { signal });
 
     this.syncSessionVisibility();
     this.syncRotateGate();
@@ -211,6 +215,10 @@ class MobileShell implements Shell {
         this.map?.showNotice(`<span class="warn">${escapeHtml(event.message)}</span>`);
       } else if (event.kind === "TradeSettled") {
         this.surfaces?.onTrade(event.trade);
+      } else if (event.kind === "PirateRaidWarning") {
+        this.unreadReports++;
+        this.notices?.push({ html: `<b>${escapeHtml(event.message)}</b>`, tone: "bad",
+          destination: { id: "log" }, durationMs: 20_000 });
       } else if (event.kind === "ReportArrived") {
         const report = reportNotice(event.report, this.ctx?.state.galaxy?.pirate_id);
         this.unreadReports++;
@@ -259,7 +267,7 @@ class MobileShell implements Shell {
         // The shared session already appended these to renderer-owned state;
         // mobile's ordinary render tick draws the same comet/chevron as desktop.
       }
-      if (event.kind === "ViewApplied" || event.kind === "TimelineApplied" || event.kind === "TradeSettled") {
+      if (event.kind === "ViewApplied" || event.kind === "TimelineApplied" || event.kind === "TradeSettled" || event.kind === "TransactionsApplied") {
         refreshSheet = true;
       }
     }
@@ -293,6 +301,7 @@ class MobileShell implements Shell {
     this.notices?.teardown();
     this.notices = null;
     this.battle?.close();
+    if (this.ctx) this.ctx.renderer.selectedBattleId = null;
     this.battle = null;
     this.ground?.close();
     this.ground = null;
@@ -326,6 +335,14 @@ class MobileShell implements Shell {
   }
 
   private syncDestination(entry: SheetEntry | null): void {
+    if (this.ctx) {
+      const props = entry?.props as { id?: string; aftermathId?: number } | undefined;
+      this.ctx.renderer.selectedBattleId = entry?.id === "battle"
+        ? props?.id ?? null
+        : entry?.id === "log" && props?.aftermathId !== undefined
+          ? this.ctx.state.battleReports.find((report) => report.id === props.aftermathId)?.battle_id ?? null
+          : null;
+    }
     this.battle?.sync(entry);
     this.ground?.sync(entry);
     const destination = entry?.id ?? "";

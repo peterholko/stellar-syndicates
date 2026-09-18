@@ -1,0 +1,14 @@
+Battle marker V21 — user-supplied crossed-laser emblem
+
+Approved attachment: ChatGPT Image Sep 7, 2026, 11_35_21 PM.png
+Master: client/art-src/battle-marker-v21.png (unaltered 1254 × 1254 RGBA)
+Runtime: client/public/art/battle_in_progress_v21.png (256 × 256 RGBA)
+
+Preparation: downsample to 256 × 256 with Sharp's default Lanczos3 kernel;
+PNG compression level 9. Preserve the original canvas, framing and alpha.
+No regeneration, recoloring or background removal of the supplied artwork.
+
+Renderer: 72 × 72 screen-pixel base size; active battles breathe by 4% over
+2.2 seconds. Concluded battles use a cached greyscale version and stay still,
+only after the conclusion light arrives. Selection-only red corner brackets
+remain separate UI state. Previous marker assets are retained.

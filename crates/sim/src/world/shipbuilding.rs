@@ -7,8 +7,11 @@ use crate::build::{BuildKind, BuildWork};
 impl World {
     pub(super) fn update_ship_build_work(&mut self) {
         for job in &mut self.build_queue {
-            let BuildKind::Ship { ship } = job.what else { continue; };
-            let yard = crate::build::yard_for(ship).0;
+            let yard = match job.what {
+                BuildKind::Ship { ship } => crate::build::yard_for(ship).0,
+                BuildKind::Module { module } if module.is_utility() => module.workshop(),
+                _ => continue,
+            };
             // The actual construction body and gating yard matter. Staffing a
             // Shipyard elsewhere cannot operate this Drydock or Capital Slipway.
             let rate = self.systems.iter().find(|s| s.id == job.system).map_or(0.0, |s|
@@ -42,7 +45,6 @@ impl World {
 mod tests {
     use super::*;
     use crate::build::StructureKind as K;
-    use crate::cargo::Commodity;
     use crate::production::Assignment;
 
     fn yard() -> (World, PlayerId, EntityId, u32) {
@@ -61,18 +63,19 @@ mod tests {
         let body = &mut s.bodies[0];
         body.structures.insert(K::Shipyard, 1);
         let body_id = body.id;
-        for (c, _) in crate::build::CONVOY_RECIPE.costs { s.stockpile.insert(*c, 1000.0); }
+        for (c, _) in crate::build::TINY_FREIGHTER_RECIPE.costs { s.stockpile.insert(*c, 1000.0); }
         (w, owner, home, body_id)
     }
 
     fn assign(w: &mut World, owner: PlayerId, home: EntityId, body: u32, workers: u32) {
         w.step(&[Command::SetAssignment { player_id: owner, system_id: home,
+            refining_ore: None,
             body_id: Some(body), structure: K::Shipyard, workers, specialists: BTreeMap::new() }]);
     }
 
     fn build(w: &mut World, owner: PlayerId, home: EntityId) {
         w.step(&[Command::BuildShip { player_id: owner, system_id: home,
-            ship_kind: ShipKind::Convoy, join: None, loadout: Default::default() }]);
+            ship_kind: ShipKind::TinyFreighter, join: None, loadout: Default::default() }]);
         assert_eq!(w.build_queue.len(), 1);
     }
 
@@ -82,14 +85,14 @@ mod tests {
         build(&mut w, owner, home);
         let initial = w.build_queue[0].clone();
         assert_eq!(initial.complete_tick, u64::MAX);
-        for _ in 0..(crate::build::CONVOY_RECIPE.build_ticks * 2) { w.step(&[]); }
+        for _ in 0..(crate::build::TINY_FREIGHTER_RECIPE.build_ticks * 2) { w.step(&[]); }
         assert_eq!(w.build_queue[0], initial, "darkness/waiting does not manufacture work or reports");
         assign(&mut w, owner, home, body, 1);
         let due = w.build_queue[0].complete_tick;
         let mut spawned = 0;
         while w.tick <= due + 1 {
             spawned += w.step(&[]).iter().filter(|e| matches!(e.payload,
-                EventPayload::ShipSpawned { owner: o, kind: ShipKind::Convoy, .. } if o == owner)).count();
+                EventPayload::ShipSpawned { owner: o, kind: ShipKind::TinyFreighter, .. } if o == owner)).count();
         }
         assert_eq!(spawned, 1);
         assert!(w.build_queue.is_empty());
@@ -119,10 +122,13 @@ mod tests {
         assert_eq!(resumed.started_tick, start);
         assert_eq!(resumed.ship_work.as_ref().unwrap().completed, earned);
         let due = resumed.complete_tick;
-        assert!(due - w.tick < crate::build::CONVOY_RECIPE.build_ticks, "resume only remaining work");
+        assert!(due - w.tick < crate::build::TINY_FREIGHTER_RECIPE.build_ticks, "resume only remaining work");
         while w.tick <= due + 1 { w.step(&[]); }
         assert!(w.build_queue.is_empty());
-        assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Alloys], 975.0);
+        for (good, units) in crate::build::TINY_FREIGHTER_RECIPE.costs {
+            assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().stockpile[good],
+                1000.0 - units, "pausing/resuming never charges {good:?} twice");
+        }
     }
 
     #[test]

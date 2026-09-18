@@ -369,6 +369,14 @@ pub struct TacticalState {
     /// Sides ordered to WITHDRAW (doctrine/raid-cap/safety) — sticky.
     #[serde(default)]
     pub withdrawing: [bool; 2],
+    /// V4 onward: actual delivered Guard assignments, including defensive
+    /// sorties. Recorder inputs freeze changes; replay never reads live fleets.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) escorts: BTreeMap<EntityId, EntityId>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) missions: BTreeMap<EntityId, crate::doctrine::MissionProfile>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub(super) mission_retreats: std::collections::BTreeSet<EntityId>,
 }
 
 /// Derive the battle's own RNG stream from `(world_seed, battle_id)` — never
@@ -445,6 +453,9 @@ impl TacticalState {
             start_hp: [0.0, 0.0],
             bearing: b,
             withdrawing: [false, false],
+            escorts: BTreeMap::new(),
+            missions: BTreeMap::new(),
+            mission_retreats: std::collections::BTreeSet::new(),
         };
         st.deploy_side(0, a);
         st.deploy_side(1, d);
@@ -741,6 +752,7 @@ impl TacticalState {
     pub fn step(&mut self, raid: bool, mods: [SideMods; 2]) -> StepOutcome {
         self.step += 1;
         self.commit_waves();
+        super::v6::update_retreats(self);
         let mut out = StepOutcome::default();
 
         // 1. MOVEMENT: seek/arrive toward each role's desired point.
@@ -749,6 +761,8 @@ impl TacticalState {
                 super::Rules::V1 => self.desired_point(i),
                 super::Rules::V2 => super::v2::desired_point(self, i),
                 super::Rules::V3 { maneuver_seed } => super::v3::desired_point(self, i, maneuver_seed),
+                super::Rules::V4 { maneuver_seed } | super::Rules::V5 { maneuver_seed } => super::v4::desired_point(self, i, maneuver_seed),
+                super::Rules::V6 { maneuver_seed } => super::v6::desired_point(self, i, maneuver_seed),
             })
             .collect();
         for (i, want) in desired.iter().enumerate() {
@@ -776,6 +790,11 @@ impl TacticalState {
             c.pos = c.pos + c.vel;
         }
 
+        // V4's one prioritized long-range volley precedes ordinary PD. The
+        // version guard leaves archived v1–v3 dice, geometry and order intact.
+        if matches!(self.rules, super::Rules::V4 { .. } | super::Rules::V5 { .. } | super::Rules::V6 { .. }) {
+            super::v4::intercept_linked(self, mods);
+        }
         // 2. TORPEDOES: fly, cross PD bubbles (intercept rolls), strike.
         let mut torps = std::mem::take(&mut self.torpedoes);
         let mut dead_torps: Vec<usize> = Vec::new();
@@ -852,7 +871,10 @@ impl TacticalState {
             let (family, mult) = if plat {
                 (DamageType::Beam, 1.0)
             } else {
-                offense(&lo)
+                // Only new battles know discovery weapons. Saved kernels must
+                // never consult the mutable live equipment balance catalog.
+                if matches!(self.rules, super::Rules::V5 { .. } | super::Rules::V6 { .. }) { super::v5::offense(&lo) }
+                else { offense(&lo) }
             };
             let cd = match family {
                 DamageType::Beam => cds.beam,
@@ -879,8 +901,8 @@ impl TacticalState {
                 DamageType::Driver => BEAM_RANGE, // falloff shots allowed out to long
                 DamageType::Torpedo => TORP_LAUNCH_RANGE,
             };
-            // TARGETING: seeded weighted roll over in-range enemies, weight ∝
-            // threat mass (doctrine bias is a future hook, documented).
+            // Seeded targeting among in-range enemies only. V1–V5 retain mass
+            // weighting; v6 adds the delivered fleet's target preference.
             let mut cands: Vec<(u32, f64, f64, f64, bool)> = Vec::new(); // cid, weight, dist, speed, plat
             for e in self
                 .combatants
@@ -889,7 +911,10 @@ impl TacticalState {
             {
                 let d = (e.pos - pos).length();
                 if d <= band {
-                    cands.push((e.cid, e.max_hp.max(1.0), d, e.speed(), e.platform));
+                    let weight = if matches!(self.rules, super::Rules::V6 { .. }) {
+                        super::v6::target_weight(self, &self.combatants[i], e)
+                    } else { e.max_hp.max(1.0) };
+                    cands.push((e.cid, weight, d, e.speed(), e.platform));
                 }
             }
             if cands.is_empty() {
@@ -1253,7 +1278,7 @@ impl TacticalState {
         Some(sum * (1.0 / pts.len() as f64))
     }
 
-    fn torpedo_threat_centroid(&self, enemy_side: u8) -> Option<Vec2> {
+    pub(super) fn torpedo_threat_centroid(&self, enemy_side: u8) -> Option<Vec2> {
         let pts: Vec<Vec2> = self
             .combatants
             .iter()
@@ -1325,6 +1350,11 @@ pub(super) const PROJECTION_BATTLE_ID: u64 = 0xC0FFEE;
 /// Shared rollout bookkeeping; only the selected, persisted movement rules
 /// differ. The live calculator and the actual battle must use the same kernel.
 pub(super) fn simulate_engagement_with_rules(setup: &ProjSetup, seed: u64, rules: super::Rules) -> SimOutcome {
+    simulate_engagement_with_missions(setup, seed, rules, &BTreeMap::new())
+}
+
+pub(super) fn simulate_engagement_with_missions(setup: &ProjSetup, seed: u64, rules: super::Rules,
+    missions: &BTreeMap<EntityId, crate::doctrine::MissionProfile>) -> SimOutcome {
     let mut st = TacticalState::open(
         seed,
         PROJECTION_BATTLE_ID,
@@ -1335,6 +1365,7 @@ pub(super) fn simulate_engagement_with_rules(setup: &ProjSetup, seed: u64, rules
         Vec2::new(1.0, 0.0),
     );
     st.rules = rules;
+    st.set_missions(missions.clone());
     let scouts = st.sync([&setup.a, &setup.d]);
     let mut out = SimOutcome::default();
     // Boundary scouts die instantly, as in the real lifecycle.
@@ -1376,7 +1407,8 @@ pub(super) fn simulate_engagement_with_rules(setup: &ProjSetup, seed: u64, rules
         }
         let a_alive = st.alive(0) > 0;
         let d_alive = st.alive(1) > 0 || st.platform_tiers() > 0;
-        if !a_alive || !d_alive || st.side_withdrawn(0) || st.side_withdrawn(1) {
+        if !a_alive || !d_alive || st.side_withdrawn(0) || st.side_withdrawn(1)
+            || st.mission_side_withdrawn(0) || st.mission_side_withdrawn(1) {
             break;
         }
     }
@@ -1390,7 +1422,7 @@ pub(super) fn simulate_engagement_with_rules(setup: &ProjSetup, seed: u64, rules
     }
     let a_alive = st.alive(0) > 0;
     let d_gone = st.alive(1) == 0 && st.platform_tiers() == 0;
-    out.a_won = a_alive && (d_gone || st.withdrawing[1]);
+    out.a_won = a_alive && (d_gone || st.withdrawing[1] || st.mission_side_withdrawn(1));
     out
 }
 
@@ -1426,7 +1458,7 @@ pub fn project_distribution(setup: &ProjSetup, base_seed: u64, k: u32) -> Distri
 
 pub(super) fn project_distribution_using(
     setup: &ProjSetup, base_seed: u64, k: u32,
-    simulate: fn(&ProjSetup, u64) -> SimOutcome,
+    simulate: impl Fn(&ProjSetup, u64) -> SimOutcome,
 ) -> Distribution {
     let ships: u32 = (setup.a.len() + setup.d.len()) as u32;
     let k = if ships > 150 {

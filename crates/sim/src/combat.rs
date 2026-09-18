@@ -603,6 +603,22 @@ impl BattleRecord {
         scouts
     }
 
+    /// Guard orders are external inputs, just like reinforcements. Record only
+    /// actual delivered assignment changes, never a pending player intention.
+    pub fn sync_escorts(&mut self, tick: u64, state: &mut crate::tactical::TacticalState,
+        guards: BTreeMap<EntityId, EntityId>) {
+        if state.set_escorts(guards.clone()) {
+            if let Some(replay) = &mut self.replay { replay.escorts(tick, guards); }
+        }
+    }
+
+    pub fn sync_missions(&mut self, tick: u64, state: &mut crate::tactical::TacticalState,
+        missions: BTreeMap<EntityId, crate::doctrine::MissionProfile>) {
+        if state.set_missions(missions.clone()) {
+            if let Some(replay) = &mut self.replay { replay.missions(tick, missions); }
+        }
+    }
+
     pub fn step_tactical(
         &mut self, tick: u64, state: &mut crate::tactical::TacticalState,
         raid: bool, mods: [crate::tactical::SideMods; 2],

@@ -4,19 +4,23 @@
 // age label and fades with staleness. Warp-light is the one transport for every
 // report, so own and rival positions use the same delayed-picture grammar.
 
-import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
+import { Application, Assets, ColorMatrixFilter, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import { label } from "./icons";
 import { battleRecordMarkKey, reportMarkKey } from "./battlehistory";
 import type { BodyView, GalaxyInfo, GhostView, NebulaInfo, NebulaKind, PathPointView, ShipKind, SystemInfo, Vec2 } from "./protocol";
-import { countClassLabel, fleetCargoManifest, fleetExactCount } from "./protocol";
+import { countClassLabel, fleetCargoManifest, fleetExactCount, PLAYER_FREIGHTERS, isPlayerFreighter } from "./protocol";
 import { JUMP_DEPARTURE_TTL_S, liveSimTime, type ViewState } from "./state";
 import { hashId } from "./prng";
 import { STAR_TYPES, starTypeFor } from "./stars";
 import { starArtwork } from "./starart";
 import { StarTextureCache } from "./startextures";
+import { COMBAT_HULL_LENGTH_SCALE, shipArtwork, shipArtUrl } from "./shipart";
+import { SHIP_FORMATIONS } from "./ship-art.generated";
 import { buildVisualSystem, SystemViewScene, type CameraRect, type SystemBodyDetail } from "./systemview";
 import { shipKindLabel } from "./core/derive/fleet";
+import { sensorMultiplier } from "./core/derive/equipment";
 import { jumpRangeAt, nebulaContains } from "./core/derive/nebula";
+import { ExplorationLayer } from "./explorationlayer";
 
 // --- SEMANTIC-ZOOM VIEW MODE (galaxy ⇄ system) --------------------------------
 // The renderer hosts TWO scenes with INDEPENDENT coordinate systems: the galaxy
@@ -163,6 +167,7 @@ interface SystemGfx {
   label: Text;
   blockade: Text; // "⛔ BLOCKADE" tag
   enclave: Text; // "☠ ENCLAVE T‹n›" tag
+  pirateSite: Sprite;
   node: Text; // "◈" dormant glyph OR "◈ TITLE" awakened tag
 }
 
@@ -226,20 +231,18 @@ const SHIP_ZOOM_MAX = 1.6; // indicator growth cap (normal-zoom phase)
 const SHIP_NATIVE_ZOOM_START = 12;
 const BODY_ZOOM_START = 0.75 * ZOOM_MAX_FACTOR;
 
-// §size-hierarchy: galaxy-only deep-zoom canvas targets, tuned against the
-// visible hulls (transparent padding is not ship length). At these sizes the
-// Scout is ~60px long, a Freighter ~102px, and the Titan ~200px. All remain
-// below their 256px source canvases. Unlisted civilians keep their old curve;
-// Interceptors retain 120 × 0.8 = 96px, and pirate art keeps its own calibration.
+// Close-up combat hulls share one VISIBLE-length ruler: Cruiser 4×,
+// Battleship 5×, Dreadnought 6×, Titan 8× the Interceptor. Measured artwork
+// calibration cancels PNG padding. Chart indicators remain compact; civilians,
+// Scouts, Interceptors and pirates retain their previous size curves. Native
+// multi-resolution hulls replace the old 256px ceiling, with GPU mipmaps below.
 const SHIP_MAX_PX = 120;
 const SHIP_CLASS_MAX_PX: Partial<Record<ShipKind, number>> = {
+  tiny_freighter: 80, small_freighter: 100, convoy: 120, large_freighter: 160, heavy_freighter: 200, bulk_freighter: 240,
   scout: 72,
-  corvette: 112,
-  destroyer: 136,
-  cruiser: 160,
-  battleship: 184,
-  dreadnought: 208,
-  titan: 232,
+  ...Object.fromEntries(Object.entries(COMBAT_HULL_LENGTH_SCALE)
+    .filter(([kind]) => kind !== "raider")
+    .map(([kind, ratio]) => [kind, SHIP_MAX_PX * INTERCEPTOR_MAP_SCALE * ratio])),
 };
 // Click-target cap for stars; the hub's pick radius follows its own bounded
 // visible-size curve instead of sharing this cap.
@@ -263,7 +266,9 @@ const BODY_HIT_CAP_PX = 90;
 const BATTLE_MARKER_PX = 44; // capture icon size on screen
 const BATTLE_MARKER_TTL_S = 1800; // hide CAPTURE markers learned > 30 min ago (tunable)
 const BATTLE_MARKER_HIT_PX = 24; // capture-marker click radius
-const BATTLE_ONGOING_PX = 52; // the battle icon size (running pulse scales it a bit)
+const BATTLE_ONGOING_PX = 72; // resting map footprint; active pulse peaks at ~86px
+const BATTLE_PULSE_PERIOD_MS = 1_400; // noticeable, smooth active-battle breathing, in wall time
+const BATTLE_PULSE_SCALE = 0.20; // 20% growth stays within the fixed hit radius; history stays fixed
 // §aftermath-fade (captures only — battle markers are steady and live as long
 // as their record is served): a capture marker fades with time since the
 // viewer's report ARRIVED — full (with the fresh pulse) at first, a smooth
@@ -286,9 +291,9 @@ type FleetFamily = "freighter" | "raider" | "corvette" | "scout";
 // Per-tier designer multipliers on the formation canvas (relative feel knobs —
 // e.g. make armadas read a touch grander). 1.0 = lead-ship parity (see below).
 const TIER_SCALE: Record<FleetTier, number> = { wing: 1.0, squadron: 1.0, armada: 1.0 };
-// Each current formation is composed with its lead ship at the same full-canvas
-// scale as the single-hull sprite, so 1.0 preserves that hull exactly across a
-// fleet-tier change; the smaller escorts expand the silhouette around it.
+// Each current formation uses the approved master at the same full-canvas
+// scale as its single hull. The measured shipArtwork calibration applies to
+// both; escorts cannot change the lead's size at a fleet-tier transition.
 const FLEET_LEAD_CALIB: Record<FleetFamily, Record<FleetTier, number>> = {
   freighter: { wing: 1, squadron: 1, armada: 1 },
   raider: { wing: 1, squadron: 1, armada: 1 },
@@ -387,6 +392,7 @@ export class Renderer {
   private galaxyRoot = new Container();
   private bg = new Container(); // galaxy rings + hub (was: also the starfield)
   private nebulaLayer = new Container();
+  private explorationLayer = new ExplorationLayer();
   private nebulaSprites = new Map<number, NebulaSprite>();
   private nebulaTex = new Map<NebulaKind, Texture>();
   /// §emplacements: coverage/fallback glyphs, dedicated structure art, then
@@ -420,7 +426,7 @@ export class Renderer {
   // geometry is dirty (camera / new View / selection) or an animated system is
   // present — never allocated per frame.
   private systemGfx = new Map<string, SystemGfx>();
-  private battleGfx = new Graphics(); // battle alert rings and ownership pips
+  private battleGfx = new Graphics(); // battle selection brackets and ownership pips
   // Battle + capture marker chrome — under the ghosts (a marker never hides a
   // ship), over bodies.
   private aftermathLayer = new Container();
@@ -431,10 +437,12 @@ export class Renderer {
   /// Key shape matches the retained event ledger: fleet + exact departure time.
   selectedJumpDepartureKey: string | null = null;
   // Pooled battle icons — ONE marker family for running AND concluded battles
-  // (running = pulsing, concluded = steady replay affordance), keyed by the
+  // (running = colored/pulsing, concluded = grey/steady replay affordance), keyed by the
   // engagement/record id (they share the id space).
   private battleSprites = new Map<string, Sprite>();
   private battleHits: { id: string; sx: number; sy: number }[] = []; // §one-battle-one-icon click targets
+  /// Engagement id selected by the current battle panel/viewer (not a capture report id).
+  selectedBattleId: string | null = null;
   // §aftermath-select: the capture-report marker that currently carries the
   // standard selection ring. Set by the shell on click, cleared when any other
   // object is selected. Ring draws at full even at the fade floor, so an
@@ -476,6 +484,7 @@ export class Renderer {
   // Role-specific ship sprites, all top-down (nose = -y). Authority freight is
   // deliberately separate from the corporation's modular Freighter silhouette.
   private texConvoy: Texture | null = null;
+  private freightTextures = new Map<ShipKind, Texture | null>();
   private texAuthorityFreighter: Texture | null = null;
   private texRaider: Texture | null = null;
   private texPrivateer: Texture | null = null;
@@ -486,7 +495,7 @@ export class Renderer {
   private texScout: Texture | null = null;
   private texTransport: Texture | null = null;
   private texBuilder: Texture | null = null;
-  // §ladder: the capital ladder (sliced from the capital-ships sheet).
+  // Capital hulls: approved individual masters, at viewport-appropriate resolution.
   private texDestroyer: Texture | null = null;
   private texCruiser: Texture | null = null;
   private texBattleship: Texture | null = null;
@@ -501,9 +510,12 @@ export class Renderer {
   // Fleet formation sprites, keyed `${family}_${tier}` (12 = 4 families × 3
   // tiers). A missing entry falls back to the single-ship sprite + badge.
   private texFleet = new Map<string, Texture>();
-  // The battle icon (running pulses, concluded is steady — same marker family).
+  // The battle icon (running pulses in color, concluded is grey and steady).
   // Null → the drawn fallback marker keeps working (the established art idiom).
   private texBattleOngoing: Texture | null = null;
+  private texBattleConcluded: Texture | null = null;
+  private texPirateDepot: Texture | null = null;
+  private texPirateStronghold: Texture | null = null;
 
   // The schematic System View scene (its own camera). Presentation only.
   private systemScene = new SystemViewScene();
@@ -555,6 +567,9 @@ export class Renderer {
   private lastSelSystem: string | null = null;
   private lastSelEmplacement: string | null = null;
   private lastSelMarker: number | null = null;
+  private lastExplorationSites: ViewState["explorationSites"] | null = null;
+  private lastExplorationJournal: ViewState["explorationJournal"] | null = null;
+  private lastExplorationSelection: string | null = null;
   /// True after a rebuild in which some system drew a per-frame pulse (rival
   /// breath / blockade), so the systems layer keeps redrawing to animate it.
   private systemsAnimating = false;
@@ -586,9 +601,10 @@ export class Renderer {
       this.systemsLayer,
       this.anchorsLayer,
       this.operationGfx, // known contract/objective sites, under routes and fleets
+      this.explorationLayer.root,
       this.routesGfx, // visible convoy routes, under ghosts
       this.orderLayer,
-      this.battleGfx, // battle alert rings, under the ghosts
+      this.battleGfx, // battle selection brackets, under the ghosts
       this.aftermathLayer, // §battle-aftermath markers, under the ghosts
       this.reacquireGfx, // served jump discontinuity, beneath the fresh marker
       this.ghostsLayer,
@@ -613,6 +629,7 @@ export class Renderer {
     // Non-blocking: the map draws (primitives) immediately and swaps to sprites the
     // moment the textures resolve — so a slow load never blanks the map.
     void this.loadArt();
+    void this.explorationLayer.load().then(() => { this.stateVersion++; });
     const viewportChanged = () => this.scheduleViewportResize();
     window.addEventListener("resize", viewportChanged);
     window.addEventListener("orientationchange", viewportChanged);
@@ -666,6 +683,24 @@ export class Renderer {
     this.deckWorldPing = { pos: { ...pos }, startedMs: performance.now() };
   }
 
+  /// Bake grey history art once, preserving the source's alpha and footprint.
+  /// Sharing this texture avoids a desaturation filter pass per marker per frame;
+  /// the separate selection brackets and own-involvement pip retain their colors.
+  private greyBattleTexture(texture: Texture): Texture | null {
+    const filter = new ColorMatrixFilter();
+    filter.desaturate();
+    const sprite = new Sprite(texture);
+    sprite.filters = [filter];
+    try {
+      return this.app.renderer.generateTexture({ target: sprite, resolution: 1 });
+    } catch {
+      return null; // a grey primitive fallback still distinguishes history
+    } finally {
+      sprite.destroy(); // leave the original texture alive for ongoing battles
+      filter.destroy();
+    }
+  }
+
   /// Load the celestial + ship sprite textures. Each resolves independently; the
   /// draw paths guard on `tex* !== null`, so missing/slow art degrades gracefully.
   private async loadArt(): Promise<void> {
@@ -675,6 +710,19 @@ export class Renderer {
       } catch {
         return null; // leave null — the primitive fallback keeps the map working
       }
+    };
+    const loadShip = async (kind: ShipKind): Promise<Texture | null> => {
+      const peak = (SHIP_CLASS_MAX_PX[kind] ?? SHIP_MAX_PX)
+        * (kind === "raider" ? INTERCEPTOR_MAP_SCALE : 1);
+      // Prewarm only the tier this viewport needs at the hull's largest map
+      // size. Zoom-out uses mipmaps, never a different silhouette or an upscale
+      // of the old 256px art; small hulls do not download capital-sized textures.
+      const tex = await load(shipArtUrl(kind, peak, this.app.renderer.resolution));
+      if (tex) {
+        tex.source.autoGenerateMipmaps = true;
+        tex.source.scaleMode = "linear";
+      }
+      return tex;
     };
     // A star SYSTEM draws its assigned star-type icon (12 types). The hub is the
     // trade station. habitable_planet / sun are intentionally NOT loaded — reserved
@@ -696,23 +744,23 @@ export class Renderer {
       load("/art/wormhole_hub_v2.png"),
       load("/art/celestial_sprites/mining_station.png"),
       load("/art/celestial_sprites/deep_space_sensor.png"),
-      load("/art/ship_sprites/corporate_freighter.png"),
-      load("/art/ship_sprites/cargo_freighter.png"),
-      load("/art/ship_sprites/raider_attack_ship.png"),
+      loadShip("convoy"),
+      loadShip("freighter"),
+      loadShip("raider"),
       load("/art/ship_sprites/privateer_raider_ship.png"),
-      load("/art/ship_sprites/corvette_escort_ship.png"),
-      load("/art/ship_sprites/colony_ship.png"),
-      load("/art/ship_sprites/scout_utility_ship.png"),
-      load("/art/ship_sprites/troop_transport.png"),
-      load("/art/ship_sprites/construction_tender.png"),
+      loadShip("corvette"),
+      loadShip("colony"),
+      loadShip("scout"),
+      loadShip("transport"),
+      loadShip("builder"),
     ]);
-    // §ladder: the capital ladder, same 256px top-down/nose-up idiom.
+    // Capital close-ups use the highest required native tier, same nose-up art.
     const [destroyer, cruiser, battleship, dreadnought, titan] = await Promise.all([
-      load("/art/ship_sprites/destroyer_line_ship.png"),
-      load("/art/ship_sprites/cruiser_line_ship.png"),
-      load("/art/ship_sprites/battleship_line_ship.png"),
-      load("/art/ship_sprites/dreadnought_line_ship.png"),
-      load("/art/ship_sprites/titan_flagship.png"),
+      loadShip("destroyer"),
+      loadShip("cruiser"),
+      loadShip("battleship"),
+      loadShip("dreadnought"),
+      loadShip("titan"),
     ]);
     this.texDestroyer = destroyer;
     this.texCruiser = cruiser;
@@ -732,6 +780,9 @@ export class Renderer {
     }
     this.texDeepSpaceSensor = deepSpaceSensor;
     this.texConvoy = convoy;
+    await Promise.all(PLAYER_FREIGHTERS.filter(kind => kind !== "convoy").map(async kind => {
+      this.freightTextures.set(kind, await loadShip(kind));
+    }));
     this.texAuthorityFreighter = authorityFreighter;
     this.texRaider = raider;
     this.texPrivateer = privateer;
@@ -746,17 +797,22 @@ export class Renderer {
     this.texScout = scout;
     this.texTransport = transport;
     this.texBuilder = builder;
-    // Transparent battle marker, downscaled to 256px for its fixed 52px map
-    // footprint (ongoing battles pulse slightly larger). Keep the drawn
-    // fallback for a failed/missing load.
-    this.texBattleOngoing = await load("/art/battle_in_progress_v2.png");
+    // User-supplied crossed-laser battle emblem, downsampled with its alpha intact.
+    // The red accents belong to the artwork; the 72px map footprint, active
+    // pulse and selection-only corner brackets remain separate renderer state.
+    // Keep the drawn fallback for a failed/missing load.
+    this.texBattleOngoing = await load("/art/battle_in_progress_v21.png");
+    this.texBattleConcluded = this.texBattleOngoing ? this.greyBattleTexture(this.texBattleOngoing) : null;
+    [this.texPirateDepot, this.texPirateStronghold] = await Promise.all([
+      load("/art/pirate-sites/depot.png"), load("/art/pirate-sites/stronghold.png"),
+    ]);
     // §fleet-lod: the far-zoom single-hull markers. They render at a few dozen
     // px from their 256px source, so enable mipmaps for shimmer-free minification.
     // A missing file simply leaves the detailed art in place.
     const [iconFreighter, iconRaider, iconCorvette] = await Promise.all([
-      load("/art/ship_sprites/icon_freighter.png"),
-      load("/art/ship_sprites/icon_raider.png"),
-      load("/art/ship_sprites/icon_corvette.png"),
+      load(shipArtUrl("convoy", 128, this.app.renderer.resolution)),
+      load(shipArtUrl("raider", 128, this.app.renderer.resolution)),
+      load(shipArtUrl("corvette", 128, this.app.renderer.resolution)),
     ]);
     for (const t of [iconFreighter, iconRaider, iconCorvette]) {
       if (t) t.source.autoGenerateMipmaps = true;
@@ -776,8 +832,12 @@ export class Renderer {
     await Promise.all(
       families.flatMap((f) =>
         tiers.map(async (t) => {
-          const tex = await load(`/art/ship_sprites/fleet_${f}_${t}.png`);
-          if (tex) this.texFleet.set(`${f}_${t}`, tex);
+          const tex = await load(SHIP_FORMATIONS[`${f}_${t}`]);
+          if (tex) {
+            tex.source.autoGenerateMipmaps = true;
+            tex.source.scaleMode = "linear";
+            this.texFleet.set(`${f}_${t}`, tex);
+          }
         }),
       ),
     );
@@ -1255,6 +1315,7 @@ export class Renderer {
       e.label.destroy();
       e.blockade.destroy();
       e.enclave.destroy();
+      e.pirateSite.destroy();
       e.node.destroy();
     }
     this.systemGfx.clear();
@@ -1436,15 +1497,24 @@ export class Renderer {
         label: new Text({ text: "", style: new TextStyle({ fontFamily: mono, fontSize: 8 }) }),
         blockade: new Text({ text: "", style: new TextStyle({ fill: COL_THREAT, fontFamily: mono, fontSize: 8, fontWeight: "700" }) }),
         enclave: new Text({ text: "", style: new TextStyle({ fill: COL_PIRATE, fontFamily: mono, fontSize: 8, fontWeight: "700" }) }),
+        pirateSite: new Sprite(Texture.EMPTY),
         node: new Text({ text: "", style: new TextStyle({ fontFamily: mono, fontSize: 8, fontWeight: "700" }) }),
       };
       e.label.anchor.set(0, 0.5);
       e.blockade.anchor.set(0.5, 1);
       e.enclave.anchor.set(0.5, 1);
+      e.pirateSite.anchor.set(0.5);
+      e.pirateSite.eventMode = "none"; // the star remains the inspection target
       e.node.anchor.set(0.5, 1);
       this.systemGfx.set(id, e);
     }
     return e;
+  }
+
+  /** Site art shares its star's selection target, including the offset icon. */
+  pirateSiteHit(id: string, x: number, y: number): boolean {
+    const sp = this.systemGfx.get(id)?.pirateSite;
+    return !!sp?.visible && Math.abs(x - sp.x) <= 20 && Math.abs(y - sp.y) <= 20;
   }
 
   /// Draw star systems with their resource geology and (light-gated) ownership.
@@ -1480,6 +1550,7 @@ export class Renderer {
       e.label.visible = true;
       e.blockade.visible = false;
       e.enclave.visible = false;
+      e.pirateSite.visible = false;
       e.node.visible = false;
       const s = this.worldToScreen(sys.pos);
       const dyn = dynById.get(sys.id);
@@ -1602,10 +1673,20 @@ export class Renderer {
         }
         g.stroke({ width: 1.4, color: COL_PIRATE, alpha: 0.7 });
         const pt = e.enclave;
-        pt.text = `☠ ENCLAVE T${dyn.intel.enclave_tier}`;
+        const tier = dyn.intel.enclave_tier ?? 0;
+        pt.text = tier >= 5 ? "REGIONAL STRONGHOLD" : tier === 4 ? "PIRATE DEPOT" : `☠ HIDEOUT T${tier}`;
         pt.position.set(s.x, s.y - rr - 2);
         pt.alpha = 0.9;
         pt.visible = true;
+        // Only arrived scout intel can reveal the site. Cache/zoom redraws
+        // cannot inspect the true garrison or disclose an unseen defeat.
+        const texture = tier >= 5 ? this.texPirateStronghold : tier === 4 ? this.texPirateDepot : null;
+        if (texture) {
+          e.pirateSite.texture = texture;
+          e.pirateSite.width = e.pirateSite.height = 40;
+          e.pirateSite.position.set(s.x - rr - 23, s.y);
+          e.pirateSite.visible = true;
+        }
       }
       // §node: an EXOTIC NODE badge. DORMANT before the awakening time → a dim "◈"
       // telegraph so players see WHERE nodes will awaken from t=0. AWAKENED → a
@@ -1655,7 +1736,7 @@ export class Renderer {
       }
       // Re-attach in sort order (big → small): the geometry, then the label, then
       // the three optional tags. Invisible tags render nothing.
-      this.systemsLayer.addChild(g, e.label, e.blockade, e.enclave, e.node);
+      this.systemsLayer.addChild(g, e.label, e.blockade, e.enclave, e.pirateSite, e.node);
     }
     this.systemsAnimating = animating;
   }
@@ -1715,7 +1796,7 @@ export class Renderer {
 
   /// §battles-take-time + §replay-marker: ONE battle marker family on the map.
   /// A pulsing icon at each ongoing engagement the player can see (strictly
-  /// light-gated by the server), and the SAME icon — steady — at each concluded
+  /// light-gated by the server), and the SAME icon — grey and steady — at each concluded
   /// battle whose record the server still serves this viewer (equally light-
   /// gated: `outcome` appears only once the conclusion light arrived). The
   /// steady marker is the map affordance for opening the replay; it leaves the
@@ -1726,7 +1807,8 @@ export class Renderer {
     const g = this.battleGfx;
     g.clear();
     const now = performance.now();
-    const pulse = 0.5 + 0.5 * Math.sin(now / 200);
+    const pulse = 0.5 - 0.5 * Math.cos(now * Math.PI * 2 / BATTLE_PULSE_PERIOD_MS);
+    const activeScale = 1 + BATTLE_PULSE_SCALE * pulse;
     this.battleHits = [];
     const live = new Set<string>();
     // §one-battle-one-icon: two SEPARATE engagements whose anchors nearly
@@ -1763,12 +1845,28 @@ export class Renderer {
       sp.texture = tex;
       return sp;
     };
+    // Selection is UI state, independent of whether the fight is live/history.
+    // Keep brackets still while the complete active battle sprite breathes.
+    const selection = (id: string, sx: number, sy: number): void => {
+      if (id !== this.selectedBattleId) return;
+      const half = BATTLE_ONGOING_PX / 2 + 3;
+      const arm = 8;
+      for (const dx of [-1, 1]) for (const dy of [-1, 1]) {
+        g.moveTo(sx + dx * (half - arm), sy + dy * half)
+          .lineTo(sx + dx * half, sy + dy * half)
+          .lineTo(sx + dx * half, sy + dy * (half - arm));
+      }
+      g.stroke({ width: 2, color: COL_THREAT, alpha: 0.95 });
+    };
     // View and reliable record packets can arrive separately. Keep an already
     // observed engagement on the map until its final record arrives; otherwise
     // the View dropping the live entry creates a gap before the replay marker.
     // This uses only arrived records, never a predicted or true battle ending.
+    // An arrived final record wins over an older View's ongoing entry. Until
+    // that light arrives, retain the color and pulse — never infer an ending from a clock.
+    const concludedIds = new Set(state.battleRecords.filter((rec) => rec.outcome !== null).map((rec) => rec.id));
     const ongoingIds = new Set(state.battles.map((b) => b.id));
-    const ongoing = [...state.battles, ...state.battleRecords
+    const ongoing = [...state.battles.filter((b) => !concludedIds.has(b.id)), ...state.battleRecords
       .filter((rec) => rec.outcome === null && !ongoingIds.has(rec.id))
       .map((rec) => ({ id: rec.id, pos: rec.pos, own: rec.own_side !== null }))];
     for (const b of ongoing) {
@@ -1777,23 +1875,22 @@ export class Renderer {
       if (this.texBattleOngoing) {
         const sp = pooled(b.id, this.texBattleOngoing);
         sp.position.set(sx, sy);
-        sp.scale.set(((BATTLE_ONGOING_PX + pulse * 5) / this.texBattleOngoing.width));
-        sp.alpha = 0.7 + 0.3 * pulse;
-        // Keep the alert ring so the icon still SHOUTS like the old burst did.
-        g.circle(sx, sy, BATTLE_ONGOING_PX * 0.7 + pulse * 5).stroke({ width: 1.4, color: COL_THREAT, alpha: 0.25 + 0.35 * pulse });
+        sp.scale.set(BATTLE_ONGOING_PX * activeScale / this.texBattleOngoing.width);
+        sp.alpha = 0.65 + 0.35 * pulse;
       } else {
-        const r = 14 + pulse * 6;
+        const r = 14 * activeScale;
         for (let i = 0; i < 8; i++) {
-          const a = (i / 8) * Math.PI * 2 + now / 1400;
+          const a = (i / 8) * Math.PI * 2;
           g.moveTo(sx + Math.cos(a) * r * 0.5, sy + Math.sin(a) * r * 0.5).lineTo(sx + Math.cos(a) * r, sy + Math.sin(a) * r);
         }
-        g.stroke({ width: 1.5, color: COL_THREAT, alpha: 0.35 + 0.4 * pulse });
+        g.stroke({ width: 1.5, color: COL_THREAT, alpha: 0.6 + 0.35 * pulse });
         g.circle(sx, sy, 3.2).fill({ color: COL_THREAT, alpha: 0.75 });
       }
       if (b.own) ownPip(sx, sy);
+      selection(b.id, sx, sy);
       this.battleHits.push({ id: b.id, sx, sy });
     }
-    // Concluded battles: same icon, steady (no pulse, no alert ring) — history
+    // Concluded battles: same icon, grey and steady (no pulse, no alert ring) — history
     // you can open, not an alarm. Dismissing the battle's report (the button on
     // its report page) hides the marker; the record itself keeps the replay.
     for (const rec of state.battleRecords) {
@@ -1802,21 +1899,25 @@ export class Renderer {
       if (state.battleDismissed.has(battleRecordMarkKey(rec.id))) continue;
       const { sx, sy } = place(rec.pos);
       live.add(rec.id);
-      if (this.texBattleOngoing) {
-        const sp = pooled(rec.id, this.texBattleOngoing);
+      if (this.texBattleConcluded) {
+        const sp = pooled(rec.id, this.texBattleConcluded);
         sp.position.set(sx, sy);
-        sp.scale.set(BATTLE_ONGOING_PX / this.texBattleOngoing.width);
+        sp.scale.set(BATTLE_ONGOING_PX / this.texBattleConcluded.width);
         sp.alpha = 0.85;
       } else {
+        const sp = this.battleSprites.get(rec.id);
+        if (sp) sp.visible = false; // no stale colored sprite over the grey fallback
+        const grey = 0x9c9c9c;
         const r = 14;
         for (let i = 0; i < 8; i++) {
           const a = (i / 8) * Math.PI * 2;
           g.moveTo(sx + Math.cos(a) * r * 0.5, sy + Math.sin(a) * r * 0.5).lineTo(sx + Math.cos(a) * r, sy + Math.sin(a) * r);
         }
-        g.stroke({ width: 1.5, color: COL_THREAT, alpha: 0.45 });
-        g.circle(sx, sy, 3.2).fill({ color: COL_THREAT, alpha: 0.55 });
+        g.stroke({ width: 1.5, color: grey, alpha: 0.45 });
+        g.circle(sx, sy, 3.2).fill({ color: grey, alpha: 0.55 });
       }
       if (rec.own_side !== null) ownPip(sx, sy);
+      selection(rec.id, sx, sy);
       this.battleHits.push({ id: rec.id, sx, sy });
     }
     // Destroy pooled icons for battles no longer on the map.
@@ -1829,7 +1930,8 @@ export class Renderer {
   }
 
   /// Hit-test the battle icons — ongoing AND concluded (screen-space, fixed
-  /// radius). Returns the clicked engagement/record id, or null.
+  /// radius). The whole marker is clickable, including transparent gaps in the emblem;
+  /// never alpha-test just the artwork. Returns the engagement/record id, or null.
   battlePick(sx: number, sy: number): string | null {
     let best: string | null = null;
     let bestD = BATTLE_ONGOING_PX * 0.65;
@@ -1997,16 +2099,8 @@ export class Renderer {
     if (state.commandCenter) drawRange(state.commandCenter, state.galaxy.sensor_range, 0.28);
     for (const ghost of state.ghosts) {
       if (!ghost.own || ghost.jump_presumed) continue;
-      const composition = ghost.composition ?? [];
-      const hasRaider = composition.some((stack) => stack.kind === "raider" && stack.count > 0)
-        || (composition.length === 0 && ghost.kind === "raider");
-      const hasConvoy = composition.some((stack) => stack.kind === "convoy" && stack.count > 0)
-        || (composition.length === 0 && ghost.kind === "convoy");
-      if (!hasRaider && !hasConvoy) continue;
-      const hasScout = composition.some((stack) => stack.kind === "scout" && stack.count > 0);
-      const multiplier = hasRaider
-        ? (hasScout ? state.galaxy.scout_sensor_mult : 1)
-        : state.galaxy.convoy_sensor_mult;
+      const multiplier = sensorMultiplier(ghost, state.galaxy.scout_sensor_mult, state.galaxy.convoy_sensor_mult);
+      if (multiplier <= 0) continue;
       drawRange(ghost.pos, state.galaxy.sensor_range * multiplier, 0.20);
     }
   }
@@ -2018,7 +2112,7 @@ export class Renderer {
     const g = this.routesGfx;
     g.clear();
     for (const gh of state.ghosts) {
-      if (gh.kind !== "convoy" || !gh.route || gh.route.length < 1) continue;
+      if (!isPlayerFreighter(gh.kind) || !gh.route || gh.route.length < 1) continue;
       const color = gh.own ? COL_OWN : gh.tca ? COL_TCA : gh.pirate ? COL_PIRATE : gh.ally ? COL_ALLY : COL_OTHER;
       const pts = gh.route.map((w) => this.worldToScreen(w));
       g.moveTo(pts[0].x, pts[0].y);
@@ -2087,6 +2181,10 @@ export class Renderer {
       if (!drawableFleetIds.has(shipId)) continue;
       const ghost = state.ghosts.find((x) => x.id === shipId);
       if (!ghost) continue;
+      // An arrived tender assignment supersedes the old fixed course. The
+      // moving rendezvous has no truthful static route; pending intents below
+      // remain visible until their own instruction/report wavefront arrives.
+      if (ghost.fuel_transfer) continue;
       const routeAnchor = ghost.pos;
       const from = this.worldToScreen(routeAnchor);
       const dest = state.orders[shipId] ?? ghost.path?.[ghost.path.length - 1]?.pos;
@@ -2296,6 +2394,8 @@ export class Renderer {
   private texFor(kind: ShipKind): Texture | null {
     switch (kind) {
       case "convoy": return this.texConvoy;
+      case "tiny_freighter": case "small_freighter": case "large_freighter":
+      case "heavy_freighter": case "bulk_freighter": return this.freightTextures.get(kind) ?? null;
       case "raider": return this.texRaider;
       case "corvette": return this.texCorvette;
       case "colony": return this.texColony;
@@ -2317,6 +2417,9 @@ export class Renderer {
   /// fleet always draws the single colony ship + its count badge).
   private static fleetFamily(kind: ShipKind): FleetFamily | null {
     switch (kind) {
+      // Preserve each freight class's silhouette; the badge conveys extra hulls.
+      case "tiny_freighter": case "small_freighter": case "large_freighter":
+      case "heavy_freighter": case "bulk_freighter": return null;
       case "convoy": return "freighter";
       case "raider": return "raider";
       case "corvette": return "corvette";
@@ -2362,7 +2465,7 @@ export class Renderer {
 
   /// The marker art for a fleet: the formation sprite (family × tier) plus its
   /// canvas multiplier (TIER_SCALE × measured lead-ship calibration), or the
-  /// single-ship sprite (mult 1) for fleets of one, colony fleets, and any
+  /// calibrated single-ship sprite for fleets of one, colony fleets, and any
   /// formation art that failed to load. The multiplier applies to a target px
   /// computed against the SINGLE sprite's canvas, so the formation's LEAD ship
   /// renders at exactly the single sprite's size at every zoom — growing a
@@ -2370,7 +2473,7 @@ export class Renderer {
   /// §fleet-lod: the matching single-hull marker + calibration, or null
   /// when the family has no icon (scout/colony) or it hasn't loaded yet. Only
   /// freighter (convoy), raider, and corvette carry icons.
-  private lodIconMarker(kind: ShipKind): { tex: Texture; mult: number } | null {
+  private lodIconMarker(kind: ShipKind): { tex: Texture; mult: number; anchor?: readonly [number, number] } | null {
     let tex: Texture | null = null;
     let fam: LodFamily | null = null;
     switch (kind) {
@@ -2379,10 +2482,11 @@ export class Renderer {
       case "corvette": tex = this.texIconCorvette; fam = "corvette"; break;
       default: return null; // scout / colony — no icon
     }
-    return tex ? { tex, mult: LOD_ICON_CALIB[fam] } : null;
+    const art = shipArtwork(kind);
+    return tex ? { tex, mult: LOD_ICON_CALIB[fam] * art.calib, anchor: art.anchor } : null;
   }
 
-  private fleetMarker(ghost: GhostView): { tex: Texture; mult: number } | null {
+  private fleetMarker(ghost: GhostView): { tex: Texture; mult: number; anchor?: readonly [number, number] } | null {
     // Pirate Raiders are a hull CULTURE, not corporate Interceptors wearing an
     // amber pip. Pick one of the available silhouettes deterministically from
     // the served id and keep it at every LOD; count still rides the honest badge.
@@ -2398,7 +2502,8 @@ export class Renderer {
     // but the map reads it as a passenger liner. The colony transport silhouette
     // distinguishes it from commodity freight without inventing a second truth.
     if (ghost.migrant) {
-      return this.texColony ? { tex: this.texColony, mult: 1 } : null;
+      const art = shipArtwork("colony");
+      return this.texColony ? { tex: this.texColony, mult: art.calib, anchor: art.anchor } : null;
     }
     // §fleet-lod: far zoomed out, a single matching hull replaces the formation
     // (fine formation detail is not legible there; the count badge still conveys
@@ -2409,12 +2514,13 @@ export class Renderer {
     }
     const fam = Renderer.fleetFamily(ghost.kind);
     const tier = fam ? Renderer.fleetTier(ghost) : null;
+    const art = shipArtwork(ghost.kind);
     if (fam && tier) {
       const tex = this.texFleet.get(`${fam}_${tier}`);
-      if (tex) return { tex, mult: TIER_SCALE[tier] * FLEET_LEAD_CALIB[fam][tier] };
+      if (tex) return { tex, mult: TIER_SCALE[tier] * FLEET_LEAD_CALIB[fam][tier] * art.calib, anchor: art.anchor };
     }
     const single = this.texFor(ghost.kind);
-    return single ? { tex: single, mult: 1 } : null;
+    return single ? { tex: single, mult: art.calib, anchor: art.anchor } : null;
   }
 
   private ghostSprite(id: string): GhostSprite {
@@ -2634,7 +2740,8 @@ export class Renderer {
   private shipSizePx(kind: ShipKind, pirate = false): number {
     // §ladder: preserve the established normal-zoom capital indicators.
     const capital: Partial<Record<ShipKind, number>> = { destroyer: 52, cruiser: 60, battleship: 70, dreadnought: 82, titan: 96 };
-    const base = capital[kind]
+    const freight: Partial<Record<ShipKind, number>> = { tiny_freighter: 42, small_freighter: 52, large_freighter: 78, heavy_freighter: 92, bulk_freighter: 108 };
+    const base = capital[kind] ?? freight[kind]
       ?? (kind === "convoy" || kind === "freighter" ? SHIP_PX_CONVOY
         : kind === "raider" ? SHIP_PX_RAIDER
           : kind === "corvette" ? SHIP_PX_CORVETTE
@@ -2972,8 +3079,9 @@ export class Renderer {
       if (sp.sprite.texture !== marker.tex) sp.sprite.texture = marker.tex;
       // Size vs zoom: the role-adjusted curve includes its deep-zoom endpoint;
       // art calibration applies equally to this sprite and fleetHitRadius.
-      // Always ≤ the art's native px, so sprites stay downscale-crisp.
+      // Native-resolution art and mipmaps retain detail through the size ramp.
       const targetPx = this.shipSizePx(ghost.kind, ghost.pirate) * marker.mult;
+      sp.sprite.anchor.set(marker.anchor?.[0] ?? 0.5, marker.anchor?.[1] ?? 0.5);
       sp.sprite.scale.set(targetPx / marker.tex.width);
       sp.sprite.rotation = angle + SHIP_ART_FACING;
       sp.sprite.tint = 0xffffff; // natural art — no per-syndicate tint
@@ -2981,10 +3089,10 @@ export class Renderer {
     } else {
       // Primitive triangle fallback until the art loads (syndicate-neutral).
       sp.sprite.visible = false;
-      const len = ghost.kind === "convoy" ? 9 : 7;
-      const wid = ghost.kind === "convoy" ? 6 : 3.5;
+      const len = isPlayerFreighter(ghost.kind) ? 9 : 7;
+      const wid = isPlayerFreighter(ghost.kind) ? 6 : 3.5;
       sp.body.poly([len, 0, -len * 0.7, -wid, -len * 0.7, wid]).fill({ color: COL_SHIP_NEUTRAL, alpha });
-      if (ghost.kind === "convoy") sp.body.circle(0, 0, 1.6).fill({ color: 0x05070d, alpha: 0.8 });
+      if (isPlayerFreighter(ghost.kind)) sp.body.circle(0, 0, 1.6).fill({ color: 0x05070d, alpha: 0.8 });
       sp.body.rotation = angle;
     }
 
@@ -3055,7 +3163,7 @@ export class Renderer {
       txt = `${ownLabel}${stale}`;
       col = COL_OWN;
       lalpha = sel ? 0.95 : 0.7;
-    } else if (ghost.kind === "convoy") {
+    } else if (isPlayerFreighter(ghost.kind)) {
       txt = `FREIGHTER  ${stale}`;
       col = fleetCargoManifest(ghost).length ? COL_REPORT : COL_OTHER; // preserve the known-cargo accent
       lalpha = 0.9;
@@ -3227,6 +3335,17 @@ export class Renderer {
       this.drawSystems(state, geomDirty);
       this.drawHubBody();
       this.drawOperations(state);
+      // Reports arrive with Views; private pins arrive independently through
+      // reliable Sections. Either must redraw even on a stationary/paused map.
+      if (geomDirty || this.lastExplorationSites !== state.explorationSites
+          || this.lastExplorationJournal !== state.explorationJournal
+          || this.lastExplorationSelection !== state.selectedExplorationSiteId) {
+        this.explorationLayer.draw(state.explorationSites, state.selectedExplorationSiteId,
+          pos => this.worldToScreen(pos), state.explorationJournal, state.galaxy?.systems);
+        this.lastExplorationSites = state.explorationSites;
+        this.lastExplorationJournal = state.explorationJournal;
+        this.lastExplorationSelection = state.selectedExplorationSiteId;
+      }
       this.drawRoutes(state);
       this.drawAnchors(state);
 

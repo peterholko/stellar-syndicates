@@ -50,11 +50,13 @@ pub const PRIVATEER_DAMAGE_MULT: f64 = 0.05;
 /// Three legible opening choices surfaced by the guide. They remain ordinary
 /// catalogue programmes: the player may ignore them and choose any open Tier I.
 pub const RECOMMENDED_FIRST_RESEARCH: [&str; 3] =
-    ["prop_drive_tuning", "mat_deep_bores", "life_med_bays"];
+    ["comp_shadow_iv_recon_suite", "prop_expedition_iii_extended_tanks", "mat_deep_bores"];
 
-/// The ordered opening arc. Each stage teaches one system before unlocking the
-/// next; expansion arrives only after the player has built, travelled, fought,
-/// hauled, traded, researched, compared two surveys, and committed a colony.
+/// The opening ends with two received surveys, not a compulsory second colony.
+/// Mine → guarded export → freight expansion OR refining → research → surveys.
+/// BuildConvoy remains the old-save/lost-starter recovery step. Keep enum order
+/// stable for saved identities; BuildSecondFreighter is appended, not inserted
+/// in play order. Retired colony stages advance directly to Complete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FoundingStage {
@@ -62,12 +64,12 @@ pub enum FoundingStage {
     BuildMine,
     BuildConvoy,
     /// Prepare the opening export. The first meaningful departure by ANY owned
-    /// Freighter starts the privateer lesson regardless of its manifest; the two
-    /// required export receipts remain a separate later milestone.
+    /// Freighter starts the privateer lesson regardless of its manifest; the
+    /// Ferrite Ore sale receipt remains a separate later milestone.
     #[serde(alias = "leave_home_well")]
     ExportProduction,
     DefeatPrivateer,
-    /// Wait for both guarded export-sale receipts to reach the command center.
+    /// Wait for a Ferrite Ore sale receipt to reach the command center.
     #[serde(alias = "first_sale")]
     CompleteExport,
     BuildAcademy,
@@ -78,6 +80,10 @@ pub enum FoundingStage {
     BuildColony,
     EstablishColony,
     Complete,
+    BuildSecondFreighter,
+    /// Two suggested investments, not a permanent class choice. Either a second
+    /// owned freight hull or an operating researched Smelter completes the chapter.
+    GrowBusiness,
 }
 
 impl Default for FoundingStage {
@@ -98,7 +104,7 @@ pub struct FoundingProgram {
     pub started_at: f64,
     #[serde(default)]
     pub interceptor: Option<EntityId>,
-    /// Initially the player's first built Freighter; rebound to whichever owned
+    /// Initially the granted Tiny Freighter; rebound to whichever owned
     /// Freighter actually departs first and becomes the privateer's target.
     #[serde(default)]
     pub convoy: Option<EntityId>,
@@ -111,20 +117,20 @@ pub struct FoundingProgram {
     pub privateer_report_at: Option<f64>,
     #[serde(default)]
     pub reward_granted: bool,
-    /// When both required opening export receipts have reached the command center.
+    /// When the first Ferrite Ore sale receipt reaches the command center.
     /// Retains its save-field name so old snapshots migrate without a custom pass.
     #[serde(default)]
     pub sale_report_at: Option<f64>,
-    /// Per-commodity report arrival for the opening export pair. The tutorial
-    /// displays and advances from these arrival clocks, never Market-Hub truth.
+    /// Sale-report arrivals. Old saves may also contain Provisions; only Metallic
+    /// Ore is required now. Progress follows receipt light, never Market-Hub truth.
     #[serde(default)]
     pub opening_export_reports: BTreeMap<Commodity, f64>,
-    /// Goods physically landed by the founding Convoy at the Market Hub. A
-    /// warehouse buy-and-resell cannot masquerade as the protected export run.
+    /// Legacy delivery ledger, retained for snapshot compatibility. Completing
+    /// the export now requires only an executed Ore sale, not a separate delivery.
     #[serde(default)]
     pub opening_export_deliveries: BTreeSet<Commodity>,
     /// Legacy v1 physical-haul bit. Retained only for snapshot compatibility;
-    /// new corporations use the per-commodity guarded-delivery ledger above.
+    /// new corporations use the Ferrite Ore sale receipt above.
     #[serde(default)]
     pub market_haul_completed: bool,
     #[serde(default)]
@@ -143,8 +149,8 @@ pub struct FoundingProgram {
     /// grant covers the first programme's basket as well as most of its clock.
     #[serde(default)]
     pub research_grant_applied: bool,
-    /// The first two prospect reports authorize one exact Colony Ship kit at
-    /// the Market Warehouse. The player still has to move it home and build it.
+    /// Legacy colony-kit ledger. New completions grant no kit; already-awarded
+    /// goods and this flag survive saves unchanged.
     #[serde(default)]
     pub colony_kit_granted: bool,
     /// Sim timestamps at which each authoritative milestone first became true.
@@ -191,7 +197,7 @@ impl FoundingProgram {
         survey_candidates: Vec<EntityId>,
     ) -> Self {
         let mut programme = Self {
-            stage: FoundingStage::BuildShipyard,
+            stage: FoundingStage::BuildMine,
             enabled: true,
             started_at: now,
             initial_surveyed,
@@ -201,7 +207,7 @@ impl FoundingProgram {
         };
         programme
             .milestones
-            .insert(FoundingStage::BuildShipyard, now);
+            .insert(FoundingStage::BuildMine, now);
         programme
     }
 

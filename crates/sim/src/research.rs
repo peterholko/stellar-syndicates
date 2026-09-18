@@ -29,6 +29,9 @@ use crate::specialist::SpecialistKind;
 /// A programme's stable slug. `&'static str` in the catalog; `String` in state.
 pub type ProgrammeId = String;
 
+/// Tunable cap on the work a recovered dossier can replace, per technology.
+pub const DOSSIER_WORK_FRACTION: f64 = 0.30;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FIELDS & SCHOOLS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -234,7 +237,7 @@ pub enum ModKey {
     // Materials / fabrication
     ExtractionRate,
     ExtractionMoons,
-    ProcessingYield,
+    ProcessingYield, // Historical key: processing speed (inputs AND outputs), not recovery.
     MachineryInputs,
     AgroplexYield,
     AgroplexInputs,
@@ -279,6 +282,9 @@ pub enum ModKey {
     TrainingTime,
     AcademyConcurrent,
     SpecialistHousing,
+    /// Smelter recovery, independent of ProcessingYield's historical speed bonus.
+    /// Appended to preserve serialized modifier identities.
+    OreRecovery,
 }
 
 impl ModKey {
@@ -409,6 +415,10 @@ pub struct Programme {
 /// empty). Owner-only in the view (design law 3).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ResearchState {
+    /// Manufacturing licenses from ARRIVED expedition reports. Never grant
+    /// these from a remote site's truth or by learning that a blueprint exists.
+    #[serde(default)]
+    pub blueprints: BTreeSet<ModuleKind>,
     /// The programme the clock is accruing into (front of the queue when set).
     #[serde(default)]
     pub active: Option<ProgrammeId>,
@@ -418,6 +428,13 @@ pub struct ResearchState {
     /// Throughput-seconds accrued into `active`.
     #[serde(default)]
     pub progress: f64,
+    /// Arrived, recovered data earmarked for one programme. Not general progress
+    /// and not an unlock. Unused data survives an unrelated active programme.
+    #[serde(default)]
+    pub recovered_data: BTreeMap<ProgrammeId, f64>,
+    /// A dossier is useful once, including after its credit has been consumed.
+    #[serde(default)]
+    pub recovered_dossiers: BTreeSet<ProgrammeId>,
     /// Completed programme ids (drives availability + the `mods` layer).
     #[serde(default)]
     pub completed: BTreeSet<ProgrammeId>,
@@ -448,6 +465,33 @@ pub struct ResearchState {
 }
 
 impl ResearchState {
+    /// Park work on legacy placeholder programmes instead of trapping a save's
+    /// active clock behind a now-hidden node. Preserve earned work under its
+    /// original id; never complete a no-op or transfer its credit to another tech.
+    pub fn suspend_unimplemented(&mut self) {
+        self.queue.retain(|id| programme(id).is_some_and(|p| !p.hidden));
+        if self.active.as_deref().is_some_and(|id| programme(id).is_none_or(|p| p.hidden)) {
+            let id = self.active.take().unwrap();
+            *self.recovered_data.entry(id).or_insert(0.0) += self.progress;
+            self.progress = 0.0;
+            self.active = if self.queue.is_empty() { None } else { Some(self.queue.remove(0)) };
+        }
+    }
+    pub fn recover_dossier(&mut self, id: &str, fraction: f64) {
+        if programme(id).is_none() || self.has(id) || !fraction.is_finite() || fraction <= 0.0
+            || !self.recovered_dossiers.insert(id.into()) { return; }
+        self.recovered_data.insert(id.into(), cost_of(id) * fraction.clamp(0.0, DOSSIER_WORK_FRACTION));
+    }
+
+    /// Called only after the ordinary availability check. Never spill dossier
+    /// credit into the next programme, even when this one is almost complete.
+    pub fn apply_recovered_data(&mut self) {
+        let Some(id) = self.active.as_deref() else { return; };
+        if let Some(points) = self.recovered_data.remove(id) {
+            self.progress += points.min((cost_of(id) - self.progress).max(0.0));
+        }
+    }
+
     /// The current value of a cumulative verb (0 if never incremented).
     pub fn verb(&self, v: Verb) -> f64 {
         self.verbs.get(&v).copied().unwrap_or(0.0)
@@ -640,17 +684,17 @@ pub fn field_affinity(field: Field) -> &'static [SpecialistKind] {
 // CATALOG — the full six-board programme set. Each field: Tier I (open) →
 // Tier II (field gate) → two schools × Tiers III–V. Effects use the existing
 // keys: `Mods` (mult/additive tuners), `Flag` (capability), `UnlockStructureTier`
-// (tier IV/V of an existing structure). A handful of NEW-CONTENT prizes — the two
-// prestige hulls (Destroyer/Cruiser), the utility modules (Extended Tanks / Recon
-// Suite / Escort Datalink / Lance Array / Blockade-runner refit), and a couple of
-// view/explore features — ship as `Effect::Mods(&[])` PLACEHOLDERS: researchable,
-// on the tree, blurb-described, but inert until the "full pass" adds the ShipKind/
-// ModuleKind content and wires them (they can't be expressed with today's enums).
+// (tier IV/V of an existing structure), plus physical hull/module unlocks.
+// Recon Suite, Extended Tanks and Cargo Pods are functional early equipment.
+// Unimplemented prizes retain their save ids with PENDING effects but stay
+// hidden and unresearchable until their gameplay is wired.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A no-op effect list for programmes whose prize is NEW CONTENT not yet in the
 /// sim (utility modules / view features). Keeps the tree complete; each content
 /// pass swaps these for real `UnlockHull`/`UnlockModule`/`Flag` effects.
+// Deferred designs remain addressable by old save ids, but are not researchable
+// until their advertised gameplay effect exists.
 const PENDING: &[Effect] = &[Effect::Mods(&[])];
 
 pub const CATALOG: &[Programme] = &[
@@ -673,7 +717,11 @@ pub const CATALOG: &[Programme] = &[
         tier: 1,
         name: "Bunkerage",
         blurb: "+25% fuel capacity.",
-        effects: &[Effect::Mods(&[(ModKey::FuelCapacity, 1.25)])],
+        effects: &[
+            Effect::Mods(&[(ModKey::FuelCapacity, 1.25)]),
+            Effect::UnlockStructureTier(StructureKind::VolatileHarvester, 1),
+            Effect::UnlockStructureTier(StructureKind::FuelRefinery, 1),
+        ],
         hidden: false,
     },
     Programme {
@@ -682,8 +730,8 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 1,
         name: "Freight Frames",
-        blurb: "+20% freighter cargo.",
-        effects: &[Effect::Mods(&[(ModKey::ConvoyCargo, 1.20)])],
+        blurb: "Small Freighter hull: 150 cargo, three times a Tiny Freighter's hold.",
+        effects: &[Effect::UnlockHull(ShipKind::SmallFreighter)],
         hidden: false,
     },
     // Shared II (gate: 200 ly flown)
@@ -703,8 +751,8 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 2,
         name: "Heavy Lifters",
-        blurb: "Colony ships seed +50% population.",
-        effects: &[Effect::Mods(&[(ModKey::ColonySeedPop, 1.50)])],
+        blurb: "Medium Freighter hull: 400 cargo. Colony ships seed +50% population.",
+        effects: &[Effect::UnlockHull(ShipKind::Convoy), Effect::Mods(&[(ModKey::ColonySeedPop, 1.50)])],
         hidden: false,
     },
     Programme {
@@ -734,8 +782,8 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::LineHaul),
         tier: 3,
         name: "Express Charters",
-        blurb: "+25% freighter speed.",
-        effects: &[Effect::Mods(&[(ModKey::ConvoySpeed, 1.25)])],
+        blurb: "Large Freighter hull: 1,000 cargo. +25% freighter speed.",
+        effects: &[Effect::UnlockHull(ShipKind::LargeFreighter), Effect::Mods(&[(ModKey::ConvoySpeed, 1.25)])],
         hidden: false,
     },
     Programme {
@@ -757,8 +805,8 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::LineHaul),
         tier: 4,
         name: "Bulk Charters",
-        blurb: "+40% freighter cargo.",
-        effects: &[Effect::Mods(&[(ModKey::ConvoyCargo, 1.40)])],
+        blurb: "Heavy Freighter hull: 2,500 cargo.",
+        effects: &[Effect::UnlockHull(ShipKind::HeavyFreighter)],
         hidden: false,
     },
     Programme {
@@ -767,8 +815,8 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::LineHaul),
         tier: 5,
         name: "Autonomous Freight",
-        blurb: "Freighters chain multi-leg standing routes without CC round-trips.",
-        effects: &[Effect::Flag(Cap::AutonomousFreight)],
+        blurb: "Bulk Freighter hull: 6,000 cargo. Autonomous multi-leg routes.",
+        effects: &[Effect::UnlockHull(ShipKind::BulkFreighter), Effect::Flag(Cap::AutonomousFreight)],
         hidden: false,
     },
     Programme {
@@ -785,11 +833,12 @@ pub const CATALOG: &[Programme] = &[
     Programme {
         id: "prop_expedition_iii_extended_tanks",
         field: Field::Propulsion,
-        school: Some(School::Expedition),
-        tier: 3,
+        // Stable save id; the basic utility is now an early corporate unlock.
+        school: None,
+        tier: 1,
         name: "Extended Tanks",
-        blurb: "Utility module: +fuel capacity (arrives with the utility-module pass).",
-        effects: PENDING,
+        blurb: "Build Extended Tanks at a staffed Shipyard I: +75% fuel capacity on the fitted Scout, Interceptor, Corvette or Freighter. Fuel sold separately.",
+        effects: &[Effect::UnlockModule(ModuleKind::ExtendedTanks)],
         hidden: false,
     },
     Programme {
@@ -811,8 +860,8 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Expedition),
         tier: 4,
         name: "Fleet Tenders",
-        blurb: "Freighters refuel fleets underway.",
-        effects: &[Effect::Flag(Cap::FleetTenders)],
+        blurb: "Build Fuel Transfer Rigs: Freighters refuel owned fleets from carried Fuel, outside combat.",
+        effects: &[Effect::Flag(Cap::FleetTenders), Effect::UnlockModule(crate::module::ModuleKind::FuelTransferRig)],
         hidden: false,
     },
     Programme {
@@ -831,7 +880,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Expedition),
         tier: 5,
         name: "Ramscoop Skimming",
-        blurb: "Ships regain fuel transiting gas-giant systems.",
+        blurb: "Order gas-giant skimming to refill tanks; Freighters collect excess Fuel as cargo for expedition support.",
         effects: &[Effect::Flag(Cap::Ramscoop)],
         hidden: false,
     },
@@ -863,8 +912,12 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 1,
         name: "Enrichment",
-        blurb: "+15% processing yield.",
-        effects: &[Effect::Mods(&[(ModKey::ProcessingYield, 1.15)])],
+        blurb: "Unlocks Smelters and Chemical Works; +15% processing speed.",
+        effects: &[
+            Effect::Mods(&[(ModKey::ProcessingYield, 1.15)]),
+            Effect::UnlockStructureTier(StructureKind::Smelter, 1),
+            Effect::UnlockStructureTier(StructureKind::ChemicalWorks, 1),
+        ],
         hidden: false,
     },
     Programme {
@@ -886,7 +939,7 @@ pub const CATALOG: &[Programme] = &[
         name: "Beneficiation",
         blurb: "Poor deposits gain a richness floor (arrives with the extraction pass).",
         effects: PENDING,
-        hidden: false,
+        hidden: true,
     },
     Programme {
         id: "mat_prefab_construction",
@@ -895,7 +948,11 @@ pub const CATALOG: &[Programme] = &[
         tier: 2,
         name: "Prefab Construction",
         blurb: "−25% structure build time.",
-        effects: &[Effect::Mods(&[(ModKey::StructureBuildTime, 0.75)])],
+        effects: &[
+            Effect::Mods(&[(ModKey::StructureBuildTime, 0.75)]),
+            Effect::UnlockStructureTier(StructureKind::CompositeWorks, 1),
+            Effect::UnlockStructureTier(StructureKind::HullFabricator, 1),
+        ],
         hidden: false,
     },
     Programme {
@@ -905,7 +962,12 @@ pub const CATALOG: &[Programme] = &[
         tier: 2,
         name: "Autoforges",
         blurb: "Machinery recipe −20% inputs.",
-        effects: &[Effect::Mods(&[(ModKey::MachineryInputs, 0.80)])],
+        effects: &[
+            Effect::Mods(&[(ModKey::MachineryInputs, 0.80)]),
+            Effect::UnlockStructureTier(StructureKind::MachineWorks, 1),
+            Effect::UnlockStructureTier(StructureKind::PrecisionWorks, 1),
+            Effect::UnlockStructureTier(StructureKind::DriveWorks, 1),
+        ],
         hidden: false,
     },
     // ⑂ DEEP CRUST (gate: 15,000 raw units extracted)
@@ -996,8 +1058,9 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Foundry),
         tier: 4,
         name: "Orbital Yards",
-        blurb: "Shipyard tier IV.",
-        effects: &[Effect::UnlockStructureTier(StructureKind::Shipyard, 4)],
+        blurb: "Shipyard tiers V–VI and Orbital Warehouses.",
+        effects: &[Effect::UnlockStructureTier(StructureKind::Shipyard, 4),
+            Effect::UnlockStructureTier(StructureKind::OrbitalWarehouse, 1)],
         hidden: false,
     },
     Programme {
@@ -1006,8 +1069,9 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Foundry),
         tier: 4,
         name: "Arcology Frames",
-        blurb: "Habitat tier IV.",
-        effects: &[Effect::UnlockStructureTier(StructureKind::Habitat, 4)],
+        blurb: "Habitat and Warehouse tiers V–VI.",
+        effects: &[Effect::UnlockStructureTier(StructureKind::Habitat, 4),
+            Effect::UnlockStructureTier(StructureKind::Warehouse, 4)],
         hidden: false,
     },
     Programme {
@@ -1039,7 +1103,10 @@ pub const CATALOG: &[Programme] = &[
         tier: 1,
         name: "Sensor Gain",
         blurb: "+15% sensor radius.",
-        effects: &[Effect::Mods(&[(ModKey::SensorRadius, 1.15)])],
+        effects: &[
+            Effect::Mods(&[(ModKey::SensorRadius, 1.15)]),
+            Effect::UnlockStructureTier(StructureKind::SensorArray, 1),
+        ],
         hidden: false,
     },
     Programme {
@@ -1049,7 +1116,10 @@ pub const CATALOG: &[Programme] = &[
         tier: 1,
         name: "Signal Libraries",
         blurb: "Rival fleets bucket one class finer to you.",
-        effects: &[Effect::Mods(&[(ModKey::BucketFineness, 1.0)])],
+        effects: &[
+            Effect::Mods(&[(ModKey::BucketFineness, 1.0)]),
+            Effect::UnlockStructureTier(StructureKind::ElectronicsFabricator, 1),
+        ],
         hidden: false,
     },
     Programme {
@@ -1071,7 +1141,7 @@ pub const CATALOG: &[Programme] = &[
         name: "Predictive Plots",
         blurb: "Stale-intel confidence bands (view feature; arrives with the intel pass).",
         effects: PENDING,
-        hidden: false,
+        hidden: true,
     },
     Programme {
         id: "comp_deep_space_arrays",
@@ -1091,7 +1161,7 @@ pub const CATALOG: &[Programme] = &[
         name: "Gravimetric Survey",
         blurb: "Deposits read one R-level deeper at range (arrives with the explore pass).",
         effects: PENDING,
-        hidden: false,
+        hidden: true,
     },
     // ⑂ WATCH (gate: 25 systems scouted)
     Programme {
@@ -1188,11 +1258,11 @@ pub const CATALOG: &[Programme] = &[
     Programme {
         id: "comp_shadow_iv_recon_suite",
         field: Field::Computation,
-        school: Some(School::Shadow),
-        tier: 4,
+        school: None,
+        tier: 1,
         name: "Recon Suite",
-        blurb: "Utility module: +sensor radius (arrives with the utility-module pass).",
-        effects: PENDING,
+        blurb: "Build Recon Suites at a staffed Shipyard I. Scout contacts 30k → 60k su, mobile sensors 40k su; Interceptor sensors 80k → 120k su. Double expedition lookout. Reports still travel at normal speed.",
+        effects: &[Effect::UnlockModule(ModuleKind::ReconSuite)],
         hidden: false,
     },
     Programme {
@@ -1224,7 +1294,11 @@ pub const CATALOG: &[Programme] = &[
         tier: 1,
         name: "Fire Control",
         blurb: "+10% beam damage.",
-        effects: &[Effect::Mods(&[(ModKey::BeamDmg, 1.10)])],
+        effects: &[
+            Effect::Mods(&[(ModKey::BeamDmg, 1.10)]),
+            Effect::UnlockStructureTier(StructureKind::DefensePlatform, 1),
+            Effect::UnlockStructureTier(StructureKind::Garrison, 1),
+        ],
         hidden: false,
     },
     Programme {
@@ -1265,10 +1339,10 @@ pub const CATALOG: &[Programme] = &[
         tier: 2,
         name: "Munitions Lines",
         blurb: "Modules −25% build time, −15% cost.",
-        effects: &[Effect::Mods(&[
-            (ModKey::ModuleBuildTime, 0.75),
-            (ModKey::ModuleCost, 0.85),
-        ])],
+        effects: &[
+            Effect::Mods(&[(ModKey::ModuleBuildTime, 0.75), (ModKey::ModuleCost, 0.85)]),
+            Effect::UnlockStructureTier(StructureKind::ArmamentsComplex, 1),
+        ],
         hidden: false,
     },
     Programme {
@@ -1290,7 +1364,7 @@ pub const CATALOG: &[Programme] = &[
         name: "Lance Array",
         blurb: "Heavy-beam module, doubly vulnerable to Reflective (arrives with the weapon-module pass).",
         effects: PENDING,
-        hidden: false,
+        hidden: true,
     },
     Programme {
         id: "weap_strike_iii_breaching_ordnance",
@@ -1340,7 +1414,7 @@ pub const CATALOG: &[Programme] = &[
         name: "Overpressure Warheads",
         blurb: "Torpedo kills splash 10% into the victim's stack (arrives with the combat pass).",
         effects: PENDING,
-        hidden: false,
+        hidden: true,
     },
     // ⑂ COUNTERMEASURES (gate: absorb 150 hull-mass of damage)
     Programme {
@@ -1406,13 +1480,38 @@ pub const CATALOG: &[Programme] = &[
     // ═══════════════════ 5 · HULLS ═══════════════════
     // Shared I
     Programme {
+        // Keep the saved id; the first Corvette must not require eight battle
+        // wins or a Line specialization to acquire its dedicated escort fit.
+        id: "hull_line_iii_escort_datalink",
+        field: Field::Hulls,
+        school: None,
+        tier: 1,
+        name: "Escort Datalink",
+        blurb: "Corvette + Point-Defense Screen: protect the guarded fleet, with an extra intercept at twice PD reach. Build at a staffed Shipyard I.",
+        effects: &[Effect::UnlockModule(ModuleKind::EscortDatalink)],
+        hidden: false,
+    },
+    Programme {
+        id: "hull_cargo_pods",
+        field: Field::Hulls,
+        school: None,
+        tier: 1,
+        name: "Cargo Pods",
+        blurb: "Build Cargo Pods at a staffed Shipyard I. Freighter hold 250 → 500 units; uses the utility slot instead of Extended Tanks.",
+        effects: &[Effect::UnlockModule(ModuleKind::CargoPods)],
+        hidden: false,
+    },
+    Programme {
         id: "hull_drydock_efficiency",
         field: Field::Hulls,
         school: None,
         tier: 1,
         name: "Drydock Efficiency",
         blurb: "Warship build time −20%.",
-        effects: &[Effect::Mods(&[(ModKey::WarshipBuildTime, 0.80)])],
+        effects: &[
+            Effect::Mods(&[(ModKey::WarshipBuildTime, 0.80)]),
+            Effect::UnlockStructureTier(StructureKind::OrdnanceFoundry, 1),
+        ],
         hidden: false,
     },
     Programme {
@@ -1453,7 +1552,10 @@ pub const CATALOG: &[Programme] = &[
         tier: 2,
         name: "Modular Berths",
         blurb: "Refits −50% time.",
-        effects: &[Effect::Mods(&[(ModKey::RefitTime, 0.50)])],
+        effects: &[
+            Effect::Mods(&[(ModKey::RefitTime, 0.50)]),
+            Effect::UnlockStructureTier(StructureKind::NavalDrydock, 1),
+        ],
         hidden: false,
     },
     Programme {
@@ -1475,16 +1577,6 @@ pub const CATALOG: &[Programme] = &[
         name: "Hardened Anchorage",
         blurb: "Anchored fleets at owned systems take −15% damage.",
         effects: &[Effect::Mods(&[(ModKey::AnchoredDmgTaken, 0.85)])],
-        hidden: false,
-    },
-    Programme {
-        id: "hull_line_iii_escort_datalink",
-        field: Field::Hulls,
-        school: Some(School::Line),
-        tier: 3,
-        name: "Escort Datalink",
-        blurb: "Corvette utility module: +screening (arrives with the utility-module pass).",
-        effects: PENDING,
         hidden: false,
     },
     Programme {
@@ -1552,6 +1644,7 @@ pub const CATALOG: &[Programme] = &[
         blurb: "The fleet screen: 5 slots / 28 fitting pts, interception affinity — a PD-fitted Dreadnought screens its side at platform grade. Grants Shipyard tier V.",
         effects: &[
             Effect::UnlockHull(ShipKind::Dreadnought),
+            Effect::UnlockStructureTier(StructureKind::CapitalSlipway, 1),
             Effect::UnlockStructureTier(StructureKind::Shipyard, 5),
         ],
         hidden: false,
@@ -1608,7 +1701,7 @@ pub const CATALOG: &[Programme] = &[
         name: "Blockade Runners",
         blurb: "Freighter refit variant: +30% speed, −20% cargo (arrives with the refit pass).",
         effects: PENDING,
-        hidden: false,
+        hidden: true,
     },
     Programme {
         id: "hull_corsair_v_salvage_rigs",
@@ -1705,7 +1798,7 @@ pub const CATALOG: &[Programme] = &[
         name: "Orbital Habitats",
         blurb: "Habitat buildable on station bodies (arrives with the habitat pass).",
         effects: PENDING,
-        hidden: false,
+        hidden: true,
     },
     Programme {
         id: "life_growth_iii_boom_charters",
@@ -1816,6 +1909,16 @@ pub const CATALOG: &[Programme] = &[
         name: "Founders' Institutes",
         blurb: "Newly trained specialists start expert.",
         effects: &[Effect::Flag(Cap::FoundersInstitutes)],
+        hidden: false,
+    },
+    Programme {
+        id: "mat_ore_recovery",
+        field: Field::Materials,
+        school: None,
+        tier: 1,
+        name: "Ore Recovery",
+        blurb: "+15% Smelter recovery from the same ore and Fuel, including byproducts. Enrichment unlocks the Smelter.",
+        effects: &[Effect::Mods(&[(ModKey::OreRecovery, 1.15)])],
         hidden: false,
     },
 ];
@@ -1959,12 +2062,19 @@ pub fn has_hull(state: &ResearchState, kind: ShipKind) -> bool {
 
 /// Has this syndicate unlocked the given module kind?
 pub fn has_module(state: &ResearchState, kind: ModuleKind) -> bool {
-    completed_effects(state).any(|e| *e == Effect::UnlockModule(kind))
+    state.blueprints.contains(&kind) || completed_effects(state).any(|e| *e == Effect::UnlockModule(kind))
 }
 
-/// The best UNLOCKED tier for `kind` from research (0 = none granted). A site
-/// takes `max(base_tier, this)` to gate tier-IV/V builds.
+/// The best unlocked tier for `kind` (0 = none). Initial construction unlocks
+/// are explicit prerequisites, independent of later tier-raising research:
+/// Deep-Space Arrays alone must not bypass Sensor Gain in a custom client.
+/// The build gate consumes this value only when enqueueing a new job. Existing
+/// structures keep operating; saves with paid jobs from before a new gate was
+/// introduced still finish under the ordinary queue/ownership rules.
 pub fn unlocked_structure_tier(state: &ResearchState, kind: StructureKind) -> u32 {
+    if kind.research_prerequisite().is_some_and(|id| !state.has(id)) {
+        return 0;
+    }
     completed_effects(state)
         .filter_map(|e| match e {
             Effect::UnlockStructureTier(k, t) if *k == kind => Some(*t),
@@ -2035,11 +2145,11 @@ mod tests {
     #[test]
     fn catalog_is_the_full_six_board_tree() {
         // 6 fields × (3 shared-I + 3 shared-II + two schools × (2+2+2)) = 108,
-        // §ladder B2: + the Line capital ladder (VI/VII/VIII, one each) = 111.
+        // + the Line capital ladder (VI/VII/VIII), Cargo Pods, Ore Recovery = 113.
         assert_eq!(
             CATALOG.len(),
-            111,
-            "the v6 tree (108) + the 3 Line capital tiers"
+            113,
+            "the v6 tree (108) + the 3 Line capital tiers + Cargo Pods + Ore Recovery"
         );
         for field in [
             Field::Propulsion,
@@ -2050,7 +2160,7 @@ mod tests {
             Field::Life,
         ] {
             let of_field: Vec<&Programme> = CATALOG.iter().filter(|p| p.field == field).collect();
-            let expect = if field == Field::Hulls { 21 } else { 18 };
+            let expect = if field == Field::Hulls { 22 } else if field == Field::Materials { 19 } else { 18 };
             assert_eq!(of_field.len(), expect, "{field:?} programme count");
             // Exactly two schools, each a III/IV/V ladder of 2+2+2.
             let schools: BTreeSet<School> = of_field.iter().filter_map(|p| p.school).collect();
@@ -2061,16 +2171,18 @@ mod tests {
                         .iter()
                         .filter(|p| p.school == Some(s) && p.tier == t)
                         .count();
-                    assert_eq!(n, 2, "{s:?} tier {t} has two programmes");
+                    let promoted = (matches!(s, School::Expedition | School::Line) && t == 3) || (s == School::Shadow && t == 4);
+                    assert_eq!(n, if promoted { 1 } else { 2 }, "{s:?} tier {t}");
                 }
             }
-            // Three shared programmes at each of tiers I and II.
+            // Three shared programmes per tier, plus equipment and recovery picks.
             for t in 1..=2u8 {
                 let n = of_field
                     .iter()
                     .filter(|p| p.school.is_none() && p.tier == t)
                     .count();
-                assert_eq!(n, 3, "{field:?} shared tier {t} has three programmes");
+                let utility = t == 1 && matches!(field, Field::Propulsion | Field::Computation | Field::Hulls | Field::Materials);
+                assert_eq!(n, if t == 1 && field == Field::Hulls { 5 } else if utility { 4 } else { 3 }, "{field:?} shared tier {t}");
             }
         }
         // §ladder B2: the capital tiers are SINGLE-PICK — exactly one Line
@@ -2084,17 +2196,12 @@ mod tests {
                 "capital tier {t} belongs to Line"
             );
         }
-        // Exactly the two documented hidden entries.
+        // Deferred capabilities plus the seven not-yet-functional designs.
         let hidden: Vec<&str> = CATALOG.iter().filter(|p| p.hidden).map(|p| p.id).collect();
-        assert_eq!(
-            hidden,
-            vec![
-                "hull_corsair_v_salvage_rigs",
-                "hull_corsair_v_boarding_parties"
-            ]
-        );
+        assert_eq!(hidden.len(), 9);
+        assert!(CATALOG.iter().filter(|p| p.effects == PENDING).all(|p| p.hidden));
         // Every catalog id resolves and every non-hidden one is visible.
-        assert_eq!(visible_ids().count(), 109);
+        assert_eq!(visible_ids().count(), 104);
     }
 
     #[test]

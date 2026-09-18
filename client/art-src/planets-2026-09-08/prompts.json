@@ -1,0 +1,64 @@
+{
+  "mode": "built-in image tool",
+  "purpose": "System-view planet and moon sprites: broader forms, softer small-size rendering; native masters retained.",
+  "version": "2026-09-08",
+  "initialTerrestrial": "Use case: stylized-concept.\nAsset type: production-ready single terrestrial planet sprite for the SYSTEM VIEW of Stellar Syndicates, a polished dark sci-fi strategy game.\nPrimary request: Regenerate the planet artwork with broad, beautiful forms that stay readable at a small 32–80 pixel displayed diameter, rather than oversharp satellite-photo microtexture.\nSubject: one Earth-like alien world, rich deep cobalt oceans, two or three large organically shaped moss-green continents, a few broad wispy ivory cloud arcs, small pale polar caps. Do not reproduce recognizable Earth geography.\nStyle/medium: premium softly shaded cinematic 3D game illustration. Smooth spherical volume and elegant natural color transitions. Restrained medium-scale detail; continents and cloud masses do the work. Clean and vivid but not neon, cartoon, flat vector or low-poly. No etched texture, grain, cities, pinpoint lights, elaborate coastlines or noise.\nComposition: exactly ONE complete circular planet, centered in a square canvas, the solid disk occupying about 88% of the canvas width and height, even transparent margins. No clipped edge.\nLighting: broad warm-white light from upper left; around 80% of the globe legibly illuminated with a soft curved terminator toward lower right; dark hemisphere remains visibly colored, not a black cutout. A very thin soft blue atmospheric limb, NOT an outline ring or large glow.\nBackground: genuinely transparent alpha, including the corners. No background scene, stars, sun, moons, orbital rings, shadow cast onto a surface, labels, frame, text or watermark.\nDeliver one high-resolution square RGBA sprite, not a contact sheet.",
+  "initialVariantPrefix": "Use case: stylized-concept.\nAsset type: single transparent planet sprite in a coherent set for the SYSTEM VIEW of Stellar Syndicates.\nInput image: STYLE REFERENCE ONLY — use its clean spherical framing, readable large-scale features, rich but natural color and soft cinematic shading. Create a NEW celestial body of the type described below; do not copy the green continents.\nStyle/medium: premium softly shaded cinematic 3D game illustration, with broad beautiful surface shapes. Designed to read cleanly at a small 32–80 pixel diameter. Favor simple medium-scale forms, smooth gradients and slightly softened texture, not oversharpened satellite imagery. No grain, microdetail, etched relief or specular speckling. Not flat vector, cartoon or low-poly.\nComposition: exactly ONE complete circular globe centered on a square transparent canvas, solid disk about 88–92% of canvas width/height, even padding. No clipped edges.\nLighting: broad warm-white light from upper left; around 80% of globe legibly illuminated; soft curved terminator at lower right; night side dim but still visible. Consistent with the reference.\nBackground: genuinely transparent alpha. No sun, stars, moons, orbit lines, decorative circles, framing, floor, cast shadow, labels, text, watermark or contact sheet.\nDeliver one high-resolution square RGBA game sprite.\nSubject: ",
+  "variants": [
+    {
+      "slug": "desert",
+      "title": "Desert world",
+      "subject": "One parched desert planet: warm ochre and peach sandstone, broad sweeping rust-red basins and sandy plateaus, one pale dune belt and a tiny ivory polar cap. Sparse broad geological shapes, NOT dense ripples, cracks, craters or stippling. Thin warm atmospheric edge; no water and no vegetation."
+    },
+    {
+      "slug": "ocean",
+      "title": "Ocean world",
+      "subject": "One ocean-covered planet: rich sapphire and turquoise seas covering almost the whole sphere, two or three tiny archipelago groups, broad soft ivory storm-cloud spirals and a pale polar haze. Clearly more blue and less land than the terrestrial reference; no giant continents. Calm large-scale forms, not turbulent tiny noisy swirls."
+    },
+    {
+      "slug": "ice",
+      "title": "Ice world",
+      "subject": "One frozen planet: luminous ivory-blue ice sheets, broad deep teal glacial seams, a few smooth pale frozen plains and one darker slate-blue basin. Restrained icy atmosphere. Frosty blue-white identity, not an Earth clone. Very few large features, no web of fine fissures or dense craters."
+    },
+    {
+      "slug": "gas_giant",
+      "title": "Gas giant",
+      "subject": "One warm gas giant: broad elegant bands of honey gold, cream, amber and muted burnt sienna, one unmistakable large oval storm, smoothly blended cloud belts. No solid surface, no rings, no moon. Bands and ONE large storm dominate; avoid filamentary noise, dozens of little storms and fine stripes."
+    },
+    {
+      "slug": "lava",
+      "title": "Lava world",
+      "subject": "One volcanic planet: dark basalt plates separated by a few broad winding rivers and seas of luminous amber-orange magma. Approximately three major molten basins and a small number of large branching seams. Restrained warm limb, subtle orange atmospheric haze. The sphere stays clearly dark rocky with orange-red areas, NOT a sun or explosion. No dense fractal vein network, sparks, eruptions outside the disk or tiny glowing speckles."
+    },
+    {
+      "slug": "barren",
+      "title": "Barren world",
+      "subject": "One airless mineral world: warm slate and smoky taupe-gray rocky plains, three or four broad softly worn impact basins and one large dark mineral patch. Gentle modeled volume, matte stone, no atmosphere glow. Clear large crater shapes with softened rims, not gravel, hundreds of tiny craters, extreme relief, razor-sharp noise or metallic facets."
+    },
+    {
+      "slug": "moon",
+      "title": "Moon",
+      "subject": "One small airless moon represented as a full circular globe: pale neutral silver-gray surface, two or three very broad softly worn craters and smooth lunar plains, quiet low-contrast surface texture. No atmosphere or blue glow. Fill the same canvas footprint as a planet sprite; the game handles its smaller display size. No dozens of tiny craters, asteroid shape or tiny moon floating in empty space."
+    }
+  ],
+  "backgroundCorrection": "Use case: background-extraction.\nInput image: EDIT TARGET.\nRemove the entire gray-and-white checkerboard background outside this planet. The checkerboard is a mistake, NOT part of the artwork. Deliver a clean cutout on a GENUINELY TRANSPARENT RGBA background with zero alpha in all four corners and everywhere outside the circular planet, with a clean softly antialiased edge. Do not draw a transparency pattern; use actual transparency.\nPreserve the existing planet itself: same large surface features, colors, light direction, scale, centered position and full circular silhouette. Preserve all solid dark regions INSIDE the planet. Change the background only. No new border, shadow, glow, text, or other objects.\nSingle square planet sprite at the original resolution.",
+  "finalSurfacePass": "Edit this transparent planet PNG. Keep the alpha channel and all empty transparent pixels outside the globe exactly as in the input. Repaint ONLY the planet interior into the following type; keep its spherical shading and full circular silhouette. The deliverable is an isolated game sprite with actual zero-alpha background, no background pixels or transparency illustration. Very broad surface features and smooth softly shaded gradients; this is displayed at 32–80px, so avoid fine, gritty, oversharp surface detail. Upper-left lighting. No text or other objects. New surface: [append the matching variant subject]. Reference: terrestrial.png. Applied to desert, ocean, gas_giant, barren, and moon.",
+  "postprocessing": {
+    "authorization": "2026-09-09: user explicitly approved local image-processing cleanup of the baked-in checkerboard backgrounds.",
+    "script": "client/scripts/prepare-planet-art.mjs",
+    "originals": "originals/ contains the five exact opaque generator outputs; the three already-transparent masters are untouched.",
+    "operation": "Trace each globe silhouette in the outer annulus, feather the alpha inward by 1.5 native pixels. No repainting, recoloring, scaling, sharpening, or color-key holes in the surface. Source RGB is retained."
+  },
+  "derivatives": {
+    "sizes": [
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024,
+      1254
+    ],
+    "sampling": "Direct from each native master with Mitchell downsampling; no sharpening. The 1254px tier is copied byte-for-byte."
+  }
+}

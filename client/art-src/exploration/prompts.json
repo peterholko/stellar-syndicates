@@ -1,0 +1,25 @@
+{
+  "generator": "Codex built-in image generator",
+  "assets": [
+    {
+      "slug": "derelict",
+      "prompt": "Use case: stylized-concept. Asset type: production PNG sprite for Stellar Syndicates, a dark sci-fi galaxy map and exploration detail panel. One isolated object, crisp small-scale silhouette, polished hard-surface game render with clean geometric forms rather than brush strokes, top-down three-quarter view, restrained metallic materials and luminous accent. Square canvas, centered object occupying roughly 78%, generous transparent padding. Genuinely transparent background with alpha, no black or checkerboard background, no frame, no text, no labels, no watermark, no planets or starfield. Must remain recognizable at 48 pixels on a dark navy map. Subject: A broken abandoned deep-space freighter wreck: asymmetrical split titanium hull, missing middle section, several nearby cargo pods, a few tiny amber emergency lights. Silver-grey metal and warm amber. No intact player ship, no large explosion."
+    },
+    {
+      "slug": "station",
+      "prompt": "Use case: stylized-concept. Asset type: production PNG sprite for Stellar Syndicates, a dark sci-fi galaxy map and exploration detail panel. One isolated object, crisp small-scale silhouette, polished hard-surface game render with clean geometric forms rather than brush strokes, top-down three-quarter view, restrained metallic materials and luminous accent. Square canvas, centered object occupying roughly 78%, generous transparent padding. Genuinely transparent background with alpha, no black or checkerboard background, no frame, no text, no labels, no watermark, no planets or starfield. Must remain recognizable at 48 pixels on a dark navy map. Subject: An abandoned orbital research station floating between stars: incomplete octagonal habitation ring around a compact central dock, two folded solar wings, tarnished pale metal with subtle teal lights. Strong distinctive ring silhouette, no enclosing UI badge."
+    },
+    {
+      "slug": "asteroids",
+      "prompt": "Use case: stylized-concept. Asset type: production PNG sprite for Stellar Syndicates, a dark sci-fi galaxy map and exploration detail panel. One isolated object, crisp small-scale silhouette, polished hard-surface game render with clean geometric forms rather than brush strokes, top-down three-quarter view, restrained metallic materials and luminous accent. Square canvas, centered object occupying roughly 78%, generous transparent padding. Genuinely transparent background with alpha, no black or checkerboard background, no frame, no text, no labels, no watermark, no planets or starfield. Must remain recognizable at 48 pixels on a dark navy map. Subject: A compact group of five irregular metallic asteroids and one small blue-white icy comet fragment. One large central rock with copper mineral seams, smaller offset rocks. Earthy graphite and copper with a subtle icy cyan accent. Empty space between the rocks, no dense dust background."
+    },
+    {
+      "slug": "anomaly",
+      "prompt": "Use case: stylized-concept. Asset type: production PNG sprite for Stellar Syndicates, a dark sci-fi galaxy map and exploration detail panel. One isolated object, crisp small-scale silhouette, polished hard-surface game render with clean geometric forms rather than brush strokes, top-down three-quarter view, restrained metallic materials and luminous accent. Square canvas, centered object occupying roughly 78%, generous transparent padding. Genuinely transparent background with alpha, no black or checkerboard background, no frame, no text, no labels, no watermark, no planets or starfield. Must remain recognizable at 48 pixels on a dark navy map. Subject: A small mysterious phenomenon within a nebula: an elegant violet-turquoise crescent of wispy plasma enclosing three bright pale motes and a compact dark angular fragment, localized self-contained silhouette with transparent gaps. It represents a research anomaly, not a wormhole hub, no large circular vortex, no solid background fog."
+    },
+    {
+      "slug": "precursor",
+      "prompt": "Use case: stylized-concept. Asset type: production PNG sprite for Stellar Syndicates, a dark sci-fi galaxy map and exploration detail panel. One isolated object, crisp small-scale silhouette, polished hard-surface game render with clean geometric forms rather than brush strokes, top-down three-quarter view, restrained metallic materials and luminous accent. Square canvas, centered object occupying roughly 78%, generous transparent padding. Genuinely transparent background with alpha, no black or checkerboard background, no frame, no text, no labels, no watermark, no planets or starfield. Must remain recognizable at 48 pixels on a dark navy map. Subject: An ancient alien installation: three black ceramic monolith arms arranged around a small floating gold energy prism, precise angular geometry, weathered dark stone and muted gold-white luminous seams. Distinctive triangular architectural silhouette, mysterious and technological, no magic runes or text."
+    }
+  ]
+}

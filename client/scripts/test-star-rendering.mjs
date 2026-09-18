@@ -95,7 +95,8 @@ class Sprite extends Container { constructor(texture) { super(); this.texture = 
 class Text extends Container { constructor({ text, style }) { super(); this.text = text; this.style = style; this.anchor = point(); } }
 const pixi = { Container, Graphics, Sprite, Text, Texture: { EMPTY: {} },
   TextStyle: class { constructor(style) { Object.assign(this, style); } }, Assets: { load: () => new Promise(() => {}) } };
-const systems = compile(source("systemview.ts"), { "./stars": stars, "./prng": prng, "pixi.js": pixi });
+const planetArt = compile(source("planetart.ts"), { "./planet-art.generated": compile(source("planet-art.generated.ts")) });
+const systems = compile(source("systemview.ts"), { "./stars": stars, "./prng": prng, "./planetart": planetArt, "pixi.js": pixi });
 
 const renderSource = source("render.ts");
 const ast = ts.createSourceFile("render.ts", renderSource, ts.ScriptTarget.Latest, true);

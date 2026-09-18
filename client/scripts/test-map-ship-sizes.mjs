@@ -16,6 +16,9 @@ function compile(text, globals = {}) {
 }
 const { fleetExactCount } = compile(source("protocol.ts"));
 const { hashId } = compile(source("prng.ts"));
+const generatedArt = compile(source("ship-art.generated.ts"));
+const shipArt = compile(source("shipart.ts"), { require: () => generatedArt });
+const { shipArtwork } = shipArt;
 const rendererSource = source("render.ts");
 
 function fixture(overrides = {}, text = rendererSource) {
@@ -55,7 +58,7 @@ function fixture(overrides = {}, text = rendererSource) {
         const marker = this.fleetMarker(ghost);
         return ${target.getText(ast)};
       }
-    }`, { fleetExactCount, hashId });
+    }`, { fleetExactCount, hashId, ...shipArt });
   const renderer = new Renderer();
   for (const name of ["Convoy", "Raider", "Corvette", "Colony", "Scout", "Destroyer", "Cruiser",
     "Battleship", "Dreadnought", "Titan", "AuthorityFreighter", "Transport", "Builder",
@@ -64,6 +67,8 @@ function fixture(overrides = {}, text = rendererSource) {
   }
   renderer.texFleet = new Map(["freighter", "raider", "corvette", "scout"].flatMap(family =>
     ["wing", "squadron", "armada"].map(tier => [`${family}_${tier}`, { name: `${family}_${tier}`, width: 256 }])));
+  renderer.freightTextures = new Map(["tiny_freighter", "small_freighter", "large_freighter", "heavy_freighter", "bulk_freighter"]
+    .map(kind => [kind, { name: kind, width: 256 }]));
   return renderer;
 }
 
@@ -75,13 +80,14 @@ const zooms = [.5, .9, 1, 1.3, 1.6, 2.499, 2.5, 4, 8, 12, 12.01, 15, 18, 21, 23.
 const normalCanvas = { raider: 64, convoy: 89.6, freighter: 89.6, corvette: 76.8,
   colony: 102.4, scout: 48, builder: 83.2, transport: 92.8, destroyer: 83.2,
   cruiser: 96, battleship: 112, dreadnought: 131.2, titan: 153.6 };
-const deepCanvas = { raider: 96, convoy: 120, freighter: 120, corvette: 112,
-  colony: 120, scout: 72, builder: 120, transport: 120, destroyer: 136,
-  cruiser: 160, battleship: 184, dreadnought: 208, titan: 232 };
+const classCaps = { scout: 72, corvette: 144, destroyer: 240, cruiser: 384,
+  battleship: 480, dreadnought: 576, titan: 768 };
+const deepCanvas = { raider: 96, convoy: 120, freighter: 120,
+  colony: 120, builder: 120, transport: 120, ...classCaps };
 const changedClasses = new Set(["scout", "corvette", "destroyer", "cruiser", "battleship", "dreadnought", "titan"]);
 const current = fixture();
 // Both reference curves run the real interpolation, not copied sizing math.
-const unscaled = fixture({ INTERCEPTOR_MAP_SCALE: 1, PRIVATEER_MAP_SCALE: 1 });
+const unscaled = fixture({ INTERCEPTOR_MAP_SCALE: 1, PRIVATEER_MAP_SCALE: 1, SHIP_CLASS_MAX_PX: classCaps });
 const beforeHierarchy = fixture({ SHIP_CLASS_MAX_PX: {} });
 const variants = new Map();
 current.scale = 4;
@@ -138,6 +144,27 @@ function checkMonotonic(renderer, kinds = Object.keys(normalCanvas)) {
 check(current);
 checkEndpoints(current);
 checkMonotonic(current);
+// Freight progression must remain readable at every zoom, using six distinct
+// single-hull designs even when a fleet has enough ships for a formation icon.
+const freightKinds = ["tiny_freighter", "small_freighter", "convoy", "large_freighter", "heavy_freighter", "bulk_freighter"];
+checkMonotonic(current, freightKinds);
+for (const zoom of zooms) {
+  current.scale = zoom;
+  let previousLength = 0;
+  for (const kind of freightKinds) {
+    const g = ghost(kind);
+    const visibleLength = current.drawnSize(g) * shipArtwork(kind).lengthRatio;
+    assert.ok(visibleLength > previousLength, `${kind} must be visibly larger than the previous freight size at ${zoom}`);
+    previousLength = visibleLength;
+    close(current.fleetHitRadius(g), current.drawnSize(g) / 2, `${kind}: freight art and pick radius agree`);
+    if (kind !== "convoy") assert.equal(current.fleetMarker(ghost(kind, 8)).tex.name, kind,
+      "new freight sizes never borrow a different hull's formation art");
+  }
+}
+current.scale = 96;
+for (const [index, cap] of [80, 100, 120, 160, 200, 240].entries()) {
+  close(current.shipSizePx(freightKinds[index]), cap, "freight close-up cap");
+}
 // Execute the real map-picking radius expression: the Scout's reduced art must
 // not reduce the existing 24px minimum target, nor cap a capital's larger one.
 const pickAst = ts.createSourceFile("mapclick.ts", source("core/mapclick.ts"), ts.ScriptTarget.Latest, true);
@@ -152,7 +179,7 @@ assert.equal(pickRadii.length, 1);
 const { pickRadius } = compile(`export function pickRadius(renderer, ghost) { return ${pickRadii[0].getText(pickAst)}; }`);
 for (const zoom of [.9, 4, 24, 96]) {
   current.scale = zoom;
-  close(pickRadius(current, ghost("scout")), zoom < 12 ? 24 : 36, `Scout pick radius at ${zoom}`);
+  close(pickRadius(current, ghost("scout")), Math.max(24, current.drawnSize(ghost("scout")) / 2), `Scout pick radius at ${zoom}`);
   close(pickRadius(current, ghost("titan")), current.drawnSize(ghost("titan")) / 2, `Titan pick radius at ${zoom}`);
 }
 // No pop at the 12/24 boundaries; LOD and fleet-count changes keep lead parity.
@@ -183,20 +210,21 @@ close(current.drawnSize(variants.get("PirateCorsair")), 75.6, "corsair deep cap"
 close(current.drawnSize(variants.get("PirateBoarding")), 75.6, "boarding privateer deep cap");
 // Missing formation art still falls back to the correctly scaled single hull.
 current.texFleet.clear();
-close(current.drawnSize(ghost("raider", 8)), 96, "formation fallback");
+close(current.drawnSize(ghost("raider", 8)), 96 * shipArtwork("raider").calib, "formation fallback");
 
 // Actual asset bounds check: canvas padding must not erase the visible ladder.
 // Alpha >= 128 excludes the faint exhaust/fringe, measuring nose-to-tail length.
 const hulls = [
   ["scout", "scout_utility_ship.png"], ["raider", "raider_attack_ship.png"],
-  ["corvette", "corvette_escort_ship.png"], ["convoy", "corporate_freighter.png"],
+  ["convoy", "corporate_freighter.png"], ["corvette", "corvette_escort_ship.png"],
   ["destroyer", "destroyer_line_ship.png"], ["cruiser", "cruiser_line_ship.png"],
   ["battleship", "battleship_line_ship.png"], ["dreadnought", "dreadnought_line_ship.png"],
   ["titan", "titan_flagship.png"],
 ];
 const lengths = new Map();
-for (const [kind, file] of hulls) {
-  const { data, info } = await sharp(new URL(`../public/art/ship_sprites/${file}`, import.meta.url).pathname)
+for (const [kind] of hulls) {
+  const url = shipArtwork(kind).levels.at(-1).url;
+  const { data, info } = await sharp(new URL(`../public${url.split("?")[0]}`, import.meta.url).pathname)
     .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   let minY = info.height, maxY = -1;
   for (let y = 0; y < info.height; y++) for (let x = 0; x < info.width; x++) {
@@ -212,7 +240,14 @@ for (const [kind, file] of hulls) {
   lengths.set(kind, length);
 }
 assert.ok(lengths.get("scout") < lengths.get("convoy") * .65, "Scout stays much shorter than Freighter");
-assert.ok(lengths.get("titan") > lengths.get("convoy") * 1.9, "Titan reads near twice Freighter length");
+for (const [kind, ratio] of Object.entries({ corvette: 1.5, destroyer: 2.5, cruiser: 4, battleship: 5, dreadnought: 6, titan: 8 })) {
+  // Measure the native pixels, not just declared canvas targets. A thumbnail's
+  // one-pixel alpha rounding is checked separately by test-ship-art.mjs.
+  close(lengths.get(kind) / lengths.get("raider"), ratio, `${kind}: approved visible length ratio`);
+  close(current.shipSizePx(kind) * shipArtwork(kind).calib * shipArtwork(kind).lengthRatio,
+    current.shipSizePx("raider") * shipArtwork("raider").calib * shipArtwork("raider").lengthRatio * ratio,
+    `${kind}: exact native hull ratio`);
+}
 
 // Teeth: class-cap rollback, the original shrinking ramp, and base-only role
 // reduction each fail their own acceptance checks without mutating repo files.
@@ -228,5 +263,5 @@ const scaledReturn = "return this.deepZoomPx(indicator, maxPx) * mapScale;";
 assert.ok(rendererSource.includes(scaledReturn));
 const baseOnly = rendererSource.replace(scaledReturn, "return this.deepZoomPx(indicator * mapScale, maxPx);");
 assert.throws(() => check(fixture({}, baseOnly)), /proportional size/);
-console.log(`Map ship sizing: ${scenarios.length} fleet cases × ${zooms.length} zooms passed; per-class caps, monotonic growth, seams, formation/hit-radius parity, unchanged civilian/Interceptor/privateer curves, and rollback teeth passed.`);
+console.log(`Map ship sizing: ${scenarios.length} fleet cases × ${zooms.length} zooms passed; approved visible capital ratios, monotonic growth, seams, formation/hit-radius parity, unchanged civilian/Interceptor/privateer size curves, and rollback teeth passed.`);
 console.log(`Deep-zoom visible lengths: ${[...lengths].map(([kind, length]) => `${kind} ${length.toFixed(1)}px`).join(", ")}`);

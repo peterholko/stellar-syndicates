@@ -38,7 +38,7 @@ pub fn extraction_structure(c: Commodity) -> Option<StructureKind> {
     match c {
         Commodity::Biomass => Some(StructureKind::Bioharvester),
         Commodity::Volatiles => Some(StructureKind::VolatileHarvester),
-        Commodity::MetallicOre | Commodity::Silicates | Commodity::RareElements => {
+        c if c.is_mineable_mineral() => {
             Some(StructureKind::MiningComplex)
         }
         _ => None,
@@ -54,6 +54,28 @@ pub const EXTRACTION_FOOD_FLOOR: f64 = 0.5;
 
 // --- THE CONVERTER TABLE ----------------------------------------------------------
 
+/// Snapshot these with a site's administrative report. Rendering today's
+/// research against yesterday's colony report would outrun that site's light.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProductionMods {
+    pub extraction: f64,
+    pub processing: f64,
+    pub ore_recovery: f64,
+}
+
+impl Default for ProductionMods {
+    fn default() -> Self {
+        Self { extraction: 1.0, processing: 1.0, ore_recovery: 1.0 }
+    }
+}
+
+impl ProductionMods {
+    pub fn recovery(self, kind: StructureKind) -> f64 {
+        if kind == StructureKind::Smelter { self.ore_recovery } else { 1.0 }
+    }
+}
+
 /// One industrial conversion: `structure` turns `inputs` (per 1.0 unit of
 /// OUTPUT) into `output` at `rate` units/s (at tier throughput 1.0, all
 /// factors 1.0). THE single source of truth — the market's basket-clearing
@@ -64,18 +86,97 @@ pub struct Converter {
     pub output: Commodity,
     /// Units of OUTPUT per second at throughput 1.0 (factors multiply this).
     pub rate: f64,
-    /// Inputs drawn from the local stockpile PER UNIT OF OUTPUT. Every basket
-    /// sums to ≥ 1.0 units, so conversion never net-adds units — the storage
-    /// cap can't be violated by industry (a guard still bounds retunings).
+    /// Inputs drawn PER UNIT OF PRIMARY OUTPUT, including its secondary yields.
+    /// Base baskets consume at least their combined yield; the storage guard
+    /// also handles planetary bonuses that can net-add units.
     pub inputs: &'static [(Commodity, f64)],
 }
 
-/// The seven conversions of the industrial web (5 processed, 2 advanced),
-/// rates straight from the design table. At home-geology extraction rates
+impl Converter {
+    /// Secondary yields share the SAME processing budget/input draw. They are
+    /// not extra production lines; storage bounds include every emitted unit.
+    pub fn byproducts(&self) -> &'static [(Commodity, f64)] {
+        if self.structure != StructureKind::Smelter { return &[]; }
+        match self.inputs[0].0 {
+            Commodity::CupriteOre | Commodity::TitaniumOre => &[(Commodity::Alloys, 0.15)],
+            // A TRACE of rare elements: enough to matter at scale, never enough
+            // to turn a silicate smelter into a rare-elements faucet (§ore-ladder).
+            Commodity::CrystallineOre => &[(Commodity::RareElements, 0.05)],
+            Commodity::RareMetalOre => &[(Commodity::ConductiveMetals, 0.7)],
+            _ => &[],
+        }
+    }
+
+    pub fn outputs(&self) -> impl Iterator<Item = (Commodity, f64)> + '_ {
+        std::iter::once((self.output, 1.0)).chain(self.byproducts().iter().copied())
+    }
+}
+
+/// Standing Smelter recipes. Choose one per body, not one per cargo shipment.
+/// All use the ordinary workforce, fuel, research and planetary yield rules.
+/// Base-price margins are opportunities, not guarantees after market flow and freight.
+///
+/// §ore-density: the ORE draw per batch is each ore's DENSITY. A bulk ore
+/// (Ferrite, Crystalline) spends 1.5 units per refined unit; a unit of Cuprite
+/// is a whole batch; a unit of Titanium ore is two and a half; a unit of
+/// Rare-metal ore is twenty Rare Elements and fourteen Conductive Metals. Dense ore
+/// also comes out of the ground in proportionally FEWER units per second
+/// ([`ore_bulk_ratio`]), so a deposit's content rate and a colony's income per
+/// hour keep their modest gradient while the PRICE PER UNIT runs two-hundredfold
+/// — EVE's shape: Veldspar to Arkonor is hundreds of times per unit and a
+/// handful of times per cubic metre. The accrual cap guard bounds the units a
+/// dense batch nets into storage.
+pub const ORE_REFINING: [Converter; 5] = [
+    CONVERTERS[0],
+    Converter { structure: StructureKind::Smelter, output: Commodity::ConductiveMetals,
+        rate: 0.75, inputs: &[(Commodity::CupriteOre, 1.0), (Commodity::Fuel, 0.2)] },
+    Converter { structure: StructureKind::Smelter, output: Commodity::Titanium,
+        rate: 0.5, inputs: &[(Commodity::TitaniumOre, 0.4), (Commodity::Fuel, 0.3)] },
+    Converter { structure: StructureKind::Smelter, output: Commodity::Silicates,
+        rate: 1.0, inputs: &[(Commodity::CrystallineOre, 1.5), (Commodity::Fuel, 0.1)] },
+    Converter { structure: StructureKind::Smelter, output: Commodity::RareElements,
+        rate: 0.4, inputs: &[(Commodity::RareMetalOre, 0.05), (Commodity::Fuel, 0.35)] },
+];
+
+/// Ore units a BULK refining batch draws — the density every other ore is
+/// measured against.
+pub const BULK_ORE_PER_BATCH: f64 = 1.5;
+
+/// Ore units one refining batch of `c` draws (bulk density for non-ores).
+pub fn ore_units_per_batch(c: Commodity) -> f64 {
+    ORE_REFINING
+        .iter()
+        .find(|r| r.inputs[0].0 == c)
+        .map(|r| r.inputs[0].1)
+        .unwrap_or(BULK_ORE_PER_BATCH)
+}
+
+/// §ore-density: units of `c` that leave the ground per unit of BULK-equivalent
+/// extraction. A deposit's `richness` is its content rate in bulk units; the
+/// extracted unit count is `richness × this` — 1.0 for the bulk ores, food and
+/// gas, two thirds for Cuprite, four fifteenths for Titanium ore, one thirtieth
+/// for Rare-metal ore. Reserves, previews and research credit use the same
+/// ratio, so recipes, prices and mining can never drift apart.
+pub fn ore_bulk_ratio(c: Commodity) -> f64 {
+    ore_units_per_batch(c) / BULK_ORE_PER_BATCH
+}
+
+pub fn assigned_converter(kind: StructureKind, assignment: Option<&Assignment>) -> Option<&'static Converter> {
+    if kind == StructureKind::Smelter {
+        let ore = assignment.and_then(|a| a.refining_ore).unwrap_or(Commodity::MetallicOre);
+        return ORE_REFINING.iter().find(|r| r.inputs[0].0 == ore);
+    }
+    converter_for(kind)
+}
+
+/// One default conversion per industrial structure. Smelters may instead run
+/// exactly one of ORE_REFINING's standing recipes, never all five concurrently.
+/// Components follow their inputs in this table, so the shared-stockpile tick
+/// can consume this tick's upstream output. At home-geology extraction rates
 /// (~0.4 raw/s) converters run INPUT-BOUND — the rate ceiling starts to matter
 /// when bulk raws are IMPORTED, which is exactly what makes a supplied forge
 /// world an engine (and its supply line a target). Tunable.
-pub const CONVERTERS: [Converter; 7] = [
+pub const CONVERTERS: [Converter; 11] = [
     Converter {
         structure: StructureKind::Smelter,
         output: Commodity::Alloys,
@@ -86,7 +187,10 @@ pub const CONVERTERS: [Converter; 7] = [
         structure: StructureKind::ElectronicsFabricator,
         output: Commodity::Electronics,
         rate: 0.5,
-        inputs: &[(Commodity::RareElements, 0.8), (Commodity::Silicates, 0.8)],
+        // §ore-ladder: the dear refined goods are needed in TENTHS of a unit —
+        // "a little goes a long way" is what makes a rare-metal haul worth the
+        // trip without repricing every end product above it.
+        inputs: &[(Commodity::ConductiveMetals, 0.5), (Commodity::RareElements, 0.1), (Commodity::Silicates, 0.6)],
     },
     Converter {
         structure: StructureKind::ChemicalWorks,
@@ -126,6 +230,32 @@ pub const CONVERTERS: [Converter; 7] = [
             (Commodity::Polymers, 0.5),
         ],
     },
+    // §industry-chains: modest value added at each stage; specialized colonies
+    // supply heavy yards without making these inputs a starter-fleet tax.
+    Converter {
+        structure: StructureKind::CompositeWorks,
+        output: Commodity::Composites,
+        rate: 0.30,
+        inputs: &[(Commodity::Alloys, 1.0), (Commodity::Polymers, 0.75), (Commodity::Silicates, 0.4)],
+    },
+    Converter {
+        structure: StructureKind::HullFabricator,
+        output: Commodity::HullSections,
+        rate: 0.18,
+        inputs: &[(Commodity::Composites, 1.2), (Commodity::Machinery, 0.5), (Commodity::Titanium, 0.4)],
+    },
+    Converter {
+        structure: StructureKind::PrecisionWorks,
+        output: Commodity::PrecisionComponents,
+        rate: 0.20,
+        inputs: &[(Commodity::Electronics, 1.0), (Commodity::Machinery, 0.5), (Commodity::RareElements, 0.1)],
+    },
+    Converter {
+        structure: StructureKind::DriveWorks,
+        output: Commodity::DriveAssemblies,
+        rate: 0.12,
+        inputs: &[(Commodity::PrecisionComponents, 1.25), (Commodity::Composites, 1.0), (Commodity::Fuel, 1.0)],
+    },
 ];
 
 /// The conversion a structure kind runs, if it is a converter.
@@ -155,6 +285,9 @@ pub struct Assignment {
     /// persisted so a snapshot doesn't re-announce old trouble.
     #[serde(default)]
     pub suspended: Option<SuspendReason>,
+    /// Absent in older saves: their Smelters continue refining Ferrite Ore.
+    #[serde(default)]
+    pub refining_ore: Option<Commodity>,
 }
 
 impl Assignment {
@@ -208,7 +341,7 @@ pub fn skill_factor(matched: u32, tier: u32) -> f64 {
 
 /// The FOOD factor of a structure's output — `FoodState::efficiency()` shaped
 /// by sector: the primary sector (extraction + Agroplex) never drops below
-/// `EXTRACTION_FOOD_FLOOR`; ADVANCED industry (MachineWorks/ArmamentsComplex)
+/// `EXTRACTION_FOOD_FLOOR`; ADVANCED industry (machinery, armaments and components)
 /// suspends outright at Critical (precision work stops before the mills do).
 pub fn food_factor(kind: StructureKind, state: crate::colony::FoodState) -> f64 {
     use crate::colony::FoodState as F;
@@ -218,7 +351,9 @@ pub fn food_factor(kind: StructureKind, state: crate::colony::FoodState) -> f64 
         | StructureKind::VolatileHarvester
         | StructureKind::MiningComplex
         | StructureKind::Agroplex => eff.max(EXTRACTION_FOOD_FLOOR),
-        StructureKind::MachineWorks | StructureKind::ArmamentsComplex => {
+        StructureKind::MachineWorks | StructureKind::ArmamentsComplex
+        | StructureKind::CompositeWorks | StructureKind::HullFabricator
+        | StructureKind::PrecisionWorks | StructureKind::DriveWorks => {
             if state <= F::Critical {
                 0.0
             } else {
@@ -252,7 +387,7 @@ mod tests {
             );
         }
         for c in Commodity::ALL {
-            if !Commodity::RAW.contains(&c) {
+            if !Commodity::RAW.contains(&c) && !c.is_mineable_mineral() {
                 assert!(
                     extraction_structure(c).is_none(),
                     "{c:?} must NOT be extractable"
@@ -261,16 +396,34 @@ mod tests {
         }
     }
 
+    /// Manufacturing baskets never net-add units. Refining a DENSE ore does by
+    /// design (§ore-density) — the accrual cap guard bounds those batches, and
+    /// `ore_economy::boosted_secondary_yields_cannot_overfill_storage` proves it
+    /// on Rare-metal ore, the densest.
     #[test]
     fn converter_baskets_never_net_add_units() {
-        for conv in &CONVERTERS {
+        for conv in CONVERTERS.iter() {
             let total_in: f64 = conv.inputs.iter().map(|(_, per)| per).sum();
             assert!(
-                total_in >= 1.0 - 1e-12,
+                total_in >= conv.outputs().map(|(_, units)| units).sum::<f64>() - 1e-12,
                 "{:?}: basket {total_in} < 1.0 unit per output — industry could overflow the storage cap",
                 conv.structure
             );
         }
+        for conv in ORE_REFINING.iter() {
+            let ore = conv.inputs[0].0;
+            let total_in: f64 = conv.inputs.iter().map(|(_, per)| per).sum();
+            let total_out: f64 = conv.outputs().map(|(_, units)| units).sum();
+            assert!(
+                total_in >= total_out - 1e-12 || ore_bulk_ratio(ore) < 1.0,
+                "{ore:?}: only a DENSE ore may net-add units per batch ({total_in} in, {total_out} out)"
+            );
+        }
+        assert_eq!(ore_bulk_ratio(Commodity::MetallicOre), 1.0);
+        assert_eq!(ore_bulk_ratio(Commodity::Volatiles), 1.0);
+        assert!(ore_bulk_ratio(Commodity::RareMetalOre) < ore_bulk_ratio(Commodity::TitaniumOre));
+        assert!(ore_bulk_ratio(Commodity::TitaniumOre) < ore_bulk_ratio(Commodity::CupriteOre));
+        assert!(ore_bulk_ratio(Commodity::CupriteOre) < 1.0);
     }
 
     #[test]

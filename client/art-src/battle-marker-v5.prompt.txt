@@ -1,0 +1,35 @@
+Battle marker V5 — filled clickable badge
+Method: built-in image_gen editing; no CLI/API fallback.
+Original edit target: client/art-src/battle-marker-v4.png
+Final generated master: client/art-src/battle-marker-v5.png
+Runtime derivative: client/public/art/battle_in_progress_v5.png (256 × 256 RGBA, Sharp Lanczos resize; generated alpha preserved)
+Generated source: /Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-6cb4f9c9-0901-455f-b7b4-29c557bdcf9d.png
+Hit testing already covers a 33.8px-radius circle, including all gaps; geometry unchanged.
+
+Initial badge edit (from V4):
+Use case: precise-object-edit.
+Asset type: a small clickable galaxy-map battle badge, displayed at about 52 pixels.
+Image 1 is the edit target: the existing coral and ivory crossed energy-blade battle icon.
+Change only the backing: add one solid opaque dark charcoal/slate circular disk (#1a2332) behind the blades, with a thin clean coral rim matching the blades. The backing fills ALL gaps inside the circle so the icon reads as a complete clickable badge. Outside the circular badge must remain genuinely transparent.
+Preserve the original crossed energy blades, ivory insets, compact grips, dark-red edge panels, central clash spark and clean flat/cel-shaded style. Uniformly scale the symbol down only enough that every blade tip and grip fits just inside the disk with a little breathing room. Keep the badge centered, nearly filling the square with a small transparent margin.
+The new backing is simple, flat and opaque: no texture, no heavy bevel, no gradient, no broad glow, no extra ornaments, no multiple rings, no text, no watermark, no scenic background. Keep the blades bright and legible at small size. One finished transparent PNG badge, not a mockup or options sheet.
+
+Transparency cleanup (dark backing had unwanted translucent patches):
+Use case: background-extraction.
+Image 1 is the edit target: a circular dark-slate badge containing coral crossed energy blades.
+Remove ONLY the light grey and white checkerboard pattern outside the circular coral rim. That pattern is currently painted pixels and must be replaced with REAL TRANSPARENT ALPHA, not a visual checkerboard representation of transparency.
+Keep every part of the circular badge unchanged: the coral rim, solid opaque dark slate circular background inside the rim, crossed coral/ivory blades, dark red panels, central spark, size, position, and small outside margin.
+Deliver a transparent PNG cutout with alpha=0 outside the circular rim and opaque pixels inside the circle. No background color, no checkerboard texture, no shadow outside, no other edits.
+
+Final backing refinement (from the initial badge, before cleanup):
+Use case: precise-object-edit.
+Image 1 is a round sci-fi battle badge; it is the edit target. Preserve the coral circular rim and the crossed ivory/coral energy swords exactly.
+The badge needs a SOLID, clearly filled face, like an opaque enamel medallion: replace the dark navy disk with a uniform muted warm burgundy fill, hex #633333. This is part of the foreground badge itself, not an image background to remove. Fill every space between and beside the swords WITHIN THE CORAL CIRCLE with this same opaque burgundy. The badge is one unbroken opaque circular object with no holes or translucent areas.
+Remove the checkerboard OUTSIDE the circle only, replacing it with real transparent alpha. A thin antialiased outer edge is fine. Transparent square corners; fully opaque circular face. Do not render a checkerboard or any solid external background.
+One clean flat raster game icon for 52px display. No texture, gradients, glow, extra symbols, text, shadow or watermark. Same composition and geometry as the reference.
+
+Final alpha extraction (from the refined badge):
+Remove the checkerboard background from this circular battle badge. Produce a genuine transparent PNG cutout.
+Keep the ENTIRE circular badge as one solid opaque foreground object, including the burgundy face, coral rim and ivory/coral crossed blades. The burgundy areas are the badge's physical filled face, not background. Do not remove or make transparent any burgundy area inside the circle.
+Only pixels OUTSIDE the circular coral rim become transparent alpha. Preserve all colors, size and details. No other changes.
+

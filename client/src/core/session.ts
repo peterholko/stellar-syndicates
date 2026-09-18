@@ -21,6 +21,7 @@ import {
 } from "./derive/market";
 import { syncOrderLifecycles } from "./derive/orders";
 import { mergeResearch } from "./derive/research";
+import { applyTransactions, emptyTransactions } from "./derive/transactions";
 
 import { PROTOCOL_VERSION } from "../wire.mjs";
 
@@ -32,11 +33,13 @@ export const jumpDepartureKey = (
 
 export function applyLinkStatus(status: LinkStatus, st: ViewState): CoreEvent[] {
   st.link = status;
+  if (status !== "online") st.transactions.loading = false;
   return [{ kind: "LinkChanged", status }];
 }
 
 export function applySessionReplaced(st: ViewState): CoreEvent[] {
   st.playerId = null;
+  st.transactions = emptyTransactions();
   st.link = "offline";
   return [{ kind: "SessionReplaced" }];
 }
@@ -58,6 +61,7 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
         });
       }
       st.playerId = msg.player_id;
+      st.transactions = emptyTransactions();
       st.name = msg.name;
       st.tickHz = msg.tick_hz;
       st.pacingScale = msg.pacing_scale;
@@ -69,6 +73,9 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       st.researchCatalog = msg.research_catalog;
       st.battleRecords = st.battleRecords.filter((record) => record.id === "demo-battle");
       st.standingOrders = [];
+      st.explorationSites = [];
+      st.selectedExplorationSiteId = null;
+      st.explorationJournal = [];
       st.battleReports = [];
       st.captureReports = [];
       loadBattleMarks(st);
@@ -128,6 +135,7 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       st.syndicate = msg.syndicate ?? null;
       st.syndicateInvites = msg.syndicate_invites ?? [];
       st.operations = msg.operations ?? [];
+      st.explorationSites = msg.exploration_sites ?? [];
       st.midgameStage = msg.midgame_stage;
       st.diplomacy = msg.diplomacy ?? null;
       st.research = msg.research ? mergeResearch(msg.research, st) : null;
@@ -265,6 +273,7 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
     }
 
     case "Sections":
+      if (msg.exploration_journal) st.explorationJournal = msg.exploration_journal;
       if (msg.standing_orders) st.standingOrders = msg.standing_orders;
       if (msg.battle_reports) st.battleReports = msg.battle_reports;
       if (msg.capture_reports) st.captureReports = msg.capture_reports;
@@ -328,8 +337,18 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
             .filter((entry) => /^(order refused|can't build)/i.test(entry.text))
             .map((entry): CoreEvent => ({ kind: "CommandRejected", message: entry.text }))
         : [];
-      return [{ kind: "TimelineApplied" }, ...rejected];
+      // These notices are already propagation-gated by the server journal.
+      // Never inspect hidden NPC orders or replay old warnings on reconnect.
+      const raids = hadTimeline ? msg.entries
+        .filter((entry) => !previous.has(`${entry.at_time}:${entry.severity}:${entry.text}`)
+          && entry.text.startsWith("Pirate raid incoming:"))
+        .map((entry): CoreEvent => ({ kind: "PirateRaidWarning", message: entry.text })) : [];
+      return [{ kind: "TimelineApplied" }, ...rejected, ...raids];
     }
+
+    case "Transactions":
+    case "TransactionRecorded":
+      return applyTransactions(st, msg) ? [{ kind: "TransactionsApplied" }] : [];
 
     case "Trade":
       return [{ kind: "TradeSettled", trade: msg.trade }];

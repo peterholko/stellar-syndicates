@@ -28,11 +28,13 @@ export type CoreEvent =
   | { kind: "StructureStaffed"; systemId: EntityId; title: string }
   | { kind: "ResearchCompleted"; programmeId: string; programmeName: string }
   | { kind: "CommandRejected"; message: string }
+  | { kind: "PirateRaidWarning"; message: string }
   | { kind: "ReportArrived"; report: RaidReport }
   | { kind: "BattleConcluded"; recordId: EntityId; outcome: RaidOutcome }
   | { kind: "EstimateReady"; estimate: EngagementEstimate }
   | { kind: "TimelineApplied" }
   | { kind: "TradeSettled"; trade: TradeEvent }
+  | { kind: "TransactionsApplied" }
   | {
       kind: "IntentChanged";
       intent: PendingIntent | null;

@@ -20,6 +20,34 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Fleet-local standing orders, delivered by the normal command signal. Target
+/// preference never grants range or detection; screening never grants free PD.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct MissionProfile {
+    pub priority: TargetPriority,
+    pub screening: ScreeningRole,
+    pub withdrawal: DamageWithdrawal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TargetPriority { #[default] Balanced, MissileShips, Installations, Transports }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreeningRole { #[default] Automatic, ProtectTransports }
+
+/// A damaged hull can order its fleet out. This is a survival instruction, not
+/// instant escape: the existing delayed disengagement/pursuit rules still apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DamageWithdrawal { #[default] Never, Hull30, Hull50, Hull70 }
+impl DamageWithdrawal {
+    pub fn threshold(self) -> Option<f64> {
+        match self { Self::Never => None, Self::Hull30 => Some(0.30), Self::Hull50 => Some(0.50), Self::Hull70 => Some(0.70) }
+    }
+}
+
 /// When an autonomous picket raider breaks off patrol to engage a hostile it can
 /// SENSE. Ordered most-passive → most-aggressive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

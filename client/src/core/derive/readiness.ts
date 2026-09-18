@@ -40,10 +40,15 @@ export function intentReadinessWarnings(st: Pick<ViewState, "ghosts" | "galaxy" 
     const fleet = st.ghosts.find(g => g.own && g.id === id);
     if (command.type === "SetEngageFreight" && command.on) return ["Attacking Authority freighters risks citations and higher market costs."];
     if (!fleet) return [];
+    if (command.type === "ExploreSite") return dispatchWarnings(fleet, intent.dest);
+    if (command.type === "RefuelFleet") {
+      const target = st.ghosts.find(g => g.id === command.target_id);
+      return [...dispatchWarnings(fleet, target?.pos), "Target must hold for refueling. Tender stops near combat."];
+    }
     if (command.type === "RequestFuelRescue") return [`Estimated charge ~${Math.ceil(aaaEstimate(fleet).cost)} Cr · includes 3× market Fuel and a non-refundable callout.`];
-    if (command.type === "HaulToMarketHub" || command.type === "HaulToSystem" || command.type === "MoveShip") {
+    if (command.type === "HaulToMarketHub" || command.type === "HaulToSystem" || command.type === "MoveShip" || command.type === "DefendSystem") {
       const destination = command.type === "HaulToMarketHub" ? st.galaxy?.hub
-        : command.type === "MoveShip" ? command.dest : st.galaxy?.systems.find(s => s.id === command.system)?.pos;
+        : command.type === "MoveShip" ? command.dest : st.galaxy?.systems.find(s => s.id === (command.type === "DefendSystem" ? command.system_id : command.system))?.pos;
       return dispatchWarnings(fleet, destination);
     }
     return [];

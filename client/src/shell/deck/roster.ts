@@ -36,12 +36,20 @@ const SCHOOL_TITLE: Record<string, string> = {
   line: "Line", corsair: "Corsair", growth: "Growth", talent: "Talent",
 };
 const ROMAN = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII"];
+type ResearchPage = "catalog" | "queue" | "completed";
+interface ResearchSelection { field: string; tier: number; id: string }
 
 /** Corporation-wide fleet, officer and research routes. These surfaces share
  * the same served owner picture; no roster row or personnel status is corrected
  * from true positions between reports. */
 export class DeckRosterRoutes {
   private signature = "";
+  private researchPreset = "";
+  private researchPage: ResearchPage = "catalog";
+  private researchSelections: Record<"catalog" | "completed", ResearchSelection> = {
+    catalog: { field: "", tier: 0, id: "" },
+    completed: { field: "", tier: 0, id: "" },
+  };
 
   constructor(
     private readonly root: HTMLElement,
@@ -50,6 +58,15 @@ export class DeckRosterRoutes {
   ) {}
 
   render(route: DeckRoute | null, force = false): boolean {
+    const preset = route?.name === "research" ? route.query?.programme ?? "" : "";
+    if (preset && preset !== this.researchPreset) {
+      const p = this.ctx.state.research?.programmes.find(p => p.id === preset);
+      if (p) {
+        this.researchPage = p.state === "completed" ? "completed" : "catalog";
+        Object.assign(this.researchSelection(), { field: p.field, tier: p.tier, id: p.id });
+        this.researchPreset = preset;
+      }
+    } else if (!preset) this.researchPreset = "";
     if (route?.name !== "fleets" && route?.name !== "officers" && route?.name !== "research") return false;
     const active = document.activeElement;
     if (!force && active instanceof HTMLElement && this.root.contains(active) && active.matches("select, input")) return true;
@@ -58,6 +75,7 @@ export class DeckRosterRoutes {
       this.ctx.state.battles, this.ctx.state.commandSignals, this.ctx.state.orders,
       this.ctx.state.raids, this.ctx.state.captains, this.ctx.state.captainCapacity,
       this.ctx.state.research, this.ctx.state.systems, this.ctx.state.syndicate?.flagship_name,
+      this.researchPage, this.researchSelections,
     ]);
     if (!force && signature === this.signature) return true;
     if (renderDeferred(this.root.id, () => this.render(route, true))) return true;
@@ -70,6 +88,7 @@ export class DeckRosterRoutes {
     if (route?.name !== "fleets" && route?.name !== "officers" && route?.name !== "research") return false;
     const action = button.dataset.deckAct;
     if (!action?.startsWith("roster-") && !action?.startsWith("officer-") && !action?.startsWith("research-")) return false;
+    if (action.startsWith("research-") && route.name !== "research") return false;
     if (action === "roster-open" || action === "roster-center") {
       const id = button.dataset.fleet;
       const fleet = this.ctx.state.ghosts.find((entry) => entry.id === id && entry.own);
@@ -118,19 +137,43 @@ export class DeckRosterRoutes {
       const home = foundingHomeSystemId();
       const system = this.ctx.state.galaxy?.systems.find((entry) => entry.id === home);
       if (home && system) this.hooks.go({ name: "system", params: { id: home, systemLabel: system.name } });
+    } else if (action === "research-page") {
+      const page = button.dataset.page;
+      if (page === "catalog" || page === "queue" || page === "completed") this.researchPage = page;
+    } else if (action === "research-field") {
+      const field = button.dataset.field;
+      if (field && FIELD_ORDER.includes(field)) {
+        Object.assign(this.researchSelection(), { field, tier: 0, id: "" });
+      }
+    } else if (action === "research-tier") {
+      const tier = Number(button.dataset.tier);
+      const selection = this.researchSelection();
+      if (this.researchPool().some((entry) => entry.field === selection.field && entry.tier === tier)) {
+        selection.tier = tier;
+        selection.id = "";
+      }
+    } else if (action === "research-select" || action === "research-inspect") {
+      const programme = this.ctx.state.research?.programmes.find((entry) => entry.id === button.dataset.programme);
+      if (programme) {
+        if (action === "research-inspect") this.researchPage = "catalog";
+        Object.assign(this.researchSelection(), { field: programme.field, tier: programme.tier, id: programme.id });
+      }
     } else if (action === "research-add") {
-      const id = button.dataset.programme;
+      // Selection only inspects. This one explicit action sends work; the
+      // server's arrived availability (not a client gate calculation) permits it.
+      const programme = this.ctx.state.research?.programmes.find((entry) => entry.id === this.researchSelections.catalog.id);
       const queue = deckResearchQueue();
-      if (id && !queue.includes(id)) {
-        this.sendResearchQueue([...queue, id]);
+      if (this.researchPage === "catalog" && programme?.state === "available" && !queue.includes(programme.id)) {
+        this.sendResearchQueue([...queue, programme.id]);
         this.hooks.notice("<b>Programme queued</b> · awaiting the next served research report.");
       }
     } else if (action === "research-up" || action === "research-down" || action === "research-remove") {
       const queue = deckResearchQueue();
       const index = Number(button.dataset.index);
-      if (Number.isFinite(index) && index >= 0 && index < queue.length) {
+      const firstMovable = this.ctx.state.research?.active ? 1 : 0;
+      if (Number.isInteger(index) && index >= firstMovable && index < queue.length) {
         if (action === "research-remove") queue.splice(index, 1);
-        else if (action === "research-up" && index > 0) [queue[index - 1], queue[index]] = [queue[index], queue[index - 1]];
+        else if (action === "research-up" && index > firstMovable) [queue[index - 1], queue[index]] = [queue[index], queue[index - 1]];
         else if (action === "research-down" && index < queue.length - 1) [queue[index + 1], queue[index]] = [queue[index], queue[index + 1]];
         this.sendResearchQueue(queue);
         this.hooks.notice("<b>Research queue updated</b> · awaiting the next served report.");
@@ -166,7 +209,7 @@ export class DeckRosterRoutes {
     const guard = g.guard_target ? this.ctx.state.ghosts.find((entry) => entry.id === g.guard_target && entry.own) : undefined;
     return fleetListRow(g, {
       openAction: "roster-open",
-      status: dock ? "Docked" : battle ? "In battle" : guard ? "Guarding" : this.rosterActivity(g),
+      status: battle ? "In battle" : g.defend_system ? dock ? "Defending · docked" : "Defending" : dock ? "Docked" : guard ? "Guarding" : this.rosterActivity(g),
       location: dock ?? (guard ? `${shipKindLabel(guard.kind)} fleet` : undefined),
       flagshipName: this.ctx.state.syndicate?.flagship_name,
       controls: true, grouped: this.ctx.state.selectedShipIds.has(g.id),
@@ -210,49 +253,91 @@ export class DeckRosterRoutes {
 
   private researchHtml(): string {
     const research = this.ctx.state.research;
-    if (!research) return `<section class="deck-page"><header class="deck-page__lead"><span>Private programme boards</span><h2>Research unavailable</h2><p>Reconnect to restore the corporation's research picture.</p></header></section>`;
+    if (!research) return empty("Research report pending", "Waiting for the corporation's research report.");
     const queue = deckResearchQueue();
-    const active = research.active ? this.activeResearchHtml(research.active, research.rate, research.stalled, research.academies) : `<div class="deck-alert"><b>No active programme</b><span>Choose any available node. The front of the queue begins accruing immediately.</span></div>`;
+    const completed = research.programmes.filter((entry) => entry.state === "completed").length;
+    const tabs: [ResearchPage, string][] = [["catalog", "Research"], ["queue", `Queue · ${queue.length}`], ["completed", `Completed · ${completed}`]];
+    const nav = `<nav class="deck-tabs" aria-label="Research pages">${tabs.map(([page, name]) => `<button type="button" data-deck-act="research-page" data-page="${page}" aria-current="${this.researchPage === page ? "page" : "false"}" aria-selected="${this.researchPage === page}">${name}</button>`).join("")}</nav>`;
+    const active = research.active ? this.activeResearchHtml(research.active, research.stalled) : `<div class="deck-research-idle">No active research</div>`;
+    return `<section class="deck-page deck-research">${nav}${active}${this.researchPage === "queue" ? this.researchQueueHtml() : this.researchBrowserHtml()}</section>`;
+  }
+
+  private researchQueueHtml(): string {
+    const research = this.ctx.state.research!;
+    const queue = deckResearchQueue();
     const activePinned = !!research.active;
     const queueHtml = queue.length ? queue.map((id, index) => {
       const programme = research.programmes.find((entry) => entry.id === id);
       const pinned = activePinned && index === 0;
       const firstQueued = activePinned ? index === 1 : index === 0;
-      return `<div class="deck-research-queue-row"><span><b>${index + 1}</b><span><strong>${esc(programme?.name ?? id)}</strong><small>${pinned ? "active · pinned" : "queued"}</small></span></span><div><button type="button" data-deck-act="research-up" data-index="${index}" ${pinned || firstQueued ? "disabled" : ""}>↑</button><button type="button" data-deck-act="research-down" data-index="${index}" ${pinned || index === queue.length - 1 ? "disabled" : ""}>↓</button><button type="button" data-deck-act="research-remove" data-index="${index}" ${pinned ? "disabled" : ""}>Remove</button></div></div>`;
-    }).join("") : `<div class="deck-empty-inline">Queue empty — choose an available programme below.</div>`;
-    const academyReady = research.academies.some((academy) => academy.supplied);
-    const boards = FIELD_ORDER.map((field) => this.researchBoard(field, research.programmes.filter((entry) => entry.field === field), queue, academyReady)).join("");
-    return `<section class="deck-page deck-research"><header class="deck-page__lead"><span>Private corporation programme boards</span><h2>Research</h2><p>Programmes apply corporation-wide when their completion report is served.</p></header>${active}<section class="deck-section"><header><div><h3>Programme queue</h3><p>Reorder or remove work; the first row is active.</p></div><b>${queue.length}</b></header><div class="deck-research-queue">${queueHtml}</div></section><div class="deck-research-boards">${boards}</div></section>`;
+      const name = programme?.name ?? id;
+      return `<div class="deck-research-queue-row"><span><b>${index + 1}</b><span><button type="button" class="deck-research-queue-name" data-deck-act="research-inspect" data-programme="${escAttr(id)}">${esc(name)}</button><small>${pinned ? "In progress" : "Queued"}</small></span></span><div><button type="button" data-deck-act="research-up" data-index="${index}" aria-label="Move ${escAttr(name)} up" ${pinned || firstQueued ? "disabled" : ""}>↑</button><button type="button" data-deck-act="research-down" data-index="${index}" aria-label="Move ${escAttr(name)} down" ${pinned || index === queue.length - 1 ? "disabled" : ""}>↓</button><button type="button" data-deck-act="research-remove" data-index="${index}" aria-label="Remove ${escAttr(name)}" ${pinned ? "disabled" : ""}>Remove</button></div></div>`;
+    }).join("") : `<div class="deck-empty-inline">Empty</div>`;
+    return `<section class="deck-section"><header><h3>Research queue</h3><b>${queue.length}</b></header><div class="deck-research-queue">${queueHtml}</div></section>` + this.researchAcademiesHtml(research.academies, research.rate);
   }
 
-  private activeResearchHtml(active: { name: string; progress: number; cost: number; eta_secs: number | null }, rate: number, stalled: boolean, academies: AcademyRow[]): string {
+  private activeResearchHtml(active: { id: string; name: string; progress: number; cost: number; eta_secs: number | null }, stalled: boolean): string {
     const pct = Math.max(0, Math.min(100, active.progress / Math.max(1e-9, active.cost) * 100));
-    const eta = active.eta_secs !== null ? fmtEta(active.eta_secs) : stalled ? "stalled" : "awaiting supply";
-    const academy = academies.length ? academies.map((row) => `<div class="deck-academy-row${row.supplied ? "" : " is-warn"}"><span><b>${esc(row.system)}</b><small>${row.supplied ? "supplied" : "unsupplied"}</small></span><em>Tier ${ROMAN[row.tier] ?? row.tier} · ${row.rate.toFixed(2)}/s</em></div>`).join("") : `<div class="deck-alert"><b>No staffed Academy</b><span>Build and staff an Academy to produce research.</span></div>`;
-    return `<section class="deck-section deck-research-active"><header><div><span>Active programme</span><h3>${esc(active.name)}</h3></div><button type="button" data-deck-act="research-academy">Open Academy</button></header><div class="deck-research-progress"><div><span>${fmt(active.progress)} / ${fmt(active.cost)} research-seconds</span><b>${esc(eta)} · ${rate.toFixed(2)}/s</b></div><div class="deck-meter"><i style="width:${pct.toFixed(1)}%"></i></div></div><div class="deck-academies">${academy}</div></section>`;
+    const eta = stalled ? "Paused" : active.eta_secs !== null ? fmtEta(active.eta_secs) : "Awaiting supply";
+    return `<section class="deck-section deck-research-active"><header><button type="button" data-deck-act="research-inspect" data-programme="${escAttr(active.id)}"><small>In progress</small><strong>${esc(active.name)}</strong></button><b>${pct.toFixed(0)}% · ${esc(eta)}</b></header><div class="deck-meter" role="progressbar" aria-label="${escAttr(active.name)} progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct.toFixed(1)}"><i style="width:${pct.toFixed(1)}%"></i></div></section>`;
   }
 
-  private researchBoard(field: string, programmes: ProgrammeView[], queue: string[], academyReady: boolean): string {
-    const schools = [...new Set(programmes.filter((entry) => entry.school).map((entry) => entry.school as string))];
-    const group = (school: string | null, tier: number) => {
-      const rows = programmes.filter((entry) => (entry.school ?? null) === school && entry.tier === tier);
-      if (!rows.length) return "";
-      const gate = rows.find((entry) => entry.gate)?.gate;
-      const gateHtml = gate ? `<div class="deck-research-gate"><span>${esc(gate.label)} · ${Math.floor(gate.current)} / ${Math.round(gate.threshold)}${gate.current >= gate.threshold ? " · gate met" : ""}</span><div class="deck-meter"><i style="width:${Math.max(0, Math.min(100, gate.current / Math.max(1e-9, gate.threshold) * 100)).toFixed(1)}%"></i></div></div>` : "";
-      const gateMet = !gate || gate.current >= gate.threshold;
-      return `<section class="deck-research-tier"><h4>Tier ${ROMAN[tier]}</h4>${gateHtml}${rows.map((entry) => this.researchNode(entry, queue.indexOf(entry.id), academyReady, gateMet)).join("")}</section>`;
-    };
-    return `<article class="deck-research-board"><header><span>${icon(fieldIcon(field), "md")}</span><h3>${esc(FIELD_TITLE[field] ?? label(field))}</h3></header>${group(null, 1)}${group(null, 2)}${schools.map((school) => `<div class="deck-research-school">${esc(SCHOOL_TITLE[school] ?? label(school))}</div>${[3, 4, 5, 6, 7, 8].map((tier) => group(school, tier)).join("")}`).join("")}</article>`;
+  private researchAcademiesHtml(academies: AcademyRow[], rate: number): string {
+    const rows = academies.map((row) => `<div class="deck-academy-row${row.supplied ? "" : " is-warn"}"><span><b>${esc(row.system)}</b><small>${row.supplied ? "Supplied" : "Unsupplied"}</small></span><em>Tier ${ROMAN[row.tier] ?? row.tier} · ${row.rate.toFixed(2)}/s</em></div>`).join("");
+    return `<section class="deck-section"><header><h3>Academies · ${rate.toFixed(2)}/s</h3><button type="button" data-deck-act="research-academy">Open Academy</button></header><div class="deck-academies">${rows || `<div class="deck-empty-inline">No staffed Academy</div>`}</div></section>`;
   }
 
-  private researchNode(programme: ProgrammeView, queueIndex: number, academyReady: boolean, gateMet: boolean): string {
-    const available = programme.state === "available";
-    const queued = queueIndex >= 0;
-    const prerequisite = (available || queued) && !academyReady
-      ? `<em class="deck-research-prerequisite">Requires a staffed, supplied Academy to progress.</em>`
-      : "";
-    const stateLabel = programme.state === "locked" && gateMet ? "prerequisites required" : label(programme.state);
-    return `<article class="deck-research-node is-${escAttr(programme.state)}"><header><b>${esc(programme.name)}</b>${queued ? `<em>#${queueIndex + 1}</em>` : `<em>${esc(stateLabel)}</em>`}</header><p>${esc(programme.blurb)}</p>${prerequisite}${available ? `<button type="button" data-deck-act="research-add" data-programme="${escAttr(programme.id)}">Add to queue</button>` : ""}</article>`;
+  private researchSelection(): ResearchSelection {
+    return this.researchSelections[this.researchPage === "completed" ? "completed" : "catalog"];
+  }
+
+  private researchPool(): ProgrammeView[] {
+    const programmes = this.ctx.state.research?.programmes ?? [];
+    return this.researchPage === "completed" ? programmes.filter((entry) => entry.state === "completed") : programmes;
+  }
+
+  private researchBrowserHtml(): string {
+    const programmes = this.researchPool();
+    const selection = this.researchSelection();
+    const preferred = (entries: ProgrammeView[]) => entries.find((entry) => entry.state === "active")
+      ?? entries.find((entry) => entry.state === "available") ?? entries.find((entry) => entry.state === "queued") ?? entries[0];
+    // Browser state survives incoming Views. Only repair missing selections;
+    // never jump to a new tier just because its requirements became satisfied.
+    if (!selection.field) selection.field = preferred(programmes)?.field ?? FIELD_ORDER[0];
+    const field = programmes.filter((entry) => entry.field === selection.field);
+    const tiers = [...new Set(field.map((entry) => entry.tier))].sort((a, b) => a - b);
+    if (!tiers.includes(selection.tier)) selection.tier = preferred(field)?.tier ?? 1;
+    const rows = field.filter((entry) => entry.tier === selection.tier);
+    if (!rows.some((entry) => entry.id === selection.id)) selection.id = preferred(rows)?.id ?? "";
+    const selected = rows.find((entry) => entry.id === selection.id);
+    const queue = deckResearchQueue();
+    const fields = `<nav class="deck-research-fields" aria-label="Research categories">${FIELD_ORDER.map((key) => {
+      const count = programmes.filter((entry) => entry.field === key && (this.researchPage === "completed" || entry.state === "available")).length;
+      return `<button type="button" data-deck-act="research-field" data-field="${key}" aria-label="${FIELD_TITLE[key]}, ${count} ${this.researchPage === "completed" ? "completed" : "available"} technologies" aria-pressed="${selection.field === key}">${icon(fieldIcon(key), "sm")}<span>${FIELD_TITLE[key]}</span><small title="${this.researchPage === "completed" ? "Completed technologies" : "Available technologies"}">${count}</small></button>`;
+    }).join("")}</nav>`;
+    const tierNav = tiers.length ? `<nav class="deck-research-tiers" aria-label="Research tiers"><span>Tier</span>${tiers.map((tier) => `<button type="button" data-deck-act="research-tier" data-tier="${tier}" aria-label="Tier ${ROMAN[tier] ?? tier}" aria-pressed="${selection.tier === tier}">${ROMAN[tier] ?? tier}</button>`).join("")}</nav>` : "";
+    const schools = [...new Set(rows.map((entry) => entry.school))];
+    const list = schools.map((school) => `${school ? `<h4>${esc(SCHOOL_TITLE[school] ?? label(school))}</h4>` : ""}${rows.filter((entry) => entry.school === school).map((entry) =>
+      `<button type="button" class="deck-research-choice is-${escAttr(entry.state)}" data-deck-act="research-select" data-programme="${escAttr(entry.id)}" aria-pressed="${entry.id === selection.id}"><strong>${esc(entry.name)}</strong><small>${esc(researchStatus(entry, queue))}</small></button>`).join("")}`).join("");
+    const canAdd = selected?.state === "available" && !queue.includes(selected.id);
+    const footer = this.researchPage === "catalog" ? `<footer class="deck-research-action"><span>${selected ? esc(selected.name) : "Select a technology"}</span><button type="button" class="is-primary" data-deck-act="research-add" ${canAdd ? "" : "disabled"}>Add to queue</button></footer>` : "";
+    return `${fields}${tierNav}${rows.length ? `<div class="deck-research-browser"><section class="deck-research-choices" aria-label="Technologies in ${escAttr(FIELD_TITLE[selection.field] ?? selection.field)} Tier ${ROMAN[selection.tier] ?? selection.tier}">${list}</section>${selected ? this.researchDetailHtml(selected, queue) : ""}</div>` : empty(this.researchPage === "completed" ? "No completed technologies in this category" : "No technology reports", "")}${footer}`;
+  }
+
+  private researchDetailHtml(programme: ProgrammeView, queue: string[]): string {
+    const research = this.ctx.state.research!;
+    const gate = programme.gate;
+    const gateMet = !gate || gate.current >= gate.threshold;
+    const hasPredecessor = programme.tier === 1 || research.programmes.some((entry) => entry.state === "completed"
+      && entry.field === programme.field && entry.tier + 1 === programme.tier
+      && (programme.tier <= 3 ? entry.school === null : entry.school === programme.school));
+    const missingPredecessor = programme.state === "locked" && !hasPredecessor;
+    const predecessor = `${programme.tier <= 3 ? FIELD_TITLE[programme.field] : SCHOOL_TITLE[programme.school ?? ""]} Tier ${ROMAN[programme.tier - 1] ?? programme.tier - 1}`;
+    const gateHtml = gate ? `<div class="deck-research-gate${gateMet ? " is-met" : ""}"><span>${esc(gate.label)} <b>${researchCount(gate.current)} / ${researchCount(gate.threshold)}</b>${gateMet ? " · Met" : ""}</span><div class="deck-meter"><i style="width:${Math.max(0, Math.min(100, gate.current / Math.max(1e-9, gate.threshold) * 100)).toFixed(1)}%"></i></div></div>` : "";
+    const requirements = programme.state === "locked" ? `<section class="deck-research-requirements"><h4>To unlock</h4>${missingPredecessor ? `<p>Complete one ${esc(predecessor)} technology.</p>` : ""}${gateHtml}${!missingPredecessor && gateMet ? `<p>Awaiting unlock confirmation.</p>` : ""}</section>` : "";
+    const dossier = programme.recovered_data ? `<div class="deck-research-dossier">Recovered data · ${Math.round(programme.recovered_data / Math.max(1, programme.cost) * 100)}% research work banked</div>` : "";
+    const needsAcademy = programme.state !== "completed" && !research.academies.some((academy) => academy.supplied);
+    return `<article class="deck-section deck-research-detail" aria-label="Selected technology"><header>${icon(fieldIcon(programme.field), "md")}<div><small>${esc(FIELD_TITLE[programme.field])} · Tier ${ROMAN[programme.tier] ?? programme.tier}${programme.school ? ` · ${esc(SCHOOL_TITLE[programme.school] ?? label(programme.school))}` : ""}</small><h3>${esc(programme.name)}</h3></div></header><span class="deck-research-state is-${escAttr(programme.state)}">${esc(researchStatus(programme, queue))}</span><p class="deck-research-benefit">${esc(programme.blurb)}</p><dl class="deck-research-cost"><dt title="Total research-seconds required; completion time depends on staffed, supplied Academies.">Research work</dt><dd>${fmt(programme.cost)}</dd></dl>${dossier}${requirements}${needsAcademy ? `<div class="deck-research-supply"><span>Staff and supply an Academy to progress.</span><button type="button" data-deck-act="research-academy">Open Academy</button></div>` : ""}</article>`;
   }
 
   private toggleGroup(fleet: GhostView): void {
@@ -290,6 +375,18 @@ export class DeckRosterRoutes {
 
 function deckResearchQueue(): string[] {
   return [...new Set(researchQueueIds())];
+}
+
+function researchStatus(programme: ProgrammeView, queue: string[]): string {
+  if (programme.state === "completed") return "Completed";
+  if (programme.state === "active") return "In progress";
+  if (programme.state === "queued" || queue.includes(programme.id)) return "Queued";
+  if (programme.state === "available") return "Available";
+  return "Locked";
+}
+
+function researchCount(value: number): string {
+  return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
 }
 
 function dockedAt(systemId: string, fleet: GhostView): boolean {

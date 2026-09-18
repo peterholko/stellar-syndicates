@@ -314,7 +314,7 @@ pub fn colony_opportunities(system: &StarSystem, jump_neighbors: usize) -> Vec<C
         );
 
         if let Some((resource, score)) = strongest_deposit(body, system.trait_, |c| {
-            matches!(c, Commodity::MetallicOre | Commodity::RareElements)
+            c.is_mineable_mineral()
         }) {
             consider(
                 ColonyRole::MiningWorld,
@@ -322,7 +322,7 @@ pub fn colony_opportunities(system: &StarSystem, jump_neighbors: usize) -> Vec<C
                 Some(body),
                 format!(
                     "{} on {} geology yields ×{score:.2} of the home reference",
-                    resource.slug(),
+                    resource.display_name(),
                     body.profile.geology.slug(),
                 ),
             );
@@ -342,7 +342,8 @@ pub fn colony_opportunities(system: &StarSystem, jump_neighbors: usize) -> Vec<C
         }
 
         if let Some((resource, extraction)) = strongest_deposit(body, system.trait_, |c| {
-            matches!(c, Commodity::Silicates | Commodity::RareElements)
+            matches!(c, Commodity::Silicates | Commodity::RareElements | Commodity::CupriteOre
+                | Commodity::CrystallineOre | Commodity::RareMetalOre)
         }) {
             let fabrication =
                 converter_site_mult(body, StructureKind::ElectronicsFabricator, system.trait_);
@@ -353,7 +354,7 @@ pub fn colony_opportunities(system: &StarSystem, jump_neighbors: usize) -> Vec<C
                 Some(body),
                 format!(
                     "{} ×{extraction:.2} with Electronics fabrication ×{fabrication:.2}",
-                    resource.slug(),
+                    resource.display_name(),
                 ),
             );
         }
@@ -433,9 +434,10 @@ impl RichnessBand {
     }
 }
 
-/// A system's STATIC value scalar: `Σ dep.richness × base_price(commodity)` —
-/// richness only (reserves deplete but richness doesn't), weighted by the fixed
-/// bootstrap anchors. Pure + deterministic; the single banding input.
+/// A system's STATIC value scalar: `Σ galaxy::deposit_value_rate` (richness ×
+/// the ore's unit ratio × base price) — richness only (reserves deplete but
+/// richness doesn't), weighted by the fixed bootstrap anchors. Pure +
+/// deterministic; the single banding input.
 pub fn band_value(deposits: &[Deposit]) -> f64 {
     band_value_iter(deposits.iter())
 }
@@ -443,9 +445,7 @@ pub fn band_value(deposits: &[Deposit]) -> f64 {
 /// §bodies: the iterator form — deposits live on bodies now, so callers sum
 /// over `StarSystem::all_deposits()`.
 pub fn band_value_iter<'a>(deposits: impl Iterator<Item = &'a Deposit>) -> f64 {
-    deposits
-        .map(|d| d.richness * crate::market::base_price(d.resource))
-        .sum()
+    deposits.map(crate::galaxy::deposit_value_rate).sum()
 }
 
 /// Bucket a system value against the stored tercile thresholds `(lo, hi)`.

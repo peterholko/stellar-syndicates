@@ -3,7 +3,7 @@
 // state that could break when the server replaces an unsent View.
 import { Decoder, Encoder } from "@msgpack/msgpack";
 
-export const PROTOCOL_VERSION = 32;
+export const PROTOCOL_VERSION = 38;
 export const SUBPROTOCOL = `stellar.msgpack.v${PROTOCOL_VERSION}`;
 export const PROTOCOL_CLOSE_CODE = 4002;
 export const MAX_CLIENT_FRAME = 64 * 1024;

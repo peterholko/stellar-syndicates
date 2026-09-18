@@ -11,6 +11,8 @@
 //! * `BIND_ADDR`    — HTTP/WS bind IP (default 0.0.0.0)
 //! * `GALAXY_SEED`  — u64 seed for deterministic generation (default 0xC0FFEE)
 //! * `MAX_PLAYERS`  — sizes the galaxy (default 4)
+//! * `BOT_PLAYERS`  — optional headless corporations, fresh galaxies only;
+//!                   saved bots resume automatically when this is unset
 //! * `HOME_RING_SU`  — optional absolute home-ring radius override
 //! * `SIM_PACING`    — sim seconds per wall second (default 1; set 4 for fast playtests)
 //! * `DATABASE_URL` — account DB fallback; old galaxy snapshots are imported once.
@@ -27,6 +29,7 @@ mod protocol;
 mod reports;
 mod session;
 mod timeline;
+mod transactions;
 mod view;
 mod ws;
 mod wire;
@@ -112,11 +115,18 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     let seed = env_u64("GALAXY_SEED", 0xC0FFEE);
     let max_players = env_u64("MAX_PLAYERS", 4) as u32;
+    let requested_bots = std::env::var("BOT_PLAYERS").ok()
+        .map(|value| value.parse::<u32>()).transpose()
+        .map_err(|_| anyhow::anyhow!("BOT_PLAYERS must be a non-negative integer"))?;
     let pacing_scale = pacing_scale();
     let mut reset_galaxy = false;
     for arg in std::env::args().skip(1) {
         anyhow::ensure!(arg == "--reset-galaxy", "unknown server argument: {arg}");
         reset_galaxy = true;
+    }
+    if reset_galaxy {
+        anyhow::ensure!(requested_bots.is_none_or(|count| count <= max_players),
+            "BOT_PLAYERS must not exceed MAX_PLAYERS; current save was not reset");
     }
     // Authentication and galaxy storage are both mandatory and fail-closed.
     // Do this before starting the world, not after opening a name-only socket.
@@ -190,7 +200,7 @@ async fn main() -> anyhow::Result<()> {
         let _ = signal_shutdown.send(true);
     });
     let mut game_task = tokio::spawn(game_loop::run(
-        world, storage, checkpoint, pacing_scale, status_tx, input_rx,
+        world, storage, checkpoint, pacing_scale, requested_bots, status_tx, input_rx,
         shutdown_rx.clone(), ready_tx,
     ));
     tokio::select! {

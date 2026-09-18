@@ -18,7 +18,7 @@
 //   system is RUN (the city-screen pattern), but every mechanic stays SYSTEM
 //   level: the build menu it hosts issues the SAME system-level commands as the
 //   old galaxy rail, buildings consume SYSTEM dev slots, and the structure
-//   markers drawn at planets are DECORATIVE ANCHORS (like the deposit pips) —
+//   markers drawn at planets are DECORATIVE ANCHORS —
 //   a Habitat "on" the agri world is still the system's Habitat. There are no
 //   per-planet slots, entities, or orders.
 //
@@ -36,6 +36,7 @@ import { Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "p
 import type { Commodity, Deposit, PlayerId, SystemInfo, BodyView, Vec2 } from "./protocol";
 import { starAnchor, starTypeFor, starVisualRatio, type StarType } from "./stars";
 import type { StarArtGeometry } from "./starart";
+import { planetArtwork, planetArtUrl, type PlanetArtGeometry } from "./planetart";
 import { hashId, mulberry32 } from "./prng";
 
 // ---- Public presentation data model (client-side, non-authoritative) --------
@@ -122,11 +123,12 @@ export interface SystemBodyDetail {
 
 /// The GLYPH families for structure markers (art only — placement comes from
 /// each body's actual structures).
-export type DevKey = "extractor" | "orbital_warehouse" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" | "refinery";
+export type DevKey = "extractor" | "warehouse" | "orbital_warehouse" | "shipyard" | "sensor_array" | "defense_platform" | "habitat" | "refinery";
 function glyphFamily(slug: string): DevKey {
   switch (slug) {
     case "mining_complex": case "volatile_harvester": case "bioharvester": return "extractor";
     case "orbital_warehouse": return "orbital_warehouse";
+    case "warehouse": return "warehouse";
     case "shipyard": return "shipyard";
     case "sensor_array": return "sensor_array";
     case "defense_platform": return "defense_platform";
@@ -154,16 +156,15 @@ const KIND_META: Record<PlanetKind, KindMeta> = {
 };
 
 // ---- Planet/moon/asteroid ART (§planet-art) -----------------------------------
-// One icon per PlanetKind (filenames match the kind slugs exactly), plus a
-// generic moon and an asteroid chunk — 256px RGBA, background-removed from the
-// generated set (real alpha). The measured VISIBLE extent of each subject on
-// its canvas, so sprites scale to exactly the radius the fallback circle used.
-const PLANET_ART_URL = (kind: PlanetKind) => `/art/celestial_sprites/planets/${kind}.png`;
-const MOON_ART_URL = "/art/celestial_sprites/planets/moon.png";
+// Regenerated planet/moon masters have broad readable forms, direct-downsampled
+// resolution tiers, and measured disk geometry (no shared 0.79/0.31 guesses).
+// A 512px source covers the system schematic through Retina/4K; trilinear GPU
+// mipmaps smoothly prefilter it down to the small on-screen bodies. The star,
+// public size hierarchy and orbital positions stay intact; hit geometry follows
+// the same body radii as the artwork.
+const PLANET_ART_URL = (kind: PlanetKind) => planetArtUrl(kind);
+const MOON_ART_URL = planetArtUrl("moon");
 const CHUNK_ART_URL = "/art/celestial_sprites/planets/asteroid_belt_chunk.png";
-/// Fraction of the canvas the planet disk fills (measured: 0.78–0.81 across kinds).
-const PLANET_ART_FILL = 0.79;
-const MOON_ART_FILL = 0.31;
 const CHUNK_ART_FILL = 0.43;
 /// Chunk sprites scattered along each belt ring (over the existing dust dots).
 const BELT_CHUNKS = 22;
@@ -177,9 +178,12 @@ export const STAR_TINT: Record<string, number> = {
 };
 
 const COMMODITY_COLOR: Record<Commodity, number> = {
+  cuprite_ore: 0xc88757, titanium_ore: 0x8bafcf, crystalline_ore: 0x78d9e6,
+  rare_metal_ore: 0xb18ad1, conductive_metals: 0xe3a773, titanium: 0xb8d9eb,
   metallic_ore: 0xb0894f, rare_elements: 0xffd76b, silicates: 0xd8c9a3, volatiles: 0x6bd0ff, biomass: 0x7fdc8a,
   alloys: 0xc99bff, electronics: 0x6be2d8, polymers: 0xe89ad1, fuel: 0xff9d5c, provisions: 0x9fe08a,
   machinery: 0x9fb0c8, armaments: 0xff7a6b,
+  composites: 0x78c6b7, hull_sections: 0xb5c9dd, precision_components: 0xe9ca75, drive_assemblies: 0x85baff,
 };
 
 // ---- Deterministic RNG (public geography — same for every player) ------------
@@ -187,7 +191,10 @@ const COMMODITY_COLOR: Record<Commodity, number> = {
 
 function radiusForKind(kind: PlanetKind, rng: () => number): number {
   if (kind === "gas_giant") return 0.052 + rng() * 0.024; // giants read clearly larger
-  return 0.02 + rng() * 0.016;
+  // A modest readability lift for small rocky/ocean/icy disks, not a larger
+  // schematic: star size, orbit spacing, public size differences and gas giants
+  // stay as before. Still one RNG draw, so no other layout feature gets rerolled.
+  return (0.02 + rng() * 0.016) * 1.20;
 }
 
 // Public body size has a visible silhouette. The ranges still overlap, so art
@@ -207,8 +214,8 @@ function bodySizeVisual(size: BodyView["size"]): number {
 //
 // Deterministic from the public system id + the VIEWER'S KNOWN geology
 // (§explore — `deposits` comes from the light-gated view: the exact table when
-// surveyed-or-owner, EMPTY when unsurveyed, in which case the schematic degrades
-// to filler bodies with no resource pips). Produces the schematic SHAPE only.
+// surveyed-or-owner, EMPTY when unsurveyed, so unknown deposits cannot color
+// the body labels). Produces the schematic SHAPE only.
 // Ownership/dynamic state is added later by the scene — never here.
 export function buildVisualSystem(sys: SystemInfo, bodies: BodyView[]): VisualSystem {
   // §bodies: the ROSTER comes from the wire (the sim owns it — kinds, names,
@@ -352,7 +359,7 @@ export class SystemViewScene {
   private beltChunks = new Container(); // asteroid-chunk sprites on the belts (static)
   private starLayer = new Container(); // the star (sprite or procedural fallback)
   private bodySprites = new Container(); // planet + moon ART sprites (static)
-  private bodiesGfx = new Graphics(); // fallback discs + halos + resource pips (static)
+  private bodiesGfx = new Graphics(); // fallback discs for unloaded planet/moon art (static)
   private starSprite: Sprite | null = null;
   private starGfx = new Graphics(); // procedural star fallback (static)
   private overlay = new Graphics(); // ownership + selection (screen-space, dynamic)
@@ -395,7 +402,7 @@ export class SystemViewScene {
   private sceneScale = 1;
   private starLayout: Vec2 = { x: 0, y: 0 };
 
-  constructor() {
+  constructor(private readonly options: { sceneryOnly?: boolean } = {}) {
     this.starLayer.addChild(this.starGfx);
     // Orbits + belts stay below the fixed-size transition star, so their early
     // scaled-down rings emerge from behind its disk rather than drawing over it.
@@ -403,6 +410,11 @@ export class SystemViewScene {
     this.content.addChild(this.worldRoot, this.markers, this.overlay, this.labels);
     this.root.addChild(this.vignette, this.content);
     this.root.visible = false;
+    if (options.sceneryOnly) {
+      // Battle backdrop: astronomy only, with no management chrome or input.
+      this.root.eventMode = "none";
+      this.vignette.visible = this.markers.visible = this.overlay.visible = this.labels.visible = false;
+    }
     // Non-blocking: fallback circles render immediately; the scene rebuilds
     // once (cached thereafter) when the art lands.
     void this.loadArt();
@@ -413,7 +425,10 @@ export class SystemViewScene {
   private async loadArt(): Promise<void> {
     const load = async (url: string): Promise<Texture | null> => {
       try {
-        return await Assets.load(url);
+        const texture = await Assets.load<Texture>(url);
+        texture.source.autoGenerateMipmaps = true;
+        texture.source.scaleMode = "linear";
+        return texture;
       } catch {
         return null;
       }
@@ -433,15 +448,17 @@ export class SystemViewScene {
     // Art arrived after a system was already built → rebuild that one scene
     // (still cached; this happens at most once per session).
     if (this.vis) {
-      const v = this.vis;
-      this.vis = null;
-      this.setSystem(v, this.lastStarTex, this.lastStarGeometry);
+      // Texture arrival is not a new system selection. Keep the picked world
+      // and transition transform while replacing only the cached drawing.
+      this.buildStatic(this.vis, this.lastStarTex);
+      this.layout(this.viewW, this.viewH, this.cameraRect);
     }
   }
 
   /// (Re)build the STATIC schematic for a system. No-op if already showing it.
   setSystem(vis: VisualSystem, starTex: Texture | null, starGeometry: StarArtGeometry | null = null): void {
-    if (this.vis?.systemId === vis.systemId) {
+    if (this.vis?.systemId === vis.systemId
+      && (!this.options.sceneryOnly || (this.vis === vis && this.lastStarTex === starTex))) {
       this.setStarArt(starTex, starGeometry);
       return;
     }
@@ -527,6 +544,7 @@ export class SystemViewScene {
   /// rival bodies arrive empty (server fog), so markers can never leak. The
   /// visual bodies' structure maps refresh too (a completed build appears).
   setDynamic(bodies: BodyView[], builds: { key: string; body_id: number }[], fed: boolean): void {
+    if (this.options.sceneryOnly) return;
     const sig = `${this.vis?.systemId ?? ""}|` +
       bodies.map((b) => `${b.id}:${Object.entries(b.structures).map(([k, t]) => `${k}${t}`).join("+")}`).join(",") +
       `|${builds.map((j) => `${j.key}@${j.body_id}`).join(",")}|${fed}`;
@@ -580,12 +598,12 @@ export class SystemViewScene {
     // Planet + moon ART sprites (the kind's icon when loaded — the tint-circle
     // fallback for any unloaded texture is drawn by redrawGfx).
     this.bodySprites.removeChildren().forEach((c) => c.destroy());
-    this.forEachBody(vis, (x, y, r, _kind, _deposits, _habitable, tex, artFill) => {
+    this.forEachBody(vis, (x, y, r, _kind, tex, art) => {
       if (!tex) return;
       const sp = new Sprite(tex);
-      sp.anchor.set(0.5);
+      sp.anchor.set(art.anchor[0], art.anchor[1]);
       sp.position.set(x, y);
-      sp.scale.set((2 * r) / (artFill * tex.width));
+      sp.scale.set((2 * r) / (art.visualRatio * tex.width));
       this.bodySprites.addChild(sp);
     });
 
@@ -598,24 +616,23 @@ export class SystemViewScene {
   /// the two passes can never disagree.
   private forEachBody(
     vis: VisualSystem,
-    cb: (x: number, y: number, r: number, kind: PlanetKind, deposits: Deposit[], habitable: boolean, tex: Texture | null, artFill: number) => void,
+    cb: (x: number, y: number, r: number, kind: PlanetKind, tex: Texture | null, art: PlanetArtGeometry) => void,
   ): void {
     for (const p of vis.planets) {
       const px = Math.cos(p.angle) * p.orbitRadius;
       const py = Math.sin(p.angle) * p.orbitRadius;
-      cb(px, py, p.radius, p.kind, p.deposits, p.habitable, this.kindTex.get(p.kind) ?? null, PLANET_ART_FILL);
+      cb(px, py, p.radius, p.kind, this.kindTex.get(p.kind) ?? null, planetArtwork(p.kind));
       for (const mn of p.moons) {
         const mx = px + Math.cos(mn.angle) * mn.orbitRadius;
         const my = py + Math.sin(mn.angle) * mn.orbitRadius;
-        // Moons: the moon icon (tiny); fallback = the old icy/rock speck. A
-        // deposit-bearing moon keeps the same resource pip as a planet.
-        cb(mx, my, mn.radius, mn.deposits.length ? "ice" : "barren", mn.deposits, false, this.moonTex, MOON_ART_FILL);
+        // Moons: the moon icon (tiny); fallback = the old icy/rock speck.
+        cb(mx, my, mn.radius, mn.deposits.length ? "ice" : "barren", this.moonTex, planetArtwork("moon"));
       }
     }
   }
 
   /// (Re)draw every VECTOR element of the schematic — star-fallback glow, orbit
-  /// rings, belt dust, body fallback discs, habitable halos, deposit pips — in
+  /// rings, belt dust and body fallback discs — in
   /// normalized coordinates but tessellated for the CURRENT displayed size
   /// (§orbit-ring fix: circlePath/ellipsePath). Called from layout() only when
   /// the system or the scene scale changed — never per frame, so the
@@ -651,10 +668,11 @@ export class SystemViewScene {
       }
     }
 
-    // Body fallback discs + the always-on overlays (halo, deposit pip).
+    // Body fallback discs only; habitability and deposits stay in the details,
+    // with no always-on rings or resource circles around the planet artwork.
     this.bodiesGfx.clear();
     const g = this.bodiesGfx;
-    this.forEachBody(vis, (x, y, r, kind, deposits, habitable, tex) => {
+    this.forEachBody(vis, (x, y, r, kind, tex) => {
       const meta = KIND_META[kind];
       if (!tex) {
         // Fallback disc (pre-art rendering, unchanged apart from tessellation).
@@ -669,14 +687,6 @@ export class SystemViewScene {
           ellipsePath(g, x, y, r * 0.92, r * 0.34, scale).fill({ color: meta.hi, alpha: 0.14 }); // band hint
         }
         circlePath(g, x, y, r, scale).stroke({ width: 0.0016, color: 0x0a0f1c, alpha: 0.7 });
-      }
-      if (habitable) circlePath(g, x, y, r * 1.25, scale).stroke({ width: 0.0016, color: 0x7fdc8a, alpha: 0.5 }); // life halo
-      // Resource pip — a small ring in the deposit's map color (VISUAL association).
-      if (deposits.length) {
-        const col = COMMODITY_COLOR[deposits[0].resource] ?? 0xffffff;
-        circlePath(g, x + r * 0.9, y - r * 0.9, r * 0.42, scale)
-          .fill({ color: col, alpha: 0.95 })
-          .stroke({ width: 0.0012, color: 0x02040a, alpha: 0.7 });
       }
     });
   }
@@ -708,6 +718,8 @@ export class SystemViewScene {
       this.gfxSystem = this.vis.systemId;
       this.gfxScale = this.sceneScale;
     }
+
+    if (this.options.sceneryOnly) return; // static scenery has no labels or hit targets
 
     // Backdrop vignette (subtle LOD separation from the galaxy).
     this.vignette.clear();
@@ -844,6 +856,10 @@ export class SystemViewScene {
         g.poly([5, -4, 5, 4, 2, 4]).stroke({ width: 1.4, color: 0x4fc3ff, alpha: 0.95 });
         g.moveTo(-5, -4).lineTo(5, -4).stroke({ width: 1.4, color: 0x4fc3ff, alpha: 0.95 });
         break;
+      case "warehouse": // amber ground store: roof and cargo door
+        g.poly([-5, -1, 0, -5, 5, -1, 5, 5, -5, 5]).stroke({ width: 1.3, color: 0xe3b66a, alpha: 0.95 });
+        g.rect(-2, 0, 4, 5).stroke({ width: 1, color: 0xe3b66a, alpha: 0.7 });
+        break;
       case "orbital_warehouse": // violet crate: square with a band
         g.rect(-4, -4, 8, 8).stroke({ width: 1.3, color: 0xc99bff, alpha: 0.95 });
         g.moveTo(-4, 0).lineTo(4, 0).stroke({ width: 1, color: 0xc99bff, alpha: 0.7 });
@@ -901,6 +917,7 @@ export class SystemViewScene {
   /// light-gated per-player view (state.systems) — identical fog to the galaxy
   /// map, so nothing hidden leaks here.
   update(owner: PlayerId | null, playerId: PlayerId | null, nowMs: number, home = false): void {
+    if (this.options.sceneryOnly) return;
     const g = this.overlay;
     g.clear();
     if (!this.viewW) return;

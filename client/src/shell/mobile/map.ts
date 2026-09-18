@@ -407,6 +407,11 @@ export class MobileMapInteraction {
         this.clearSelection();
         this.hooks.openSheet({ id: "hub" });
         break;
+      case "exploration":
+        this.clearSelection();
+        this.ctx.state.selectedExplorationSiteId = target.id;
+        this.hooks.openSheet({ id: "operations" });
+        break;
       case "ongoingBattle":
         this.hooks.openSheet({ id: "battle", props: { id: target.id } });
         break;
@@ -450,6 +455,7 @@ export class MobileMapInteraction {
   }
 
   private clearSelection(): void {
+    this.ctx.state.selectedExplorationSiteId = null;
     this.ctx.intent.clearPendingIntent(true);
     this.ctx.intent.clearJumpAiming(true);
     this.ctx.intent.clearGuardAiming(true);

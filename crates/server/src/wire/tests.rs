@@ -23,8 +23,24 @@ fn orders() -> Vec<Value> {
         json!({"type":"MarketSell", "commodity":"metallic_ore", "units":7}),
         json!({"type":"GuardFleet", "interceptor_id":"42", "target_id":"43"}),
         json!({"type":"SetAssignment", "system_id":"2", "structure":"extractor", "workers":12, "specialists":{}, "body_id":1}),
+        json!({"type":"SetAssignment", "system_id":"2", "structure":"smelter", "workers":1, "body_id":1, "refining_ore":"cuprite_ore"}),
+        json!({"type":"MarketBuy", "commodity":"titanium", "units":50}),
+        json!({"type":"MarketSell", "commodity":"rare_metal_ore", "units":20}),
         json!({"type":"TransferModules", "from":"2", "to":"3", "manifest":{"torpedo_rack":2,"reflective_plating":1}}),
         json!({"type":"Withdraw", "fleet_id":"42"}),
+        json!({"type":"ExploreSite", "fleet_id":"42", "site_id":"80", "task":"study"}),
+        json!({"type":"ExploreSite", "fleet_id":"43", "site_id":"81", "task":"extract"}),
+        json!({"type":"AnnotateExploration", "entry":{"id":"80", "kind":"site", "pinned":true, "note":"星 · return with escorts"}}),
+        json!({"type":"BuildModule", "system_id":"2", "module":"survey_drive"}),
+        json!({"type":"SetFreightRoute","fleet_id":"43","route":{"name":"Ore & Fuel","fuel_reserve":12.5,"escort":"42","repeat":true,"stops":[
+            {"port":{"kind":"system","id":"2"},"load":{"metallic_ore":25,"biomass":10},"unload":{"fuel":10},"sell":false},
+            {"port":{"kind":"hub"},"load":{"fuel":10},"unload":{"metallic_ore":25,"biomass":10},"sell":true}]}}),
+        json!({"type":"SetFreightRoute","fleet_id":"43","route":null}),
+        json!({"type":"ReserveProject","system_id":"2","target":{"kind":"development","project":"orbital_assembly"},"reserve":true}),
+        json!({"type":"StartColonyProject","system_id":"2","body_id":0,"project":"deep_extraction","commodity":"rare_elements"}),
+        json!({"type":"SetColonyProjectActive","system_id":"2","project":"deep_extraction","active":false}),
+        json!({"type":"DeployOutpost","fleet_id":"43","system_id":"2","body_id":0,"outpost":"extraction","commodity":"rare_elements"}),
+        json!({"type":"SkimFuel","fleet_id":"43","system_id":"2"}),
     ]
 }
 

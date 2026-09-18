@@ -6,22 +6,168 @@
 //! until a scout snapshots it (like fortifications), periodically launches a dark
 //! raider PACK (owned by the [`crate::ids::PlayerId::PIRATE`] sentinel — so it
 //! reuses ALL the fleet/combat/raid code by owner comparison) that hunts
-//! corporate convoys within its local hunting radius, escalates on a slow clock if ignored,
+//! corporate convoys within its local hunting radius and periodically raids an
+//! unprotected home stockpile. It escalates on a slow clock if ignored,
 //! and is suppressed by ASSAULTING the base (a platform-equivalent defense pool ∝
-//! tier). Pirates STEAL (raid brevity) — they never siege, never capture — so the
-//! standing defense handles them fully offline; loss rates are bounded by the same
-//! raid caps as players.
+//! tier). Home raids are short, defended blockades with a capped theft allowance
+//! and a protected stock floor — never capture or bombardment. Standing defenses
+//! fight while the owner is offline; warships and platforms can take real losses.
+//! Fortified depots and regional strongholds are separate fixed-strength sites:
+//! stationary fitted garrisons, no escalation, and permanent clearance that
+//! opens their host system for settlement. Their plunder must be hauled home.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+/// Recognizable, fixed opponents, never generated to counter a player's loadout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PirateFaction { Ashwake, Ironclad, Rift }
+impl PirateFaction {
+    pub fn for_base(id: crate::EntityId) -> Self {
+        match id.0 % 3 { 0 => Self::Ashwake, 1 => Self::Ironclad, _ => Self::Rift }
+    }
+    pub fn name(self) -> &'static str { match self {
+        Self::Ashwake => "Ashwake Corsairs", Self::Ironclad => "Ironclad Reclaimers", Self::Rift => "Rift Stalkers",
+    } }
+    pub fn counter(self) -> &'static str { match self {
+        Self::Ashwake => "Torpedo salvos; bring point-defense screens and prioritize missile ships.",
+        Self::Ironclad => "Slow armored scavengers; torpedoes bypass their plating. Avoid a beam slugging match.",
+        Self::Rift => "Fast driver ambushers; use Whipple Armor and screen transports. They retreat at 50% hull.",
+    } }
+    pub fn mission(self) -> crate::doctrine::MissionProfile {
+        use crate::doctrine::*;
+        MissionProfile { priority: TargetPriority::Transports, screening: ScreeningRole::Automatic,
+            withdrawal: if self == Self::Rift { DamageWithdrawal::Hull50 } else { DamageWithdrawal::Never } }
+    }
+    pub fn patrol(self, count: u32) -> Vec<(crate::ShipKind, crate::Loadout, u32)> {
+        use crate::{ShipKind as H, ModuleKind as M, Loadout};
+        let (hull, fit) = match self {
+            Self::Ashwake => (H::Raider, vec![M::TorpedoRack]),
+            Self::Ironclad => (H::Corvette, vec![M::ReflectivePlating, M::WhippleArmor]),
+            Self::Rift => (H::Raider, vec![M::MassDriver]),
+        };
+        vec![(hull, Loadout::new(fit), count.max(1))]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CombatObjective { DisableFireControl, DisableSupply, HoldExtraction, BreakBlockade, ProtectEvacuation }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupportSite {
+    pub id: crate::EntityId,
+    pub pos: crate::Vec2,
+    pub objective: CombatObjective,
+    pub guards: Vec<crate::EntityId>,
+    pub disabled_at: Option<f64>,
+    pub disabled_by: Option<crate::PlayerId>,
+    pub effect_at: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BaseNetwork {
+    pub faction: PirateFaction,
+    pub supports: Vec<SupportSite>,
+    pub patrol: Option<crate::EntityId>,
+    pub next_patrol_at: f64,
+    pub lost_at: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Campaign {
+    pub bases: std::collections::BTreeMap<crate::EntityId, BaseNetwork>,
+    /// Immutable mission actors survive expired contracts; renewal never clones them.
+    pub missions: std::collections::BTreeMap<crate::OperationId, ObjectiveActors>,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ObjectiveActors {
+    pub pirates: Vec<crate::EntityId>,
+    pub evacuees: Option<crate::EntityId>,
+    pub launched: bool,
+    pub arrived: bool,
+}
+
+pub const CAMPAIGN_PATROL_COST: u32 = 12;
+pub const CAMPAIGN_PATROL_PERIOD_S: f64 = 300.0;
+pub const EXTRACTION_HOLD_S: u32 = 60;
+
 use crate::cargo::Commodity;
-use crate::ids::EntityId;
+use crate::ids::{EntityId, PlayerId};
+
+/// Home raids respect founder protection and cannot start during the first
+/// thirty sim minutes, even for an older corporation without a founding record.
+pub const HOME_RAID_GRACE_S: f64 = 30.0 * 60.0;
+/// Minimum warning lead before departure, AFTER the pirate's broadcast reaches
+/// the target's CC. Travel adds further response time; no teleporting attackers.
+pub const HOME_RAID_WARNING_S: f64 = 90.0;
+/// Per-victim rest between expeditions (also refreshed when a raid breaks off).
+pub const HOME_RAID_COOLDOWN_S: f64 = 15.0 * 60.0;
+/// A smash-and-grab cannot hold orbit indefinitely. Scales with battle pacing.
+pub const HOME_RAID_HOLD_BATTLE_MULT: f64 = 2.0;
+pub const HOME_RAID_MAX_LOOT: u32 = 60;
+pub const HOME_RAID_STOCK_FRAC: f64 = 0.10;
+
+/// One physical pack's home-raid mission. This is private simulation state,
+/// never a client countdown. The ordinary fleet/history and delayed notices
+/// expose only arrived light. Persist every phase: loading a save must neither
+/// reissue the warning nor refill the theft allowance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HomeRaid {
+    pub base: EntityId,
+    pub owner: PlayerId,
+    pub system: EntityId,
+    pub pos: crate::math::Vec2,
+    pub depart_at: f64,
+    pub arrived_at: Option<f64>,
+    /// Frozen at first arrival; replenishing/importing cannot enlarge this raid.
+    pub allowance: BTreeMap<Commodity, u32>,
+    pub stolen: BTreeMap<Commodity, u32>,
+    pub loading_credit: f64,
+    pub returning: bool,
+    /// First loss of the source base. The pack may react only inside this
+    /// report's light cone; turning a remote fleet instantly would leak the loss.
+    #[serde(default)]
+    pub source_lost_at: Option<f64>,
+    #[serde(default)]
+    pub counter_raid_offered: bool,
+}
 
 // --- TUNABLE PIRATE BLOCK (playtest placeholders — mechanics are the deliverable) ---
 /// How many hidden enclaves to seed at generation.
 pub const PIRATE_ENCLAVE_COUNT: usize = 3;
+/// Fixed objectives, separate from the three repeatable, escalating hideouts.
+/// These tags travel in the existing scout snapshot, never from live site truth.
+pub const DEPOT_TIER: u32 = 4;
+pub const STRONGHOLD_TIER: u32 = 5;
+pub fn permanent_site(tier: u32) -> bool { tier >= DEPOT_TIER }
+pub fn site_name(tier: u32) -> &'static str {
+    match tier { DEPOT_TIER => "Fortified pirate depot", STRONGHOLD_TIER => "Regional stronghold", _ => "Privateer hideout" }
+}
+
+/// Published, fixed encounter fittings: research can counter them; bringing a
+/// better fleet never silently increases the opposition. All hulls start whole.
+pub fn formation(tier: u32) -> Vec<(crate::ship::ShipKind, crate::module::Loadout, u32)> {
+    use crate::ship::ShipKind::*;
+    use crate::module::{Loadout, ModuleKind::*};
+    match tier {
+        DEPOT_TIER => vec![(Destroyer, Loadout::new(vec![MassDriver, ReflectivePlating]), 1),
+            (Corvette, Loadout::new(vec![PointDefenseScreen, ReflectivePlating]), 1)],
+        STRONGHOLD_TIER => vec![(Cruiser, Loadout::new(vec![MassDriver, WhippleArmor, ReflectivePlating]), 1),
+            (Destroyer, Loadout::new(vec![TorpedoRack, ReflectivePlating]), 1),
+            (Corvette, Loadout::new(vec![PointDefenseScreen, ReflectivePlating]), 2)],
+        _ => vec![(Raider, Loadout::default(), pack_size(tier))],
+    }
+}
+
+pub fn patrol_fitting(variant: u8) -> crate::module::Loadout {
+    use crate::module::{Loadout, ModuleKind::*};
+    Loadout::new(match variant % 3 {
+        0 => vec![MassDriver], 1 => vec![TorpedoRack], _ => vec![ReflectivePlating],
+    })
+}
 /// No enclave is seeded within this of ANY home slot (keeps piracy off the doorstep).
 pub const PIRATE_HOME_EXCLUSION: f64 = 2600.0;
 /// Enclaves live in this frontier band (0 = inner margin, 1 = rim) — the MID ring.
@@ -59,6 +205,50 @@ pub const PIRATE_LAUNCH_PERIOD: f64 = 90.0;
 pub const PIRATE_GROW_PERIOD: f64 = 300.0;
 /// After a base is destroyed, this long DORMANT before a weaker (tier-1) respawn.
 pub const PIRATE_DORMANCY: f64 = 600.0;
+/// Finite wreckage at an ambient hideout, even if its raid stole nothing.
+/// Created once at clearance, recovered physically; never a remote home payout.
+pub const HIDEOUT_WRECK_ALLOYS_PER_TIER: u32 = 8;
+
+/// Authored, finite equipment caches. These are useful combinations of real
+/// fittings, not a new rarity multiplier: a breacher still needs torpedo cover,
+/// and a screening ship still sacrifices gun damage. Only permanent sites mint
+/// them, once on clearance; ordinary respawning hideouts cannot farm dossiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SitePrize { BreacherCache, ScreenCache }
+
+impl SitePrize {
+    pub fn for_tier(tier: u32) -> Option<Self> {
+        match tier { DEPOT_TIER => Some(Self::BreacherCache), STRONGHOLD_TIER => Some(Self::ScreenCache), _ => None }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self { Self::BreacherCache => "Breacher cache", Self::ScreenCache => "Fleet-screen cache" }
+    }
+
+    pub fn modules(self) -> BTreeMap<crate::module::ModuleKind, u32> {
+        use crate::module::ModuleKind::*;
+        match self {
+            Self::BreacherCache => BTreeMap::from([(MassDriver, 2), (WhippleArmor, 2)]),
+            Self::ScreenCache => BTreeMap::from([(PointDefenseScreen, 4), (ReflectivePlating, 4)]),
+        }
+    }
+
+    pub fn programme(self) -> &'static str {
+        match self { Self::BreacherCache => "hull_line_v_cruiser", Self::ScreenCache => "hull_line_vi_battleship" }
+    }
+
+    /// Tunable: one dossier offsets 30% of this programme only. Normal gates,
+    /// the remaining Academy work and the shipbuilding recipe still apply.
+    pub const DOSSIER_FRACTION: f64 = crate::research::DOSSIER_WORK_FRACTION;
+
+    pub fn summary(self) -> &'static str {
+        match self {
+            Self::BreacherCache => "2 Mass Drivers + 2 Whipple Armor: outfit two breachers; no torpedo cover. Cruiser Hull dossier: 30% research work.",
+            Self::ScreenCache => "4 Point-Defense Screens + 4 Reflective Plating: outfit four escorts; reduced gun damage. Battleship dossier: 30% research work.",
+        }
+    }
+}
 /// A player war-fleet stationed (Idle) within this of an ACTIVE enclave opens an
 /// assault on the base (the "attack the defended site" gesture).
 pub const PIRATE_ASSAULT_RADIUS: f64 = 220.0;
@@ -69,7 +259,7 @@ pub fn hunt_radius(tier: u32) -> f64 {
 }
 /// The base's platform-equivalent defense tiers at a given enclave tier.
 pub fn base_defense_tiers(tier: u32) -> u32 {
-    tier * PIRATE_DEFENSE_PER_TIER
+    match tier { DEPOT_TIER => 3, STRONGHOLD_TIER => 6, _ => tier * PIRATE_DEFENSE_PER_TIER }
 }
 /// The raider count a pack launches at a given tier (≥ 1).
 pub fn pack_size(tier: u32) -> u32 {
@@ -85,7 +275,7 @@ pub struct Enclave {
     /// The unclaimed system this base sits at (`owner` stays `None` — dark until
     /// scouted; existence is DISCOVERED via scouting + raids, never announced).
     pub system: EntityId,
-    /// Escalation tier (1..=`PIRATE_MAX_TIER`); grows on the slow clock if ignored.
+    /// 1..=3 are escalating hideouts; 4/5 identify fixed depot/stronghold templates.
     pub tier: u32,
     /// Loot returned by packs — the prize an assault victor seizes.
     #[serde(default)]
@@ -100,11 +290,15 @@ pub struct Enclave {
     /// The current pack fleet id (out raiding or home), if one is deployed.
     #[serde(default)]
     pub pack: Option<EntityId>,
+    /// Heavy objectives stay cleared across save/load. Legacy hideouts retain
+    /// their old dormant/respawn cycle; no new state is inferred from a clock.
+    #[serde(default)]
+    pub cleared: bool,
 }
 
 impl Enclave {
     /// Whether the enclave is ACTIVE (not in post-suppression dormancy) at `now`.
     pub fn active(&self, now: f64) -> bool {
-        now >= self.dormant_until
+        !self.cleared && now >= self.dormant_until
     }
 }
