@@ -26,6 +26,15 @@ fn connect(id: u64, player: u64, divisor: u64) -> GameInput {
     }
 }
 
+fn confirm_landing(conn_id: u64) -> GameInput {
+    GameInput::Intent {
+        conn_id,
+        msg: ClientMsg::FoundColony {
+            profile: sim::settlement::FoundingProfile::MineralHighlands,
+        },
+    }
+}
+
 fn ticks(game: &mut GameLoop, n: u64) {
     for _ in 0..n {
         game.tick();
@@ -66,6 +75,8 @@ async fn crash_restores_only_the_saved_instant_including_orders_and_delayed_ligh
     let mut game = fresh();
     game.handle_input(connect(1, 10, 1));
     game.handle_input(connect(2, 20, 2));
+    game.handle_input(confirm_landing(1));
+    game.handle_input(confirm_landing(2));
     ticks(&mut game, 6);
     let fleet = game
         .world
@@ -121,6 +132,11 @@ async fn checkpoint_keeps_accepted_commands_waiting_for_the_next_tick() {
     let (storage, _) = Storage::open(dir.0.clone(), false).await.unwrap();
     let mut game = fresh();
     game.handle_input(connect(1, 10, 1));
+    assert!(
+        game.pending.is_empty(),
+        "reading the intro creates no colony"
+    );
+    game.handle_input(confirm_landing(1));
     assert_eq!(game.pending.len(), 1);
     storage.checkpoint(game.durable_checkpoint()).await.unwrap();
     drop(storage);
@@ -145,6 +161,7 @@ async fn checkpoint_keeps_accepted_commands_waiting_for_the_next_tick() {
 fn restore_drops_old_sessions_uses_current_pacing_and_never_fast_forwards() {
     let mut game = fresh();
     game.handle_input(connect(1, 10, 1));
+    game.handle_input(confirm_landing(1));
     ticks(&mut game, 6);
     let saved: GalaxyCheckpoint = decode(&encode(&game.durable_checkpoint()).unwrap()).unwrap();
     let recovered = restore(saved, 4.0);
@@ -180,8 +197,9 @@ async fn clean_shutdown_saves_and_commands_do_not_write_between_checkpoints() {
     let initial_path = dir.0.join("checkpoint-00000000000000000001.ssg");
     let initial_bytes = std::fs::read(&initial_path).unwrap();
     input.send(connect(1, 10, 1)).unwrap();
+    input.send(confirm_landing(1)).unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {
-        while status_rx.borrow().online_players == 0 {
+        while status_rx.borrow().corporations == 0 {
             status_rx.changed().await.unwrap();
         }
     })
@@ -246,6 +264,7 @@ async fn full_checkpoint_interval_is_fifteen_wall_minutes_not_ten_seconds() {
 fn checkpoint_binary_roundtrip_preserves_unmodified_reports_and_full_width_ids() {
     let mut game = fresh();
     game.handle_input(connect(u64::MAX, u64::MAX - 1, 2));
+    game.handle_input(confirm_landing(u64::MAX));
     ticks(&mut game, 3);
     let saved = decode::<GalaxyCheckpoint>(&encode(&game.durable_checkpoint()).unwrap()).unwrap();
     assert!(picture(&restore(saved, 1.0)) == picture(&game));

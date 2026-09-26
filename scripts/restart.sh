@@ -6,6 +6,7 @@
 #
 # Uses start.sh's graceful shutdown, final checkpoint and startup health check.
 # PostgreSQL accounts are preserved, including when resetting the galaxy.
+# To also clear local accounts for registration tests, use reset-database.sh.
 # Accepts the same options and environment variables as start.sh.
 set -euo pipefail
 

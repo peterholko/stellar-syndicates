@@ -809,48 +809,7 @@ button.m-primary, .m-action-grid button.m-primary, .m-decision button.m-primary,
 
 .m-join[hidden] { display: none; }
 
-.m-join__card {
-  width: min(100%, 380px);
-  padding: 24px 20px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: rgba(13, 19, 34, .96);
-  box-shadow: var(--panel-shadow);
-}
-
-.m-join__eyebrow { color: var(--accent); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
-.m-join h1 { margin: 5px 0 6px; font-size: 21px; }
-.m-join p { margin: 0 0 18px; color: var(--dim); font-size: 12px; line-height: 1.45; }
-.m-join label { display: block; margin-bottom: 6px; color: var(--dim); font-size: 10px; letter-spacing: .8px; text-transform: uppercase; }
-.m-join input {
-  width: 100%;
-  min-height: 46px;
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--field-bd);
-  border-radius: 7px;
-  background: var(--field-bg);
-  color: var(--ink);
-  font: inherit;
-}
-.m-join button {
-  width: 100%;
-  min-height: 46px;
-  border: 0;
-  border-radius: 7px;
-  background: var(--accent);
-  color: #04121d;
-  font: inherit;
-  font-weight: 800;
-}
-.m-join button:disabled { opacity: .55; }
-.m-join__error { min-height: 17px; margin-top: 7px; color: var(--warn); font-size: 11px; }
-.m-join__card { max-height: calc(100dvh - 32px); overflow-y: auto; }
-.m-join [data-register-field][hidden] { display: none; }
-.m-join [data-account-toggle] { margin-top: 8px; background: transparent; color: var(--accent); }
-.m-join [data-account-guest] { margin-top: 8px; border: 1px solid var(--accent); background: transparent; color: var(--accent); }
-.m-join .account-guest-hint { margin-top: 8px; }
-.m-join small { display: block; margin-bottom: 12px; color: var(--dim); }
+.m-join__art::after { content: ""; position: absolute; inset: 0; background: #03081066; }
 
 @media (max-width: 360px) {
   .m-tabs button > small { font-size: 10px; }

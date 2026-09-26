@@ -16,6 +16,10 @@ use crate::standing::StandingOrder;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Command {
+    FoundColony { id: PlayerId, name: String, profile: crate::settlement::FoundingProfile },
+    DevelopSettlement { player_id: PlayerId, system_id: EntityId, body_id: u32,
+        project: crate::settlement::SettlementProject },
+    SetRefiningReserve { player_id: PlayerId, system_id: EntityId, ore: u32, fuel: u32 },
     SetFreightRoute { player_id: PlayerId, fleet_id: EntityId, route: Option<crate::industry::FreightRoute> },
     DeployOutpost { player_id: PlayerId, fleet_id: EntityId, system_id: EntityId, body_id: u32,
         outpost: crate::industry::OutpostKind, commodity: crate::Commodity },

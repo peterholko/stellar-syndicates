@@ -16,7 +16,9 @@ const structures = Object.keys(manifest.structures);
 assert.equal(structures.length, 25);
 const catalog = await readFile(new URL("src/shell/deck/empire.ts", root), "utf8");
 const descriptions = catalog.slice(catalog.indexOf("const STRUCTURE_DESCRIPTION"), catalog.indexOf("import { MODULES"));
-assert.deepEqual(structures.sort(), [...descriptions.matchAll(/^  (\w+): "/gm)].map(match => match[1]).sort(), "all current structures have tiered art");
+assert.deepEqual(structures.sort(), [...descriptions.matchAll(/^  (\w+): "/gm)].map(match => match[1]).filter(key => key !== "service_berth").sort(), "all standalone structures have tiered art");
+assert.equal(icons.structureIcon("service_berth"), icons.structureIcon("warehouse"), "the Service Berth is a Warehouse attachment");
+assert.equal(icons.structureImage("service_berth", 1), icons.structureImage("warehouse", 1));
 let bytes = 0;
 for (const key of structures) {
   const variants = manifest.structures[key];

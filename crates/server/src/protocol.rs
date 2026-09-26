@@ -23,12 +23,15 @@ use sim::{
 /// Binary MessagePack transport: bump the WebSocket subprotocol and the
 /// client's wire version together; old text clients must refresh, not silently
 /// misinterpret binary data. Welcome retains the version for the UI contract.
-pub const PROTOCOL_VERSION: u32 = 38;
+pub const PROTOCOL_VERSION: u32 = 40;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientMsg {
+    FoundColony { profile: sim::settlement::FoundingProfile },
+    DevelopSettlement { system_id: EntityId, body_id: u32, project: sim::settlement::SettlementProject },
+    SetRefiningReserve { system_id: EntityId, ore: u32, fuel: u32 },
     SetFreightRoute { fleet_id: EntityId, route: Option<sim::industry::FreightRoute> },
     DeployOutpost { fleet_id: EntityId, system_id: EntityId, body_id: u32,
         outpost: sim::industry::OutpostKind, commodity: Commodity },
@@ -650,6 +653,10 @@ pub struct CharterView {
 #[derive(Debug, Clone, Serialize)]
 pub struct FoundingView {
     pub stage: sim::FoundingStage,
+    pub local_opening: bool,
+    pub recovery_site: Option<EntityId>,
+    pub recovered: bool,
+    pub export_dispatched: bool,
     pub protected: bool,
     pub protection_min_until: f64,
     pub protection_max_until: f64,
@@ -1550,6 +1557,9 @@ pub struct GateProgressView {
 /// one level down, nothing new leaks).
 #[derive(Debug, Clone, Serialize)]
 pub struct BodyView {
+    pub founding_camp: Option<sim::settlement::FoundingCamp>,
+    /// Owner-only base accommodation; research multipliers are separate.
+    pub population_capacity: Option<f64>,
     pub id: u32,
     pub name: String,
     /// Kind slug: rocky | terrestrial | ocean | ice | gas_giant.
@@ -2325,6 +2335,8 @@ pub struct GhostView {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub enum ServerMsg {
+    /// The authenticated account has not founded a corporation in this galaxy.
+    FoundingOffer,
     /// Sent once, immediately after a successful join.
     Welcome {
         player_id: PlayerId,

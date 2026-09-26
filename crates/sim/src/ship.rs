@@ -610,44 +610,53 @@ impl CountClass {
     }
 }
 
-// --- STANDING UPKEEP (§upkeep) -------------------------------------------------
-// Fleets cost PROVISIONS every second they exist, fed or not, anywhere. This is
-// the ceiling on force: before it, a hull was a one-off purchase and an idle
-// navy was free forever, so hoarding was strictly dominant and the economy never
-// pushed back. The charge is on CREW, not tonnage — a Titan is a city under arms
-// while a convoy is mostly empty hold — so the sink lands on warfleets and
-// leaves logistics cheap.
-//
-// Scale check against a fresh home (one staffed Agroplex ≈ 1.2 Provisions/s, its
-// 2.0M population eating 0.12/s): the ~1.08/s spare feeds roughly 18 raiders, or
-// 10 corvettes, and not one Titan. A home alone supports a raiding wing; a line
-// of battle needs colonies behind it. Every value Tunable — this table is the
-// single dial on how big a navy the map can carry.
+// --- CREW AND STANDING UPKEEP (§upkeep) ----------------------------------------
 
-/// PROVISIONS per second, per hull. `Freighter` is 0: the Authority's own hull is
-/// never a corporation's cost.
-pub fn upkeep_per_sec(kind: ShipKind) -> f64 {
+/// Operating crew in PEOPLE, not workforce cohorts or cargo mass. Tunable hull
+/// complements: freight holds are largely automated, while warships need more
+/// personnel. Every existing hull is fully crewed; recruitment and crew
+/// casualties are not simulated. Deriving this from the roster keeps old saves
+/// compatible and makes merging, splitting and losing hulls conserve headcount.
+/// Marines, colony settlers and specialist passengers are counted separately.
+pub fn crew_size(kind: ShipKind) -> u32 {
     match kind {
-        ShipKind::Builder => 0.04, // a full work crew rides along
-        ShipKind::Scout => 0.01,   // a couple of crew and a very good sensor
-        ShipKind::Convoy => 0.03,  // civilian hauler: big hull, small crew
-        ShipKind::TinyFreighter => 0.01,
-        ShipKind::SmallFreighter => 0.02,
-        ShipKind::LargeFreighter => 0.05,
-        ShipKind::HeavyFreighter => 0.08,
-        ShipKind::BulkFreighter => 0.12,
-        ShipKind::Colony => 0.06,  // the colonists aboard eat too
-        // §ground: a trooper is a barracks under way — marines eat well.
-        ShipKind::Transport => 0.35,
-        ShipKind::Raider => 0.06,
-        ShipKind::Corvette => 0.10,
-        ShipKind::Destroyer => 0.25,
-        ShipKind::Cruiser => 0.45,
-        ShipKind::Battleship => 0.80,
-        ShipKind::Dreadnought => 1.40,
-        ShipKind::Titan => 2.50, // a flagship is a standing commitment, not a purchase
-        ShipKind::Freighter => 0.0,
+        ShipKind::TinyFreighter => 5,
+        ShipKind::SmallFreighter => 10,
+        ShipKind::Convoy => 20,
+        ShipKind::LargeFreighter => 30,
+        ShipKind::HeavyFreighter => 50,
+        ShipKind::BulkFreighter => 80,
+        ShipKind::Builder => 30,
+        ShipKind::Scout => 4,
+        ShipKind::Colony => 50,
+        ShipKind::Transport => 40,
+        ShipKind::Raider => 12,
+        ShipKind::Corvette => 40,
+        ShipKind::Destroyer => 120,
+        ShipKind::Cruiser => 350,
+        ShipKind::Battleship => 800,
+        ShipKind::Dreadnought => 1_800,
+        ShipKind::Titan => 4_000,
+        // The crew exists, but sentinel-owned ships are fed outside the player
+        // economy. The exemption belongs to the owner, not to the hull's food.
+        ShipKind::Freighter => 24,
     }
+}
+
+fn colonists_aboard(kind: ShipKind) -> u32 {
+    if kind == ShipKind::Colony {
+        (crate::colony::COLONY_FOUNDING_POP * 1_000_000.0) as u32
+    } else {
+        0
+    }
+}
+
+/// Baseline food for one fully crewed hull with its initial embarked complement.
+/// A live fleet uses its actual remaining marines and specialist passengers in
+/// [`Fleet::upkeep_per_sec`]. Every person eats the same baseline colony ration.
+pub fn upkeep_per_sec(kind: ShipKind) -> f64 {
+    f64::from(crew_size(kind) + marine_capacity(kind) + colonists_aboard(kind))
+        * crate::colony::PROVISIONS_PER_PERSON_PER_S
 }
 
 // --- §ground M6/M7: MARINES ----------------------------------------------------
@@ -740,17 +749,24 @@ pub const SCOUT_INTEL_RENOTIFY_S: f64 = 60.0;
 /// Seconds a patrolling ship waits at each waypoint before moving on.
 const PATROL_DWELL: f64 = 2.5;
 
+/// Economy freighters trade turnaround for range. Tunable: 25% of Full speed
+/// and 10% of Full fuel PER DISTANCE, hence 2.5% of Full's burn per second.
+pub const ECONOMY_SPEED_FRACTION: f64 = 0.25;
+pub const ECONOMY_FUEL_MULT: f64 = 0.10;
+
 /// A fleet's TRANSIT THROTTLE (§Part 4): the stealth-vs-speed choice. `Full`
 /// (default, behavior-preserving) runs at the formation speed and lights up the
 /// fleet's signature at flank; `Stealth` creeps at `STEALTH_FRACTION` of it (~2×
 /// trip time) to stay quiet. Applies to MoveTo/Patrol; pursuit is always Full
-/// (v1). serde default = Full keeps old snapshots loading.
+/// (v1). Economy is for all-freighter formations only; it saves fuel as well
+/// as slowing travel. serde default = Full keeps old snapshots loading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransitMode {
     #[default]
     Full,
     Stealth,
+    Economy,
 }
 
 impl TransitMode {
@@ -759,6 +775,7 @@ impl TransitMode {
         match self {
             TransitMode::Full => 1.0,
             TransitMode::Stealth => crate::detection::STEALTH_FRACTION,
+            TransitMode::Economy => ECONOMY_SPEED_FRACTION,
         }
     }
 }
@@ -1071,6 +1088,28 @@ pub struct PursuitPlan {
     pub replan_at: f64,
 }
 
+/// Derived fleet fuel effects. World refreshes these at tick boundaries and
+/// after loading; completed corporate research remains the only authority.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FuelResearch {
+    pub capacity: f64,
+    pub consumption: f64,
+}
+
+impl Default for FuelResearch {
+    fn default() -> Self { Self { capacity: 1.0, consumption: 1.0 } }
+}
+
+impl FuelResearch {
+    pub fn from_state(state: &crate::research::ResearchState) -> Self {
+        let mods = crate::research::mods(state);
+        Self {
+            capacity: mods.get(&crate::research::ModKey::FuelCapacity).copied().unwrap_or(1.0),
+            consumption: mods.get(&crate::research::ModKey::FuelConsumption).copied().unwrap_or(1.0),
+        }
+    }
+}
+
 /// A FLEET: the map/sim unit (GDD §13.1). One or more ships of mixed kinds
 /// moving, fighting, and being observed as a SINGLE entity. A fleet-of-one is
 /// the N=1 case and behaves exactly as the old single ship-per-unit world.
@@ -1171,6 +1210,10 @@ pub struct Fleet {
     /// bookkeeping question and becomes a property of the formation.
     #[serde(default)]
     pub fuel: f64,
+    /// Runtime cache, not a saved upgrade or a fuel grant. Rebuilt from the
+    /// owner's research; old snapshots need no new authoritative fields.
+    #[serde(skip)]
+    pub(crate) fuel_research: FuelResearch,
     /// §course-change: what the drives are DOING — cruising, spinning up, or
     /// shutting down.
     ///
@@ -1197,7 +1240,7 @@ pub struct Fleet {
     /// carrying the remainder forward.
     #[serde(default)]
     pub damage: BTreeMap<ShipKind, f64>,
-    /// TRANSIT THROTTLE (§Part 4): Full (default) or Stealth. Governs move speed
+    /// TRANSIT THROTTLE: Full (default), Stealth or freighter Economy. Governs move speed
     /// and, via the retarded velocity, the fleet's detection signature.
     #[serde(default)]
     pub transit: TransitMode,
@@ -1345,6 +1388,7 @@ impl Fleet {
             marines_spent: 0,
             warp: false,
             fuel: hull_mass * crate::fuel::FUEL_PER_HULL_MASS,
+            fuel_research: FuelResearch::default(),
             regime: crate::transit::Regime::Thrusters,
             drive_state: DriveState::default(),
             stalled: false,
@@ -1512,10 +1556,25 @@ impl Fleet {
         self.marines_spent = 0;
     }
 
-    /// §upkeep: Provisions per second this whole formation draws — the sum over
-    /// its hulls. A fleet's standing cost, paid wherever it happens to be.
+    /// Operating personnel on the actual hull roster, including their officers.
+    /// No extra captain charge: that is a role within the complement.
+    pub fn crew_count(&self) -> u32 {
+        self.ships.iter().map(|s| crew_size(s.kind)).sum()
+    }
+
+    /// Everyone currently aboard eats, including settlers and specialists.
+    /// Deployed marines no longer draw shipboard rations; cargo never adds crew.
+    pub fn provisions_headcount(&self) -> u32 {
+        self.crew_count()
+            + self.marines()
+            + self.ships.iter().map(|s| colonists_aboard(s.kind)).sum::<u32>()
+            + self.passengers.values().sum::<u32>()
+    }
+
+    /// §upkeep: standing food demand, whether moving or docked. Use the colony's
+    /// per-person baseline, never a second per-hull food-price table.
     pub fn upkeep_per_sec(&self) -> f64 {
-        self.ships.iter().map(|s| upkeep_per_sec(s.kind)).sum()
+        f64::from(self.provisions_headcount()) * crate::colony::PROVISIONS_PER_PERSON_PER_S
     }
 
     /// Total missing hull across the whole formation, and its full-health total —
@@ -1732,7 +1791,7 @@ impl Fleet {
         stock.max(recon)
     }
 
-    fn has_recon_on(&self, kind: ShipKind) -> bool {
+    pub fn has_recon_on(&self, kind: ShipKind) -> bool {
         self.loadouts.get(&kind).is_some_and(|fits| fits.iter().any(|(key, n)|
             *n > 0 && crate::module::Loadout::from_key(key).has_recon()))
     }
@@ -1801,6 +1860,40 @@ impl Fleet {
             .filter(|(_, units)| *units > 0)
             .map(|(commodity, units)| Cargo { commodity, units })
             .collect()
+    }
+
+    /// Does `stacks` equal [`Self::cargo_stacks`] as it would be built now?
+    /// Walks the manifest in the same order without allocating it, so a
+    /// recorder can compare against its last report before copying anything.
+    pub fn cargo_stacks_matches(&self, stacks: &[Cargo]) -> bool {
+        let mut extra = self.cargo.filter(|cargo| cargo.units > 0);
+        let mut expected = stacks.iter();
+        for (&commodity, &units) in &self.cargo_extra {
+            if let Some(cargo) = extra
+                && cargo.commodity < commodity
+            {
+                if expected.next() != Some(&cargo) {
+                    return false;
+                }
+                extra = None;
+            }
+            let mut total = units;
+            if let Some(cargo) = extra
+                && cargo.commodity == commodity
+            {
+                total += cargo.units;
+                extra = None;
+            }
+            if total > 0 && expected.next() != Some(&Cargo { commodity, units: total }) {
+                return false;
+            }
+        }
+        if let Some(cargo) = extra
+            && expected.next() != Some(&cargo)
+        {
+            return false;
+        }
+        expected.next().is_none()
     }
 
     /// Total occupied hold space across every commodity.
@@ -1911,7 +2004,7 @@ impl Fleet {
             fits.iter().map(|(key, n)| kind.hull_mass() * *n as f64
                 * (crate::module::Loadout::from_key(key).fuel_capacity_mult() - 1.0)).sum::<f64>()
         }).sum();
-        (self.hull_mass() + extra_mass) * crate::fuel::FUEL_PER_HULL_MASS
+        (self.hull_mass() + extra_mass) * crate::fuel::FUEL_PER_HULL_MASS * self.fuel_research.capacity
     }
 
     /// Fill from a supply, returning what was actually taken.
@@ -1925,17 +2018,45 @@ impl Fleet {
     /// How far this fleet can still go at `factor` (1 on thrusters,
     /// `WARP_FACTOR` in warp). Distance, not time — what a range ring draws.
     pub fn range_at(&self, factor: f64) -> f64 {
-        let per_second = crate::fuel::fuel_tick(self.mass(), self.transit_speed(), 1.0);
+        let per_second = crate::fuel::fuel_tick(self.mass(), self.transit_speed(), 1.0)
+            * self.propulsion_fuel_mult();
         if per_second <= 1e-12 {
             return f64::INFINITY;
         }
         (self.fuel / per_second) * self.transit_speed() * factor
     }
 
-    /// The fleet's TRANSIT speed = formation speed × the throttle fraction
-    /// (§Part 4). Full = formation speed (behavior-preserving); Stealth creeps.
+    /// Only freight engines have Economy cruise. Recheck composition so merging
+    /// a warship into an economy fleet cannot give it a freight fuel discount.
+    pub fn can_economy_cruise(&self) -> bool {
+        self.composition.iter().any(|(_, n)| *n > 0)
+            && self.composition.iter().all(|(kind, n)| *n == 0 || kind.is_player_freighter())
+    }
+
+    pub fn cruise_fuel_mult(&self) -> f64 {
+        if self.transit == TransitMode::Economy && self.can_economy_cruise() {
+            ECONOMY_FUEL_MULT
+        } else { 1.0 }
+    }
+
+    /// Research and the selected freight throttle compose once, both in the
+    /// physical burn and in range/route estimates. Captain bonuses are separate.
+    pub fn propulsion_fuel_mult(&self) -> f64 {
+        self.cruise_fuel_mult() * self.fuel_research.consumption
+    }
+
+    pub fn jump_fuel_cost(&self, distance: f64) -> f64 {
+        crate::fuel::fuel_cost(distance, self.mass()) / crate::transit::JUMP_FUEL_FACTOR
+            * self.fuel_research.consumption
+    }
+
+    /// Formation speed × throttle. Economy's fuel saving is separate: simply
+    /// halving speed and burn/second would leave total trip fuel unchanged.
     pub fn transit_speed(&self) -> f64 {
-        self.max_speed() * self.transit.fraction()
+        let throttle = if self.transit == TransitMode::Economy && !self.can_economy_cruise() {
+            1.0
+        } else { self.transit.fraction() };
+        self.max_speed() * throttle
     }
 
     /// The fleet's detection SIGNATURE (§Part 4) at its CURRENT velocity — the
@@ -2007,7 +2128,7 @@ impl Fleet {
 
     /// Advance this fleet one timestep at simulation time `time`. Moves at the
     /// FORMATION constant speed (slowest member sets the pace), scaled by the
-    /// transit throttle (§Part 4 — Full/Stealth).
+    /// transit throttle (Full/Stealth/freighter Economy).
     pub fn advance(&mut self, time: f64, dt: f64, env: &crate::transit::TransitEnv<'_>) {
         let heading = if self.vel.length_sq() > 1e-9 {
             self.vel
@@ -2233,6 +2354,76 @@ mod tests {
             f.add(*k, *n);
         }
         f
+    }
+
+    #[test]
+    fn every_hull_feeds_its_people_at_the_colony_ration_rate() {
+        for kind in ALL_SHIP_KINDS {
+            let f = fleet(&[(kind, 1)], None);
+            assert!(crew_size(kind) > 0, "{kind:?} has an operating crew");
+            assert_eq!(f.crew_count(), crew_size(kind));
+            let expected = f.provisions_headcount() as f64 / 1_000_000.0
+                * crate::colony::PROVISIONS_PER_MILLION_PER_S;
+            assert!((f.upkeep_per_sec() - expected).abs() < 1e-12, "{kind:?}");
+            assert!((upkeep_per_sec(kind) - expected).abs() < 1e-12, "{kind:?} quote matches draw");
+        }
+        for (kind, crew) in PLAYER_FREIGHTERS.into_iter().zip([5, 10, 20, 30, 50, 80]) {
+            assert_eq!(crew_size(kind), crew);
+        }
+        assert_eq!(crew_size(ShipKind::Raider), 12);
+    }
+
+    #[test]
+    fn starter_fleet_food_depends_on_crew_not_cargo_speed_or_hull_damage() {
+        let mut f = fleet(&[(ShipKind::TinyFreighter, 1), (ShipKind::Raider, 1)], None);
+        assert_eq!(f.crew_count(), 17);
+        let rate = f.upkeep_per_sec();
+        assert!((rate * 25.0 * 60.0 - 1.02).abs() < 1e-12,
+            "a 25-minute escort circuit feeds 17 people, not 1,750");
+        f.cargo = Some(Cargo { commodity: Commodity::MetallicOre, units: 50 });
+        f.transit = TransitMode::Stealth;
+        f.ships[0].hp *= 0.5;
+        assert_eq!(f.upkeep_per_sec(), rate,
+            "cargo, throttle and hull damage do not change crew headcount");
+        let mut freight = fleet(&[(ShipKind::TinyFreighter, 1)], None);
+        let normal = freight.upkeep_per_sec();
+        freight.transit = TransitMode::Economy;
+        assert_eq!(freight.upkeep_per_sec(), normal);
+    }
+
+    #[test]
+    fn crew_follows_roster_splits_merges_losses_and_saves() {
+        let mut f = fleet(&[(ShipKind::TinyFreighter, 2), (ShipKind::Raider, 3)], None);
+        let people = f.crew_count();
+        let food = f.upkeep_per_sec();
+        let detached = f.detach_ships(ShipKind::Raider, 2);
+        let mut wing = fleet(&[], None);
+        wing.absorb_ships(detached);
+        assert_eq!(f.crew_count() + wing.crew_count(), people);
+        assert!((f.upkeep_per_sec() + wing.upkeep_per_sec() - food).abs() < 1e-12);
+        f.absorb_ships(wing.ships);
+        assert_eq!(f.crew_count(), people);
+        let restored: Fleet = serde_json::from_str(&serde_json::to_string(&f).unwrap()).unwrap();
+        assert_eq!(restored.crew_count(), people, "no new save fields are required");
+        assert_eq!(restored.upkeep_per_sec(), food);
+        f.remove_one(ShipKind::Raider);
+        assert_eq!(f.crew_count(), people - crew_size(ShipKind::Raider));
+    }
+
+    #[test]
+    fn embarked_people_eat_and_disembarked_people_stop_drawing_ship_rations() {
+        let mut f = fleet(&[(ShipKind::Colony, 1), (ShipKind::Transport, 1)], None);
+        f.passengers.insert(crate::specialist::SpecialistKind::NavalArchitect, 2);
+        assert_eq!(f.crew_count(), 90);
+        assert_eq!(f.provisions_headcount(), 90 + 1_000 + 40 + 2);
+        f.commit_marines();
+        assert_eq!(f.provisions_headcount(), 90 + 1_000 + 2);
+        f.passengers.clear();
+        assert_eq!(f.provisions_headcount(), 90 + 1_000);
+        f.remove_one(ShipKind::Colony);
+        assert_eq!(f.provisions_headcount(), 40);
+        f.reembark_marines();
+        assert_eq!(f.provisions_headcount(), 40 + 40);
     }
 
     #[test]
@@ -2609,5 +2800,58 @@ mod drive_wire {
             }),
             "{\"dropping\":{\"from\":\"warp\",\"left\":1.0}}"
         );
+    }
+}
+
+#[cfg(test)]
+mod cargo_stack_match_tests {
+    use super::*;
+    use crate::cargo::Commodity;
+
+    fn fleet_with(cargo: Option<Cargo>, extra: &[(Commodity, u32)]) -> Fleet {
+        let mut f = Fleet::single(
+            EntityId(1),
+            PlayerId(1),
+            ShipKind::Freighter,
+            Vec2::ZERO,
+            FleetOrder::Idle,
+            None,
+        );
+        f.cargo = cargo;
+        f.cargo_extra = extra.iter().copied().collect();
+        f
+    }
+
+    #[test]
+    fn matches_exactly_the_manifest_cargo_stacks_builds() {
+        let mut kinds = Commodity::ALL.to_vec();
+        kinds.sort();
+        let (lo, mid, hi) = (kinds[0], kinds[kinds.len() / 2], kinds[kinds.len() - 1]);
+        let cases = [
+            fleet_with(None, &[]),
+            fleet_with(Some(Cargo { commodity: mid, units: 5 }), &[]),
+            fleet_with(Some(Cargo { commodity: mid, units: 0 }), &[(lo, 3)]),
+            fleet_with(Some(Cargo { commodity: mid, units: 5 }), &[(lo, 3), (hi, 7)]),
+            fleet_with(Some(Cargo { commodity: mid, units: 5 }), &[(mid, 4)]),
+            fleet_with(Some(Cargo { commodity: lo, units: 2 }), &[(mid, 0), (hi, 1)]),
+            fleet_with(Some(Cargo { commodity: hi, units: 2 }), &[(lo, 1), (mid, 0)]),
+            fleet_with(None, &[(lo, 0), (mid, 9)]),
+        ];
+        for fleet in &cases {
+            let stacks = fleet.cargo_stacks();
+            assert!(fleet.cargo_stacks_matches(&stacks), "{stacks:?}");
+            let mut shorter = stacks.clone();
+            if shorter.pop().is_some() {
+                assert!(!fleet.cargo_stacks_matches(&shorter), "{stacks:?}");
+            }
+            let mut longer = stacks.clone();
+            longer.push(Cargo { commodity: hi, units: 1 });
+            assert!(!fleet.cargo_stacks_matches(&longer), "{stacks:?}");
+            if let Some(first) = stacks.first() {
+                let mut bumped = stacks.clone();
+                bumped[0] = Cargo { units: first.units + 1, ..*first };
+                assert!(!fleet.cargo_stacks_matches(&bumped), "{stacks:?}");
+            }
+        }
     }
 }

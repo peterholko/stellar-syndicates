@@ -19,6 +19,105 @@ fn fixture() -> (World, PlayerId, EntityId) {
 }
 
 #[test]
+fn economy_freighters_take_four_times_as_long_and_burn_a_tenth_per_journey() {
+    use crate::ship::{DriveState, TransitMode};
+    let (mut w, owner, _) = fixture();
+    // Isolate propulsion from refuelling, commands, wells and captain bonuses.
+    // Exercise the real tick debit and movement integrator, not just a quote.
+    w.fleets.clear();
+    let start = Vec2::new(5_000_000.0, 0.0);
+    let dest = start + Vec2::new(1_000.0, 0.0);
+    for kind in PLAYER_FREIGHTERS {
+        let mut results = Vec::new();
+        for mode in [TransitMode::Full, TransitMode::Economy, TransitMode::Stealth] {
+            let id = w.alloc_entity_id();
+            let mut f = Fleet::single(id, owner, kind, start, FleetOrder::MoveTo { dest }, None);
+            f.add_cargo(C::MetallicOre, kind.cargo_units());
+            f.transit = mode;
+            f.drive_state = DriveState::Cruising(crate::transit::Regime::Warp);
+            f.vel = Vec2::new(f.transit_speed() * crate::transit::WARP_FACTOR, 0.0);
+            let initial = f.fuel;
+            let range = f.range_at(crate::transit::WARP_FACTOR);
+            w.fleets.insert(id, f);
+            let mut ticks = 0;
+            while w.fleets[&id].pos.distance(dest) > 0.1 && ticks < 1_000 {
+                w.time += DT;
+                w.integrate_movement(&mut vec![]);
+                ticks += 1;
+            }
+            assert!(ticks < 1_000, "{kind:?} {mode:?} must reach the destination");
+            results.push((ticks, initial - w.fleets[&id].fuel, range));
+            w.fleets.remove(&id);
+        }
+        let (full, economy, stealth) = (results[0], results[1], results[2]);
+        // Whole-tick arrival rounding can amplify by up to four ticks when
+        // comparing the quarter-speed trip against four times the Full trip.
+        assert!((economy.0 as i32 - 4 * full.0 as i32).abs() <= 4, "{kind:?}: {results:?}");
+        assert!((economy.1 / full.1 - 0.1).abs() < 0.001, "{kind:?}: {results:?}");
+        assert!((economy.2 / full.2 - 10.0).abs() < 1e-9);
+        assert!((stealth.1 / full.1 - 1.0).abs() < 0.01, "Stealth's trip cost is unchanged");
+        eprintln!("{kind:?}: Full {} ticks / {:.4} Fuel; Economy {} ticks / {:.4} Fuel",
+            full.0, full.1, economy.0, economy.1);
+    }
+}
+
+#[test]
+fn economy_escorts_match_the_charge_without_getting_freight_engine_savings() {
+    use crate::ship::{DriveState, TransitMode};
+    let (mut w, owner, _) = fixture();
+    w.fleets.clear();
+    let mut results = Vec::new();
+    for mode in [TransitMode::Full, TransitMode::Economy] {
+        let start = Vec2::new(5_000_000.0, 0.0);
+        let id = w.alloc_entity_id();
+        let guard_id = w.alloc_entity_id();
+        let mut f = Fleet::single(id, owner, ShipKind::TinyFreighter, start,
+            FleetOrder::MoveTo { dest: start + Vec2::new(10_000.0, 0.0) }, None);
+        f.transit = mode;
+        f.drive_state = DriveState::Cruising(crate::transit::Regime::Warp);
+        f.vel = Vec2::new(f.transit_speed() * crate::transit::WARP_FACTOR, 0.0);
+        let guard_pos = f.pos - f.vel.normalized() * GUARD_STANDOFF_SU;
+        let mut guard = Fleet::single(guard_id, owner, ShipKind::Raider, guard_pos,
+            FleetOrder::Guard { target: id }, None);
+        guard.vel = f.vel;
+        guard.drive_state = f.drive_state;
+        let before = guard.fuel;
+        w.fleets.insert(id, f);
+        w.fleets.insert(guard_id, guard);
+        let ticks = if mode == TransitMode::Full { 120 } else { 480 };
+        for _ in 0..ticks { w.time += DT; w.integrate_movement(&mut vec![]); }
+        assert!((w.fleets[&guard_id].vel.length() - w.fleets[&id].vel.length()).abs() < 1e-6);
+        results.push((w.fleets[&id].pos.distance(start), before - w.fleets[&guard_id].fuel));
+        w.fleets.clear();
+    }
+    assert!((results[0].0 - results[1].0).abs() < 0.1);
+    assert!((results[0].1 - results[1].1).abs() < 1e-6, "escort burns the same fuel over the same distance");
+}
+
+#[test]
+fn economy_commands_are_delayed_and_cannot_discount_combat_hulls() {
+    use crate::ship::TransitMode;
+    let (mut w, owner, _) = fixture();
+    w.fleets.clear();
+    let id = w.alloc_entity_id();
+    let pos = w.players[&owner].command_center + Vec2::new(10_000.0, 0.0);
+    w.fleets.insert(id, Fleet::single(id, owner, ShipKind::TinyFreighter, pos, FleetOrder::Idle, None));
+    w.step(&[Command::SetFleetTransit { player_id: owner, fleet_id: id, mode: TransitMode::Economy }]);
+    assert_eq!(w.fleets[&id].transit, TransitMode::Full, "setting cannot beat its order signal");
+    for _ in 0..((crate::transit::delay(pos, w.players[&owner].command_center, w.config.c) + 1.0) / DT) as u32 {
+        w.step(&[]);
+    }
+    assert_eq!(w.fleets[&id].transit, TransitMode::Economy);
+    let restored: World = serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
+    assert_eq!(restored.fleets[&id].transit, TransitMode::Economy);
+    let f = w.fleets.get_mut(&id).unwrap();
+    f.composition.insert(ShipKind::Raider, 1);
+    assert!(!f.can_economy_cruise());
+    assert_eq!(f.cruise_fuel_mult(), 1.0, "merging a warship cannot borrow freight engines");
+    assert_eq!(f.transit_speed(), f.max_speed());
+}
+
+#[test]
 fn freight_construction_starts_with_importable_basics_then_adds_industry() {
     // These are construction manifests, not a credit purchase or an automatic
     // hull replacement. Every unit must reach a yard through normal logistics.

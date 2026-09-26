@@ -16,6 +16,8 @@ use crate::ship::ShipKind;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BuildKind {
+    /// A one-time camp development; shares the planet's ordinary FIFO queue.
+    Founding { project: crate::settlement::SettlementProject },
     /// Construct a ship of `ship` kind; it spawns Idle at the building system.
     Ship { ship: ShipKind },
     /// Build/raise a STRUCTURE tier (§economy — the industrial web). The field
@@ -137,6 +139,9 @@ pub enum StructureKind {
     /// Ground storage. A founding Warehouse I replaces the old invisible base
     /// allowance; all warehouses still contribute to one system stockpile.
     Warehouse,
+    /// A one-tier Warehouse attachment. Light-hull utility fitting only; no slot,
+    /// manufacturing, military work, or free workforce.
+    ServiceBerth,
 }
 
 impl StructureKind {
@@ -160,12 +165,12 @@ impl StructureKind {
             Self::SensorArray => Some("comp_sensor_gain"),
             Self::DefensePlatform | Self::Garrison => Some("weap_fire_control"),
             Self::MiningComplex | Self::Bioharvester | Self::Agroplex | Self::Shipyard
-            | Self::Habitat | Self::Warehouse | Self::Academy => None,
+            | Self::Habitat | Self::Warehouse | Self::Academy | Self::ServiceBerth => None,
         }
     }
 
     /// Every kind, in display order.
-    pub const ALL: [StructureKind; 25] = [
+    pub const ALL: [StructureKind; 26] = [
         StructureKind::MiningComplex,
         StructureKind::VolatileHarvester,
         StructureKind::Bioharvester,
@@ -191,6 +196,7 @@ impl StructureKind {
         StructureKind::Academy,
         StructureKind::Garrison,
         StructureKind::Warehouse,
+        StructureKind::ServiceBerth,
     ];
 
     /// Which slot pool a built tier of this kind consumes.
@@ -226,6 +232,7 @@ impl StructureKind {
             StructureKind::Agroplex
             | StructureKind::Habitat
             | StructureKind::Warehouse
+            | StructureKind::ServiceBerth
             | StructureKind::OrbitalWarehouse
             | StructureKind::SensorArray
             | StructureKind::DefensePlatform
@@ -259,6 +266,7 @@ impl StructureKind {
             StructureKind::OrdnanceFoundry => "ordnance_foundry",
             StructureKind::Habitat => "habitat",
             StructureKind::Warehouse => "warehouse",
+            StructureKind::ServiceBerth => "service_berth",
             StructureKind::OrbitalWarehouse => "orbital_warehouse",
             StructureKind::SensorArray => "sensor_array",
             StructureKind::DefensePlatform => "defense_platform",
@@ -290,6 +298,7 @@ impl StructureKind {
             StructureKind::OrdnanceFoundry => "Ordnance Foundry",
             StructureKind::Habitat => "Habitat",
             StructureKind::Warehouse => "Warehouse",
+            StructureKind::ServiceBerth => "Service Berth",
             StructureKind::OrbitalWarehouse => "Orbital Warehouse",
             StructureKind::SensorArray => "Sensor Array",
             StructureKind::DefensePlatform => "Defense Platform",
@@ -356,7 +365,7 @@ impl BuildJob {
     }
 
     pub fn is_queued_structure(&self) -> bool {
-        matches!(self.what, BuildKind::Upgrade { .. })
+        matches!(self.what, BuildKind::Upgrade { .. } | BuildKind::Founding { .. })
             && self.structure_work.as_ref().is_some_and(|work| work.rate == 0.0)
     }
 }
@@ -440,11 +449,25 @@ pub struct RefitJob {
     pub in_place: bool,
     #[serde(default)]
     pub work: Option<BuildWork>,
+    /// A limited warehouse attachment may fit light utility hulls. If its crew
+    /// was borrowed from mining, restore that posting when the job ends.
+    #[serde(default)]
+    pub service: Option<ServiceAssignment>,
     /// Fuel accompanies hulls removed for military work; a refit never refuels.
     #[serde(default)]
     pub fuel: f64,
     /// Absolute sim tick of completion.
     pub complete_tick: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ServiceAssignment {
+    pub body: u32,
+    pub borrowed: Option<(u32, crate::production::Assignment)>,
+}
+
+pub fn service_berth_hull(ship: ShipKind) -> bool {
+    matches!(ship, ShipKind::Scout | ShipKind::Raider | ShipKind::TinyFreighter | ShipKind::SmallFreighter)
 }
 
 /// One recipe: commodity costs (whole units; the stockpile is f64) + duration in
@@ -739,6 +762,10 @@ pub const WAREHOUSE_RECIPE: Recipe = Recipe {
     costs: &[(Commodity::Alloys, 30.0), (Commodity::Machinery, 8.0)],
     build_ticks: 15 * HZ,
 };
+pub const SERVICE_BERTH_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 5.0), (Commodity::Machinery, 3.0)],
+    build_ticks: 120 * HZ,
+};
 /// Bulk orbital storage is a late industrial investment. Tunable.
 pub const ORBITAL_WAREHOUSE_RECIPE: Recipe = Recipe {
     costs: &[(Commodity::Alloys, 120.0), (Commodity::Machinery, 40.0),
@@ -980,6 +1007,7 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         BuildKind::Train { .. } => &ACADEMY_TRAIN_RECIPE,
         BuildKind::RecruitCaptain { .. } => &CAPTAIN_RECRUIT_RECIPE,
         BuildKind::Module { module } => module_recipe(module),
+        BuildKind::Founding { project } => project.recipe(),
         BuildKind::Upgrade { upgrade } => match upgrade {
             StructureKind::MiningComplex => &MINING_COMPLEX_RECIPE,
             StructureKind::VolatileHarvester => &VOLATILE_HARVESTER_RECIPE,
@@ -1001,6 +1029,7 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
             StructureKind::OrdnanceFoundry => &ORDNANCE_FOUNDRY_RECIPE,
             StructureKind::Habitat => &HABITAT_RECIPE,
             StructureKind::Warehouse => &WAREHOUSE_RECIPE,
+            StructureKind::ServiceBerth => &SERVICE_BERTH_RECIPE,
             StructureKind::OrbitalWarehouse => &ORBITAL_WAREHOUSE_RECIPE,
             StructureKind::SensorArray => &SENSOR_ARRAY_RECIPE,
             StructureKind::DefensePlatform => &DEFENSE_PLATFORM_RECIPE,
@@ -1020,14 +1049,6 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
 // POPULATION (capacity `colony::POP_CAP_PER_HABITAT_TIER` per tier), and it is
 // the population that eats (`colony::PROVISIONS_PER_MILLION_PER_S`), works, and
 // unlocks slots. All colony-life tunables live in `crate::colony`.
-
-/// §syndicates Part 3: Provisions consumed per second PER SHIP of an ALLY GARRISON
-/// stationed at a host system, drawn from the HOST's own stockpile each tick.
-/// Hosting a coalition shield means FEEDING it — a cut supply line UNFEEDS the
-/// garrison (its defense contribution suspends until fed; nothing is destroyed).
-/// Sized in the Habitat-upkeep ballpark so a modest garrison is affordable but a
-/// large one strains a small host. Playtest placeholder. Tunable.
-pub const GARRISON_UPKEEP_PER_SHIP: f64 = 0.05;
 
 // --- DEFENSE PLATFORM (§buildings step 2c) ------------------------------------
 
@@ -1200,6 +1221,7 @@ pub const RESEARCHED_MAX_STRUCTURE_TIER: u32 = 6;
 /// the prize tiers open to [`RESEARCHED_MAX_STRUCTURE_TIER`]. The `kind` arg is
 /// used to keep gated structures locked until their first research unlock.
 pub fn max_buildable_tier(kind: StructureKind, research_unlocked_tier: u32) -> u32 {
+    if kind == StructureKind::ServiceBerth { return 1; }
     if kind.research_prerequisite().is_some() && research_unlocked_tier == 0 {
         return 0;
     }
@@ -1289,7 +1311,9 @@ mod tests {
             (OrbitalWarehouse, "mat_foundry_iv_orbital_yards"),
             (DefensePlatform, "weap_fire_control"), (Garrison, "weap_fire_control"),
         ];
-        assert_eq!(starter.len() + gated.len(), StructureKind::ALL.len());
+        assert_eq!(starter.len() + gated.len() + 1, StructureKind::ALL.len());
+        assert_eq!(ServiceBerth.research_prerequisite(), None);
+        assert_eq!(max_buildable_tier(ServiceBerth, 6), 1, "attachment has only one tier");
         for kind in starter {
             assert_eq!(kind.research_prerequisite(), None, "{kind:?}: no bootstrap loop");
             assert_eq!(max_buildable_tier(kind, 0), BASE_MAX_STRUCTURE_TIER);
@@ -1446,7 +1470,9 @@ mod tests {
         // require their initial research unlock, then use the same ladder.
         for kind in StructureKind::ALL {
             for unlocked in 0..=5u32 {
-                if kind.research_prerequisite().is_some() && unlocked == 0 {
+                if kind == StructureKind::ServiceBerth {
+                    assert_eq!(max_buildable_tier(kind, unlocked), 1);
+                } else if kind.research_prerequisite().is_some() && unlocked == 0 {
                     assert_eq!(max_buildable_tier(kind, unlocked), 0);
                 } else {
                     assert!(max_buildable_tier(kind, unlocked) >= BASE_MAX_STRUCTURE_TIER);

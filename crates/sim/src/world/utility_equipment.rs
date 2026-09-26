@@ -274,6 +274,40 @@ fn deferred_research_is_hidden_without_erasing_saved_work() {
 }
 
 #[test]
+fn bunkerage_composes_with_fittings_splits_merges_and_refit_fuel_checks() {
+    let (mut w, owner, _, id) = yard();
+    w.players.get_mut(&owner).unwrap().research.completed.insert("prop_bunkerage".into());
+    w.refresh_fleet_fuel_research();
+    let base = ShipKind::Convoy.hull_mass() * crate::fuel::FUEL_PER_HULL_MASS * 1.25;
+    let tanks = Loadout::new(vec![M::ExtendedTanks]);
+    w.fleets.get_mut(&id).unwrap().set_fitted(ShipKind::Convoy, &tanks, 1);
+    assert!((w.fleets[&id].fuel_capacity() - base * 1.75).abs() < 1e-9);
+    w.fleets.get_mut(&id).unwrap().add(ShipKind::Scout, 1);
+    let (capacity, fuel) = (w.fleets[&id].fuel_capacity(), w.fleets[&id].fuel);
+    let mut events = vec![];
+    w.apply_split_fleet(owner, id, &BTreeMap::from([(ShipKind::Scout, 1)]), &mut events);
+    let split = events.iter().find_map(|e| if let EventPayload::ShipSpawned { id, .. } = e.payload { Some(id) } else { None }).unwrap();
+    assert!((w.fleets[&split].fuel_capacity() - 3.5).abs() < 1e-9);
+    assert!((w.fleets[&id].fuel_capacity() + w.fleets[&split].fuel_capacity() - capacity).abs() < 1e-9);
+    assert!((w.fleets[&id].fuel + w.fleets[&split].fuel - fuel).abs() < 1e-9);
+    w.apply_merge_fleets(owner, id, split, &mut []);
+    assert!((w.fleets[&id].fuel_capacity() - capacity).abs() < 1e-9);
+    assert!((w.fleets[&id].fuel - fuel).abs() < 1e-9);
+    w.fleets.get_mut(&id).unwrap().fuel = capacity;
+    w.apply_refit(owner, id, ShipKind::Convoy, tanks.clone(), Loadout::default(), 1, &mut vec![]);
+    assert!(w.refit_queue.is_empty(), "a researched tank still cannot destroy excess fuel when removed");
+    // This amount exceeds the old unresearched tank but fits the new bare
+    // capacity: the downsizing validator must price the researched hulls too.
+    w.fleets.get_mut(&id).unwrap().fuel = base * 0.99;
+    let before = w.fleets[&id].fuel;
+    w.apply_refit(owner, id, ShipKind::Convoy, tanks, Loadout::default(), 1, &mut vec![]);
+    assert_eq!(w.refit_queue.len(), 1);
+    finish_refit(&mut w);
+    assert_eq!(w.fleets[&id].fuel, before);
+    assert!((w.fleets[&id].fuel_capacity() - base - 3.5).abs() < 1e-9);
+}
+
+#[test]
 fn utility_refit_starts_only_when_the_command_reaches_the_dock() {
     let (mut w, owner, _, id) = yard();
     w.players.get_mut(&owner).unwrap().command_center = w.fleets[&id].pos - Vec2::new(10_000.0, 0.0);

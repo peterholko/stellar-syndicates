@@ -275,6 +275,8 @@ export function buildVisualSystem(sys: SystemInfo, bodies: BodyView[]): VisualSy
 /// The wire's collapsed kind → a stable VISUAL sub-kind (rocky worlds pick a
 /// barren/desert/lava look from their per-body seed; the rest map 1:1).
 function visualKindFor(b: BodyView, rng: () => number): PlanetKind {
+  // Mineral Highlands is a living, habitable plateau, not an airless rock.
+  if (b.founding_camp) return b.founding_camp.profile === "coastal_plains" ? "ocean" : "terrestrial";
   switch (b.kind) {
     case "terrestrial": return "terrestrial";
     case "ocean": return "ocean";

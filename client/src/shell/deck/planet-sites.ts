@@ -48,8 +48,8 @@ export class PlanetSites {
     if (!model.mine) return { occupied: [], free: [] };
     const layout = this.load(model), before = JSON.stringify(layout);
     const order = Object.keys(model.descriptions);
-    const jobs = model.report.builds.filter(job => job.body_id === model.body.id && isSitePool(POOL_OF[job.key]));
-    const known = new Set([...Object.keys(model.body.structures).filter(key => model.body.structures[key] > 0), ...jobs.map(job => job.key)]);
+    const jobs = model.report.builds.filter(job => job.body_id === model.body.id && job.key !== "service_berth" && isSitePool(POOL_OF[job.key]));
+    const known = new Set([...Object.keys(model.body.structures).filter(key => key !== "service_berth" && model.body.structures[key] > 0), ...jobs.map(job => job.key)]);
     const usage = bodyPoolUsage(model.body, model.report);
     const firstReport = layout.sites.length === 0;
     for (const site of layout.sites) if (site.key && !known.has(site.key)) delete site.key;

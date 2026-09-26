@@ -766,7 +766,8 @@ export class MobileParitySurfaces {
     const ground = this.groundAction(systemId);
     if (!mine) return { title: body.name, eyebrow: `${human(body.kind)} · observed world`, html: publicData + ground };
     const active = this.planetTab === "economy" ? this.planetEconomy(systemId, dynamic, body) : this.planetTab === "population" ? this.planetPopulation(systemId, body) : this.planetInfrastructure(systemId, dynamic, body);
-    return { title: body.name, eyebrow: "Owned world · served management", html: `<div class="m-subtabs m-subtabs--3">${tabs}</div>${active}${publicData}${ground}` };
+    const camp = body.founding_camp ? `<section class="camp-summary"><b>Founding Camp · ${body.founding_camp.completed.length}/4 developments</b><p>Housing ${Math.round((body.population_capacity ?? .003) * 1e6).toLocaleString()} · System storage ${dynamic.storage_cap}</p><button type="button" data-settlement-open data-system="${esc(systemId)}" data-body="${body.id}">Settlement projects</button></section>` : "";
+    return { title: body.name, eyebrow: "Owned world · served management", html: `${camp}<div class="m-subtabs m-subtabs--3">${tabs}</div>${active}${publicData}${ground}` };
   }
 
   /** A ground record is already player-served and fog-filtered. Surfacing it
@@ -867,9 +868,12 @@ export class MobileParitySurfaces {
 
   private structureDetail(systemId: string, dynamic: SystemStateView, body: BodyView, build: BuildOpt, pools: ReturnType<typeof bodyPoolUsage>): string {
     const state = structOption(build, dynamic, body, pools);
+    const attachment = build.key === "service_berth";
+    const heading = attachment ? "Warehouse attachment" : `${POOL_LABEL[state.pool]} · ${state.tierUp ? `upgrade to Tier ${state.targetTier}` : "new structure"}`;
+    const slot = attachment ? " Attached to Warehouse; no extra slot." : state.foundsNew ? ` Claims one ${POOL_LABEL[state.pool].toLowerCase()} slot.` : " Deepens in place without another slot.";
     const supply = constructionStock(dynamic).available;
     const costs = build.costs.map((cost) => `<div class="m-order"><b>${human(cost.commodity)}</b><span>need ${cost.units} · have ${fmt(supply.get(cost.commodity as Commodity) ?? 0)}</span></div>`).join("");
-    return `<article class="m-build-detail"><header>${structureImage(build.key, state.targetTier, "md", undefined, "m-structure-icon")}<span><small>${POOL_LABEL[state.pool]} · ${state.tierUp ? `upgrade to Tier ${state.targetTier}` : "new structure"}</small><h3>${esc(build.label)}</h3></span></header>${build.conversion ? `<p>${esc(conversionSummary(build))}</p>` : ""}<div>${costs}</div><p>${fmtEta(build.build_secs * body.construction_time_mult)} on this world.${state.foundsNew ? ` Claims one ${POOL_LABEL[state.pool].toLowerCase()} slot.` : " Deepens in place without another slot."}</p>${state.reason ? `<div class="m-warning">${esc(state.reason)}</div>` : ""}<button type="button" class="m-primary" data-mobile-act="build-queue" data-system="${esc(systemId)}" data-body="${body.id}" data-key="${esc(build.key)}" ${state.buildable ? "" : "disabled"}>Queue build</button></article>`;
+    return `<article class="m-build-detail"><header>${structureImage(build.key, state.targetTier, "md", undefined, "m-structure-icon")}<span><small>${heading}</small><h3>${esc(build.label)}</h3></span></header>${build.conversion ? `<p>${esc(conversionSummary(build))}</p>` : ""}<div>${costs}</div><p>${fmtEta(build.build_secs * body.construction_time_mult)} on this world.${slot}</p>${state.reason ? `<div class="m-warning">${esc(state.reason)}</div>` : ""}<button type="button" class="m-primary" data-mobile-act="build-queue" data-system="${esc(systemId)}" data-body="${body.id}" data-key="${esc(build.key)}" ${state.buildable ? "" : "disabled"}>Queue build</button></article>`;
   }
 
   private queueStructure(button: HTMLElement): void {

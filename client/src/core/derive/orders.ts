@@ -13,7 +13,7 @@ import { renderer } from "../../render";
 import { liveSimTime, state, type PendingIntent } from "../../state";
 import { emplacementLabel, systemName } from "./geo";
 import { projectedBand } from "./research";
-import { estimatedFuelForLeg, fleetBaseSpeed, shipKindLabel, WARP_FACTOR } from "./fleet";
+import { estimatedFuelForLeg, fleetBaseSpeed, shipKindLabel, transitLabel, transitSpeedMultiplier, WARP_FACTOR } from "./fleet";
 import { doneAtLocal, fmt, fmtDur } from "./format";
 import { fleetCommandSummary } from "../fleetorders";
 
@@ -103,7 +103,7 @@ export function intentSummary(intent: PendingIntent): string {
   const target = intentTargetLabel(intent);
   const moveEstimate = ship && intent.dest ? (() => {
     const distance = Math.hypot(intent.dest!.x - ship.pos.x, intent.dest!.y - ship.pos.y);
-    const flight = distance / Math.max(1, fleetBaseSpeed(ship) * WARP_FACTOR);
+    const flight = distance / Math.max(1, fleetBaseSpeed(ship) * WARP_FACTOR * transitSpeedMultiplier(ship));
     const eta = ship.age + flight;
     const fuel = estimatedFuelForLeg(ship, intent.dest!);
     const tank = ship.fuel == null ? "" : ` / ${fmt(ship.fuel)} aboard`;
@@ -202,7 +202,7 @@ export function orderObject(p: PendingOrderView): string {
       const configuration = p.configuration;
       if (configuration?.kind === "mission") return `Mission → ${label(configuration.mission.priority)} · ${label(configuration.mission.screening)}`;
       if (configuration?.kind === "transit") {
-        return `Transit → ${configuration.mode === "full" ? "Full speed" : "Stealth"}`;
+        return `Transit → ${transitLabel(configuration.mode)}`;
       }
       if (configuration?.kind === "posture") {
         return `Posture → ${label(configuration.posture)}`;

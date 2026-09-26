@@ -1,7 +1,7 @@
 import type { ClientMsg, GhostView } from "../protocol";
 import type { PendingIntent, ViewState } from "../state";
 import { label } from "../icons";
-import { dockedAtSystem, guardCapable, shipKindLabel, WARP_FACTOR } from "./derive/fleet";
+import { dockedAtSystem, economyCapable, guardCapable, shipKindLabel, transitLabel, WARP_FACTOR } from "./derive/fleet";
 import { expeditionCapable, deepExpeditionReason } from "./derive/exploration";
 import { tenderCapable, tenderFuel } from "./derive/tenders";
 import { freightRouteReason } from "./derive/industry";
@@ -42,6 +42,7 @@ export function fleetCommandsValid(commands: FleetCommand[], st: ViewState): boo
     const id = recipient(command);
     const fleet = id ? own(id) : undefined;
     if (id && !fleet) return false;
+    if (command.type === "SetFleetTransit" && command.mode === "economy") return !!fleet && economyCapable(fleet);
     if (command.type === "SetFreightRoute") return !!fleet && (!command.route || !freightRouteReason(st, fleet, command.route));
     if (command.type === "SkimFuel") return !!fleet && !fleet.tca
       && st.research?.programmes.some(p => p.id === "prop_expedition_v_ramscoop" && p.state === "completed") === true
@@ -97,8 +98,8 @@ export function fleetCommandIntent(input: FleetCommand | FleetCommand[], st: Vie
 function commandLabel(command: FleetCommand, st: ViewState): string {
   const system = (id: string) => st.galaxy?.systems.find(s => s.id === id)?.name ?? id;
   switch (command.type) {
-    case "SetFleetTransit": return `Transit → ${command.mode === "stealth" ? "Stealth" : "Full speed"}`;
-    case "SetFreightRoute": return command.route ? `Route: ${command.route.name} · ${command.route.stops.length} stops · ${command.route.fuel_reserve} Fuel reserve` : "Stop freight route";
+    case "SetFleetTransit": return `Transit → ${transitLabel(command.mode)}${command.mode === "economy" ? " · 25% speed · 10% trip Fuel" : ""}`;
+    case "SetFreightRoute": return command.route ? `Route: ${command.route.name} · ${command.route.stops.length} stops · ${transitLabel(command.route.transit)} · ${command.route.fuel_reserve} Fuel reserve${command.route.shopping_budget == null ? "" : ` · buy missing return goods: max ${command.route.shopping_budget} cr per Hub visit (fees included); skip unaffordable goods`}` : "Stop freight route";
     case "DeployOutpost": return `Establish ${command.outpost} outpost → ${system(command.system_id)}`;
     case "SkimFuel": return `Harvest gas-giant Fuel → ${system(command.system_id)}`;
     case "SetFleetPosture": return `Posture → ${label(command.posture)}`;
@@ -120,7 +121,14 @@ function commandLabel(command: FleetCommand, st: ViewState): string {
     case "RefuelFleet": return `Refuel ${shipKindLabel(st.ghosts.find(g => g.id === command.target_id)?.kind ?? "raider")} · ${command.target_id}`;
     case "SplitFleet": return `Split ${Object.entries(command.counts).map(([kind, n]) => `${n}× ${shipKindLabel(kind as GhostView["kind"])}`).join(", ")}`;
     case "MergeFleets": return `Merge fleet ${command.from} into ${command.into}`;
-    case "RefitShips": return `Refit ${command.n}× ${shipKindLabel(command.ship)} → ${command.to.map(label).join(", ") || "unfitted"}`;
+    case "RefitShips": {
+      const g = st.ghosts.find(g => g.id === command.fleet_id);
+      const dock = st.systems.find(s => g && dockedAtSystem(g,s.id));
+      const yard = dock?.assignments.some(a => a.structure === "shipyard" && a.workers > 0);
+      const berth = dock?.bodies.some(b => (b.structures.service_berth ?? 0) > 0);
+      const borrowing = berth && !yard && !dock?.assignments.some(a => a.structure === "service_berth" && a.workers > 0);
+      return `Refit ${command.n}× ${shipKindLabel(command.ship)} → ${command.to.map(label).join(", ") || "unfitted"}${borrowing ? " · Service Berth borrows one mining crew until fitting finishes; mining pauses/reduces, then resumes" : ""}`;
+    }
     case "BuildEmplacement": return `Build ${label(command.emplacement)} here`;
     case "DemolishEmplacement": return `Demolish installation ${command.target}`;
     case "MoveShip": case "JumpShip": return `${command.type === "JumpShip" ? "Jump" : "Move"} → ${Math.round(command.dest.x)}, ${Math.round(command.dest.y)} su`;

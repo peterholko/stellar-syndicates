@@ -85,6 +85,8 @@ pub const FUEL_PER_HULL_MASS: f64 = 0.035;
 ///
 /// Zero when idle, and it picks up the Stealth throttle for free — half speed
 /// burns half per second and takes twice as long, netting the same total.
+/// Economy cruise applies its separate per-distance multiplier at the fleet
+/// caller; this primitive remains unchanged for Full, Stealth and combat hulls.
 pub fn fuel_tick(mass: f64, base_speed: f64, dt: f64) -> f64 {
     FUEL_PER_MASS_DISTANCE * mass.max(0.0) * base_speed.max(0.0) * dt.max(0.0)
 }

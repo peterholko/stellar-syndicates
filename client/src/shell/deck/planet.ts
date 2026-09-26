@@ -4,6 +4,8 @@ import { assignedRecipe, POOL_LABEL, recipeOutputs } from "../../core/derive/mar
 import { PlanetSites } from "./planet-sites";
 import { refiningComparison } from "../refining";
 import type { RefiningContext } from "../../core/derive/refining";
+import { planetSurface, planetSurfaceArt, type HabitableSurface } from "../../planet-surfaces";
+export { planetSurface } from "../../planet-surfaces";
 
 const ART = "/art/derived/planet-workbench/v1/";
 /** The rendered footprint width for srcset selection: 11.5% of the image plane,
@@ -46,6 +48,8 @@ export interface PlanetStructure {
   status: string;
   x: number;
   y: number;
+  /** Row recession for the sprite; see footprintAddress. */
+  scale: number;
 }
 
 /** Footprint addresses on the 16:9 artwork, in percent. Every surface painting shares
@@ -72,13 +76,39 @@ const OCEAN_ROWS: readonly (readonly number[])[] = [
   [89, 89, 89, 89, 89, 87, 86, 88],
 ];
 
-export function footprintAddress(surface: string | null, slot: number): { x: number; y: number } {
+/** The new paintings have lakes and cliffs in different places. Reorder the
+ * same spaced grid so the opening mine, farms, quarters and storehouse occupy
+ * foreground land; coastal/orbital industry can use the outlying addresses.
+ * These are fixed art coordinates, never recalculated from a viewport/report. */
+const HABITABLE_ADDRESSES: Record<HabitableSurface, readonly number[]> = {
+  "highland-plateau": [10, 11, 12, 13, 14, 15, 8, 9, 16, 17, 19, 20, 21, 22, 23, 0, 1, 2, 18, 3, 4, 5, 6, 7],
+  "savanna-world": [10, 11, 12, 13, 8, 9, 15, 17, 16, 14, 19, 20, 21, 22, 23, 0, 1, 2, 18, 3, 4, 5, 6, 7],
+  "volcanic-highlands": [12, 13, 14, 15, 10, 11, 20, 21, 22, 23, 18, 19, 4, 5, 6, 7, 0, 1, 3, 2, 8, 9, 16, 17],
+  "boreal-world": [11, 12, 13, 14, 8, 9, 10, 15, 16, 17, 2, 19, 20, 21, 22, 23, 0, 1, 18, 3, 4, 5, 6, 7],
+  "archipelago-world": [11, 12, 13, 14, 21, 2, 4, 10, 5, 6, 9, 1, 7, 15, 0, 8, 16, 17, 3, 18, 19, 20, 22, 23],
+  "temperate-basin": [10, 11, 12, 13, 14, 15, 8, 9, 16, 17, 19, 20, 21, 22, 23, 0, 1, 2, 18, 3, 4, 5, 6, 7],
+};
+
+/** Sprite scale per row, back to front. Every painting is an oblique near-orbital
+ * view, so equal ground looks about half as wide near the limb as in the
+ * foreground; footprints recede the same way instead of sitting on the terrain at
+ * one size. Anchors are untouched: only the sprite, its shadow, its ring and its
+ * badges take the scale. Globes have no horizon, so orbital infrastructure keeps
+ * scale 1. */
+const ROW_SCALE: readonly number[] = [0.55, 0.78, 1];
+
+export interface FootprintAddress { x: number; y: number; scale: number }
+
+export function footprintAddress(surface: string | null, slot: number): FootprintAddress {
+  const addresses = HABITABLE_ADDRESSES[surface as HabitableSurface];
+  if (addresses) slot = addresses[Math.min(addresses.length - 1, slot)];
   const column = slot % COLUMNS.length;
   // Unknown future kinds beyond the 24 authored slots share the last row.
   const row = Math.min(LAND_ROWS.length - 1, Math.floor(slot / COLUMNS.length));
+  const scale = surface === null ? 1 : ROW_SCALE[row];
   return surface === "ocean"
-    ? { x: OCEAN_COLUMNS[column], y: OCEAN_ROWS[row][column] }
-    : { x: COLUMNS[column], y: LAND_ROWS[row][column] };
+    ? { x: OCEAN_COLUMNS[column], y: OCEAN_ROWS[row][column], scale }
+    : { x: COLUMNS[column], y: LAND_ROWS[row][column], scale };
 }
 
 /** Fixed addresses on the 16:9 artwork, not viewport coordinates or slot promises.
@@ -90,7 +120,7 @@ export function planetStructures(model: PlanetPanelModel): PlanetStructure[] {
   const order = Object.keys(model.descriptions);
   const extra = Object.keys(model.body.structures).filter(key => !order.includes(key)).sort();
   const keys = [...order, ...extra];
-  const surface = planetSurface(model.art);
+  const surface = planetSurface(model.art, model.system.id, model.body);
   return keys.flatMap((key, index) => {
     const tier = model.body.structures[key] ?? 0;
     if (tier <= 0) return [];
@@ -113,16 +143,12 @@ export function planetStructures(model: PlanetPanelModel): PlanetStructure[] {
       : !workers && !specialists ? "No workforce"
       : stopped ? ({ no_food: "Needs Provisions", no_inputs: "Needs inputs", storage_full: "Storage full", needs_crew: "No workforce" }[stopped] ?? label(stopped))
       : "Operating";
-    return [{ key, title: assignment?.title ?? model.catalog.find(option => option.key === key)?.label ?? label(key),
+    const camp = model.body.founding_camp;
+    const campTitle = camp && tier === 1 ? key === "habitat" ? camp.completed.includes("quarters") ? "Permanent Quarters" : "Founding Quarters"
+      : key === "warehouse" && !camp.completed.includes("storehouse") ? "Camp Storehouse" : null : null;
+    return [{ key, title: campTitle ?? assignment?.title ?? model.catalog.find(option => option.key === key)?.label ?? label(key),
       tier, workers, staffable, assignment, outputs, status, ...footprintAddress(surface, index) }];
   });
-}
-
-/** Match the public System View's deterministic visual variant. Gas giants
- * retain their globe: no land or invented surface colony on a gas giant. */
-export function planetSurface(art: string): string | null {
-  if (art.includes("gas_giant")) return null;
-  return ["terrestrial", "desert", "ocean", "ice", "lava"].find(kind => art.includes(`${kind}-`) || art.includes(`${kind}.`)) ?? "barren";
 }
 
 type Posting = { workers: number; specialists: Record<string, number>; refining_ore?: Commodity };
@@ -185,7 +211,7 @@ export class PlanetPanel {
     const layout = this.sites.snapshot(model);
     for (const item of structures) {
       const site = layout.occupied.find(site => site.key === item.key);
-      if (site) Object.assign(item, footprintAddress(planetSurface(model.art), site.slot));
+      if (site) Object.assign(item, footprintAddress(planetSurface(model.art, model.system.id, model.body), site.slot));
     }
     if (!structures.some(item => item.key === this.selected)) {
       this.selected = structures.find(item => item.outputs.length)?.key ?? structures[0]?.key ?? "";
@@ -277,11 +303,12 @@ export class PlanetPanel {
   renderScene(model: PlanetPanelModel): string {
     const structures = this.sync(model);
     const selected = structures.find(item => item.key === this.selected);
-    const surface = planetSurface(model.art);
-    const background = surface
-      ? `<img class="deck-planet__surface" src="${ART}${surface}-768.webp" srcset="${ART}${surface}-768.webp 768w, ${ART}${surface}-1536.webp 1536w" sizes="(min-width: 1125px) calc(100vw - 552px), 100vw" alt="${esc(model.body.name)} landscape" draggable="false">`
+    const surface = planetSurface(model.art, model.system.id, model.body);
+    const surfaceArt = surface ? planetSurfaceArt(surface) : null;
+    const background = surfaceArt
+      ? `<img class="deck-planet__surface" src="${surfaceArt.src}" srcset="${surfaceArt.srcset}" sizes="(min-width: 1125px) calc(100vw - 552px), 100vw" alt="${esc(model.body.name)} landscape" draggable="false">`
       : `<img class="deck-planet__globe" src="${esc(model.art)}" alt="${esc(model.body.name)}" draggable="false">`;
-    const position = (item: { x: number; y: number }) => `--planet-x:${item.x}%;--planet-y:${item.y}%`;
+    const position = (item: FootprintAddress) => `--planet-x:${item.x}%;--planet-y:${item.y}%;--planet-scale:${item.scale}`;
     const footprints = structures.map(item => `<button id="planet-spot-${esc(item.key)}" type="button" class="deck-planet__building" style="${position(item)}" data-deck-act="planet-select" data-structure="${esc(item.key)}" aria-label="Inspect ${esc(item.title)}" aria-pressed="${item.key === this.selected}" aria-controls="planet-structure-detail">${structureImage(item.key, item.tier, "lg", undefined, "", FOOTPRINT_SIZES)}</button>`).join("");
     const badge = selected && !this.buildSites ? `<div class="deck-planet__selection" style="${position(selected)};--planet-output-height:${selected.outputs.length > 2 ? 84 : 44}px">
       <button type="button" class="deck-planet__workforce-badge" data-deck-act="planet-select" data-structure="${esc(selected.key)}" aria-label="${esc(selected.title)}${selected.staffable ? `: ${selected.workers} workforce assigned` : ""}"><span>${esc(selected.title)}</span>${selected.staffable ? `<b>${selected.workers}</b>${workforceIcon()}` : ""}</button>
@@ -328,6 +355,7 @@ export class PlanetPanel {
       ${model.mine ? `<div class="deck-planet__workforce-summary"><span>${workforceIcon()} Workforce <b>${assignedHere}</b> assigned here</span><span class="deck-planet__available">${free === null ? "—" : free} available in system</span></div>` : ""}
       <nav class="deck-tabs deck-planet__tabs" aria-label="Planet management">${tabs}</nav>
       <div id="planet-page">${page}</div>
+      ${model.mine && model.body.founding_camp ? `<section class="camp-summary"><b>Founding Camp · ${model.body.founding_camp.completed.length}/4 developments</b><p>Housing ${Math.round((model.body.population_capacity ?? .003) * 1e6).toLocaleString()} · ${model.report.storage_cap} goods of system storage. Prospect, improve the mine, expand storage or prepare the next workforce cohort.</p><button type="button" data-settlement-open data-system="${esc(model.system.id)}" data-body="${model.body.id}">Settlement projects</button></section>` : ""}
       ${development}
     </section>`;
   }
@@ -353,6 +381,7 @@ export class PlanetPanel {
     return `<aside id="planet-structure-detail" class="deck-planet__detail" aria-label="Selected structure">
       <header>${structureImage(item.key, item.tier, "lg")}<div><small>Tier ${item.tier}</small><h3>${esc(item.title)}</h3><span class="${item.status === "Operating" || item.status === "Automatic" ? "deck-planet__good" : "deck-planet__warning"}">${esc(item.status)}</span></div></header>
       <p>${esc(model.descriptions[item.key] ?? "Planetary infrastructure.")}</p>
+      ${item.key === "warehouse" && (model.body.structures.service_berth ?? 0) > 0 ? `<small>Attached Service Berth · utility fittings · no extra slot</small>` : ""}
       ${refining}${comparison}
       ${item.staffable ? `<div class="deck-planet__assignment"><div><b>Assigned workforce</b><small>Capacity ${item.tier}</small></div><div class="deck-stepper"><button type="button" data-deck-act="planet-workers" data-delta="-1" aria-label="Decrease assigned workforce" ${draft <= 0 ? "disabled" : ""}>−</button><b aria-label="Planned workforce">${draft}</b><button type="button" data-deck-act="planet-workers" data-delta="1" aria-label="Increase assigned workforce" ${draft >= item.tier ? "disabled" : ""}>+</button></div><small>1 workforce = 1,000 populace</small>${specialists.length ? `<small>Specialists: ${specialists.map(([kind, count]) => `${count} ${esc(label(kind))}`).join(" · ")}</small>` : ""}</div>` : ""}
       ${item.outputs.length ? `<div class="deck-planet__reported"><small>Reported output</small><div>${outputHtml(item.outputs)}</div></div>` : ""}

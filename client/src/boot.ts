@@ -1,4 +1,6 @@
 import "./styles/tokens.css";
+import "./styles/settlement.css";
+import { SettlementUI } from "./settlement";
 import { accounts } from "./auth";
 
 import { updateSignals } from "./core/derive/orders";
@@ -35,6 +37,7 @@ function present(events: Parameters<Shell["onCore"]>[0]): void {
 }
 
 let net!: Net;
+const settlement = new SettlementUI(state, message => net.send(message));
 net = new Net({
   beforeConnect: async () => {
     const account = await accounts.session();
@@ -48,12 +51,15 @@ net = new Net({
   },
   onMessage: (message) => {
     present(applyServerMessage(message, state));
+    settlement.onMessage(message);
   },
   onClose: () => {
     present(applyLinkStatus(state.playerId === null ? "offline" : "reconnecting", state));
+    settlement.connectionChanged();
   },
   onSessionReplaced: () => {
     present(applySessionReplaced(state));
+    settlement.endSession();
   },
   onError: () => {
     const events = applyLinkStatus(state.playerId === null ? "offline" : "reconnecting", state);

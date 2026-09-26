@@ -33,6 +33,15 @@ pub struct FreightRoute {
     pub fuel_reserve: f64,
     pub escort: Option<EntityId>,
     pub repeat: bool,
+    /// Remember cruise with the route. Old saves/bookings retain Full; new UI
+    /// and bot routes explicitly choose Economy, never by rewriting old saves.
+    #[serde(default)]
+    pub transit: crate::ship::TransitMode,
+    /// Optional cash cap per Hub visit, including fees. Purchases fill that
+    /// stop's load manifest from available cash after real sales; never credit.
+    /// None preserves existing warehouse-only routes.
+    #[serde(default)]
+    pub shopping_budget: Option<f64>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -56,6 +65,8 @@ pub struct FreightRun {
     pub visits: u32,
     #[serde(default)]
     pub hold: Option<String>,
+    #[serde(default)]
+    pub shopping_spent: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,6 +182,10 @@ pub struct SiteIndustry {
     pub reservations: Vec<Reservation>,
     pub outpost: Option<Outpost>,
     pub projects: Vec<ColonyProject>,
+    /// Smelters alone leave these physical floors untouched. Freighters may
+    /// export the ore and local ships can refuel; these are not project locks.
+    #[serde(default)]
+    pub refining_reserve: BTreeMap<Commodity, u32>,
 }
 impl SiteIndustry {
     pub fn reserved(&self, c: Commodity, except: Option<ProjectTarget>) -> f64 {

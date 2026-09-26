@@ -14,6 +14,7 @@ import {
   type SideRecordView,
   type SystemInfo,
   type SystemStateView,
+  type TransitMode,
   type Vec2,
 } from "../../protocol";
 import type { Net } from "../../net";
@@ -72,6 +73,20 @@ export const fleetBaseSpeed = (g: GhostView): number => Math.min(...(g.compositi
 export const fleetFuelCapacity = (g: GhostView): number => g.fuel_capacity ?? (fleetHullMass(g)
   + (g.loadouts ?? []).reduce((extra, s) => extra + HULL_MASS[s.kind] * s.n * (tankMultiplier(s.modules) - 1), 0)) * FUEL_PER_HULL_MASS;
 
+// Mirrors the sim's Economy constants. Savings are per distance, in addition
+// to the throttle; do not multiply trip fuel by speed a second time.
+export const ECONOMY_SPEED_FRACTION = 0.25;
+export const ECONOMY_FUEL_MULT = 0.10;
+export const economyCapable = (g: GhostView): boolean => !g.tca && (g.composition?.length
+  ? g.composition.some(s => s.count > 0) && g.composition.every(s => s.count === 0 || isPlayerFreighter(s.kind))
+  : isPlayerFreighter(g.kind));
+export const transitLabel = (mode: TransitMode = "full"): string =>
+  mode === "economy" ? "Economy" : mode === "stealth" ? "Stealth" : "Full speed";
+export const cruiseFuelMultiplier = (g: GhostView): number =>
+  g.transit === "economy" && economyCapable(g) ? ECONOMY_FUEL_MULT : 1;
+export const transitSpeedMultiplier = (g: GhostView): number =>
+  g.transit === "economy" && economyCapable(g) ? ECONOMY_SPEED_FRACTION : g.transit === "stealth" ? 0.5 : 1;
+
 const SHIP_KIND_LABEL: Record<ShipKind, string> = {
   tiny_freighter: "Tiny Freighter", small_freighter: "Small Freighter", large_freighter: "Large Freighter", heavy_freighter: "Heavy Freighter", bulk_freighter: "Bulk Freighter",
   convoy: "Medium Freighter", raider: "Interceptor", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
@@ -112,7 +127,7 @@ export function estimatedFuelForLeg(g: GhostView, dest: Vec2): number {
   const warp = FUEL_PER_MASS_DISTANCE * distance * shipMass(g) / WARP_FACTOR;
   const wellDistance = Math.min(distance, HYPERLIMIT_SU * 2);
   const wellSurcharge = FUEL_PER_MASS_DISTANCE * wellDistance * shipMass(g) * (1 - 1 / WARP_FACTOR);
-  return (warp + wellSurcharge) * logisticsMult;
+  return (warp + wellSurcharge) * logisticsMult * cruiseFuelMultiplier(g);
 }
 
 

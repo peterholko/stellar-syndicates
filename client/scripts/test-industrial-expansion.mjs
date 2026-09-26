@@ -12,12 +12,15 @@ function compile(file,deps={}) {
 }
 const plain = x => JSON.parse(JSON.stringify(x));
 const fleets={fleetCargoCapacity:g=>g.kind==="convoy"?250:0,fleetFuelCapacity:()=>160,fleetBaseSpeed:()=>40,
+  economyCapable:g=>g.kind==="convoy",transitSpeedMultiplier:g=>g.transit==="economy"?.25:g.transit==="stealth"?.5:1,
+  transitLabel:(m="full")=>m==="economy"?"Economy":m==="stealth"?"Stealth":"Full speed",
   guardCapable:g=>g.own&&g.kind==="raider",shipKindLabel:k=>k==="convoy"?"Freighter":"Interceptor",WARP_FACTOR:5};
 const market=compile("core/derive/market.ts");
 const derive=compile("core/derive/industry.ts",{"./fleet":fleets,"./market":market});
 const icons=compile("icons.ts");
 const protocol=compile("protocol.ts");
 const shell=compile("shell/industry.ts",{"../core/derive/fleet":fleets,"../core/derive/industry":derive,"../icons":icons,
+  "../core/derive/geo":{foundingHomeSystemId:()=>"home"},
   "../protocol":protocol,"../core/derive/market":{COMMODITIES:["metallic_ore","fuel","alloys","biomass"]}});
 const commands=compile("core/fleetorders.ts",{"./derive/industry":derive,"./derive/fleet":fleets,"../icons":icons});
 const body={id:0,name:"Freya II",habitable:true,deposits:[{resource:"biomass"}],structures:{shipyard:2}};
@@ -40,6 +43,12 @@ assert.equal(derive.productionPlan(state,unstaffed,"alloys",10).rated,12);
 assert.equal(derive.productionPlan(state,unstaffed,"alloys",10).workforceLimited,true,"a built empty factory needs workers, not another factory");
 site.industry.reservations=[{target:{kind:"academy"},goods:{metallic_ore:100}}];
 assert.equal(derive.productionPlan(state,site,"alloys",10).inputs[0].runway,1,"reserved goods are not production runway");
+site.industry.refining_reserve={metallic_ore:50};
+assert.equal(derive.productionPlan(state,site,"alloys",10).inputs[0].stock,0,"Smelter floors also protect unreserved inputs");
+site.industry.reservations=[];
+assert.equal(derive.productionPlan(state,site,"alloys",10).inputs[0].runway,3.5,"reported reserve floors reduce the Smelter runway");
+assert.equal(derive.availableStock(site,"metallic_ore"),120,"refining floors never block a Freighter's export");
+site.industry.refining_reserve={};
 site.assignments.push({...line,structure:"extractor",outputs:[["metallic_ore",.5]]});
 assert.equal(derive.productionPlan(state,site,"alloys",10).inputs[0].local,30,"do not count the planned smelter's old input basket twice");
 state.systems.push({...structuredClone(other),id:"rival",owner:"2",stockpile:[{commodity:"metallic_ore",units:9999}]});
@@ -63,6 +72,10 @@ assert.equal(preview.commands[0].route.name,"Ore outward, Fuel return","confirma
 const staged=[],sent=[];
 const ctx={state,send:m=>sent.push(m),intent:{beginFleetCommand:m=>staged.push(structuredClone(m))}};
 shell.industryHtml(state);
+assert.equal(shell.industryUiSignature(state).route.transit,"economy","new routes default to economy");
+shell.handleIndustryInput(new Input({industryInput:"transit"},"full"),state);
+assert.equal(shell.industryUiSignature(state).route.transit,"full");
+shell.handleIndustryInput(new Input({industryInput:"transit"},"economy"),state);
 shell.handleIndustryInput(new Input({industryInput:"name"},"My persistent draft"),state);
 shell.handleIndustryInput(new Input({industryInput:"good"},"fuel"),state);
 shell.handleIndustryAction({dataset:{industryAct:"add-cargo",stop:"0",side:"load"}},ctx);
@@ -72,6 +85,7 @@ assert.equal(shell.industryUiSignature(state).route.stops[0].load.fuel,25);
 shell.handleIndustryInput(new Input({industryInput:"escort"},"e"),state);
 shell.handleIndustryAction({dataset:{industryAct:"assign"}},ctx);
 assert.equal(sent.length,0,"assign never bypasses fleet confirmation");
+assert.equal(staged[0][0].route.transit,"economy","cruise travels with the confirmed route");
 assert.deepEqual(plain(staged[0].map(c=>c.type)),["SetFreightRoute","GuardFleet"]);
 assert.equal(staged[0][1].interceptor_id,"e");
 state.ghosts[0].industry={kind:"route",run:{route:structuredClone(route),stop:1,phase:"loading",visits:3}};
@@ -89,3 +103,47 @@ assert.equal(derive.colonyProjectReason(state,site,0,"orbital_assembly","metalli
 site.industry.projects.push({kind:"deep_extraction",work:1});
 assert.match(derive.colonyProjectReason(state,site,0,"orbital_assembly","metallic_ore"),/Finish/);
 console.log("Industrial expansion: served-only planner, project floors, exact manifests, stable drafts, route validation and confirmation pass.");
+
+// Local-opening plans use reported deficits and a bounded basket, not an
+// assumed complete construction kit or an automatic command on selection.
+site.structures={}; site.stockpile=[]; site.industry.reservations=[];
+state.founding={local_opening:true,stage:"local_recovery",recovery_site:"cache",recovered:false};
+state.explorationSites=[{id:"cache",details:null}];
+state.galaxy.build_options.push(...[
+  ["shipyard",[["alloys",40],["machinery",20],["electronics",15]]],
+  ["academy",[["alloys",25],["electronics",15],["provisions",20]]],
+].map(([key,costs])=>({key,costs:costs.map(([commodity,units])=>({commodity,units}))})));
+for(const goal of ["transport","refining","exploration"]){
+  const plan=derive.openingImportPlan(state,site,goal);
+  assert.ok(Object.values(plan.manifest).reduce((n,v)=>n+v,0)<=50);
+  assert.equal(plan.manifest.fuel,10);
+}
+const kit=derive.openingImportPlan(state,site,"transport");
+assert.equal(Object.values(kit.manifest).reduce((n,v)=>n+v,0),50);
+assert.equal(Object.values(kit.remainder).reduce((n,v)=>n+v,0),35,"a 75-unit yard kit needs more than one 40-unit materials basket");
+site.stockpile=[{commodity:"alloys",units:40}];
+assert.equal(derive.openingImportPlan(state,site,"transport").manifest.alloys,undefined,"arrived home stock reduces the shopping deficit");
+state.research.programmes=[];
+const sentBefore=sent.length, stagedBefore=staged.length;
+shell.handleIndustryAction({dataset:{industryAct:"opening-plan",home:"home",goal:"transport"}},ctx);
+const draft=shell.industryUiSignature(state).route;
+assert.equal(sent.length,sentBefore);assert.equal(staged.length,stagedBefore);
+assert.equal(draft.shopping_budget,3000);assert.equal(draft.repeat,false);
+assert.equal(draft.stops.length,3);assert.equal(draft.stops[1].sell,true);
+assert.equal(derive.freightRouteReason(state,state.ghosts[0],draft),null,"one-off home/Hub/home needs no automation research");
+const repeated=structuredClone(draft);repeated.repeat=true;
+assert.match(derive.freightRouteReason(state,state.ghosts[0],repeated),/Autonomous Freight/);
+const invalidCap=structuredClone(draft);invalidCap.shopping_budget=-1;
+assert.match(derive.freightRouteReason(state,state.ghosts[0],invalidCap),/shopping cap/);
+shell.handleIndustryAction({dataset:{industryAct:"assign"}},ctx);
+assert.equal(sent.length,sentBefore);
+assert.deepEqual(plain(staged.at(-1).map(c=>c.type)),["SetFreightRoute","GuardFleet"]);
+const founding=compile("core/derive/founding.ts");
+assert.ok(founding.foundingLocalGoals(state,site).some(g=>g.action==="recovery"));
+assert.ok(founding.foundingLocalGoals(state,site).some(g=>g.action==="build-service-berth"));
+assert.match(shell.industryHtml(state),/Dispatch is a good stopping point/);
+const received=plain(site);
+shell.handleIndustryAction({dataset:{industryAct:"refining-floor",on:"true"}},ctx);
+assert.deepEqual(plain(sent.at(-1)),{type:"SetRefiningReserve",system_id:"home",ore:50,fuel:20});
+assert.deepEqual(plain(site),received,"sending a policy never changes the served report optimistically");
+console.log("Local opening: bounded goal baskets, honest shortfalls, one-off return, confirmation, report-only guide and refining floors pass.");

@@ -79,6 +79,11 @@ impl FoodState {
 /// Tunable.
 pub const PROVISIONS_PER_MILLION_PER_S: f64 = 40.0;
 
+/// The same baseline ration for one person, including people aboard ships.
+/// Colony environment/research modifiers remain local to colony consumption;
+/// ship food is not a separate, arbitrary per-hull maintenance charge.
+pub const PROVISIONS_PER_PERSON_PER_S: f64 = PROVISIONS_PER_MILLION_PER_S / 1_000_000.0;
+
 // --- CAPACITY ---------------------------------------------------------------
 
 /// Population capacity (millions) per Habitat tier. One tier houses 25,000

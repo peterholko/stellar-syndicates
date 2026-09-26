@@ -64,6 +64,7 @@ impl World {
             .flat_map(|e| e.attackers.iter().chain(&e.defenders).copied())
             .collect();
         let mut retreats = Vec::new();
+        let held = self.node_holdings();
         for (&id, fleet) in &self.fleets {
             let FleetOrder::Expedition { site, .. } = fleet.order else {
                 continue;
@@ -87,7 +88,7 @@ impl World {
                 let age = crate::transit::delay(other.pos, fleet.pos, self.config.c);
                 let seen = other.pos - other.vel * age;
                 let sig = other.signature()
-                    * self.veil_factor(other.owner, seen)
+                    * self.veil_factor_held(&held, other.owner, seen)
                     * self.nebula_signature_factor(seen);
                 let detected = if other.broadcasts() {
                     fleet.pos.distance(seen) <= range
@@ -372,6 +373,7 @@ impl World {
         self.exploration.sites.insert(
             id,
             ExplorationSite {
+                founding_owner: None,
                 id,
                 pos,
                 details: SiteDetails {
@@ -409,6 +411,7 @@ impl World {
         let Some(site) = self.exploration.sites.get_mut(&id) else {
             return;
         };
+        if site.founding_owner.is_some_and(|owner| owner != player) { return; }
         let detailed = site.surveyed.contains(&player);
         let key = (if detailed { site.revision } else { 0 }, detailed);
         if site.emitted.get(&player) == Some(&key) {
@@ -497,6 +500,7 @@ impl World {
         task: ExpeditionTask,
         events: &mut Vec<Event>,
     ) {
+        if self.exploration.sites.get(&site).is_some_and(|s| s.founding_owner.is_some_and(|o| o != player)) { return; }
         // Issue-time authorization uses only the commander's arrived picture.
         // Guessing an unseen ID must neither route to it nor expose its contents.
         let Some(report) = self
@@ -667,6 +671,7 @@ impl World {
             return;
         };
         let pos = site.pos;
+        if site.founding_owner.is_some_and(|o| o != player) { return; }
         if matches!(task, ExpeditionTask::Study | ExpeditionTask::Extract) {
             self.finish_deep_expedition(id, player, site_id, task, events);
             return;
@@ -717,6 +722,10 @@ impl World {
                     }
                     site.details.cargo.retain(|_, n| *n > 0);
                     site.details.modules.retain(|_, n| *n > 0);
+                    if changed && site.founding_owner == Some(player)
+                        && let Some(corp) = self.players.get_mut(&player) {
+                        corp.founding.recovery_report_at.get_or_insert(self.time + crate::transit::delay(pos, corp.command_center, self.config.c));
+                    }
                     if changed {
                         site.revision += 1;
                     }

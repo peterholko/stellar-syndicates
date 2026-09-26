@@ -116,6 +116,47 @@ test("tender orders freeze the selected recipient and require Confirm on both sh
   }
 });
 
+test("Economy needs confirmation on desktop, strip and mobile; combat hulls cannot select it", () => {
+  for (const surface of ["fleet", "strip", "mobile"]) {
+    const f = fixture();
+    f.state.selectedShipId = "102";
+    f.state.selectedShipIds = new Set(["102"]);
+    const before = JSON.stringify(f.state.ghosts);
+    const click = () => surface === "fleet" ? f.fleetClick("transit", {mode:"economy"}, "102")
+      : surface === "strip" ? f.stripClick("transit", {mode:"economy"})
+      : f.mobileClick("fleet-transit", {id:"102",mode:"economy"});
+    click();
+    assert.equal(f.sent.length, 0);
+    assert.match(f.orders.intentSummary(f.state.pendingIntent), /Economy.*25% speed.*10% trip Fuel/);
+    f.intent.clearPendingIntent();
+    assert.equal(f.sent.length, 0);
+    click();
+    f.intent.confirmPendingIntent();
+    assert.deepEqual(plain(f.sent), [{type:"SetFleetTransit",fleet_id:"102",mode:"economy"}]);
+    assert.equal(JSON.stringify(f.state.ghosts), before, "no optimistic mode or fuel changes");
+    assert.equal(f.commands.fleetCommandsValid([{type:"SetFleetTransit",fleet_id:"101",mode:"economy"}],f.state),false);
+  }
+});
+
+test("Economy quotes 10% trip Fuel and 25% speed for every freighter size", () => {
+  const f = fixture(), fleet = f.deps["../../core/derive/fleet"];
+  for (const kind of ["tiny_freighter","small_freighter","convoy","large_freighter","heavy_freighter","bulk_freighter"]) {
+    const full = {...f.state.ghosts[1],kind,composition:[{kind,count:1}],fuel_capacity:undefined,
+      cargo_manifest:[{commodity:"metallic_ore",units:protocol.cargoUnitsPerHull(kind)}]};
+    const economy = {...full,transit:"economy"}, stealth = {...full,transit:"stealth"};
+    const dest = {x:85_000,y:0};
+    assert.ok(Math.abs(fleet.estimatedFuelForLeg(economy,dest)-fleet.estimatedFuelForLeg(full,dest)*.1)<1e-9);
+    assert.equal(fleet.estimatedFuelForLeg(stealth,dest),fleet.estimatedFuelForLeg(full,dest));
+    assert.equal(fleet.transitSpeedMultiplier(economy),.25);
+    assert.equal(fleet.transitSpeedMultiplier(stealth),.5);
+    assert.equal(fleet.fleetFuelCapacity(economy),fleet.fleetFuelCapacity(full));
+  }
+  const mixed = {...f.state.ghosts[1],transit:"economy",composition:[{kind:"convoy",count:1},{kind:"raider",count:1}]};
+  assert.equal(fleet.economyCapable(mixed),false);
+  assert.equal(fleet.cruiseFuelMultiplier(mixed),1);
+  assert.equal(fleet.transitSpeedMultiplier(mixed),1);
+});
+
 test("Stealth on the fleet panel previews; Cancel changes nothing; Confirm sends exactly once", () => {
   const f = fixture();
   const before = JSON.stringify([f.state.ghosts, f.state.orders, f.state.raids]);

@@ -45,6 +45,12 @@ const backdrop = load("battlebackdrop.ts", { "./systemview": systems, "./stars":
 const system = { id: "8", name: "Freya", pos: { x: 20_000, y: 0 }, band: "rich" };
 const body = (id, kind, parent = null) => ({ id, kind, parent, size: "large", name: `Freya ${id}`,
   deposits: [{ resource: "metallic_ore", richness: 50 }], structures: { shipyard: 3 }, habitable: true });
+for (const profile of ["mineral_highlands", "verdant_lowlands", "coastal_plains"]) {
+  const home = { ...body(1, "terrestrial"), founding_camp: { profile, completed: [] } };
+  const expected = profile === "coastal_plains" ? "ocean" : "terrestrial";
+  assert.ok(systems.bodyArtUrl("8", home).includes(`/${expected}-`), "habitable founding globes match the living surface art");
+  assert.equal(systems.buildVisualSystem(system, [home]).planets[0].kind, expected);
+}
 const report = { id: system.id, owner: "1", bodies: [body(1, "terrestrial"), body(2, "gas_giant"), body(3, "ice", 2)], stockpile: [999] };
 const state = { galaxy: { systems: [system] }, systems: [report] };
 const original = JSON.stringify(state);

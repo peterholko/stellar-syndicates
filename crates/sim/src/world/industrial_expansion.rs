@@ -48,14 +48,20 @@ impl World {
             return;
         };
         let capacity = self.fleets[&id].cargo_capacity() as u64;
+        let return_trip = !route.repeat && route.stops.len() == 3
+            && route.stops[0].port == route.stops[2].port;
         let valid = (2..=MAX_STOPS).contains(&route.stops.len())
+            && (route.transit != crate::ship::TransitMode::Economy
+                || self.fleets[&id].can_economy_cruise())
             && !route.name.trim().is_empty()
             && route.name.chars().count() <= 48
             && route.fuel_reserve.is_finite()
             && route.fuel_reserve >= 0.0
             && route.fuel_reserve <= self.fleets[&id].fuel_capacity()
             && route.escort != Some(id)
+            && route.shopping_budget.is_none_or(|budget| budget.is_finite() && (0.0..=1_000_000_000.0).contains(&budget))
             && (route.stops.len() <= 2
+                || return_trip
                 || self.research_flag(owner, crate::research::Cap::AutonomousFreight))
             && route.stops.iter().all(|s| {
                 self.freight_port_pos(s.port).is_some()
@@ -69,6 +75,7 @@ impl World {
             return;
         }
         let f = self.fleets.get_mut(&id).unwrap();
+        f.transit = route.transit;
         f.mission = None;
         f.defense = None;
         f.pursuit_plan = None;
@@ -81,6 +88,7 @@ impl World {
                 remaining_unload: Default::default(),
                 visits: 0,
                 hold: None,
+                shopping_spent: 0.0,
             },
         });
         f.order = FleetOrder::Idle;
@@ -470,6 +478,7 @@ impl World {
                 .map(|(c, n)| (*c, (*n).min(f.cargo_amount(*c))))
                 .collect();
             run.phase = RoutePhase::Unloading;
+            run.shopping_spent = 0.0;
         }
         if run.phase == RoutePhase::Unloading {
             for (&c, left) in &mut run.remaining_unload {
@@ -536,7 +545,37 @@ impl World {
             }
         }
         if run.phase == RoutePhase::Loading {
+            // After selling, leave cash for the ordinary paid tank service on
+            // the next tick. Only physically present escorts count here; no
+            // remote fleet telemetry is consulted by an onboard shopping job.
+            let bunker_cash = if system.is_none() && run.route.shopping_budget.is_some() {
+                let f = &self.fleets[&id];
+                let escort = run.route.escort.and_then(|escort| self.fleets.get(&escort))
+                    .filter(|g| g.owner == owner && g.pos.distance(f.pos) <= 1_000.0);
+                let room = (f.fuel_capacity() - f.fuel).max(0.0).floor() as u32
+                    + escort.map_or(0, |g| (g.fuel_capacity() - g.fuel).max(0.0).floor() as u32);
+                let quote = self.market.quote_buy(C::Fuel,room).total;
+                (quote + self.exchange_penalty(owner,quote)) * 1.05
+            } else { 0.0 };
             for (&c, left) in &mut run.remaining_load {
+                if system.is_none() && let Some(budget) = run.route.shopping_budget {
+                    let stocked = self.players[&owner].warehouse.get(&c).copied().unwrap_or(0);
+                    let room = self.fleets[&id].cargo_capacity().saturating_sub(self.fleets[&id].cargo_units());
+                    let need = (*left).min(room).saturating_sub(stocked);
+                    let cash = (budget - run.shopping_spent).max(0.0).min((self.players[&owner].credits - bunker_cash).max(0.0));
+                    let mut lo = 0;
+                    let mut hi = need.min(self.market.available_to_buy(c));
+                    while lo < hi {
+                        let n = lo + (hi - lo).div_ceil(2);
+                        let cost = self.market.quote_buy(c, n).total;
+                        if cost + self.exchange_penalty(owner, cost) <= cash { lo = n; } else { hi = n - 1; }
+                    }
+                    if lo > 0 {
+                        let before = self.players[&owner].credits;
+                        self.apply_now(&Command::MarketBuy { player_id: owner, commodity: c, units: lo, max_unit_price: Some(self.market.quote_buy(c, lo).unit_price) }, events);
+                        run.shopping_spent += (before - self.players[&owner].credits).max(0.0);
+                    }
+                }
                 let available = system
                     .map(|sid| {
                         self.systems
@@ -558,6 +597,9 @@ impl World {
                     self.apply_logistics_load(owner, id, system, c, n, events);
                     *left -= self.fleets[&id].cargo_amount(c).saturating_sub(before);
                 }
+                // A bounded shopping trip returns affordable/available goods.
+                // An unaffordable wishlist must not strand a new player's hull.
+                if system.is_none() && run.route.shopping_budget.is_some() { *left = 0; }
             }
             if run.remaining_load.values().all(|n| *n == 0) {
                 run.phase = RoutePhase::Fuel;
@@ -605,8 +647,7 @@ impl World {
         let f = &self.fleets[&id];
         // Same public-geometry estimate as CC planning; onboard tank/cargo
         // checks are local physical decisions, not remote information shortcuts.
-        let consumption = crate::research::mod_of(&self.players[&f.owner].research,
-            crate::research::ModKey::FuelConsumption);
+        let consumption = f.propulsion_fuel_mult();
         let budget = crate::fuel::route_estimate(f.pos, dest, f.mass(), consumption,
             self.systems.iter().map(|s| s.pos).chain(std::iter::once(self.hub))) + route.fuel_reserve;
         let reason = if budget > f.fuel_capacity() {
@@ -626,8 +667,13 @@ impl World {
             "Waiting for escort"
         } else if route.escort.is_some_and(|escort| {
             let g = &self.fleets[&escort];
+            // Matching the freighter's pace is not an Economy engine upgrade
+            // for its warship escort. Price that hull independently.
+            let escort_consumption = g.propulsion_fuel_mult();
+            let escort_budget = crate::fuel::route_estimate(f.pos, dest, g.mass(), escort_consumption,
+                self.systems.iter().map(|s| s.pos).chain(std::iter::once(self.hub)));
             !g.supplied
-                || g.fuel + 1e-9 < (budget - route.fuel_reserve) * g.mass() / f.mass().max(1.0)
+                || g.fuel + 1e-9 < escort_budget
         }) {
             "Waiting for escort fuel or supplies"
         } else {
@@ -791,7 +837,9 @@ mod tests {
     }
     fn route(home: EntityId) -> FreightRoute {
         FreightRoute {
+            shopping_budget: None,
             name: "Mixed outward / alloy return".into(),
+            transit: crate::ship::TransitMode::Full,
             fuel_reserve: 5.0,
             escort: None,
             repeat: true,
@@ -817,11 +865,112 @@ mod tests {
         };
         run
     }
+
+    #[test]
+    fn economy_routes_remember_cruise_and_keep_legacy_routes_at_full_speed() {
+        let (mut w, owner, home, fleet) = scene();
+        let mut r = route(home);
+        let mut legacy = serde_json::to_value(&r).unwrap();
+        legacy.as_object_mut().unwrap().remove("transit");
+        assert_eq!(serde_json::from_value::<FreightRoute>(legacy).unwrap().transit,
+            crate::ship::TransitMode::Full);
+        r.transit = crate::ship::TransitMode::Economy;
+        w.set_freight_route(owner, fleet, Some(r), &mut vec![]);
+        assert_eq!(w.fleets[&fleet].transit, crate::ship::TransitMode::Economy);
+        assert_eq!(run(&w, fleet).route.transit, crate::ship::TransitMode::Economy);
+        let full_budget = crate::fuel::route_estimate(w.fleets[&fleet].pos, w.hub,
+            w.fleets[&fleet].mass(), 1.0, w.systems.iter().map(|s| s.pos).chain(std::iter::once(w.hub)));
+        w.fleets.get_mut(&fleet).unwrap().fuel = full_budget * 0.15 + run(&w, fleet).route.fuel_reserve;
+        assert!(w.freight_departure_hold(fleet, &run(&w, fleet).route, w.hub).is_none());
+        w.fleets.get_mut(&fleet).unwrap().transit = crate::ship::TransitMode::Full;
+        assert!(w.freight_departure_hold(fleet, &run(&w, fleet).route, w.hub).unwrap().contains("fuel"));
+        w.step(&[Command::SetFleetTransit { player_id: owner, fleet_id: fleet, mode: crate::ship::TransitMode::Full }]);
+        assert_eq!(run(&w, fleet).route.transit, crate::ship::TransitMode::Full,
+            "a received mode change updates the remembered route too");
+    }
     fn pump(w: &mut World, ticks: u32) {
         for _ in 0..ticks {
             w.time += DT;
             w.tick_industrial_expansion(&mut vec![]);
         }
+    }
+
+    #[test]
+    fn opening_return_trip_needs_no_automation_but_recurring_multi_stop_does() {
+        let (mut w, owner, home, id) = scene();
+        let mut r = route(home);
+        r.stops.push(RouteStop { port: FreightPort::System { id: home }, load: Default::default(), unload: [(C::Alloys,7)].into(), sell: false });
+        w.set_freight_route(owner,id,Some(r.clone()),&mut vec![]);
+        assert!(w.fleets[&id].industry.is_none(), "recurring multi-stop needs research");
+        r.repeat = false;
+        w.set_freight_route(owner,id,Some(r),&mut vec![]);
+        assert_eq!(run(&w,id).route.stops.len(),3);
+        let mut old = serde_json::to_value(route(home)).unwrap();
+        old.as_object_mut().unwrap().remove("shopping_budget");
+        assert!(serde_json::from_value::<FreightRoute>(old).unwrap().shopping_budget.is_none());
+    }
+
+    #[test]
+    fn opening_shopping_sells_real_cargo_then_buys_within_cap_and_returns_partial() {
+        let (mut w, owner, home, id) = scene();
+        site_mut(&mut w,home).stockpile.insert(C::MetallicOre,50.0);
+        w.players.get_mut(&owner).unwrap().credits = 0.0;
+        let r = FreightRoute { name:"One trip".into(), repeat:false, escort:None,
+            transit:crate::ship::TransitMode::Economy, fuel_reserve:0.0, shopping_budget:Some(100.0),
+            stops:vec![
+                RouteStop { port:FreightPort::System{id:home},load:[(C::MetallicOre,50)].into(),unload:Default::default(),sell:false },
+                RouteStop { port:FreightPort::Hub,load:[(C::Alloys,40)].into(),unload:[(C::MetallicOre,50)].into(),sell:true },
+                RouteStop { port:FreightPort::System{id:home},load:Default::default(),unload:[(C::Alloys,40)].into(),sell:false },
+            ] };
+        w.set_freight_route(owner,id,Some(r),&mut vec![]);
+        pump(&mut w,1);
+        assert_eq!(w.players[&owner].credits,0.0, "no advance credit for unarrived ore");
+        assert_eq!(w.fleets[&id].cargo_amount(C::Alloys),0);
+        w.fleets.get_mut(&id).unwrap().pos = w.hub;
+        let mut events=vec![];
+        w.tick_industrial_expansion(&mut events);
+        let bought=w.fleets[&id].cargo_amount(C::Alloys);
+        assert!(bought>0 && bought<40);
+        assert!(run(&w,id).shopping_spent>0.0 && run(&w,id).shopping_spent<=100.0);
+        assert!(w.players[&owner].credits>0.0);
+        assert_eq!(run(&w,id).stop,2, "an unaffordable remainder must not strand the hull");
+        assert!(events.iter().any(|e| matches!(e.payload, EventPayload::Trade(TradeEvent::Bought { .. }))));
+        let before=w.players[&owner].credits;
+        let mut w: World=serde_json::from_slice(&serde_json::to_vec(&w).unwrap()).unwrap();
+        pump(&mut w,10);
+        assert_eq!(w.players[&owner].credits,before, "reload never buys the same manifest twice");
+        w.fleets.get_mut(&id).unwrap().pos=Vec2::ZERO;
+        pump(&mut w,1);
+        assert_eq!(site(&w,home).stockpile[&C::Alloys],f64::from(bought));
+        assert_eq!(w.fleets[&id].cargo_units(),0);
+        assert_eq!(run(&w,id).phase,RoutePhase::Complete);
+        pump(&mut w,10);
+        assert_eq!(site(&w,home).stockpile[&C::Alloys],f64::from(bought));
+    }
+
+    #[test]
+    fn opening_shopping_leaves_cash_for_ordinary_tank_service() {
+        let (mut w, owner, home, id) = scene();
+        let f = w.fleets.get_mut(&id).unwrap();
+        f.pos = w.hub;
+        f.fuel = f.fuel_capacity() - 10.0;
+        let fuel = w.market.quote_buy(C::Fuel, 10).total;
+        let buffer = (fuel + w.exchange_penalty(owner, fuel)) * 1.05;
+        let alloys = w.market.quote_buy(C::Alloys, 2).total;
+        w.players.get_mut(&owner).unwrap().credits = buffer + alloys + w.exchange_penalty(owner, alloys);
+        let route = FreightRoute {
+            name: "Limited-cash return".into(), repeat: false, escort: None,
+            transit: crate::ship::TransitMode::Economy, fuel_reserve: 0.0, shopping_budget: Some(10_000.0),
+            stops: vec![
+                RouteStop { port: FreightPort::Hub, load: [(C::Alloys, 40)].into(), unload: Default::default(), sell: false },
+                RouteStop { port: FreightPort::System { id: home }, load: Default::default(), unload: [(C::Alloys, 40)].into(), sell: false },
+            ],
+        };
+        w.set_freight_route(owner, id, Some(route), &mut vec![]);
+        pump(&mut w, 1);
+        assert!(w.players[&owner].credits + 1e-9 >= buffer);
+        assert!((1..=2).contains(&w.fleets[&id].cargo_amount(C::Alloys)));
+        assert_eq!(run(&w, id).stop, 1, "partial shopping does not keep the carrier at the Hub");
     }
 
     #[test]

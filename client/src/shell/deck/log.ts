@@ -32,6 +32,8 @@ const HOSTILE_CONCERN_MULT = 1.6;
 const IDLE_UNITS = 30;
 const MAX_HOSTILE_ITEMS = 4;
 const FOUNDING_DIRECTIVE: Record<FoundingStage, string> = {
+  local_recovery: "Recover nearby supplies",
+  prepare_export: "Dispatch the guarded Hub shipment",
   build_shipyard: "Build Shipyard I",
   build_mine: "Build and staff Mining Complex I",
   build_convoy: "Prepare a Freighter",

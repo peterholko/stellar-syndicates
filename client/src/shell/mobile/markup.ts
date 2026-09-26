@@ -65,10 +65,9 @@ export const mobileMarkup = String.raw`
     </div>
 
     ${accountProfile("m")}
-    <div id="m-join" class="m-join">
+    <div id="m-join" class="m-join" aria-labelledby="m-join-title">
       ${accountBackdrop("m")}
-      <form id="m-join-form" class="m-join__card">
-        <div class="m-join__eyebrow">Corporate command uplink</div>
+      <form id="m-join-form" class="m-join__card account-card" data-account-mode="signin">
         ${accountFields("m")}
       </form>
     </div>

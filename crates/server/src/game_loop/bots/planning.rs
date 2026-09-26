@@ -2,6 +2,14 @@ use super::*;
 use sim::industry::FleetIndustry;
 
 impl Observation {
+    /// Conservative ordinary-carrier delivery window, including booking and
+    /// returned light. This is a planning estimate, not an arrival assertion.
+    pub(super) fn supply_lead(&self) -> f64 {
+        sim::tca::TCA_DEPARTURE_PERIOD * 2.0
+            + self.home.system.pos.distance(self.hub) / (H::Freighter.max_speed() * sim::transit::WARP_FACTOR)
+            + self.round_trip(self.hub) * 2.0 + 120.0
+    }
+
     pub(super) fn price(&self, good: C) -> f64 {
         self.ticker.as_ref().and_then(|m| m.prices.get(&good)).copied().unwrap_or(20.0)
     }
@@ -14,6 +22,7 @@ impl Observation {
 
     pub(super) fn leg(&self, fleet: &GhostView, from: Vec2, to: Vec2, units: u32) -> f64 {
         self.fuel_per_mass(from, to) * (hull_mass(fleet) + units as f64 * sim::ship::CARGO_MASS_PER_UNIT)
+            * cruise_fuel_mult(fleet)
     }
 
     pub(super) fn safe_load(&self, fleet: &GhostView, from: Vec2, to: Vec2) -> u32 {
@@ -23,13 +32,31 @@ impl Observation {
         self.freight_limit(&full, to)
     }
 
+    pub(super) fn uses_local_port(&self, fleet: &GhostView) -> bool {
+        let id = self.home.system.id;
+        if fleet.docked.as_deref() == Some(id.to_string().as_str())
+            || fleet.defend_system.as_ref().is_some_and(|d| d.system == id) { return true; }
+        let carrier = fleet.guard_target.and_then(|ward| self.own().find(|f| f.id == ward)).unwrap_or(fleet);
+        if let Some(FleetIndustry::Route { run }) = &carrier.industry {
+            if run.phase != sim::industry::RoutePhase::Complete {
+                return run.route.stops.iter().any(|s| s.port == sim::industry::FreightPort::System { id });
+            }
+        }
+        // Unassigned expeditions use their nearest reported owned berth. Every
+        // new colony must not import a full tank for the corporation's ENTIRE
+        // navy; an active route/defense order is the stronger depot assignment.
+        self.sites.iter().min_by(|a, b| carrier.pos.distance(a.system.pos)
+            .total_cmp(&carrier.pos.distance(b.system.pos)).then(a.system.id.cmp(&b.system.id)))
+            .is_none_or(|s| s.system.id == id)
+    }
+
     pub(super) fn fuel_target(&self) -> f64 {
         // A depot target covers the next dispatch/refill, not an arbitrary stock
         // floor. Fuel already in tanks is usable runway; an empty silo alone is
         // not a crisis. Hub bunkering is paid separately from imported fuel cargo.
         let home = self.home.system.pos;
         let mut target = 0.0;
-        for fleet in self.own() {
+        for fleet in self.own().filter(|f| self.uses_local_port(f)) {
             let cycle = if fleet.kind.is_player_freighter() {
                 self.leg(fleet, home, self.hub, self.safe_load(fleet, home, self.hub))
             } else { self.tank(fleet) };
@@ -50,9 +77,7 @@ impl Observation {
             fuel * recipe.rate * sim::production::tier_throughput(tier)
                 * a.workers.min(tier) as f64 / tier as f64 * system.staffing_share() * processing
         })).sum::<f64>();
-        let lead = sim::tca::TCA_DEPARTURE_PERIOD * 2.0
-            + home.distance(self.hub) / (H::Freighter.max_speed() * sim::transit::WARP_FACTOR)
-            + self.round_trip(self.hub) * 2.0 + 120.0;
+        let lead = self.supply_lead();
         (target + industrial * lead * 2.0).min(system.storage_cap() * 0.6).max(20.0)
     }
 
@@ -79,7 +104,9 @@ impl Observation {
         // Automatic hub fills can spend money without a MarketBuy command. Hold
         // their conservative cost until returned account/fleet light catches up.
         self.own().filter(|f| (f.kind.is_player_freighter() || f.guard_target.is_some())
-            && (f.docked.as_deref() == Some("hub") || f.docked.is_none() && f.vel.length_sq() > 1.0))
+            && (f.docked.as_deref() == Some("hub") || f.docked.is_none() && f.vel.length_sq() > 1.0)
+            && !matches!(&f.industry, Some(FleetIndustry::Route { run })
+                if !run.route.stops.iter().any(|s| s.port == sim::industry::FreightPort::Hub)))
             .map(|f| {
                 let burn = self.leg(f, f.pos, self.hub, cargo_used(f));
                 (self.tank(f) - f.fuel.unwrap_or(0.0) + burn).clamp(0.0, self.tank(f))
@@ -108,15 +135,23 @@ impl Bot {
         // (or rejection) before we release its reservation. Saves retain it.
         if p.account.is_some() { self.commitments.retain(|c| p.market_at < c.receiver_at); }
         self.surveys.retain(|fleet, _| p.own().any(|g| g.id == *fleet));
+        self.reconnaissance.retain(|fleet, _| p.own().any(|g| g.id == *fleet));
         self.survey_started.retain(|id| self.surveys.contains_key(id));
         self.returns.retain(|id, trip| p.own().any(|g| g.id == *id
             && !(p.now - g.age >= trip.issued_at && g.docked.is_some()
                 && g.pos.distance(trip.destination) < sim::transit::HYPERLIMIT)));
         for fleet in p.own() {
+            // Replacing a completed route resets its visit counter locally, but
+            // the old completion remains visible until the new order's report.
+            // Do not count that same homecoming again while it is in flight.
+            if !self.ready(&format!("fleet:{}", fleet.id), p.now) { continue; }
             if let Some(FleetIndustry::Route { run }) = &fleet.industry {
+                let returned = !run.route.repeat && run.phase == sim::industry::RoutePhase::Complete
+                    && fleet.docked.as_deref() == Some(p.home.system.id.to_string().as_str());
+                let visits = run.visits + u32::from(returned);
                 let previous = self.route_visits.entry(fleet.id).or_default();
-                self.trade_cycles += (run.visits / 2).saturating_sub(*previous / 2) as u64;
-                *previous = run.visits;
+                self.trade_cycles += (visits / 2).saturating_sub(*previous / 2) as u64;
+                *previous = visits;
             }
         }
         self.status = if self.recovering(p) { "recovery: protecting the next earning trip" }
@@ -192,18 +227,95 @@ impl Bot {
         for site in &p.sites {
             let key = format!("staff:{}", site.system.id);
             if !self.ready("staff", p.now) || !self.ready(&key, p.now) { continue; }
+            let system = &site.system;
+            let workforce = sim::colony::workforce_units(system.population());
+            let mut jobs = Vec::new();
             for body in &site.system.bodies {
                 for (&kind, &tier) in &body.structures {
-                    let wanted = match kind {
-                        K::MiningComplex | K::Bioharvester | K::Agroplex | K::Academy | K::Smelter | K::VolatileHarvester | K::FuelRefinery => 1,
-                        K::Shipyard => u32::from(site.builds.iter().any(|job| job.body_id == body.id && matches!(job.what, BuildKind::Ship { .. }))),
+                    if tier == 0 { continue; }
+                    let priority = match kind {
+                        K::Bioharvester | K::Agroplex => 0,
+                        K::MiningComplex => 1,
+                        K::Shipyard | K::NavalDrydock | K::CapitalSlipway | K::Garrison
+                            if site.builds.iter().any(|job| job.body_id == body.id && matches!(job.what, BuildKind::Ship { ship } if sim::build::yard_for(ship).0 == kind)) => 2,
+                        K::OrdnanceFoundry if p.own().any(|f| f.damage.unwrap_or(0.0) > 0.05) => 2,
+                        K::Academy => 3,
+                        K::VolatileHarvester | K::FuelRefinery => 4,
+                        // Don't burn the expedition's fuel in an optional line.
+                        K::Smelter if system.free_stock(C::Fuel) > if body.assignments.get(&kind).is_some_and(|a| a.workers > 0) { 10.0 } else { 40.0 } => 5,
+                        K::Shipyard | K::NavalDrydock | K::CapitalSlipway | K::OrdnanceFoundry | K::Smelter => 9,
+                        k if sim::production::converter_for(k).is_some() => 5,
                         _ => continue,
                     };
-                    if tier > 0 && body.assignments.get(&kind).map_or(0, |a| a.workers) != wanted {
-                        self.wait(key, p, site.system.pos);
-                        self.status = "assigning workforce to a reported local job".into();
-                        return Some(Command::SetAssignment { player_id: p.owner, system_id: site.system.id,
-                            structure: kind, workers: wanted, body_id: Some(body.id), specialists: BTreeMap::new(), refining_ore: None });
+                    let specialists = body.assignments.get(&kind).map_or(0, |a| a.specialists.values().sum::<u32>());
+                    jobs.push((priority, body.id, kind, tier.saturating_sub(specialists)));
+                }
+            }
+            jobs.sort();
+            let needed = jobs.iter().filter(|(priority, _, _, _)| *priority < 9).map(|(_, _, _, tier)| tier).sum::<u32>();
+            // Managed migration needs overposted jobs. A budgeted workforce no
+            // longer supplies that signal, so explicitly recruit up to the jobs
+            // we intend to open, then return to Managed. Migrants still travel.
+            let inbound = system.bodies.iter().map(|b| b.inbound_migrants).sum::<u32>() / 1_000;
+            let policy = if workforce + inbound < needed && system.food_state == sim::colony::FoodState::WellSupplied {
+                sim::MigrationPolicy::Open
+            } else { sim::MigrationPolicy::Managed };
+            if let Some(body) = system.bodies.iter().find(|b| b.population > 0.0 && b.migration_policy != policy) {
+                self.wait(key, p, system.pos);
+                return Some(Command::SetMigrationPolicy { player_id: p.owner, system_id: system.id, body_id: body.id, policy });
+            }
+            // The founding food chain and mine may briefly share the first two
+            // cohorts. Beyond that, don't dilute the Academy with every optional
+            // factory: allocate scarce cohorts by priority, releasing jobs first.
+            let core = jobs.iter().filter(|(priority, _, _, _)| *priority <= 1).count() as u32;
+            let budget = workforce.saturating_sub(system.industry.workforce()).max(core);
+            // One cohort gets each essential line working, then spare cohorts
+            // fill its researched tiers. Tier IV no longer operates forever at
+            // one-quarter staffing just because the opening used one worker.
+            let mut allocated = BTreeMap::new();
+            let mut remaining = budget;
+            for cohort in 0..jobs.iter().map(|j| j.3).max().unwrap_or(0) {
+                for &(priority, body, kind, tier) in &jobs {
+                    if remaining > 0 && priority < 9 && cohort < tier {
+                        *allocated.entry((body, kind)).or_insert(0) += 1;
+                        remaining -= 1;
+                    }
+                }
+            }
+            let mut changes = Vec::new();
+            for &(_, body_id, kind, _) in &jobs {
+                let wanted = allocated.get(&(body_id, kind)).copied().unwrap_or(0);
+                let body = system.bodies.iter().find(|b| b.id == body_id).unwrap();
+                let current = body.assignments.get(&kind).map_or(0, |a| a.workers);
+                if current != wanted { changes.push((wanted > current, body_id, kind, wanted)); }
+            }
+            changes.sort();
+            if let Some((_, body_id, kind, wanted)) = changes.first().copied() {
+                self.wait(key, p, site.system.pos);
+                self.status = "budgeting workforce for food, income, construction and science".into();
+                let assignment = site.system.bodies.iter().find(|b| b.id == body_id)
+                    .and_then(|b| b.assignments.get(&kind));
+                return Some(Command::SetAssignment { player_id: p.owner, system_id: site.system.id,
+                    structure: kind, workers: wanted, body_id: Some(body_id),
+                    specialists: assignment.map(|a| a.specialists.clone()).unwrap_or_default(),
+                    refining_ore: assignment.and_then(|a| a.refining_ore) });
+            }
+            // Post resident specialists to staffed lines of their profession.
+            // Their ordinary training/transport remains physical; none are
+            // conjured to open an activity-gated research school.
+            for (&specialist, &resident) in &system.specialists {
+                let posted: u32 = system.bodies.iter().flat_map(|b| b.assignments.values())
+                    .map(|a| a.specialists.get(&specialist).copied().unwrap_or(0)).sum();
+                if posted >= resident { continue; }
+                for body in &system.bodies {
+                    if let Some((&kind, a)) = body.assignments.iter().find(|(k, a)| specialist.affine(**k)
+                        && a.workers > 0 && a.specialists.values().sum::<u32>() < body.tier(**k)) {
+                        let mut specialists = a.specialists.clone();
+                        *specialists.entry(specialist).or_default() += 1;
+                        self.wait(key, p, system.pos);
+                        return Some(Command::SetAssignment { player_id: p.owner, system_id: system.id,
+                            structure: kind, body_id: Some(body.id), workers: a.workers.saturating_sub(1),
+                            specialists, refining_ore: a.refining_ore });
                     }
                 }
             }

@@ -302,7 +302,7 @@ impl Timeline {
                         *owner,
                         e.time,
                         TimelineSeverity::Good,
-                        if *complete_tick == u64::MAX && matches!(what, sim::BuildKind::Upgrade { .. }) {
+                        if *complete_tick == u64::MAX && matches!(what, sim::BuildKind::Upgrade { .. } | sim::BuildKind::Founding { .. }) {
                             format!("Construction queued at {name}: {}.", build_label(*what))
                         } else if *complete_tick == u64::MAX {
                             format!("Construction queued at {name}: {} · awaiting workforce.", build_label(*what))
@@ -355,6 +355,12 @@ impl Timeline {
                         TimelineSeverity::Good,
                         format!("Repairs complete at {name} — the fleet is back to full hull."),
                     );
+                }
+                EventPayload::SettlementDeveloped { owner, system, project, .. } => {
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
+                        "{}: {} complete.", system_name(world, *system),
+                        build_label(sim::BuildKind::Founding { project: *project }),
+                    ));
                 }
                 EventPayload::SystemUpgraded {
                     owner,
@@ -1468,6 +1474,12 @@ fn build_label(what: sim::BuildKind) -> &'static str {
             ship: sim::ShipKind::Titan,
         } => "a Titan",
         sim::BuildKind::Upgrade { upgrade } => upgrade.title(),
+        sim::BuildKind::Founding { project } => match project {
+            sim::settlement::SettlementProject::Prospect => "a settlement survey",
+            sim::settlement::SettlementProject::SurfaceWorkings => "surface workings",
+            sim::settlement::SettlementProject::Storehouse => "a camp storehouse expansion",
+            sim::settlement::SettlementProject::Quarters => "permanent quarters",
+        },
         // §economy Part 4: an Academy course — label by profession.
         sim::BuildKind::Train { specialist } => match specialist {
             sim::SpecialistKind::Geologist => "a Geologist (training)",
@@ -1944,6 +1956,25 @@ mod tests {
             },
         ]);
         (w, a, b)
+    }
+
+    #[test]
+    fn settlement_completion_is_private_and_waits_for_its_site_report() {
+        let (mut w, owner, rival) = world_with_two();
+        let system = w.players[&owner].home_system.unwrap();
+        let site = w.systems.iter().find(|s| s.id == system).unwrap().pos;
+        let cc = site + Vec2::new(10.0 * sim::transit::signal_speed(w.config.c), 0.0);
+        w.players.get_mut(&owner).unwrap().command_center = cc;
+        let mut tl = Timeline::new();
+        tl.ingest(&[Event::new(w.time, EventPayload::SettlementDeveloped {
+            owner, system, body_id: 1, project: sim::settlement::SettlementProject::Storehouse,
+        })], &w);
+        tl.promote(w.time + 9.99);
+        assert_eq!(tl.journal_len(owner), 0);
+        tl.promote(w.time + 10.0);
+        assert_eq!(tl.journal_len(owner), 1);
+        assert!(tl.digest(owner).0[0].text.contains("complete"));
+        assert_eq!(tl.journal_len(rival), 0);
     }
 
     #[test]

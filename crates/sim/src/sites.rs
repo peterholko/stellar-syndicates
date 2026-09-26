@@ -131,6 +131,10 @@ pub struct SiteReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExplorationSite {
+    /// A finite founding cache belongs to its founder; ordinary discoveries
+    /// remain shared. Kept off SiteReport so no remote owner facts leak.
+    #[serde(default)]
+    pub founding_owner: Option<PlayerId>,
     pub id: EntityId,
     pub pos: Vec2,
     pub details: SiteDetails,

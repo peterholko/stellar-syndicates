@@ -6,6 +6,11 @@ import sharp from "sharp";
 const clientRoot = fileURLToPath(new URL("..", import.meta.url));
 const sourceRoot = path.join(clientRoot, "art-src/planet-view");
 const outputRoot = path.join(clientRoot, "public/art/derived/planet-workbench/v1");
+export const HABITABLE_SURFACES = [
+  "highland-plateau", "savanna-world", "volcanic-highlands", "boreal-world",
+  "archipelago-world", "temperate-basin",
+];
+export const HABITABLE_SURFACE_WIDTHS = [768, 1280, 1672];
 
 // Reuse the approved empty landscapes; buildings are live DOM sprites, never
 // baked into the background (an undeveloped or rival world must stay empty).
@@ -21,6 +26,19 @@ export async function buildPlanetWorkbenchArt() {
     for (const width of [768, 1536]) {
       await derive(path.join(sourceRoot, `surfaces/${kind}-surface-v1.png`),
         path.join(outputRoot, `${kind}-${width}.webp`),
+        image => image.resize({ width, withoutEnlargement: true }).webp({ quality: 88, effort: 5 }));
+    }
+  }
+  const habitableOutput = path.join(clientRoot, "public/art/derived/planet-workbench/habitable-v1");
+  await mkdir(habitableOutput, { recursive: true });
+  for (const kind of HABITABLE_SURFACES) {
+    const source = path.join(sourceRoot, `habitable-v1/${kind}.png`);
+    const meta = await sharp(source).metadata();
+    // Width descriptors must name real pixels; don't silently upscale a smaller
+    // replacement or distort a differently framed painting under the footprints.
+    if (meta.width !== 1672 || meta.height !== 941) throw new Error(`Unexpected surface dimensions: ${source}`);
+    for (const width of HABITABLE_SURFACE_WIDTHS) {
+      await derive(source, path.join(habitableOutput, `${kind}-${width}.webp`),
         image => image.resize({ width, withoutEnlargement: true }).webp({ quality: 88, effort: 5 }));
     }
   }

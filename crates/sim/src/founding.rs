@@ -84,6 +84,9 @@ pub enum FoundingStage {
     /// Two suggested investments, not a permanent class choice. Either a second
     /// owned freight hull or an operating researched Smelter completes the chapter.
     GrowBusiness,
+    /// Version-two opening: a short, local recovery before the Hub voyage.
+    LocalRecovery,
+    PrepareExport,
 }
 
 impl Default for FoundingStage {
@@ -96,6 +99,20 @@ impl Default for FoundingStage {
 /// disabled: old snapshots must not be pushed backwards into onboarding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FoundingProgram {
+    /// Old saves retain their existing arc. Only first joins opt into v2.
+    #[serde(default)]
+    pub local_opening: bool,
+    #[serde(default)]
+    pub recovery_site: Option<EntityId>,
+    #[serde(default)]
+    pub scout: Option<EntityId>,
+    /// Arrival at command, not the time the cache was physically recovered.
+    #[serde(default)]
+    pub recovery_report_at: Option<f64>,
+    #[serde(default)]
+    pub export_dispatched_at: Option<f64>,
+    #[serde(default)]
+    pub local_ready_report_at: Option<f64>,
     #[serde(default)]
     pub stage: FoundingStage,
     #[serde(default)]
@@ -164,6 +181,12 @@ pub struct FoundingProgram {
 impl Default for FoundingProgram {
     fn default() -> Self {
         Self {
+            local_opening: false,
+            recovery_site: None,
+            scout: None,
+            recovery_report_at: None,
+            export_dispatched_at: None,
+            local_ready_report_at: None,
             stage: FoundingStage::Complete,
             enabled: false,
             started_at: 0.0,

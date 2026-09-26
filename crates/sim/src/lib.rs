@@ -27,6 +27,7 @@ pub use emplace::{Emplacement, EmplacementKind};
 pub mod event;
 pub mod explore;
 pub mod founding;
+pub mod settlement;
 pub mod fuel;
 pub mod galaxy;
 pub mod ground;

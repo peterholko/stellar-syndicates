@@ -203,6 +203,10 @@ impl Sessions {
         self.conns.get(&conn_id).map(|c| c.player_id)
     }
 
+    pub fn name_of(&self, conn_id: ConnId) -> Option<&str> {
+        self.conns.get(&conn_id).map(|c| c.name.as_str())
+    }
+
     /// A clone of one connection's discrete-message sender, for handing to an
     /// off-thread task (e.g. an engagement-estimate rollout) that will deliver a
     /// reply itself. `None` if the connection has since dropped.

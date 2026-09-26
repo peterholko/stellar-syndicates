@@ -2,6 +2,8 @@
 // the management column in the workspace, and the actual confirmation controller.
 // --serve opens an isolated browser fixture; it never contacts a game server.
 // Add --terran to check structure contrast against the green landscape.
+// --habitable presents all six approved habitable surface variants as worlds.
+// --port=N pins the fixture's port for a launch configuration (default: any free port).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -22,6 +24,8 @@ function compile(path, source = src(path), globals = {}) {
 deps["../../icons"] = compile("icons.ts");
 const marketDerive = compile("core/derive/market.ts");
 deps["../../core/derive/market"] = marketDerive;
+deps["./prng"] = compile("prng.ts");
+deps["../../planet-surfaces"] = compile("planet-surfaces.ts");
 deps["./planet-sites"] = compile("shell/deck/planet-sites.ts");
 const { PlanetSites } = deps["./planet-sites"];
 const { PlanetPanel, planetStructures, planetSurface, footprintAddress } = compile("shell/deck/planet.ts");
@@ -45,16 +49,22 @@ assert.match(planetCss, /\.deck-planet-stage \{[^}]*right: var\(--deck-workspace
 assert.match(planetCss, /\.deck-planet-stage \{[^}]*--deck-workbench-bottom-inset/, "the scene keeps clear of the command band");
 assert.doesNotMatch(planetCss, /--z-overlay|inset: var\(--deck-topbar-height\) 0 0/, "nothing about the planet is full-screen any more");
 assert.match(planetCss, /\.deck-planet__canvas \{[^}]*width: min\(100cqw, calc\(100cqh \* 16 \/ 9\)\); aspect-ratio: 16 \/ 9;/, "one fitted image plane preserves terrain anchors for any aspect ratio");
-assert.match(planetCss, /--planet-building: clamp\(36px, 8\.625cqw, 150px\)/, "footprints are 25% smaller at the minimum, responsive size and maximum");
+assert.match(planetCss, /--planet-building: clamp\(36px, 7\.5cqw, 130px\)/, "front-row footprints are 7.5% of the plane, capped at 130px");
 assert.doesNotMatch(planetCss, /planet-narrow|planet-wide|object-fit: cover/, "neither responsive rearrangement nor independent image cropping may move structures");
-assert.doesNotMatch(planetCss, /\.deck-planet__building[^{}]*::before/, "structures have no added foundation pads, including when hovered or selected");
+assert.match(planetCss, /--planet-footprint: calc\(var\(--planet-building\) \* var\(--planet-scale, 1\)\)/, "sprites, shadows, rings and badges share the row-scaled footprint");
+assert.match(planetCss, /\.deck-planet__building::before \{[^}]*radial-gradient/, "structures stand on a soft contact shadow");
+assert.doesNotMatch(planetCss, /\.deck-planet__building[^{]*\{[^}]*url\(/, "no foundation-pad artwork is drawn under structures");
+assert.match(planetCss, /\.deck \.deck-planet__building:hover \{ background: transparent; \}/, "hovering a structure never boxes the sprite with the generic button hover");
+assert.doesNotMatch(planetCss, /\.deck-planet__building(:hover|\[aria-pressed="true"\]) \{[^}]*(border-color|background: rgba)/, "hover and selection are a ground ring, not a box around the sprite");
+assert.match(planetCss, /\.deck-planet__building:is\(\[aria-pressed="true"\], :focus-visible\)::after \{[^}]*border-color: var\(--accent\)/, "the selected or focused structure shows an accent ground ring");
+assert.match(planetCss, /\.deck-planet__scene\.is-orbital \.deck-planet__building::before \{ display: none; \}/, "orbital infrastructure has no ground to shadow");
 const workspaceSource = src("shell/deck/workspace.ts");
 assert.match(workspaceSource, /route\.name === "world"\) return "standard"/, "the world route keeps the system rail width so the scene stays wide");
 assert.match(workspaceSource, /this\.route\.name === "market" \|\| this\.route\.name === "world"\) return;/, "no wide toggle on a world");
 // The fixture follows the actual authored catalogue and staffed-kind list.
 const descriptions = Object.fromEntries([...empireSource.slice(empireSource.indexOf("const STRUCTURE_DESCRIPTION"), empireSource.indexOf("import { MODULES"))
   .matchAll(/^  (\w+): "([^"]+)"/gm)].map(([, key, description]) => [key, description]));
-assert.equal(Object.keys(descriptions).length, 25);
+assert.equal(Object.keys(descriptions).length, 26);
 const workforceStructures = new Set([...empireSource.slice(empireSource.indexOf("const WORKFORCE_STRUCTURES"), empireSource.indexOf("const STRUCTURE_DESCRIPTION"))
   .matchAll(/"([a-z_]+)"/g)].map(match => match[1]));
 const catalog = [
@@ -117,6 +127,7 @@ const allOccupied = new PlanetSites(storage).snapshot(fullModel).occupied;
 assert.equal(allOccupied.length, 24, "even the all-buildings preview reuses empty reservations instead of overlapping built structures");
 assert.equal(new Set(allOccupied.map(site => site.slot)).size, 24);
 assert.ok(allOccupied.some(site => site.key === "warehouse"), "the founding store receives a terrain site, including when empty sites must be reused");
+assert.ok(!allOccupied.some(site => site.key === "service_berth"), "the Warehouse attachment does not occupy a second planetary footprint");
 assert.ok(Object.entries(initialPositions).every(([key, slot]) => allOccupied.find(site => site.key === key)?.slot === slot), "reclaiming empty plots never moves an existing building");
 siteModel.report.builds = [];
 assert.ok(!sites.snapshot(siteModel).occupied.some(site => site.key === "fuel_refinery"), "cancelled new construction releases its site");
@@ -144,15 +155,16 @@ assert.equal((worldsHtml.match(/aria-current="page"/g) ?? []).length, 1);
 const visual = controller.renderScene(model), controls = controller.render(model);
 assert.match(visual, /class="deck-planet-scene"[\s\S]*id="planet-worlds"[\s\S]*class="deck-planet__scene"/, "the scene carries the world strip and the artwork");
 assert.match(visual, /class="deck-planet__canvas"><img class="deck-planet__surface"[\s\S]*class="deck-planet__building"[\s\S]*class="deck-planet__selection"/, "art, hit targets and selected badges share the same canvas");
-assert.match(visual, /id="planet-spot-mining_complex"[^>]*style="--planet-x:7%;--planet-y:46%"/);
+assert.match(visual, /id="planet-spot-mining_complex"[^>]*style="--planet-x:7%;--planet-y:46%;--planet-scale:0.55"/, "a back-row footprint carries its recession scale");
 // Footprints must sit on the painting's terrain: below the planetary limb (whose haze
 // curves from ~19% at the centre down to ~32% at the edges) and never overlapping,
 // even across the full reserved footprint (11.5% wide, 20.4% tall on 16:9);
 // the rendered sprites are now smaller, but their terrain addresses stay fixed.
-for (const surface of ["desert", "terrestrial", "ice", "lava", "barren", "ocean", null]) {
+for (const surface of ["desert", "terrestrial", "ice", "lava", "barren", "ocean", null, ...deps["../../planet-surfaces"].HABITABLE_SURFACES]) {
   const spots = Array.from({ length: 24 }, (_, slot) => footprintAddress(surface, slot));
-  for (const { x, y } of spots) {
+  for (const { x, y, scale } of spots) {
     const limb = 19 + 13 * ((x - 50) / 50) ** 2;
+    assert.equal(scale, surface === null ? 1 : y < 50 ? .55 : y < 75 ? .78 : 1, `${surface} slot at ${x},${y} recedes with its row`);
     assert.ok(y - 10.2 >= limb + 3, `${surface} slot at ${x},${y} pokes into the limb haze (${limb.toFixed(1)})`);
     assert.ok(x - 5.75 >= 0 && x + 5.75 <= 100 && y + 10.2 <= 100, `${surface} slot at ${x},${y} leaves the painting`);
   }
@@ -165,6 +177,30 @@ const oceanModel = { ...structuredClone(initialModel), art: "/art/derived/planet
 oceanModel.body.structures = { bioharvester: 1, agroplex: 1, habitat: 1, mining_complex: 1 };
 const oceanSpots = Object.fromEntries(planetStructures(oceanModel).map(({ key, x, y }) => [key, [x, y]]));
 assert.deepEqual(oceanSpots, { mining_complex: [67, 46], bioharvester: [31, 41], agroplex: [7, 46], habitat: [31, 89] }, "the common surface kinds sit on islands and shorelines, not in the sky or the open sea");
+// All six new landscapes reach the real scene, not just the art catalogue.
+for (const surface of deps["../../planet-surfaces"].HABITABLE_SURFACES) {
+  const habitat = structuredClone(initialModel);
+  habitat.body.habitable = true;
+  habitat.body.kind = surface === "archipelago-world" ? "ocean" : "terrestrial";
+  habitat.art = "/art/terrestrial-512.png";
+  let id = 0;
+  while (planetSurface(habitat.art, habitat.system.id, { ...habitat.body, id }) !== surface) {
+    assert.ok(id++ < 100, `reachable ${surface}`);
+  }
+  habitat.body.id = id;
+  habitat.report.bodies = [habitat.body];
+  habitat.report.builds = [];
+  const panel = new PlanetPanel();
+  const scene = panel.renderScene(habitat);
+  assert.ok(scene.includes(`/habitable-v1/${surface}-1672.webp 1672w`));
+  const positions = text => [...text.matchAll(/id="planet-spot-([^\"]+)"[^>]*style="([^\"]+)"/g)].map(m => [m[1], m[2]]);
+  habitat.body.structures.mining_complex++;
+  habitat.body.population += .001;
+  habitat.body.name = "Renamed world";
+  assert.deepEqual(positions(panel.renderScene(habitat)), positions(scene), "new art preserves footprints through upgrades and reports");
+  assert.deepEqual(positions(new PlanetPanel().renderScene(habitat)), positions(scene), "reopening preserves the art coordinates");
+  assert.doesNotMatch(panel.renderScene({ ...habitat, mine: false }), /planet-spot-|planet-construction-|world-build-site/, "new art cannot invent rival structures");
+}
 assert.doesNotMatch(visual, /workforce-summary|class="deck-tabs|id="planet-page"|deck-planet__development|planet-workers|planet-review|planet-narrow|planet-wide/, "no management control lives on the map scene");
 assert.match(controls, /class="deck-page deck-planet"[\s\S]*deck-planet__lead[\s\S]*<h2>Freya III<\/h2>[\s\S]*Information delay <b>~17s<\/b>[\s\S]*workforce-summary[\s\S]*class="deck-tabs[\s\S]*id="planet-page"[\s\S]*deck-planet__development/, "identity, workforce, tabs, structure details and build actions all live in the workspace column");
 assert.doesNotMatch(controls, /deck-planet__canvas|deck-planet__building|world-switch/, "the workspace column never repeats the scene or the world strip");
@@ -391,7 +427,7 @@ function checkWorldRoute(source) {
   fixture.report.builds.push({ key: "academy", body_id: 3, queued: true });
   ui.render(world, true);
   const address = footprintAddress(planetSurface(fixture.art), Number(siteButton[1]));
-  assert.ok(stageRoot.html.includes(`id="planet-construction-academy" class="deck-planet__site is-construction" style="--planet-x:${address.x}%;--planet-y:${address.y}%"`), "the received job uses the clicked address");
+  assert.ok(stageRoot.html.includes(`id="planet-construction-academy" class="deck-planet__site is-construction" style="--planet-x:${address.x}%;--planet-y:${address.y}%;--planet-scale:${address.scale}"`), "the received job uses the clicked address");
   ui.handleAction(action(buildRoot, "builder-queue"), world);
   assert.equal(dispatched.length, beforeSite + 1, "a consumed site rejects a stale queue click");
   ui.handleAction(action(buildRoot, "builder-all-structures"), world);
@@ -522,6 +558,26 @@ if (process.argv.includes("--serve")) {
     initialModel.body.environment = "terran";
     initialModel.body.habitable = true;
   }
+  let surfaceWorlds = null;
+  if (process.argv.includes("--habitable")) {
+    const used = new Set();
+    surfaceWorlds = deps["../../planet-surfaces"].HABITABLE_SURFACES.map(surface => {
+      const world = { ...structuredClone(initialModel.body), id: 0,
+        kind: surface === "archipelago-world" ? "ocean" : "terrestrial", habitable: true, environment: "terran",
+        name: surface.replace(/-/g, " ").replace(/\b\w/g, s => s.toUpperCase()),
+        structures: { bioharvester: 1, agroplex: 1, habitat: 1, warehouse: 1, mining_complex: 1 } };
+      while (used.has(world.id) || planetSurface("/art/terrestrial-512.png", "home", world) !== surface) world.id++;
+      used.add(world.id);
+      return world;
+    });
+    initialModel.body = surfaceWorlds[0];
+    initialModel.report.builds = [];
+    initialModel.report.assignments = surfaceWorlds.flatMap(world => [
+      { ...line, body_id: world.id, workers: 1, tier: 1 },
+      { ...line, body_id: world.id, structure: "bioharvester", title: "Bioharvester", workers: 1, tier: 1, outputs: [["biomass", .5]] },
+      { ...line, body_id: world.id, structure: "agroplex", title: "Agroplex", workers: 1, tier: 1, outputs: [["provisions", 1.2]] },
+    ]);
+  }
   const { build } = await import("vite");
   const clientRoot = fileURLToPath(new URL("../", import.meta.url));
   const result = await build({ root: clientRoot, configFile: false, publicDir: false, logLevel: "error",
@@ -534,15 +590,16 @@ if (process.argv.includes("--serve")) {
         const model = ${JSON.stringify(initialModel)};
         state.playerId = '1'; state.simTime = 100;
         state.commandCenter = {x:0,y:0}; state.galaxy = {systems:[model.system],c:200,build_options:model.catalog};
-        state.systems = [model.report]; state.systems[0].bodies = [
+        state.systems = [model.report]; state.systems[0].bodies = ${JSON.stringify(surfaceWorlds)} ?? [
           {...model.body,id:2,name:'Freya II',kind:'rocky',environment:'hostile',habitable:false,structures:{mining_complex:1}},
           model.body,
           {...model.body,id:4,name:'Freya IV',kind:'gas_giant',environment:'hostile',habitable:false,structures:{},deposits:[]}
         ];
+        model.body = state.systems[0].bodies.find(b=>b.id===model.body.id);
         const root = document.getElementById('deck-workspace-body'), stageRoot = document.getElementById('deck-planet-stage-body');
         document.querySelector('.deck').style.setProperty('--deck-workspace-inset', '552px');
         document.querySelector('.deck-workspace').style.width = '552px';
-        let current = {name:'world',params:{systemId:'home',systemLabel:'Freya',bodyId:'3',worldLabel:'Freya III'}}; let sent = null;
+        let current = {name:'world',params:{systemId:'home',systemLabel:'Freya',bodyId:String(model.body.id),worldLabel:model.body.name}}; let sent = null;
         const controller = new DeckEmpireRoutes(root,document.getElementById('deck-build-workbench-body'),stageRoot,{state,renderer:{pulseSystemBody(){}},send(command){sent=command;document.getElementById('fixture-status').textContent='Directive in flight';}}, {go(route){document.getElementById('fixture-status').textContent='Opened '+route.name;},replace(route){current=route;controller.render(current,true);},notice(){},toast(){}});
         bindMarketDerive(()=>({send(command){sent=command;document.getElementById('fixture-status').textContent=JSON.stringify(command);}}),()=>controller.composedFit);
         installPressGuard();
@@ -575,5 +632,6 @@ if (process.argv.includes("--serve")) {
     } else { response.writeHead(404).end(); return; }
     try { response.end(readFileSync(path)); } catch { response.writeHead(404).end(); }
   });
-  server.listen(0, "127.0.0.1", () => console.log(`Planet fixture: http://127.0.0.1:${server.address().port}/`));
+  const port = Number(process.argv.find(arg => arg.startsWith("--port="))?.slice("--port=".length)) || 0;
+  server.listen(port, "127.0.0.1", () => console.log(`Planet fixture: http://127.0.0.1:${server.address().port}/`));
 }

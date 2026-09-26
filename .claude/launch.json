@@ -10,8 +10,36 @@
     {
       "name": "stellar-client",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "client", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "client",
+        "run",
+        "dev"
+      ],
       "port": 5173
+    },
+    {
+      "name": "planet-fixture",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "client/scripts/test-planet-panel.mjs",
+        "--serve",
+        "--habitable",
+        "--port=4174"
+      ],
+      "port": 4174,
+      "url": "http://127.0.0.1:4174"
+    },
+    {
+      "name": "planet-fixture-system",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "client/scripts/test-planet-panel.mjs",
+        "--serve",
+        "--port=4175"
+      ],
+      "port": 4175,
+      "url": "http://127.0.0.1:4175"
     }
   ]
 }

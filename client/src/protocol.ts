@@ -160,6 +160,8 @@ export interface BuildState {
 /// deposits ride the survey ladder (null when unsurveyed); structures and
 /// population are OWNER-ONLY (empty/0 for rivals).
 export interface BodyView {
+  founding_camp?: { profile: FoundingProfile; completed: SettlementProject[] } | null;
+  population_capacity?: number | null;
   id: number;
   name: string;
   /// rocky | terrestrial | ocean | ice | gas_giant
@@ -248,12 +250,13 @@ export interface RefiningSiteView {
 export type FreightPort = { kind: "system"; id: EntityId } | { kind: "hub" };
 export type Manifest = Partial<Record<Commodity, number>>;
 export interface RouteStop { port: FreightPort; load: Manifest; unload: Manifest; sell: boolean }
-export interface FreightRoute { name: string; stops: RouteStop[]; fuel_reserve: number; escort: EntityId | null; repeat: boolean }
+export interface FreightRoute { name: string; stops: RouteStop[]; fuel_reserve: number; escort: EntityId | null; repeat: boolean; transit?: TransitMode; shopping_budget?: number | null }
 export type OutpostKind = "extraction" | "research";
 export type ColonyProjectKind = "orbital_assembly" | "agricultural_export" | "deep_extraction";
 export type ProjectTarget = { kind: "cruiser" | "academy" | "colony" } | { kind: "development"; project: ColonyProjectKind };
 export interface ColonyProject { kind: ColonyProjectKind; body: number; commodity: Commodity; work: number; active: boolean; supplied: boolean; outputs: [Commodity, number][] }
 export interface SiteIndustry {
+  refining_reserve?: Manifest;
   reservations: { target: ProjectTarget; goods: Manifest }[];
   outpost: { kind: OutpostKind; body: number; commodity: Commodity; supplied: boolean; rate: number } | null;
   projects: ColonyProject[];
@@ -1071,8 +1074,9 @@ export interface GhostView {
 }
 
 // A fleet's transit throttle (§Part 4). `full` = formation speed (loud at flank);
-// `stealth` = creep at STEALTH_FRACTION (quiet, ~2× trip).
-export type TransitMode = "full" | "stealth";
+// `stealth` = creep at STEALTH_FRACTION (quiet, ~2× trip); freighter `economy`
+// = 25% speed AND 10% fuel per journey. Missing legacy settings remain full.
+export type TransitMode = "full" | "stealth" | "economy";
 
 // Total ship count implied by a ghost: exact when composition is known,
 // otherwise null (you only have the bucket).
@@ -1102,8 +1106,13 @@ export function formatId(id: PlayerId): string {
 }
 
 // Client → server.
+export type FoundingProfile = "mineral_highlands" | "verdant_lowlands" | "coastal_plains";
+export type SettlementProject = "prospect" | "surface_workings" | "storehouse" | "quarters";
 export type ClientMsg =
+  | { type: "FoundColony"; profile: FoundingProfile }
+  | { type: "DevelopSettlement"; system_id: EntityId; body_id: number; project: SettlementProject }
   | { type: "SetFreightRoute"; fleet_id: EntityId; route: FreightRoute | null }
+  | { type: "SetRefiningReserve"; system_id: EntityId; ore: number; fuel: number }
   | { type: "DeployOutpost"; fleet_id: EntityId; system_id: EntityId; body_id: number; outpost: OutpostKind; commodity: Commodity }
   | { type: "SkimFuel"; fleet_id: EntityId; system_id: EntityId }
   | { type: "ReserveProject"; system_id: EntityId; target: ProjectTarget; reserve: boolean }
@@ -1169,7 +1178,7 @@ export type ClientMsg =
   | { type: "TransferSpecialists"; from: EntityId; to: EntityId; manifest: Record<string, number> }
   // §battles-take-time — withdraw an engaged fleet (light-delayed).
   | { type: "Withdraw"; fleet_id: EntityId }
-  // §Part 4 — set a fleet's transit throttle (Full/Stealth).
+  // Set a fleet's transit throttle (Full/Stealth/freighter Economy).
   | { type: "SetFleetTransit"; fleet_id: EntityId; mode: TransitMode }
   // §FLEETS Part 3 — request a projected engagement estimate (read-only query).
   | { type: "EstimateEngagement"; attacker: EntityId; target: EntityId }
@@ -1722,10 +1731,16 @@ export type FoundingStage =
   | "establish_colony"
   | "complete"
   | "build_second_freighter"
-  | "grow_business";
+  | "grow_business"
+  | "local_recovery"
+  | "prepare_export";
 
 export interface FoundingView {
   stage: FoundingStage;
+  local_opening?: boolean;
+  recovery_site?: EntityId | null;
+  recovered?: boolean;
+  export_dispatched?: boolean;
   protected: boolean;
   protection_min_until: number;
   protection_max_until: number;
@@ -1741,6 +1756,7 @@ export interface FoundingView {
 
 // Server → client.
 export type ServerMsg =
+  | { type: "FoundingOffer" }
   | {
       /// §over-capacity homes: the star chart grew after Welcome (a join past
       /// the slot pool minted a new home system). Replaces galaxy.systems.

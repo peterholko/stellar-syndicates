@@ -11,6 +11,11 @@ use std::collections::BTreeSet;
 mod planning;
 mod logistics;
 mod expeditions;
+mod development;
+mod strategy;
+mod warfare;
+mod networks;
+mod opening;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Commitment { amount: f64, receiver_at: f64 }
@@ -52,6 +57,18 @@ pub(super) struct Bot {
     expansion: Option<EntityId>,
     #[serde(default)]
     status: String,
+    #[serde(default)]
+    development: Option<DevelopmentGoal>,
+    #[serde(default)]
+    campaign: Option<warfare::Campaign>,
+    #[serde(default)]
+    freight_homes: BTreeMap<EntityId, EntityId>,
+    #[serde(default)]
+    economy_turn: usize,
+    #[serde(default)]
+    supply_dispatches: BTreeMap<EntityId, networks::SupplyDispatch>,
+    #[serde(default)]
+    reconnaissance: BTreeMap<EntityId, expeditions::Reconnaissance>,
 }
 
 impl Bot {
@@ -62,16 +79,23 @@ impl Bot {
             && self.commitments.iter().all(|c| c.amount.is_finite() && c.amount >= 0.0 && c.receiver_at.is_finite())
             && self.returns.values().all(|r| r.destination.x.is_finite() && r.destination.y.is_finite() && r.issued_at.is_finite())
             && self.avoided.values().all(|t| t.is_finite())
+            && self.development.as_ref().is_none_or(|g| g.since.is_finite() && g.target > 0)
+            && self.campaign.as_ref().is_none_or(|c| c.since.is_finite() && c.deadline.is_finite() && c.deadline >= c.since)
+            && self.supply_dispatches.values().all(|s| s.until.is_finite())
+            && self.reconnaissance.values().all(|r| r.since.is_finite() && r.deadline.is_finite()
+                && r.point.x.is_finite() && r.point.y.is_finite())
     }
 }
 
 #[derive(Clone)]
 struct Observation {
     owner: PlayerId,
+    capital: EntityId,
     now: f64,
     cc: Vec2,
     hub: Vec2,
     c: f64,
+    siege_secs: f64,
     home: sim::information::SiteReport,
     sites: Vec<sim::information::SiteReport>,
     prospects: Vec<Prospect>,
@@ -80,6 +104,12 @@ struct Observation {
     account: Option<MarketAccountSample>,
     market_at: f64,
     exported: bool,
+    founding_stage: sim::FoundingStage,
+    local_opening: bool,
+    opening_recovered: bool,
+    recovery_site: Option<sim::sites::SiteReport>,
+    expansion_unlocked: bool,
+    survey_candidates: Vec<EntityId>,
     ticker: Option<view::MarketTickerSample>,
     research: sim::research::ResearchState,
     available_research: Vec<String>,
@@ -87,16 +117,23 @@ struct Observation {
     shipments: Vec<sim::tca::Shipment>,
     /// The public chart contains positions, NOT unexplored resources/ownership.
     chart: Vec<(EntityId, Vec2)>,
+    /// Scout intelligence and diplomatic notices already received at command.
+    military_sites: Vec<warfare::MilitarySite>,
+    relations: BTreeMap<PlayerId, sim::diplomacy::RelationState>,
+    captains: Vec<sim::Captain>,
 }
 
 #[derive(Clone)]
 struct Prospect { id: EntityId, pos: Vec2, score: f64 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct Project {
     what: BuildKind,
     body: u32,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DevelopmentGoal { project: Project, target: u32, since: f64 }
 
 impl GameLoop {
     /// Explicit configuration applies only to a fresh galaxy. Resuming without
@@ -119,7 +156,9 @@ impl GameLoop {
                 slot, next_think: self.world.time + 1.0 + slot as f64 * 0.43,
                 waits: BTreeMap::new(), surveys: BTreeMap::new(), survey_started: BTreeSet::new(), commands_sent: 0,
                 commitments: Vec::new(), returns: BTreeMap::new(), avoided: BTreeMap::new(),
-                route_visits: BTreeMap::new(), trade_cycles: 0, expansion: None, status: String::new(),
+                route_visits: BTreeMap::new(), trade_cycles: 0, expansion: None, status: String::new(), development: None,
+                campaign: None, freight_homes: BTreeMap::new(), economy_turn: 0, supply_dispatches: BTreeMap::new(),
+                reconnaissance: BTreeMap::new(),
             });
             self.pending.push(Command::AddPlayer {
                 id: owner,
@@ -143,10 +182,15 @@ impl GameLoop {
         let home = sites.iter().find(|report| report.system.id == home_id)?.clone();
         // Only geology already surveyed by this corporation may inform a colony
         // choice. Ownership is also an ARRIVED report, never current world truth.
+        let intel = self.world.information.intel(owner, cc, c, now);
         let prospects = corp.surveyed.iter().filter_map(|id| {
             let report = self.world.information.site(*id, cc, c, now)?;
             let s = &report.system;
             if s.owner.is_some() || !s.bodies.iter().any(|b| b.habitable) { return None; }
+            // Unclaimed is not undefended. A reported pirate base needs a
+            // military operation, not a civilian hull parked there forever.
+            // A later ARRIVED clearance report may make it a candidate again.
+            if intel.get(id).is_some_and(|s| s.enclave_tier > 0) { return None; }
             let score = s.bodies.iter().flat_map(|b| &b.deposits).map(|d|
                 d.richness * if d.resource == C::Volatiles { 2.0 } else if d.resource.is_ore() { 1.5 } else { 1.0 })
                 .sum::<f64>();
@@ -173,11 +217,32 @@ impl GameLoop {
             view::NodeEffects { veil: &veil, deep_scan: &deep_scan });
         ghosts.sort_by_key(|g| g.id);
         let market_time = now - sim::transit::delay(self.world.hub, cc, c);
+        let military_sites = intel.iter().filter_map(|(&id, intel)| {
+            let report = self.world.information.site(id, cc, c, now)?;
+            let system = &report.system;
+            if system.owner == Some(owner) || system.owner.is_some_and(|o| self.world.known_ally(owner, o, now)) {
+                return None;
+            }
+            (intel.enclave_tier > 0 || system.owner.is_some()).then_some(warfare::MilitarySite {
+                id, pos: system.pos, owner: system.owner, intel: *intel,
+                blockade: system.blockade,
+            })
+        }).collect();
+        let relations = self.world.diplomacy.values().flat_map(|r| r.values())
+            .filter_map(|r| r.other(owner).map(|other| (other, r.known_by(owner)))).collect();
         Some(Observation {
-            owner, now, cc, hub: self.world.hub, c, home, sites, prospects, ghosts, fighting,
+            owner, capital: home_id, now, cc, hub: self.world.hub, c, siege_secs: self.world.siege_duration_secs(), home, sites, prospects, ghosts, fighting,
             account: self.market_accounts.at(owner, market_time).cloned(),
             market_at: market_time,
             exported: corp.founding.sale_report_at.is_some(),
+            // These are the same CC tutorial ledger and public candidate ids
+            // served in FoundingView, not an early read of survey geology.
+            founding_stage: corp.founding.stage,
+            local_opening: corp.founding.local_opening,
+            opening_recovered: corp.founding.recovery_report_at.is_some_and(|at| at <= now),
+            recovery_site: corp.founding.recovery_site.and_then(|id| self.world.exploration.sites.get(&id)).and_then(|s| s.known.get(&owner)).cloned(),
+            expansion_unlocked: corp.founding.expansion_unlocked(),
+            survey_candidates: corp.founding.survey_candidates.clone(),
             ticker: self.prices.at(market_time).cloned(),
             // Completed research and arrived survey knowledge are CC ledgers,
             // exactly like the human research panel; metrics use arrived sites.
@@ -189,6 +254,8 @@ impl GameLoop {
             surveyed: corp.surveyed.clone(),
             shipments: self.world.information.shipments(owner, cc, c, now).into_iter().map(|(s, _)| s).collect(),
             chart: self.world.systems.iter().map(|s| (s.id, s.pos)).collect(),
+            military_sites, relations,
+            captains: self.world.information.captains(owner, cc, c, now),
         })
     }
 
@@ -227,7 +294,8 @@ impl Observation {
     fn count(&self, kind: H) -> u32 {
         self.own().flat_map(|g| g.composition.iter().flatten())
             .filter(|s| s.kind == kind).map(|s| s.count).sum::<u32>()
-            + self.home.builds.iter().filter(|b| b.what == BuildKind::Ship { ship: kind }).count() as u32
+            + self.home.builds.iter().chain(self.sites.iter().filter(|s| s.system.id != self.home.system.id)
+                .flat_map(|s| &s.builds)).filter(|b| b.what == BuildKind::Ship { ship: kind }).count() as u32
     }
 
     fn round_trip(&self, pos: Vec2) -> f64 {
@@ -244,7 +312,7 @@ impl Observation {
     }
 
     fn freight_limit(&self, fleet: &GhostView, dest: Vec2) -> u32 {
-        let per_mass = self.fuel_per_mass(fleet.pos, dest);
+        let per_mass = self.fuel_per_mass(fleet.pos, dest) * cruise_fuel_mult(fleet);
         if per_mass <= 0.0 { return capacity(fleet); }
         let mass_budget = fleet.fuel.unwrap_or(0.0) / per_mass;
         (((mass_budget - hull_mass(fleet)).max(0.0) / sim::ship::CARGO_MASS_PER_UNIT).floor() as u32)
@@ -253,7 +321,7 @@ impl Observation {
 
     fn enough_fuel(&self, fleet: &GhostView, dest: Vec2) -> bool {
         let mass = hull_mass(fleet) + cargo_used(fleet) as f64 * sim::ship::CARGO_MASS_PER_UNIT;
-        fleet.fuel.is_some_and(|fuel| fuel >= self.fuel_per_mass(fleet.pos, dest) * mass)
+        fleet.fuel.is_some_and(|fuel| fuel >= self.fuel_per_mass(fleet.pos, dest) * mass * cruise_fuel_mult(fleet))
     }
 
     fn stock(&self, good: C) -> f64 {
@@ -269,9 +337,10 @@ impl Observation {
     }
 
     fn export_reserve(&self, good: C, wanted: &BTreeMap<C, f64>) -> Option<f64> {
-        let refinery_product = self.home.system.tier(K::Smelter) > 0
-            && matches!(good, C::Alloys | C::ConductiveMetals | C::Titanium | C::Silicates | C::RareElements);
-        if !good.is_ore() && good != C::Provisions && !refinery_product { return None; }
+        let refinery_product = self.home.system.bodies.iter().any(|b| b.structures.iter().any(|(&k, &t)| t > 0
+            && sim::production::assigned_converter(k, b.assignments.get(&k))
+                .is_some_and(|r| r.outputs().any(|(c, _)| c == good))));
+        if sim::production::extraction_structure(good).is_none() && good != C::Provisions && !refinery_product { return None; }
         let reserve = wanted.get(&good).copied().unwrap_or(0.0);
         Some(if good.is_ore() && self.home.system.tier(K::Smelter) > 0 || refinery_product {
             reserve.max(20.0)
@@ -284,6 +353,8 @@ impl Observation {
                 => sim::explore::UNSTABLE_COST_MULT,
             BuildKind::Ship { ship } if ship.is_combatant() =>
                 sim::research::mod_of(&self.research, sim::research::ModKey::WarshipCost),
+            BuildKind::Ship { ship: H::Colony } =>
+                sim::research::mod_of(&self.research, sim::research::ModKey::ColonyCost),
             _ => 1.0,
         };
         sim::build::recipe_for(project.what).costs.iter().map(|(c, n)| (*c, n * mult)).collect()
@@ -295,6 +366,7 @@ impl Observation {
             .any(|b| b.what == BuildKind::Upgrade { upgrade: kind }) { return None; }
         let cap = sim::build::max_buildable_tier(kind, sim::research::unlocked_structure_tier(&self.research, kind));
         if tier > cap { return None; }
+        if sim::build::yard_prereq(kind).is_some_and(|(k, n)| system.tier(k) < n) { return None; }
         // Prefer the natural deposit/inhabited site, but use another legal body
         // rather than repeatedly ordering construction into a full slot pool.
         let preferred = system.site_for(kind);
@@ -307,6 +379,7 @@ impl Observation {
     }
 
     fn ship(&self, kind: H, desired: u32) -> Option<Project> {
+        if kind == H::Colony && !self.expansion_unlocked { return None; }
         if self.count(kind) >= desired || (sim::ship::requires_hull_unlock(kind)
             && !sim::research::has_hull(&self.research, kind)) { return None; }
         let (yard, tier) = sim::build::yard_for(kind);
@@ -334,6 +407,13 @@ fn hull_mass(ghost: &GhostView) -> f64 {
     ghost.composition.iter().flatten().map(|s| s.kind.hull_mass() * s.count as f64).sum()
 }
 
+fn cruise_fuel_mult(ghost: &GhostView) -> f64 {
+    if ghost.transit == Some(sim::ship::TransitMode::Economy)
+        && ghost.composition.as_ref().is_some_and(|stacks| !stacks.is_empty()
+            && stacks.iter().all(|s| s.count == 0 || s.kind.is_player_freighter()))
+    { sim::ship::ECONOMY_FUEL_MULT } else { 1.0 }
+}
+
 impl Bot {
     fn ready(&self, key: &str, now: f64) -> bool {
         self.waits.get(key).is_none_or(|until| *until <= now)
@@ -344,54 +424,62 @@ impl Bot {
     }
 
     fn project(&self, p: &Observation) -> Option<Project> {
-        // Fix the binding bottleneck before adding more idle hulls. Different
-        // temperaments still prioritize science/trade, but every plan pays its
-        // operating reserve. Replacement hulls and the starter mine come first.
-        p.structure(K::MiningComplex, 1)
-            .or_else(|| (p.fuel_target() >= p.home.system.storage_cap() * 0.6 - 1e-9)
-                .then(|| p.structure(K::Warehouse, p.home.system.tier(K::Warehouse) + 1)).flatten())
-            .or_else(|| p.structure(K::Shipyard, 1))
-            .or_else(|| p.ship(H::TinyFreighter, 1))
-            .or_else(|| p.structure(K::Academy, 1))
-            .or_else(|| p.ship(H::Scout, 1))
-            .or_else(|| p.structure(K::Smelter, 1))
-            .or_else(|| (p.fuel_critical()).then(|| p.structure(K::VolatileHarvester, 1)).flatten())
-            .or_else(|| (p.home.system.tier(K::VolatileHarvester) > 0).then(|| p.structure(K::FuelRefinery, 1)).flatten())
-            .or_else(|| (self.expansion.is_some()).then(|| p.ship(H::Colony, 1)).flatten())
-            .or_else(|| p.ship(H::SmallFreighter, 1))
-            .or_else(|| (p.own().filter(|g| g.kind.is_player_freighter()).count() < 2
-                && p.own().any(|f| f.kind.is_player_freighter()
-                    && p.route_margin(f, &p.exports(&BTreeMap::new(), p.safe_load(f, p.home.system.pos, p.hub)), &BTreeMap::new(), None) > 0.0))
-                .then(|| p.ship(H::TinyFreighter, 2)).flatten())
-            .or_else(|| p.structure(K::Warehouse, 2))
-            .or_else(|| p.structure(K::MiningComplex, 2))
-            .or_else(|| p.structure(K::Shipyard, 2))
-            .or_else(|| p.structure(K::Habitat, 2))
+        if p.home.system.id != p.capital { return self.strategic_project(p); }
+        if let Some(goal) = &self.development {
+            // Paid construction is already supplied. Keep the goal until its
+            // completion report, but don't buy a second copy of its recipe.
+            return (!p.home.builds.iter().any(|b| b.what == goal.project.what))
+                .then_some(goal.project);
+        }
+        self.next_project(p)
+    }
+
+    fn next_project(&self, p: &Observation) -> Option<Project> {
+        self.strategic_project(p)
     }
 
     fn desired_stock(&self, p: &Observation, project: Option<Project>) -> BTreeMap<C, f64> {
         let mut wanted = project.map(|goal| p.project_costs(goal)).unwrap_or_default();
         let fuel = p.fuel_target();
         *wanted.entry(C::Fuel).or_default() += if p.fuel_critical() { fuel } else { fuel * 0.5 };
-        *wanted.entry(C::Provisions).or_default() += if p.stock(C::Provisions) < 10.0 { 40.0 } else { 20.0 };
-        if let Some(programme) = p.research.active.as_deref().and_then(sim::research::programme) {
+        let food = (p.home.system.population() * sim::colony::PROVISIONS_PER_MILLION_PER_S
+            * p.supply_lead() * 2.0).min(p.home.system.storage_cap() * 0.25)
+            .max(if p.stock(C::Provisions) < 10.0 { 40.0 } else { 20.0 });
+        *wanted.entry(C::Provisions).or_default() += food;
+        if let Some(programme) = p.research.active.as_deref().and_then(sim::research::programme)
+            .filter(|_| p.home.system.id == p.capital || p.home.system.tier(K::Academy) > 0) {
+            // Ten minutes of electronics cannot sustain a two-hour programme
+            // behind a longer freight lead. Buy two delivery windows, bounded
+            // by the remaining work (normal research still pays every unit).
+            let rate = p.home.academies.iter().map(|a| a.rate).sum::<f64>().max(1.0);
+            let work = (p.supply_lead() * 2.0 * rate)
+                .min((sim::research::tier_cost_secs(programme.tier) - p.research.progress).max(0.0));
             for (good, rate) in sim::research::basket(programme.field, programme.tier) {
-                *wanted.entry(good).or_default() += (rate * 600.0).ceil();
+                *wanted.entry(good).or_default() += (rate * work).ceil();
             }
         }
+        self.industry_buffers(p, project, &mut wanted);
+        // An issued transfer earmarks source goods; it is not destination
+        // stock and can never satisfy a build's actual-inventory check.
+        for c in C::ALL { *wanted.entry(c).or_default() += self.reserved_supply(p, c) as f64; }
         wanted
     }
 
     fn decide(&mut self, p: &Observation) -> Option<Command> {
         self.refresh(p);
-        if let Some(cmd) = self.rescue(p).or_else(|| self.staff(p)).or_else(|| self.guards(p))
+        self.refresh_development(p);
+        self.refresh_network(p);
+        if let Some(cmd) = self.rescue(p).or_else(|| self.recover_military(p)).or_else(|| self.staff(p))
+            .or_else(|| self.military(p)).or_else(|| self.guards(p)).or_else(|| self.officers(p))
+            .or_else(|| self.local_opening(p))
             .or_else(|| self.scouts(p)).or_else(|| self.colonies(p)) { return Some(cmd); }
         let project = self.project(p);
         let wanted = self.desired_stock(p, project);
-        if let Some(cmd) = self.routes(p, &wanted) { return Some(cmd); }
+        if let Some(cmd) = self.network_routes(p) { return Some(cmd); }
         if self.ready("build", p.now) && p.home.builds.is_empty() {
             if let Some(project) = project {
-                let essential = matches!(project.what, BuildKind::Upgrade { upgrade: K::MiningComplex });
+                let essential = matches!(project.what, BuildKind::Upgrade { upgrade: K::MiningComplex })
+                    || self.recovery_project(p) == Some(project);
                 if (essential || !self.recovering(p) && !p.fuel_critical())
                     && p.project_costs(project).iter().all(|(c, n)| p.stock(*c) + 1e-9 >= *n) {
                     self.wait("build".into(), p, p.home.system.pos);
@@ -408,24 +496,17 @@ impl Bot {
         }
         if self.ready("research", p.now) && p.home.system.tier(K::Academy) > 0
             && p.research.active.is_none() && p.research.queue.is_empty() && !self.recovering(p) {
-            let raw_trade_loses = p.home.system.tier(K::Smelter) == 0 && p.own()
-                .filter(|f| f.kind.is_player_freighter()).all(|f|
-                    p.route_margin(f, &p.exports(&wanted, p.safe_load(f, p.home.system.pos, p.hub)), &BTreeMap::new(), None) <= 0.0);
-            let bottleneck = if p.fuel_critical() { "prop_bunkerage" }
-                else if raw_trade_loses { "mat_enrichment" }
-                else if p.own().all(|g| !g.kind.is_player_freighter() || capacity(g) <= 50) { "prop_freight_frames" }
-                else if self.slot % 4 == 2 { "comp_sensor_gain" } else { "mat_ore_recovery" };
-            // Unlock the missing capability before committing a young Academy
-            // to an eight-hour Tier II efficiency programme.
-            let priorities = [bottleneck, "mat_enrichment", "prop_bunkerage", "prop_freight_frames",
-                "prop_efficient_burns", "mat_ore_recovery", "prop_drive_tuning", "comp_sensor_gain", "weap_fire_control"];
-            if let Some(id) = priorities.iter().find(|id| p.available_research.iter().any(|s| s == **id)) {
+            if let Some(id) = self.next_research(p, &wanted) {
                 self.wait("research".into(), p, p.home.system.pos);
                 self.status = "researching the reported operating bottleneck".into();
-                return Some(Command::SetResearchQueue { player_id: p.owner, queue: vec![(*id).into()] });
+                return Some(Command::SetResearchQueue { player_id: p.owner, queue: vec![id.into()] });
             }
         }
-        self.support_colonies(p).or_else(|| self.market(p, &wanted))
+        // Rotate the first serviced port; a home buying one batch every think
+        // must not starve its colonies (and colonies must not monopolize cash).
+        let command = self.network_economy(p, &wanted);
+        if command.is_none() { self.explain_blocker(p, project); }
+        command
     }
 }
 

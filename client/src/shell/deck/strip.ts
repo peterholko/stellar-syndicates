@@ -1,4 +1,4 @@
-import { guardCapable, jumpCapable, shipKindLabel } from "../../core/derive/fleet";
+import { economyCapable, guardCapable, jumpCapable, shipKindLabel } from "../../core/derive/fleet";
 import { gravityWellAt, nearestKnownDock } from "../../core/derive/geo";
 import { intentSummary } from "../../core/derive/orders";
 import { intentReadinessWarnings } from "../../core/derive/readiness";
@@ -142,7 +142,7 @@ export class DeckCommandStrip {
       this.ctx.intent.beginFleetCommand({ type: "HoldFleet", ship_id: fleet.id });
     } else if (action === "transit" && fleet) {
       const mode = button.dataset.mode as TransitMode | undefined;
-      if (mode !== "full" && mode !== "stealth") return;
+      if (mode !== "full" && mode !== "stealth" && !(mode === "economy" && economyCapable(fleet))) return;
       this.ctx.intent.beginFleetCommand({ type: "SetFleetTransit", fleet_id: fleet.id, mode });
     } else if (action === "recall" && fleet) {
       this.ctx.intent.beginFleetCommand({ type: "RecallRaid", raider_id: fleet.id });
@@ -256,6 +256,7 @@ export class DeckCommandStrip {
     return `<span class="deck-command-transit${pending ? " is-pending" : ""}" role="group" aria-label="Transit mode" title="${esc(hint)}">` +
       `<span>Transit${pending ? " · sent" : ""}</span>` +
       `<button type="button" data-deck-command="transit" data-mode="full" aria-pressed="${current === "full"}" ${pending ? "disabled" : ""} aria-label="Set full-speed transit" title="${pending ? esc(hint) : "Travel at full speed."}">Full</button>` +
+      (economyCapable(fleet) ? `<button type="button" data-deck-command="transit" data-mode="economy" aria-pressed="${current === "economy"}" ${pending ? "disabled" : ""} title="${pending ? esc(hint) : "25% speed, 10% Fuel per journey."}">Economy</button>` : "") +
       `<button type="button" data-deck-command="transit" data-mode="stealth" aria-pressed="${current === "stealth"}" ${pending ? "disabled" : ""} aria-label="Set stealth transit" title="${pending ? esc(hint) : "Trade speed for a smaller detection signature."}">Stealth</button></span>`;
   }
 

@@ -14,7 +14,7 @@ import {
   warehouseUnits,
   utilityRefitChoices,
 } from "../../core/derive/market";
-import { dockedAtSystem, fleetCargoCapacity, guardCapable, jumpCapable, shipKindLabel, shipRoleLore } from "../../core/derive/fleet";
+import { dockedAtSystem, economyCapable, fleetCargoCapacity, guardCapable, jumpCapable, shipKindLabel, shipRoleLore } from "../../core/derive/fleet";
 import { tenderStatus } from "../../core/derive/tenders";
 import { fuelTransferHtml } from "../fueltransfer";
 import { missionCommand, missionHtml, pirateFactionHtml } from "../mission";
@@ -23,7 +23,7 @@ import { fleetReadiness, dispatchWarnings } from "../../core/derive/readiness";
 import { pirateSite } from "../../core/derive/pirates";
 import { foundingHomeSystemId } from "../../core/derive/geo";
 import { postVictoryHandoff } from "../../core/derive/handoff";
-import { FOUNDING_STEP, FOUNDING_TOTAL, foundingBusinessGoals, foundingScoutGoal } from "../../core/derive/founding";
+import { FOUNDING_STEP, FOUNDING_TOTAL, foundingBusinessGoals, foundingScoutGoal, foundingLocalGoals } from "../../core/derive/founding";
 import { jumpRangeAt } from "../../core/derive/nebula";
 import {
   countClassLabel,
@@ -183,8 +183,12 @@ export class MobileSurfaces {
         : "shield active"
       : "shield ended";
     const content = founding.stage === "build_scout" ? foundingScoutGoal(this.homeSystem()) : foundingCopy(founding.stage);
+    if (founding.local_opening && founding.stage === "grow_business") {
+      content.title = "Shipment underway";
+      content.copy = "Your first session can end here. Your confirmed return route can sell and bring supplies home; check its report next session. A manual one-way order still needs return instructions.";
+    }
     const home = this.ctx.state.systems.find(s => s.id === this.homeSystemId());
-    const goals = founding.stage === "grow_business" ? foundingBusinessGoals(this.ctx.state, home) : [content];
+    const goals = foundingLocalGoals(this.ctx.state, home) ?? (founding.stage === "grow_business" ? foundingBusinessGoals(this.ctx.state, home) : [content]);
     setHtml(root,
       `<header><span>Founding ${step}/${FOUNDING_TOTAL} · ${shield}</span>` +
       `<button type="button" data-mobile-act="founding-toggle" aria-label="${this.foundingMinimized ? "Expand" : "Minimize"} tutorial">${this.foundingMinimized ? "+" : "−"}</button></header>` +
@@ -263,7 +267,7 @@ export class MobileSurfaces {
         }
         break;
       case "fleet-transit":
-        if (button.dataset.id && (button.dataset.mode === "full" || button.dataset.mode === "stealth")) {
+        if (button.dataset.id && (button.dataset.mode === "full" || button.dataset.mode === "stealth" || button.dataset.mode === "economy")) {
           this.ctx.intent.beginFleetCommand({ type: "SetFleetTransit", fleet_id: button.dataset.id, mode: button.dataset.mode });
         }
         break;
@@ -583,6 +587,7 @@ export class MobileSurfaces {
     const range = jumpRangeAt(this.ctx.state.galaxy, fleet.pos);
     const commandHelp = `<details class="m-details m-help"><summary>Command rules</summary><div>` +
       `<p>A movement order automatically undocks a berthed fleet. Full speed is fastest but makes dark hulls easier to detect; Stealth is quieter and takes about twice as long.</p>` +
+      (economyCapable(fleet) ? `<p>Economy uses 25% speed and 10% Fuel per journey. Travel takes four times as long.</p>` : "") +
       (jump ? `<p>Jump destinations must be within ${fmt(range)} su of the served sighting, with both ends clear of gravity wells. The true fleet is checked when the delayed order arrives.</p>` : "") +
       (guard ? `<p>A Guard assignment is light-delayed. Once it arrives, defensive reactions happen locally without another command-center round trip.</p>` : "") +
       `</div></details>`;
@@ -590,6 +595,7 @@ export class MobileSurfaces {
       `<button type="button" class="m-primary" data-mobile-act="fleet-move" data-id="${esc(fleet.id)}">Move</button>` +
       jump + guard + recall + unload + rescue +
       `<button type="button" data-mobile-act="fleet-transit" data-id="${esc(fleet.id)}" data-mode="full">Full speed</button>` +
+      (economyCapable(fleet) ? `<button type="button" data-mobile-act="fleet-transit" data-id="${esc(fleet.id)}" data-mode="economy">Economy · 25% speed / 10% Fuel</button>` : "") +
       `<button type="button" data-mobile-act="fleet-transit" data-id="${esc(fleet.id)}" data-mode="stealth">Stealth</button>` +
       `</div><small class="m-hint">Select an Interceptor, then tap a rival to raid. Long-press the rival to destroy.</small>${commandHelp}</section>` +
       this.emplacementControls(fleet);
@@ -867,6 +873,11 @@ export class MobileSurfaces {
   private runFoundingAction(action: string): void {
     const founding = this.ctx.state.founding;
     if (!founding) return;
+    if (action === "recovery") {
+      this.ctx.state.selectedExplorationSiteId = founding.recovery_site ?? null;
+      this.hooks.openSheet({ id: "operations" }); return;
+    }
+    if (action === "opening-imports") { this.hooks.openSheet({ id: "logistics" }); return; }
     if (action === "market") {
       this.marketTab = "warehouse";
       this.hooks.openSheet({ id: "market" });
@@ -889,7 +900,7 @@ export class MobileSurfaces {
       this.hooks.focusFleet(founding.privateer);
       return;
     }
-    if (["freighter", "scout", "colony"].includes(action)) {
+    if (["freighter", "convoy", "scout", "colony"].includes(action)) {
       const kind = action === "freighter" ? "convoy" : action;
       const fleet = this.ctx.state.ghosts.find((ghost) => ghost.own && ghost.composition?.some((stack) => (kind === "convoy" ? isPlayerFreighter(stack.kind) : stack.kind === kind)));
       if (fleet) this.hooks.focusFleet(fleet.id);
@@ -897,10 +908,15 @@ export class MobileSurfaces {
     }
     const home = this.homeSystem();
     if (!home) return;
+    if (action === "home-development") {
+      const body = home.bodies.find(b => b.founding_camp);
+      if (body) this.hooks.openSheet({ id: "planet", props: { systemId: home.id, bodyId: body.id } });
+      return;
+    }
     if (action.startsWith("build-")) {
-      const structure = action.slice(6);
+      const structure = action.slice(6).replaceAll("-", "_");
       const ships = ["convoy", "scout"].includes(structure);
-      const body = ships ? home.bodies.find(b => (b.structures.shipyard ?? 0) > 0)
+      const body = structure === "service_berth" ? home.bodies.find(b => (b.structures.warehouse ?? 0) > 0) : ships ? home.bodies.find(b => (b.structures.shipyard ?? 0) > 0)
         : [...home.bodies].sort((a,b) => (structure === "academy" ? (b.infrastructure_slots ?? 0) - (a.infrastructure_slots ?? 0) : (b.industrial_slots ?? 0) - (a.industrial_slots ?? 0)))[0];
       if (body) this.hooks.openSheet({ id: ships ? "shipyard" : "build", props: { systemId: home.id, bodyId: body.id } });
     } else if (["academy", "shipyard", "smelter"].includes(action)) {
@@ -948,6 +964,8 @@ export class MobileSurfaces {
 }
 
 function foundingCopy(stage: keyof typeof FOUNDING_STEP): { title: string; copy: string; action: string; label: string } {
+  if (stage === "local_recovery") return { title: "Build, explore, recover", copy: "Guard the local recovery, return its supplies home and fit the Scout.", action: "recovery", label: "Open recovery" };
+  if (stage === "prepare_export") return { title: "Ready for the long voyage", copy: "Dispatch your guarded export, then leave the voyage to your fleet. No need to wait online.", action: "opening-imports", label: "Plan export & return" };
   switch (stage) {
     case "grow_business": return { title: "Grow your business", copy: "Expand exports or start refining. Either advances the tutorial; both remain open.", action: "home", label: "Open home" };
     case "build_shipyard": return { title: "Build Shipyard I", copy: "Import Alloys, Machinery and Electronics with your export earnings.", action: "home", label: "Open home" };

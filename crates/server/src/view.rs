@@ -446,6 +446,9 @@ impl PositionHistory {
     pub fn record(&mut self, world: &World) {
         let now = world.time;
         let frontiers = self.frontiers.get_mut();
+        // One pass over the rescue runs instead of one scan per fleet per tick.
+        let rescue_customers: std::collections::BTreeSet<EntityId> =
+            world.fuel_rescues.values().map(|run| run.customer).collect();
         let owner_name = |owner: PlayerId| {
             if owner == PlayerId::PIRATE {
                 "Pirates".to_string()
@@ -509,12 +512,17 @@ impl PositionHistory {
                         .find(|captain| captain.assigned_fleet == Some(*id) && !captain.missing())
                 });
             track.captain_id = captain.map(|captain| captain.id);
-            track.captain_name = captain.map(|captain| captain.name.clone());
+            let captain_name = captain.map(|captain| captain.name.as_str());
+            if track.captain_name.as_deref() != captain_name {
+                track.captain_name = captain_name.map(str::to_owned);
+            }
             track.captain_portrait = captain.map(|captain| captain.portrait);
             if let Some(captain) = captain {
                 debug_assert_eq!(track.captain_id, Some(captain.id));
             }
-            track.composition = ship.composition.clone();
+            if track.composition != ship.composition {
+                track.composition = ship.composition.clone();
+            }
             track.flagship = ship.flagship_kind();
             track.broadcasts = ship.broadcasts();
             track.projects_sensor = ship.projects_sensor();
@@ -596,64 +604,164 @@ impl PositionHistory {
                 track.guards.pop_front();
             }
             track.last_seen = now;
-            track.cargo = ship.cargo_stacks();
-            track.passengers = ship.passengers.clone();
-            track.loadouts = ship.loadouts.clone();
-            track.modules = ship.modules.clone();
-            track.route = route_of(&ship.order);
-            let facts = FleetFacts {
-                defend_system: ship.system_defense(),
-                owner: track.owner.clone(),
-                owner_name: track.owner_name.clone(),
-                captain_id: track.captain_id.clone(),
-                captain_name: track.captain_name.clone(),
-                captain_portrait: track.captain_portrait.clone(),
-                composition: track.composition.clone(),
-                flagship: track.flagship.clone(),
-                broadcasts: track.broadcasts.clone(),
-                projects_sensor: track.projects_sensor.clone(),
-                sensor_mult: track.sensor_mult.clone(),
-                max_speed: track.max_speed.clone(),
-                count_class: track.count_class.clone(),
-                damage_frac: track.damage_frac.clone(),
-                job: track.job.clone(),
-                cargo: track.cargo.clone(),
-                passengers: track.passengers.clone(),
-                loadouts: track.loadouts.clone(),
-                modules: track.modules.clone(),
-                route: track.route.clone(),
-                ships: ship.ships.clone(),
-                marines: ship.marines(),
-                posture: ship.posture,
-                mission: ship.mission_profile,
-                industry: ship.industry.clone(),
-                pirate_faction: ship.pirate_faction,
-                transit: ship.transit,
-                engage_freight: matches!(ship.order, FleetOrder::Blockade { .. })
-                    .then_some(ship.engage_freight),
-                garrison_host: world.garrison_host_of(*id),
-                garrison_fed: ship.garrison_fed,
-                supplied: ship.supplied,
-                rescue_inbound: world.fuel_rescues.values()
-                    .any(|run| run.customer == *id),
-                fuel_transfer: match ship.order {
-                    FleetOrder::Refuel { transfer, .. } => Some(transfer),
-                    _ => None,
-                },
-                survey_progress: match ship.order {
-                    FleetOrder::Survey { dwell_since: Some(since), .. } =>
-                        Some(((now - since) / sim::explore::SURVEY_SECS).clamp(0.0, 1.0)),
-                    FleetOrder::Expedition { dwell_since: Some(since), task, .. } =>
-                        Some(((now - since) / task.seconds()).clamp(0.0, 1.0)),
-                    _ => None,
-                },
-                expedition: match ship.order {
-                    FleetOrder::Expedition { site, task, .. } => Some(sim::sites::ExpeditionAssignment { site, task }),
-                    _ => None,
-                },
-                freight_run: world.freight_runs.get(id).cloned(),
+            // Refresh the cached onboard facts only when they differ: every one
+            // of these was an unconditional clone per fleet per tick.
+            if !ship.cargo_stacks_matches(&track.cargo) {
+                track.cargo = ship.cargo_stacks();
+            }
+            if track.passengers != ship.passengers {
+                track.passengers = ship.passengers.clone();
+            }
+            if track.loadouts != ship.loadouts {
+                track.loadouts = ship.loadouts.clone();
+            }
+            if track.modules != ship.modules {
+                track.modules = ship.modules.clone();
+            }
+            if !route_matches(&track.route, &ship.order) {
+                track.route = route_of(&ship.order);
+            }
+            let defend_system = ship.system_defense();
+            let marines = ship.marines();
+            let engage_freight =
+                matches!(ship.order, FleetOrder::Blockade { .. }).then_some(ship.engage_freight);
+            let garrison_host = world.garrison_host_of(*id);
+            let rescue_inbound = rescue_customers.contains(id);
+            let fuel_transfer = match ship.order {
+                FleetOrder::Refuel { transfer, .. } => Some(transfer),
+                _ => None,
             };
-            if track.facts.back().is_none_or(|(_, previous)| *previous != facts) {
+            let survey_progress = match ship.order {
+                FleetOrder::Survey { dwell_since: Some(since), .. } =>
+                    Some(((now - since) / sim::explore::SURVEY_SECS).clamp(0.0, 1.0)),
+                FleetOrder::Expedition { dwell_since: Some(since), task, .. } =>
+                    Some(((now - since) / task.seconds()).clamp(0.0, 1.0)),
+                _ => None,
+            };
+            let expedition = match ship.order {
+                FleetOrder::Expedition { site, task, .. } => Some(sim::sites::ExpeditionAssignment { site, task }),
+                _ => None,
+            };
+            let freight_run = world.freight_runs.get(id);
+            // Compare against the retained facts before assembling a copy: an
+            // unchanged fleet costs a read, not fifteen clones per tick. The
+            // destructuring is deliberately exhaustive so a new field cannot be
+            // left out of the comparison.
+            let unchanged = track.facts.back().is_some_and(|(_, previous)| {
+                let FleetFacts {
+                    defend_system: prev_defend_system,
+                    owner,
+                    owner_name,
+                    captain_id,
+                    captain_name,
+                    captain_portrait,
+                    composition,
+                    flagship,
+                    broadcasts,
+                    projects_sensor,
+                    sensor_mult,
+                    max_speed,
+                    count_class,
+                    damage_frac,
+                    job,
+                    cargo,
+                    passengers,
+                    loadouts,
+                    modules,
+                    route,
+                    ships,
+                    marines: prev_marines,
+                    posture,
+                    mission,
+                    industry,
+                    pirate_faction,
+                    transit,
+                    engage_freight: prev_engage_freight,
+                    garrison_host: prev_garrison_host,
+                    garrison_fed,
+                    supplied,
+                    rescue_inbound: prev_rescue_inbound,
+                    fuel_transfer: prev_fuel_transfer,
+                    survey_progress: prev_survey_progress,
+                    expedition: prev_expedition,
+                    freight_run: prev_freight_run,
+                } = previous;
+                *prev_defend_system == defend_system
+                    && *owner == track.owner
+                    && *owner_name == track.owner_name
+                    && *captain_id == track.captain_id
+                    && *captain_name == track.captain_name
+                    && *captain_portrait == track.captain_portrait
+                    && *composition == track.composition
+                    && *flagship == track.flagship
+                    && *broadcasts == track.broadcasts
+                    && *projects_sensor == track.projects_sensor
+                    && *sensor_mult == track.sensor_mult
+                    && *max_speed == track.max_speed
+                    && *count_class == track.count_class
+                    && *damage_frac == track.damage_frac
+                    && *job == track.job
+                    && *cargo == track.cargo
+                    && *passengers == track.passengers
+                    && *loadouts == track.loadouts
+                    && *modules == track.modules
+                    && *route == track.route
+                    && *ships == ship.ships
+                    && *prev_marines == marines
+                    && *posture == ship.posture
+                    && *mission == ship.mission_profile
+                    && *industry == ship.industry
+                    && *pirate_faction == ship.pirate_faction
+                    && *transit == ship.transit
+                    && *prev_engage_freight == engage_freight
+                    && *prev_garrison_host == garrison_host
+                    && *garrison_fed == ship.garrison_fed
+                    && *supplied == ship.supplied
+                    && *prev_rescue_inbound == rescue_inbound
+                    && *prev_fuel_transfer == fuel_transfer
+                    && *prev_survey_progress == survey_progress
+                    && *prev_expedition == expedition
+                    && prev_freight_run.as_ref() == freight_run
+            });
+            if !unchanged {
+                let facts = FleetFacts {
+                    defend_system,
+                    owner: track.owner.clone(),
+                    owner_name: track.owner_name.clone(),
+                    captain_id: track.captain_id.clone(),
+                    captain_name: track.captain_name.clone(),
+                    captain_portrait: track.captain_portrait.clone(),
+                    composition: track.composition.clone(),
+                    flagship: track.flagship.clone(),
+                    broadcasts: track.broadcasts.clone(),
+                    projects_sensor: track.projects_sensor.clone(),
+                    sensor_mult: track.sensor_mult.clone(),
+                    max_speed: track.max_speed.clone(),
+                    count_class: track.count_class.clone(),
+                    damage_frac: track.damage_frac.clone(),
+                    job: track.job.clone(),
+                    cargo: track.cargo.clone(),
+                    passengers: track.passengers.clone(),
+                    loadouts: track.loadouts.clone(),
+                    modules: track.modules.clone(),
+                    route: track.route.clone(),
+                    ships: ship.ships.clone(),
+                    marines,
+                    posture: ship.posture,
+                    mission: ship.mission_profile,
+                    industry: ship.industry.clone(),
+                    pirate_faction: ship.pirate_faction,
+                    transit: ship.transit,
+                    engage_freight,
+                    garrison_host,
+                    garrison_fed: ship.garrison_fed,
+                    supplied: ship.supplied,
+                    rescue_inbound,
+                    fuel_transfer,
+                    survey_progress,
+                    expedition,
+                    freight_run: freight_run.cloned(),
+                };
                 track.facts.push_back((now, facts));
             }
             while track.facts.len() > 1 && track.facts[1].0 < now - self.horizon {
@@ -1740,6 +1848,8 @@ pub fn filter_systems(
                     .iter()
                     .map(|b| {
                         crate::protocol::BodyView {
+                            founding_camp: own.then(|| b.founding_camp.clone()).flatten(),
+                            population_capacity: own.then(|| b.population_capacity()),
                             id: b.id,
                             name: b.name.clone(),
                             kind: b.kind.slug().to_string(),
@@ -2621,6 +2731,7 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
             ship: sim::ShipKind::Titan,
         } => "titan",
         sim::BuildKind::Upgrade { upgrade } => upgrade.slug(),
+        sim::BuildKind::Founding { project } => project.slug(),
         // §economy Part 4: Academy courses key by profession slug.
         sim::BuildKind::Train { specialist } => specialist.slug(),
         sim::BuildKind::RecruitCaptain { .. } => "officer_commission",
@@ -2701,6 +2812,16 @@ fn route_of(order: &FleetOrder) -> Option<Vec<Vec2>> {
         FleetOrder::Patrol { waypoints, .. } => Some(waypoints.clone()),
         FleetOrder::MoveTo { dest } => Some(vec![*dest]),
         _ => None,
+    }
+}
+
+/// Does `route` equal what [`route_of`] would build for `order`, without
+/// building it?
+fn route_matches(route: &Option<Vec<Vec2>>, order: &FleetOrder) -> bool {
+    match order {
+        FleetOrder::Patrol { waypoints, .. } => route.as_deref() == Some(waypoints.as_slice()),
+        FleetOrder::MoveTo { dest } => route.as_deref() == Some(std::slice::from_ref(dest)),
+        _ => route.is_none(),
     }
 }
 
@@ -2964,6 +3085,39 @@ mod tests {
         let site = view.refining_sites.iter().find(|s| s.built).unwrap();
         assert!((site.work_rate-work*1.15).abs()<1e-9);
         assert!((site.recovery-recovery*1.15).abs()<1e-9);
+    }
+
+    #[test]
+    fn bunkerage_capacity_is_served_only_when_the_fleet_report_arrives() {
+        use sim::{Command, Fleet, FleetOrder, SimConfig};
+        let mut world = World::new(SimConfig::for_players(123, 4));
+        let owner = PlayerId(903);
+        world.step(&[Command::AddPlayer { id: owner, name: "Research reports".into() }]);
+        world.fleets.clear();
+        world.enclaves.clear();
+        let cc = world.players[&owner].command_center;
+        let pos = cc + Vec2::new(180_000.0, 0.0);
+        let id = EntityId(900_003);
+        world.fleets.insert(id, Fleet::single(id, owner, ShipKind::Colony, pos, FleetOrder::Idle, None));
+        let capacity = world.fleets[&id].fuel_capacity();
+        let fuel = world.fleets[&id].fuel;
+        world.time = 0.0;
+        let mut history = PositionHistory::for_world(&world);
+        history.record(&world);
+        world.time = 1.0;
+        let r = &mut world.players.get_mut(&owner).unwrap().research;
+        r.active = Some("prop_bunkerage".into());
+        r.progress = sim::research::cost_of("prop_bunkerage");
+        world.step(&[]);
+        history.record(&world);
+        assert!((world.fleets[&id].fuel_capacity() - capacity * 1.25).abs() < 1e-9);
+        let delay = sim::transit::delay(pos, cc, world.config.c);
+        let before = history.view_for(owner, cc, world.config.c, delay + 0.5);
+        assert_eq!(before.iter().find(|g| g.id == id).unwrap().fuel_capacity, Some(capacity));
+        let after = history.view_for(owner, cc, world.config.c, delay + world.time + 1e-6);
+        let reported = after.iter().find(|g| g.id == id).unwrap();
+        assert!((reported.fuel_capacity.unwrap() - capacity * 1.25).abs() < 1e-9);
+        assert_eq!(reported.fuel, Some(fuel));
     }
 
     #[test]
@@ -4721,6 +4875,7 @@ mod tests {
         };
         // Two standing tiers on the habitable body — 50 marines to take it.
         sys.bodies.push(sim::Body {
+            founding_camp: None,
             id: 1,
             name: "S I".into(),
             kind: sim::BodyKind::Terrestrial,
@@ -4930,6 +5085,7 @@ mod tests {
                 specialists: Default::default(),
             };
             sys.bodies.push(sim::Body {
+                founding_camp: None,
                 id: 1,
                 name: "S I".into(),
                 kind: sim::BodyKind::Terrestrial,

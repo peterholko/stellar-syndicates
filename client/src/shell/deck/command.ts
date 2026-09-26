@@ -3,7 +3,7 @@ import { fmtDur, operationTitle } from "../../core/derive/format";
 import { foundingHomeSystemId } from "../../core/derive/geo";
 import { nextDecisionLabel } from "../../core/derive/orders";
 import { postVictoryHandoff } from "../../core/derive/handoff";
-import { FOUNDING_STEP, FOUNDING_TOTAL, foundingBusinessGoals, foundingScoutGoal } from "../../core/derive/founding";
+import { FOUNDING_STEP, FOUNDING_TOTAL, foundingBusinessGoals, foundingScoutGoal, foundingLocalGoals } from "../../core/derive/founding";
 import { icon, label } from "../../icons";
 import type { BodyView, FoundingStage, FoundingView, GhostView, SystemInfo, SystemStateView } from "../../protocol";
 import { renderDeferred, setHtml } from "../dom";
@@ -173,12 +173,16 @@ export class DeckCommandRoutes {
 
   private foundingContent(founding: FoundingView): FoundingContent {
     const home = this.homeDynamic();
+    const local = foundingLocalGoals(this.ctx.state, home);
+    if (local) return { title: founding.stage === "prepare_export" ? "Ready for the long voyage" : "Build, explore, recover", copy: founding.stage === "prepare_export" ? "Send the guarded ore shipment when you are ready to leave. Its sale receipt arrives later." : "Develop home while the Scout investigates. Recover nearby cargo before starting the Hub journey.", action: local[0].action, label: local[0].label, alternatives: local };
     const mineBody = home?.bodies.find((body) => (body.structures.mining_complex ?? 0) > 0);
     const mineStaffed = !!mineBody && home?.assignments.some((line) => line.body_id === mineBody.id && line.structure === "mining_complex" && line.workers > 0);
     const academyBody = home?.bodies.find((body) => (body.structures.academy ?? 0) > 0);
     const academyStaffed = !!academyBody && home?.assignments.some((line) => line.body_id === academyBody.id && line.structure === "academy" && (line.workers > 0 || Object.values(line.specialists).some((count) => count > 0)));
     const content: Record<FoundingStage, FoundingContent> = {
-      grow_business: { title: "Grow your business", copy: "Expand exports or start refining. Either advances the tutorial; both remain open.", action: "command", label: "Choose next investment", alternatives: foundingBusinessGoals(this.ctx.state, home) },
+      local_recovery: { title: "Recover nearby supplies", copy: "Protect the Freighter, bring the cache home and fit the Scout.", action: "recovery", label: "Open recovery" },
+      prepare_export: { title: "Send the guarded export", copy: "Set a return manifest, then leave the voyage to your fleet.", action: "opening-imports", label: "Plan export" },
+      grow_business: { title: founding.local_opening ? "Shipment underway" : "Grow your business", copy: founding.local_opening ? "Your first session can end here. Your confirmed return route can sell and bring supplies home; check its report next session. A manual one-way order still needs return instructions." : "Expand exports or start refining. Either advances the tutorial; both remain open.", action: "command", label: "Choose next investment", alternatives: foundingBusinessGoals(this.ctx.state, home) },
       build_shipyard: { title: "Build Shipyard I", copy: "Import Alloys, Machinery and Electronics with your export earnings.", action: "build-shipyard", label: "Build Shipyard I" },
       build_mine: mineBody
         ? { title: mineStaffed ? "Mining Complex staffed" : "Assign workforce to Mining Complex I", copy: mineStaffed ? `${mineBody.name} is producing Ferrite Ore.` : "An unstaffed mine produces no ore.", action: "mine", label: `Open ${mineBody.name}` }
@@ -205,6 +209,18 @@ export class DeckCommandRoutes {
     const homeId = foundingHomeSystemId();
     const home = this.homeDynamic();
     const system = homeId ? this.ctx.state.galaxy?.systems.find((entry) => entry.id === homeId) : undefined;
+    if (action === "home-development" && home && system) {
+      const body = home.bodies.find(b => b.founding_camp);
+      if (body) this.openWorld(system, body);
+    } else if (action === "recovery") {
+      this.ctx.state.selectedExplorationSiteId = founding.recovery_site ?? null;
+      this.hooks.go({ name: "operations" });
+    } else if (action === "opening-imports") {
+      this.hooks.go({ name: "logistics" });
+    } else if (action === "build-service-berth" && home && system) {
+      const body = home.bodies.find(b => (b.structures.warehouse ?? 0) > 0);
+      if (body) this.openBuild(system, body, "structures", "service_berth");
+    } else
     if (action === "build-shipyard" && homeId && home && system) {
       const body = bestShipyardBody(home);
       if (body) this.openBuild(system, body, "structures", "shipyard");
@@ -248,7 +264,7 @@ export class DeckCommandRoutes {
   }
 
   private businessActions(goals: FoundingContent[]): string {
-    return `<div class="deck-founding__prospects">${goals.map(goal => `<button type="button" data-deck-act="founding-action" data-action="${esc(goal.action)}"><span><small>${esc(goal.title)}</small><b>${esc(goal.label)}</b></span></button>`).join("")}</div>`;
+    return `<div class="deck-founding__prospects">${goals.map(goal => `<button type="button" data-deck-act="founding-action" data-action="${esc(goal.action)}" title="${esc(goal.copy)}"><span><small>${esc(goal.title)}</small><b>${esc(goal.label)}</b><small>${esc(goal.copy)}</small></span></button>`).join("")}</div>`;
   }
 
   private prospectCards(founding: FoundingView): string {
@@ -259,7 +275,7 @@ export class DeckCommandRoutes {
       const surveyed = dynamic?.bodies.some((body) => body.geology !== null);
       const top = dynamic?.opportunities?.[0];
       const finding = surveyed ? top ? `${top.title} · ×${top.score.toFixed(2)}` : "Survey received" : `${label(system.band)} spectrum · awaiting survey`;
-      return `<button type="button" data-deck-act="founding-candidate" data-id="${esc(id)}"><span><small>${index ? "Industrial prospect" : "Population prospect"}</small><b>${esc(system.name)}</b></span><em>${esc(finding)}</em></button>`;
+      return `<button type="button" data-deck-act="founding-candidate" data-id="${esc(id)}"><span><small>${founding.local_opening ? "Nearby survey destination" : index ? "Industrial prospect" : "Population prospect"}</small><b>${esc(system.name)}</b></span><em>${esc(finding)}</em></button>`;
     }).join("");
     return cards ? `<div class="deck-founding__prospects">${cards}</div>` : "";
   }

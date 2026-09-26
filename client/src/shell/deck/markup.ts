@@ -73,8 +73,7 @@ export function mountDeckMarkup(root: HTMLElement): void {
       <div id="deck-overlays" class="deck-overlays">
         <section id="deck-join" class="deck-overlay deck-join" aria-labelledby="deck-join-title">
           ${accountBackdrop("deck")}
-          <form id="deck-join-form" class="deck-join__card">
-            <div class="deck-eyebrow">Terran Charter Authority · corporate registry</div>
+          <form id="deck-join-form" class="deck-join__card account-card" data-account-mode="signin">
             ${accountFields("deck")}
           </form>
         </section>

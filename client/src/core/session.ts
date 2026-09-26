@@ -49,6 +49,7 @@ export function applySessionReplaced(st: ViewState): CoreEvent[] {
 // presentational consequence and may render the same state in different forms.
 export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
   switch (msg.type) {
+    case "FoundingOffer": return []; // the shared boot-level introduction owns presentation
     case "Welcome": {
       const events: CoreEvent[] = [];
       marketReservations.length = 0;

@@ -68,7 +68,7 @@ const WORKFORCE_STRUCTURES = new Set([
   "mining_complex", "volatile_harvester", "bioharvester", "smelter", "electronics_fabricator",
   "chemical_works", "fuel_refinery", "machine_works", "armaments_complex", "agroplex", "academy",
   "composite_works", "hull_fabricator", "precision_works", "drive_works",
-  "shipyard", "naval_drydock", "capital_slipway", "ordnance_foundry",
+  "shipyard", "naval_drydock", "capital_slipway", "ordnance_foundry", "service_berth",
 ]);
 const STRUCTURE_DESCRIPTION: Record<string, string> = {
   mining_complex: "Extracts Ferrite Ore, Silicates, or Rare Elements from local deposits.",
@@ -96,6 +96,7 @@ const STRUCTURE_DESCRIPTION: Record<string, string> = {
   academy: "Contributes research and trains specialists and officers.",
   garrison: "Defends the planet and raises troop transports.",
   warehouse: "Stores 700 goods at tier I; each upgrade adds 400. Shared across the system.",
+  service_berth: "Warehouse attachment for Scout, Interceptor, Tiny and Small Freighter utility fittings. No extra slot. Temporarily borrows a mining crew if unstaffed, then restores it. No manufacture or repairs.",
 };
 import { MODULES, moduleFitsHull } from "../../core/derive/equipment";
 
@@ -875,11 +876,13 @@ export class DeckEmpireRoutes {
       const have = supply.get(commodity) ?? 0;
       return `<tr${have < cost.units ? ` class="is-short"` : ""}><th scope="row"><span>${commodityGlyph(commodity)} ${esc(label(commodity))}</span></th><td>${cost.units}</td><td>${fmt(have)}</td></tr>`;
     }).join("");
-    const category = state.foundsNew ? POOL_LABEL[state.pool] : `${POOL_LABEL[state.pool]} · upgrade to tier ${state.targetTier}`;
+    const attachment = option.key === "service_berth";
+    const category = attachment ? "Warehouse attachment" : state.foundsNew ? POOL_LABEL[state.pool] : `${POOL_LABEL[state.pool]} · upgrade to tier ${state.targetTier}`;
+    const slot = attachment ? "Attached to Warehouse · no extra slot" : state.foundsNew ? `${POOL_LABEL[state.pool]} ${pools[state.pool].used} → ${pools[state.pool].used + 1}/${pools[state.pool].total}` : "Deepens in place";
     const recipe = option.key === "smelter" ? option.refining_recipes?.find(r => body.deposits?.some(d => d.resource === r.inputs[0][0])) ?? option.conversion : undefined;
     const comparison = recipe ? refiningComparison(this.ctx.state, dynamic, body.id, recipe) : "";
     const description = STRUCTURE_DESCRIPTION[option.key] ?? "Adds a new capability to this world.";
-    return `<article class="deck-build-detail"><header>${structureImage(option.key, state.targetTier, "md", undefined, "deck-structure-icon")}<span><small>${esc(category)}</small><h3>${esc(option.label)}</h3></span></header><p>${esc(description)}</p>${option.conversion ? `<p class="deck-production-recipe">${esc(conversionSummary(option))}</p>` : ""}<table class="deck-cost-table" aria-label="Construction requirements"><thead><tr><th aria-label="Resource"></th><th scope="col">Cost</th><th scope="col">Stock</th></tr></thead><tbody>${costs}</tbody></table><dl><div><dt>Build time</dt><dd>${fmtBuildDur(option.build_secs * body.construction_time_mult)}</dd></div><div><dt>Slot</dt><dd>${state.foundsNew ? `${POOL_LABEL[state.pool]} ${pools[state.pool].used} → ${pools[state.pool].used + 1}/${pools[state.pool].total}` : "Deepens in place"}</dd></div></dl>${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}${comparison}</article>`;
+    return `<article class="deck-build-detail"><header>${structureImage(option.key, state.targetTier, "md", undefined, "deck-structure-icon")}<span><small>${esc(category)}</small><h3>${esc(option.label)}</h3></span></header><p>${esc(description)}</p>${option.conversion ? `<p class="deck-production-recipe">${esc(conversionSummary(option))}</p>` : ""}<table class="deck-cost-table" aria-label="Construction requirements"><thead><tr><th aria-label="Resource"></th><th scope="col">Cost</th><th scope="col">Stock</th></tr></thead><tbody>${costs}</tbody></table><dl><div><dt>Build time</dt><dd>${fmtBuildDur(option.build_secs * body.construction_time_mult)}</dd></div><div><dt>Slot</dt><dd>${slot}</dd></div></dl>${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}${comparison}</article>`;
   }
 
   private shipBuilder(dynamic: SystemStateView, body: BodyView): string {

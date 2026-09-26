@@ -7,6 +7,7 @@ import { buildShipDerivatives } from "./build-ship-derivatives.mjs";
 import { buildPlanetDerivatives } from "./build-planet-derivatives.mjs";
 import { buildPlanetWorkbenchArt } from "./build-planet-workbench-art.mjs";
 import { buildStructureTierArt } from "./build-structure-tier-art.mjs";
+import { buildFoundingStoryArt } from "./build-founding-story-art.mjs";
 
 const clientRoot = fileURLToPath(new URL("..", import.meta.url));
 const publicArt = path.join(clientRoot, "public", "art");
@@ -89,6 +90,23 @@ async function buildLoginBackgrounds() {
     ));
   }
   return { sources: sources.length, written };
+}
+
+async function buildAuthoritySeal() {
+  const source = path.join(sourceArt, "authority-v2", "terran-charter-authority-seal.png");
+  const outputDir = path.join(publicArt, "derived", "authority-v2");
+  await mkdir(outputDir, { recursive: true });
+  let written = 0;
+  for (const size of [96, 192, 288, 384]) {
+    written += Number(await derive(
+      source, path.join(outputDir, `terran-charter-authority-seal-${size}.webp`),
+      // Keep the tall emblem's proportions and generated transparency. Lossless
+      // variants preserve the fine orbital ring on high-density displays.
+      image => image.resize(size, size, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+        .webp({ lossless: true, effort: 5 }),
+    ));
+  }
+  return { sources: 1, written };
 }
 
 async function buildPwaIcons() {
@@ -192,10 +210,10 @@ async function buildNebulas() {
   return { sources: sources.length, written };
 }
 
-const [captains, lore, pwa, structures, nebulas, login, resources, stars, ships, planets, planetWorkbench, structureTiers] = await Promise.all([
+const [captains, lore, pwa, structures, nebulas, login, resources, stars, ships, planets, planetWorkbench, structureTiers, foundingStory, authority] = await Promise.all([
   buildCaptains(), buildLore(), buildPwaIcons(), buildStructureIcons(), buildNebulas(), buildLoginBackgrounds(),
   buildResourceIcons(), buildStarDerivatives(), buildShipDerivatives(), buildPlanetDerivatives(),
-  buildPlanetWorkbenchArt(), buildStructureTierArt(),
+  buildPlanetWorkbenchArt(), buildStructureTierArt(), buildFoundingStoryArt(), buildAuthoritySeal(),
 ]);
 console.log(
   `art derivatives: ${captains.sources} captain portraits (${captains.written} written), ` +
@@ -209,5 +227,7 @@ console.log(
   `${stars.sources} star masters / ${stars.variants} sizes (${stars.written} written), ` +
   `${ships.sources} ship masters (${ships.written} written), ` +
   `${planets.sources} planet masters / ${planets.variants} sizes (${planets.written} written), ` +
-  `planet workbench (${planetWorkbench.written} written)`,
+  `planet workbench (${planetWorkbench.written} written), ` +
+  `${foundingStory.sources} founding story scenes (${foundingStory.written} written), ` +
+  `${authority.sources} Authority seal (${authority.written} written)`,
 );

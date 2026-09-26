@@ -257,6 +257,13 @@ pub enum EventPayload {
         what: crate::build::BuildKind,
         complete_tick: u64,
     },
+    /// A one-time founding project completed at its physical site. Owner-only.
+    SettlementDeveloped {
+        owner: PlayerId,
+        system: EntityId,
+        body_id: u32,
+        project: crate::settlement::SettlementProject,
+    },
     /// A system development completed (an upgrade tier applied). Owner-only.
     SystemUpgraded {
         system: EntityId,
@@ -1236,6 +1243,7 @@ impl Event {
             | Citation { pos, .. } | EnforcementDispatched { pos, .. }
             | EnforcementWithdrawn { pos, .. } | JumpFailed { pos, .. } => Some(*pos),
             BuildStarted { system, .. } | SystemUpgraded { system, .. }
+            | SettlementDeveloped { system, .. }
             | BuildRejected { system, .. } | IndustryRejected { system, .. } | SpecialistTrained { system, .. }
             | ModuleBuilt { system, .. } | ShipsRefitted { system, .. }
             | GarrisonSupplyStateChanged { system, .. } | FleetRepaired { system, .. }

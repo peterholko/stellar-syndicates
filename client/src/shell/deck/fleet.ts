@@ -7,9 +7,11 @@ import {
   AAA_SERVICE_FEE,
   aaaEstimate,
   coLocatedOwnFleet,
+  cruiseFuelMultiplier,
   dockLoadStock,
   dockedAtSystem,
   estimatedFuelForLeg,
+  economyCapable,
   fleetBaseSpeed,
   fleetCargoCapacity,
   fleetFuelCapacity,
@@ -19,12 +21,14 @@ import {
   jumpCapable,
   shipKindLabel,
   shipMass,
+  transitSpeedMultiplier,
   WARP_FACTOR,
 } from "../../core/derive/fleet";
 import { fmt, fmtEta, informationDelay } from "../../core/derive/format";
 import { emplacementLabel, gravityWellAt, nearestKnownDock, systemName } from "../../core/derive/geo";
-import { fitLegal, kitAffordable, kitCostLabel, maxCargoRefitCount, MODULE_SLOTS, moduleLedgerAt, ownedHaulDestinations, refitCargoBlocked, refitFuelBlocked, refitPreview, shipyardBoost } from "../../core/derive/market";
+import { fitLegal, kitAffordable, kitCostLabel, maxCargoRefitCount, MODULE_SLOTS, moduleLedgerAt, ownedHaulDestinations, refitCargoBlocked, refitFuelBlocked, refitPreview } from "../../core/derive/market";
 import { MODULES, utilityChange } from "../../core/derive/equipment";
+import { utilityWorkshop } from "../../core/derive/market";
 import { tenderStatus } from "../../core/derive/tenders";
 import { fuelTransferHtml } from "../fueltransfer";
 import { orderEtaRange, orderObject, orderPoint } from "../../core/derive/orders";
@@ -169,7 +173,7 @@ export class DeckFleetRoutes {
       this.ctx.intent.beginFleetCommand({ type: "Withdraw", fleet_id: fleet.id });
     } else if (command === "transit" && fleet.own) {
       const mode = button.dataset.mode as TransitMode;
-      if (mode === "full" || mode === "stealth") {
+      if (mode === "full" || mode === "stealth" || mode === "economy" && economyCapable(fleet)) {
         this.ctx.intent.beginFleetCommand({ type: "SetFleetTransit", fleet_id: fleet.id, mode });
       }
     } else if (command === "dock" && fleet.own) {
@@ -370,12 +374,13 @@ export class DeckFleetRoutes {
         ? "Served sighting is inside a gravity well."
         : pending("jump") ? "Jump order already in flight." : "";
     items.push(commandButton("fleet-jump", "Set jump destination", `Range ${fmt(jumpRangeAt(this.ctx.state.galaxy, g.pos))} su · choose on map.`, "is-primary", jumpReason));
-    if (!g.docked) {
+    if (!g.docked || economyCapable(g)) {
       const requested = this.requestedTransit.get(g.id);
       const current = requested ?? g.transit ?? "full";
       const waiting = pending("configure");
       const hint = waiting ? "Requested setting awaits a served fleet report." : "Stealth trades speed for a smaller detection signature.";
-      transit = `<div class="deck-command-block deck-fleet-setting${waiting ? " is-pending" : ""}" title="${escAttr(hint)}"><b>Transit${waiting ? " · signal in flight" : ""}</b><div class="deck-segment"><button type="button" data-deck-act="fleet-transit" data-mode="full" title="${waiting ? escAttr(hint) : "Travel at full speed."}" aria-pressed="${current === "full"}" ${waiting ? "disabled" : ""}>Full speed</button><button type="button" data-deck-act="fleet-transit" data-mode="stealth" title="${escAttr(hint)}" aria-pressed="${current === "stealth"}" ${waiting ? "disabled" : ""}>Stealth</button></div></div>`;
+      const economy = economyCapable(g) ? `<button type="button" data-deck-act="fleet-transit" data-mode="economy" title="${waiting ? escAttr(hint) : "25% speed, 10% Fuel per journey. Four times the travel time."}" aria-pressed="${current === "economy"}" ${waiting ? "disabled" : ""}>Economy</button>` : "";
+      transit = `<div class="deck-command-block deck-fleet-setting${waiting ? " is-pending" : ""}" title="${escAttr(hint)}"><b>Transit${waiting ? " · signal in flight" : ""}</b><div class="deck-segment"><button type="button" data-deck-act="fleet-transit" data-mode="full" title="${waiting ? escAttr(hint) : "Travel at full speed."}" aria-pressed="${current === "full"}" ${waiting ? "disabled" : ""}>Full speed</button>${economy}<button type="button" data-deck-act="fleet-transit" data-mode="stealth" title="${escAttr(hint)}" aria-pressed="${current === "stealth"}" ${waiting ? "disabled" : ""}>Stealth</button></div></div>`;
     }
     const dock = nearestKnownDock(g);
     if (!g.docked) items.push(commandButton("fleet-dock", "Initiate docking", dock ? `${dock.name} · ${fmt(dock.distance)} su` : "Nearest known friendly berth.", "is-primary", pending("move") ? "Move or docking order already in flight." : !dock ? "No known friendly berth." : ""));
@@ -416,7 +421,7 @@ export class DeckFleetRoutes {
     const capacity = fleetFuelCapacity(g);
     const pct = capacity > 0 ? fuel / capacity * 100 : 0;
     const dest = this.ctx.state.orders[g.id] ?? g.path?.at(-1)?.pos;
-    const burn = FUEL_PER_MASS_DISTANCE * 1000 * shipMass(g) / WARP_FACTOR;
+    const burn = FUEL_PER_MASS_DISTANCE * 1000 * shipMass(g) / WARP_FACTOR * cruiseFuelMultiplier(g);
     const detail = dest ? `Current leg needs ~${fmt(estimatedFuelForLeg(g, dest))}` : `Warp burn ~${burn.toFixed(1)} / 1k su`;
     return `<div class="deck-subhead"><b>${icon("fuel", "sm")} Fuel</b><span>${g.fuel == null ? "report unavailable" : `${fmt(fuel)} / ${fmt(capacity)}`}</span></div><div class="deck-meter"><i style="width:${Math.max(0, Math.min(100, pct)).toFixed(1)}%"></i></div><p class="deck-muted">${esc(detail)} · ${esc(informationDelay(g.age))}.</p>`;
   }
@@ -440,15 +445,15 @@ export class DeckFleetRoutes {
     const dock = g.docked && g.docked !== "hub" ? this.ctx.state.systems.find((system) => dockedAtSystem(g, system.id)) : undefined;
     const friendly = !!dock && (dock.owner === this.ctx.state.playerId || dock.ally);
     const foundry = friendly && (dock.structures.ordnance_foundry ?? 0) > 0;
-    const utilityYard = friendly && dock.bodies.some(body => shipyardBoost(dock, body) > 0);
-    if (!foundry && !utilityYard) return `<div class="deck-subhead"><b>Equipment</b><span>Utilities: staffed Shipyard I · Military: Ordnance Foundry</span></div>`;
+    const utilityYard = friendly && (g.composition ?? []).some(s => utilityWorkshop(dock, s.kind));
+    if (!foundry && !utilityYard) return `<div class="deck-subhead"><b>Equipment</b><span>Utilities: Service Berth or staffed Shipyard I · Military: Ordnance Foundry</span></div>`;
     const ledger = moduleLedgerAt(dock!.id);
     const stacks = refitStacks(g);
     const busy = Math.hypot(g.vel.x, g.vel.y) >= .5 || !!g.path?.length || (this.ctx.state.pendingOrders.get(g.id)?.length ?? 0) > 0;
     const rows = stacks.map((stack) => {
       const maxFor = (to: ModuleKind[]) => maxCargoRefitCount(g, stack.kind, stack.modules, to, maxRefitCount(stack.modules, to, ledger, stack.n));
       const targets = refitTargets(stack.kind, stack.modules, ledger, this.ctx.state.syndicate?.fits ?? [])
-        .filter(to => (utilityChange(stack.modules, to) ? utilityYard : foundry) && !refitFuelBlocked(g, stack.modules, to) && maxFor(to) > 0);
+        .filter(to => (utilityChange(stack.modules, to) ? utilityWorkshop(dock!, stack.kind) : foundry) && !refitFuelBlocked(g, stack.modules, to) && maxFor(to) > 0);
       const remembered = this.refitChoices.get(`${g.id}/${stack.kind}/${fitKey(stack.modules)}`);
       const selected = targets.find(to => fitKey(to) === remembered?.to) ?? targets[0];
       const maximum = selected ? maxFor(selected) : 1;
@@ -618,7 +623,7 @@ export class DeckFleetRoutes {
     for (let i = 1; i < points.length; i++) {
       distance += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
     }
-    const throttle = g.transit === "stealth" ? 0.5 : 1;
+    const throttle = transitSpeedMultiplier(g);
     const seconds = distance / Math.max(1, fleetBaseSpeed(g) * WARP_FACTOR * throttle);
     return `ETA ~${fmtEta(seconds)} from served position`;
   }

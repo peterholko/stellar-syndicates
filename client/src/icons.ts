@@ -55,6 +55,8 @@ export type IconKey =
  * never feed the result back into commands; attributes that round-trip to
  * `net.send` (data-resource / data-hire / option values …) stay raw. */
 export function label(slug: string): string {
+  const camp: Record<string, string> = { camp_prospect: "Home-world survey", camp_workings: "Surface workings", camp_storehouse: "Storehouse expansion", camp_quarters: "Permanent quarters" };
+  if (camp[slug]) return camp[slug];
   if (slug === "metallic_ore" || slug === "ore") return "Ferrite Ore";
   if (slug === "rare_metal_ore") return "Rare-metal Ore";
   return slug.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
@@ -378,6 +380,7 @@ export function structureIcon(key: string): IconKey {
     habitat: "structureHabitat",
     orbital_warehouse: "structureOrbitalWarehouse",
     warehouse: "structureWarehouse",
+    service_berth: "structureWarehouse",
     sensor_array: "structureSensorArray",
     defense_platform: "structureDefensePlatform",
     academy: "structureAcademy",

@@ -24,8 +24,8 @@ impl World {
         let taken: BTreeSet<_> = self.systems.iter().map(|s| s.name.clone()).collect();
         let mut names_rng = Rng::keyed(self.config.seed, "exploration-star-names-v1");
         let names = crate::galaxy::shuffled_system_names(&mut names_rng, taken.len() + count);
-        // Leave each home's two authored starter choices its nearest options.
-        // The extra chart density belongs beyond that first expansion decision.
+        // Local survey stops reuse two extra-star slots per home. The original
+        // garden/mineral colony prospects remain untouched and optional.
         let home_clearance: Vec<_> = self
             .home_slots
             .iter()
@@ -45,13 +45,24 @@ impl World {
             .collect();
         let mut rng = Rng::keyed(self.config.seed, "exploration-star-positions-v1");
         let mut added = Vec::with_capacity(count);
+        let mut local_ice = Vec::new();
         for (i, name) in names
             .into_iter()
             .filter(|n| !taken.contains(n))
             .take(count)
             .enumerate()
         {
-            let pos = (0..4096)
+            let local = self.home_slots.get(i / 2).map(|h| h.pos);
+            let safe = |pos: Vec2| pos.distance(self.hub) > STAR_SPACING_SU
+                && pos.length() <= self.config.galaxy_radius
+                && self.systems.iter().all(|s| pos.distance(s.pos) >= STAR_SPACING_SU)
+                && self.exploration.sites.values().all(|s| pos.distance(s.pos) > 3_000.0);
+            let nearby = local.and_then(|home| (0..512).find_map(|attempt| {
+                let radius = 18_000.0 + (attempt / 128) as f64 * 5_000.0;
+                let pos = home + Vec2::from_polar((attempt % 128) as f64 * TAU / 128.0 + i as f64, radius);
+                safe(pos).then_some(pos)
+            }));
+            let pos = nearby.unwrap_or_else(|| (0..4096)
                 .find_map(|_| {
                     let r = self.config.galaxy_radius * (0.12 + 0.84 * rng.next_f64().sqrt());
                     let pos = Vec2::from_polar(rng.range(0.0, TAU), r);
@@ -70,7 +81,7 @@ impl World {
                             .all(|s| pos.distance(s.pos) > 3_000.0))
                     .then_some(pos)
                 })
-                .expect("galaxy too crowded for exploration stars with safe spacing");
+                .expect("galaxy too crowded for exploration stars with safe spacing"));
             let id = self.alloc_entity_id();
             let mut body_rng =
                 Rng::keyed_id(self.config.seed, "exploration-star-bodies-v1", i as u64);
@@ -79,7 +90,18 @@ impl World {
             // scarce ores holds for every star in the chart.
             let frontier = ((pos.distance(self.hub) / self.config.galaxy_radius - 0.12) / 0.84)
                 .clamp(0.0, 1.0);
-            let bodies = sparse_bodies(id, &name, &mut body_rng, frontier);
+            let bodies = if nearby.is_some() {
+                let icy = i % 2 == 1;
+                let mut b = sparse_body(0, format!("{name} I"), if icy { BodyKind::Ice } else { BodyKind::Rocky }, None);
+                b.deposits.push(Deposit { resource: if icy { Commodity::Volatiles } else { Commodity::MetallicOre },
+                    richness: DEPOSIT_BASE_RICHNESS * 0.65, reserves: None, accessibility: 0.75 });
+                b.ensure_profile(&id.0.to_string());
+                b.profile.environment = Environment::Uninhabitable;
+                b.profile.size = BodySize::Small;
+                if !icy { b.profile.special = Some(crate::body::BodySpecial::PrecursorRuins); }
+                if icy { local_ice.push(pos); }
+                vec![b]
+            } else { sparse_bodies(id, &name, &mut body_rng, frontier) };
             let deposits: Vec<_> = bodies
                 .iter()
                 .flat_map(|b| b.deposits.iter().cloned())
@@ -99,6 +121,12 @@ impl World {
             added.push(pos);
         }
         self.seed_exploration_star_sites(&added);
+        for (i, pos) in local_ice.into_iter().enumerate() {
+            if self.exploration.sites.values().any(|s| s.details.kind == crate::sites::SiteKind::Station && s.pos.distance(pos) < 15_000.0) { continue; }
+            if let Some(site) = self.clear_exploration_position(pos + Vec2::new(6_000.0, 0.0), 4_000.0, &mut rng) {
+                self.create_exploration_site(site, crate::sites::SiteKind::Station, i as u64);
+            }
+        }
     }
 }
 
@@ -188,6 +216,7 @@ fn sparse_bodies(id: EntityId, name: &str, rng: &mut Rng, frontier: f64) -> Vec<
 
 fn sparse_body(id: u32, name: String, kind: BodyKind, parent: Option<u32>) -> Body {
     Body {
+        founding_camp: None,
         id,
         name,
         kind,
@@ -240,6 +269,12 @@ mod tests {
                     serde_json::to_value(&old.home_slots).unwrap()
                 );
                 assert_eq!((new.band_lo, new.band_hi), (old.band_lo, old.band_hi));
+                for home in &new.home_slots {
+                    let nearby: Vec<_> = new.systems.iter().filter(|s| new.exploration_systems.contains(&s.id)
+                        && s.pos.distance(home.pos) <= 34_000.0).collect();
+                    assert!(nearby.len() >= 2, "seed {seed}, players {players}: two local survey destinations");
+                    assert!(nearby.iter().all(|s| s.bodies.iter().all(|b| !b.habitable)));
+                }
                 assert_eq!(
                     serde_json::to_value(new.rng).unwrap(),
                     serde_json::to_value(old.rng).unwrap(),
@@ -270,12 +305,6 @@ mod tests {
                             .filter(|other| other.id != s.id)
                             .all(|other| s.pos.distance(other.pos) >= STAR_SPACING_SU)
                     );
-                    for home in &old.home_slots {
-                        for starter in &home.founding_opportunities {
-                            let starter = old.systems.iter().find(|s| s.id == *starter).unwrap();
-                            assert!(s.pos.distance(home.pos) > starter.pos.distance(home.pos));
-                        }
-                    }
                     for body in &s.bodies {
                         assert!(!body.habitable);
                         assert!(!body.profile.environment.naturally_habitable());

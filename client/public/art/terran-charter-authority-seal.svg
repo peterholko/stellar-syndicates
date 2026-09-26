@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <title>Terran Charter Authority seal</title>
+  <desc>A frontier star above a planetary horizon, enclosed by a wormhole ring and laurel branches.</desc>
+  <circle cx="64" cy="64" r="61" fill="#10232f" stroke="#8cb9cf" stroke-width="2"/>
+  <circle cx="64" cy="64" r="54" stroke="#375367" stroke-width="1.5"/>
+  <path d="M64 3v8m0 106v8M3 64h8m106 0h8" stroke="#9ed8e8" stroke-width="2"/>
+  <circle cx="64" cy="57" r="30" stroke="#618eaa" stroke-width="3"/>
+  <path d="M39 41a30 30 0 0 1 50 0" stroke="#c6e9f3" stroke-width="3" stroke-linecap="round"/>
+  <path d="m64 21 6 27 15 9-15 6-6 20-6-20-15-6 15-9z" fill="#9ed8e8"/>
+  <path d="m64 21 0 62-6-20-15-6 15-9z" fill="#dceff5"/>
+  <path d="M37 78q27-14 54 0M43 88q21-9 42 0" stroke="#8cb9cf" stroke-width="2" stroke-linecap="round"/>
+  <g stroke="#8cb9cf" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M28 49c-10 26 3 48 27 53M100 49c10 26-3 48-27 53"/>
+    <path d="M25 60c-7-1-10-6-9-12 6 2 9 6 9 12ZM25 75c-8 0-12-4-13-10 7 0 11 4 13 10ZM31 87c-8 3-14 0-17-6 7-2 13 0 17 6ZM41 97c-6 5-13 4-18-1 7-4 12-3 18 1Z" fill="#375367"/>
+    <path d="M103 60c7-1 10-6 9-12-6 2-9 6-9 12ZM103 75c8 0 12-4 13-10-7 0-11 4-13 10ZM97 87c8 3 14 0 17-6-7-2-13 0-17 6ZM87 97c6 5 13 4 18-1-7-4-12-3-18 1Z" fill="#375367"/>
+  </g>
+  <path d="m64 96 5 6-5 6-5-6z" fill="#9ed8e8"/>
+</svg>

@@ -77,7 +77,7 @@ export const POOL_OF: Record<string, "resource" | "industrial" | "infrastructure
   composite_works: "industrial", hull_fabricator: "industrial", precision_works: "industrial", drive_works: "industrial",
   shipyard: "industrial", naval_drydock: "industrial", capital_slipway: "industrial", ordnance_foundry: "industrial",
   agroplex: "infrastructure", habitat: "infrastructure", orbital_warehouse: "infrastructure",
-  warehouse: "infrastructure",
+  warehouse: "infrastructure", service_berth: "infrastructure",
   sensor_array: "infrastructure", defense_platform: "infrastructure", academy: "infrastructure", garrison: "infrastructure",
 };
 const EXTRACTION_OF: Record<string, Commodity[]> = {
@@ -267,7 +267,7 @@ export function refitPreview(g: GhostView, hull: import("../../protocol").ShipKi
 }
 
 export function utilityRefitChoices(g: GhostView, dock: SystemStateView) {
-  if (!g.own || !dockedAtSystem(g, dock.id) || !dock.bodies.some(b => shipyardBoost(dock, b) > 0)) return [];
+  if (!g.own || !dockedAtSystem(g, dock.id)) return [];
   const ledger = moduleLedgerAt(dock.id);
   const stacks = (g.composition ?? []).flatMap(stack => {
     const fitted = (g.loadouts ?? []).filter(s => s.kind === stack.kind && s.n > 0);
@@ -275,6 +275,7 @@ export function utilityRefitChoices(g: GhostView, dock: SystemStateView) {
     return [...fitted, ...(stock > 0 ? [{ kind: stack.kind, modules: [] as ModuleKind[], n: stock }] : [])];
   });
   return stacks.flatMap(stack => MODULES.filter(m => isUtility(m.kind)).flatMap(module => {
+    if (!utilityWorkshop(dock, stack.kind)) return [];
     const has = stack.modules.includes(module.kind);
     let to = has ? stack.modules.filter(m => m !== module.kind) : [...stack.modules, module.kind];
     if (!has && !fitLegal(stack.kind, to)) to = [...stack.modules.filter(m => !isUtility(m)), module.kind];
@@ -283,6 +284,15 @@ export function utilityRefitChoices(g: GhostView, dock: SystemStateView) {
       name: `${has ? "Remove" : "Fit"} ${module.name}`, blocked: refitFuelBlocked(g, stack.modules, to) || refitCargoBlocked(g, stack.kind, stack.modules, to, 1),
       preview: refitPreview(g, stack.kind, stack.modules, to, 1) }];
   }));
+}
+
+/** A berth can borrow a mining posting, not food crew. Eligibility is a served
+ * estimate; actual ownership, crew and crates are checked again on receipt. */
+export function utilityWorkshop(dock: SystemStateView, hull: string): boolean {
+  return dock.bodies.some(b => shipyardBoost(dock, b) > 0) ||
+    dock.owner === state.playerId && ["scout", "raider", "tiny_freighter", "small_freighter"].includes(hull)
+    && dock.bodies.some(b => (b.structures.warehouse ?? 0) > 0 && (b.structures.service_berth ?? 0) > 0)
+    && dock.assignments.some(a => ["service_berth", "mining_complex"].includes(a.structure) && a.workers > 0);
 }
 
 // A module's goods VALUE = its recipe commodities priced at the observed hub
@@ -319,10 +329,10 @@ export function bodyPoolUsage(b: BodyView, dyn: SystemStateView | undefined): Po
   const totals = bodyPoolTotals(b);
   const used = { resource: 0, industrial: 0, infrastructure: 0 };
   for (const [slug, t] of Object.entries(b.structures ?? {})) {
-    if (t > 0 && POOL_OF[slug]) used[POOL_OF[slug]] += 1;
+    if (t > 0 && POOL_OF[slug] && slug !== "service_berth") used[POOL_OF[slug]] += 1;
   }
   const pending = new Set((dyn?.builds ?? [])
-    .filter((j) => j.body_id === b.id && POOL_OF[j.key] && ((b.structures ?? {})[j.key] ?? 0) === 0)
+    .filter((j) => j.body_id === b.id && j.key !== "service_berth" && POOL_OF[j.key] && ((b.structures ?? {})[j.key] ?? 0) === 0)
     .map((j) => j.key));
   for (const slug of pending) used[POOL_OF[slug]] += 1;
   return {
@@ -339,7 +349,7 @@ export function poolUsage(dyn: SystemStateView | undefined): PoolUse {
     const totals = bodyPoolTotals(b);
     for (const k of ["resource", "industrial", "infrastructure"] as const) sum[k].total += totals[k];
     for (const [slug, t] of Object.entries(b.structures ?? {})) {
-      if (t > 0 && POOL_OF[slug]) sum[POOL_OF[slug]].used += 1;
+      if (t > 0 && POOL_OF[slug] && slug !== "service_berth") sum[POOL_OF[slug]].used += 1;
     }
   }
   return sum;
@@ -366,7 +376,8 @@ export function structOption(o: BuildOpt, dyn: SystemStateView, body: BodyView, 
   const targetTier = currentTier + pendingAhead + 1;
   const have = constructionStock(dyn, o.key).available;
   const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
-  const poolFull = foundsNew && !!pool && pools[pool].used >= pools[pool].total;
+  const attachment = o.key === "service_berth";
+  const poolFull = !attachment && foundsNew && !!pool && pools[pool].used >= pools[pool].total;
   const extractsFrom = EXTRACTION_OF[o.key];
   const noDeposit = foundsNew && !!extractsFrom && !(body.deposits ?? []).some((d) => extractsFrom.includes(d.resource as Commodity));
   // §yards: a yard needs the one below it standing on the same SYSTEM (not this
@@ -383,12 +394,13 @@ export function structOption(o: BuildOpt, dyn: SystemStateView, body: BodyView, 
   const researchTitle = programme?.name
     ?? state.researchCatalog?.find((entry) => entry.id === research)?.name
     ?? label(research ?? "");
-  const buildable = !researchLocked && !poolFull && !noDeposit && !yardPrereq && afford;
-  const reason = researchLocked ? `Requires ${researchTitle} research.`
+  const attachmentReason = attachment && targetTier > 1 ? "Service Berth has one tier." : attachment && !(body.structures.warehouse > 0) ? "Requires a Warehouse on this world. Uses no extra slot." : "";
+  const buildable = !attachmentReason && !researchLocked && !poolFull && !noDeposit && !yardPrereq && afford;
+  const reason = attachmentReason || (researchLocked ? `Requires ${researchTitle} research.`
     : noDeposit ? "No matching deposit on this body — a mine only works its own rock."
     : yardPrereq ? `Needs ${YARD_TITLE[yardPrereq.yard] ?? yardPrereq.yard} tier ${yardPrereq.tier} somewhere in this system (have ${yardPrereq.have}).`
     : poolFull ? `This body's ${POOL_LABEL[pool]} slots are full (${pools[pool].used}/${pools[pool].total}).`
-      : !afford ? "Not enough goods available at this system." : "";
+      : !afford ? "Not enough goods available at this system." : "");
   return { o, pool, currentTier, targetTier, foundsNew, tierUp: !foundsNew, afford, poolFull, noDeposit, yardPrereq, buildable, reason };
 }
 

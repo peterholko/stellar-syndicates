@@ -23,17 +23,38 @@
 /* Landscape, structures and their badges use ONE fitted 16:9 image plane. Keep
    the entire artwork visible: independently cropping it or reflowing footprints
    would slide buildings across terrain when the window's aspect ratio changes.
-   Footprints are 8.625% of this plane (the anchor columns remain 12% apart),
-   25% smaller across the full size curve, capped at 150px. */
-.deck-planet__canvas { container: planet-canvas / inline-size; --planet-building: clamp(36px, 8.625cqw, 150px); position: absolute; left: 50%; top: 50%; width: min(100cqw, calc(100cqh * 16 / 9)); aspect-ratio: 16 / 9; transform: translate(-50%, -50%); border-radius: inherit; }
+   Front-row footprints are 7.5% of this plane (the anchor columns remain 12%
+   apart), capped at 130px; each address also carries --planet-scale (planet.ts),
+   so rows nearer the limb render smaller and the colony recedes with the terrain. */
+.deck-planet__canvas { container: planet-canvas / inline-size; --planet-building: clamp(36px, 7.5cqw, 130px); position: absolute; left: 50%; top: 50%; width: min(100cqw, calc(100cqh * 16 / 9)); aspect-ratio: 16 / 9; transform: translate(-50%, -50%); border-radius: inherit; }
 .deck-planet__surface { width: 100%; height: 100%; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; }
 .deck-planet__globe { position: absolute; width: 80%; height: 90%; left: 10%; top: 5%; object-fit: contain; pointer-events: none; opacity: .85; }
-.deck .deck-planet__building { position: absolute; left: var(--planet-x); top: var(--planet-y); width: var(--planet-building); height: var(--planet-building); min-height: 0; padding: 0; transform: translate(-50%, -50%); border: 1px solid transparent; border-radius: var(--space-1); background: transparent; }
-.deck .deck-planet__building:hover { background: rgba(7, 15, 26, .25); border-color: var(--dim); }
-.deck .deck-planet__building[aria-pressed="true"] { border-color: var(--accent); background: rgba(7, 15, 26, .3); }
-.deck-planet__building > .icon { position: relative; width: 100%; height: 100%; object-fit: contain; filter: brightness(var(--planet-building-brightness, 1)) drop-shadow(0 0 1px rgba(228, 235, 242, .7)) drop-shadow(0 3px 3px rgba(0, 0, 0, .85)); pointer-events: none; }
+.deck-planet__building, .deck-planet__site, .deck-planet__selection { --planet-footprint: calc(var(--planet-building) * var(--planet-scale, 1)); }
+/* The hit target keeps the front-row size on every row; only the sprite, its
+   shadow and its ring take --planet-footprint, so a back-row building stays as
+   easy to click as a front-row one. No box chrome: selection is a ground ring. */
+.deck .deck-planet__building { position: absolute; left: var(--planet-x); top: var(--planet-y); width: var(--planet-building); height: var(--planet-building); min-height: 0; padding: 0; transform: translate(-50%, -50%); border: 0; border-radius: 0; background: transparent; isolation: isolate; }
+.deck .deck-planet__building:hover { background: transparent; }
+.deck .deck-planet__canvas .deck-planet__building:focus-visible { outline: 0; }
+/* Grounding. ::before is an ambient-occlusion ellipse under the base, leaning
+   lower-right because every painting is lit from the upper left; the sprite's own
+   silhouette casts a soft shadow the same way. ::after is the selection ring: an
+   ellipse on the ground plane, not a frame around the sprite. Both sit behind the
+   sprite, so the front arc reads as the building standing inside it. */
+.deck-planet__building::before, .deck-planet__building::after { content: ""; position: absolute; z-index: 0; left: 50%; top: 50%; width: calc(var(--planet-footprint) * .92); height: calc(var(--planet-footprint) * .46); transform: translate(calc(-50% + var(--planet-footprint) * .03), calc(-50% + var(--planet-footprint) * .17)); border-radius: 50%; pointer-events: none; }
+.deck-planet__building::before { background: radial-gradient(ellipse at center, rgba(4, 10, 18, .55) 0%, rgba(4, 10, 18, .3) 40%, rgba(4, 10, 18, 0) 70%); }
+.deck-planet__building::after { width: var(--planet-footprint); height: calc(var(--planet-footprint) * .5); border: var(--deck-focus-ring) solid var(--dim); box-shadow: 0 0 0 1px rgba(4, 10, 18, .55), inset 0 0 0 1px rgba(4, 10, 18, .35); opacity: 0; transition: opacity .12s ease-out; }
+.deck-planet__building:hover::after { opacity: .85; }
+.deck-planet__building:is([aria-pressed="true"], :focus-visible)::after { opacity: 1; border-color: var(--accent); box-shadow: 0 0 0 1px rgba(4, 10, 18, .55), inset 0 0 0 1px rgba(4, 10, 18, .35), 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent); }
+.deck-planet__building > .icon { position: absolute; z-index: 1; left: 50%; top: 50%; width: var(--planet-footprint); height: var(--planet-footprint); transform: translate(-50%, -50%); object-fit: contain; filter: brightness(var(--planet-building-brightness, 1)) drop-shadow(calc(var(--planet-footprint) * .045) calc(var(--planet-footprint) * .06) calc(var(--planet-footprint) * .03) rgba(4, 10, 18, .5)); pointer-events: none; }
 .deck-planet__building:is(:hover, :focus-visible) { --planet-building-brightness: 1.15; }
-.deck .deck-planet__site { position: absolute; left: var(--planet-x); top: var(--planet-y); transform: translate(-50%, -50%); width: var(--planet-building); height: var(--planet-building); min-height: 0; padding: var(--space-1); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-1); border: 1px dashed currentColor; border-radius: var(--space-1); background: rgba(7, 15, 26, .65); color: var(--accent); box-sizing: border-box; }
+/* Orbital infrastructure floats beside a globe: nothing to stand on, so it keeps a
+   pale edge against black space and a plain drop instead of a ground shadow. */
+.deck-planet__scene.is-orbital .deck-planet__building::before { display: none; }
+.deck-planet__scene.is-orbital .deck-planet__building > .icon { filter: brightness(var(--planet-building-brightness, 1)) drop-shadow(0 0 1px rgba(228, 235, 242, .7)) drop-shadow(0 3px 3px rgba(0, 0, 0, .85)); }
+/* Sites recede with their row too, but never below a legible 56px unless the
+   whole plane is that small. */
+.deck .deck-planet__site { position: absolute; left: var(--planet-x); top: var(--planet-y); transform: translate(-50%, -50%); width: max(var(--planet-footprint), min(var(--planet-building), 56px)); height: max(var(--planet-footprint), min(var(--planet-building), 56px)); min-height: 0; padding: var(--space-1); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-1); border: 1px dashed currentColor; border-radius: var(--space-1); background: rgba(7, 15, 26, .65); color: var(--accent); box-sizing: border-box; }
 .deck-planet__site.is-resource { color: var(--positive); }
 .deck-planet__site.is-industrial, .deck-planet__site.is-construction { color: var(--warn); }
 .deck-planet__site > b { font-size: var(--fs-page); line-height: 1; }
@@ -44,11 +65,11 @@
 .deck-planet__site.is-construction > small { position: relative; padding: var(--space-1); background: var(--panel); }
 .deck-planet__sites-empty { position: absolute; top: var(--space-3); left: var(--space-3); padding: var(--space-2); background: var(--panel); color: var(--dim); }
 .deck-planet__selection { position: absolute; inset: 0; pointer-events: none; }
-.deck .deck-planet__workforce-badge { position: absolute; left: clamp(110px, var(--planet-x), calc(100% - 110px)); top: calc(var(--planet-y) - var(--planet-building) / 2 - var(--space-1)); transform: translate(-50%, -100%); display: flex; align-items: center; gap: var(--space-2); max-width: min(220px, calc(100% - var(--space-4))); padding: var(--space-1) var(--space-2); min-height: var(--deck-control-height); border-color: var(--accent); background: var(--panel); pointer-events: auto; }
+.deck .deck-planet__workforce-badge { position: absolute; left: clamp(110px, var(--planet-x), calc(100% - 110px)); top: calc(var(--planet-y) - var(--planet-footprint) / 2 - var(--space-1)); transform: translate(-50%, -100%); display: flex; align-items: center; gap: var(--space-2); max-width: min(220px, calc(100% - var(--space-4))); padding: var(--space-1) var(--space-2); min-height: var(--deck-control-height); border-color: var(--accent); background: var(--panel); pointer-events: auto; }
 .deck-planet__workforce-badge > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-fine); }
 .deck-planet__workforce-badge > b { padding-left: var(--space-2); border-left: 1px solid var(--border); }
 .deck-planet__workforce-icon { width: var(--deck-control-height); height: var(--space-6); object-fit: contain; flex: 0 0 auto; vertical-align: middle; }
-.deck-planet__output-badge { position: absolute; left: clamp(110px, var(--planet-x), calc(100% - 110px)); top: min(calc(var(--planet-y) + var(--planet-building) / 2 + var(--space-1)), calc(100% - var(--planet-output-height, 44px))); transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-1) var(--space-2); width: max-content; max-width: min(220px, calc(100% - var(--space-4))); padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--space-1); background: var(--panel); pointer-events: auto; }
+.deck-planet__output-badge { position: absolute; left: clamp(110px, var(--planet-x), calc(100% - 110px)); top: min(calc(var(--planet-y) + var(--planet-footprint) / 2 + var(--space-1)), calc(100% - var(--planet-output-height, 44px))); transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-1) var(--space-2); width: max-content; max-width: min(220px, calc(100% - var(--space-4))); padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--space-1); background: var(--panel); pointer-events: auto; }
 .deck-planet__rate { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
 .deck-planet__rate b, .deck-planet__good { color: var(--positive); font-variant-numeric: tabular-nums; }
 .deck-planet__rate small { color: var(--dim); font-size: var(--fs-fine); }

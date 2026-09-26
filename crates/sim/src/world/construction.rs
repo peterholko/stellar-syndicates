@@ -9,7 +9,7 @@ impl World {
         // Lost-site structure jobs already forfeit their reserved goods. Drop
         // waiting jobs too, so a former owner's queue cannot block a new owner.
         // The change is still disclosed only through the arrived site report.
-        self.build_queue.retain(|job| !matches!(job.what, BuildKind::Upgrade { .. })
+        self.build_queue.retain(|job| !matches!(job.what, BuildKind::Upgrade { .. } | BuildKind::Founding { .. })
             || self.systems.iter().any(|system| system.id == job.system
                 && system.owner == Some(job.owner)
                 && system.bodies.iter().any(|body| body.id == job.body_id)));
@@ -18,13 +18,13 @@ impl World {
         // Include system id: body ids are local, not galaxy-wide identifiers.
         let mut heads: BTreeMap<(EntityId, u32), u64> = BTreeMap::new();
         for job in &self.build_queue {
-            if matches!(job.what, BuildKind::Upgrade { .. }) {
+            if matches!(job.what, BuildKind::Upgrade { .. } | BuildKind::Founding { .. }) {
                 heads.entry((job.system, job.body_id))
                     .and_modify(|id| *id = (*id).min(job.id)).or_insert(job.id);
             }
         }
         for job in &mut self.build_queue {
-            if !matches!(job.what, BuildKind::Upgrade { .. }) { continue; }
+            if !matches!(job.what, BuildKind::Upgrade { .. } | BuildKind::Founding { .. }) { continue; }
             let active = heads.get(&(job.system, job.body_id)) == Some(&job.id);
             let work = job.structure_work.get_or_insert_with(|| {
                 // Older snapshots allowed parallel timers. Preserve their earned

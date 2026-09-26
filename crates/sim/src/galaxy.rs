@@ -366,6 +366,7 @@ impl StarSystem {
             // §ground: the garrison sits where the people are — you defend a
             // populated world, not a bare rock.
             K::Habitat | K::Agroplex | K::Academy | K::Garrison => habitable_body,
+            K::ServiceBerth => self.bodies.iter().find(|b| b.tier(K::Warehouse) > 0).map(|b| b.id),
             K::Warehouse => {
                 if let Some(b) = self.bodies.iter().filter(|b| b.tier(K::Warehouse) > 0)
                     .max_by_key(|b| b.tier(K::Warehouse)) {
@@ -827,8 +828,7 @@ impl StarSystem {
         let ground: f64 = if self.bodies.is_empty() {
             crate::build::warehouse_capacity(self.tier(crate::build::StructureKind::Warehouse))
         } else {
-            self.bodies.iter().map(|b| crate::build::warehouse_capacity(
-                b.tier(crate::build::StructureKind::Warehouse))).sum()
+            self.bodies.iter().map(|b| b.warehouse_capacity()).sum()
         };
         ground + crate::build::STORAGE_PER_ORBITAL_WAREHOUSE_TIER
                 * self.tier_sum(crate::build::StructureKind::OrbitalWarehouse) as f64

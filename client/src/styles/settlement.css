@@ -1,0 +1,52 @@
+.settlement-dialog { color: #dce7ed; background: #0b141e; border: 1px solid #375367; border-radius: 16px; width: min(1050px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; box-shadow: 0 30px 100px #000b; font-family: inherit; }
+.settlement-dialog::backdrop { background: #020811e8; }
+.settlement-dialog button { font: inherit; color: inherit; border: 1px solid #405263; border-radius: 7px; padding: 10px 16px; background: #192735; cursor: pointer; min-height: 44px; }
+.settlement-dialog button:hover { border-color: #8cb9cf; }
+.settlement-dialog button:focus-visible { outline: 2px solid #a9deef; outline-offset: 3px; }
+.settlement-dialog button:disabled { opacity: .55; cursor: default; }
+.settlement-dialog .settlement-primary { background: #9ed8e8; color: #0a1720; font-weight: 700; }
+.settlement-story-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 28px; }
+.settlement-story-header small { display: block; letter-spacing: .16em; font-size: 11px; color: #b4ddea; }
+.settlement-story-header span { display: block; color: #8da4b5; font-size: 12px; margin-top: 6px; }
+.settlement-story-header button { background: transparent; border-color: transparent; font-size: 13px; }
+.settlement-story-frame { margin: 0; background: #050b12; border-block: 1px solid #223647; }
+.settlement-story-image { display: block; width: 100%; height: auto; max-height: 50dvh; object-fit: contain; }
+.settlement-dialog .settlement-story-caption { padding-bottom: 12px; }
+.settlement-dialog .settlement-story-caption h1 { font-size: clamp(26px, 3vw, 36px); margin: 2px 0 12px; }
+.settlement-story-caption > p { max-width: 780px; margin: 0; }
+.settlement-story-caption .settlement-story-status { margin-top: 16px; font-size: 12px; }
+.settlement-story .settlement-story-caption footer { margin-top: 8px; bottom: -12px; }
+.settlement-hero { padding: 32px 36px 20px; background: linear-gradient(0deg,#0b141e, #0b141e66),var(--settlement-art) center 40% / cover; }
+.settlement-hero small { color: #b4ddea; letter-spacing: .16em; }
+.settlement-dialog h1 { font-size: clamp(26px, 3vw, 42px); margin: 18px 0; line-height: 1.1; }
+.settlement-hero span, .settlement-muted, .settlement-dialog small { color: #a4b7c5; }
+.settlement-content { padding: 20px 36px 28px; }
+.settlement-content p { line-height: 1.6; }
+.settlement-content footer { display: flex; justify-content: space-between; gap: 12px; margin-top: 20px; position: sticky; bottom: -28px; padding: 14px 0; background: #0b141ef5; }
+.settlement-content header > button { float: right; font-size: 24px; }
+.settlement-choices { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin: 24px 0; }
+.settlement-choices button { text-align: left; padding: 0 0 18px; overflow: hidden; }
+.settlement-choices button[aria-pressed="true"] { border-color: #a2e5f7; box-shadow: 0 0 0 2px #67b9cd; background: #17313e; }
+.settlement-choices img { width: 100%; height: 115px; object-fit: cover; }
+.settlement-choices b, .settlement-choices span, .settlement-choices small { display: block; margin: 12px 16px 0; line-height: 1.45; }
+.settlement-kit { display: flex; gap: 24px; align-items: center; margin: 20px 0; }
+.settlement-kit img { width: 80px; height: 80px; object-fit: contain; }
+.settlement-projects { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.settlement-projects article { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border: 1px solid #2d4152; border-radius: 9px; }
+.settlement-projects article img { width: 56px; height: 56px; object-fit: contain; }
+.settlement-projects h2 { font-size: 17px; margin: 0; }
+.settlement-projects p { font-size: 13px; }
+.settlement-projects button { display: block; margin-top: 12px; }
+.settlement-review { padding: 18px; background: #163443; border-radius: 8px; margin-top: 18px; }
+.settlement-review button { margin-right: 12px; }
+.camp-summary { padding: 14px; margin: 12px 0; border: 1px solid #345060; border-radius: 8px; background: #11232e; }
+.camp-summary p { line-height: 1.5; margin: 8px 0; }
+@media (max-width: 700px) {
+  .settlement-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  .settlement-story-header { padding: 12px 16px; gap: 8px; }
+  .settlement-story-header small { font-size: 10px; letter-spacing: .12em; }
+  .settlement-hero { padding: 30px 20px 20px; }
+  .settlement-content { padding: 16px 20px; }
+  .settlement-choices, .settlement-projects { grid-template-columns: 1fr; }
+  .settlement-choices img { height: 90px; }
+}

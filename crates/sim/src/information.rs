@@ -11,6 +11,9 @@ use crate::{BuildJob, EntityId, PlayerId, StarSystem, Vec2, World};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 
+#[cfg(test)]
+mod retirement_tests;
+
 /// Change-only reports for discrete facts. Moving entities may jump, so select
 /// the greatest ARRIVED emission, not the newest value or an arrival-age tier.
 /// These streams contain state changes, not a tick-by-tick motion history.
@@ -225,9 +228,47 @@ impl<T: PartialEq> Reports<T> {
             self.moving_origin |= self.samples.back().is_some_and(|(_, old, _)| *old != pos);
             self.samples.push_back((at, pos, value));
         }
+        self.trim(at, horizon);
+    }
+
+    /// [`Self::record`] of a present value, cloning it only when it differs from
+    /// the retained report. Same retained stream, no copy for unchanged state.
+    fn record_present(&mut self, at: f64, pos: Vec2, value: &T, horizon: f64)
+    where
+        T: Clone,
+    {
+        self.last_pos = pos;
+        if self
+            .samples
+            .back()
+            .is_none_or(|(_, _, last)| last.as_ref() != Some(value))
+        {
+            self.moving_origin |= self.samples.back().is_some_and(|(_, old, _)| *old != pos);
+            self.samples.push_back((at, pos, Some(value.clone())));
+        }
+        self.trim(at, horizon);
+    }
+
+    /// The bookkeeping [`Self::record`] performs when the value is unchanged.
+    fn touch(&mut self, at: f64, pos: Vec2, horizon: f64) {
+        self.last_pos = pos;
+        self.trim(at, horizon);
+    }
+
+    fn trim(&mut self, at: f64, horizon: f64) {
         while self.samples.len() > 1 && self.samples[1].0 < at - horizon {
             self.samples.pop_front();
         }
+    }
+
+    /// A final absence must outlive the same full light-history window as its
+    /// preceding reports. A live, unchanged value never expires this way.
+    /// Trimming samples alone leaves one tombstone in every dead entity's map
+    /// slot forever; callers also remove that slot once this receipt is old.
+    fn expired_absence(&self, now: f64, horizon: f64) -> Option<(f64, Vec2)> {
+        self.samples.back().and_then(|(at, pos, value)| {
+            (value.is_none() && *at + horizon < now).then_some((*at, *pos))
+        })
     }
 
     fn at(&self, cc: Vec2, c: f64, now: f64) -> Option<&T> {
@@ -281,6 +322,12 @@ pub struct InformationHistory {
     facts: BTreeMap<u64, Vec<(PlayerId, LearnedFact)>>,
     fleet_assets: BTreeMap<EntityId, Reports<FleetAssets>>,
     rankings: VecDeque<(f64, Vec<crate::rankings::RankingRow>)>,
+    /// Compact completion receipts, queried only by fleet id; never traversed
+    /// by record() or fleet_assets(). Keep the original emission/position so an
+    /// old standing-order latch still resolves after cleanup/load, without
+    /// equating an unknown id with a completed haul or revealing a loss early.
+    /// The enclosing serde(default) also accepts pre-cleanup saved histories.
+    fleet_completions: BTreeMap<EntityId, (f64, Vec2)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -339,10 +386,14 @@ impl InformationHistory {
     }
 
     pub fn fleet_haul_finished(&self, id: EntityId, receiver: Vec2, c: f64, now: f64) -> bool {
-        self.fleet_assets
-            .get(&id)
-            .and_then(|r| r.state_at(receiver, c, now))
-            .is_some_and(|state| state.as_ref().is_none_or(|f| f.mission.is_none()))
+        if let Some(history) = self.fleet_assets.get(&id) {
+            history.state_at(receiver, c, now)
+                .is_some_and(|state| state.as_ref().is_none_or(|f| f.mission.is_none()))
+        } else {
+            self.fleet_completions.get(&id).is_some_and(|(at, pos)| {
+                *at + crate::transit::delay(*pos, receiver, c) <= now + 1e-9
+            })
+        }
     }
 
     pub fn rankings(
@@ -486,6 +537,7 @@ impl InformationHistory {
                 unknown.modules.clear();
                 unknown.specialists.clear();
                 for body in &mut unknown.bodies {
+                    body.founding_camp = None;
                     body.population = 0.0;
                     body.inbound_migrants = 0;
                     body.structures.clear();
@@ -510,43 +562,80 @@ impl InformationHistory {
         while self.rankings.len() > 1 && self.rankings[1].0 < world.time - horizon {
             self.rankings.pop_front();
         }
+        // One pass over the operations table, in its own order, instead of one
+        // filtered scan of it per fleet per tick.
+        let mut operations_by_assignment: BTreeMap<(PlayerId, EntityId), Vec<crate::OperationId>> =
+            BTreeMap::new();
+        for operation in world.operations.values() {
+            for (&owner, &fleet) in &operation.assigned_fleets {
+                operations_by_assignment
+                    .entry((owner, fleet))
+                    .or_default()
+                    .push(operation.id);
+            }
+        }
         for (&id, fleet) in &world.fleets {
-            self.fleet_assets.entry(id).or_default().record(
-                world.time,
-                fleet.pos,
-                Some(FleetAssets {
-                    id,
-                    owner: fleet.owner,
-                    mission: fleet.mission,
-                    cargo: fleet.cargo_stacks(),
-                    operations: world
-                        .operations
-                        .values()
-                        .filter(|op| op.assigned_fleets.get(&fleet.owner) == Some(&id))
-                        .map(|op| op.id)
-                        .collect(),
-                }),
-                horizon,
-            );
-        }
-        for (id, history) in &mut self.fleet_assets {
-            if !world.fleets.contains_key(id) {
-                history.record(world.time, history.last_pos, None, horizon);
+            let history = match self.fleet_assets.entry(id) {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    self.fleet_completions.remove(&id);
+                    entry.insert(Reports::default())
+                }
+            };
+            let operations = operations_by_assignment
+                .get(&(fleet.owner, id))
+                .map_or(&[][..], Vec::as_slice);
+            // Compare against the retained report before building a new one.
+            let unchanged = history.samples.back().is_some_and(|(_, _, last)| {
+                last.as_ref().is_some_and(|assets| {
+                    assets.id == id
+                        && assets.owner == fleet.owner
+                        && assets.mission == fleet.mission
+                        && assets.operations == operations
+                        && fleet.cargo_stacks_matches(&assets.cargo)
+                })
+            });
+            if unchanged {
+                history.touch(world.time, fleet.pos, horizon);
+            } else {
+                history.record(
+                    world.time,
+                    fleet.pos,
+                    Some(FleetAssets {
+                        id,
+                        owner: fleet.owner,
+                        mission: fleet.mission,
+                        cargo: fleet.cargo_stacks(),
+                        operations: operations.to_vec(),
+                    }),
+                    horizon,
+                );
             }
         }
+        // The hot maps contain only live entities and disappearance reports
+        // still inside the light window, not every fleet/shipment ever made.
+        // Legacy tombstones are retired on the first post-load record pass.
+        self.fleet_assets.retain(|id, history| {
+            if world.fleets.contains_key(id) { return true; }
+            history.record(world.time, history.last_pos, None, horizon);
+            if let Some(receipt) = history.expired_absence(world.time, horizon) {
+                self.fleet_completions.insert(*id, receipt);
+                false
+            } else {
+                true
+            }
+        });
         for e in &world.emplacements {
-            self.emplacements.entry(e.id).or_default().record(
-                world.time,
-                e.pos,
-                Some(e.clone()),
-                horizon,
-            );
+            self.emplacements
+                .entry(e.id)
+                .or_default()
+                .record_present(world.time, e.pos, e, horizon);
         }
-        for (id, history) in &mut self.emplacements {
-            if !world.emplacements.iter().any(|e| e.id == *id) {
-                history.record(world.time, history.last_pos, None, horizon);
-            }
-        }
+        self.emplacements.retain(|id, history| {
+            if world.emplacements.iter().any(|e| e.id == *id) { return true; }
+            history.record(world.time, history.last_pos, None, horizon);
+            history.expired_absence(world.time, horizon).is_none()
+        });
         for (&owner, corp) in &world.players {
             for (&system, snapshot) in &corp.intel {
                 self.intel
@@ -577,13 +666,13 @@ impl InformationHistory {
                         })
                         .unwrap_or(history.last_pos)
                 };
-                history.record(world.time, pos, Some(captain.clone()), horizon);
+                history.record_present(world.time, pos, captain, horizon);
             }
-            for (id, history) in histories {
-                if !corp.captains.contains_key(id) {
-                    history.record(world.time, history.last_pos, None, horizon);
-                }
-            }
+            histories.retain(|id, history| {
+                if corp.captains.contains_key(id) { return true; }
+                history.record(world.time, history.last_pos, None, horizon);
+                history.expired_absence(world.time, horizon).is_none()
+            });
             let histories = self.standing.entry(owner).or_default();
             for order in &corp.standing_orders {
                 let pos = order
@@ -601,11 +690,11 @@ impl InformationHistory {
                     horizon,
                 );
             }
-            for (id, history) in histories {
-                if !corp.standing_orders.iter().any(|o| o.id == *id) {
-                    history.record(world.time, history.last_pos, None, horizon);
-                }
-            }
+            histories.retain(|id, history| {
+                if corp.standing_orders.iter().any(|o| o.id == *id) { return true; }
+                history.record(world.time, history.last_pos, None, horizon);
+                history.expired_absence(world.time, horizon).is_none()
+            });
         }
         let mut present_shipments = std::collections::BTreeSet::new();
         for (&owner, _) in &world.players {
@@ -635,67 +724,87 @@ impl InformationHistory {
                 );
             }
         }
-        for (id, history) in &mut self.shipments {
-            if !present_shipments.contains(id) {
-                history.record(world.time, history.last_pos, None, horizon);
-            }
-        }
+        self.shipments.retain(|id, history| {
+            if present_shipments.contains(id) { return true; }
+            history.record(world.time, history.last_pos, None, horizon);
+            history.expired_absence(world.time, horizon).is_none()
+        });
         for (&id, syndicate) in &world.syndicates {
             let pos = world
                 .players
                 .get(&syndicate.founder)
                 .map_or(world.hub, |c| c.command_center);
-            self.syndicates.entry(id).or_default().record(
-                world.time,
-                pos,
-                Some(syndicate.clone()),
-                horizon,
-            );
+            self.syndicates
+                .entry(id)
+                .or_default()
+                .record_present(world.time, pos, syndicate, horizon);
         }
-        for (id, history) in &mut self.syndicates {
-            if !world.syndicates.contains_key(id) {
-                history.record(world.time, history.last_pos, None, horizon);
-            }
+        self.syndicates.retain(|id, history| {
+            if world.syndicates.contains_key(id) { return true; }
+            history.record(world.time, history.last_pos, None, horizon);
+            history.expired_absence(world.time, horizon).is_none()
+        });
+        // Group the per-site inputs once per tick, in their source order, and
+        // resolve each owner's research modifiers once, instead of a filtered
+        // copy and three modifier folds per system per tick.
+        let mut builds_by_system: BTreeMap<EntityId, Vec<&BuildJob>> = BTreeMap::new();
+        for job in &world.build_queue {
+            builds_by_system.entry(job.system).or_default().push(job);
         }
+        let mut academies_by_system: BTreeMap<EntityId, Vec<&crate::world::AcademyContribution>> =
+            BTreeMap::new();
+        for contribution in &academies {
+            academies_by_system
+                .entry(contribution.system)
+                .or_default()
+                .push(contribution);
+        }
+        let mut production_mods_by_owner: BTreeMap<PlayerId, crate::production::ProductionMods> =
+            BTreeMap::new();
         for system in &world.systems {
-            let production_mods = system.owner.map(|owner| world.production_mods(owner)).unwrap_or_default();
-            let mut system = system.clone();
-            // Only whole inventory units go onto the wire. Quantize before
-            // change compression, not the physical stockpile: fractional mine
-            // ticks must not allocate a full planetary report 30 times/second.
-            for amount in system.stockpile.values_mut() {
-                *amount = amount.floor();
-            }
-            let builds: Vec<_> = world
-                .build_queue
-                .iter()
-                .filter(|job| job.system == system.id)
-                .cloned()
-                .collect();
+            let production_mods = system
+                .owner
+                .map(|owner| {
+                    *production_mods_by_owner
+                        .entry(owner)
+                        .or_insert_with(|| world.production_mods(owner))
+                })
+                .unwrap_or_default();
+            let builds = builds_by_system
+                .get(&system.id)
+                .map_or(&[][..], Vec::as_slice);
+            let site_academies = academies_by_system
+                .get(&system.id)
+                .map_or(&[][..], Vec::as_slice);
             let garrison = world.hosted_garrison(system.id);
             let node_fed = world.nodes.get(&system.id).is_some_and(|n| n.fed);
-            let academies: Vec<_> = academies
-                .iter()
-                .filter(|a| a.system == system.id)
-                .cloned()
-                .collect();
             let history = self.sites.entry(system.id).or_default();
-            if history.back().is_none_or(|last| {
-                last.system != system
-                    || last.builds != builds
-                    || last.garrison != garrison
-                    || last.node_fed != node_fed
-                    || last.academies != academies
-                    || last.production_mods != production_mods
-            }) {
+            // Compare against the retained report before copying anything: an
+            // unchanged site costs a read, not a full planetary clone per tick.
+            let unchanged = history.back().is_some_and(|last| {
+                last.garrison == garrison
+                    && last.node_fed == node_fed
+                    && last.production_mods == production_mods
+                    && last.builds.iter().eq(builds.iter().copied())
+                    && last.academies.iter().eq(site_academies.iter().copied())
+                    && site_system_matches(&last.system, system)
+            });
+            if !unchanged {
+                let mut system = system.clone();
+                // Only whole inventory units go onto the wire. Quantize before
+                // change compression, not the physical stockpile: fractional mine
+                // ticks must not allocate a full planetary report 30 times/second.
+                for amount in system.stockpile.values_mut() {
+                    *amount = amount.floor();
+                }
                 history.push_back(SiteReport {
                     at: world.time,
                     tick: world.tick,
                     system,
-                    builds,
+                    builds: builds.iter().map(|job| (*job).clone()).collect(),
                     garrison,
                     node_fed,
-                    academies,
+                    academies: site_academies.iter().map(|a| (*a).clone()).collect(),
                     production_mods,
                 });
             }
@@ -727,4 +836,89 @@ impl InformationHistory {
             .filter_map(move |id| self.site(*id, cc, c, now))
             .filter(move |r| r.system.owner == Some(owner))
     }
+}
+
+/// Does the retained site report's system still describe `live`? The report
+/// stores the stockpile floored to whole units, so that map is compared
+/// floored; every other field is compared exactly as `StarSystem`'s derived
+/// equality would. The field list is deliberately exhaustive: adding a field
+/// to `StarSystem` must be reflected here, or this stops compiling.
+fn site_system_matches(stored: &StarSystem, live: &StarSystem) -> bool {
+    let StarSystem {
+        id,
+        pos,
+        name,
+        bodies,
+        legacy_deposits,
+        claim_cost,
+        owner,
+        claimed_at,
+        stockpile,
+        industry,
+        modules,
+        legacy_extractor_tier,
+        legacy_depot_tier,
+        legacy_shipyard_tier,
+        legacy_sensor_tier,
+        legacy_defense_tier,
+        defense_pool,
+        legacy_habitat_tier,
+        food_state,
+        legacy_refinery_tier,
+        blockade,
+        blockade_prev,
+        trait_,
+        garrison_fed,
+        garrison_suppression,
+        cache_claimed,
+        legacy_structures,
+        legacy_population,
+        legacy_assignments,
+        specialists,
+    } = stored;
+    *id == live.id
+        && *pos == live.pos
+        && *name == live.name
+        && *bodies == live.bodies
+        && *legacy_deposits == live.legacy_deposits
+        && *claim_cost == live.claim_cost
+        && *owner == live.owner
+        && *claimed_at == live.claimed_at
+        && floored_stockpile_matches(stockpile, &live.stockpile)
+        && *industry == live.industry
+        && *modules == live.modules
+        && *legacy_extractor_tier == live.legacy_extractor_tier
+        && *legacy_depot_tier == live.legacy_depot_tier
+        && *legacy_shipyard_tier == live.legacy_shipyard_tier
+        && *legacy_sensor_tier == live.legacy_sensor_tier
+        && *legacy_defense_tier == live.legacy_defense_tier
+        && *defense_pool == live.defense_pool
+        && *legacy_habitat_tier == live.legacy_habitat_tier
+        && *food_state == live.food_state
+        && *legacy_refinery_tier == live.legacy_refinery_tier
+        && *blockade == live.blockade
+        && *blockade_prev == live.blockade_prev
+        && *trait_ == live.trait_
+        && *garrison_fed == live.garrison_fed
+        && *garrison_suppression == live.garrison_suppression
+        && *cache_claimed == live.cache_claimed
+        && *legacy_structures == live.legacy_structures
+        && *legacy_population == live.legacy_population
+        && *legacy_assignments == live.legacy_assignments
+        && *specialists == live.specialists
+}
+
+/// The stored (floored) stockpile against the live one, floored the same way
+/// the report would store it. Mirrors `BTreeMap`'s own equality walk.
+fn floored_stockpile_matches(
+    stored: &BTreeMap<crate::cargo::Commodity, f64>,
+    live: &BTreeMap<crate::cargo::Commodity, f64>,
+) -> bool {
+    stored.len() == live.len()
+        && stored
+            .iter()
+            .zip(live)
+            .all(|((stored_key, stored_units), (live_key, live_units))| {
+                stored_key == live_key && *stored_units == live_units.floor()
+            })
 }

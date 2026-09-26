@@ -73,10 +73,11 @@ impl World {
             } else { FleetOrder::Idle };
             return; // surviving ambushers do not immediately re-enter the fight
         }
+        let held = self.node_holdings();
         let target = self.fleets.values().filter(|t| !t.owner.is_pirate()
             && (!t.owner.is_tca() || self.pirate_campaign.missions.values().any(|m| m.evacuees == Some(t.id)))
             && t.pos.distance(anchor) <= radius
-            && crate::detection::detected(t.signature() * self.veil_factor(t.owner, t.pos)
+            && crate::detection::detected(t.signature() * self.veil_factor_held(&held, t.owner, t.pos)
                 * self.nebula_signature_factor(t.pos)
                 * if t.surveying() { crate::explore::SURVEY_SIGNATURE_FACTOR } else { 1.0 },
                 &[(p, self.config.sensor_range * self.nebula_sensor_factor(p))], t.pos)

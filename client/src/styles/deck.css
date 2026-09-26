@@ -658,15 +658,8 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 .deck-join { isolation: isolate; background: var(--bg); }
 .deck-join__art { position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
 .deck-join__art img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.deck-join__card { width: min(420px, calc(100vw - var(--space-6) * 2)); display: grid; gap: var(--space-3); padding: var(--space-6); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); }
-.deck-join__card h1 { margin: 0; font-size: var(--fs-page); }
-.deck-join__card p { margin: 0; color: var(--dim); line-height: 1.5; }
-.deck-join__card { max-height: calc(100dvh - var(--space-6) * 2); overflow-y: auto; }
-.deck-join__card [data-register-field][hidden] { display: none; }
-.deck-join__card small { color: var(--dim); }
-.deck-join__card [data-account-guest] { border-color: var(--accent); color: var(--accent); }
-.deck-join__card label, .deck-eyebrow { color: var(--dim); font-size: var(--fs-fine); text-transform: uppercase; letter-spacing: .08em; }
-.deck-join__card input { min-height: var(--deck-control-height); padding-inline: var(--space-2); border: 1px solid var(--field-bd); border-radius: var(--deck-radius); background: var(--field-bg); color: var(--ink); font: inherit; }
+.deck-join__art::after { content: ""; position: absolute; inset: 0; background: #03081066; }
+.deck-eyebrow { color: var(--dim); font-size: var(--fs-fine); text-transform: uppercase; letter-spacing: .08em; }
 .deck-inline-error { min-height: var(--space-4); color: var(--negative); font-size: var(--fs-fine); }
 .deck-help__card { width: min(680px, calc(100vw - var(--space-6) * 2)); display: grid; gap: var(--space-4); padding: var(--space-6); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); }
 .deck-help__card header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }

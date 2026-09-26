@@ -182,3 +182,17 @@ for (const [html, attribute] of [[desktop.shipBuilder(system, body), "data-hull"
   }
 }
 console.log("Industry: structure/hull research visibility, starter access, live affordability, recipes, cargo and icons pass.");
+
+const berthBody={id:9,structures:{warehouse:1},infrastructure_slots:1,industrial_slots:0,resource_slots:0,construction_time_mult:1};
+const berthSystem={id:"home",owner:"1",structures:{warehouse:1},builds:[],bodies:[berthBody],stockpile:[{commodity:"alloys",units:5},{commodity:"machinery",units:3}]};
+const berthOption={key:"service_berth",label:"Service Berth",build_secs:120,costs:[{commodity:"alloys",units:5},{commodity:"machinery",units:3}]};
+const berthPools=market.bodyPoolUsage(berthBody,berthSystem);
+assert.equal(berthPools.infrastructure.used,berthPools.infrastructure.total);
+assert.equal(market.structOption(berthOption,berthSystem,berthBody,berthPools).buildable,true);
+const detail=DeckEmpireRoutes.prototype.structureDetail.call({ctx:{state}},berthSystem,berthBody,berthOption,berthPools);
+assert.match(detail,/Warehouse attachment/);assert.match(detail,/no extra slot/);assert.doesNotMatch(detail,/1 → 2/);
+berthBody.structures.service_berth=1;
+assert.equal(market.bodyPoolUsage(berthBody,berthSystem).infrastructure.used,1);
+assert.match(market.structOption(berthOption,berthSystem,berthBody,berthPools).reason,/one tier/);
+delete berthBody.structures.service_berth;delete berthBody.structures.warehouse;
+assert.match(market.structOption(berthOption,berthSystem,berthBody,berthPools).reason,/Requires a Warehouse/);

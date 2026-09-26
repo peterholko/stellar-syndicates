@@ -771,11 +771,10 @@ impl GameLoop {
                     },
                 );
 
-                // Ensure the corporation exists in the sim (idempotent).
-                self.pending.push(Command::AddPlayer {
-                    id: player_id,
-                    name,
-                });
+                // Reading the intro consumes no supplies or founder protection.
+                if !self.world.players.contains_key(&player_id) {
+                    self.sessions.send_to_conn(conn_id, ServerMsg::FoundingOffer);
+                }
                 info!(
                     %player_id, conn_id,
                     newly_online = inserted.newly_online,
@@ -796,6 +795,18 @@ impl GameLoop {
                 }
             }
             GameInput::Intent { conn_id, msg } => match {
+                if let ClientMsg::FoundColony { profile } = &msg {
+                    if let Some(id) = self.sessions.player_of(conn_id)
+                        && !self.world.players.contains_key(&id)
+                        && !self.pending.iter().any(|c| matches!(c, Command::FoundColony { id: pending, .. } if *pending == id))
+                        && let Some(name) = self.sessions.name_of(conn_id) {
+                        self.pending.push(Command::FoundColony { id, name: name.to_owned(), profile: *profile });
+                    }
+                    return;
+                }
+                if self.sessions.player_of(conn_id).is_none_or(|id| !self.world.players.contains_key(&id)) {
+                    return;
+                }
                 // One choke point for fixed-Hub command feedback. Every command
                 // addressed to a fleet now emits its lifecycle-linked signal
                 // only after the sim accepts it into the delayed order queue.
@@ -808,6 +819,12 @@ impl GameLoop {
             } {
                 ClientMsg::Ping => {
                     debug!(conn_id, "ping");
+                }
+                ClientMsg::FoundColony { .. } => unreachable!("handled before normal intents"),
+                ClientMsg::DevelopSettlement { system_id, body_id, project } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::DevelopSettlement { player_id, system_id, body_id, project });
+                    }
                 }
                 ClientMsg::RequestTransactions { before, request_id } => {
                     // Reading the CC's already-received records is local, not a
@@ -962,6 +979,9 @@ impl GameLoop {
                 }
                 ClientMsg::SetFreightRoute { fleet_id, route } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) { self.pending.push(Command::SetFreightRoute { player_id, fleet_id, route }); }
+                }
+                ClientMsg::SetRefiningReserve { system_id, ore, fuel } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) { self.pending.push(Command::SetRefiningReserve { player_id, system_id, ore, fuel }); }
                 }
                 ClientMsg::DeployOutpost { fleet_id, system_id, body_id, outpost, commodity } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) { self.pending.push(Command::DeployOutpost { player_id, fleet_id, system_id, body_id, outpost, commodity }); }
@@ -2456,6 +2476,10 @@ impl GameLoop {
                 .filter(|id| ghosts.iter().any(|ghost| ghost.id == *id));
             let founding = crate::protocol::FoundingView {
                 stage: corp.founding.stage,
+                local_opening: corp.founding.local_opening,
+                recovery_site: corp.founding.recovery_site.filter(|id| self.world.exploration.sites.get(id).is_some_and(|s| s.known.contains_key(&player_id))),
+                recovered: corp.founding.recovery_report_at.is_some_and(|at| at <= now),
+                export_dispatched: corp.founding.export_dispatched_at.is_some_and(|at| at <= now),
                 protected: corp.founding.protected(now),
                 protection_min_until: corp.founding.started_at
                     + sim::founding::FOUNDER_PROTECTION_MIN_S,
@@ -2463,7 +2487,7 @@ impl GameLoop {
                     + sim::founding::FOUNDER_PROTECTION_MAX_S,
                 expansion_unlocked: corp.founding.expansion_unlocked(),
                 interceptor: corp.founding.interceptor,
-                privateer: (corp.founding.stage == sim::FoundingStage::DefeatPrivateer)
+                privateer: (corp.founding.stage == sim::FoundingStage::DefeatPrivateer || corp.founding.local_opening && !corp.founding.reward_granted)
                     .then_some(known_privateer)
                     .flatten(),
                 bounty_received: corp.founding.reward_granted,
@@ -3349,6 +3373,8 @@ pub(crate) async fn binary_protocol_fixtures() -> Vec<ServerMsg> {
             outbound, view_tx, replace_tx, view_divisor: if index == 4 { 2 } else { 1 },
         });
         receivers.push((rx, view_rx));
+        game.handle_input(GameInput::Intent { conn_id: index, msg: ClientMsg::FoundColony {
+            profile: sim::settlement::FoundingProfile::MineralHighlands } });
     }
     let mut messages = Vec::new();
     for _ in 0..4 {
@@ -3461,6 +3487,46 @@ mod tests {
         let (status, _) = watch::channel(ServerStatus::default());
         let (estimate, _) = mpsc::unbounded_channel();
         GameLoop::new(world, 1.0, status, estimate)
+    }
+
+    #[tokio::test]
+    async fn landing_requires_confirmation_and_reconnect_cannot_refound() {
+        let mut game = reporting_game(World::new(sim::SimConfig::for_players(971, 2)));
+        let owner = PlayerId(971);
+        let connect = |game: &mut GameLoop, conn_id| {
+            let (outbound, rx) = mpsc::channel(32);
+            let (view_tx, _) = watch::channel(None);
+            let (replace_tx, _) = watch::channel(false);
+            game.handle_input(GameInput::Connect { conn_id, player_id: owner, name: "Auth name".into(),
+                outbound, view_tx, replace_tx, view_divisor: 1 });
+            rx
+        };
+        let mut rx = connect(&mut game, 7);
+        assert!(matches!(rx.try_recv().unwrap(), ServerMsg::Welcome { .. }));
+        assert!(matches!(rx.try_recv().unwrap(), ServerMsg::Timeline { .. }));
+        assert!(matches!(rx.try_recv().unwrap(), ServerMsg::FoundingOffer));
+        for _ in 0..5 { game.tick(); }
+        assert!(!game.world.players.contains_key(&owner));
+        assert!(game.pending.is_empty());
+        game.handle_input(GameInput::Intent { conn_id: 7, msg: ClientMsg::Ping });
+        game.handle_input(GameInput::Intent { conn_id: 999, msg: ClientMsg::FoundColony {
+            profile: sim::settlement::FoundingProfile::CoastalPlains } });
+        assert!(game.pending.is_empty(), "unknown session cannot found a corporation");
+        for _ in 0..2 { game.handle_input(GameInput::Intent { conn_id: 7, msg: ClientMsg::FoundColony {
+            profile: sim::settlement::FoundingProfile::CoastalPlains } }); }
+        assert_eq!(game.pending.len(), 1);
+        let before = game.world.time;
+        game.tick();
+        let corp = &game.world.players[&owner];
+        assert_eq!(corp.name, "Auth name");
+        assert!(corp.founding.started_at >= before);
+        let started = corp.founding.started_at;
+        let mut returning = connect(&mut game, 8);
+        while let Ok(msg) = returning.try_recv() { assert!(!matches!(msg, ServerMsg::FoundingOffer)); }
+        game.handle_input(GameInput::Intent { conn_id: 8, msg: ClientMsg::FoundColony {
+            profile: sim::settlement::FoundingProfile::MineralHighlands } });
+        assert!(game.pending.is_empty());
+        assert_eq!(game.world.players[&owner].founding.started_at, started);
     }
 
     #[tokio::test]

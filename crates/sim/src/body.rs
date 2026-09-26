@@ -288,6 +288,9 @@ impl BodyKind {
 /// hyphenated letter ("Veles II-a").
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
+    /// Present only for explicitly founded camps; never retrofitted onto saves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub founding_camp: Option<crate::settlement::FoundingCamp>,
     pub id: u32,
     pub name: String,
     pub kind: BodyKind,
@@ -326,6 +329,20 @@ pub struct Body {
 }
 
 impl Body {
+    pub fn population_capacity(&self) -> f64 {
+        let tier = self.tier(crate::StructureKind::Habitat);
+        if tier == 1 && let Some(camp) = &self.founding_camp {
+            return if camp.done(crate::settlement::SettlementProject::Quarters) { 0.006 } else { 0.003 };
+        }
+        crate::colony::POP_CAP_PER_HABITAT_TIER * tier as f64 * self.habitat_capacity_mult()
+    }
+
+    pub fn warehouse_capacity(&self) -> f64 {
+        let tier = self.tier(crate::StructureKind::Warehouse);
+        if tier == 1 && self.founding_camp.as_ref().is_some_and(|c|
+            !c.done(crate::settlement::SettlementProject::Storehouse)) { return 250.0; }
+        crate::build::warehouse_capacity(tier)
+    }
     pub fn tier(&self, kind: crate::build::StructureKind) -> u32 {
         self.structures.get(&kind).copied().unwrap_or(0)
     }
@@ -599,6 +616,9 @@ impl Body {
     /// INFRASTRUCTURE slots: 1, +1 if habitable, +1 once developed.
     pub fn infrastructure_slots(&self) -> u32 {
         1 + self.habitable as u32 + (body_pop_tier(self.population) >= 1) as u32
+            + self.founding_camp.as_ref().is_some_and(|c|
+                c.profile == crate::settlement::FoundingProfile::CoastalPlains
+                    && c.done(crate::settlement::SettlementProject::Prospect)) as u32
     }
 
     pub fn pool_slots(&self, pool: crate::build::SlotPool) -> u32 {
@@ -614,7 +634,7 @@ impl Body {
     pub fn pool_slots_built(&self, pool: crate::build::SlotPool) -> u32 {
         self.structures
             .iter()
-            .filter(|(k, t)| k.slot_pool() == pool && **t >= 1)
+            .filter(|(k, t)| **k != crate::build::StructureKind::ServiceBerth && k.slot_pool() == pool && **t >= 1)
             .count() as u32
     }
 }
@@ -843,6 +863,7 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
         // above): "Veles I", "Veles II", "Veles III".
         let name = format!("{} {}", system_name, planet_numeral(i));
         bodies.push(Body {
+            founding_camp: None,
             id,
             name,
             kind: p.kind.collapse(),
@@ -865,6 +886,7 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
         let pname = bodies[parent as usize].name.clone();
         bodies.push(Body {
             id: next_id,
+            founding_camp: None,
             // Moons keep the letter suffix but gain a hyphen: "Veles 2-a", "Veles 2-b".
             name: format!("{}-{}", pname, (b'a' + (k as u8 % 26)) as char),
             kind: BodyKind::Ice, // the walk forced moons to ice — kept
@@ -973,6 +995,7 @@ mod tests {
     #[test]
     fn slot_pools_derive_per_body() {
         let mut b = Body {
+            founding_camp: None,
             id: 0,
             name: "X I".into(),
             kind: BodyKind::Rocky,
@@ -1014,6 +1037,7 @@ mod tests {
         let mut b = Body {
             id: 0,
             name: "Head I".into(),
+            founding_camp: None,
             kind: BodyKind::Terrestrial,
             parent: None,
             habitable: true,
@@ -1053,6 +1077,7 @@ mod tests {
     #[test]
     fn atmosphere_never_determines_mineral_grade() {
         let mut barren = Body {
+            founding_camp: None,
             id: 0,
             name: "Test I".into(),
             kind: BodyKind::Rocky,
@@ -1099,6 +1124,7 @@ mod tests {
     #[test]
     fn planetary_profile_drives_legible_economic_factors() {
         let b = Body {
+            founding_camp: None,
             id: 0,
             name: "Forge I".into(),
             kind: BodyKind::Rocky,

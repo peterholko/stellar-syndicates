@@ -10,6 +10,7 @@ impl World {
         let engaged: std::collections::BTreeSet<_> = self.engagements.values()
             .flat_map(|e| e.attackers.iter().chain(&e.defenders).copied()).collect();
         let mut changes = Vec::new();
+        let held = self.node_holdings();
         for (&id, fleet) in &self.fleets {
             let Some(post) = fleet.system_defense() else { continue; };
             if engaged.contains(&id) { continue; } // tactical retreat owns a running battle
@@ -40,7 +41,7 @@ impl World {
                     let age = crate::transit::delay(source, other.pos, self.config.c)
                         + crate::transit::delay(source, fleet.pos, self.config.c);
                     let seen = other.pos - other.vel * age;
-                    let signature = other.signature() * self.veil_factor(other.owner, seen)
+                    let signature = other.signature() * self.veil_factor_held(&held, other.owner, seen)
                         * self.nebula_signature_factor(seen);
                     let detected = if other.broadcasts() { source.distance(seen) <= range }
                         else { crate::detection::detected(signature, &[(source, range)], seen) };
@@ -82,7 +83,8 @@ impl World {
                 || fleet.pos.distance(post.station) > 1e-6 { continue; }
             // Remain berthed for normal refuelling/resupply instead of installing
             // a dry Intercept at the dock, which would make the berth ineligible.
-            if !fleet.supplied || fleet.fuel < crate::fuel::fuel_tick(fleet.mass(), fleet.transit_speed(), DT) { continue; }
+            if !fleet.supplied || fleet.fuel < crate::fuel::fuel_tick(fleet.mass(), fleet.transit_speed(), DT)
+                * fleet.propulsion_fuel_mult() { continue; }
             let target = self.fleets.iter().filter_map(|(&target, other)| {
                 if target == id || !hostile(other) { return None; }
                 visible(other).map(|seen| (target, seen.distance(post.station)))

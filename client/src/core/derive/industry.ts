@@ -1,6 +1,6 @@
 import type { ColonyProjectKind, Commodity, FreightRoute, GhostView, ProjectTarget, SystemStateView } from "../../protocol";
 import type { ViewState } from "../../state";
-import { fleetBaseSpeed, fleetCargoCapacity, fleetFuelCapacity, WARP_FACTOR } from "./fleet";
+import { economyCapable, fleetBaseSpeed, fleetCargoCapacity, fleetFuelCapacity, transitSpeedMultiplier, WARP_FACTOR } from "./fleet";
 import { assignedRecipe } from "./market";
 
 export const projectName = (target: ProjectTarget): string => target.kind === "development"
@@ -11,13 +11,35 @@ export const reservedStock = (s: SystemStateView, c: Commodity): number =>
 export const availableStock = (s: SystemStateView, c: Commodity): number =>
   Math.max(0, (s.stockpile?.find(x => x.commodity === c)?.units ?? 0) - reservedStock(s, c));
 export const routePortId = (port: FreightRoute["stops"][number]["port"]): string => port.kind === "hub" ? "hub" : port.id;
+export type OpeningInvestment = "transport" | "refining" | "exploration";
+export function openingImportPlan(st: ViewState, home: SystemStateView, goal: OpeningInvestment) {
+  const key = goal === "transport" ? (home.structures.shipyard ? "tiny_freighter" : "shipyard")
+    : home.structures.academy ? "smelter" : "academy";
+  const costs: [Commodity, number][] = goal === "exploration" ? [["machinery",12],["electronics",8]]
+    : (st.galaxy?.build_options.find(o => o.key === key)?.costs ?? []).map(c => [c.commodity as Commodity,c.units]);
+  const missing = new Map(costs.map(([c,n]) => [c, Math.max(0, Math.ceil(n - availableStock(home,c)))]));
+  const manifest: import("../../protocol").Manifest = { fuel: 10 };
+  let room = 40;
+  // Fill a bounded mixed basket, not an implicit promise that every project kit
+  // fits one hold. Stock and prerequisites come only from arrived reports.
+  const priority: Commodity[] = ["electronics", "machinery", "alloys", "provisions", "polymers"];
+  while (room > 0 && priority.some(c => (missing.get(c) ?? 0) > 0)) {
+    for (const c of priority) if (room && (missing.get(c) ?? 0) > 0) {
+      manifest[c] = (manifest[c] ?? 0) + 1; missing.set(c, missing.get(c)! - 1); room--;
+    }
+  }
+  return { manifest, remainder: Object.fromEntries([...missing].filter(([,n]) => n > 0)), key };
+}
 export const routePortPosition = (st: ViewState, port: FreightRoute["stops"][number]["port"]) =>
   port.kind === "hub" ? st.galaxy?.hub : st.galaxy?.systems.find(s => s.id === port.id)?.pos;
 export function freightRouteReason(st: ViewState, g: GhostView, r: FreightRoute): string | null {
   if (!g.own || g.tca || fleetCargoCapacity(g) <= 0) return "Choose an owned Freighter.";
+  if (r.transit === "economy" && !economyCapable(g)) return "Economy cruise requires only Freighter hulls.";
   if (!r.name.trim() || r.name.length > 48) return "Name the route (up to 48 characters).";
   if (r.stops.length < 2 || r.stops.length > 8) return "Use 2–8 stops.";
-  if (r.stops.length > 2 && !st.research?.programmes.some(p => p.id === "prop_line_autonomous_freight" && p.state === "completed")) return "More than two stops requires Autonomous Freight research.";
+  const returnTrip = !r.repeat && r.stops.length === 3 && routePortId(r.stops[0].port) === routePortId(r.stops[2].port);
+  if (r.stops.length > 2 && !returnTrip && !st.research?.programmes.some(p => p.id === "prop_line_autonomous_freight" && p.state === "completed")) return "More than two stops requires Autonomous Freight research (a one-off return to the first port is allowed).";
+  if (r.shopping_budget != null && (!Number.isFinite(r.shopping_budget) || r.shopping_budget < 0 || r.shopping_budget > 1e9)) return "Enter a valid Hub shopping cap.";
   if (!Number.isFinite(r.fuel_reserve) || r.fuel_reserve < 0 || r.fuel_reserve > fleetFuelCapacity(g)) return "Fuel reserve exceeds the tank.";
   for (const [i, stop] of r.stops.entries()) {
     if (!routePortPosition(st, stop.port)) return `Choose stop ${i + 1}.`;
@@ -108,10 +130,12 @@ export function productionPlan(st: ViewState, s: SystemStateView, output: Commod
       const loaded = stops.filter(x => x.port.kind !== "system" || x.port.id !== s.id).reduce((n, x) => n + (x.load[commodity] ?? 0), 0);
       // Ceiling at cruise speed, ignoring berths/wells/waiting. Not a promise
       // that a not-yet-arrived load, refuel or ship exists at another colony.
-      if (distance > 0) freight += Math.min(delivered, loaded) * 60 / (distance / (fleetBaseSpeed(g) * WARP_FACTOR));
+      if (distance > 0) freight += Math.min(delivered, loaded) * 60 / (distance / (fleetBaseSpeed(g) * WARP_FACTOR * transitSpeedMultiplier(g)));
     }
-    return { commodity, needed, local, shortfall, stock: availableStock(s, commodity),
-      runway: shortfall > 0 ? availableStock(s, commodity) / shortfall : null, suppliers, freight };
+    const refiningFloor = recipe?.key === "smelter" ? s.industry?.refining_reserve?.[commodity] ?? 0 : 0;
+    const stock = Math.max(0, availableStock(s, commodity) - refiningFloor);
+    return { commodity, needed, local, shortfall, stock, refiningFloor,
+      runway: shortfall > 0 ? stock / shortfall : null, suppliers, freight };
   });
   return { recipe, rated, staffed, inputs, capacityLimited: rated + .001 < perMinute,
     workforceLimited: staffed + .001 < Math.min(rated, perMinute),

@@ -2,10 +2,11 @@ import type { CoreContext } from "./types";
 import type { ViewState } from "../state";
 import type { ColonyProjectKind, Commodity, FreightRoute, GhostView, Manifest, OutpostKind, ProjectTarget } from "../protocol";
 import { fleetCargoManifest } from "../protocol";
+import { foundingHomeSystemId } from "../core/derive/geo";
 import { commodityIcon, label } from "../icons";
 import { COMMODITIES, MINERAL_DEPOSITS } from "../core/derive/market";
-import { fleetCargoCapacity, fleetFuelCapacity, guardCapable, shipKindLabel } from "../core/derive/fleet";
-import { colonyProjectReason, freightRouteReason, productionPlan, projectName, routePortId } from "../core/derive/industry";
+import { fleetCargoCapacity, fleetFuelCapacity, guardCapable, shipKindLabel, transitLabel } from "../core/derive/fleet";
+import { colonyProjectReason, freightRouteReason, productionPlan, projectName, routePortId, openingImportPlan, type OpeningInvestment } from "../core/derive/industry";
 import type { FleetCommand } from "../core/fleetorders";
 import "../styles/industry.css";
 
@@ -26,7 +27,7 @@ const views = new WeakMap<ViewState, Ui>();
 function ui(st: ViewState): Ui {
   let v = views.get(st);
   if (!v || v.owner !== st.playerId) {
-    v = { owner: st.playerId, tab: "routes", fleet: "", system: "", route: { name: "Supply circuit", fuel_reserve: 10, escort: null, repeat: true,
+    v = { owner: st.playerId, tab: "routes", fleet: "", system: "", route: { name: "Supply circuit", fuel_reserve: 10, escort: null, repeat: true, transit: "economy",
       stops: [{ port: { kind: "hub" }, load: {}, unload: {}, sell: false }, { port: { kind: "hub" }, load: {}, unload: {}, sell: false }] },
       good: "metallic_ore", qty: 25, output: "alloys", rate: 10, project: "agricultural_export", body: 0, resource: "metallic_ore",
       outpostSystem: "", outpostBody: 0, outpostKind: "extraction", builder: "", skimSystem: "", skimFleet: "", feedback: "" };
@@ -62,12 +63,15 @@ function routesHtml(st: ViewState, v: Ui): string {
   const manifest = (m: Manifest, stop: number, side: "load" | "unload") => `<div class="industry-manifest"><b>${label(side)}</b>${Object.entries(m).filter(([,n]) => n! > 0).map(([c,n]) =>
     `<div>${commodityIcon(c as Commodity)}<span>${esc(label(c))}</span><input aria-label="${side} ${esc(label(c))}" type="number" min="0" max="${fleet ? fleetCargoCapacity(fleet) : 250}" value="${n}" ${field("manifest", `data-stop="${stop}" data-side="${side}" data-good="${c}"`)}></div>`).join("") || `<small>None</small>`}
     <button type="button" ${act("add-cargo", `data-stop="${stop}" data-side="${side}"`)}>+ ${label(v.good)}</button></div>`;
-  return `<section class="industry-panel"><header><h3>Assigned Freighter routes</h3><small>Exact manifests per visit · return cargo supported</small></header>${routes}
+  return openingPlansHtml(st) + `<section class="industry-panel"><header><h3>Assigned Freighter routes</h3><small>Exact manifests per visit · return cargo supported</small></header>${routes}
     <div class="industry-grid"><label>Freighter<select ${field("fleet")}>${fleets.map(g => option(g.id, fleetName(g), v.fleet)).join("")}</select></label>
     <label>Route name<input maxlength="48" value="${esc(v.route.name)}" ${field("name")}></label>
+    <label>Cruise<select ${field("transit")}>${option("economy","Economy · 25% speed, 10% trip Fuel",v.route.transit ?? "full")}${option("full","Full speed",v.route.transit ?? "full")}${option("stealth","Stealth",v.route.transit ?? "full")}</select></label>
     <label>Arrival Fuel reserve<input type="number" min="0" max="${fleet ? fleetFuelCapacity(fleet) : 0}" value="${v.route.fuel_reserve}" ${field("reserve")}></label>
     <label>Escort<select ${field("escort")}>${option("", "None", v.route.escort ?? "")}${st.ghosts.filter(g => g.id !== v.fleet && guardCapable(g)).map(g => option(g.id, fleetName(g),v.route.escort ?? "")).join("")}</select></label></div>
     <label class="industry-check"><input type="checkbox" ${field("repeat")} ${v.route.repeat ? "checked" : ""}>Repeat circuit</label>
+    <label class="industry-check"><input type="checkbox" ${field("shopping")} ${v.route.shopping_budget != null ? "checked" : ""}>Buy missing Hub load goods with available credits after selling</label>
+    ${v.route.shopping_budget != null ? `<label>Maximum purchases per Hub visit, including fees<input type="number" min="0" max="1000000000" value="${v.route.shopping_budget}" ${field("budget")}></label><small>Actual prices and available cash at arrival apply. Unaffordable or unavailable goods are skipped. Cash for local tank top-ups is kept aside; paid fuel-tank service is separate from this cargo budget. Departure still waits for sufficient Fuel and your escort.</small>` : ""}
     <div class="industry-grid"><label>Add commodity<select ${field("good")}>${COMMODITIES.map(c => option(c,label(c),v.good)).join("")}</select></label><label>Quantity<input type="number" min="1" value="${v.qty}" ${field("qty")}></label></div>
     ${v.route.stops.map((stop,i) => `<article class="industry-card" id="industry-stop-${i}"><header><b>Stop ${i+1}</b><button type="button" ${act("remove-stop",`data-stop="${i}"`)} ${v.route.stops.length <= 2 ? "disabled" : ""}>Remove</button></header>
       <select aria-label="Stop ${i+1} port" ${field("port",`data-stop="${i}"`)}>${portOptions(routePortId(stop.port))}</select>
@@ -75,6 +79,23 @@ function routesHtml(st: ViewState, v: Ui): string {
       ${stop.port.kind === "hub" ? `<label class="industry-check"><input type="checkbox" ${field("sell",`data-stop="${i}"`)} ${stop.sell ? "checked" : ""}>Sell only this visit’s unloaded goods</label>` : ""}</article>`).join("")}
     <div class="industry-actions"><button type="button" ${act("add-stop")} ${v.route.stops.length >= 8 ? "disabled" : ""}>+ Stop</button><button type="button" ${act("assign")} ${reason ? "disabled" : ""}>Assign route…</button></div>
     <small>${esc(reason ?? "Waits for cargo, storage, Fuel reserve and the assigned escort. Orders require confirmation.")}</small></section>` + skimmingHtml(st,v);
+}
+
+function openingPlansHtml(st: ViewState): string {
+  if (!st.founding?.local_opening) return "";
+  const home = st.systems.find(s => s.owner === st.playerId && s.id === foundingHomeSystemId())
+    ?? st.systems.find(s => s.owner === st.playerId);
+  if (!home) return "";
+  const choices: { goal: OpeningInvestment; title: string; copy: string }[] = [
+    { goal: "transport", title: "Expand transport", copy: "Shipyard → a second Tiny Freighter. Larger holds still need research. A full yard kit may take more than one trip." },
+    { goal: "refining", title: "Begin refining", copy: "Academy → Enrichment → Smelter. Refine surplus next session; exporting raw ore stays useful." },
+    { goal: "exploration", title: "Restore an observatory", copy: "Bring 12 Machinery and 8 Electronics to a discovered station for a sensor outpost. No colony required." },
+  ];
+  return `<section class="industry-panel"><h3>Choose your next investment</h3><p>Draft a one-off guarded ore export and automatic return. Selecting a plan sends nothing.</p><div class="industry-grid">${choices.map(c => {
+    const plan = openingImportPlan(st,home,c.goal);
+    const count = Object.values(plan.manifest).reduce((n,v) => n + (v ?? 0),0);
+    return `<article class="industry-card"><h4>${c.title}</h4><p>${c.copy}</p><small>Return basket: ${esc(goods(plan.manifest))} · ${count}/50 hold</small>${Object.keys(plan.remainder).length ? `<small>Still needed after a full basket: ${esc(goods(plan.remainder))}</small>` : ""}<button type="button" ${act("opening-plan", `data-goal="${c.goal}" data-home="${home.id}"`)}>Use this draft</button></article>`;
+  }).join("")}</div><small>Dispatch is a good stopping point. Sales and new supplies appear only when their reports arrive.</small></section>`;
 }
 function plannerHtml(st: ViewState, v: Ui): string {
   const sites = st.systems.filter(s => s.owner === st.playerId);
@@ -92,8 +113,9 @@ function plannerHtml(st: ViewState, v: Ui): string {
     ${!p.recipe ? `<p>Extraction depends on surveyed deposits and assigned extraction teams.</p>` : `<h4>${esc(p.recipe.label)} inputs</h4>`}
     ${p.inputs.map(i => `<article class="industry-card"><header><b>${commodityIcon(i.commodity)} ${label(i.commodity)}</b><span>${amount(i.needed)}/min required</span></header>
       <p>Local ${amount(i.local)}/min · import ${amount(i.shortfall)}/min · route ceiling ${amount(i.freight)}/min</p>
-      <small>Unreserved stock ${amount(i.stock)}${i.runway === null ? "" : ` · covers ~${amount(i.runway)} min`}</small>
-      <div>${i.suppliers.map(x => `<p><b>${esc(x.name)}</b> · ${amount(x.surplus)}/min surplus · ${amount(x.stock)} stock${x.deposit ? " · local deposit" : ""}</p>`).join("") || `<p>No reported supplier. Survey another system or import from the Market.</p>`}</div></article>`).join("")}</section>`;
+      <small>Usable input stock ${amount(i.stock)}${i.refiningFloor ? ` · keeps ${amount(i.refiningFloor)} for exports/fleets` : ""}${i.runway === null ? "" : ` · covers ~${amount(i.runway)} min`}</small>
+      <div>${i.suppliers.map(x => `<p><b>${esc(x.name)}</b> · ${amount(x.surplus)}/min surplus · ${amount(x.stock)} stock${x.deposit ? " · local deposit" : ""}</p>`).join("") || `<p>No reported supplier. Survey another system or import from the Market.</p>`}</div></article>`).join("")}
+      <section class="industry-card"><h4>Smelter reserve policy</h4><p>Refine surplus only. Keep ore for exports and Fuel for fleets; these floors do not block loading your Freighters.</p><small>Received floors: ${s.industry?.refining_reserve?.metallic_ore ?? 0} of each ore · ${s.industry?.refining_reserve?.fuel ?? 0} Fuel</small><div class="industry-actions"><button type="button" ${act("refining-floor", 'data-on="true"')}>Keep 50 ore + 20 Fuel</button><button type="button" ${act("refining-floor", 'data-on="false"')}>Use all available inputs</button></div></section></section>`;
 }
 function projectsHtml(st: ViewState, v: Ui): string {
   const sites = st.systems.filter(s => s.owner === st.playerId);
@@ -159,7 +181,7 @@ function skimmingHtml(st: ViewState,v: Ui): string {
 export function fleetIndustryHtml(g: GhostView, st: ViewState): string {
   if (!g.own || !g.industry) return "";
   const i = g.industry;
-  const text = i.kind === "route" ? `${i.run.route.name} · stop ${i.run.stop+1}/${i.run.route.stops.length} · ${i.run.hold ?? label(i.run.phase)}${i.run.route.escort ? " · escorted" : ""}`
+  const text = i.kind === "route" ? `${i.run.route.name} · stop ${i.run.stop+1}/${i.run.route.stops.length} · ${transitLabel(i.run.route.transit)} · ${i.run.hold ?? label(i.run.phase)}${i.run.route.escort ? " · escorted" : ""}`
     : i.kind === "deploy" ? `${label(i.outpost)} outpost → ${sysName(st,i.system)} · ${Math.floor(i.work / (st.galaxy?.industry_catalog?.outpost_build_secs ?? 60)*100)}%`
     : `Fuel harvesting → ${sysName(st,i.system)} · ${i.status} · ${amount(i.harvested)} collected`;
   return `<div class="industry-status"><b>${esc(text)}</b><small>Latest fleet report</small></div>`;
@@ -169,7 +191,10 @@ export function handleIndustryInput(el: HTMLInputElement | HTMLSelectElement, st
   if (!name) return false;
   const v = ui(st), n = Math.max(0, Number(el.value) || 0), stop = v.route.stops[Number(el.dataset.stop)];
   if (name === "name") v.route.name = el.value;
+  else if (name === "transit" && (el.value === "economy" || el.value === "full" || el.value === "stealth")) v.route.transit = el.value;
   else if (name === "reserve") v.route.fuel_reserve = n;
+  else if (name === "budget") v.route.shopping_budget = n;
+  else if (name === "shopping" && el instanceof HTMLInputElement) v.route.shopping_budget = el.checked ? 3000 : null;
   else if (name === "escort") v.route.escort = el.value || null;
   else if (name === "repeat" && el instanceof HTMLInputElement) v.route.repeat = el.checked;
   else if (name === "port" && stop) { stop.port = el.value === "hub" ? {kind:"hub"} : {kind:"system",id:el.value}; if (stop.port.kind !== "hub") stop.sell = false; }
@@ -187,6 +212,26 @@ export function handleIndustryAction(el: HTMLElement, ctx: CoreContext): boolean
   if (!a) return false;
   const st = ctx.state, v = ui(st), fleet = st.ghosts.find(g => g.own && g.id === v.fleet);
   if (a === "tab") v.tab = el.dataset.tab ?? "routes";
+  else if (a === "refining-floor") {
+    const protect = el.dataset.on === "true";
+    ctx.send({type:"SetRefiningReserve",system_id:v.system,ore:protect ? 50 : 0,fuel:protect ? 20 : 0});
+    v.feedback = "Refining policy sent. Waiting for the system report.";
+  }
+  else if (a === "opening-plan") {
+    const home = st.systems.find(s => s.id === el.dataset.home && s.owner === st.playerId);
+    const goal = el.dataset.goal;
+    if (!home || !["transport","refining","exploration"].includes(goal ?? "")) return true;
+    const plan = openingImportPlan(st,home,goal as OpeningInvestment);
+    const f = st.ghosts.find(g => g.own && fleetCargoCapacity(g) >= 50 && !g.tca);
+    v.fleet = f?.id ?? ""; v.tab = "routes";
+    v.route = { name: `Opening ${goal} run`, transit: "economy", repeat:false, shopping_budget:3000,
+      fuel_reserve: f ? Math.min(2, fleetFuelCapacity(f)*.1) : 0,
+      escort: st.ghosts.find(g => guardCapable(g) && g.id !== f?.id)?.id ?? null,
+      stops: [ {port:{kind:"system",id:home.id}, load:{metallic_ore:50},unload:Object.fromEntries(f ? fleetCargoManifest(f).map(c => [c.commodity,c.units]) : []),sell:false},
+        {port:{kind:"hub"},load:plan.manifest,unload:{metallic_ore:50},sell:true},
+        {port:{kind:"system",id:home.id},load:{},unload:{...plan.manifest},sell:false} ] };
+    v.feedback = "Draft only: load 50 Ferrite Ore, sell at the Hub, buy within 3,000 credits, return and unload. Review the basket, cap and escort, then Assign route to confirm.";
+  }
   else if (a === "copy") { const source = st.ghosts.find(g => g.own && g.id === el.dataset.fleet)?.industry; if (source?.kind === "route") { v.route = structuredClone(source.run.route); v.feedback = "Route copied. Choose a Freighter and confirm assignment."; } }
   else if (a === "stop" && el.dataset.fleet) ctx.intent.beginFleetCommand({type:"SetFreightRoute",fleet_id:el.dataset.fleet,route:null});
   else if (a === "add-stop" && v.route.stops.length < 8) v.route.stops.push({port:{kind:"hub"},load:{},unload:{},sell:false});
