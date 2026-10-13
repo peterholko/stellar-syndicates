@@ -1,0 +1,4131 @@
+{
+  "recipe": "shared-building-biome-native-alpha-v1",
+  "sizes": [
+    128,
+    256,
+    512
+  ],
+  "families": {
+    "academy": 6,
+    "agroplex": 6,
+    "armaments_complex": 6,
+    "bioharvester": 6,
+    "chemical_works": 6,
+    "command_center": 3,
+    "composite_works": 6,
+    "defense_platform": 6,
+    "drive_works": 6,
+    "electronics_fabricator": 6,
+    "fuel_refinery": 6,
+    "garrison": 6,
+    "habitat": 6,
+    "hull_fabricator": 6,
+    "living_terraces": 6,
+    "machine_works": 6,
+    "mining_complex": 6,
+    "orbital_warehouse": 6,
+    "ordnance_foundry": 6,
+    "precision_works": 6,
+    "sensor_array": 6,
+    "service_berth": 1,
+    "smelter": 6,
+    "volatile_harvester": 6,
+    "warehouse": 6
+  },
+  "biomes": [
+    "temperate-basin",
+    "boreal-world",
+    "highland-plateau",
+    "savanna-world",
+    "volcanic-highlands",
+    "archipelago-world",
+    "terrestrial",
+    "desert",
+    "ocean",
+    "ice",
+    "lava",
+    "barren",
+    "marginal"
+  ],
+  "assets": {
+    "buildings/warehouse/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/warehouse/tier-1.png",
+      "sourceSha256": "d0324624e268f9d706b91ff07d4bb9037b08fc52a9ed2912aabfc1ce57726293",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 6894,
+          "sha256": "61deaffb10c7675803e1ac3ffc856efb9b28e9721090cac47be601f7261d99cf",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 19990,
+          "sha256": "d29a216069eaece3036d64e90a4f9349b199083ff919ccb349948d714eb169b5",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 60312,
+          "sha256": "4660cf8d45243b74fb5b71bc25aba5f2e0a511d6658379fdd88ff2ef105c036c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/warehouse/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/warehouse/tier-2.png",
+      "sourceSha256": "66e7e48e53425dfc935b86e8cbc1270b32f010796cca31585ded2f15d7f779ed",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7220,
+          "sha256": "4b9ff03d723bde7d41c5af220ce127dc5bd1ae2c06485d0595b6acff48b824aa",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20388,
+          "sha256": "c485d99a5bd73f0030f1de4cb71ae96ed31884974761ccf4f4b476d5aa7253cb",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 61274,
+          "sha256": "8fc492984d7e3ab3c0ac9ef2ef9770123b499298f98509145d1600a6963bb1a8",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/warehouse/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/warehouse/tier-3.png",
+      "sourceSha256": "fdb22d144edb0828cfadde0e3300a1f6993fd15e9cb5fba731936d7e09793b80",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7526,
+          "sha256": "668734ac724144da0339cc4a823b657450fbd15d3071979b175f9522dcb57ce3",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21462,
+          "sha256": "1d90550a99403a69e1e9e3d5b45ca254dbd6abe102a0974eb27ab8b6d7af4ed1",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 65972,
+          "sha256": "e90e7d3342f9ebb461f06dd961fa7abefe8f341abd924b9dd007c079c0b57cbe",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/warehouse/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/warehouse/tier-4.png",
+      "sourceSha256": "0e9ff13994f82d308d3dc9530dfee5ee22f2e2269aa1347bab7333fca64d5c33",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8016,
+          "sha256": "2428793862b3a7bc76f500d76c20d89650b22e8374d602bfd0222f93f88ace05",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22968,
+          "sha256": "c5a3d4c5f3c967ac2dc59710c65d020bded51ede3644f1f050a7e10dd2845bae",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 71238,
+          "sha256": "6b9af88b3132211aac49c7e6ed7e8ef977db70dd128174de3c4357ebe2a4be8f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/warehouse/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/warehouse/tier-5.png",
+      "sourceSha256": "a9d4e75a25b326f2fe5dea03150a91122680e8860a31711bd080aa4dbd294845",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7438,
+          "sha256": "d6507986d35b5e89c06bc6bf55a29c4ac58b501ba959d10b71260fffbe5984c5",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21252,
+          "sha256": "f9c07ca1fe280b2d352dc556429fbf96c27383bb0fdea420170535f34ea1ae05",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 65126,
+          "sha256": "625b9bea302a2450548121053c6a973ce8c6e8c688195d394e477f6b5e448fc0",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/warehouse/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/warehouse/tier-6.png",
+      "sourceSha256": "b5da6538343abf90dc126b511bc869e92347961f2c119f12257ff466084f692d",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8160,
+          "sha256": "79ab48747d8269e8d827ccffc75eafcc557abb4c8428ee587ab26ffacba7ea9c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22840,
+          "sha256": "6ffc12532cb283e577cbc824c3de4d0a3c96afd6a08a37ca1d8205ab0d4e390a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 71488,
+          "sha256": "1339de959f4773c45cfe695b43c71e2ee0860f1473f63d0276c24c7f92c2cb4f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/warehouse/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/mining_complex/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/mining_complex/tier-1.png",
+      "sourceSha256": "a0da67430b5d97869bbcdf67af18aa7371cc3e3191a89cd4c554103298b19b91",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 6832,
+          "sha256": "ffa491de74637f0f99f3c1b45783c89fd5551822646b56a1830cd8cc22e8c6f2",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 19708,
+          "sha256": "25a2b623efa1a812238df07f962d42c5177f26fe54e77f1673f5aa38fbf1c4af",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 60454,
+          "sha256": "4eb3b5ea59bb472c08dcec3b7ea985d54029cd624afc7e23c0b52ed5d248cdef",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/mining_complex/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/mining_complex/tier-2.png",
+      "sourceSha256": "93433931f05f17946d0d3920583b95224b1c59e17136a13bb4ae28f420697052",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7042,
+          "sha256": "fd6cce213e69c6c5c5eafbda6455718d363bd9239b42e65fd3dc117f153cebf3",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 19844,
+          "sha256": "b9d7efde7375efbe79167b847d257ad50ca5b92163fbce19c1878f31abffc6cf",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 59412,
+          "sha256": "f6000677e109babc84ef1859ba1b766e32117bfcd5036da8da597421756d78a6",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/mining_complex/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/mining_complex/tier-3.png",
+      "sourceSha256": "09302f5962b39bba1438b2342d3f9f35189867a5879eae08b70a6e01542c5982",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8012,
+          "sha256": "4122546a0285727c3101a5e1e6fb75a8fdba853348fc9c6b75ce4989c40405b7",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22542,
+          "sha256": "9c938eb56a7823b202a3a6d05fd8607348733ad903fd81fa9d768c284549f53d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 70204,
+          "sha256": "bbe3cf5b52cf89b0dae3bf44f7126622cc2f641dd26e88eca27af67fbaf84c10",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/mining_complex/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/mining_complex/tier-4.png",
+      "sourceSha256": "54062dd3b1d261144351a7eb9037f6b5245c364e0c9b6a0ea5f86b398116e8f8",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7926,
+          "sha256": "1d5583fb42f4f0b1c442d88d9d41828b39fabee58d404b26a11134dd6e0a3972",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23086,
+          "sha256": "08fe40c6461b7484c0d52680a9a207edb0e5fca8378c97e72d19104b236cfb85",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 72844,
+          "sha256": "32e14ceda073ec1282d87a60057116965c8ce0b9c1dcefcaaa3748df6ff01765",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/mining_complex/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/mining_complex/tier-5.png",
+      "sourceSha256": "0b60a0455a566f8b482b0f703f26d5304de1253841046576ab40f8a759e83997",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7974,
+          "sha256": "40b6f26acd2a64734560ad25a836e5e0f320d32f5387a0150de57bfe0a171157",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22904,
+          "sha256": "a28012c12fe8b4bebe228bc6507d89f4e301d5e6604c86f5393e3b1364251383",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 71996,
+          "sha256": "bdbb2622d301298fc4e800cb48bd378cc1b5c7d8bb4767e62bacc39e33fd1f3d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/mining_complex/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/mining_complex/tier-6.png",
+      "sourceSha256": "17cc92ad64ed99bb23ed53d64aa0be55fe114ae96a10dbf5adec9e517e72b380",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8010,
+          "sha256": "eb42cc8ad1b0c4f70c1979efb1d6a426ae563c291d6b67f90877a35641104d28",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24118,
+          "sha256": "905ae2c9c26d0363cd860e17932bf05cbc2b641a0f50f48a93bacfa86cdaf339",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 74276,
+          "sha256": "5db7032110fe651df1c3c88dbda68d018dd87b0a2633430bf46df0f0768ccc61",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/mining_complex/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/habitat/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/habitat/tier-1.png",
+      "sourceSha256": "e18a4c820f748cf14ad38990ee687da64b3b24200c0669abba46962fe7f67fe1",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 6908,
+          "sha256": "1a1b697c7e85d72837d29d57855169d8b74cbffff87eb677addcac53ee7480ff",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 18212,
+          "sha256": "9f13b44c9452a0108ce8944d70782bd6583e3822e39b8a4cfaaa9bb046e8779c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 53158,
+          "sha256": "ec89d7939b4db59eb4637461fc4341d4f3aca72ace433ae45909b41ab71502ff",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/habitat/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/habitat/tier-2.png",
+      "sourceSha256": "66b463c56b7b9fd1f0e0d91b544a755f3e1d7bbc2f22d6198304261951cc5532",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7042,
+          "sha256": "8509767a004a6a240ea5f59d35b8cc2a3e1c6aa3004659685f73d0ddb6837227",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 19178,
+          "sha256": "8aac24778418b238cb4c8bea269823a0a21e0f9c9179f1c94225cf8009c6e6e4",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 56860,
+          "sha256": "b3b5466fd380258c4d60d8144e50861a77e06c6cd02f7286e97948a24194877c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/habitat/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/habitat/tier-3.png",
+      "sourceSha256": "3ff82b8825a6ad31c94d7191a4b4be4b227e3956cf8d03e91c59e37258229ff6",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7428,
+          "sha256": "c45e969ee966473bf1b95f2b4b4447ae826f77082458f6725cab49f1c03cea6d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20424,
+          "sha256": "a2a182af2dd66fd095f082219cc622b32a711c9d9d6bb258149ab07fff8d22b7",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 59302,
+          "sha256": "bb839ffd58509bfaacaa4bbe4fcdc0739afc7772e029d777eeaf766ea4535c6b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/habitat/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/habitat/tier-4.png",
+      "sourceSha256": "201e3c49c39f8e23f9ceb378cf61378b526eff40518c3e4c4ed29544ea129034",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7818,
+          "sha256": "177afe53c1e6bc67a827ab529a89530676ac8fe1e611cba41c87d068f29144ac",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21970,
+          "sha256": "a1176a8777712c6adbee5a19161accde262253a09dc893db4a442f7a6763f4f1",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 65146,
+          "sha256": "ea3ce87d20ae92ab8a282a44a70b25ab6727fc21c618068fd1b4a737ab7461b4",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/habitat/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/habitat/tier-5.png",
+      "sourceSha256": "a64e5fce3e5afed2c953da593e66a9ed73a0ac7b8a9f1b823fd6214a9ee4ba0a",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8008,
+          "sha256": "1eb339ffbf1449afac7ba75170c44f7fd45387d8d0c766c2432ad5942be171c0",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22378,
+          "sha256": "ea2e337591cd36f92d0ec91404a67e163a6da6aa4baa10fd059878a0455605de",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 67202,
+          "sha256": "8eb5a8198ab753b580f453d4d0aa0a2abaa4ab6a6b675720c95b95fb41a7782a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/habitat/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/habitat/tier-6.png",
+      "sourceSha256": "b4b113f0d4a83e2d97527ce2e4d9701e9f76518e6a098409132088a45fd58ca8",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7594,
+          "sha256": "291181cc31e4f49389cf3766764f0ce6bfe300b82528845e0f89933deb05e1d4",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20106,
+          "sha256": "64beeb616ae1db740ea96dba526f091f9e9902668e970e9bba1133e77ecb62e5",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 59518,
+          "sha256": "eea541be1363d0bfc7432a5361a61db853b826847410561e33657b3caeca3bdb",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/habitat/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/bioharvester/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/bioharvester/tier-1.png",
+      "sourceSha256": "7650441badc06090daddb7a253b987d52f3583ee7749773e114844ef7a4eb5c7",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7926,
+          "sha256": "54904670e739a8fa9093fe482e8f675d9297d179b648a2b19ba08c6462721477",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22670,
+          "sha256": "119df3bb62ec1a5b698dc4fae0e10293d1c5b8ea54aed1ddccadc63083e19e9f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 73832,
+          "sha256": "2c54e021e2810dba4e73860dfc9a2e45e00b09e9159c5446533e0b71c3f3c275",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/bioharvester/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/bioharvester/tier-2.png",
+      "sourceSha256": "5a6b9eaf97e4952ec2e0d66ad73069b89695fd0bc755ff38543746f02b004aa0",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8004,
+          "sha256": "2517a4c120b091ca2a147e12755d2ec1cde785182f067c2143a7f911d98cef8b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23084,
+          "sha256": "bb86a24a73ba074c40e9f383aaa46211ffa10019d67e35791cbaa7583070030b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 73304,
+          "sha256": "3b66bb2afef7c7f4907eae33ce36cab690c85b541f46fd383d79f6884a0ba065",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/bioharvester/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/bioharvester/tier-3.png",
+      "sourceSha256": "bac5acca32722925c55b8d9b12f088278a16176ae78379a3b1515477e9e18454",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9262,
+          "sha256": "f5cc7bc07dfb4dbdbe9d03ada5adef7fa0e1526ab04148103f21133fa856657e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 26626,
+          "sha256": "7495e8dba4d9754e7e531a61303141e1b276f43b30e5cc832a934023e2416d8c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 89222,
+          "sha256": "89c82ddb102c85f48b939c6ff474986b3b3d13620e8690b3b6212e8370c121a6",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/bioharvester/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/bioharvester/tier-4.png",
+      "sourceSha256": "f6bb2bda56d2a8b30692d0905067061e1b6f3f2d8e6ce3ffa0718d49ef7f29e2",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8710,
+          "sha256": "5c78cd9c606ca0537b201513b26778ce9ebcdaebf1ee33f1a64ab285d3f96758",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24742,
+          "sha256": "c2fab405f42a2ba8b1ff8d5ca422579c180f698e96325ccc3b9482ceee000b0c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 80664,
+          "sha256": "e9e9fe74c9f35088b0794e98ba7ac6cf8610bb6b4d76ad59d377c5ae8b3d3d10",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/bioharvester/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/bioharvester/tier-5.png",
+      "sourceSha256": "61b08fb4ca53eeda8ededfa099d4120c88a49d15cb98dea9d56ef675f0f7ad23",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8180,
+          "sha256": "11c9bad0dd7bf34b8a1809490f7c679f6b678ba721dbeebab6aae65055bd107e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23410,
+          "sha256": "6493acb1b2864897b45249c4284a2d2fd7cdef68268e7598546f9aacc269436c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 77478,
+          "sha256": "85a54ba962d7839117b6a1f6ff9e0121bbefbdb662efda29ee83d1c530f4961f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/bioharvester/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/bioharvester/tier-6.png",
+      "sourceSha256": "44ff8f840e13414eb311f0262ba98d2514871c484ed7cac3db1e2727f07fbbc2",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8830,
+          "sha256": "a2547a4698fab89280e9d0641580476e3c50a6cf87fd657b031e434ea424d30e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 25186,
+          "sha256": "b76477c39fb78c535fd98fe30882581d6dbc4b9f1d598652dc3a40faffadac7c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 85396,
+          "sha256": "14544ed980c5d0176468ddad4fd01bd239ee9db095335d42b08b06f2bf891bc1",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/bioharvester/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/agroplex/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/agroplex/tier-1.png",
+      "sourceSha256": "ac7e93dae4f7d9a543691ce3c0f9b1b9ba84d5c5c0a3a546874c8ecec90662df",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7758,
+          "sha256": "e9092d13b5d133232c9df3c1188f4547098b7017c0c87753495910dd733d8421",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22634,
+          "sha256": "3e09a5afdaf1b17008ec3d5229c8813eeb3666deac30b238154eb81b36fa6c9c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 72258,
+          "sha256": "c2336ad0c36cfe42b07bdf400a7cf1755f3f48a28447fcb6e868b7a65cc5430f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/agroplex/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/agroplex/tier-2.png",
+      "sourceSha256": "7cf1d629bb846c5fb8e989e60e5a6aada6a51d3ffb325d6f187bc1c6f59469db",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7964,
+          "sha256": "eb642714b71a4a730f5244ad24d1e498936ffa648bb9d7281dc4bdddc8b3bd4b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22596,
+          "sha256": "3c515a6b047f2eaa0e1da1f11dbedf409dff76496dfc1dd9c21cde74cc292e6a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 73028,
+          "sha256": "dec75724c1b93cf65a78fc2b7aa7c35276f9c7678429bf082009c03167dcaf60",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/agroplex/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/agroplex/tier-3.png",
+      "sourceSha256": "71bc78df5bc462053b244b392966ec93b421afd1b6091b7783a79aff6c0805cd",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7308,
+          "sha256": "0f645b089759833487ec150ce5322c7fb4bef41155f22020f90ea75a4100e64c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21348,
+          "sha256": "3b094a58206186ffd35e5e5fae19f8994e3fa0fae467c24aa57b398ad5be8371",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 68818,
+          "sha256": "98959001c353ba59b7084598c524e6daf9c46a9b1d926ac4094c50dbb1ecbe5b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/agroplex/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/agroplex/tier-4-v2.png",
+      "sourceSha256": "7f1510e24da21643753566a08db283780446ee7266bd0ee4ef812cb74443ad9e",
+      "width": 1024,
+      "height": 1024,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8072,
+          "sha256": "24810db321af5345afc06bfdc3a479abed12b8ffa0cb90fcd5a6703ced42e7ff",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23708,
+          "sha256": "37a5fb1d6e9af35b2259f6f5e6f4e5439fea28a1fa60780fe17ebea96f9c2e70",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 76570,
+          "sha256": "d79a209cee82334d5adb77e688536bb4d908259b52dbf34b4b592b2632b8d233",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/agroplex/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/agroplex/tier-5-v2.png",
+      "sourceSha256": "cfbf836f1775996fd38d0818253cfcc504f45cf34e1ab41148b2c565f949d4f7",
+      "width": 1024,
+      "height": 1024,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9190,
+          "sha256": "df3e30bde84806424346fa933374bf1c8863dd043cce7ed1c83a735692f220b8",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 27694,
+          "sha256": "93027acd0f02ff0d855a7c1ec5e09a183e73588e15a657d25cf4abd6e1d95ab6",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 88650,
+          "sha256": "5c2a7e97ffd5475a7c40c6d43e2ef23e319ae497bba1e1b8c9b56d6d747d43e8",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/agroplex/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/agroplex/tier-6-v2.png",
+      "sourceSha256": "8eb85fc1e4f1c54c88f940e94c6713d4521a7e0b0e3b0aa114f53ce2fd136b9d",
+      "width": 1024,
+      "height": 1024,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8522,
+          "sha256": "a82ac027124d5f42976d29a75a2ade90ddae114749e0fc3e672bbe15022e4a9f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 25516,
+          "sha256": "2e8ece6d38d790b1276375b4bbb8337e13b41deb8fbb0b47d819b6a7332d06b5",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 77574,
+          "sha256": "e0c995bf12dace56cb4c0c6e1761d5fac9acd1a74874ac3cb6f309cab339000a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/agroplex/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/volatile_harvester/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/volatile_harvester/tier-1.png",
+      "sourceSha256": "4be773b34eb401fa41b7083731d1131bb3591d96e62283a1f9d9b45ebfaaf729",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 6222,
+          "sha256": "8916c1205988575fc212a3d1446ee06ae69af27d57452fcfe72a46bceffc2655",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 16214,
+          "sha256": "127bb5dbbc708fc835582f88e14e5b62a09937f98d40037d4f2f1a678be5b3de",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 45528,
+          "sha256": "c5aca3a2e46d44c167706fbc26b44ff70ee734732a8ace354b1e77243287dd1c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/volatile_harvester/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/volatile_harvester/tier-2.png",
+      "sourceSha256": "96b715a87bde9e9156597b0bbe7391943f308ac2a9aca0e52a72cf5931047b0b",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7798,
+          "sha256": "f14246ec58dde28b60f5280a5f29760cb8cb08773fa3db52d36c241e55be4e30",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20044,
+          "sha256": "27f0cd941633a331b37da84b7f702f927d93876efeee359b7f80d48777ee1ee0",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 56898,
+          "sha256": "3354a3bd669ff41fc799a09e7685cb618612fe18aefacdc852b70b8c0ddce46f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/volatile_harvester/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/volatile_harvester/tier-3.png",
+      "sourceSha256": "e9fe6cfb646bd044934c1f2c54b609cd9da3301a9783a7a6ac7bab43b34b3471",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7672,
+          "sha256": "9095694fdeee93dfe1439e6f5f16b3d48afb24f716386154412ec2598ec856cc",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20146,
+          "sha256": "f696da152f450288912d922d5d8061794c7767f14a9b87cb8f9169dd58008608",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 58138,
+          "sha256": "1c6aded17448c267e7204ffb256b37550e3f0e926dc1835f9c02bcb2780c5205",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/volatile_harvester/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/volatile_harvester/tier-4.png",
+      "sourceSha256": "74564dee21dc606456d723a23ff68a3954a269e76df896ac79a329b5c70f07cf",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7310,
+          "sha256": "623a14f10dfd9a37f45a874d5ce2a6c8371ac56a35692feb7d8b18c10a4aed30",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 19044,
+          "sha256": "c770474484a4020595b6aa2b7d285e56422b3ddca0d24ca1c2abb75bf92fa2b0",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 54036,
+          "sha256": "d93313c1ca2b98a7afff88900c61db0ab24173cbd546ef925ebcda8b3d8d6f06",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/volatile_harvester/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/volatile_harvester/tier-5.png",
+      "sourceSha256": "0ccf5a5ae65f2049091d3046b1d4aefe3082a06b41ca6595aad49442f4a11922",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7960,
+          "sha256": "3fa26f9b744cc58f249517f3f57ff90e8d3f9bd5da4c6269e9fcfa9a61d5429b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21554,
+          "sha256": "832721e81e6fc7c5dfe388a51f2b88bfd95fca3a2295564a82ad88ab1f00d351",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 62404,
+          "sha256": "bc42daf34752bccee829f4d47217fa71db421286c4145f611441f946c0584863",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/volatile_harvester/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/volatile_harvester/tier-6.png",
+      "sourceSha256": "fd0ff8a09583157f0d4e3430a606b26cdbf87f30f2a1e696f67cb21f55316b4a",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7664,
+          "sha256": "7127cf6a4f2e22ca86004ca207b538d9cbdb685ebc9ed80e3eca8caa64d6e325",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20284,
+          "sha256": "03ae839faf09c4228f98f361e9ef907c42cc95488520c904ea4f1c1235627e65",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 60192,
+          "sha256": "8af1e47f47bc38e82133dfffe454a9be1518b277cb5339aa21136cd6b04e9e2f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/volatile_harvester/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/smelter/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/smelter/tier-1.png",
+      "sourceSha256": "186c7de11d9dfd3a1d3747d60f2f865fdd6ea441948198866b577daafd24e085",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7206,
+          "sha256": "81329c4f36c8b23e7f24da33ba2c68fa7a25d34b0815bcbf3690d62df528eec5",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 19172,
+          "sha256": "68f4a2ecc7c278e7d1d7df8de3ed51bb89048ae8987e347ace8a1eb62f707518",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 59272,
+          "sha256": "fd2c688830169a815b2c502606195765450d938ce3b4f3d9f74ccfcc56319726",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/smelter/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/smelter/tier-2.png",
+      "sourceSha256": "b32fda500c0021b34295be07c891af54ead586222129a60c3536f9a9daf601f6",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7352,
+          "sha256": "3285647fbe640fb1d3c8785efab03ea0f551c7b6a71e0d1c129c138f7529c31f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21062,
+          "sha256": "7f682bbd723ac52fc1587dba6e5e743da08b782fb10f3ede74746695f3d1bf28",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 62406,
+          "sha256": "555ee4c181ac7c4c64810eeff0e570fc7267ba4d71dca872df5b9d8447b07b66",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/smelter/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/smelter/tier-3.png",
+      "sourceSha256": "a02dc813cdd3c498aafccd4b55299206ecbee9e755dc797a7b8f23dccc2dfff7",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7612,
+          "sha256": "7515ce29d8578b9e7a5f02eae6126d6c60c91e7208ed2a9cc89a18edcdd061ca",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20942,
+          "sha256": "a4b0e04e6fc56c2689c566f6db22843e1e354cb4e29a5121ab4dbd22fe854973",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 62982,
+          "sha256": "798b7b18cdb039addb418fabaad3ea27beb66e3a21dae7d572922c9a25daa1bf",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/smelter/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/smelter/tier-4.png",
+      "sourceSha256": "c756831d6cee6a933dbabd0560dbb16fc16117df9c535ac51b0f1d16f27f89da",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7656,
+          "sha256": "ef1aa69c52b590149b2e52eff6a0ac815aa5cfade74b80cd82292318011711fa",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21684,
+          "sha256": "5f020078ba84506fb6c32d7ae2b65a9446c25b77783630037132bbcef127126b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 65120,
+          "sha256": "af3323d3a4344e30a44b93699f007cb9467fc69c5c8f7304a8c974452a834f60",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/smelter/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/smelter/tier-5.png",
+      "sourceSha256": "09167d071b7adc8fa1706e28f2696c6f4aaf5cc03ebcdbc287521543680e1147",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8732,
+          "sha256": "1e20d66691f3e900facf716f30145a170436c121386c140dc8b369e76f90ff58",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23904,
+          "sha256": "aa6cbe14f4daad4af0a5eb08f205eaeedb960458ba985ec3e5038566fcd8cfa9",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 72918,
+          "sha256": "e15c309559d5efc200a75919f47229bb9151d248540ac85e16b2eed246d7510b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/smelter/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/smelter/tier-6.png",
+      "sourceSha256": "f52ec14c3cfadd1d7684f226ffb022a8e2ba4ca0a0c09dde917bbb141b5baf9e",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8252,
+          "sha256": "f0ca15a1e46d379d50881856571d9d9e3e76553b2fe8c332998e2d1a51e52484",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23366,
+          "sha256": "1be6b36848581c2ec8666f9b154e9d9b507db5b9c6c2e9eb1a40cf5d1142d33b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 69978,
+          "sha256": "4c645445dc43bf9888681b5d0e24f4f05c5b8ce4b65eb7c3e4059c9d2dbea803",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/smelter/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/electronics_fabricator/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/electronics_fabricator/tier-1.png",
+      "sourceSha256": "cd88923d4b399bbdb80cbca0ffea73da22afacc3fb503cb3883330d746d96173",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7624,
+          "sha256": "e50b52c9d520a5cbdd203573c13e49d2a534ae282f702256457c9d2e7b41b213",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20592,
+          "sha256": "8ff9063cbd0824f9374947bc9d06b7a440af8f3decba1ad87bbbce326520e293",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 60216,
+          "sha256": "02d9186d22a2149435d5b4085ce865a5d0ff013ef47cfccad9bf85edeaaa2a8a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/electronics_fabricator/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/electronics_fabricator/tier-2.png",
+      "sourceSha256": "aab63d57b2052d2678a5fcb3de5b52756ff74d285a694f6c9d2205df5be06ccc",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7950,
+          "sha256": "179299f72bf8e74cf15117610026de5793ec9f165207c620f97b903889362879",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21432,
+          "sha256": "a3de301a03fe1c0233af5954057fdb90e19017ca69fa15dcb095da71bec085e5",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 61358,
+          "sha256": "fa07ed9763fbf5b1c758f93158894627c7bf2a190c635bea8c2ff1f149baaacf",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/electronics_fabricator/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/electronics_fabricator/tier-3.png",
+      "sourceSha256": "8b2b3375d3181d015c56de3611a68c00e52bb191a085f53878aecb26dec9c07b",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7678,
+          "sha256": "0f547a202b962109e0bff754854166c857c4445ebd50e687cb2d5d86f873f18f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20846,
+          "sha256": "c7ffce01ebf64c977c5338fe75f78c875505a864a4ef5781327560472708e0a0",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 61146,
+          "sha256": "e441b6989130a6c55b99094fe8ef46a34e2b77d24d23df8e06a8468fe327b398",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/electronics_fabricator/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/electronics_fabricator/tier-4.png",
+      "sourceSha256": "f895a7fff5fa64af1258f3eceb6a025316ebbb1bd3d77f0a850b90f1dad6a470",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8146,
+          "sha256": "7776e0fd01cf947c2cb7f08949f8243b23bdffc798983025d4af6dedcc3048ac",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22700,
+          "sha256": "588e23594560d0929959f428b85a5299935547ee0c181e03cc5b3b7464abde86",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 65578,
+          "sha256": "97e6fb2b18372c362dee363d91cb0898e752d434fb6ed9dbe5b8eba19bed0e84",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/electronics_fabricator/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/electronics_fabricator/tier-5.png",
+      "sourceSha256": "ca105ce137fac773603f3fb706b71919186de324410e3809434c898971ea4585",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8964,
+          "sha256": "7db5baf03f3138978c2447808d4225c7e3c091c7c19be87a691a491339d5d22b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24490,
+          "sha256": "c767da61a7be2a001324fb2e0bb83d8dff8e145c261859223d33525200d8b448",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 70296,
+          "sha256": "6c9ee4a2083ba9ac6655eb6e04ca9a5fea54a9501be197e8e5c0a08f0b914166",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/electronics_fabricator/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/electronics_fabricator/tier-6.png",
+      "sourceSha256": "4d88a29cea1ae9ff54380b9f2cac03cca365dc8df515da2603d5d570bccf6c12",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9380,
+          "sha256": "2c7860c216a697d5259f3f7ee9773a0df3745286781a334d7018b90f2bc0cd0c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 25656,
+          "sha256": "4a04aefce06d9ecfad906ef82c30450382687f4cf20d6df565f55ba180b9578a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 72738,
+          "sha256": "f3c4dc9421078fe920429aacc0a75aa031f02618a4ea2ba950336b321c4fad2a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/electronics_fabricator/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/chemical_works/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/chemical_works/tier-1.png",
+      "sourceSha256": "d4e2596bfa163113da3b915ca2f78baf7bb5b6a63f4c887c3f23ed0412ee943c",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7944,
+          "sha256": "c3cf61f07ff13876f525155a5df2349feafc1e567498f28f0a582c8e6fc3369e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22090,
+          "sha256": "e89b7f563b7a41305bfb42dce91ba50b089317c152e425b80ad7921f28c3fdfa",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 65194,
+          "sha256": "a42793f27bcc71ca54ae50093b06ab04100226d80626da24f3eb04559acfdfef",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/chemical_works/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/chemical_works/tier-2.png",
+      "sourceSha256": "eedde2b59accb307ac7578b8c88478f42993c9cdb2623ad68871674518fd200d",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8672,
+          "sha256": "3e38c34dcada5a9d1cee705decb0ab76d354cd912f956675c719708e7f521d72",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24522,
+          "sha256": "3cc34afded909beb235f1964d51596539c71df78a81a963975fdf45f50cdedef",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 70464,
+          "sha256": "0c1eb7a68007078bf189cc080ed673147ab6ac82c690c8cb2ff55864ba2741b3",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/chemical_works/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/chemical_works/tier-3.png",
+      "sourceSha256": "0fb52f2b791e8bd2fa35b979e367c190ad4f7cfbc98e988fd54e9591437519d9",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8780,
+          "sha256": "0517b696a54b623d652c55045bac1a6d90af192fde9c99561df5c04516f8d65b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24032,
+          "sha256": "320797f65c300e15e0ad22d923d6feb82224ff752f9de05e07e8d97aad933d3f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 70416,
+          "sha256": "de68d1c505f146ca60dd2737ca92d240122951bf841c68590e98ef13c19bb6ed",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/chemical_works/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/chemical_works/tier-4.png",
+      "sourceSha256": "969961a444e4b66d62ce24dee1d14478821bd9ce4f3597289614401e97f28b2a",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8518,
+          "sha256": "e9ee89a01f2cec1839154e7320a213b83a0c3c0dbec3a51649a85ba7010ad6d5",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23500,
+          "sha256": "5e11da66b407553016919683b77e871d8d493533869d95ad0dd76483b64b3a63",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 67722,
+          "sha256": "0425c559d292b176b951f0806a99137e892b0761ffdbc4bf56c4a556fb8780a3",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/chemical_works/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/chemical_works/tier-5.png",
+      "sourceSha256": "4750a8d36d6b0fe225e1bf9d188597a834180ccd1ba34b2272f9d695df938847",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8158,
+          "sha256": "338a093c22deee90f37c3c13e5bb6a2336e5c792e00d6ac04be4d9cac120c4f1",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22346,
+          "sha256": "11c235a46b941299a2ca599072e514f92fae98f30e444782b9b9a7dead09f272",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 65994,
+          "sha256": "c8b2c50929921a0a4e9386d83e105325d129c8479f80f4d03125cb00cb07865e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/chemical_works/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/chemical_works/tier-6.png",
+      "sourceSha256": "02a12eaf7981023e33a36f5ae449c16d2295b06ab92e663f053d26d9c9cc4e12",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9330,
+          "sha256": "9c59389173506725fa701f1ee1ada85935ddff324ac9dd991c634c64ae7e58ce",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 25876,
+          "sha256": "edec9b8378b05feed6064cb92428f0316c4029c57baabd69b32f635a8ca6e8c1",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 75982,
+          "sha256": "62861dab25707e0cb928b91fb3810845d57432fb1dcc3d84163e6b392792be97",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/chemical_works/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/fuel_refinery/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/fuel_refinery/tier-1.png",
+      "sourceSha256": "dd19fca47cab72e4444decb136f7cda6fc2098c69a14e0b429070a2ee9d47e6c",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7224,
+          "sha256": "eaafd3a04aeed763cba2cb1881bddb64c8dfa8312dea27019e66fe0d5211ceea",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 19402,
+          "sha256": "50485463083775a258262c4c3889e09a76f813228b603bb96d3c490b09562250",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 58034,
+          "sha256": "cf7b155a804afa2973a549302e46407cb64de6bb21f0697691cc126a53fe4708",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/fuel_refinery/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/fuel_refinery/tier-2.png",
+      "sourceSha256": "fe8cbc687b3f843a6b0842a9b0c7c2f72bb66a0c006ad2be7a25b845918d1b2f",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7390,
+          "sha256": "cea441ae5c6d384a7927d5c6852903da1265ae61d61819092da35ec06473d324",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20014,
+          "sha256": "ba27b4fa7134140f8b053c12d77018a9b74a2692b82b0beb24bf3c5f37968103",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 59918,
+          "sha256": "086b24e0596190369e85b103fdaa30ae6d763dab1e6792584a3f7a1a498a4928",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/fuel_refinery/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/fuel_refinery/tier-3.png",
+      "sourceSha256": "a374c5bd8b85c9bc65aa98a0a572bc91af9e3e0546c101ad05c74b26c3aedb95",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7656,
+          "sha256": "02977c1c2e9bc3f98b23813c41aa83f856eaad581194a2e9e85f9e28ec3a34b5",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21298,
+          "sha256": "bc18c6067d1140b91086b8b88c73e704a6d3ea6e5ab98baf311ba2796b683ab4",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 62852,
+          "sha256": "e6c68235d87054d66e2ae237a2785969c4fafb0035ebc509ed33661643e0a569",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/fuel_refinery/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/fuel_refinery/tier-4.png",
+      "sourceSha256": "056dac2cdfe804baec3b85dd2a965229037a8b73a6ec3368699c25c1ffcd1c96",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7692,
+          "sha256": "68b3c881a8e3324fea939f2a82018c57f15afa6dac68dd004f8cc84b84c3b9ff",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21728,
+          "sha256": "5dcf91e00e1969d4bf80a11deade4d5bbd28a74d065a306b4d0ad9020792b434",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 65496,
+          "sha256": "f1fe6e36d9f8b28a570bf79f30cb7ea6d8994d4e06d19397f93c1d8daac41786",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/fuel_refinery/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/fuel_refinery/tier-5.png",
+      "sourceSha256": "c0fe0c9856ea1fe4f2af150b2cc63138e6b2631e5a533717a7ba6a49e46af287",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7868,
+          "sha256": "ba02de8557dbf327688132401a00b84319c503218936393da1ee723944195087",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21630,
+          "sha256": "f62dd7ec391e4e42be9af2dce7a415f6f4c8b14aaecb08317f8d7865073d5d47",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 66896,
+          "sha256": "2af705a34c4c5a376fc5fe844c4b44aea4eb604fc0114930ec668ec17e97f89d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/fuel_refinery/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/fuel_refinery/tier-6.png",
+      "sourceSha256": "293a8032daa09f93354dbf4a0083d9551bce58db8e3136a13deb3b49de3e4865",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8190,
+          "sha256": "18f4c8de04e2491ef6bb863bf8f3e9adee0e7c327427b5bfd746061096ce3f91",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22802,
+          "sha256": "4b3fb98f315b80ae586d984318f35db77cb2de96609d8ab58bad6d9307eae947",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 68276,
+          "sha256": "3f2b48557809995f1fab21db9539e74119ca04b91b67b44dd81bd3a7cea3c426",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/fuel_refinery/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/machine_works/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/machine_works/tier-1.png",
+      "sourceSha256": "225686dcfa060d3f50b47262460014b7825775d663e45b2b41cd3c8661786ad7",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7686,
+          "sha256": "101bfff4aeb6e9f11fa9fe497c2151ce36a4ec0bc14454007cfe0c6f222ec225",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20872,
+          "sha256": "57e8427aeaad01fd9ab15565180dd75f3036e57d5dbccf3ad190a8b0c01ce61c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 63582,
+          "sha256": "2a130692b84d32d85e18826ef905a5abe962f2f0a1d9b71bdf3dd539fe8d0490",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/machine_works/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/machine_works/tier-2.png",
+      "sourceSha256": "be1d3e4bbea1398fc7032783d3501e0bd9fa9fe4c035ed20105ebb2cbce36ade",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7614,
+          "sha256": "1a41750edf478a967b7bcf06d1cbfac448fb9ac19f5f8a4be59e249113a40fde",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21380,
+          "sha256": "cbb325dd94158c5f0947e5d53bcc3a11ee37f9391d9b2e9ecb4b96f8e6b1ba8c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 65062,
+          "sha256": "a34b1ae0e473641083fe7ce469cabae76c8e692c941dca34f76a82bc268334bd",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/machine_works/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/machine_works/tier-3.png",
+      "sourceSha256": "338b11c6db73b842ce75ffc4f5ab917ebd0fab53ca0ac5079bcf5dadafe6d286",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8012,
+          "sha256": "ab848d3638db8baed598aaedc3f551a7f42ac86f7ead0120d28577a139e28e35",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22544,
+          "sha256": "c55d66bc5835231beade8089e53ba03a2e0ba060670549fcdafbf46437aa5a4f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 69204,
+          "sha256": "e8a36b92ee67e233e2599ddabc53a5c900ccf4a70d306561f1fa53f7260be0b0",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/machine_works/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/machine_works/tier-4.png",
+      "sourceSha256": "b0c89d9f6ef59538ab7ba50d7fa5c6ce18b2b9cefa82c46a610e3b22693a093f",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7546,
+          "sha256": "f0c39093d9c4730d02e60e215274179784f39ff944434ac2ce013cd296cd97a3",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21112,
+          "sha256": "bb797b971a5d8e4d9799f855c762120e68be77114478ad364f0ee4291588ee5e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 64906,
+          "sha256": "b8cc694f8d520df518993add0df451f01e4395dcb57a28be35051737bee32b22",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/machine_works/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/machine_works/tier-5.png",
+      "sourceSha256": "8fbeaca643834accd4582cd8e6e1aface4cacaff6a014b85bda120d5ab852e54",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8278,
+          "sha256": "d1145f3ebabdf9d18e4426c4d675f5d3b9810c99b27ddf6460871c8ed9b8945e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23930,
+          "sha256": "939e5ea9c783fbaa017d57598f10d949d404fb9753926a5a07880f720f67e4ec",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 72512,
+          "sha256": "f9d22262171ded9f9fdf56d8acec351e7fc44580c4ddab51924c32bee3ef8f01",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/machine_works/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/machine_works/tier-6.png",
+      "sourceSha256": "14a41dfa880dde75c5c776c7e7e3824cad2995b0cac382941932d5eeb6512104",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8334,
+          "sha256": "a8fa45560a3bcb8a07fa3f258c941785042a92d2932d67b760a7aef62bbabc25",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22880,
+          "sha256": "6126918b7736a21df397364823769ef98ec9ff10a376ad61206da3ce187a3827",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 69184,
+          "sha256": "9f895bb264537d99486f7b439cc301dca5b0457b15a4b5b9da0a1ce9f558b63d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/machine_works/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/armaments_complex/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/armaments_complex/tier-1.png",
+      "sourceSha256": "199c127d84f4fdf05b4ebd48b9d470226cf8ceae2707b92c95edaa64daae1b8e",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8060,
+          "sha256": "38f8ab2dbf7a4e70ff302d14d3dc7e6341e5dd92c71548282ca9396c5b7fd65d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21900,
+          "sha256": "187b524224d957fd50ca848d105c7142b2170ccbf63562bc4e1366c28779de69",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 66928,
+          "sha256": "552ab7b2cfdd37c78a2bb3aa9ec9bb7781596a8211e08bb8a5d0b1b91ce4393a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/armaments_complex/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/armaments_complex/tier-2.png",
+      "sourceSha256": "03fa0c8e5fce9638c5b5241a231cc016dc9acb91bc400aa267b0a1c7ff5db460",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8012,
+          "sha256": "ce7a2d5b44e5f6eeddbc113a2ba32addef33da1de2e15b735a603483b9879c0c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22024,
+          "sha256": "0e0248eba0766b06aacbce4f8617ff0c81c8aa2b58e9e94af72a2ece0217f00d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 67044,
+          "sha256": "2d58653ef18b706f7ee3e6aebe5947c32d2cf2c6728e1f72355ade5606265490",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/armaments_complex/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/armaments_complex/tier-3.png",
+      "sourceSha256": "be08336ecc32d42d125d2722f70a9a1177c9abf4bd41057fde2fb0c870166c6a",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8162,
+          "sha256": "12495804fb659ba26bfb1a6a0b07dfcf66c5374ef764d7894d4a6103502fd92d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22050,
+          "sha256": "37af63c29ac7f29809657897c0f23d6263fad186fd38da07d10d7f04ac354a18",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 66302,
+          "sha256": "4a277c2b0533975ae0870b3fcd2c38903b17768d15c8d8b571376d59291982be",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/armaments_complex/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/armaments_complex/tier-4.png",
+      "sourceSha256": "3d1f6c355bd0ebbb0b4ec9158f154d5444efa4cecc7ea85b9ed1f1548437fa90",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8150,
+          "sha256": "f19f980e8cb5c0484395b9b4fbe96c5a9a3883e1287479978e4496ffd15b7a74",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22286,
+          "sha256": "8c501470e41c7f92b112177d586847dc32f0ffb4937607a64e24873df132e513",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 67012,
+          "sha256": "3682c6c47b38cb40bd148f2697f3ba371e98f2d1e7dd11d057c86e88b33850a6",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/armaments_complex/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/armaments_complex/tier-5.png",
+      "sourceSha256": "6633a7d110a65da37dd5936b4155d6f6f2707ff0c47620c383e130b9d4b59aa7",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8906,
+          "sha256": "547973b54a2687c592e36eb2fcf4a9f2ed5f9b61f5ce67aed5870fa3b1de1cb5",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24028,
+          "sha256": "bf035e4c630c40c5203ae5b2a36d0c16aee1a517e6478fdfcabe62bf83c044bc",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 73254,
+          "sha256": "4656b267fd986d63e0c70a36c82dda3e42bf886650460dce92839f52a01ca4c4",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/armaments_complex/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/armaments_complex/tier-6.png",
+      "sourceSha256": "56354abbcd22479422f6873df82d9d822df7077865af769baefbaa0b1832d9cb",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8420,
+          "sha256": "6aae7a0403e200c5d64e8c5e02d79f65c5bba939fa97e9652d9732c32a7f916e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24232,
+          "sha256": "50b4c22104270aea17d42866223efd8e0ca65fe671f43c27808f274b0851409a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 72570,
+          "sha256": "5d10c59f0bfd28f3cdd38522e41766458a1bd4f100c588772cb64b6322a5625c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/armaments_complex/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/composite_works/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/composite_works/tier-1.png",
+      "sourceSha256": "856518e097f9b1e342de6e3a60a2001f661d11dae3456cc34203f816678f0165",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 6742,
+          "sha256": "4f202b4dbae7520c3c3b42bc9a9c7950e5c679dd98fd12f77ad4151669538fc6",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 18560,
+          "sha256": "dc8d2a04a15cd167f7b6f01ab496338e2d72c1388fc2bf8eb685b7bf959cc3d4",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 56186,
+          "sha256": "b26de5b44fb6f3b6513ae2be19e3f95d98c4257698bbdb0f24be49c87b0734bb",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/composite_works/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/composite_works/tier-2.png",
+      "sourceSha256": "2ea074f83a709bc2eff244becdc4cd85ed12fd1944c7e96f4ef9c52a0377327e",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7670,
+          "sha256": "9d7bd220124c0f90dad2bad4bd4d2744e10e92a98b20eca2023c51addd032e4c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21478,
+          "sha256": "ab29d4eae859612f7b5744f95378aeae042aab35c0210bfb15219a0ddbf6eb42",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 65076,
+          "sha256": "b13a6e9c49f43e74485e9728a97b82effd7b6598665cdef40b79165caa1de53c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/composite_works/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/composite_works/tier-3.png",
+      "sourceSha256": "61c3835e967292ffc059f899fc239f80982f37f9520900d2b5b5a1a51a339286",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8346,
+          "sha256": "ac681800353aeca1264cfa460b4878eb4e605b1d8a0ad5b6298339529169e3cb",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22730,
+          "sha256": "e542e7b18a1ebe0921c4b17352e176df1e82731bb5f30992893f5f9a30a8381b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 68488,
+          "sha256": "555599abe694fcedfb804dc1bab1eee75121aefc2f50319e94d850a2e3f4dd95",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/composite_works/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/composite_works/tier-4.png",
+      "sourceSha256": "b54087fb03eeb3ccd3d8caa2b34f113527d6480a2b9e1a9122658ebf120bfc90",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7798,
+          "sha256": "1a24e92b8dbad686c79d21714db518e26b889e0d85419d217de75bc9318ca7f2",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22382,
+          "sha256": "75baa06e71f2941200fb32ddb3dbf1f824b65c49ba26182ca73b038863662c40",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 67322,
+          "sha256": "2729a42e110a507714de3e109f25018a89390bd95dd99f4053436716e9a9b9f4",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/composite_works/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/composite_works/tier-5.png",
+      "sourceSha256": "eca55dda6a7ea5d1acdc8c1dbd3e3088e50882a81d0cbfa8752999a7c47106fa",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7656,
+          "sha256": "ba68158cd0a187623b782325c729c81e795303b94b9c4cb6c87552f5cf5c5a89",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21714,
+          "sha256": "204e6e23fea624bb6201cd1dc423cc4dd6acc3f6df030e41d57deef9e58f40cf",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 63828,
+          "sha256": "a433d7ed77c024bf75c5750cf3446c5510cf4c2415ef40218dc21611ff1cf031",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/composite_works/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/composite_works/tier-6.png",
+      "sourceSha256": "699cdca2e33d4dc460caba2f4939c59503fb54e05e7a50cbf46ef1024b339af9",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8272,
+          "sha256": "60512cb41b43a60c228e8e7e21f30639899a5af523f7ba92c85682fe68c616ed",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23166,
+          "sha256": "afb3f0619278eceaa598885290f076b80c0b38fbea817f62a4b31f7e8f66ca1f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 66780,
+          "sha256": "10f372650b2de6ec2fdabd38a6f74edc0443433abc01a57a2d5a8c130f7cd5c3",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/composite_works/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/hull_fabricator/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/hull_fabricator/tier-1.png",
+      "sourceSha256": "505240105e0946e58df0c17f876486d64d4c9f68dc8460159afdd8df210768e2",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7178,
+          "sha256": "d3050a800fe002e0cf6d915f80c4560929369e229d239e4cba6b693e1bed1711",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20178,
+          "sha256": "914136f6b835ad912c972c8280c16139eac66a2c2e18fadc116864cfd369c7b3",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 62152,
+          "sha256": "fc615daeec5258bf213e7891c71196aa935af51179a41a880bdff396beb75d1b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/hull_fabricator/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/hull_fabricator/tier-2.png",
+      "sourceSha256": "35a571aa53251106888bf78a35af208e9ca58302fb6ffe0c4994d96ffb6682e2",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7790,
+          "sha256": "39aa39f773bea7750db4808cc726514f96475edbefed8f7f8cc85999f6647c01",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22374,
+          "sha256": "d693f1b509d96d0dd2f5b79d4d2d790382e8168696f794b1d569d61780edf484",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 69038,
+          "sha256": "f646736210ae7310589441ede224414b65d806e7be941e1a822158e5bb39ca41",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/hull_fabricator/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/hull_fabricator/tier-3.png",
+      "sourceSha256": "390ac40663161bfd9333132ca1503946a4f1467c1756ff859968f371c46904ae",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8540,
+          "sha256": "7867e4f2e502e7a50588e14a0bd9a0fa654137f0093a4d87d98ba0182d380eb5",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24472,
+          "sha256": "cda4afab36a5179f3289190a7429e74568ff9237b4eb51f33e01d10bb3da37fa",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 77640,
+          "sha256": "de51fca5c4c3bcd3a7fc427fb80f6f8cab4e4983b664b3cec4219cdd5351655a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/hull_fabricator/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/hull_fabricator/tier-4.png",
+      "sourceSha256": "267c020f8467a765abd4570dca9e30a732ae36a4ca7e15760d9603bba3aa6ea5",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8730,
+          "sha256": "f10da535b4541568fab4865230014baddbbec0c19e738574d8f110a8b38e6da5",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24304,
+          "sha256": "1be8657d31a4a5b8df37673340f6e434b1a8512ae9f425b20848a5874c14a1b1",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 77842,
+          "sha256": "05aa7bff2903e0c1d7d28ea3cb191b267b74ab96a79d7eb69ff6d0b767b81285",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/hull_fabricator/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/hull_fabricator/tier-5.png",
+      "sourceSha256": "7fc0903d6c55a45f21c154a0d77b55574408003575ca84f180c6f2173d1731f7",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8202,
+          "sha256": "cb4acf8f185cce95a5e3ac6fe9334b7af41174ad1a01014f43a0cf71265022d8",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23876,
+          "sha256": "56dca775e14fc5e8d1be84d5a64de94a3159ee4ca9e5f324960d7602192ecfca",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 73778,
+          "sha256": "5c2bf3f0d681f514ec7da0785303fded25b487bc6d6621dc6dbef5a224e56c4f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/hull_fabricator/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/hull_fabricator/tier-6.png",
+      "sourceSha256": "e23156b279f0634b9bb4ed8dab1e8e3b8f19ddadbb0a409b89e6c43d766eb8ad",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 10010,
+          "sha256": "1cec5b3fc52d55fb15326162eec4327f1082c5fba6fc505b9c889ea0a31dc28c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 28436,
+          "sha256": "ffea44a34798641e63780047050f497b67115f88b211a30a40b2a7360070e5bf",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 89492,
+          "sha256": "45853e19a3c6648ac87143188f3138195184381f0afc22dd629c608c314208df",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/hull_fabricator/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/precision_works/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/precision_works/tier-1.png",
+      "sourceSha256": "ae525cd6d742a8441b64861ca0be7a4d16283e5fe7dd0c3e9874f5350f2d064f",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7988,
+          "sha256": "ca1f298840250a04bfe3e57d31efcd9a9e9b08c8d832987b37e319e0c2d25e07",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21892,
+          "sha256": "bedd0d262261add3986b463a892456d3eca9c80c679cd8f58827f0533bc9d51b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 64406,
+          "sha256": "e938851cc39767cc977e51f8f48f74c234fcb216425866b3eafefb04c12b0d07",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/precision_works/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/precision_works/tier-2.png",
+      "sourceSha256": "340b49757e9b8062f770cb6246c3db4974208c6deedc20f85fad07f2c79e51e6",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8094,
+          "sha256": "f8ba85d7ce62c10ad7a9cad8973c669d25b542eac163a7a38f588eb1bf0810a7",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22616,
+          "sha256": "df3abce9d79dc9557b8e2e4c7bf7f17ad86fb00188e31ec20b96cdf8889ad695",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 65912,
+          "sha256": "34fe93452b60603b9b8014088db790160499644add6653f3be967f69adf659bd",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/precision_works/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/precision_works/tier-3.png",
+      "sourceSha256": "8fabcd15d54510ad5b8cd5cf68210a4bcb47d08a08d1eb1565c97c71025f3cb6",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8814,
+          "sha256": "25a4088440cd1c757fcfc984af499429e5207035b4209bc40fb2a09c588a26d9",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24438,
+          "sha256": "12f70cdb0f059c5314e8d729a574f1434991df1d2022f57f257c7ee7ad75ba9f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 71436,
+          "sha256": "1d33d72fb21b1b6bf5411e8fb4062249e8bb8ce4b94bf6afbfeec4a3c046d15f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/precision_works/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/precision_works/tier-4.png",
+      "sourceSha256": "b685d904295e7585fe7de3022c9fc25caf8e55bdd18c20d625d912e1407c39f9",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9320,
+          "sha256": "94550df443e2ce9768320d7dcf90b10e9bc66d7e7d0c32c24ed7f59e5cb3d5f2",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 25850,
+          "sha256": "5fff26d2beeed07f47ddc1f3fd92b7b56623b2cb48fa682e2988ba6ec9d79408",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 77234,
+          "sha256": "56dfdce61fac60dbb793d58437348de5b235b6381e320c180612d1f399fefa9c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/precision_works/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/precision_works/tier-5.png",
+      "sourceSha256": "6d48c93aaaae9f5c4652d8516d8b3988a6e82a97d9f618130cc861227f51313c",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8596,
+          "sha256": "85aa4741b7afc7ad9e98e294aa276d68c3484a87786e7341baf21c08f3be8312",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23600,
+          "sha256": "f27363590af6657e0ea7d9facaa7c2c85121e6d59e2cc6be80b41cd7cedb88dd",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 69520,
+          "sha256": "5b4e24e1641b8a9c964df738e926d825a384bd2d7c4ef7abea7b40583f16ca11",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/precision_works/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/precision_works/tier-6.png",
+      "sourceSha256": "c5c7b53d708403ed87c45ba6dab1ec38d0816247a6751f7623d3ab906ef3bf43",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8302,
+          "sha256": "a62e718bf6fa781fd616d2b7ecc32e3ea46574bcbeed373294b5f194fef89576",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23322,
+          "sha256": "88e50146388fa8688b0b33b3ea8dc416c3457512273115ce361726c756c3a71d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 69368,
+          "sha256": "52b861543275a00fb0c80d05e2cbe3fe6328bfa90d343fe90dbb1fc5734e1356",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/precision_works/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/drive_works/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/drive_works/tier-1.png",
+      "sourceSha256": "4f0afbc6c601544d4995a77f652041686a64039a4f542b57bd9827bd1a4177ad",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7938,
+          "sha256": "12ddb087a4e46a1ad552e52186532353f0eefbf6fd08d1df3b0f75ad8edc9b01",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22340,
+          "sha256": "d5e84f4c131a65389c38157a111011eb640e9dd08ec0821614dfa6f28a7ec444",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 67048,
+          "sha256": "a06ace972a8d2ba298850d6f177968a4d60f92a306118ef0b02ca3108d1a7295",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/drive_works/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/drive_works/tier-2.png",
+      "sourceSha256": "fdc358ff616186bf48b64830310f3789f49acec4ea86b78fa1dbba22ae886092",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8202,
+          "sha256": "895cc49ce5e86c8052952d345a3d597a26fb8679ce4107bc38a0a775e1a6694e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22962,
+          "sha256": "f0f2e11b6abd9ff9b69f48fff45f29e2e7cd1ebf61df4dc537758882180ea3fc",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 72312,
+          "sha256": "9198ffa58dd06a93ff58bac49df619ccb2fa18b72a6ccb1a4e6a7c1dc212d1d4",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/drive_works/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/drive_works/tier-3.png",
+      "sourceSha256": "c02fea05c62238daf4703d1368235780311d46749ce4a2c652685c0aafb603fc",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7906,
+          "sha256": "df2027af0675fd1084f761187dda79fc6fdb3d3f8540f2c1352fee0eb06055b9",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23470,
+          "sha256": "a669b6803cc1a7027e03b52da7412adb091ab7a4808ae90ecdc6782ac83f330a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 70930,
+          "sha256": "53ac065e2a9d1713b812387cea7ac65ace2d0cad0643c35a1de54f600753c38e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/drive_works/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/drive_works/tier-4.png",
+      "sourceSha256": "49b85c5162764790296b589195f5bf227dd2eb6fa9af05c8c9e87554025d1ef1",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9096,
+          "sha256": "ff1b81f597ffab16378e4944a3929c69b8b178de2112ce56ee2ce60a016d9426",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 25336,
+          "sha256": "e96e44f7e94104442dfa0dd6c50547f1611f9cbce99a09fb7780469fb2bd674b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 79706,
+          "sha256": "989522aa125c4f4ac70773ccfd86f1ed5ed8d11b66ccfddc386b74f18330dc9b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/drive_works/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/drive_works/tier-5.png",
+      "sourceSha256": "7d33845309054c2329f155a191cfc3dc2a483c09e6d944a93f87a9d6090d49f6",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8742,
+          "sha256": "a0bff13e0acb1844a061be07b3f2dc16ba9b9fc4332c343c5f3c3c348dfe8482",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24028,
+          "sha256": "7b79f087c60504096ced3d1412b9bb8cd9afe581dcd3c1b1350c20f9a32c1bce",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 74626,
+          "sha256": "3570e445e306549154f7ba7fa337b08d66384c4cb3b3322d7d10c0f2aa6beff3",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/drive_works/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/drive_works/tier-6.png",
+      "sourceSha256": "502c5dee99a23c0a57d7c6ab77e64c49e846f825629f6a97df1522c20ee46585",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8358,
+          "sha256": "0218413f88846cdeb982f7141b0dbd7446efe2160022b6abf49c38cfe5b76de8",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23868,
+          "sha256": "28d58a2481d4a94c0bd102ed6622057c2ee1a9f5616eef5fadd7ecaa1cdf3977",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 73894,
+          "sha256": "25b04eb47ba5468de088b3476fa16c98db0c8149ad480dfd746e2ddaae093fd7",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/drive_works/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/ordnance_foundry/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/ordnance_foundry/tier-1.png",
+      "sourceSha256": "631c367a19ad7de9ee05e390d3c17810b1d22de4b5546bee3641cce212cbc672",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8116,
+          "sha256": "5ff859daba6adf22700e6d5ff9f22fb4667c96bb53843fa764638cb48063ad1d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22472,
+          "sha256": "4eea71f3a6c3a5b39e82211498648a3a4ba5ee135ec4ece54556027e7b1a2299",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 66840,
+          "sha256": "027772af829b8c4b6d1ee899ec404b9595fbbaf09970042b90374ccc257bb656",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/ordnance_foundry/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/ordnance_foundry/tier-2.png",
+      "sourceSha256": "d4bcc40a743e713a362c6f0ef13368b1b0b14dbc7ceb4b827a48e33a0a732fff",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8270,
+          "sha256": "d8346acb10e2e0fef7f1bdf3e810c14fa970f80c270ae2cc24727af948d695ca",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23604,
+          "sha256": "ff82dba1488d4ae907395f1abe8da33a6a3b55711d3aabdbaf07f9e462f1d977",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 69722,
+          "sha256": "de985d07e4a93c3dfb2ca543b5a363494cf61ee5f44930a7956f8ca11f93def8",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/ordnance_foundry/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/ordnance_foundry/tier-3.png",
+      "sourceSha256": "3333151c30e41af1863643eef094ecbbfdac3274c3bdb2bad84baccd3ee6956a",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8392,
+          "sha256": "abefa1ec84e457adff924574903b43b9128a2e6004c60a3b625a17f6e5dda7ee",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23316,
+          "sha256": "7697ea2f774a81f19cfc8d757fff24547702e6c6ffb1d488a3359dafda28e6e7",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 69000,
+          "sha256": "f92f16962815d292ac3dfcc29a2ed8605514a7775fbfbf3dcb23885d20bc2dff",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/ordnance_foundry/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/ordnance_foundry/tier-4.png",
+      "sourceSha256": "31d9e62a5ecc7da67dcc092f54ca4a20fe00c8519fd8d5a4583a300486b2f247",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8834,
+          "sha256": "15ec465c4ddb4b6d7e5463ace23cabd254e506dba30131e046643ae7c3283033",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24526,
+          "sha256": "359912f1318c4228da42c3a17c189b3df2bb31d7d71299633588c1b9cebbccff",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 75416,
+          "sha256": "60c61b2d297f5daade772305360cda7209f1336d4a39da7d10a26b128416ef19",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/ordnance_foundry/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/ordnance_foundry/tier-5.png",
+      "sourceSha256": "791a1c8250f426998c00ff8fa24cdab1ecca442cef9e72528f8a2ca81be4b0bd",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9180,
+          "sha256": "97db1ad62951bde6fecba2e2099609ce1bf998c481fade68278ba558bfdb0482",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 25714,
+          "sha256": "1d56030d5ba9f640506fcbabc3e00c9a4031a918894ebc25e990af256964eb59",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 79076,
+          "sha256": "cb1f9142736ce4e9a76dd11b6f7389b69642bf83cb82fb617ea84c8b34188a2b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/ordnance_foundry/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/ordnance_foundry/tier-6.png",
+      "sourceSha256": "c1f3c0c9b630f54b648df6dfc69066b2e8ad21b7b7d95fc498aa72190b1fa238",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9104,
+          "sha256": "4578779675a8ab5d7a0cecd002970275ac64659a44cc597ef61559893e408959",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 25232,
+          "sha256": "045eb0f1c0f97291a49aecb363bac3fdfa0d6bdd636c332f936eaed8a1f9ab40",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 76404,
+          "sha256": "b73149db4f98dc12337932f1533f029890338a762f185bf5e5970a82d26cd2d7",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/ordnance_foundry/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/orbital_warehouse/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/orbital_warehouse/tier-1.png",
+      "sourceSha256": "7e4cfb7e32d85c551e5d1a68f827bad4b71ab34c187e03edcd986704dbbf3be1",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7242,
+          "sha256": "c4ae3f862f87d3fb9e27509a0fd4e0ccc0df0b36cd8512b4225e5aed8ce67b6b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 19094,
+          "sha256": "c6a31b553d26584f7c5b9d553c188d4ed96090ed02265f8e808e825e76646f2a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 56330,
+          "sha256": "544965b05ebab65b4ff324dec1b0c076070dc10de102c5524ea3d0d7f5645a0e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/orbital_warehouse/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/orbital_warehouse/tier-2.png",
+      "sourceSha256": "cc5037c05c9a811c6fb2e6d93ec9f4ab00a52e669bea51c5ded89c4829449b2f",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7784,
+          "sha256": "aa23355c6ef064567cad3f03de54fb7fcf27bf2f190faf1ffde262d6ec0135db",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21848,
+          "sha256": "182dcd14c16fa058dfdc4f6a092e7fd0332a1c966a9a21ded306efaa507b258b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 63926,
+          "sha256": "ad67319b282a3936b89be489237f04397d18fc26a2fbef0a30c3098ffd474f1b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/orbital_warehouse/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/orbital_warehouse/tier-3.png",
+      "sourceSha256": "78f88b76a704ccddce00d7eb21765f32a289e45f47d8d9061ac46c29dfd5508e",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7484,
+          "sha256": "2b2c8c960b0e5694712fbe21b86052b3b4d95801577542614117c66c16a4397d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20258,
+          "sha256": "541c451e1d2a0df39aef25676f8b6f2269111827d99e8d6457ba1ba567073190",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 60070,
+          "sha256": "5864d5d4037193b792aaecaa4b372562c2ea3f77f9eee1cf8bf2d0e96458ce9c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/orbital_warehouse/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/orbital_warehouse/tier-4.png",
+      "sourceSha256": "5f99052d0f1251068301919289cbe9274f7a6077efec45bb455060693286aca3",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8920,
+          "sha256": "d227ca1f14a916750d1fe95943364b89af44887b7d9c91ee7227b47e09f240f9",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24096,
+          "sha256": "c6ecac4d62bf0d03df28f5f827a9f9df49b72c5ac6ec1d55e99857816ab8bc98",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 69456,
+          "sha256": "12afa554aad14296e04706a1ade8b9b95e86a785799684a5a07980016f14d72e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/orbital_warehouse/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/orbital_warehouse/tier-5.png",
+      "sourceSha256": "dcbf2e9370437e76ae5918bf005128781b04c2d87f3f25528ea50b055b124dab",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7942,
+          "sha256": "853135933d8998d6ef56c117fd32a6bedf729e8d689eb798095b311c9eb858d9",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22512,
+          "sha256": "1bbf3378963ac6132c3771d7adc1a8a990e82686f2d0b13cf711aaaea42f1235",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 65572,
+          "sha256": "204dff158eacb0d431ac6463e274d9f186d33a12ac66a225b84acb2089e83701",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/orbital_warehouse/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/orbital_warehouse/tier-6.png",
+      "sourceSha256": "cbc820937b2821899e99ab572355da5f14ffe3ae0ad466dbf34348a5b885a32c",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8386,
+          "sha256": "057b0b4ee2a661acc21d952764c5600f57cda5bd952ee01940b93e3a8ae704ee",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23880,
+          "sha256": "0ccd3a7d60ebf6a0086e221bee488878af09151e6d013bf6794439607a76e1be",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 69960,
+          "sha256": "1f75cbb46eace55430b6e5286bec4d319fd294728f86e545cc10d89caf0ea341",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/orbital_warehouse/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/sensor_array/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/sensor_array/tier-1.png",
+      "sourceSha256": "fa06a3854573f66c98ecf0949c4c7bd44fe899fe5f147c3d0ca6f9d729fb9498",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8218,
+          "sha256": "eb8053e12f9cec6dc285958573dd5bdc70a6303df8cecbc4e54e69b744e2689e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21020,
+          "sha256": "a3de362cc49c88129508798e8284dfcdcdab42cd92edf1e284dfe7423a1d850a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 64142,
+          "sha256": "2a1208b10664c0f63e6b3e58bc7e4811683e85e95ad54a191343789dcbd65564",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/sensor_array/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/sensor_array/tier-2.png",
+      "sourceSha256": "50b816c4d5de9802147edb5a4caa301b84ca53f346bcf465f77e71082f60ad40",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8516,
+          "sha256": "fe88519648494937748e6ce7ffdba34c24f6244e9f696cb76828448e2b05bfc3",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22998,
+          "sha256": "1fa9ed90063a718cec52e77c2e4530b3d740918886e0605c10befc5586bb821f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 68604,
+          "sha256": "2b1e4a9af511a0a84e34b2414785145cbdd699d08e4419a9b0a1d9d685d67fa5",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/sensor_array/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/sensor_array/tier-3.png",
+      "sourceSha256": "602a813bb8b00a558079216b3a437077d40f0a75b97d7d3dee34340d7040eacc",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8116,
+          "sha256": "2ad5975e352858c665730e831279de9078765a22d7541ccbeed5098dea7d6c13",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22758,
+          "sha256": "887abf58b10989198ef8d7c58fbb8357e77d65e7679cc8b0d19af32cc807fa3b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 65070,
+          "sha256": "536dc1840aa68961b965c72266fffb16560d6e5ce0d1e3cc67ded7ca59290811",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/sensor_array/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/sensor_array/tier-4.png",
+      "sourceSha256": "b53e91edf9df3ee6e5f2a005b2d0ce19fac6908099c89414c5fcb4343b26b898",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8136,
+          "sha256": "4b3e43b9a5ebdf61057050e0421ae43fd9359c185acb340643b5999756762a87",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23046,
+          "sha256": "f9919bc8bfa9886cbf2f8e06e32db9e238ab4c551d416639262045526c7645a0",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 68912,
+          "sha256": "e39279aee4baf13b4dee49ef0f0ed08d6b557b38644776806be06bfb49d96a97",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/sensor_array/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/sensor_array/tier-5.png",
+      "sourceSha256": "2cfe8f8205b1630d841436cc75a61170833343f3ea30132b135aabafbd84e118",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8524,
+          "sha256": "fc7598539f8f07ab073a5195028dc60092760859ea4d676fb9afc4099b138996",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23168,
+          "sha256": "02dc1588b7e18fca6b7032868e23e6f7769264ee08053505de22e2d3c1b94b9c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 69620,
+          "sha256": "a24406db6f1de649205620e9c7c9dc27ae5a566270541ca57f66a485e32eaa18",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/sensor_array/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/sensor_array/tier-6.png",
+      "sourceSha256": "ec5e8d643176355af3235148d8093006c0cb8de6dbd10f23e2b2c068f5b7e9e1",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9134,
+          "sha256": "da07e6dd213f4ded63a07d1596cc38cd65ce7de2301e0e71b0c4f11ec6028278",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24740,
+          "sha256": "07f47414e6d880b718f5f634e957e13f2916cdd1a8e19f14942ceb59d1e3998e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 74612,
+          "sha256": "8cb15e264b53b7e9f29ddbc1908fc7606c8b972b55a1c6aee547b6064216581d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/sensor_array/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/defense_platform/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/defense_platform/tier-1.png",
+      "sourceSha256": "b8c81b6853533f35ffe4d0c4261cde7db6964133399dfef7bc5bf9cddc4fdf1b",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7032,
+          "sha256": "1b830f069bb235a5a73dc1e4e312bb071895003682d68d26e0efee2ab20d28e6",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 18730,
+          "sha256": "e0cb19806d726e00312258969a70fefd84e2f4e2c4f2db660e18ceae70903d6e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 56400,
+          "sha256": "7209496fc373c1e41f1f36719b288892231c791da980f2990597b9e3665c14d9",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/defense_platform/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/defense_platform/tier-2.png",
+      "sourceSha256": "d6016b19b509e42a4c5f8d7859e1e7bea76bde156678c79c34fa955574622e57",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7898,
+          "sha256": "2dd2c738a2e024117c9fdbe88271ff63df29db29004356d26865597677442d38",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22136,
+          "sha256": "7131608c95f64aef946f0c698b3a9e0a7ca9f583c9b22ebbe7f68ba884c33e0d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 65976,
+          "sha256": "313b364245281f5590975de7b1425f7753200e8fe3ab5dd6dc525802284970f5",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/defense_platform/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/defense_platform/tier-3.png",
+      "sourceSha256": "dd89c9a128797462a0db76b6b5d1fb44ede5944e8286be114551bc635e98fa93",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8776,
+          "sha256": "49e20a9f12da991b8e4c11bd662f41723049a50a559e52e899a4e74d307bb37c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 25140,
+          "sha256": "5fd005b1744fece98c06533aa81e90cd3e94866a5c98e09c50fb087b5f3f015e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 76398,
+          "sha256": "35cb1f9c055004a6241fb3d4bf40de9bc9f23e1ef3200f93da808a492d260995",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/defense_platform/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/defense_platform/tier-4.png",
+      "sourceSha256": "963334b3bc9c74992064f0115d7e09d78eee3b86077c32e386b5e3b328fd66b2",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7238,
+          "sha256": "d3eea24cd569776cb450bcf2a7ddc6a8071a62276e47404b1840dfb4175c74d5",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20636,
+          "sha256": "98d8619c7daee0ebce92690af48763fdc9541c2a6246a06d2843ecc75adb75c7",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 62680,
+          "sha256": "95d68e58516b10319ce64875492ff511418e6a365a9336c5971cd6a236201d34",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/defense_platform/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/defense_platform/tier-5.png",
+      "sourceSha256": "8234da7fd515239cd8fcde51fa7ee04ffdcc61500ba618731e2768505b7c8a6c",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8098,
+          "sha256": "5452c99b645362f74ac48f52847819917423148f64fd3883ce13d510f53fe1e3",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22234,
+          "sha256": "74420e657ef3d2ad871cb97b66ace6f1310928bf7f7f5a27dfbd32f1335f0db2",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 67248,
+          "sha256": "e107c914019d5a46fa4c06950b66d8f9ea9aee7319c31188cbcfc53ec804d9af",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/defense_platform/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/defense_platform/tier-6.png",
+      "sourceSha256": "f10002e2a8f5b9bef2ea64fe8e9de8a3c07c659f6db74a68b1ff192f2293928b",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9510,
+          "sha256": "1ce1f7631c8b8cbed38fd7753dc602cac58b48f8a5c6f58139db3756d2321398",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 26958,
+          "sha256": "37e9c59572acbfa2d088d49db3848532c33863b37ee7db0df7d3649161c0411b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 81876,
+          "sha256": "2e851407172df2d075b8d79111ebf90cce36755c139c61afd940c9f75bab6bb3",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/academy/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/academy/tier-1.png",
+      "sourceSha256": "bc2f46551f0afd835e2818d060c41cf686bb639f89e11b1f1136d6035ba0c0e0",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7004,
+          "sha256": "d301cc486da47f83c785148f18eab167c223d47d8fbbdb7ad356cbbe56bc8cca",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 18896,
+          "sha256": "73ffa660a96b82e704bef80d228479dd52e12112a1fceb0adc5fa801ec1cf45c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 56130,
+          "sha256": "70475c0c8c9d3d797df2e260a6103e6c5c22e53c7815b3290c8fc9558993ca21",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/academy/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/academy/tier-2.png",
+      "sourceSha256": "72ccdc8b0741ffb566331765f1a37e8eb0af32e2c41e420adcb48cfb4f3663ac",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7268,
+          "sha256": "621746c942d0c5262666fd36c0dd7314d9ff1f0d538185f8c46938fad90dfa5f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 19762,
+          "sha256": "54d344c3270a9532a93d13eb2b1707e40e1a01c05dc75dbc75c5b02cd0b8ea58",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 57396,
+          "sha256": "6e0a3969984b1f2ffda950358e24682b9fe511dc7f5c072bd8efcdfb36fcc0c4",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/academy/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/academy/tier-3.png",
+      "sourceSha256": "d17dfbaf0f4c185c6b059c34d311b6b3bd8a5cf7deba11065a617d80b98d004c",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7890,
+          "sha256": "05de8cb0edcbaf723465d45db4bd2deeb52267630dd1d51f429cbc8134b8eeb9",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22622,
+          "sha256": "e55ffc831087059b5c499cbb7061c92ba10e476dc6250eabdf836ffb228a589f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 64770,
+          "sha256": "623e0d48135737ff2718acf4f4c76df57059b681944197a1aed3465295be3e52",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/academy/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/academy/tier-4.png",
+      "sourceSha256": "eea500fbf8a60efe3c4a38f2e230379bbd1887657d63ed481dcc43721a11252a",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7562,
+          "sha256": "96f7e5f322abe484232b55072d9a3d85acfc72654e6d8b28d780e23da3134d3f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21160,
+          "sha256": "9b6c387a67c66a7c276bf79be181bbab9b37a35bd449a6b7ff14f4ad02063905",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 61716,
+          "sha256": "9af104aef155c7fdcf289f0092ba07e1216b15d3d59d06b536c7cdaf8fe81ece",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/academy/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/academy/tier-5.png",
+      "sourceSha256": "53610f0c1fc3233749c90e0379b5bf6d548ccbf58e08e5ad7d68fdf13a0ade0b",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8286,
+          "sha256": "cd25c441badcacfe1768abfffd771fe764ecb4db018d9cd536f09510c75787db",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22650,
+          "sha256": "9d925cebe6f0999c4a4bf7912ee002e9cefaa6714a5b8065545627036266861d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 65644,
+          "sha256": "17e3951877c0f9b8f07f4ac314036b7449146097d54f47029d2ca201b40e5f8e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/academy/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/academy/tier-6.png",
+      "sourceSha256": "f7dbccff39fd23c0f8e726173db8050eca38a983e8a11f8a430571202e9b164c",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7472,
+          "sha256": "877ca4fefc5f7de2027484804fd153132abc885addb25220639bfdff0b98edbf",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20672,
+          "sha256": "28ba3bb448aa2dcf71a75aac80437716843583798216c2d64e9629d4dd59829b",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 59970,
+          "sha256": "10bfc0c8e150d09110d0b1f15517a15830064e786c7be2570613a4478d10dfdd",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/academy/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/garrison/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/garrison/tier-1.png",
+      "sourceSha256": "a69ed10d6bc0942f1b58b4f44a02672eabaf590dd4d658018ea5fce7b9032f47",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7892,
+          "sha256": "311eac862586540c1a11ab7f3359486ab5f1976f0903378ad9e8021ef80011e8",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20772,
+          "sha256": "af1e7ca52c693c316b51e40ac4badb8907eead54db912332996d89ab17f611d6",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 61762,
+          "sha256": "ab5d487d1075852112ea0db7cc8829936d405594b7ab1e0f430fc6d15cd18cc1",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/garrison/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/garrison/tier-2.png",
+      "sourceSha256": "a0772725c224dc95fd4706babda25ea9a781424e419460f16e92f6532b84cc2d",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8504,
+          "sha256": "49519a81086e7157ef842772048d85bdd861d5864a2ed59bd848737c8475d74c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23292,
+          "sha256": "e6177292e7078212ec79d0c0d625b03db0d0d24fe0c53a3908db76c4956796ee",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 67228,
+          "sha256": "b9ffacf2f74be0eb9bea2dccdbd8f697ee7e4170e97c13547bf39063a97d390d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/garrison/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/garrison/tier-3.png",
+      "sourceSha256": "d018ea14f28de20c608e307a22b23b422ce4e7d801131810d2d9eaca18254485",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8500,
+          "sha256": "c067a88433c34e9acbc93db4a219db17777dde357381905ec29582e4b178fb16",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23200,
+          "sha256": "c634f06a15cc3b9b884a14f95837e50cc5c9ad089e646504ceeb879a480cdb29",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 66630,
+          "sha256": "708fa646d99d42b94c23a5517fef596b942ef3f288bffd881e7176ac8a576a7c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/garrison/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/garrison/tier-4.png",
+      "sourceSha256": "42df82fbbd8dd621f0c072c81c1b27445eee2f779bf9535f89f5d88bc66df171",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8102,
+          "sha256": "424d6b1d225be9daf85c68ed86ddee2fe38488c5ff2b3eb90c43b9b1c3857053",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21992,
+          "sha256": "a8dd6c1b761da144d5f7ebd8e46bf3f0cb83a969e507aff09b0bf4380c2363a6",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 64360,
+          "sha256": "edd7f1c7a06580c8de26079314ed9acd60fe74c545905fbd38860c05fc91a4be",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/garrison/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/garrison/tier-5.png",
+      "sourceSha256": "2a872088d9617e193aa1fee96d33ab6dc5e27250b3a292c584bc8793785149d7",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8802,
+          "sha256": "c3865c8d8c324c7e72818ab514d4ff7f6db3bc4fbe281b22eeff84d62b48e920",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23774,
+          "sha256": "0cedf9d650d573d913889ebd16a76c9b16b2cb57805053c6a422e96cdf428bf4",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 69362,
+          "sha256": "331501a71dcd8d04ec688a117c205304c439ef49d10d07d2c40f831cb7fa6b4c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/garrison/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/garrison/tier-6.png",
+      "sourceSha256": "139b27e7255c86dece7fa5949c32b93e7db9c1fd9f2fdf3c81b38c7e78fda249",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9028,
+          "sha256": "886c3b7dd730a84939bc2a1259b32deed5b7dc35b76408f0a4a02ca712c2cbd9",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24462,
+          "sha256": "0eeec3f081813a0e3c9255cbdd6313e42c5e896bf92e2d599e67d52a210bd057",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 74358,
+          "sha256": "5ae1f65b900ab10315c393ff78905922e8366c6212d373701a8adf8cdfcf6feb",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/garrison/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/command_center/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/command_center/tier-1.png",
+      "sourceSha256": "41a0905fea8fac3d929ac04e2fd0ca08a8df9df16a0a89418ef66e65c3043c8f",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8066,
+          "sha256": "9f4cb3ae5cc9b638210600adcf38935ec0157c7c5dde086e765b9e3caa4281ae",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/command_center/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21796,
+          "sha256": "062848bdb78d474c598d851d10c47c5ffb3f1378e4f926925f109c3b4e79a8d9",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/command_center/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 62000,
+          "sha256": "c05a972a6280d432a4610058c40f89f1884dab9e240bdf7ec382039c76c7ee13",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/command_center/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/command_center/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/command_center/tier-2.png",
+      "sourceSha256": "643a6280475be7a26066cc01d1332a10738e7615f9b11acf18f3410ceaf0fd76",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7790,
+          "sha256": "e10e2bd1d5a35a730ccdbd95a36a349ddbbfba474562e53b4b260ba23b4c6c52",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/command_center/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21870,
+          "sha256": "e13efbfcd69b7ec2de5d0020bc8cae28ef713fbaf0f36e0e9c955d079a7449e8",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/command_center/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 62986,
+          "sha256": "bb252e3166f3a6898103576c6560a5f39de7d2f8295691237432cd50c39ff0ea",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/command_center/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/command_center/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/command_center/tier-3.png",
+      "sourceSha256": "60d9985b55ba0fe4427b7f90f42daab5bc894a1e10f580fa1a6c707b6f7e5b2f",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7860,
+          "sha256": "64d90971746828bb0135af4086a1ea8110c6d4926541bc24585112cc335d0a21",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/command_center/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21048,
+          "sha256": "58d65f0d096797caa2c4f48f6c62a9fec084c1320af547ab9d994af498368c43",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/command_center/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 60582,
+          "sha256": "1f3c6c2219d17323e7c5adf94bacad7f905514ce912d7c43e267d62253690d56",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/command_center/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/service_berth/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/service_berth/tier-1.png",
+      "sourceSha256": "982ff5fe26ddc61208d37d0c9441b77d09f162b4dd7070ab878d61d0ab700c88",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7584,
+          "sha256": "890f16bdafd06993b2073fc31a3ad60bbab70f4f43be6e0a61a3707e5ed5d6b8",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/service_berth/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 20738,
+          "sha256": "835061a82aa1bcd95a3672c3a82017cab95b7c9a524996d501ff6a2cb20f9ead",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/service_berth/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 61704,
+          "sha256": "324cccb5db5258adf487b2d67ce4b85ae6ae6624555802837ed6f8e61e77517d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/service_berth/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/living_terraces/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/living_terraces/tier-1.png",
+      "sourceSha256": "8c831c6ab1d7fb9f360f42ba389d9050bb1131ce1b4cf9811780db851e007ca4",
+      "width": 1024,
+      "height": 1024,
+      "framing": {
+        "scale": 1.16,
+        "anchor": [
+          0.5,
+          0.38
+        ]
+      },
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8340,
+          "sha256": "61bbef882f36ce93ee200047d98d55c1a8588e26d0e10a1831cbb224b30e354c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24920,
+          "sha256": "626dbbc3a17a5b7045cf952a0b12807d3e06a5135b2b173b9bc15d1395b3806a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 78286,
+          "sha256": "453de55c41a1217489f2f99946f792b4ef3ebe89edab9cdc464167267969474f",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/living_terraces/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/living_terraces/tier-2.png",
+      "sourceSha256": "ce5c89e50d77416e3016ed10b643d8851d3935ebf12aa30ef6f94c88b00ff7f2",
+      "width": 1024,
+      "height": 1024,
+      "framing": {
+        "scale": 1.16,
+        "anchor": [
+          0.5,
+          0.38
+        ]
+      },
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8744,
+          "sha256": "1e408a11d20a3d5746ac4ad1c57b3cdeb3848393ea6db5dfa253629f205f7e1c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 26090,
+          "sha256": "7b67550b202d28693574d676e6ce0a044c641760f51c65cff98e5e7e80c82cdd",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 83766,
+          "sha256": "2272d6d7d35ae86df633e5948116baeb3ef51d95107fb554133f3477ed95f0ce",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/living_terraces/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/living_terraces/tier-3.png",
+      "sourceSha256": "dea96fd947cf5436945b066d460927739e440af2ecc644bf3c9e70e12f49baad",
+      "width": 1024,
+      "height": 1024,
+      "framing": {
+        "scale": 1.16,
+        "anchor": [
+          0.5,
+          0.38
+        ]
+      },
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8550,
+          "sha256": "9a1bc52ffbec856284469d61347140fb595671c339d2c408da9e2bf74763342c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 25586,
+          "sha256": "ae5afff7b207780634ac45e9682c8eef73fc699c1f2968b515b400131486f5b3",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 82764,
+          "sha256": "676571b6baef15f14f34bf2006ccaaad469038b8495eaae5d2f1d09d3b2c7a0c",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-3-512.webp"
+        }
+      ]
+    },
+    "buildings/living_terraces/tier-4": {
+      "source": "art-src/planet-surface-structures-v2/buildings/living_terraces/tier-4.png",
+      "sourceSha256": "a22f08c66f93b57bdbb716b266fbc06cb9c6f8224261f7033ab029482d6f27c2",
+      "width": 1024,
+      "height": 1024,
+      "framing": {
+        "scale": 1.16,
+        "anchor": [
+          0.5,
+          0.38
+        ]
+      },
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8774,
+          "sha256": "19b14608a181fa52fbafe865ac9635ad4dd8eb6287a0bcf2524c8d360c9690d3",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 26266,
+          "sha256": "cf54e71179c050b4883a7e4c7aa662b95b0512b2e1bec5a594270b1022304b01",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 85106,
+          "sha256": "77a044f0a2c1568865e765f0d1bc44020a2264c3e64d940e533fdfd432da0289",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-4-512.webp"
+        }
+      ]
+    },
+    "buildings/living_terraces/tier-5": {
+      "source": "art-src/planet-surface-structures-v2/buildings/living_terraces/tier-5.png",
+      "sourceSha256": "e5b54b5fb2a27805a4a5dbe982d0e9fe5d35eac2303dd25eb7d20891c63f7c04",
+      "width": 1024,
+      "height": 1024,
+      "framing": {
+        "scale": 1.16,
+        "anchor": [
+          0.5,
+          0.38
+        ]
+      },
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8882,
+          "sha256": "6b5c29eccc243055574a6cc285a65a7e984cc321d923b0b0a639d76fd4adf67a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 26418,
+          "sha256": "10b149162b5241359d7884e4e3639da3b6e860780a072e407a48d187bdd6fb37",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 85234,
+          "sha256": "a14fbdb9ef3b0cc874aee263c1ef3e0bb8e232bc4b9784aea4886368e87e1437",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-5-512.webp"
+        }
+      ]
+    },
+    "buildings/living_terraces/tier-6": {
+      "source": "art-src/planet-surface-structures-v2/buildings/living_terraces/tier-6.png",
+      "sourceSha256": "9643b0898f959a4c7490321e0f8d88f0393fb70ec25984c8a86a6a695f2f1bf1",
+      "width": 1024,
+      "height": 1024,
+      "framing": {
+        "scale": 1.16,
+        "anchor": [
+          0.5,
+          0.38
+        ]
+      },
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9398,
+          "sha256": "d40f8a2267ec6ec13ae0fa45dd20e508316f62ba139bec1ed37f45d459860d8e",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 27694,
+          "sha256": "bd21664145a9564aa75ecfb1757395c5d92c092a353357049b18ba49e6278aca",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 89702,
+          "sha256": "bc82feb2a0cc18ad74649b58979847f6cc4e97f809ffd93b8f4aa3bde743fe74",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/living_terraces/tier-6-512.webp"
+        }
+      ]
+    },
+    "grounds/temperate-basin": {
+      "source": "art-src/planet-surface-structures-v2/grounds/temperate-basin.png",
+      "sourceSha256": "de10671cc639de9113ffc663e4f4130b12d6420038e14190bf3ce775a84f011e",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8846,
+          "sha256": "bc29116858a3ce3a2d56b3b6d8a2a44bc4a9a71767e9628fb15d9efe01cf183a",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/temperate-basin-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 27782,
+          "sha256": "52da415b55a233cbc16a24bec3c54b9cdf57b865b7b7d1766ee418f7c7ece664",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/temperate-basin-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 97384,
+          "sha256": "8c43d1de67d2346f5836f80b88de08f3b79c36bef6ef7596dc3c052758309f74",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/temperate-basin-512.webp"
+        }
+      ]
+    },
+    "grounds/boreal-world": {
+      "source": "art-src/planet-surface-structures-v2/grounds/boreal-world.png",
+      "sourceSha256": "6c2214e1247dc9f7c9fab194a88c53f2c210782b7b8a2a18c8f16baec8060248",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8480,
+          "sha256": "9e963e08d66287345b5fbfbe55c23c5a28d8417b1b8c476152e92abe6a0bd84c",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/boreal-world-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 27754,
+          "sha256": "ea5977ee00ea223c7a17dfc761e838879b874b4d144397ab44a609f97bd534e2",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/boreal-world-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 97742,
+          "sha256": "019a47ffcd32a5d0b26d4d4b92a34fe81c3691547aacd5b22dbe359e6bb4aebb",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/boreal-world-512.webp"
+        }
+      ]
+    },
+    "grounds/highland-plateau": {
+      "source": "art-src/planet-surface-structures-v2/grounds/highland-plateau.png",
+      "sourceSha256": "5b1d625399b8cdcaeba41fa086359b8a6b5ab6a9d9a07169f705ff0260791a33",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9222,
+          "sha256": "75299b8b4dcf3a667cfe69e2ade82f829a3e4e6b0d4aed121d6ff97c6ae0894b",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/highland-plateau-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 28678,
+          "sha256": "9319225004acfda0f160a98007a41fb1c0841aabdfd5bbe940344ebd5b072d1b",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/highland-plateau-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 105344,
+          "sha256": "11ee1a3edaa79a17262a6bac80574c451cb257cf3c9a94419fe8ebb215a22aa3",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/highland-plateau-512.webp"
+        }
+      ]
+    },
+    "grounds/savanna-world": {
+      "source": "art-src/planet-surface-structures-v2/grounds/savanna-world.png",
+      "sourceSha256": "5e92a6d478fc4a32e42aaca8173a43e8b027e8125aae299681bb9adc840ffbde",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8786,
+          "sha256": "a14104d87dc92e2bc58179f034c55088be02328fbf94f35a845ab7b6f9142e94",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/savanna-world-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 27088,
+          "sha256": "5ea940c98cd1430cd8bc31ef9da4c551b4b4ba90163102fa8b9576d70f31ea02",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/savanna-world-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 97902,
+          "sha256": "c3ec8155ae88563ab1c83b732ce0262e3544f3f9dabf0390f7da533c9c21960c",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/savanna-world-512.webp"
+        }
+      ]
+    },
+    "grounds/volcanic-highlands": {
+      "source": "art-src/planet-surface-structures-v2/grounds/volcanic-highlands.png",
+      "sourceSha256": "85847ed7665ea9ca783671d4afd3f456d935942ed858b406d92cef110ca3bed2",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8236,
+          "sha256": "3ebc0ed8391a977256e489f231ea3046c9ae2380780a0748fa1f8487332d2ae8",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/volcanic-highlands-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 26416,
+          "sha256": "fb5a38e4932a5a4f9648d05247ffd12c024c8f6a4d72523611e79bcfcbc2478b",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/volcanic-highlands-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 96834,
+          "sha256": "bc50c76dd5103454e8368cb9dab8578cf733f3282ca3f42a8f96faf4bd590aeb",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/volcanic-highlands-512.webp"
+        }
+      ]
+    },
+    "grounds/archipelago-world": {
+      "source": "art-src/planet-surface-structures-v2/grounds/archipelago-world.png",
+      "sourceSha256": "3b9802be329e0357b5cdc73fa1c777fc227c93653ea694f77698aea516de9712",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8598,
+          "sha256": "beb4cacbf7f81aeef9b260493072f56fbcc28227345db242ad6db9bc1fbdb6d5",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/archipelago-world-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 28478,
+          "sha256": "c41ca024e2608efaac1dba89d40123e1f50233bc0779f3822e32571f21ad3fe5",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/archipelago-world-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 100452,
+          "sha256": "3d331ac1d74b95d167c97124fcad2ab0cfcab829a386e19e97759dc96be1c104",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/archipelago-world-512.webp"
+        }
+      ]
+    },
+    "grounds/terrestrial": {
+      "source": "art-src/planet-surface-structures-v2/grounds/terrestrial.png",
+      "sourceSha256": "057be4dba82c69be711da32b74ce16d5871d18b1fb5587634fc0202b973d5386",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8540,
+          "sha256": "308d1d8bc3270e6317624e7716861b4f76d990825db06473cb54b20cee17e05a",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/terrestrial-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 27810,
+          "sha256": "d8df18637cc134f99e39f5bd9b624aad42443a2c99456349e8e84a7a89defc57",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/terrestrial-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 99528,
+          "sha256": "b1803eaa7749c200b69f648306e9a0924b904eaeb5cc9f0f52a86f20a4f424da",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/terrestrial-512.webp"
+        }
+      ]
+    },
+    "grounds/desert": {
+      "source": "art-src/planet-surface-structures-v2/grounds/desert.png",
+      "sourceSha256": "6c9d44fecc67825b43e186c98d27faacb6a9690cc0ee1ade7ce4559e7f7604da",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8554,
+          "sha256": "7971c1fa202ca636ab7c379124517de86ab1d92fa9f39aebedc55fb6deb4603e",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/desert-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 26780,
+          "sha256": "d3ffc175a05192b8f2a558a73b494ddc63ef33dbf90c400312364d5ebc3c1166",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/desert-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 92504,
+          "sha256": "a7197d13709a8b567f20325e5be5025c19b24222868c08e4043be7af7e05a6cc",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/desert-512.webp"
+        }
+      ]
+    },
+    "grounds/ocean": {
+      "source": "art-src/planet-surface-structures-v2/grounds/ocean.png",
+      "sourceSha256": "c10af13c4ce9e3874037eba428eebf3f17f04039dd7e72de67957150a69646b2",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8936,
+          "sha256": "b2b1619ec61ed91b9588e108c8f180a45fac9a9a396e3d7c8450c58a1f028544",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/ocean-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 29510,
+          "sha256": "7eb83cf3ca898c7c7ca30eaee96869a8055b61ab8d81d6f4a2def0a383972727",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/ocean-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 104022,
+          "sha256": "fddd112718dc907f3cb0edde058484aabaca3e0495d11844c7ec9de193be94ee",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/ocean-512.webp"
+        }
+      ]
+    },
+    "grounds/ice": {
+      "source": "art-src/planet-surface-structures-v2/grounds/ice.png",
+      "sourceSha256": "aff0e5e4a1a47a0b7a28933d273ebc9eb75f474d1eb6c93ea4b4b29c42386f52",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8422,
+          "sha256": "a08b0628b92bed5b2e3978276f676aa253c6cdb80b99e9b2c3857cee31faac72",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/ice-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 26182,
+          "sha256": "7eb7f29ceafce12ddeaab8671d5de45736724927b4f21186b6284d09525b71a0",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/ice-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 89066,
+          "sha256": "6826d35c6aefc6a1f241e7bc96548a46eecfbc73c4e502e9dcd6accb3785aa76",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/ice-512.webp"
+        }
+      ]
+    },
+    "grounds/lava": {
+      "source": "art-src/planet-surface-structures-v2/grounds/lava.png",
+      "sourceSha256": "652cab094dbb50b195e722b15df239e938d7e60c918bea2fd2e5a016e011b6f6",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8102,
+          "sha256": "81a2d4f90fba997c5659e8592cc718bc53f9f168db5a9f00187760ce1314e7ce",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/lava-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 27128,
+          "sha256": "c2137e7fd930cacd88d48b49fbb1b8d13034fcb96832ca55ff36a557871e365f",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/lava-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 95592,
+          "sha256": "d26cfb4b948e3b929283f0233414aac2f1b75d7c003729627b65624494a7ed36",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/lava-512.webp"
+        }
+      ]
+    },
+    "grounds/barren": {
+      "source": "art-src/planet-surface-structures-v2/grounds/barren.png",
+      "sourceSha256": "b5fe2080610819c893a9b9edd20b2d45cf13603d5552bf97426828d33cb133a8",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8470,
+          "sha256": "168535881a06bc7b0efb809f445a9412dc82ef9cd568fae64a7bf33aab1d2245",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/barren-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 27666,
+          "sha256": "f95cdc729b3ca6d33bada42290dd317b443e8c82983f112388b941958d46c7c3",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/barren-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 97282,
+          "sha256": "ed55d76c8969a56a40f4789306d9beb67d434d23b0bd019765c15885c06c27d6",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/barren-512.webp"
+        }
+      ]
+    },
+    "grounds/marginal": {
+      "source": "art-src/planet-surface-structures-v2/grounds/marginal.png",
+      "sourceSha256": "7e57110583739ae10e052ede860c630192a8431e53e08d1d596747c4b11c238d",
+      "width": 1024,
+      "height": 1024,
+      "framing": {
+        "scale": 1.2,
+        "anchor": [
+          0.5,
+          0.755
+        ]
+      },
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7638,
+          "sha256": "c0d878c1afada691f269b6ccf83b35d94a25c494debcc8ce8f7791fa75ff25eb",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/marginal-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24162,
+          "sha256": "bd8b214cb443a432abb1ae477b374089641a960c5fc90a89795d0680af44a7b2",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/marginal-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 85602,
+          "sha256": "fa4668a32a075759023b12c5dd94caf321cab3bfe2bf9eae7e86f4868914311a",
+          "url": "/art/derived/planet-surface-structures/v2/grounds/marginal-512.webp"
+        }
+      ]
+    }
+  }
+}

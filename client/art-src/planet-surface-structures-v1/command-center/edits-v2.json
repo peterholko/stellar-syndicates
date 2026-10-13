@@ -1,0 +1,43 @@
+{
+  "edited": "2026-09-27",
+  "method": "built-in image_gen image edit",
+  "use_case": "precise-object-edit",
+  "request": "Remove the Terran Authority logo because these command centers belong to the player's corporation.",
+  "preservation": "V1 assets retained; no code, icons, game rules or runtime integration changed.",
+  "validation": {
+    "width": 1254,
+    "height": 1254,
+    "format": "png",
+    "channels": 3,
+    "hasAlpha": false,
+    "status": "concept draft",
+    "visual_review": "All three entrance insignia removed; headquarters roof crest also removed. Blank corporate panels retained, with recognizable architecture and functional equipment preserved.",
+    "background": "Opaque checkerboard retained from v1; not ready for transparent planet-surface compositing."
+  },
+  "assets": [
+    {
+      "stage": "Landing Command",
+      "input": "landing-command-draft.png",
+      "file": "landing-command-unbranded-v2-draft.png",
+      "generated_source": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-5821d1f7-965d-4a88-8261-2eb806674beb.png",
+      "transparent_background": false,
+      "prompt": "Use case: precise-object-edit.\nAsset type: existing command-center concept art for the player's corporation in a space strategy game.\nImage 1 is the EDIT TARGET, not a style reference. Make a minimal localized edit to this exact image.\nPrimary request: remove the Terran Charter Authority emblem, the thin metallic-gold ring crossed by vertical golden spires, from the dark graphite panel immediately above the entrance. Seamlessly restore the plain dark graphite panel beneath the emblem, matching its material, subtle weathering, light and perspective. Leave the panel unbranded for the player's own corporation. No replacement logo, no text, no decorative symbol.\nPreserve everything else: exact architecture, building silhouette, roof layout, doors, ramps, equipment, proportions, camera angle, image dimensions and framing, cream and graphite materials, amber trim and functional lights, cyan glazing, ground pad, cast shadows, and existing backdrop. This is logo removal only, not a redesign. Do not remove amber lighting or trim.\nThe small communications dish, antenna mast and landing supports must remain exactly as they are."
+    },
+    {
+      "stage": "Colony Command Center",
+      "input": "colony-command-center-draft.png",
+      "file": "colony-command-center-unbranded-v2-draft.png",
+      "generated_source": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-2bad8f4d-9753-43c5-8c8d-7b4a2ac2b0d2.png",
+      "transparent_background": false,
+      "prompt": "Use case: precise-object-edit.\nAsset type: existing command-center concept art for the player's corporation in a space strategy game.\nImage 1 is the EDIT TARGET, not a style reference. Make a minimal localized edit to this exact image.\nPrimary request: remove the Terran Charter Authority emblem, the thin metallic-gold ring crossed by vertical golden spires, from the dark graphite panel immediately above the entrance. Seamlessly restore the plain dark graphite panel beneath the emblem, matching its material, subtle weathering, light and perspective. Leave the panel unbranded for the player's own corporation. No replacement logo, no text, no decorative symbol.\nPreserve everything else: exact architecture, building silhouette, roof layout, doors, ramps, equipment, proportions, camera angle, image dimensions and framing, cream and graphite materials, amber trim and functional lights, cyan glazing, ground pad, cast shadows, and existing backdrop. This is logo removal only, not a redesign. Do not remove amber lighting or trim.\nThe raised central operations room, wraparound cyan windows, all three joined building blocks and roof communications equipment must remain exactly as they are."
+    },
+    {
+      "stage": "Syndicate Headquarters",
+      "input": "syndicate-headquarters-draft.png",
+      "file": "syndicate-headquarters-unbranded-v2-draft.png",
+      "generated_source": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-65555cc4-046d-4760-b29b-0a2691d96bfa.png",
+      "transparent_background": false,
+      "prompt": "Use case: precise-object-edit.\nAsset type: existing command-center concept art for the player's corporation in a space strategy game.\nImage 1 is the EDIT TARGET, not a style reference. Make a minimal localized edit to this exact image.\nPrimary request: remove the Terran Charter Authority emblem, the thin metallic-gold ring crossed by vertical golden spires, from the dark graphite panel immediately above the entrance. Seamlessly restore the plain dark graphite panel beneath the emblem, matching its material, subtle weathering, light and perspective. Leave the panel unbranded for the player's own corporation. No replacement logo, no text, no decorative symbol.\nPreserve everything else: exact architecture, building silhouette, roof layout, doors, ramps, equipment, proportions, camera angle, image dimensions and framing, cream and graphite materials, amber trim and functional lights, cyan glazing, ground pad, cast shadows, and existing backdrop. This is logo removal only, not a redesign. Do not remove amber lighting or trim.\nALSO remove the small golden ornamental crest/sculpture on the right-hand roof terrace beside the satellite dishes. Restore a clean matching roof surface in its place. Keep the actual satellite dishes and communications masts intact. Keep the existing blank rectangular corporate nameplate with its amber edge above the entrance; do not add any lettering or symbols. Keep the tower and all terraces unchanged."
+    }
+  ]
+}

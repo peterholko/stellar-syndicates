@@ -16,6 +16,7 @@ mod strategy;
 mod warfare;
 mod networks;
 mod opening;
+mod belts;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Commitment { amount: f64, receiver_at: f64 }
@@ -26,6 +27,8 @@ struct ReturnTrip { destination: Vec2, issued_at: f64 }
 // Accounts use positive PostgreSQL i64 ids. This separate, non-sentinel namespace
 // cannot collide with an authenticated account or impersonate an existing player.
 const BOT_ID_BASE: u64 = 0xB070_0000_0000_0000;
+/// §fuel-overhaul: the two fuels a bot keeps stocked.
+const FUELS: [C; 2] = [C::Uranium, C::Deuterium];
 const THINK_SECONDS: f64 = 4.0;
 const NAMES: [&str; 8] = [
     "Atlas Freight", "Cinder Industries", "Pioneer Survey", "Meridian Metals",
@@ -69,6 +72,9 @@ pub(super) struct Bot {
     supply_dispatches: BTreeMap<EntityId, networks::SupplyDispatch>,
     #[serde(default)]
     reconnaissance: BTreeMap<EntityId, expeditions::Reconnaissance>,
+    /// §belts phase 6: freighters running a station's ore home (freighter → station).
+    #[serde(default)]
+    belt_haulers: BTreeMap<EntityId, EntityId>,
 }
 
 impl Bot {
@@ -110,6 +116,12 @@ struct Observation {
     recovery_site: Option<sim::sites::SiteReport>,
     expansion_unlocked: bool,
     survey_candidates: Vec<EntityId>,
+    /// §belts: during the charter's barge lesson, the charted belt it points
+    /// at, the ore worth cutting there and the system's position.
+    belt_lesson: Option<(EntityId, u32, C, Vec2)>,
+    /// §belts phase 6: every charted belt, from arrived reports, with the
+    /// pockets this corporation has found there.
+    belts: Vec<belts::BeltSite>,
     ticker: Option<view::MarketTickerSample>,
     research: sim::research::ResearchState,
     available_research: Vec<String>,
@@ -158,7 +170,7 @@ impl GameLoop {
                 commitments: Vec::new(), returns: BTreeMap::new(), avoided: BTreeMap::new(),
                 route_visits: BTreeMap::new(), trade_cycles: 0, expansion: None, status: String::new(), development: None,
                 campaign: None, freight_homes: BTreeMap::new(), economy_turn: 0, supply_dispatches: BTreeMap::new(),
-                reconnaissance: BTreeMap::new(),
+                reconnaissance: BTreeMap::new(), belt_haulers: BTreeMap::new(),
             });
             self.pending.push(Command::AddPlayer {
                 id: owner,
@@ -243,6 +255,32 @@ impl GameLoop {
             recovery_site: corp.founding.recovery_site.and_then(|id| self.world.exploration.sites.get(&id)).and_then(|s| s.known.get(&owner)).cloned(),
             expansion_unlocked: corp.founding.expansion_unlocked(),
             survey_candidates: corp.founding.survey_candidates.clone(),
+            // The programme's own target: a belt this corporation charted.
+            belt_lesson: matches!(corp.founding.stage,
+                    sim::FoundingStage::BuildBarge | sim::FoundingStage::MineBelt | sim::FoundingStage::HaulOre)
+                .then_some(corp.founding.belt_target).flatten()
+                .and_then(|(system_id, body_id)| {
+                    let system = self.world.systems.iter().find(|s| s.id == system_id)?;
+                    let belt = system.bodies.iter().find(|b| b.id == body_id)?;
+                    let ore = belt.deposits.iter().max_by(|a, b| {
+                        let value = |d: &sim::galaxy::Deposit| d.richness
+                            * sim::production::ore_bulk_ratio(d.resource) * sim::market::base_price(d.resource);
+                        value(a).total_cmp(&value(b))
+                    })?.resource;
+                    Some((system_id, body_id, ore, system.pos))
+                }),
+            belts: corp.surveyed.iter().filter_map(|id| self.world.information.site(*id, cc, c, now))
+                .flat_map(|report| {
+                    let s = &report.system;
+                    s.bodies.iter().filter(|b| b.is_belt()).map(move |b| belts::BeltSite {
+                        system: s.id, body: b.id, pos: s.pos, owner: s.owner,
+                        ores: b.deposits.iter().map(|d| (d.resource, false, d.richness, d.reserves))
+                            .chain(b.pockets.iter().filter(|k| k.found_by.contains(&owner))
+                                .map(|k| (k.deposit.resource, true, k.deposit.richness, k.deposit.reserves)))
+                            .collect(),
+                        prospected: b.prospected.get(&owner).map_or(0, |k| k.reported),
+                    })
+                }).collect(),
             ticker: self.prices.at(market_time).cloned(),
             // Completed research and arrived survey knowledge are CC ledgers,
             // exactly like the human research panel; metrics use arrived sites.
@@ -269,12 +307,12 @@ impl GameLoop {
             let Some(picture) = picture else { continue; };
             let old_status = bot.status.clone();
             if let Some(command) = bot.decide(&picture) {
-                debug!(%owner, ?command, "bot issued command");
+                debug!(%owner, t = self.world.time as u64, ?command, "bot issued command");
                 bot.commands_sent += 1;
                 self.pending.push(command);
             }
             if bot.status != old_status {
-                info!(%owner, reason = %bot.status, "bot decision");
+                info!(%owner, t = self.world.time as u64, reason = %bot.status, "bot decision");
             }
             // An offline bot consumes the same compliance evidence as a human
             // View. No independent timer can confirm an unseen outcome.
@@ -312,16 +350,57 @@ impl Observation {
     }
 
     fn freight_limit(&self, fleet: &GhostView, dest: Vec2) -> u32 {
-        let per_mass = self.fuel_per_mass(fleet.pos, dest) * cruise_fuel_mult(fleet);
+        let per_mass = self.fuel_per_mass(fleet.pos, dest) * self.cruise_mult(fleet);
         if per_mass <= 0.0 { return capacity(fleet); }
-        let mass_budget = fleet.fuel.unwrap_or(0.0) / per_mass;
+        let mass_budget = store(fleet) / per_mass;
         (((mass_budget - hull_mass(fleet)).max(0.0) / sim::ship::CARGO_MASS_PER_UNIT).floor() as u32)
             .min(capacity(fleet))
     }
 
     fn enough_fuel(&self, fleet: &GhostView, dest: Vec2) -> bool {
         let mass = hull_mass(fleet) + cargo_used(fleet) as f64 * sim::ship::CARGO_MASS_PER_UNIT;
-        fleet.fuel.is_some_and(|fuel| fuel >= self.fuel_per_mass(fleet.pos, dest) * mass * cruise_fuel_mult(fleet))
+        fleet.fuel.is_some() && store(fleet) >= self.fuel_per_mass(fleet.pos, dest) * mass * self.cruise_mult(fleet)
+    }
+
+    /// §fuel-overhaul: Fusion Freight is researched.
+    fn fusion_freight(&self) -> bool { self.research.has("prop_line_fusion_freight") }
+
+    /// §fuel-overhaul: freight flies Slow on Uranium until Fusion Freight makes
+    /// full-speed Deuterium freight cost the same.
+    fn freight_transit(&self) -> sim::ship::TransitMode {
+        if self.fusion_freight() { sim::ship::TransitMode::Full } else { sim::ship::TransitMode::Slow }
+    }
+
+    /// The throttle's multiplier on energy per distance, as the sim applies it.
+    fn cruise_mult(&self, ghost: &GhostView) -> f64 {
+        self.cruise_mult_on(ghost, on_uranium(ghost))
+    }
+
+    /// The multiplier on one store, weighed hull by hull by mass as the sim
+    /// does (`Fleet::cruise_mult_for`): a quarter on Uranium; Fusion Freight's
+    /// cut for player freighters and their cargo; Torch Regime on warships.
+    fn cruise_mult_on(&self, ghost: &GhostView, uranium: bool) -> f64 {
+        let mods = sim::research::mods(&self.research);
+        let freight = mods.get(&sim::research::ModKey::FreighterFusionBurn).copied().unwrap_or(1.0);
+        let torch = mods.get(&sim::research::ModKey::WarshipBurn).copied().unwrap_or(1.0);
+        let regime = |freighter: bool| if uranium { sim::fuel::SLOW_FUEL_MULT }
+            else if freighter { freight } else { 1.0 };
+        let stacks = || ghost.composition.iter().flatten().filter(|s| s.count > 0);
+        let cargo = cargo_used(ghost) as f64 * sim::ship::CARGO_MASS_PER_UNIT;
+        let total = hull_mass(ghost) + cargo;
+        if total <= 1e-9 {
+            return regime(false);
+        }
+        let hulls: f64 = stacks().map(|s| s.kind.hull_mass() * s.count as f64
+            * regime(s.kind.is_player_freighter()) * if s.kind.is_combatant() { torch } else { 1.0 }).sum();
+        (hulls + cargo * regime(stacks().any(|s| s.kind.is_player_freighter()))) / total
+    }
+
+    /// §fuel-overhaul: an escort in formation burns its charge's Uranium regime
+    /// when it can fly it. Returns (its store, its multiplier).
+    fn escort_burn(&self, guard: &GhostView, charge_slow: bool) -> (f64, f64) {
+        let uranium = charge_slow && slow_capable(guard);
+        (if uranium { guard.uranium } else { guard.fuel }.unwrap_or(0.0), self.cruise_mult_on(guard, uranium))
     }
 
     fn stock(&self, good: C) -> f64 {
@@ -357,10 +436,35 @@ impl Observation {
                 sim::research::mod_of(&self.research, sim::research::ModKey::ColonyCost),
             _ => 1.0,
         };
-        sim::build::recipe_for(project.what).costs.iter().map(|(c, n)| (*c, n * mult)).collect()
+        let tier = match project.what {
+            BuildKind::Upgrade { upgrade } => self.home.system.bodies.iter().find(|b| b.id == project.body)
+                .map_or(0, |b| b.tier(upgrade)) + 1,
+            _ => 1,
+        };
+        sim::build::recipe_for_tier(project.what, tier).costs.iter().map(|(c, n)| (*c, n * mult)).collect()
+    }
+
+    /// §power: the planet whose demand outruns its plant (and base), with the
+    /// MW it is short. A dry plant is a fuel problem, not a building one.
+    pub(super) fn power_shortfall(&self) -> Option<(u32, f64)> {
+        self.home.system.bodies.iter().filter(|b| !b.grid.no_fuel)
+            .map(|b| (b.id, b.grid.demand - sim::power::BASE_MW - sim::power::plant_mw(b.tier(K::PowerPlant))))
+            .filter(|(_, short)| *short > 1e-9)
+            .max_by(|a, b| a.1.total_cmp(&b.1).then(b.0.cmp(&a.0)))
+    }
+
+    /// §power: build or raise that planet's plant, within its research cap.
+    pub(super) fn power_project(&self) -> Option<Project> {
+        let (body, _) = self.power_shortfall()?;
+        if self.home.builds.iter().any(|b| b.what == BuildKind::Upgrade { upgrade: K::PowerPlant }) { return None; }
+        let tier = self.home.system.bodies.iter().find(|b| b.id == body)?.tier(K::PowerPlant) + 1;
+        let cap = sim::build::max_buildable_tier(K::PowerPlant, sim::research::unlocked_structure_tier(&self.research, K::PowerPlant));
+        (tier <= cap).then_some(Project { what: BuildKind::Upgrade { upgrade: K::PowerPlant }, body })
     }
 
     fn structure(&self, kind: K, tier: u32) -> Option<Project> {
+        // §power: plants are per planet; `power_project` places them.
+        if kind == K::PowerPlant { return None; }
         let system = &self.home.system;
         if system.tier(kind) >= tier || self.home.builds.iter()
             .any(|b| b.what == BuildKind::Upgrade { upgrade: kind }) { return None; }
@@ -372,7 +476,9 @@ impl Observation {
         let preferred = system.site_for(kind);
         let body = system.bodies.iter().filter(|b| {
             let extraction = matches!(kind, K::MiningComplex | K::Bioharvester | K::VolatileHarvester);
-            (!extraction || b.has_deposit_for(kind)) && (b.tier(kind) > 0
+            (kind != K::CommandCenter || b.population >= sim::build::COMMAND_CENTER_MIN_POPULATION
+                && b.kind != sim::body::BodyKind::GasGiant)
+                && (!extraction || b.has_deposit_for(kind)) && (!kind.uses_slot() || b.tier(kind) > 0
                 || b.pool_slots_built(kind.slot_pool()) < b.pool_slots(kind.slot_pool()))
         }).max_by_key(|b| (b.tier(kind), Some(b.id) == preferred))?;
         Some(Project { what: BuildKind::Upgrade { upgrade: kind }, body: body.id })
@@ -407,11 +513,25 @@ fn hull_mass(ghost: &GhostView) -> f64 {
     ghost.composition.iter().flatten().map(|s| s.kind.hull_mass() * s.count as f64).sum()
 }
 
-fn cruise_fuel_mult(ghost: &GhostView) -> f64 {
-    if ghost.transit == Some(sim::ship::TransitMode::Economy)
-        && ghost.composition.as_ref().is_some_and(|stacks| !stacks.is_empty()
-            && stacks.iter().all(|s| s.count == 0 || s.kind.is_player_freighter()))
-    { sim::ship::ECONOMY_FUEL_MULT } else { 1.0 }
+/// §fuel-overhaul: a formation without a ship of the line can fly Slow.
+fn slow_capable(ghost: &GhostView) -> bool {
+    ghost.composition.as_ref().is_some_and(|stacks| stacks.iter().any(|s| s.count > 0)
+        && stacks.iter().all(|s| s.count == 0 || !s.kind.is_siege_anchor()))
+}
+
+/// Flying Slow on the fission store.
+fn on_uranium(ghost: &GhostView) -> bool {
+    ghost.transit == Some(sim::ship::TransitMode::Slow) && slow_capable(ghost)
+}
+
+/// The fuel its regime burns.
+fn regime_fuel(ghost: &GhostView) -> C {
+    if on_uranium(ghost) { C::Uranium } else { C::Deuterium }
+}
+
+/// The reported level of the store its regime burns.
+fn store(ghost: &GhostView) -> f64 {
+    if on_uranium(ghost) { ghost.uranium.unwrap_or(0.0) } else { ghost.fuel.unwrap_or(0.0) }
 }
 
 impl Bot {
@@ -440,8 +560,10 @@ impl Bot {
 
     fn desired_stock(&self, p: &Observation, project: Option<Project>) -> BTreeMap<C, f64> {
         let mut wanted = project.map(|goal| p.project_costs(goal)).unwrap_or_default();
-        let fuel = p.fuel_target();
-        *wanted.entry(C::Fuel).or_default() += if p.fuel_critical() { fuel } else { fuel * 0.5 };
+        // §fuel: hold the whole target. Wanting half of it sat on the critical
+        // line, and its reorder point sat below it: every refill began in a crisis.
+        // §fuel-overhaul: one target per fuel.
+        for fuel in FUELS { *wanted.entry(fuel).or_default() += p.fuel_target_of(fuel); }
         let food = (p.home.system.population() * sim::colony::PROVISIONS_PER_MILLION_PER_S
             * p.supply_lead() * 2.0).min(p.home.system.storage_cap() * 0.25)
             .max(if p.stock(C::Provisions) < 10.0 { 40.0 } else { 20.0 });
@@ -465,6 +587,17 @@ impl Bot {
         wanted
     }
 
+    /// A stocked project starts unless a cash or fuel crisis holds it. The
+    /// mine and casualty recovery are exempt, and so (§fuel) is a fuel line:
+    /// the cure for a fuel shortage is never held by one.
+    fn may_build(&self, p: &Observation, project: Project) -> bool {
+        let essential = matches!(project.what, BuildKind::Upgrade {
+                upgrade: K::MiningComplex | K::VolatileHarvester | K::FuelRefinery | K::UraniumMill })
+            || self.recovery_project(p) == Some(project);
+        (essential || !self.recovering(p) && !p.fuel_critical())
+            && p.project_costs(project).iter().all(|(c, n)| p.stock(*c) + 1e-9 >= *n)
+    }
+
     fn decide(&mut self, p: &Observation) -> Option<Command> {
         self.refresh(p);
         self.refresh_development(p);
@@ -472,16 +605,14 @@ impl Bot {
         if let Some(cmd) = self.rescue(p).or_else(|| self.recover_military(p)).or_else(|| self.staff(p))
             .or_else(|| self.military(p)).or_else(|| self.guards(p)).or_else(|| self.officers(p))
             .or_else(|| self.local_opening(p))
-            .or_else(|| self.scouts(p)).or_else(|| self.colonies(p)) { return Some(cmd); }
+            .or_else(|| self.scouts(p)).or_else(|| self.belt_lesson(p)).or_else(|| self.belt_work(p))
+            .or_else(|| self.colonies(p)) { return Some(cmd); }
         let project = self.project(p);
         let wanted = self.desired_stock(p, project);
         if let Some(cmd) = self.network_routes(p) { return Some(cmd); }
         if self.ready("build", p.now) && p.home.builds.is_empty() {
             if let Some(project) = project {
-                let essential = matches!(project.what, BuildKind::Upgrade { upgrade: K::MiningComplex })
-                    || self.recovery_project(p) == Some(project);
-                if (essential || !self.recovering(p) && !p.fuel_critical())
-                    && p.project_costs(project).iter().all(|(c, n)| p.stock(*c) + 1e-9 >= *n) {
+                if self.may_build(p, project) {
                     self.wait("build".into(), p, p.home.system.pos);
                     self.status = "building the next funded bottleneck improvement".into();
                     return Some(match project.what {

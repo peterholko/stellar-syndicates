@@ -24,3 +24,8 @@
 .exploration-warning { color: #efbe86; }
 .exploration-lead { border-color: #716348; }
 @media (max-width: 600px) { .exploration-hero { align-items: flex-start; } .exploration-hero img { width: 5rem; height: 5rem; } }
+
+/* §founding R3: one-order escorted recovery. */
+.exploration-guarded { display: grid; gap: var(--space-2, 8px); padding: var(--space-2, 8px); border: 1px solid var(--positive, #5fd08a); border-radius: 6px; }
+.exploration-guarded p { margin: 0; color: var(--dim, #8493a8); line-height: 1.4; }
+.exploration-guarded .is-primary { border-color: var(--positive, #5fd08a); color: var(--positive, #5fd08a); }

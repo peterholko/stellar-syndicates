@@ -1,0 +1,38 @@
+{
+  "tool": "built-in imagegen",
+  "mode": "reference-image edit",
+  "transparentBackground": true,
+  "sharedPrompt": "Use case: stylized-concept. Production-ready transparent PNG cutout for Stellar Syndicates game scene and UI art. Transform the supplied current top-down hull into a true isometric three-quarter view from about 30 degrees above, nose upper right and stern lower left. Preserve the hull's distinctive identity. Show roof and visible side thickness with believable machinery. Match the existing premium rendered hard-surface style: pale titanium plates, dark gunmetal frame, restrained brass fittings, tiny cyan lights, soft upper-left studio lighting, large readable forms. Exactly one complete centered ship with comfortable padding and a thumbnail-readable silhouette. Genuinely transparent RGBA, including structural gaps. No floor, cast shadow, starfield, smoke, long exhaust, motion blur, text, logo, border or other ships. Re-render in three dimensions rather than skewing the source flat.",
+  "ships": [
+    {
+      "name": "interceptor",
+      "source": "../ships-2026-09-08/interceptor.png",
+      "identityPrompt": "Fast light Interceptor: long chisel nose, narrow black cockpit, swept split-delta silver wings with notched roots, paired cylindrical rear engines, compact forward weapon mounts, cyan optical slits and two visible aft apertures."
+    },
+    {
+      "name": "cruiser",
+      "source": "../ships-2026-09-08/cruiser.png",
+      "identityPrompt": "Cruiser: long pointed central wedge prow, broad swept armored shoulders, central command bridge, one twin-barrel turret per shoulder, deep recessed side bays and four cyan stern engines."
+    },
+    {
+      "name": "titan",
+      "source": "../ships-2026-09-08/titan.png",
+      "identityPrompt": "Titan flagship: monumental trident/crown silhouette, one long central spear prow and two shorter heavy forward citadels, bold open gaps between prongs, broad aft command fortress, recessed capital weapons and clustered cyan stern drives."
+    },
+    {
+      "name": "freighter",
+      "source": "../ships-2026-09-08/freighter.png",
+      "identityPrompt": "Corporate freighter: narrow central keel, exactly three pairs of broad separate rectangular freight containers with dark gaps, small forward bridge, four compact stern drives, pearl-grey pod panels, dark structural rails and brass latches; no guns."
+    },
+    {
+      "name": "colony",
+      "source": "../ships-2026-09-08/colony_ship.png",
+      "identityPrompt": "Colony vessel: long central spine, small pointed forward bridge, one large forward glass habitat dome with visible green vegetation, two pairs of smaller spherical greenhouse habitats, prominent broad glass-and-metal middle ring, paired aft drives. Preserve botanical glass enclosure depth."
+    },
+    {
+      "name": "construction",
+      "source": "../ships-2026-09-08/construction_ship.png",
+      "identityPrompt": "Construction tender: two tall articulated industrial gantry arms flanking an open U-shaped work bay, separate tips with open negative space, stout cockpit and machine body aft, paired cylindrical drives, exposed trusses and small tool or cargo housings."
+    }
+  ]
+}

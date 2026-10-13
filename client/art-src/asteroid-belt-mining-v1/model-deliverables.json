@@ -1,0 +1,44 @@
+{
+  "generator": "Python/NumPy reconstruction, no Blender",
+  "models": [
+    {
+      "id": "mining-barge",
+      "glb": "client/art-src/ship-models/mining-barge-textured-v1/mining-barge.glb",
+      "sha256": "e9e88c7db431f06048a43a9aa6527990ea70228806f3647ed37b160f43a6664e",
+      "bytes": 5051896,
+      "triangles": 7816,
+      "renderSections": 2,
+      "closedComponents": 112,
+      "fullyTextured": true,
+      "gltfErrors": 0,
+      "gltfWarnings": 0,
+      "sockets": [
+        "socket.mining.port",
+        "socket.engine.port",
+        "socket.mining.starboard",
+        "socket.engine.starboard"
+      ]
+    },
+    {
+      "id": "mining-belt-station",
+      "glb": "client/art-src/ship-models/mining-belt-station-textured-v1/mining-belt-station.glb",
+      "sha256": "0f28b34cec04f8f8680c553b4a1fa8140b5051b61c12a09b35e429c5990f6a9d",
+      "bytes": 4989944,
+      "triangles": 14536,
+      "renderSections": 2,
+      "closedComponents": 182,
+      "fullyTextured": true,
+      "gltfErrors": 0,
+      "gltfWarnings": 0,
+      "sockets": [
+        "socket.docking.barge.port",
+        "socket.docking.barge.starboard",
+        "socket.docking.hauler",
+        "socket.anchor.1",
+        "socket.anchor.2",
+        "socket.anchor.3",
+        "socket.anchor.4"
+      ]
+    }
+  ]
+}

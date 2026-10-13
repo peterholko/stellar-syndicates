@@ -27,7 +27,16 @@ pub struct MissionProfile {
     pub priority: TargetPriority,
     pub screening: ScreeningRole,
     pub withdrawal: DamageWithdrawal,
+    /// The shape the fleet holds in battle (rules v10 onward).
+    #[serde(default)]
+    pub formation: Formation,
 }
+
+/// The shape a fleet holds in battle (rules v10 onward). Automatic picks one
+/// from the fleet's makeup when it forms up; Free holds no formation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Formation { #[default] Automatic, BattleLine, EscortRing, Wedge, Free }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

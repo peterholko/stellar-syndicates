@@ -71,6 +71,26 @@ pub const THIN_LIQUIDITY: Liquidity = Liquidity {
     reversion: 0.005,
 };
 
+/// §fuel-overhaul: the Authority makes antimatter only on the far side of the
+/// wormhole, so its book is shallow and refills slowly — a limited daily supply
+/// at a steep price until a corporation synthesizes its own. Tunable.
+pub const ANTIMATTER_LIQUIDITY: Liquidity = Liquidity {
+    depth: 120.0,
+    external_cap: 120.0,
+    replenish: 0.05,
+    reversion: 0.005,
+};
+
+/// §fuel-overhaul: the Authority always stocks Warp and Fusion Cores, so a
+/// corporation can never be locked out of building ships or plants. The book
+/// is deep and effectively bottomless; a big order still nudges the price.
+pub const CORE_LIQUIDITY: Liquidity = Liquidity {
+    depth: 2000.0,
+    external_cap: 1_000_000.0,
+    replenish: 1_000.0,
+    reversion: 0.05,
+};
+
 /// Which book a commodity trades on. Rare-metal ore and the rare elements it
 /// refines into are the scarce goods; everything else is bulk. A DENSE ore's
 /// book refills per unit of CONTENT, not per unit of ore (§ore-density): its
@@ -79,11 +99,18 @@ pub const THIN_LIQUIDITY: Liquidity = Liquidity {
 /// saturate Sol, and the players' own book takes over the price.
 pub fn liquidity(c: Commodity) -> Liquidity {
     match c {
-        Commodity::RareMetalOre => Liquidity {
-            replenish: THIN_LIQUIDITY.replenish * crate::production::ore_bulk_ratio(c),
-            ..THIN_LIQUIDITY
-        },
-        Commodity::RareElements => THIN_LIQUIDITY,
+        // §pockets: the rare pocket ores trade like Rare-metal ore.
+        Commodity::RareMetalOre | Commodity::IridiumOre | Commodity::Helium3Ice | Commodity::VoidCrystal => {
+            Liquidity {
+                replenish: THIN_LIQUIDITY.replenish * crate::production::ore_bulk_ratio(c),
+                ..THIN_LIQUIDITY
+            }
+        }
+        Commodity::RareElements | Commodity::Iridium | Commodity::Helium3 | Commodity::ExoticMatter => {
+            THIN_LIQUIDITY
+        }
+        Commodity::Antimatter => ANTIMATTER_LIQUIDITY,
+        Commodity::WarpCore | Commodity::FusionCore => CORE_LIQUIDITY,
         _ => BULK_LIQUIDITY,
     }
 }
@@ -125,23 +152,52 @@ pub fn base_price(c: Commodity) -> f64 {
         Commodity::RareMetalOre => 1700.0,
         Commodity::ConductiveMetals => 30.0,
         Commodity::Titanium => 60.0,
+        // §belt-ores: priced on the same ~70%-of-content rule, so each one's
+        // value per second of mining sits inside today's ladder — Olivine just
+        // above Ferrite, Bornite beside Cuprite, Ilmenite between Cuprite and
+        // Titanium ore.
+        Commodity::OlivineOre => 10.0,
+        Commodity::BorniteOre => 21.0,
+        Commodity::IlmeniteOre => 19.0,
+        // §pockets: the rare pocket ores, on the same rule. Rarer is denser,
+        // so per second of mining they sit at the top of the ladder beside
+        // Rare-metal ore: Helium-3 ice ≈35, Iridium ore ≈42, Void crystal ≈56
+        // a bulk unit, against Titanium ore's 29 and Rare-metal ore's 57.
+        Commodity::Helium3Ice => 260.0,
+        Commodity::IridiumOre => 630.0,
+        Commodity::VoidCrystal => 1680.0,
         // Processed
         Commodity::Provisions => 9.0,
-        Commodity::Fuel => 14.0,
+        // §fuel-overhaul: Deuterium keeps Fuel's price. Uranium is priced so a
+        // slow trip (a quarter of the energy per distance) costs exactly what
+        // Economy cruise cost: ¼ × 5.6 = 0.1 × 14. Full warp costs ten times.
+        Commodity::Deuterium => 14.0,
+        Commodity::Uranium => 5.6,
         Commodity::Polymers => 16.0,
         Commodity::Alloys => 26.0,
         Commodity::Electronics => 34.0,
+        // §pockets: the top-end materials. §rare-materials: Iridium goes into
+        // the ships of the line and Drive Assemblies, Helium-3 refuels
+        // capitals at a dock, Exotic Matter feeds Tier V+ research and the
+        // special modules.
+        Commodity::Helium3 => 75.0,
+        Commodity::Iridium => 90.0,
+        Commodity::ExoticMatter => 120.0,
+        // §fuel-overhaul: an Interceptor's 50k su jump burns one.
+        Commodity::Antimatter => 120.0,
         // Advanced
         // (Machinery raised from the handoff's suggested 48: its input basket —
-        // 1.2 Alloys + 0.6 Electronics + 0.4 Fuel = 57.2 — didn't clear. 62
-        // clears with margin. The component chains now consume Machinery too.)
+        // then 1.2 Alloys + 0.6 Electronics + 0.4 Fuel = 57.2 — didn't clear. 62
+        // clears with margin. §fuel-overhaul: the Fuel left the basket.)
         Commodity::Machinery => 62.0,
         Commodity::Armaments => 56.0,
         // §industry-chains: ~20% value added over each unbonused input basket.
         Commodity::Composites => 50.0,
         Commodity::HullSections => 128.0,
         Commodity::PrecisionComponents => 92.0,
-        Commodity::DriveAssemblies => 215.0,
+        Commodity::WarpCore => 215.0,
+        // §fuel-overhaul: one per Fusion Plant tier from III.
+        Commodity::FusionCore => 300.0,
     }
 }
 
@@ -535,7 +591,7 @@ mod economy_price_tests {
         let old_price = market.price(Commodity::Alloys);
         let old_supply = market.available_to_buy(Commodity::Alloys);
         let goods = [Commodity::Composites, Commodity::HullSections,
-            Commodity::PrecisionComponents, Commodity::DriveAssemblies];
+            Commodity::PrecisionComponents, Commodity::WarpCore];
         for good in goods {
             market.base.remove(&good);
             market.prices.remove(&good);
@@ -550,7 +606,7 @@ mod economy_price_tests {
             assert_eq!(loaded.price(good), base_price(good));
             assert!(loaded.available_to_buy(good) > 0);
         }
-        loaded.execute_buy(Commodity::DriveAssemblies, 10);
+        loaded.execute_buy(Commodity::WarpCore, 10);
         let before = serde_json::to_string(&loaded).unwrap();
         loaded.ensure_catalog();
         assert_eq!(serde_json::to_string(&loaded).unwrap(), before, "migration is idempotent");
@@ -563,7 +619,9 @@ mod economy_price_tests {
     #[test]
     fn processed_prices_clear_their_input_baskets() {
         let mut covered = std::collections::BTreeSet::new();
-        for conv in crate::production::CONVERTERS.iter().chain(crate::production::ORE_REFINING.iter()) {
+        for conv in crate::production::CONVERTERS.iter().chain(crate::production::ORE_REFINING.iter())
+            .chain(std::iter::once(&crate::production::FUSION_CORE_CONVERTER))
+        {
             let input_cost: f64 = conv
                 .inputs
                 .iter()
@@ -625,16 +683,16 @@ mod economy_price_tests {
     #[test]
     fn external_liquidity_is_finite_and_counterflow_restores_it() {
         let mut market = Market::new();
-        let cap = market.available_to_buy(Commodity::Fuel);
+        let cap = market.available_to_buy(Commodity::Deuterium);
         assert_eq!(cap, BULK_LIQUIDITY.external_cap as u32);
 
-        market.execute_buy(Commodity::Fuel, 400);
-        assert_eq!(market.available_to_buy(Commodity::Fuel), cap - 400);
-        assert_eq!(market.available_to_sell(Commodity::Fuel), cap);
+        market.execute_buy(Commodity::Deuterium, 400);
+        assert_eq!(market.available_to_buy(Commodity::Deuterium), cap - 400);
+        assert_eq!(market.available_to_sell(Commodity::Deuterium), cap);
 
-        market.execute_sell(Commodity::Fuel, 150);
-        assert_eq!(market.available_to_buy(Commodity::Fuel), cap - 250);
-        assert_eq!(market.available_to_sell(Commodity::Fuel), cap - 150);
+        market.execute_sell(Commodity::Deuterium, 150);
+        assert_eq!(market.available_to_buy(Commodity::Deuterium), cap - 250);
+        assert_eq!(market.available_to_sell(Commodity::Deuterium), cap - 150);
     }
 
     /// §ore-ladder: the scarce goods trade on a thinner book — the same convoy

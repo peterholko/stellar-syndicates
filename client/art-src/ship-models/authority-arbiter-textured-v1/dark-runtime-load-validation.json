@@ -1,0 +1,45 @@
+{
+  "ok": true,
+  "threeRevision": "180",
+  "triangles": 19388,
+  "renderSections": 25,
+  "variant": "dark-imperial",
+  "standardVertexColors": true,
+  "movingGunMounts": 22,
+  "muzzleSocketsFollowingMounts": 44,
+  "gameExtractorWeaponMuzzles": 45,
+  "gameExtractorEngines": 4,
+  "viewerEmbedsExactModel": true,
+  "detailViewBounds": {
+    "driver": {
+      "min": [
+        -1.1764706373214722,
+        -0.3499999940395355,
+        -11.926960945129395
+      ],
+      "max": [
+        1.1764706373214722,
+        1.5499999523162842,
+        -6.980391979217529
+      ]
+    },
+    "spines": {
+      "min": [
+        -1.1176470518112183,
+        0.9340476393699646,
+        -9.490196228027344
+      ],
+      "max": [
+        1.1176470518112183,
+        2.6830294132232666,
+        8.823529243469238
+      ]
+    }
+  },
+  "embeddedTextures": 3,
+  "textureResolution": [
+    1024,
+    1024
+  ],
+  "method": "Node GLTFLoader with decoded-dimension bitmap stand-ins; real Three.js scene graph, bounds and gun/socket transforms. No browser/WebGL rendering."
+}

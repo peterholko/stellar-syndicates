@@ -24,6 +24,24 @@ pub enum Command {
     DeployOutpost { player_id: PlayerId, fleet_id: EntityId, system_id: EntityId, body_id: u32,
         outpost: crate::industry::OutpostKind, commodity: crate::Commodity },
     SkimFuel { player_id: PlayerId, fleet_id: EntityId, system_id: EntityId },
+    /// §belts: send a fleet's Mining Barges to work one ore of a charted belt
+    /// (`body_id`) in an unowned system or one of your own.
+    MineBelt { player_id: PlayerId, fleet_id: EntityId, system_id: EntityId, body_id: u32,
+        ore: crate::Commodity,
+        /// §pockets: work the found pocket of `ore`, not the belt's own ore.
+        #[serde(default)]
+        pocket: bool },
+    /// §pockets: send a fleet with a Scout or Mining Barge to prospect a charted
+    /// belt for its hidden pockets: a loud 60 s pass at the star.
+    ProspectBelt { player_id: PlayerId, fleet_id: EntityId, system_id: EntityId, body_id: u32 },
+    /// §belts: send a lone Mining Belt Station to anchor at a charted belt in an
+    /// unowned or allied system. It anchors 60 s after reaching the star.
+    AnchorStation { player_id: PlayerId, fleet_id: EntityId, system_id: EntityId, body_id: u32 },
+    /// §belts: free an anchored station (60 s), or stop one on its way.
+    UnanchorStation { player_id: PlayerId, fleet_id: EntityId },
+    /// §belts: load an idle freighter beside one of your stations from its hold.
+    StationLoad { player_id: PlayerId, fleet_id: EntityId, station_id: EntityId,
+        commodity: crate::Commodity, units: u32 },
     ReserveProject { player_id: PlayerId, system_id: EntityId, target: crate::industry::ProjectTarget, reserve: bool },
     StartColonyProject { player_id: PlayerId, system_id: EntityId, body_id: u32,
         project: crate::industry::ColonyProjectKind, commodity: crate::Commodity },
@@ -87,6 +105,12 @@ pub enum Command {
         player_id: PlayerId,
         fleet_id: EntityId,
         target_id: EntityId,
+    },
+    /// Raise an interdiction field where the fleet is when the order reaches
+    /// it (needs a destroyer carrying an Interdiction Field).
+    DeployInterdiction {
+        player_id: PlayerId,
+        fleet_id: EntityId,
     },
 
     /// Light-delayed standing local defense; the pursuit limit is centered on
@@ -167,6 +191,17 @@ pub enum Command {
         system: EntityId,
         commodity: crate::cargo::Commodity,
         units: u32,
+    },
+
+    /// §fuel-overhaul: set a FUEL DEPOT rule — the Authority keeps `target`
+    /// units of a fuel (Uranium, Deuterium, Helium-3, Antimatter) at one of the
+    /// corp's systems, buying and shipping the shortfall by Authority freight.
+    /// `target` 0 clears the rule. Delivered to the Hub like a booking.
+    SetDepotRule {
+        player_id: PlayerId,
+        system: EntityId,
+        commodity: crate::cargo::Commodity,
+        target: u32,
     },
 
     /// BOOK INBOUND FREIGHT (§TCA): the reverse leg — the Authority collects
@@ -438,6 +473,19 @@ pub enum Command {
         target: EntityId,
     },
 
+    /// §orbital-defense: refit one hardpoint of the system's station at its
+    /// Ordnance Foundry. The new fit's added modules come from the system's
+    /// module ledger and the removed ones go back to it (a Prismatic Lance
+    /// comes with Platform Lances research instead). Light-delayed like any
+    /// order to the system; refused, with nothing spent, without a foundry,
+    /// mid-battle, or for an illegal fit or missing crates.
+    FitStation {
+        player_id: PlayerId,
+        system_id: EntityId,
+        mount: u8,
+        fit: crate::module::Loadout,
+    },
+
     /// Develop one of the player's OWNED systems (§step1 structure sink) — e.g. an
     /// Extractor tier that raises its output. Same deduct-and-enqueue semantics as
     /// `BuildShip`; on completion the upgrade is applied (only if still owned).
@@ -449,6 +497,17 @@ pub enum Command {
         /// the shared siting rules — same layouts the anchors always used.
         #[serde(default)]
         body_id: Option<u32>,
+    },
+
+    /// §construction: cancel a structure order still WAITING for its world's
+    /// work slot. Travels at light speed like `DevelopSystem`; on arrival the
+    /// order's goods return to the system stockpile. Refused once it has
+    /// started, for anything but a structure, or while a later order for the
+    /// same structure on that world still builds on it.
+    CancelBuild {
+        player_id: PlayerId,
+        system_id: EntityId,
+        job_id: u64,
     },
 
     /// §economy Part 3: post `workers` workforce crews to a structure at one of
@@ -627,6 +686,17 @@ pub enum Command {
     /// strangles a rival's own logistics without picking a fight with the
     /// chartering power. Soft-reject if not the player's fleet.
     SetEngageFreight {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        on: bool,
+    },
+
+    /// §blockade-running: set whether one of the player's freighter fleets RUNS
+    /// a held blockade at the system it is delivering to (rolling against the
+    /// blockade's catch chance as it crosses) instead of holding outside until
+    /// it lifts. A standing per-fleet policy, light-delayed to the fleet like
+    /// `SetEngageFreight`. Soft-reject if not the player's fleet.
+    SetRunBlockades {
         player_id: PlayerId,
         fleet_id: EntityId,
         on: bool,

@@ -18,30 +18,44 @@ function compile(path) {
   return exports;
 }
 const icons = deps["../../icons"] = compile("icons.ts");
+deps["./icons"] = icons;
+deps["./planet-surface-structure-art.generated"] = compile("planet-surface-structure-art.generated.ts");
+deps["../../planet-structure-art"] = compile("planet-structure-art.ts");
 const market = deps["./market"] = deps["../../core/derive/market"] = compile("core/derive/market.ts");
 const refining = deps["../core/derive/refining"] = compile("core/derive/refining.ts");
 deps["../icons"] = icons;
 deps["../core/derive/format"] = { fmtDur: n => `${Math.round(n)}s` };
 deps["../refining"] = compile("shell/refining.ts");
+deps["./prng"] = compile("prng.ts");
+deps["../../planet-surfaces"] = compile("planet-surfaces.ts");
+deps["../../planet-sites.generated"] = compile("planet-sites.generated.ts");
 deps["./planet-sites"] = compile("shell/deck/planet-sites.ts");
+// §build-sheet: the world panel's Upgrade row reads levels and build times.
+deps["../../core/derive/worldbuild"] = compile("core/derive/worldbuild.ts");
+deps["../../core/derive/format"] = compile("core/derive/format.ts");
 const { PlanetPanel, planetStructures } = compile("shell/deck/planet.ts");
 const { productionPlan } = compile("core/derive/industry.ts");
 deps["../industry"] = { handleIndustryAction: () => false };
 deps["../exploration"] = { handleExplorationAction: () => false };
 const { MobileParitySurfaces } = compile("shell/mobile/parity.ts");
 
-const ferrite = { output: "alloys", rate: 1, inputs: [["metallic_ore",1.5],["fuel",.3]], byproducts: [] };
-const cuprite = { output: "conductive_metals", rate: .75, inputs: [["cuprite_ore",1.5],["fuel",.2]], byproducts: [["alloys",.15]] };
+// §fuel-overhaul: smelting burns no fuel; it draws power instead.
+const ferrite = { output: "alloys", rate: 1, inputs: [["metallic_ore",1.5]], byproducts: [] };
+const cuprite = { output: "conductive_metals", rate: .75, inputs: [["cuprite_ore",1.5]], byproducts: [["alloys",.15]] };
 const smelter = { key: "smelter", label: "Smelter", conversion: ferrite, refining_recipes: [ferrite,cuprite] };
 state.galaxy.build_options = [smelter];
 assert.equal(icons.label("metallic_ore"),"Ferrite Ore");
-assert.equal(market.COMMODITIES.length,22);
+assert.equal(market.COMMODITIES.length,34);
+// §pockets: the rare pocket ores and their materials are real goods now.
+assert.equal(icons.label("helium3_ice"),"Helium-3 Ice");
+assert.equal(icons.label("exotic_matter"),"Exotic Matter");
 assert.equal(market.assignedRecipe(smelter,null),ferrite);
 assert.equal(market.assignedRecipe(smelter,"cuprite_ore"),cuprite);
 assert.deepEqual(plain(market.recipeOutputs(cuprite)),[["conductive_metals",1],["alloys",.15]]);
 assert.match(market.commodityPurpose("cuprite_ore",[smelter]),/Sell raw.*Conductive Metals.*Alloys/);
 
-for (const name of ["ferrite_ore","cuprite_ore","titanium_ore","crystalline_ore","rare_metal_ore","conductive_metals","titanium"]) {
+for (const name of ["ferrite_ore","cuprite_ore","titanium_ore","crystalline_ore","rare_metal_ore","conductive_metals","titanium",
+  "olivine_ore","bornite_ore","ilmenite_ore","iridium_ore","helium3_ice","void_crystal","iridium","helium3","exotic_matter"]) {
   for (const size of [64,128]) {
     const path = new URL(`../public/art/ui_icons/resource/ores-2026-09-16/${name}-${size}.png`,import.meta.url);
     assert.ok(existsSync(path));
@@ -63,20 +77,20 @@ const report = { id: "home", owner: "1", assignments: [assignment], bodies: [bod
 const model = { system: {id:"home",name:"Freya"}, report, body, mine: true, art:"barren.png", delay:17,
   catalog:[smelter], descriptions:{smelter:"Refines ore."}, workforceStructures:new Set(["smelter"]),
   populationHtml:"",surveyHtml:"",developmentHtml:"",queueHtml:"" };
-state.market = { staleness:12, prices:[ ["metallic_ore",8],["cuprite_ore",12],["alloys",28],["conductive_metals",36],["fuel",14] ]
+state.market = { staleness:12, prices:[ ["metallic_ore",8],["cuprite_ore",12],["alloys",28],["conductive_metals",36],["deuterium",14] ]
   .map(([commodity,price])=>({commodity,price,available_buy:10000,available_sell:10000})) };
 state.research = { programmes:[] };
 assert.equal(refining.refiningEstimate(state,report,1,ferrite),null,"no capabilities means unknown, not current-research inference");
 report.refining_sites = [{body_id:1,tier:1,built:true,recovery:1,work_rate:1}];
 const estimate = refining.refiningEstimate(state,report,1,ferrite);
 assert.equal(estimate.raw,market.marketAverageQuote(8,50,"sell")*50);
-assert.equal(estimate.fuel,10);
-assert.equal(estimate.refined,market.marketAverageQuote(28,33,"sell")*33-market.marketAverageQuote(14,10,"buy")*10);
+assert.deepEqual(plain(estimate.inputs),[],"smelting buys no fuel");
+assert.equal(estimate.refined,market.marketAverageQuote(28,33,"sell")*33);
 assert.equal(estimate.seconds,50/1.5);
 assert.equal(estimate.priceAge,12);
 const multiYield = refining.refiningEstimate(state,report,1,cuprite);
 assert.deepEqual(plain(multiYield.outputs),[["conductive_metals",33],["alloys",5]]);
-assert.equal(multiYield.fuel,7,"whole Fuel purchase covers the entire batch");
+assert.equal(multiYield.inputCost,0);
 state.research.programmes = [{id:"mat_ore_recovery",state:"completed"}];
 assert.equal(refining.refiningEstimate(state,report,1,ferrite).refined,estimate.refined,"corporate news cannot upgrade an old local factory report");
 report.refining_sites[0].recovery = 1.15;
@@ -117,7 +131,7 @@ assert.deepEqual(plain(planetStructures(model)[0].outputs),[["conductive_metals"
 
 state.systems = [report]; state.ghosts = [];
 const plan = productionPlan(state,report,"conductive_metals",30);
-assert.deepEqual(plain(plan.inputs.map(i => i.commodity)),["cuprite_ore","fuel"]);
+assert.deepEqual(plain(plan.inputs.map(i => i.commodity)),["cuprite_ore"]);
 assert.equal(plan.rated,45);
 const alloys = productionPlan(state,report,"alloys",5);
 assert.equal(alloys.rated,6.75,"secondary output is not a second fully staffed refinery");
@@ -131,4 +145,4 @@ assert.equal(phoneCommands.length,0);
 mobileAct("refining-confirm");
 assert.equal(phoneCommands[0].refining_ore,"metallic_ore");
 assert.equal(assignment.refining_ore,"cuprite_ore","mobile confirmation is not optimistic state mutation");
-console.log("Ore economy: recipes, secondary yields, delayed confirmation on both shells, planner, binary command and seven alpha icons pass.");
+console.log("Ore economy: recipes, secondary yields, delayed confirmation on both shells, planner, binary command and ten alpha icons plus the six pocket-ore icons pass.");

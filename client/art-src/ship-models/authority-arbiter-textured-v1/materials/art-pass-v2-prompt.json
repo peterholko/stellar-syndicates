@@ -1,0 +1,15 @@
+{
+  "tool": "image_gen.imagegen (built-in)",
+  "purpose": "Clean material atlas for the top-view fidelity art pass",
+  "prompt": "Use case: stylized-concept. Asset type: production PBR albedo material atlas for a detailed hard-surface sci-fi capital ship, NOT a picture of a spaceship. A square 2048 x 2048 image, exactly FOUR equal square material swatches arranged 2 columns x 2 rows, occupying the entire canvas with no margins, borders, separators or labels. Boundaries exactly at the horizontal and vertical midpoint. All materials perfectly flat front-on orthographic, uniform diffuse illumination, no directional shading or baked reflections. TOP LEFT: pale neutral ivory ceramic naval armor, a restrained mosaic of broad rectangular plates and occasional clipped corners, very thin precise dark seams and sparse recessed fasteners, fine subtle wear, no gold stripes, no parallel long streaks. TOP RIGHT: warm antique-gold/brass armor, mostly broad quiet brushed metal plates with sparse fine horizontal joints, a few tiny screws, highly readable warm gold color but not mirror shiny; no silver, no repeated high-contrast vertical bands. BOTTOM LEFT: deep charcoal-navy structural machinery plates, dark blue-grey rather than pure black, small recessed access panels, restrained clean seam grid, discrete tiny bolts, no gold, no lights. BOTTOM RIGHT: medium graphite gunmetal service panels, a few small cooling grille sections and recessed maintenance hatches at varied locations, subtle silver chamfers and tiny fasteners; no light strips. Each swatch is a coherent seamless-looking texture intended to wrap real 3D geometry at even texel density, not an illustration of a part. Premium clean crisp machining with low-frequency readable panels and subtle micro-surface grain. No gradients, cast shadows, perspective, ship parts, weapons, windows, emissive lights, text, insignias, lettering, decorative stripes, gold bands running across the ceramic, dirt splatters or noise. The fine seams must be sharp; avoid smeared painterly surfaces.",
+  "savedSource": "materials/material-atlas-artpass-v2.png",
+  "nativeResolution": [
+    1254,
+    1254
+  ],
+  "productionAlbedo": "textures/authority-arbiter-basecolor.jpg",
+  "productionResolution": [
+    1024,
+    1024
+  ]
+}

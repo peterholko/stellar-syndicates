@@ -1,4 +1,7 @@
 import { isPlayerFreighter } from "../../protocol";
+import { systemName } from "../../core/derive/geo";
+import { blockadeBrief, blockadeStage, heldOutsideStatus, runBlockadesCopy, siegeClock } from "../../core/derive/blockade";
+import { FIELD_COOLDOWN_S, FIELD_FUEL, FIELD_RADIUS_SU, FIELD_SECONDS, interdictionReason, interdictorCapable } from "../../core/derive/interdiction";
 import {
   COMMODITIES,
   marketAverageQuote,
@@ -14,16 +17,18 @@ import {
   warehouseUnits,
   utilityRefitChoices,
 } from "../../core/derive/market";
-import { dockedAtSystem, economyCapable, fleetCargoCapacity, guardCapable, jumpCapable, shipKindLabel, shipRoleLore } from "../../core/derive/fleet";
+import { dockedAtSystem, slowCapable, fleetCargoCapacity, fleetUraniumCapacity, fusionTank, guardCapable, jumpCapable, regimeStore, shipKindLabel, shipRoleLore } from "../../core/derive/fleet";
 import { tenderStatus } from "../../core/derive/tenders";
 import { fuelTransferHtml } from "../fueltransfer";
 import { missionCommand, missionHtml, pirateFactionHtml } from "../mission";
-import { fleetIndustryHtml } from "../industry";
+import { fleetIndustryHtml, focusIndustryFleet } from "../industry";
+import { anchorStatus, isStation } from "../../core/derive/belts";
 import { fleetReadiness, dispatchWarnings } from "../../core/derive/readiness";
 import { pirateSite } from "../../core/derive/pirates";
 import { foundingHomeSystemId } from "../../core/derive/geo";
 import { postVictoryHandoff } from "../../core/derive/handoff";
-import { FOUNDING_STEP, FOUNDING_TOTAL, foundingBusinessGoals, foundingScoutGoal, foundingLocalGoals } from "../../core/derive/founding";
+import { bestMineBody, FOUNDING_STEP, FOUNDING_TOTAL, foundingBusinessGoals, foundingCommands, foundingPlan, foundingScoutGoal, foundingLocalGoals, shieldStatus, type FoundingPlan } from "../../core/derive/founding";
+import { coach } from "../coach";
 import { jumpRangeAt } from "../../core/derive/nebula";
 import {
   countClassLabel,
@@ -46,7 +51,7 @@ import { sheetFingerprint } from "../signature";
 import { requestTransactions } from "../../core/derive/transactions";
 import { transactionsHtml } from "../transactions";
 import { DEFAULT_DEFENSE_RADIUS, DEFENSE_RADII } from "../../core/derive/defense";
-import { stageDefenseAction, systemDefenseHtml } from "../systemdefense";
+import { stageDefenseAction, stationDraftAction, systemDefenseHtml, type StationDraft } from "../systemdefense";
 import "../../styles/system-defense.css";
 
 type MarketTab = "exchange" | "warehouse" | "specialists" | "modules" | "transactions";
@@ -91,9 +96,11 @@ const propsOf = <T extends object>(entry: SheetEntry): Partial<T> => (entry.prop
 export class MobileSurfaces {
   private readonly defenseRadius = new Map<string, number>();
   private readonly defenseAssigning = new Set<string>();
+  /** §orbital-defense: a hardpoint refit being composed, per system. */
+  private readonly stationDraft = new Map<string, StationDraft>();
   private readonly renderSignatures = new Map<SheetEntry["id"], string>();
   private marketTab: MarketTab = "exchange";
-  private marketCommodity: Commodity = "fuel";
+  private marketCommodity: Commodity = "deuterium";
   private marketSide: Side = "buy";
   private readonly dismissedDecisions = new Set<string>();
   private readonly engagementEstimates = new Map<string, EngagementEstimate>();
@@ -155,14 +162,36 @@ export class MobileSurfaces {
   decisionKeys(): string[] {
     const keys: string[] = [];
     const founding = this.ctx.state.founding;
-    if (founding && founding.stage !== "complete") keys.push(`founding:${founding.stage}`);
+    if (founding && founding.stage !== "complete") keys.push(this.foundingDecisionKey());
     for (const proposal of this.ctx.state.diplomacy?.incoming ?? []) keys.push(`treaty:${proposal.id}`);
     for (const invite of this.ctx.state.syndicateInvites) keys.push(`syndicate:${invite.id}`);
     for (const operation of this.ctx.state.operations.filter((candidate) => candidate.state === "offered" && !candidate.joined).slice(0, 3)) {
       keys.push(`operation:${operation.id}`);
     }
     for (const battle of this.ctx.state.battles.filter((candidate) => candidate.own)) keys.push(`battle:${battle.id}`);
+    for (const item of this.blockadeDecisions()) keys.push(item.key);
     return keys.filter((key) => !this.dismissedDecisions.has(key));
+  }
+
+  /** Blockade decisions, the same as the desktop inbox's: the owner hears
+   * every stage with what to do; the besieger, the fight and the ripe siege. */
+  private blockadeDecisions(): { key: string; system: string; mine: boolean; tone: string; title: string; detail: string }[] {
+    const state = this.ctx.state;
+    if (!state.galaxy) return [];
+    const now = liveSimTime();
+    const out = [];
+    for (const system of state.systems) {
+      const blockade = system.blockade;
+      if (!blockade) continue;
+      const mine = system.owner === state.playerId;
+      const stage = blockadeStage(blockade);
+      const ripe = siegeClock(blockade, now, state.galaxy.siege_secs)?.ripe ?? false;
+      if (!mine && !(blockade.by_me && (stage === "contested" || ripe))) continue;
+      const brief = blockadeBrief(blockade, now, state.galaxy.siege_secs, system.ground?.marines_needed);
+      const key = mine ? `blockade-${stage}:${system.id}` : ripe ? `siege-ripe:${system.id}` : `blockade-contesting:${system.id}`;
+      out.push({ key, system: system.id, mine, tone: brief.tone, title: `${systemName(system.id)} — ${brief.title}`, detail: brief.detail });
+    }
+    return out;
   }
 
   refreshFounding(): void {
@@ -176,12 +205,20 @@ export class MobileSurfaces {
     }
     root.hidden = false;
     root.classList.toggle("is-minimized", this.foundingMinimized);
+    const shield = shieldStatus(founding, this.ctx.state.simTime);
+    const toggle = `<button type="button" data-mobile-act="founding-toggle" aria-label="${this.foundingMinimized ? "Expand" : "Minimize"} tutorial">${this.foundingMinimized ? "+" : "−"}</button>`;
+    const rewards = founding.bounty_received ? `<button type="button" data-mobile-act="next-objectives">Next objectives &amp; rewards</button>` : "";
+    const plan = foundingPlan(this.ctx.state, this.homeSystem());
+    if (plan) {
+      // §founding R4/R7: the same plan as the desktop card — chapter progress,
+      // what is under way, one next step, and optional work while you wait.
+      setHtml(root,
+        `<header><span>${plan.chapter.name} ${plan.chapter.done}/${plan.chapter.total} · <span title="${esc(shield.detail)}">${esc(shield.label)}</span></span>${toggle}</header>` +
+        `<div class="m-founding__body">${foundingPlanHtml(plan)}${rewards}</div>`,
+      );
+      return;
+    }
     const step = FOUNDING_STEP[founding.stage];
-    const shield = founding.protected
-      ? founding.protection_min_until > this.ctx.state.simTime
-        ? `shield ${fmt(founding.protection_min_until - this.ctx.state.simTime)}s`
-        : "shield active"
-      : "shield ended";
     const content = founding.stage === "build_scout" ? foundingScoutGoal(this.homeSystem()) : foundingCopy(founding.stage);
     if (founding.local_opening && founding.stage === "grow_business") {
       content.title = "Shipment underway";
@@ -190,11 +227,17 @@ export class MobileSurfaces {
     const home = this.ctx.state.systems.find(s => s.id === this.homeSystemId());
     const goals = foundingLocalGoals(this.ctx.state, home) ?? (founding.stage === "grow_business" ? foundingBusinessGoals(this.ctx.state, home) : [content]);
     setHtml(root,
-      `<header><span>Founding ${step}/${FOUNDING_TOTAL} · ${shield}</span>` +
-      `<button type="button" data-mobile-act="founding-toggle" aria-label="${this.foundingMinimized ? "Expand" : "Minimize"} tutorial">${this.foundingMinimized ? "+" : "−"}</button></header>` +
+      `<header><span>Founding ${step}/${FOUNDING_TOTAL} · <span title="${esc(shield.detail)}">${esc(shield.label)}</span></span>${toggle}</header>` +
       `<div class="m-founding__body"><b>${esc(content.title)}</b><p>${esc(content.copy)}</p>` +
-      goals.map(goal => `<button type="button" class="m-primary" data-mobile-act="founding-action" data-kind="${goal.action}">${founding.stage === "grow_business" ? `${esc(goal.title)} · ` : ""}${esc(goal.label)}</button>`).join("") + `${founding.bounty_received ? `<button type="button" data-mobile-act="next-objectives">Next objectives &amp; rewards</button>` : ""}</div>`,
+      goals.map(goal => `<button type="button" class="m-primary" data-mobile-act="founding-action" data-kind="${goal.action}">${founding.stage === "grow_business" ? `${esc(goal.title)} · ` : ""}${esc(goal.label)}</button>`).join("") + `${rewards}</div>`,
     );
+  }
+
+  /** The Log's founding decision keys by step, so a new step re-lights the badge. */
+  private foundingDecisionKey(): string {
+    const founding = this.ctx.state.founding!;
+    const plan = foundingPlan(this.ctx.state, this.homeSystem());
+    return `founding:${founding.stage}:${plan?.primary?.action ?? ""}`;
   }
 
   handleClick(event: Event): boolean {
@@ -205,7 +248,14 @@ export class MobileSurfaces {
     if (action.startsWith("defense-")) {
       const system = button.dataset.system ?? "";
       if (!this.ctx.state.systems.some(s => s.id === system && s.owner === this.ctx.state.playerId)) return true;
-      if (action === "defense-toggle") {
+      const refit = stationDraftAction(action, button.dataset, this.stationDraft.get(system) ?? null,
+        this.ctx.state.systems.find(s => s.id === system));
+      if (refit) {
+        if (refit.draft) this.stationDraft.set(system, refit.draft);
+        else this.stationDraft.delete(system);
+        if (refit.send) this.ctx.send(refit.send);
+        this.sheets.refresh();
+      } else if (action === "defense-toggle") {
         if (this.defenseAssigning.has(system)) this.defenseAssigning.delete(system);
         else this.defenseAssigning.add(system);
         this.sheets.refresh();
@@ -261,13 +311,35 @@ export class MobileSurfaces {
         }
         break;
       }
+      case "fleet-unanchor":
+        if (button.dataset.id) this.ctx.intent.beginFleetCommand({ type: "UnanchorStation", fleet_id: button.dataset.id });
+        break;
+      case "fleet-station-load":
+        if (button.dataset.id && button.dataset.into && button.dataset.commodity) {
+          this.ctx.intent.beginFleetCommand({ type: "StationLoad", fleet_id: button.dataset.into, station_id: button.dataset.id,
+            commodity: button.dataset.commodity as Commodity, units: Number(button.dataset.units) || 0 });
+        }
+        break;
       case "fleet-recall":
         if (button.dataset.id) {
           this.ctx.intent.beginFleetCommand({ type: "RecallRaid", raider_id: button.dataset.id });
         }
         break;
+      case "fleet-authority":
+        // Whether a blockade also stops arriving Authority freighters (a
+        // citation risk); staged and confirmed like any order.
+        if (button.dataset.id) {
+          this.ctx.intent.beginFleetCommand({ type: "SetEngageFreight", fleet_id: button.dataset.id, on: button.dataset.on === "1" });
+        }
+        break;
+      case "fleet-run-blockades":
+        // Whether this freighter's deliveries run a held blockade or wait it out.
+        if (button.dataset.id) {
+          this.ctx.intent.beginFleetCommand({ type: "SetRunBlockades", fleet_id: button.dataset.id, on: button.dataset.on === "1" });
+        }
+        break;
       case "fleet-transit":
-        if (button.dataset.id && (button.dataset.mode === "full" || button.dataset.mode === "stealth" || button.dataset.mode === "economy")) {
+        if (button.dataset.id && (button.dataset.mode === "full" || button.dataset.mode === "stealth" || button.dataset.mode === "slow")) {
           this.ctx.intent.beginFleetCommand({ type: "SetFleetTransit", fleet_id: button.dataset.id, mode: button.dataset.mode });
         }
         break;
@@ -276,6 +348,9 @@ export class MobileSurfaces {
         break;
       case "fleet-rescue":
         if (button.dataset.id) this.ctx.intent.beginFleetCommand({ type: "RequestFuelRescue", fleet_id: button.dataset.id });
+        break;
+      case "fleet-interdict":
+        if (button.dataset.id) this.ctx.intent.beginFleetCommand({ type: "DeployInterdiction", fleet_id: button.dataset.id });
         break;
       case "fleet-refuel": {
         const target = button.closest("[data-fuel-transfer]")?.querySelector<HTMLSelectElement>("[data-tender-target]")?.value;
@@ -469,14 +544,38 @@ export class MobileSurfaces {
       html: `<div class="m-stat-grid"><span><small>Status</small><b>${esc(this.fleetStatus(fleet))}</b></span>` +
         `<span><small>Information delay</small><b>${fmt(fleet.age, 1)}s</b></span>` +
         `<span><small>Drive</small><b>${esc(this.driveLabel(fleet))}</b></span>` +
-        `<span><small>Fuel</small><b>${fleet.fuel == null ? "—" : `${fmt(fleet.fuel)}/${fmt(fleet.fuel_capacity ?? 0)}`}</b></span></div>` +
+        // §fuel-overhaul: the stores this fleet carries; the burning one first.
+        (fleet.own && fleetUraniumCapacity(fleet) > 0 ? `<span><small>Uranium${regimeStore(fleet).fuel === "uranium" ? " · burning" : ""}</small><b>${fleet.uranium == null ? "—" : `${fmt(fleet.uranium)}/${fmt(fleetUraniumCapacity(fleet))}`}</b></span>` : "") +
+        `<span><small>Deuterium${regimeStore(fleet).fuel === "deuterium" ? " · burning" : ""}</small><b>${fleet.fuel == null ? "—" : (() => {
+          // The fusion tank as space: a Helium-3 unit fills one, for six of Deuterium's energy.
+          const t = fusionTank(fleet);
+          return t.helium3 > 0 ? `${fmt(t.deuterium)} + ${fmt(t.helium3)} He-3/${fmt(t.capacity)}` : `${fmt(t.deuterium)}/${fmt(t.capacity)}`;
+        })()}</b></span>` +
+        ((fleet.antimatter_capacity ?? 0) > 0 ? `<span><small>Antimatter</small><b>${fleet.antimatter == null ? "—" : `${fmt(fleet.antimatter, 1)}/${fmt(fleet.antimatter_capacity!, 1)}`}</b></span>` : "") + `</div>` +
         `<section class="m-section"><h3>Formation</h3><p>${esc(composition)}</p>${roleLore ? `<details class="m-details m-help"><summary>Fleet role</summary><div><p>${esc(roleLore)}</p></div></details>` : ""}</section>` +
-        ready + supply + fleetIndustryHtml(fleet, this.ctx.state) + this.utilityEquipment(fleet) + pirateFactionHtml(fleet, true) + missionHtml(fleet, orders, true) +
+        ready + supply + fleetIndustryHtml(fleet, this.ctx.state) + this.stationSection(fleet) + this.utilityEquipment(fleet) + pirateFactionHtml(fleet, true) + missionHtml(fleet, orders, true) +
         `<section class="m-section"><h3>Cargo</h3><div class="m-ledger">${cargo}</div></section>` +
         engagement +
         ownControls + (fleet.own ? fuelTransferHtml(fleet, this.ctx.state, "", true) : "") +
         `<section class="m-section"><h3>Orders</h3>${orderRows}</section>`,
     };
+  }
+
+  /** §belts: a station's anchor and hold, Unanchor, and loading a freighter beside it. */
+  private stationSection(fleet: GhostView): string {
+    if (!fleet.own || !isStation(fleet)) return "";
+    const st = this.ctx.state, a = fleet.anchor;
+    const belt = a ? st.systems.find((s) => s.id === a.system)?.bodies.find((b) => b.id === a.body)?.name ?? "" : "";
+    const held = fleetCargoManifest(fleet), total = held.reduce((n, c) => n + c.units, 0);
+    const top = [...held].sort((x, y) => y.units - x.units)[0];
+    const loads = top ? st.ghosts.filter((f) => f.own && !f.tca && f.id !== fleet.id && !isStation(f) && fleetCargoCapacity(f) > 0
+      && Math.hypot(f.pos.x - fleet.pos.x, f.pos.y - fleet.pos.y) <= 260).slice(0, 3).map((f) => {
+      const n = Math.min(top.units, fleetCargoCapacity(f) - fleetCargoManifest(f).reduce((m, c) => m + c.units, 0));
+      return n > 0 ? `<button type="button" data-mobile-act="fleet-station-load" data-id="${esc(fleet.id)}" data-into="${esc(f.id)}" data-commodity="${top.commodity}" data-units="${n}">Load ${fmt(n)} ${esc(human(top.commodity))} into ${esc(f.id)}</button>` : "";
+    }).join("") : "";
+    const unanchor = a && a.phase !== "unanchoring" ? `<button type="button" data-mobile-act="fleet-unanchor" data-id="${esc(fleet.id)}">${a.phase === "approaching" ? "Stop anchoring" : "Unanchor"}</button>` : "";
+    return `<section class="m-section"><h3>Station</h3><div class="m-order"><b>${esc(a ? `${anchorStatus(a, liveSimTime())} · ${belt}` : "Not anchored")}</b><span>${fmt(total)} / ${fmt(fleetCargoCapacity(fleet))}</span></div>`
+      + (unanchor || loads ? `<div class="m-action-grid">${unanchor}${loads}</div>` : "") + `</section>`;
   }
 
   private utilityEquipment(fleet: GhostView): string {
@@ -486,7 +585,7 @@ export class MobileSurfaces {
     const busy = (this.ctx.state.pendingOrders.get(fleet.id)?.length ?? 0) > 0 || !!fleet.path?.length || Math.hypot(fleet.vel.x, fleet.vel.y) >= .5;
     const installed = (fleet.loadouts ?? []).map(s => `${s.n}× ${shipKindLabel(s.kind)} · ${s.modules.map(human).join(" + ")}`).join(" · ");
     return `<section class="m-section"><h3>Equipment</h3>${installed ? `<p>${esc(installed)}</p>` : ""}${choices.map(c =>
-      `<div class="m-service-row"><span><b>${shipKindLabel(c.ship)} · ${esc(c.name)}</b><small>${esc(c.preview)}</small></span><button type="button" data-mobile-act="fleet-utility-refit" data-id="${fleet.id}" data-ship="${c.ship}" data-from="${c.from.join(",")}" data-to="${c.to.join(",")}" ${busy || c.blocked ? "disabled" : ""}>Refit 1</button></div>`
+      `<div class="m-service-row"><span><b>${shipKindLabel(c.ship)} · ${esc(c.name)}</b><small>${esc(c.preview)}</small></span><button type="button" data-mobile-act="fleet-utility-refit" data-coach="refit" data-id="${fleet.id}" data-ship="${c.ship}" data-from="${c.from.join(",")}" data-to="${c.to.join(",")}" ${busy || c.blocked ? "disabled" : ""}>Refit 1</button></div>`
     ).join("") || `<small class="m-muted">Utilities need a stocked, staffed Shipyard I.</small>`}</section>`;
   }
 
@@ -578,24 +677,38 @@ export class MobileSurfaces {
       ? `<button type="button" data-mobile-act="fleet-jump" data-id="${esc(fleet.id)}">Jump</button>` : "";
     const guard = guardCapable(fleet)
       ? `<button type="button" data-mobile-act="fleet-guard" data-id="${esc(fleet.id)}">Guard</button>` : "";
-    const recall = this.ctx.state.raids[fleet.id]
-      ? `<button type="button" data-mobile-act="fleet-recall" data-id="${esc(fleet.id)}">Recall</button>` : "";
+    // A fleet on a Blockade order (the only one carrying engage_freight) lifts
+    // it by coming home: the same light-delayed recall.
+    const blockading = fleet.engage_freight !== null && fleet.engage_freight !== undefined;
+    const authority = blockading
+      ? `<button type="button" data-mobile-act="fleet-authority" data-id="${esc(fleet.id)}" data-on="${fleet.engage_freight ? "0" : "1"}" aria-pressed="${!!fleet.engage_freight}">${fleet.engage_freight ? "Engaging" : "Ignoring"} Authority freight</button>` : "";
+    const recall = blockading
+      ? `<button type="button" class="m-danger" data-mobile-act="fleet-recall" data-id="${esc(fleet.id)}">Lift blockade</button>${authority}`
+      : this.ctx.state.raids[fleet.id]
+        ? `<button type="button" data-mobile-act="fleet-recall" data-id="${esc(fleet.id)}">Recall</button>` : "";
+    const runs = fleet.run_blockades !== null && fleet.run_blockades !== undefined
+      ? `<button type="button" data-mobile-act="fleet-run-blockades" data-id="${esc(fleet.id)}" data-on="${fleet.run_blockades ? "0" : "1"}" aria-pressed="${!!fleet.run_blockades}" title="${esc(runBlockadesCopy(fleet.run_blockades).hint)}">${runBlockadesCopy(fleet.run_blockades).label}</button>` : "";
     const unload = fleet.docked && fleetCargoUnits(fleet) > 0
       ? `<button type="button" data-mobile-act="fleet-unload" data-id="${esc(fleet.id)}"${unloadQueued ? " disabled" : ""}>${unloadQueued ? "Unload queued" : "Unload"}</button>` : "";
     const rescue = fleet.stalled && !fleet.rescue_inbound
       ? `<button type="button" data-mobile-act="fleet-rescue" data-id="${esc(fleet.id)}">Call AAA Rescue</button>` : "";
+    const interdictQueued = (this.ctx.state.pendingOrders.get(fleet.id) ?? []).some((order) => !order.lost && order.kind === "interdict");
+    const interdictBlocked = interdictQueued ? "Interdiction order already in flight." : interdictionReason(fleet, this.ctx.state);
+    const interdict = interdictorCapable(fleet)
+      ? `<button type="button" data-mobile-act="fleet-interdict" data-id="${esc(fleet.id)}"${interdictBlocked ? ` disabled title="${esc(interdictBlocked)}"` : ""}>Raise interdiction field</button>` : "";
     const range = jumpRangeAt(this.ctx.state.galaxy, fleet.pos);
     const commandHelp = `<details class="m-details m-help"><summary>Command rules</summary><div>` +
       `<p>A movement order automatically undocks a berthed fleet. Full speed is fastest but makes dark hulls easier to detect; Stealth is quieter and takes about twice as long.</p>` +
-      (economyCapable(fleet) ? `<p>Economy uses 25% speed and 10% Fuel per journey. Travel takes four times as long.</p>` : "") +
+      (slowCapable(fleet) ? `<p>Slow flies at half speed on Uranium, at a quarter of the energy per distance. Full speed and Stealth burn Deuterium; Stealth also runs dark, quieter than Slow.</p>` : "") +
       (jump ? `<p>Jump destinations must be within ${fmt(range)} su of the served sighting, with both ends clear of gravity wells. The true fleet is checked when the delayed order arrives.</p>` : "") +
       (guard ? `<p>A Guard assignment is light-delayed. Once it arrives, defensive reactions happen locally without another command-center round trip.</p>` : "") +
+      (interdict ? `<p>An interdiction field drops every fleet within ${fmt(FIELD_RADIUS_SU)} su out of warp and blocks jumps, for up to ${FIELD_SECONDS / 60} minutes while this fleet holds station inside it. It burns ${FIELD_FUEL} Deuterium, and the generator needs ${FIELD_COOLDOWN_S / 60} minutes before the next.${interdictBlocked ? ` Now: ${esc(interdictBlocked)}` : ""}</p>` : "") +
       `</div></details>`;
     return `<section class="m-section"><h3>Command</h3><div class="m-action-grid">` +
       `<button type="button" class="m-primary" data-mobile-act="fleet-move" data-id="${esc(fleet.id)}">Move</button>` +
-      jump + guard + recall + unload + rescue +
+      jump + guard + recall + unload + runs + rescue + interdict +
       `<button type="button" data-mobile-act="fleet-transit" data-id="${esc(fleet.id)}" data-mode="full">Full speed</button>` +
-      (economyCapable(fleet) ? `<button type="button" data-mobile-act="fleet-transit" data-id="${esc(fleet.id)}" data-mode="economy">Economy · 25% speed / 10% Fuel</button>` : "") +
+      (slowCapable(fleet) ? `<button type="button" data-mobile-act="fleet-transit" data-id="${esc(fleet.id)}" data-mode="slow">Slow · ½ speed · Uranium</button>` : "") +
       `<button type="button" data-mobile-act="fleet-transit" data-id="${esc(fleet.id)}" data-mode="stealth">Stealth</button>` +
       `</div><small class="m-hint">Select an Interceptor, then tap a rival to raid. Long-press the rival to destroy.</small>${commandHelp}</section>` +
       this.emplacementControls(fleet);
@@ -650,7 +763,7 @@ export class MobileSurfaces {
           `<span><small>Workforce</small><b>${dynamic.workforce ? `${dynamic.workforce.posted}/${dynamic.workforce.units}` : "—"}</b></span>` +
           `<span><small>Storage</small><b>${dynamic.storage_used}/${dynamic.storage_cap}</b></span>` +
           `<span><small>Slots</small><b>${dynamic.slots_used}/${dynamic.slots_total}</b></span></div>` : "") +
-        (mine && dynamic ? systemDefenseHtml(this.ctx.state, fixed, dynamic, this.defenseRadius.get(fixed.id) ?? DEFAULT_DEFENSE_RADIUS, "mobile", this.defenseAssigning.has(fixed.id)) : "") +
+        (mine && dynamic ? systemDefenseHtml(this.ctx.state, fixed, dynamic, this.defenseRadius.get(fixed.id) ?? DEFAULT_DEFENSE_RADIUS, "mobile", this.defenseAssigning.has(fixed.id), this.stationDraft.get(fixed.id) ?? null) : "") +
         `<section class="m-section"><h3>Stockpile</h3><div class="m-ledger">${stock}</div></section>` +
         `<section class="m-section"><h3>Worlds</h3>${bodies || `<div class="m-muted">No body report.</div>`}</section>` +
         (fleetRows ? `<section class="m-section"><h3>Fleets here</h3><div class="m-list">${fleetRows}</div></section>` : ""),
@@ -757,12 +870,18 @@ export class MobileSurfaces {
     const rows: string[] = [];
     const founding = this.ctx.state.founding;
     if (founding && founding.stage !== "complete") {
-      const key = `founding:${founding.stage}`;
+      const key = this.foundingDecisionKey();
       if (!this.dismissedDecisions.has(key)) {
-        const content = foundingCopy(founding.stage);
-        rows.push(`<article class="m-decision"><b>${esc(content.title)}</b><p>${esc(content.copy)}</p><div>` +
-          `<button type="button" data-mobile-act="decision-dismiss" data-key="${esc(key)}">Dismiss</button>` +
-          `<button type="button" class="m-primary" data-mobile-act="decision-founding" data-kind="${content.action}">${esc(content.label)}</button></div></article>`);
+        // §founding R4: the Log runs the guide's own next step, not a copy of it.
+        const plan = foundingPlan(this.ctx.state, this.homeSystem());
+        const step = plan?.primary;
+        const content = step ?? foundingCopy(founding.stage);
+        const chapter = plan && plan.chapter.name !== "Founding" ? `${plan.chapter.name} ${plan.chapter.done}/${plan.chapter.total} · ` : "";
+        const choices = step?.alternatives?.length
+          ? step.alternatives.map(goal => `<button type="button" class="m-primary" data-mobile-act="decision-founding" data-kind="${esc(goal.action)}">${esc(goal.label)}</button>`).join("")
+          : `<button type="button" class="m-primary" data-mobile-act="decision-founding" data-kind="${esc(content.action)}">${esc(content.label)}</button>`;
+        rows.push(`<article class="m-decision"><b>${esc(chapter + content.title)}</b><p>${esc([step?.reason, content.copy].filter(Boolean).join(" "))}</p><div>` +
+          `<button type="button" data-mobile-act="decision-dismiss" data-key="${esc(key)}">Dismiss</button>${choices}</div></article>`);
       }
     }
     for (const proposal of this.ctx.state.diplomacy?.incoming ?? []) {
@@ -785,6 +904,12 @@ export class MobileSurfaces {
       rows.push(`<article class="m-decision"><b>${esc(human(operation.issuer))} operation offered</b><p>${esc(human(operation.kind.kind))} · reward ${fmt(operation.reward.credits)} credits.</p><div>` +
         `<button type="button" data-mobile-act="decision-dismiss" data-key="${esc(key)}">Later</button>` +
         `<button type="button" class="m-primary" data-mobile-act="decision-operation" data-id="${esc(operation.id)}">Accept</button></div></article>`);
+    }
+    for (const item of this.blockadeDecisions()) {
+      if (this.dismissedDecisions.has(item.key)) continue;
+      rows.push(`<article class="m-decision${item.tone === "bad" ? " is-danger" : ""}"><b>${esc(item.title)}</b><p>${esc(item.detail)}</p><div>` +
+        `<button type="button" data-mobile-act="decision-dismiss" data-key="${esc(item.key)}">Dismiss</button>` +
+        `<button type="button" class="m-primary" data-mobile-act="system-select" data-id="${esc(item.system)}">${item.mine ? "Send defenders" : "Open system"}</button></div></article>`);
     }
     for (const battle of this.ctx.state.battles.filter((candidate) => candidate.own)) {
       const ownFleet = this.ctx.state.ghosts.find((fleet) => fleet.own && battle.participants.includes(fleet.id));
@@ -873,11 +998,26 @@ export class MobileSurfaces {
   private runFoundingAction(action: string): void {
     const founding = this.ctx.state.founding;
     if (!founding) return;
-    if (action === "recovery") {
-      this.ctx.state.selectedExplorationSiteId = founding.recovery_site ?? null;
-      this.hooks.openSheet({ id: "operations" }); return;
+    // §founding R3/R4: one-click orders still pass through Confirm/Cancel.
+    const commands = foundingCommands(action, this.ctx.state, this.homeSystem());
+    if (commands) {
+      if (action === "guarded-recovery") this.ctx.state.selectedExplorationSiteId = founding.recovery_site ?? null;
+      this.ctx.intent.beginFleetCommand(commands);
+      coach("confirm-order", "Check the order, then confirm it here.");
+      return;
     }
-    if (action === "opening-imports") { this.hooks.openSheet({ id: "logistics" }); return; }
+    if (action === "recovery" || action === "guarded-recovery") {
+      this.ctx.state.selectedExplorationSiteId = founding.recovery_site ?? null;
+      this.hooks.openSheet({ id: "operations" });
+      coach(action === "guarded-recovery" ? "guarded-recovery" : "travel-here",
+        action === "guarded-recovery" ? "Send the Freighter with its escort in one order." : "Send your Scout from here.");
+      return;
+    }
+    if (action === "opening-imports") {
+      this.hooks.openSheet({ id: "logistics" });
+      coach("send-shipment", "Check the basket and spending cap, then send it. The Interceptor guards the trip.");
+      return;
+    }
     if (action === "market") {
       this.marketTab = "warehouse";
       this.hooks.openSheet({ id: "market" });
@@ -900,28 +1040,41 @@ export class MobileSurfaces {
       this.hooks.focusFleet(founding.privateer);
       return;
     }
-    if (["freighter", "convoy", "scout", "colony"].includes(action)) {
-      const kind = action === "freighter" ? "convoy" : action;
-      const fleet = this.ctx.state.ghosts.find((ghost) => ghost.own && ghost.composition?.some((stack) => (kind === "convoy" ? isPlayerFreighter(stack.kind) : stack.kind === kind)));
-      if (fleet) this.hooks.focusFleet(fleet.id);
+    if (action === "shipment-trip") {
+      const freighter = this.ctx.state.ghosts.find((ghost) => ghost.own && ghost.composition?.some((stack) => isPlayerFreighter(stack.kind) && stack.count > 0));
+      if (freighter) focusIndustryFleet(this.ctx.state, freighter.id);
+      this.hooks.openSheet({ id: "logistics" });
       return;
     }
+    if (["freighter", "convoy", "scout", "colony", "barge", "probe"].includes(action)) {
+      const kind = action === "freighter" ? "convoy" : action === "barge" ? "mining_barge" : action === "probe" ? "survey_probe" : action;
+      const fleet = this.ctx.state.ghosts.find((ghost) => ghost.own && ghost.composition?.some((stack) => (kind === "convoy" ? isPlayerFreighter(stack.kind) : stack.kind === kind)));
+      if (fleet) this.hooks.focusFleet(fleet.id);
+      if (action === "scout" && founding.recovered) coach("refit", "Fit the recovered Recon Suite here.");
+      return;
+    }
+    if (action === "command") return;
     const home = this.homeSystem();
     if (!home) return;
     if (action === "home-development") {
       const body = home.bodies.find(b => b.founding_camp);
       if (body) this.hooks.openSheet({ id: "planet", props: { systemId: home.id, bodyId: body.id } });
+      coach("settlement-projects", "Settlement projects are here.");
       return;
     }
     if (action.startsWith("build-")) {
       const structure = action.slice(6).replaceAll("-", "_");
-      const ships = ["convoy", "scout"].includes(structure);
+      const ships = ["convoy", "scout", "barge", "probe"].includes(structure);
       const body = structure === "service_berth" ? home.bodies.find(b => (b.structures.warehouse ?? 0) > 0) : ships ? home.bodies.find(b => (b.structures.shipyard ?? 0) > 0)
+        : structure === "mine" ? bestMineBody(home)
         : [...home.bodies].sort((a,b) => (structure === "academy" ? (b.infrastructure_slots ?? 0) - (a.infrastructure_slots ?? 0) : (b.industrial_slots ?? 0) - (a.industrial_slots ?? 0)))[0];
       if (body) this.hooks.openSheet({ id: ships ? "shipyard" : "build", props: { systemId: home.id, bodyId: body.id } });
-    } else if (["academy", "shipyard", "smelter"].includes(action)) {
-      const body = home.bodies.find(b => (b.structures[action] ?? 0) > 0);
+      coach("queue-build", "Queue the build here.");
+    } else if (["mine", "academy", "shipyard", "smelter"].includes(action)) {
+      const structure = action === "mine" ? "mining_complex" : action;
+      const body = home.bodies.find(b => (b.structures[structure] ?? 0) > 0);
       if (body) this.hooks.openSheet({ id: "planet", props: { systemId: home.id, bodyId: body.id } });
+      coach("staff-plus", "Add one workforce here, then review and confirm.");
     } else this.hooks.focusSystem(home.id);
   }
 
@@ -934,9 +1087,10 @@ export class MobileSurfaces {
     if (fleet.rescue_inbound) return "AAA rescue inbound";
     if (fleet.stalled) return "out of fuel";
     if (fleet.fuel_transfer) return tenderStatus(fleet);
-    if (fleet.jump_spool) return fleet.jump_spool.waiting_for_fuel ? "jump waiting for fuel" : `jump spooling ${fmt(fleet.jump_spool.remaining)}s`;
+    if (fleet.jump_spool) return `jump spooling ${fmt(fleet.jump_spool.remaining)}s`;
     if (fleet.guard_target) return "guarding";
     if (fleet.defend_system) return "defending system";
+    if (fleet.held_outside) return heldOutsideStatus(fleet, this.ctx.state);
     return Math.hypot(fleet.vel.x, fleet.vel.y) < 0.5 ? "holding" : "under way";
   }
 
@@ -963,9 +1117,24 @@ export class MobileSurfaces {
   }
 }
 
+function foundingPlanHtml(plan: FoundingPlan): string {
+  const step = plan.primary;
+  const button = (action: string, text: string, primary = false) =>
+    `<button type="button"${primary ? ` class="m-primary"` : ""} data-mobile-act="founding-action" data-kind="${esc(action)}">${esc(text)}</button>`;
+  const progress = plan.progress.length ? `<ul class="m-founding__progress">${plan.progress.map(line => `<li>${esc(line)}</li>`).join("")}</ul>` : "";
+  const next = step
+    ? `<div class="m-founding__next${plan.blocked ? " is-blocked" : ""}"><small>${plan.blocked ? "Needs attention" : "Next"}</small><b>${esc(step.title)}</b>` +
+      `${step.reason ? `<em>${esc(step.reason)}</em>` : ""}<p>${esc(step.copy)}</p>` +
+      (step.alternatives?.length ? step.alternatives.map(goal => button(goal.action, `${goal.title} · ${goal.label}`, true)).join("") : button(step.action, step.label, true)) + `</div>`
+    : "";
+  const waiting = plan.waiting.length
+    ? `<div class="m-founding__waiting"><small>While you wait</small>${plan.waiting.map(item => button(item.action, item.label)).join("")}</div>`
+    : "";
+  return progress + next + waiting;
+}
+
 function foundingCopy(stage: keyof typeof FOUNDING_STEP): { title: string; copy: string; action: string; label: string } {
-  if (stage === "local_recovery") return { title: "Build, explore, recover", copy: "Guard the local recovery, return its supplies home and fit the Scout.", action: "recovery", label: "Open recovery" };
-  if (stage === "prepare_export") return { title: "Ready for the long voyage", copy: "Dispatch your guarded export, then leave the voyage to your fleet. No need to wait online.", action: "opening-imports", label: "Plan export & return" };
+  if (stage === "local_recovery" || stage === "prepare_export") return { title: "Send your first shipment", copy: "Dispatch your guarded export, then leave the voyage to your fleet. No need to wait online.", action: "opening-imports", label: "Plan export & return" };
   switch (stage) {
     case "grow_business": return { title: "Grow your business", copy: "Expand exports or start refining. Either advances the tutorial; both remain open.", action: "home", label: "Open home" };
     case "build_shipyard": return { title: "Build Shipyard I", copy: "Import Alloys, Machinery and Electronics with your export earnings.", action: "home", label: "Open home" };
@@ -976,9 +1145,12 @@ function foundingCopy(stage: keyof typeof FOUNDING_STEP): { title: string; copy:
     case "defeat_privateer": return { title: "Guard the Freighter", copy: "Intercept the Rogue Privateer before it reaches the civilian hull.", action: "privateer", label: "Select Privateer" };
     case "complete_export": return { title: "Complete the export", copy: "Sell Ferrite Ore at the Market Hub.", action: "freighter", label: "Select Freighter" };
     case "build_academy": return { title: "Establish and staff Academy I", copy: "Import its kit, build it at home, and assign workforce.", action: "market", label: "Open Warehouse" };
-    case "first_research": return { title: "Choose a first programme", copy: "Complete any Tier I corporate research programme.", action: "research", label: "Open Research" };
+    case "first_research": return { title: "Start research", copy: "Build and staff an Academy, then start any Tier I programme.", action: "research", label: "Open Research" };
     case "build_scout": return { title: "Build a Scout", copy: "Import its kit and construct the exploration hull.", action: "market", label: "Open Warehouse" };
-    case "survey_candidates": return { title: "Survey two nearby systems", copy: "Receive both reports to complete the tutorial.", action: "scout", label: "Select Scout" };
+    case "survey_candidates": return { title: "Chart a nearby system", copy: "Build a Survey Probe and send it to the assigned stop; its report charts a belt for your first Mining Barge.", action: "build-probe", label: "Open Shipyard" };
+    case "build_barge": return { title: "Build a Mining Barge", copy: "Import its kit and build it at your Shipyard.", action: "build-barge", label: "Open Shipyard" };
+    case "mine_belt": return { title: "Send the barge to the belt", copy: "Mine the belt your survey charted. This step completes when command hears it cutting ore.", action: "mine-belt", label: "Send Mining Barge" };
+    case "haul_ore": return { title: "Bring the ore home", copy: "Send the barge home and unload its ore, or sell it at the Market Hub.", action: "barge-home", label: "Send the barge home" };
     case "build_colony":
     case "establish_colony":
     case "complete": return { title: "Founding complete", copy: "Develop home and grow your trade routes.", action: "home", label: "Open home" };

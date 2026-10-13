@@ -1,0 +1,109 @@
+{
+  "id": "mining-belt-station",
+  "name": "Mining Belt Station",
+  "center": [
+    292,
+    455
+  ],
+  "pixelsPerUnit": [
+    33.5,
+    40
+  ],
+  "reference": "mining-belt-station-reference-v1/mining-belt-station-reference.png",
+  "sprite": "mining-belt-station-reference-v1/mining-belt-station.png",
+  "triangleBudget": [
+    10000,
+    16000
+  ],
+  "counts": {
+    "oreSilos": 6,
+    "bargeBerths": 2,
+    "haulerGantries": 1,
+    "anchoringBooms": 4,
+    "stationKeepingPods": 4,
+    "mainEngines": 0,
+    "guns": 0
+  },
+  "regions": {
+    "top": [
+      24,
+      91,
+      552,
+      753
+    ],
+    "bottom": [
+      557,
+      90,
+      1068,
+      753
+    ],
+    "front": [
+      1085,
+      120,
+      1720,
+      329
+    ],
+    "back": [
+      1085,
+      382,
+      1720,
+      588
+    ],
+    "side": [
+      1086,
+      631,
+      1725,
+      834
+    ]
+  },
+  "patches": {
+    "silver": [
+      8,
+      1032,
+      674,
+      1698
+    ],
+    "dark": [
+      692,
+      1032,
+      1355,
+      1698
+    ],
+    "brass": [
+      1374,
+      1032,
+      2038,
+      1698
+    ],
+    "hazard": [
+      278,
+      151,
+      305,
+      195
+    ],
+    "cyan": [
+      256,
+      448,
+      261,
+      462
+    ],
+    "glass": [
+      728,
+      343,
+      740,
+      356
+    ],
+    "silowall": [
+      1248,
+      154,
+      1343,
+      215
+    ],
+    "enginewall": [
+      692,
+      1032,
+      1355,
+      1698
+    ]
+  }
+}

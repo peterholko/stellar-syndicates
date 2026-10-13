@@ -10,12 +10,28 @@ impl World {
         let Some(sys) = self.systems.iter_mut().find(|s| s.id == home) else {
             return;
         };
-        let Some(index) = sys.bodies.iter().position(|b| b.population > 0.0) else {
+        let Some(populated) = sys.bodies.iter().position(|b| b.population > 0.0) else {
             return;
         };
+        // Land on the garden. The home generator makes the Biomass world the
+        // roomy habitable body, but the bootstrap seeds people on the FIRST
+        // habitable body, which can be a one-deposit rock. Settling there moved
+        // the Bioharvester off its Biomass and let it fill the only Resource
+        // slot, so the camp starved and could never build its mine. Every
+        // generated home has this garden, so the first settlement is habitable.
+        let index = sys
+            .bodies
+            .iter()
+            .position(|b| b.habitable && b.has_deposit_for(K::Bioharvester))
+            .unwrap_or(populated);
+        if index != populated {
+            let people = std::mem::take(&mut sys.bodies[populated].population);
+            sys.bodies[index].population += people;
+        }
         // The legacy system bootstrap may site storage/processing on a sibling
-        // world. A landing camp visibly deploys all four starting modules here.
-        for kind in [K::Habitat, K::Warehouse, K::Bioharvester, K::Agroplex] {
+        // world. A landing camp visibly deploys all four starting modules here,
+        // and its Landing Command stays with the people it administers.
+        for kind in [K::Habitat, K::Warehouse, K::Bioharvester, K::Agroplex, K::CommandCenter] {
             let mut tier = 0;
             let mut assignment = None;
             for b in &mut sys.bodies {
@@ -124,6 +140,7 @@ impl World {
         self.next_build_id += 1;
         self.build_queue.push(crate::build::BuildJob {
             id: self.next_build_id,
+            construction_yard: None,
             owner,
             system,
             body_id: body,
@@ -270,14 +287,96 @@ mod tests {
             assert_eq!(sys.storage_cap(), 250.0);
             assert_eq!(b.tier(K::MiningComplex), 0);
             assert_eq!(b.tier(K::Shipyard), 0);
+            assert_eq!(b.tier(K::CommandCenter), 1, "Landing Command deploys on the selected settlement planet");
             assert!(b.has_deposit_for(K::MiningComplex));
             assert!(b.has_deposit_for(K::Bioharvester));
             assert_eq!(w.players[&owner].credits, 2000.0);
-            assert_eq!(w.fleets.values().filter(|f| f.owner == owner).count(), 3);
-            assert_eq!(sys.stockpile[&C::Alloys], 30.0);
-            assert_eq!(sys.stockpile[&C::Machinery], 15.0);
+            assert_eq!(w.fleets.values().filter(|f| f.owner == owner).count(), 2);
+            assert_eq!(sys.stockpile[&C::Alloys], 70.0);
+            assert_eq!(sys.stockpile[&C::Machinery], 27.0);
         }
     }
+    #[test]
+    fn every_founding_camp_can_feed_itself_and_host_its_mine() {
+        // Regression: 25% of pre-generated homes and 37% of overflow homes
+        // used to land on a one-deposit habitable rock. The camp then had no
+        // Biomass under its Bioharvester and no Resource slot for the mine.
+        use crate::build::SlotPool;
+        for seed in [12648430_u64, 1, 7, 42, 0xC0FFEE, 99_991, 4_354_685_564_932_589_508] {
+            let mut w = World::new(SimConfig::for_players(seed, 4));
+            w.enclaves.clear();
+            for join in 0..6_u64 {
+                let owner = PlayerId(20_000 + join);
+                w.step(&[Command::FoundColony {
+                    id: owner,
+                    name: format!("Camp audit {join}"),
+                    profile: F::MineralHighlands,
+                }]);
+                let home = w.players[&owner].home_system.unwrap();
+                let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+                let camp = sys.bodies.iter().find(|b| b.founding_camp.is_some()).unwrap();
+                let at = format!("seed {seed} join {join} {}", camp.name);
+                assert!(camp.habitable, "{at}: the first settlement is habitable");
+                assert!(camp.tier(K::Bioharvester) == 1 && camp.has_deposit_for(K::Bioharvester),
+                    "{at}: the Bioharvester must work Biomass on the camp world");
+                assert!(camp.has_deposit_for(K::MiningComplex)
+                    && camp.pool_slots(SlotPool::Resource) > camp.pool_slots_built(SlotPool::Resource),
+                    "{at}: the camp world must host the Mining Complex");
+                assert_eq!(camp.population, crate::colony::HOME_FOUNDING_POP, "{at}");
+                assert!(sys.bodies.iter().filter(|b| b.id != camp.id).all(|b| b.population == 0.0
+                    && b.tier(K::Habitat) == 0 && b.tier(K::CommandCenter) == 0), "{at}: people and administration move together");
+            }
+        }
+    }
+
+    #[test]
+    fn a_previously_starving_home_slot_now_stays_fed() {
+        // Seed 12648430's third home slot (Millstone) used to hit "OUT OF
+        // PROVISIONS" about three minutes after landing.
+        let mut w = World::new(SimConfig::for_players(12648430, 4));
+        w.enclaves.clear();
+        for join in 0..3_u64 {
+            w.step(&[Command::FoundColony { id: PlayerId(30_000 + join), name: format!("Slot {join}"), profile: F::VerdantLowlands }]);
+        }
+        let owner = PlayerId(30_002);
+        let home = w.players[&owner].home_system.unwrap();
+        for _ in 0..(300 * crate::config::TICK_HZ) {
+            w.accrue_production(&mut Vec::new());
+        }
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        assert_eq!(sys.food_state, crate::colony::FoodState::WellSupplied);
+        assert!(sys.stockpile.get(&C::Provisions).copied().unwrap_or(0.0) > 1.0);
+    }
+
+    #[test]
+    fn a_camp_keeps_a_food_reserve_instead_of_filling_its_warehouse() {
+        let (mut w, _owner, home, _id) = start(F::VerdantLowlands);
+        let mut events = Vec::new();
+        // Twenty sim-minutes of the default Bioharvester -> Agroplex chain.
+        for _ in 0..(20 * 60 * crate::config::TICK_HZ) {
+            w.accrue_production(&mut events);
+        }
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        let demand = sys.bodies.iter().map(|b| b.population * b.provisions_mult()).sum::<f64>()
+            * crate::colony::PROVISIONS_PER_MILLION_PER_S;
+        let reserve = crate::settlement::camp_food_reserve(demand);
+        let food = sys.stockpile.get(&C::Provisions).copied().unwrap_or(0.0)
+            + sys.stockpile.get(&C::Biomass).copied().unwrap_or(0.0);
+        assert!(food <= reserve + 5.0, "food {food:.1} must hover at the reserve {reserve:.1}");
+        assert!(sys.storage_headroom() >= 250.0 - 120.0 - reserve - 5.0,
+            "the camp warehouse keeps room for ore: {:.1}", sys.storage_headroom());
+        assert_eq!(sys.food_state, crate::colony::FoodState::WellSupplied);
+        let held = sys.bodies.iter().any(|b| b.assignments.get(&K::Bioharvester)
+            .is_some_and(|a| a.suspended == Some(crate::production::SuspendReason::FoodReserve)));
+        let producing = sys.bodies.iter().any(|b| b.assignments.get(&K::Bioharvester)
+            .is_some_and(|a| a.suspended.is_none()));
+        assert!(held || producing);
+        assert!(!events.iter().any(|e| matches!(e.payload,
+            EventPayload::ProductionSuspended { reason: crate::production::SuspendReason::NoInputs, .. }
+            | EventPayload::ProductionSuspended { reason: crate::production::SuspendReason::FoodReserve, .. })),
+            "a reserve hold is quiet policy, not an input outage");
+    }
+
     #[test]
     fn founding_is_one_time_and_old_colonies_are_not_converted() {
         let (mut w, owner, home, id) = start(F::CoastalPlains);
@@ -342,7 +441,7 @@ mod tests {
         );
         assert_eq!(
             w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&C::Alloys],
-            25.0
+            65.0
         );
         let slots = body(&w, home, id).infrastructure_slots();
         finish(&mut w);
@@ -386,8 +485,11 @@ mod tests {
         );
         assert_eq!(w.build_queue.len(), 2);
         assert!(w.build_queue[1].is_queued_structure());
+        // A short stockpile refuses a project: 5 Alloys cannot fund the
+        // 7-Alloy Storehouse (the kit itself now covers every project).
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().stockpile.insert(C::Alloys, 5.0);
         queue(&mut w, owner, home, id, P::Storehouse);
-        assert_eq!(w.build_queue.len(), 2, "mine left only 5 alloys");
+        assert_eq!(w.build_queue.len(), 2, "5 alloys cannot fund the Storehouse");
         finish(&mut w);
         finish(&mut w);
         assert!(

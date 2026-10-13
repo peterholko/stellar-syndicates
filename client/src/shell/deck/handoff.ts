@@ -8,12 +8,12 @@ import type { DeckRoute } from "./router";
 export function handoffHtml(compact = false): string {
   const goals = postVictoryHandoff();
   if (!goals.length) return "";
-  return `<section class="deck-section deck-handoff"><header><div><h3>Your next chapter</h3><p>Explore and strengthen your fleet.</p></div></header>
+  return `<section class="deck-section deck-handoff"><header><div><h3>Your next chapter</h3><p>Found a colony and strengthen your fleet.</p></div></header>
     <div class="deck-handoff__goals${compact ? " is-compact" : ""}">${goals.map(g => `<article class="deck-handoff__goal${g.done ? " is-done" : ""}" data-handoff-goal="${g.id}">
-      <header>${icon(g.id === "explore" ? "scout" : "corvette", "lg")}<div><h4>${esc(g.title)}</h4><small>${esc(g.status)}</small></div></header>
+      <header>${icon(g.id === "colony" ? "colony" : "corvette", "lg")}<div><h4>${esc(g.title)}</h4><small>${esc(g.status)}</small></div></header>
       ${compact ? "" : `<p>${esc(g.summary)}</p><ul aria-label="Requirements">${g.requirements.map(r => `<li class="${r.met ? "is-met" : ""}"><span aria-label="${r.met ? "Met" : "Needed"}">${r.met ? "✓" : "○"}</span>${esc(r.text)}</li>`).join("")}</ul>
       ${g.costs.length ? `<table><caption>Hull costs · local stock</caption><thead><tr><th>Resource</th><th>Cost</th><th>Stock</th></tr></thead><tbody>${g.costs.map(c => `<tr><th>${esc(label(c.commodity))}</th><td>${c.units}</td><td class="${c.stock < c.units ? "is-short" : ""}">${c.stock}</td></tr>`).join("")}</tbody></table>` : ""}
-      <p class="deck-handoff__payoff"><b>${g.id === "explore" ? "Reward" : "Gain"}</b> ${esc(g.payoff)}</p>`}
+      <p class="deck-handoff__payoff"><b>${g.id === "colony" ? "Reward" : "Gain"}</b> ${esc(g.payoff)}</p>`}
       <button type="button" data-deck-act="handoff-open" data-goal="${g.id}" ${g.action ? "" : "disabled"}>${esc(g.actionLabel)}</button>
       ${!compact && !g.done && g.prospect ? `<button type="button" data-deck-act="handoff-prospect" data-goal="${g.id}">Inspect ${esc(state.galaxy?.systems.find(s => s.id === g.prospect)?.name ?? "prospect")}</button>` : ""}
       ${!compact && !g.done && g.funding ? `<button type="button" class="deck-handoff__funding" data-deck-act="handoff-contract" data-goal="${g.id}"><span>Fund this · ${esc(operationTitle(g.funding))}</span><small>${esc(operationReward(g.funding))} · ${g.funding.joined ? "active contract" : "view requirements"}</small></button>` : ""}

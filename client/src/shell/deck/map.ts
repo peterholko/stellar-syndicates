@@ -1,7 +1,10 @@
 import { shipKindLabel } from "../../core/derive/fleet";
+import { contactBrief, contractBrief } from "../../core/derive/map-markers";
+import { liveSimTime } from "../../state";
 import { nebulaEffect } from "../../core/derive/nebula";
 import { type MapClickResult, type SelectTarget, resolveMapClick, resolveSystemClick } from "../../core/mapclick";
 import type { GhostView, SystemInfo } from "../../protocol";
+import { SYSTEM_ZOOM_MAX } from "../../systemview";
 import type { CoreContext } from "../types";
 
 const DRAG_THRESHOLD_PX = 5;
@@ -11,6 +14,8 @@ const CTRL_CLICK_CONTEXTMENU_MS = 5_000;
 interface DeckMapHooks {
   enteredSystem(system: SystemInfo): void;
   enteredBattle(id: string): void;
+  /** Watch a battle at the viewed star without leaving the System View. */
+  watchSystemBattle(id: string, systemId: string): void;
   returnedToGalaxy(): void;
   openTarget(target: SelectTarget): void;
   notice(html: string): void;
@@ -30,6 +35,8 @@ export class DeckMapInteraction {
   private readonly previousTouchAction: string;
   private dynamicTick = -1;
   private dynamicSystemId = "";
+  /// Wheel pushes held at the orrery's zoom limit; the second hands off to a world.
+  private worldPushes = 0;
 
   constructor(
     private readonly ctx: CoreContext,
@@ -46,6 +53,7 @@ export class DeckMapInteraction {
     canvas.addEventListener("pointerleave", (event) => {
       if (event.pointerType === "mouse") {
         ctx.renderer.cursorWorld = null;
+        ctx.renderer.clearSystemHover();
         this.hideHover();
       }
     }, { signal });
@@ -76,7 +84,13 @@ export class DeckMapInteraction {
   }
 
   zoomIn(): void {
-    if (this.ctx.renderer.viewMode.type === "galaxy") this.ctx.renderer.zoomByFactor(1.3);
+    const renderer = this.ctx.renderer;
+    if (renderer.viewMode.type === "galaxy") renderer.zoomByFactor(1.3);
+    else if (renderer.viewMode.type === "system" && !renderer.isSystemScrubbing()) {
+      // The orrery camera zooms about the map's centre (the wheel aims it).
+      const rect = renderer.cameraRect;
+      renderer.systemZoomAt(rect.x + rect.w / 2, rect.y + rect.h / 2, 1.3);
+    }
   }
 
   zoomOut(): void {
@@ -86,6 +100,11 @@ export class DeckMapInteraction {
       return;
     }
     if (renderer.viewMode.type === "system") {
+      if (renderer.systemZoomFactor() > 1.02) {
+        const rect = renderer.cameraRect;
+        renderer.systemZoomAt(rect.x + rect.w / 2, rect.y + rect.h / 2, 1 / 1.3);
+        return;
+      }
       const system = this.systemById(renderer.viewMode.systemId);
       if (system && renderer.beginSystemScrubOut(system)) renderer.adjustSystemScrub(-SYSTEM_SCRUB_STEP);
       return;
@@ -97,6 +116,12 @@ export class DeckMapInteraction {
     const renderer = this.ctx.renderer;
     if (renderer.isSystemScrubbing()) renderer.cancelSystemScrub();
     else if (renderer.viewMode.type === "system") {
+      // Fit first returns a zoomed or panned orrery to its fit; a second fit
+      // leaves it.
+      if (renderer.systemZoomFactor() > 1.02 || !renderer.systemAtRest()) {
+        renderer.systemResetZoom();
+        return;
+      }
       const system = this.systemById(renderer.viewMode.systemId);
       if (system && renderer.beginSystemScrubOut(system)) renderer.adjustSystemScrub(-1);
     }
@@ -129,8 +154,11 @@ export class DeckMapInteraction {
     if (!this.panning && Math.hypot(event.clientX - this.startX, event.clientY - this.startY) > DRAG_THRESHOLD_PX) {
       this.panning = true;
     }
-    if (this.panning && this.ctx.renderer.viewMode.type === "galaxy" && !this.ctx.renderer.isSystemScrubbing()) {
-      this.ctx.renderer.panBy(event.clientX - this.lastX, event.clientY - this.lastY);
+    if (this.panning && !this.ctx.renderer.isSystemScrubbing()) {
+      const dx = event.clientX - this.lastX;
+      const dy = event.clientY - this.lastY;
+      if (this.ctx.renderer.viewMode.type === "galaxy") this.ctx.renderer.panBy(dx, dy);
+      else if (this.ctx.renderer.viewMode.type === "system") this.ctx.renderer.systemPanBy(dx, dy);
     }
     this.lastX = event.clientX;
     this.lastY = event.clientY;
@@ -162,10 +190,29 @@ export class DeckMapInteraction {
       return;
     }
     if (renderer.viewMode.type === "system") {
-      if (event.deltaY > 0) {
-        const system = this.systemById(renderer.viewMode.systemId);
-        if (system && renderer.beginSystemScrubOut(system)) renderer.adjustSystemScrub(-SYSTEM_SCRUB_STEP);
+      const factor = Math.exp(-event.deltaY * 0.0016);
+      if (event.deltaY < 0) {
+        // Zoom the orrery toward the cursor; pushing past its limit over a
+        // world hands off to that world's rung (the planet stage).
+        const before = renderer.systemZoomFactor();
+        const zoom = renderer.systemZoomAt(event.clientX, event.clientY, factor);
+        if (zoom >= SYSTEM_ZOOM_MAX - 1e-3 && before >= SYSTEM_ZOOM_MAX - 0.05) {
+          this.worldPushes++;
+          const body = renderer.systemBodyNear(event.clientX, event.clientY);
+          if (body && this.worldPushes >= 2) {
+            this.worldPushes = 0;
+            this.hooks.openTarget({ type: "systemBody", detail: body });
+          }
+        }
+        return;
       }
+      this.worldPushes = 0;
+      if (renderer.systemZoomFactor() > 1.02) {
+        renderer.systemZoomAt(event.clientX, event.clientY, factor);
+        return;
+      }
+      const system = this.systemById(renderer.viewMode.systemId);
+      if (system && renderer.beginSystemScrubOut(system)) renderer.adjustSystemScrub(-SYSTEM_SCRUB_STEP);
       return;
     }
     const battleId = renderer.battlePick(event.clientX, event.clientY);
@@ -176,7 +223,8 @@ export class DeckMapInteraction {
         return;
       }
     }
-    if (event.deltaY < 0 && renderer.atMaxZoom()) {
+    if (event.deltaY < 0 && renderer.atSystemZoomThreshold()
+      && !renderer.fleetUnderPoint(event.clientX, event.clientY)) {
       const system = this.systemUnderPoint(event.clientX, event.clientY);
       const bodies = system ? this.ctx.state.systems.find((entry) => entry.id === system.id)?.bodies ?? [] : [];
       if (system && renderer.beginSystemScrubIn(system, bodies)) {
@@ -206,6 +254,13 @@ export class DeckMapInteraction {
 
   private doubleClick(event: MouseEvent): void {
     const renderer = this.ctx.renderer;
+    if (renderer.viewMode.type === "system" && !renderer.isSystemScrubbing()) {
+      // Double-clicking a fight (or its wreck field) at this star opens its
+      // theater over the orrery; the System View stays the rung beneath.
+      const pick = renderer.systemScenePick(event.clientX, event.clientY);
+      if (pick?.kind === "battle" || pick?.kind === "wreck") this.hooks.watchSystemBattle(pick.id, renderer.viewMode.systemId);
+      return;
+    }
     if (renderer.viewMode.type !== "galaxy" || renderer.isSystemScrubbing()) return;
     const battleId = renderer.battlePick(event.clientX, event.clientY);
     if (battleId !== null) {
@@ -370,6 +425,16 @@ export class DeckMapInteraction {
   private updateHover(clientX: number, clientY: number): void {
     const renderer = this.ctx.renderer;
     const state = this.ctx.state;
+    if (renderer.viewMode.type === "system") {
+      const copy = renderer.systemHover(clientX, clientY);
+      if (!copy) {
+        this.hideHover();
+        renderer.canvas.style.cursor = "default";
+        return;
+      }
+      this.showHover(copy, clientX, clientY);
+      return;
+    }
     if (renderer.viewMode.type !== "galaxy") {
       this.hideHover();
       renderer.canvas.style.cursor = "default";
@@ -417,6 +482,16 @@ export class DeckMapInteraction {
         consider(1, distance, selected ? `Move ${shipKindLabel(selected.kind)} to Market Hub` : "Open Market Hub");
       }
     }
+    // Points of interest: exploration contacts and contract tags explain themselves.
+    const siteId = renderer.explorationPick(clientX, clientY);
+    const site = siteId ? state.explorationSites.find((candidate) => candidate.id === siteId) : undefined;
+    if (site) {
+      const point = renderer.worldToScreen(site.pos);
+      consider(1, Math.hypot(point.x - clientX, point.y - clientY), contactBrief(site, selected ? shipKindLabel(selected.kind) : undefined));
+    }
+    const operationId = renderer.operationPick(clientX, clientY);
+    const operation = operationId ? state.operations.find((candidate) => candidate.id === operationId) : undefined;
+    if (operation) consider(1, 0, contractBrief(operation, liveSimTime()));
     const nebula = renderer.nebulaPick(clientX, clientY);
     if (nebula) consider(3, 0, `${nebula.name} · ${nebulaEffect(nebula)}`);
     const battleId = renderer.battlePick(clientX, clientY);
@@ -429,14 +504,19 @@ export class DeckMapInteraction {
       renderer.canvas.style.cursor = selected ? "crosshair" : "grab";
       return;
     }
-    const tip = document.getElementById("deck-hover")!;
-    tip.textContent = `${copy} · RMB inspect`;
+    this.showHover(`${copy} · RMB inspect`, clientX, clientY);
+  }
+
+  private showHover(copy: string, clientX: number, clientY: number): void {
+    const tip = document.getElementById("deck-hover");
+    if (!tip) return;
+    tip.textContent = copy;
     tip.hidden = false;
     const left = Math.min(window.innerWidth - Math.max(180, tip.offsetWidth) - 8, clientX + 14);
     const top = Math.min(window.innerHeight - tip.offsetHeight - 8, clientY + 16);
     tip.style.left = `${Math.max(8, left)}px`;
     tip.style.top = `${Math.max(8, top)}px`;
-    renderer.canvas.style.cursor = "pointer";
+    this.ctx.renderer.canvas.style.cursor = "pointer";
   }
 
   private fleetHover(ghost: GhostView, engaged: boolean): string {

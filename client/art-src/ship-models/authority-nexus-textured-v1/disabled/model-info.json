@@ -1,0 +1,49 @@
+{
+  "name": "Authority Nexus \u2014 Attack disabled",
+  "triangles": 9856,
+  "renderSections": 32,
+  "sourceComponents": 368,
+  "materials": 12,
+  "dimensionsXYZ": [
+    19.8,
+    6.34,
+    19.8
+  ],
+  "embeddedTextures": 11,
+  "textureResolution": [
+    1536,
+    1024
+  ],
+  "towerTextureResolution": [
+    1254,
+    1254
+  ],
+  "ringTextureResolution": [
+    2172,
+    724
+  ],
+  "powerTextureResolution": [
+    724,
+    2172
+  ],
+  "assemblies": [
+    "structure",
+    "stabilizer-1",
+    "stabilizer-2",
+    "stabilizer-3",
+    "stabilizer-4"
+  ],
+  "animations": [],
+  "axes": "Y up, -Z forward",
+  "physicalDiameter": "Unspecified; authored at approximately 20 relative units",
+  "generator": "Python/NumPy; no Blender",
+  "texturing": "Impact-scorched ivory and brass; textured graphite supports and exposed titanium; repaired local UVs on all physical faces; fractured unpowered reactor cells; seven amber reserve-power markers",
+  "optimization": "Static components merged by assembly and material; exact vertex deduplication; 16-bit indices",
+  "note": "Repairable disabled-state asset. No active portal or reopening animation. Not game-integrated.",
+  "state": "attack-disabled",
+  "damage": [
+    "Stabilizer 2 fractured and capped",
+    "Two scarred impact recesses with exposed ribs",
+    "Portal and containment field absent"
+  ]
+}

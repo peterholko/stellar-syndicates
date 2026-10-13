@@ -14,21 +14,25 @@ impl Observation {
         self.ticker.as_ref().and_then(|m| m.prices.get(&good)).copied().unwrap_or(20.0)
     }
 
+    /// §fuel-overhaul: the size of the store the fleet's regime burns.
     pub(super) fn tank(&self, fleet: &GhostView) -> f64 {
-        fleet.fuel_capacity.unwrap_or_else(|| hull_mass(fleet) * sim::fuel::FUEL_PER_HULL_MASS)
+        let base = || hull_mass(fleet) * sim::fuel::FUEL_PER_HULL_MASS;
+        if on_uranium(fleet) { fleet.uranium_capacity.unwrap_or_else(base) }
+        else { fleet.fuel_capacity.unwrap_or_else(base) }
     }
 
     pub(super) fn arrival_reserve(&self, fleet: &GhostView) -> f64 { self.tank(fleet) * 0.05 }
 
     pub(super) fn leg(&self, fleet: &GhostView, from: Vec2, to: Vec2, units: u32) -> f64 {
         self.fuel_per_mass(from, to) * (hull_mass(fleet) + units as f64 * sim::ship::CARGO_MASS_PER_UNIT)
-            * cruise_fuel_mult(fleet)
+            * self.cruise_mult(fleet)
     }
 
     pub(super) fn safe_load(&self, fleet: &GhostView, from: Vec2, to: Vec2) -> u32 {
         let mut full = fleet.clone();
         full.pos = from;
-        full.fuel = Some((self.tank(fleet) - self.arrival_reserve(fleet)).max(0.0));
+        let level = Some((self.tank(fleet) - self.arrival_reserve(fleet)).max(0.0));
+        if on_uranium(fleet) { full.uranium = level; } else { full.fuel = level; }
         self.freight_limit(&full, to)
     }
 
@@ -50,17 +54,25 @@ impl Observation {
             .is_none_or(|s| s.system.id == id)
     }
 
-    pub(super) fn fuel_target(&self) -> f64 {
+    /// §fuel-overhaul: which fuel a fleet draws from its port: its regime's,
+    /// or for an escort its charge's Uranium when it can fly it.
+    pub(super) fn port_fuel(&self, fleet: &GhostView) -> C {
+        let charge_slow = fleet.guard_target.and_then(|ward| self.own().find(|f| f.id == ward))
+            .is_some_and(on_uranium);
+        if charge_slow && slow_capable(fleet) { C::Uranium } else { regime_fuel(fleet) }
+    }
+
+    pub(super) fn fuel_target_of(&self, fuel: C) -> f64 {
         // A depot target covers the next dispatch/refill, not an arbitrary stock
         // floor. Fuel already in tanks is usable runway; an empty silo alone is
         // not a crisis. Hub bunkering is paid separately from imported fuel cargo.
         let home = self.home.system.pos;
         let mut target = 0.0;
-        for fleet in self.own().filter(|f| self.uses_local_port(f)) {
+        for fleet in self.own().filter(|f| self.uses_local_port(f) && self.port_fuel(f) == fuel) {
             let cycle = if fleet.kind.is_player_freighter() {
                 self.leg(fleet, home, self.hub, self.safe_load(fleet, home, self.hub))
             } else { self.tank(fleet) };
-            let deficit = (self.tank(fleet) - fleet.fuel.unwrap_or(0.0)).max(0.0);
+            let deficit = (self.tank(fleet) - store(fleet)).max(0.0);
             target += cycle + if fleet.docked.as_deref() == Some(self.home.system.id.to_string().as_str()) { deficit } else { 0.0 };
         }
         // Refining is a standing fuel customer too. Size its buffer to the
@@ -73,30 +85,40 @@ impl Observation {
             let tier = b.tier(kind);
             let Some(recipe) = sim::production::assigned_converter(kind, Some(a)) else { return 0.0; };
             if tier == 0 { return 0.0; }
-            let fuel = recipe.inputs.iter().find(|(c, _)| *c == C::Fuel).map_or(0.0, |(_, n)| *n);
-            fuel * recipe.rate * sim::production::tier_throughput(tier)
+            let input = recipe.inputs.iter().find(|(c, _)| *c == fuel).map_or(0.0, |(_, n)| *n);
+            input * recipe.rate * sim::production::tier_throughput(tier)
                 * a.workers.min(tier) as f64 / tier as f64 * system.staffing_share() * processing
         })).sum::<f64>();
         let lead = self.supply_lead();
-        (target + industrial * lead * 2.0).min(system.storage_cap() * 0.6).max(20.0)
+        // Slow freight runs on Uranium, so it keeps a floor; Deuterium only
+        // when something burns it.
+        let floor = if fuel == C::Uranium { 20.0 } else { 0.0 };
+        (target + industrial * lead * 2.0).min(system.storage_cap() * 0.3).max(floor)
     }
 
+    /// Either fuel below half its target.
     pub(super) fn fuel_critical(&self) -> bool {
-        self.stock(C::Fuel) + (self.inbound(C::Fuel) as f64) < self.fuel_target() * 0.5
+        FUELS.into_iter().any(|fuel| {
+            let target = self.fuel_target_of(fuel);
+            target > 0.0 && self.stock(fuel) + (self.inbound(fuel) as f64) < target * 0.5
+        })
     }
 
     pub(super) fn operating_reserve(&self) -> f64 {
         // Protect one full working circuit, escort included, plus its normal
         // cargo fuel delivery fee. Never count a speculative future sale as cash.
         let home = self.home.system.pos;
+        // §fuel-overhaul: priced in the fuel each hull burns.
         let freight = self.own().filter(|f| f.kind.is_player_freighter())
-            .map(|f| self.leg(f, home, self.hub, self.safe_load(f, home, self.hub)) * 2.0)
+            .map(|f| self.leg(f, home, self.hub, self.safe_load(f, home, self.hub)) * 2.0
+                * self.price(regime_fuel(f)))
             .min_by(f64::total_cmp).unwrap_or(0.0);
         let escort = self.own().filter(|f| f.kind == H::Raider)
-            .map(|f| self.leg(f, home, self.hub, 0) * 2.0).next().unwrap_or(0.0);
-        let fuel = freight + escort;
-        fuel * self.price(C::Fuel) * 1.25
-            + sim::tca::freight_fee(fuel.ceil() as u32, self.price(C::Fuel), home.distance(self.hub))
+            .map(|f| self.leg(f, home, self.hub, 0) * 2.0 * self.price(self.port_fuel(f))).next().unwrap_or(0.0);
+        let cost = freight + escort;
+        cost * 1.25
+            + sim::tca::freight_fee((cost / self.price(C::Uranium).max(0.1)).ceil() as u32,
+                self.price(C::Uranium), home.distance(self.hub))
             + self.price(C::Provisions) * 10.0
     }
 
@@ -109,17 +131,24 @@ impl Observation {
                 if !run.route.stops.iter().any(|s| s.port == sim::industry::FreightPort::Hub)))
             .map(|f| {
                 let burn = self.leg(f, f.pos, self.hub, cargo_used(f));
-                (self.tank(f) - f.fuel.unwrap_or(0.0) + burn).clamp(0.0, self.tank(f))
-            }).sum::<f64>() * self.price(C::Fuel) * 1.25
+                (self.tank(f) - store(f) + burn).clamp(0.0, self.tank(f)) * self.price(regime_fuel(f))
+            }).sum::<f64>() * 1.25
     }
 
     pub(super) fn threatened(&self, at: Vec2) -> bool {
+        self.threatened_within(at, 25_000.0)
+    }
+
+    /// A hostile warship within `radius` of `at`. Mining works within 1,500 su
+    /// of its star, so a barge needs a much closer threat to stay home than a
+    /// Scout crossing open space.
+    pub(super) fn threatened_within(&self, at: Vec2, radius: f64) -> bool {
         self.ghosts.iter().any(|g| !g.own && !g.ally && !g.owner.is_tca()
-            && g.kind.is_combatant() && g.pos.distance(at) < 25_000.0)
+            && g.kind.is_combatant() && g.pos.distance(at) < radius)
     }
 
     pub(super) fn refuel_port(&self, fleet: &GhostView, hub_affordable: bool) -> Option<Vec2> {
-        self.sites.iter().filter(|r| r.system.free_stock(C::Fuel) > 0.5)
+        self.sites.iter().filter(|r| r.system.free_stock(regime_fuel(fleet)) > 0.5)
             .map(|r| r.system.pos).chain(hub_affordable.then_some(self.hub))
             .filter(|p| self.enough_fuel(fleet, *p))
             .min_by(|a, b| fleet.pos.distance(*a).total_cmp(&fleet.pos.distance(*b)))
@@ -180,10 +209,10 @@ impl Bot {
     pub(super) fn return_for_fuel(&mut self, p: &Observation, fleet: &GhostView) -> Option<Command> {
         let key = format!("fleet:{}", fleet.id);
         if !self.ready(&key, p.now) || self.returns.contains_key(&fleet.id) { return None; }
-        let affordable = self.cash(p) >= p.tank(fleet) * p.price(C::Fuel) * 1.25;
+        let affordable = self.cash(p) >= p.tank(fleet) * p.price(regime_fuel(fleet)) * 1.25;
         let scout_port = (fleet.kind == H::Scout).then(|| p.sites.iter()
             .map(|s| s.system.pos).chain(affordable.then_some(p.hub))
-            .filter(|pos| fleet.fuel.unwrap_or(0.0) >= p.scout_leg(fleet, fleet.pos, *pos))
+            .filter(|pos| store(fleet) >= p.scout_leg(fleet, fleet.pos, *pos))
             .min_by(|a, b| fleet.pos.distance(*a).total_cmp(&fleet.pos.distance(*b)))).flatten();
         let dest = scout_port.or_else(|| p.refuel_port(fleet, affordable)).or_else(|| {
             // An empty depot is still a safe berth. Do not leave a threatened
@@ -210,7 +239,7 @@ impl Bot {
         for fleet in p.own().filter(|f| f.stalled && !f.rescue_inbound && f.docked.is_none()) {
             if !self.ready("market", p.now) || !self.ready(&format!("fleet:{}", fleet.id), p.now) { continue; }
             let quote = sim::tca::TCA_RESCUE_SERVICE_FEE + p.tank(fleet)
-                * p.price(C::Fuel) * sim::tca::TCA_RESCUE_FUEL_PRICE_MULT * 1.25;
+                * p.price(regime_fuel(fleet)) * sim::tca::TCA_RESCUE_FUEL_PRICE_MULT * 1.25;
             if self.cash(p) >= quote + p.operating_reserve() * 0.5 {
                 self.spend(p, quote);
                 self.wait(format!("fleet:{}", fleet.id), p, fleet.pos);
@@ -237,13 +266,13 @@ impl Bot {
                         K::Bioharvester | K::Agroplex => 0,
                         K::MiningComplex => 1,
                         K::Shipyard | K::NavalDrydock | K::CapitalSlipway | K::Garrison
-                            if site.builds.iter().any(|job| job.body_id == body.id && matches!(job.what, BuildKind::Ship { ship } if sim::build::yard_for(ship).0 == kind)) => 2,
+                            if site.builds.iter().any(|job| job.body_id == body.id && matches!(job.what, BuildKind::Ship { .. }) && job.work_yard() == Some(kind)) => 2,
                         K::OrdnanceFoundry if p.own().any(|f| f.damage.unwrap_or(0.0) > 0.05) => 2,
                         K::Academy => 3,
-                        K::VolatileHarvester | K::FuelRefinery => 4,
-                        // Don't burn the expedition's fuel in an optional line.
-                        K::Smelter if system.free_stock(C::Fuel) > if body.assignments.get(&kind).is_some_and(|a| a.workers > 0) { 10.0 } else { 40.0 } => 5,
-                        K::Shipyard | K::NavalDrydock | K::CapitalSlipway | K::OrdnanceFoundry | K::Smelter => 9,
+                        K::VolatileHarvester | K::FuelRefinery | K::UraniumMill => 4,
+                        // §fuel-overhaul: refining burns no fuel any more.
+                        K::Smelter => 5,
+                        K::Shipyard | K::NavalDrydock | K::CapitalSlipway | K::OrdnanceFoundry => 9,
                         k if sim::production::converter_for(k).is_some() => 5,
                         _ => continue,
                     };

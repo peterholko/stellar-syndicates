@@ -1,0 +1,18 @@
+{
+  "source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-0a7985c6-abc0-41e9-bce2-02fcb9c2dec5.png",
+  "output": "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/habitable-v1/volcanic-highlands-v2.png",
+  "prompt": "Use case: precise-object-edit.\nEdit this planet-surface painting (Image 1, 1672 × 941). Keep the composition, camera, horizon, planetary curvature, lighting, colours, starfield and painterly style exactly, and output the same 1672 × 941 framing.\nWiden the open ground in the middle distance. In the band between about 55% and 80% of the image height, across the central two-thirds of the width, smooth the plateau into continuous open grassland: remove the scattered dark rock outcrops, small ponds and minor ridges there, keeping the big cliffs, waterfalls, lakes, steam vents and the volcano. The result needs enough level, open ground for a settlement of about 17 buildings. Keep the large lakes, rivers, cliffs, coasts and forests elsewhere, so the world still reads as itself.\nNo buildings, roads, paths, fields, plots, ruins, vehicles, text or interface.\n",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/habitable-v1/volcanic-highlands.png"
+  ],
+  "processing": "painting",
+  "verification": {
+    "width": 1672,
+    "height": 941,
+    "channels": 3,
+    "hasAlpha": false,
+    "fileSHA256": "ebbfeb2a5c19820ae218ffed36978a8808f9f774f63868049b23a25163dd76fc"
+  },
+  "mode": "builtin-imagegen",
+  "created": "2026-10-09"
+}

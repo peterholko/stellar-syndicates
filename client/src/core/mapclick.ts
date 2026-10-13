@@ -1,13 +1,16 @@
 import { formatId, type EmplacementView, type GhostView, type SystemInfo, type Vec2 } from "../protocol";
+import { blockadeOrderBlock } from "./derive/blockade";
 import type { Renderer } from "../render";
 import { JUMP_DEPARTURE_TTL_S, liveSimTime, type PendingIntent, type ViewState } from "../state";
 import type { SystemBodyDetail } from "../systemview";
 import { emplacementLabel, gravityWellAt, knownDeposits } from "./derive/geo";
-import { guardCapable, jumpCapable, shipKindLabel } from "./derive/fleet";
+import { beltMiningTarget, guardCapable, jumpCapable, mineCapable, shipKindLabel, surveyCapable } from "./derive/fleet";
+import { isStation } from "./derive/belts";
 import { jumpRangeAt } from "./derive/nebula";
 import { armedSelection } from "./derive/orders";
 import { jumpDepartureKey } from "./session";
 import { siteTitle } from "./derive/exploration";
+import { operationTitle } from "./derive/format";
 
 export type EmplacementKind = EmplacementView["kind"];
 
@@ -27,11 +30,13 @@ export type SelectTarget = (
   | { type: "anchor"; readout: string }
   | { type: "hub" }
   | { type: "exploration"; id: string }
+  | { type: "operation"; id: string }
   | { type: "ongoingBattle"; id: string }
   | { type: "aftermath"; id: number }
   | { type: "capture"; id: number }
   | { type: "systemBody"; detail: SystemBodyDetail }
   | { type: "clearSystemBody" }
+  | { type: "landing"; id: string }
 ) & { readout?: string };
 
 export type MapClickResult =
@@ -50,11 +55,34 @@ const esc = (value: string): string => value.replace(
 // of re-picking the same one. Reset implicitly whenever the spot or stack changes.
 let clickCycle: { sx: number; sy: number; keys: string; index: number } | null = null;
 
+/// The System View's click grammar: the precise served objects first (fleets,
+/// battle sites, wreck fields, a landing), then the worlds. There is no
+/// movement verb here — the sim has no intra-system positions to move to.
 export function resolveSystemClick(sx: number, sy: number, ctx: MapClickCtx): MapClickResult {
-  const detail = ctx.renderer.systemPick(sx, sy);
-  return detail
-    ? { kind: "select", target: { type: "systemBody", detail } }
-    : { kind: "select", target: { type: "clearSystemBody" } };
+  const pick = ctx.renderer.systemScenePick(sx, sy);
+  if (pick?.kind === "fleet") {
+    const fleet = ctx.state.ghosts.find((ghost) => ghost.id === pick.id);
+    if (fleet) {
+      const name = shipKindLabel(fleet.kind);
+      const where = fleet.docked ? " at its berth" : "";
+      return {
+        kind: "select",
+        target: {
+          type: "fleet",
+          id: fleet.id,
+          readout: fleet.own
+            ? `<b>${esc(name)}</b> selected${where} — details in the panel.`
+            : `<b>${esc(name)}</b> contact selected — its light-delayed details are in the panel.`,
+        },
+      };
+    }
+  }
+  if (pick?.kind === "battle" || pick?.kind === "wreck") {
+    return { kind: "select", target: { type: "ongoingBattle", id: pick.id } };
+  }
+  if (pick?.kind === "landing") return { kind: "select", target: { type: "landing", id: pick.id } };
+  if (pick?.kind === "body") return { kind: "select", target: { type: "systemBody", detail: pick.detail } };
+  return { kind: "select", target: { type: "clearSystemBody" } };
 }
 
 // The map CLICK decision (select own ship · select a star system incl. home ·
@@ -130,19 +158,22 @@ export function resolveMapClick(
         clearAiming: "guard",
       };
     }
+    // §founding R3: a docked charge is a legal target too (the sim accepts any
+    // friendly fleet); the escort forms up as soon as it leaves the berth.
+    // Undocked markers win ties so a crowded home berth stays predictable.
     const target = state.ghosts
-      .filter((ghost) => ghost.own && ghost.id !== interceptor.id && !ghost.docked)
+      .filter((ghost) => ghost.own && ghost.id !== interceptor.id && !ghost.tca)
       .map((ghost) => {
         const point = renderer.worldToScreen(ghost.pos);
         return { g: ghost, d: Math.hypot(point.x - sx, point.y - sy) };
       })
       .filter(({ g, d }) => d < Math.max(24, renderer.fleetHitRadius(g)))
-      .sort((a, b) => a.d - b.d || a.g.id.localeCompare(b.g.id))[0]?.g;
+      .sort((a, b) => a.d - b.d || Number(!!a.g.docked) - Number(!!b.g.docked) || a.g.id.localeCompare(b.g.id))[0]?.g;
     if (!target) {
       return {
         kind: "reject",
-        reason: `<span style="color:var(--warn)"><b>Choose one of your fleet markers.</b> ` +
-          `Docked fleets are assigned after they undock. <span class="dim">Esc cancels.</span></span>`,
+        reason: `<span style="color:var(--warn)"><b>Choose one of your fleets.</b> ` +
+          `Pick it in the command strip or click its marker. <span class="dim">Esc cancels.</span></span>`,
       };
     }
     return {
@@ -172,6 +203,15 @@ export function resolveMapClick(
       const dyn = hitSys ? state.systems.find((system) => system.id === hitSys!.id) : undefined;
       const rival = dyn && dyn.owner !== null && dyn.owner !== state.playerId;
       if (hitSys && rival) {
+        // Say why up front rather than send an order the sim will refuse.
+        const block = blockadeOrderBlock(selF, dyn.owner, state.playerId ?? "", state.diplomacy, state.simTime);
+        if (block) {
+          return {
+            kind: "reject",
+            reason: `<span style="color:var(--warn)"><b>Can't blockade ${esc(hitSys.name)}.</b> ${esc(block)} ` +
+              `<span class="dim">To fly there instead, click beside the star.</span></span>`,
+          };
+        }
         return {
           kind: "intent",
           intent: { shipId: selF.id, verb: "blockade", targetId: hitSys.id, dest: hitSys.pos },
@@ -180,10 +220,9 @@ export function resolveMapClick(
     }
 
     // §explore Part 2 — SURVEY-ON-CLICK (the blockade idiom for the scout's
-    // second job): a SCOUT-carrying own fleet selected + click an UNSURVEYED
-    // system → order a survey.
-    if (selF && selF.own && state.galaxy
-      && (selF.composition ?? []).some((stack) => stack.kind === "scout" && stack.count > 0)) {
+    // second job): a SCOUT- or PROBE-carrying own fleet selected + click an
+    // UNSURVEYED system → order a survey.
+    if (selF && selF.own && state.galaxy && surveyCapable(selF)) {
       let hitSys: SystemInfo | null = null;
       let bestD = Infinity;
       for (const sys of state.galaxy.systems) {
@@ -198,6 +237,59 @@ export function resolveMapClick(
         return {
           kind: "intent",
           intent: { shipId: selF.id, verb: "survey", targetId: hitSys.id, dest: hitSys.pos },
+        };
+      }
+    }
+
+    // §belts — MINE-ON-CLICK: a fleet carrying a Mining Barge selected + click
+    // a charted system (unowned or yours) whose belt holds ore → stage a
+    // MineBelt order for its most valuable ore, through the ordinary preview.
+    if (selF && selF.own && !selF.tca && state.galaxy && state.playerId && mineCapable(selF)) {
+      let hitSys: SystemInfo | null = null;
+      let bestD = Infinity;
+      for (const sys of state.galaxy.systems) {
+        const point = renderer.worldToScreen(sys.pos);
+        const distance = Math.hypot(point.x - sx, point.y - sy);
+        if (distance < Math.max(15, renderer.systemHitRadius(sys)) && distance < bestD) {
+          bestD = distance;
+          hitSys = sys;
+        }
+      }
+      const served = hitSys ? state.systems.find(s => s.id === hitSys!.id) : undefined;
+      const target = served && (served.owner == null || served.owner === state.playerId || !!served.ally) ? beltMiningTarget(served) : null;
+      if (hitSys && target) {
+        return {
+          kind: "intent",
+          intent: { shipId: selF.id, verb: "command", commander: state.playerId, dest: hitSys.pos,
+            commands: [{ type: "MineBelt", fleet_id: selF.id, system_id: hitSys.id, body_id: target.body, ore: target.ore,
+              ...(target.pocket ? { pocket: true } : {}) }] },
+        };
+      }
+    }
+
+    // §belts — ANCHOR-ON-CLICK: a lone Mining Belt Station selected + click a
+    // charted system with a belt (unowned or allied) → stage AnchorStation at its
+    // richest belt, through the ordinary preview.
+    if (selF && selF.own && !selF.tca && state.galaxy && state.playerId && isStation(selF)
+        && (!selF.anchor || selF.anchor.phase === "approaching")) {
+      let hitSys: SystemInfo | null = null;
+      let bestD = Infinity;
+      for (const sys of state.galaxy.systems) {
+        const point = renderer.worldToScreen(sys.pos);
+        const distance = Math.hypot(point.x - sx, point.y - sy);
+        if (distance < Math.max(15, renderer.systemHitRadius(sys)) && distance < bestD) {
+          bestD = distance;
+          hitSys = sys;
+        }
+      }
+      const served = hitSys ? state.systems.find(s => s.id === hitSys!.id) : undefined;
+      const open = served && (served.owner == null || (served.owner !== state.playerId && !!served.ally));
+      const target = open ? beltMiningTarget(served) : null;
+      if (hitSys && target) {
+        return {
+          kind: "intent",
+          intent: { shipId: selF.id, verb: "command", commander: state.playerId, dest: hitSys.pos,
+            commands: [{ type: "AnchorStation", fleet_id: selF.id, system_id: hitSys.id, body_id: target.body }] },
         };
       }
     }
@@ -367,6 +459,13 @@ export function resolveMapClick(
       label: site.details?.name ?? "Unknown contact", target: { type: "exploration", id: site.id },
       readout: "" });
   }
+
+  // A contract tag is a precise target: it opens the contract (accept, assign
+  // or follow it from its card), never a movement order.
+  const operationId = renderer.operationPick(sx, sy);
+  const operation = operationId ? state.operations.find((candidate) => candidate.id === operationId) : undefined;
+  if (operation) cands.push({ key: `op:${operation.id}`, sortD: -1e6,
+    label: operationTitle(operation), target: { type: "operation", id: operation.id }, readout: "" });
 
   if (cands.length) {
     // A visible fleet is a more precise hit than the enlarged star affordance

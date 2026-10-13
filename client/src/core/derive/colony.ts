@@ -3,14 +3,15 @@ import type { BodyView, ColonyOpportunityView, Commodity, SystemStateView } from
 // Mirrors production.rs::CONVERTERS' input identities (not rates). Used only to
 // explain supply chains; actual output and colony-role scores come from reports.
 export const PRODUCTION_INPUTS: Record<string, Commodity[]> = {
-  smelter: ["metallic_ore", "fuel"], electronics_fabricator: ["conductive_metals", "rare_elements", "silicates"],
-  chemical_works: ["volatiles", "biomass"], fuel_refinery: ["volatiles"], agroplex: ["biomass"],
-  machine_works: ["alloys", "electronics", "fuel"], armaments_complex: ["alloys", "electronics", "polymers"],
+  smelter: ["metallic_ore"], uranium_mill: ["metallic_ore"], electronics_fabricator: ["conductive_metals", "rare_elements", "silicates"],
+  chemical_works: ["volatiles", "biomass"], fuel_refinery: ["volatiles"], agroplex: ["biomass"], living_terraces: [],
+  machine_works: ["alloys", "electronics"], armaments_complex: ["alloys", "electronics", "polymers"],
   composite_works: ["alloys", "polymers", "silicates"], hull_fabricator: ["composites", "machinery", "titanium"],
-  precision_works: ["electronics", "machinery", "rare_elements"], drive_works: ["precision_components", "composites", "fuel"],
+  precision_works: ["electronics", "machinery", "rare_elements"], drive_works: ["precision_components", "composites", "iridium"],
+  antimatter_plant: ["deuterium"],
 };
 const ROLE_PRODUCT: Record<ColonyOpportunityView["role"], Commodity[]> = {
-  mining_world: ["metallic_ore", "cuprite_ore", "titanium_ore", "crystalline_ore", "rare_metal_ore", "rare_elements", "silicates"], fuel_complex: ["fuel"],
+  mining_world: ["metallic_ore", "cuprite_ore", "titanium_ore", "crystalline_ore", "rare_metal_ore", "olivine_ore", "bornite_ore", "ilmenite_ore", "iridium_ore", "void_crystal", "rare_elements", "silicates"], fuel_complex: ["deuterium"],
   electronics_center: ["electronics"], agricultural_exporter: ["provisions"],
   population_world: [], shipbuilding_center: [], strategic_outpost: [],
 };
@@ -69,7 +70,7 @@ export function colonyPurpose(candidate: SystemStateView, home?: SystemStateView
     const stock = (g: Commodity) => home.stockpile?.find(s => s.commodity === g)?.units;
     const stalled = home.converters?.find(c => {
       const ore = home.assignments?.find(a => a.body_id === c.body_id && a.structure === c.structure)?.refining_ore;
-      const inputs = c.structure === "smelter" && ore ? [ore, "fuel" as Commodity] : PRODUCTION_INPUTS[c.structure] ?? [];
+      const inputs = c.structure === "smelter" && ore ? [ore] : PRODUCTION_INPUTS[c.structure] ?? [];
       return c.status === "no_inputs" && inputs.some(input => potentialExports.includes(input) && (stock(input) ?? Infinity) < 1);
     });
     const foodNeed = potentialExports.includes("provisions") && !!home.food_state && home.food_state !== "well_supplied";

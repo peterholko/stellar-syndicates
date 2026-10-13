@@ -23,7 +23,23 @@ impl Bot {
         // Still use the player's ordinary prerequisite/metric availability;
         // no technology, larger tank or jump capability is granted for free.
         if range_blocked && available("prop_efficient_burns") { return Some("prop_efficient_burns"); }
-        if (p.fuel_critical() || range_blocked) && available("prop_bunkerage") { return Some("prop_bunkerage"); }
+        // §fuel-overhaul: freight before anything optional. Freight Frames opens
+        // the 150-unit Small Freighter (and satisfies the charter's research
+        // step); Fusion Freight, once its convoy count is in, makes full-speed
+        // freight cost what slow freight does.
+        if let Some(id) = ["prop_freight_frames", "prop_line_fusion_freight"].into_iter()
+            .find(|id| available(id) && !p.research.has(id)) {
+            return Some(id);
+        }
+        // §belts phase 6: barges at work and an unowned belt worth a station.
+        if p.wants_station() && available("mat_belt_stations") { return Some("mat_belt_stations"); }
+        // §power: a planet that has outgrown a tier IV plant needs fusion.
+        if p.power_shortfall().is_some_and(|(body, _)| p.home.system.bodies.iter()
+            .any(|b| b.id == body && b.tier(K::PowerPlant) >= sim::build::BASE_MAX_STRUCTURE_TIER))
+            && available(sim::power::FUSION_RESEARCH)
+        {
+            return Some(sim::power::FUSION_RESEARCH);
+        }
         // Score EVERY legal catalogue entry. Completed openings never exhaust
         // the controller's technology list; new tiers compete by useful effects,
         // colony role and the corporation's investment preferences.

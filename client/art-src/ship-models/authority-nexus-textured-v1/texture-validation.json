@@ -1,0 +1,64 @@
+{
+  "method": "Every exported GLB triangle: embedded albedo, finite noncollapsed UVs, sampler bounds, interior color samples and original per-component geometry/normal digest.",
+  "models": {
+    "operational": {
+      "model": "authority-nexus.glb",
+      "modelSha256": "0565ddbbe96bed7b2a8432e49253b5f60d6c46a68ee17aa713b18e3658c723ce",
+      "triangles": 11440,
+      "physicalTriangles": 9744,
+      "texturedTriangles": 10448,
+      "texturedComponents": 367,
+      "untexturedPhysicalTriangles": 0,
+      "collapsedTexturedTriangles": 0,
+      "minimumUvArea": 9.663610001098277e-08,
+      "sampledTextureVariationOnEveryTexturedComponent": true,
+      "minimumComponentColorRange": 0.10450190935729275,
+      "intentionalUniformSurfaces": {
+        "Free containment energy": 992
+      },
+      "materialTextures": {
+        "Ventral reference armor and radiators": "authority-nexus-basecolor.png",
+        "Reference armor and port architecture": "authority-nexus-basecolor.png",
+        "Brushed brass fittings": "authority-nexus-brass-ring.png",
+        "Machined brass containment collars": "authority-nexus-brass-ring.png",
+        "Ivory titanium panel armor": "authority-nexus-ivory-panels.png",
+        "Graphite structure": "authority-nexus-ivory-panels.png",
+        "Powered cyan reactor cells": "authority-nexus-power-cells.png",
+        "Violet wormhole energy \u2014 independent surface": "authority-nexus-basecolor.png"
+      },
+      "geometryAndNormalsUnchanged": true,
+      "geometryNormalsSha256": "444184cb84cd0a0bdb58ee84c0719a1c97f227df4d41d38c34466eae1cf28e50",
+      "renderSections": 28
+    },
+    "disabled": {
+      "model": "disabled/authority-nexus-disabled.glb",
+      "modelSha256": "df98d3bda436a3472d4e05e278ea0abb87212c887c64b023bd4a625879ff9003",
+      "triangles": 9856,
+      "physicalTriangles": 9716,
+      "texturedTriangles": 9716,
+      "texturedComponents": 361,
+      "untexturedPhysicalTriangles": 0,
+      "collapsedTexturedTriangles": 0,
+      "minimumUvArea": 9.663610001098277e-08,
+      "sampledTextureVariationOnEveryTexturedComponent": true,
+      "minimumComponentColorRange": 0.3385460599526353,
+      "intentionalUniformSurfaces": {
+        "Small uniform emergency lamps": 140
+      },
+      "materialTextures": {
+        "Ventral reference armor and radiators": "authority-nexus-basecolor.png",
+        "Reference armor and port architecture": "authority-nexus-basecolor.png",
+        "Brushed brass fittings": "authority-nexus-brass-ring.png",
+        "Scorched brass containment collars": "authority-nexus-brass-ring.png",
+        "Impact-scorched ivory armor": "authority-nexus-ivory-panels.png",
+        "Graphite structure": "authority-nexus-ivory-panels.png",
+        "Fractured reactor cells / unpowered": "authority-nexus-power-cells.png",
+        "Exposed torn titanium": "authority-nexus-ivory-panels.png",
+        "Scorched impact recesses / exposed machinery": "authority-nexus-impact.png"
+      },
+      "geometryAndNormalsUnchanged": true,
+      "geometryNormalsSha256": "8a0314d2ac3fe613d2cfe75739ed24a90008495dfff5e78fc180ea82af158997",
+      "renderSections": 32
+    }
+  }
+}

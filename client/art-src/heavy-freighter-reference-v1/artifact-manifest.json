@@ -1,0 +1,31 @@
+{
+  "asset": "heavy-freighter-reference.png",
+  "generatedOn": "2026-09-29",
+  "method": "built-in image_gen, reference-guided generation and a front projection correction",
+  "resolution": [
+    1774,
+    887
+  ],
+  "mode": "RGB",
+  "bytes": 2045525,
+  "sha256": "49ab8ae407d0a3c0b47481092c46d2855ad499ea74c10255c56f62eb2cd7f1a4",
+  "views": [
+    "front",
+    "back",
+    "top",
+    "bottom",
+    "side"
+  ],
+  "referenceInputs": [
+    "../freighters-2026-09-16/heavy-freighter-alpha.png",
+    "../large-freighter-reference-v1/large-freighter-reference.png"
+  ],
+  "prompts": [
+    "prompt.txt",
+    "front-projection-correction-prompt.txt"
+  ],
+  "generationOutputs": [
+    "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-6868c25e-42bd-47bb-8393-4adc4f1fcd7c.png",
+    "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-314aa018-f449-4e43-9f8d-253333b44153.png"
+  ]
+}

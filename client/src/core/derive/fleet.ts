@@ -24,14 +24,17 @@ import { HYPERLIMIT_SU } from "./geo";
 import { cargoMultiplier, sensorMultiplier, tankMultiplier } from "./equipment";
 
 // Mirror of the sim's commodity value-rank (also in render.ts) — for flavor
-// text and the observed Fuel fallback. Client-only; no server data.
+// text and the observed fuel fallback. Client-only; no server data.
 export const COMMODITY_VALUE: Record<Commodity, number> = {
   biomass: 5, silicates: 9, metallic_ore: 8, volatiles: 9, rare_elements: 100,
   cuprite_ore: 24, titanium_ore: 110, crystalline_ore: 6, rare_metal_ore: 1700,
-  conductive_metals: 30, titanium: 60,
-  provisions: 9, fuel: 14, polymers: 16, alloys: 26, electronics: 34,
+  olivine_ore: 10, bornite_ore: 21, ilmenite_ore: 19,
+  iridium_ore: 630, helium3_ice: 260, void_crystal: 1680,
+  conductive_metals: 30, titanium: 60, iridium: 90, helium3: 75, exotic_matter: 120,
+  provisions: 9, deuterium: 14, polymers: 16, alloys: 26, electronics: 34,
   machinery: 62, armaments: 56,
-  composites: 50, hull_sections: 128, precision_components: 92, drive_assemblies: 215,
+  composites: 50, hull_sections: 128, precision_components: 92, warp_core: 215,
+  uranium: 5.6, antimatter: 120, fusion_core: 300,
 };
 
 // Mirrors the sim's fuel-cost model (crates/sim/src/fuel.rs + ship.rs).
@@ -39,11 +42,18 @@ export const FUEL_PER_MASS_DISTANCE = 1.0e-6;
 const FUEL_PER_HULL_MASS = 0.035;
 export const WARP_FACTOR = 5;
 export const AAA_FUEL_PRICE_MULT = 3;
+// §fuel-overhaul: mirrors crates/sim/src/fuel.rs and transit.rs.
+export const SLOW_SPEED_FRACTION = 0.5;
+export const SLOW_FUEL_MULT = 0.25;
+export const FUSION_FREIGHT_MULT = 0.1;
+export const HELIUM3_FUEL_EQUIV = 6;
+export const JUMP_FUEL_FACTOR = 10;
 export const AAA_SERVICE_FEE = 1_000;
 const AAA_RESERVE_FRAC = 0.10;
 export const HULL_MASS: Record<ShipKind, number> = {
   tiny_freighter: 1500, small_freighter: 2500, large_freighter: 8000, heavy_freighter: 14000, bulk_freighter: 24000,
-  convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80,
+  convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80, survey_probe: 40, mining_barge: 3500,
+  mining_belt_station: 12000,
   destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
   transport: 7000, freighter: 6000, builder: 2500,
 };
@@ -52,7 +62,8 @@ export const HULL_MASS: Record<ShipKind, number> = {
 // authority for drive transitions, wells, fuel, and future route changes.
 export const HULL_BASE_SPEED: Record<ShipKind, number> = {
   tiny_freighter: 40, small_freighter: 40, large_freighter: 38, heavy_freighter: 34, bulk_freighter: 30,
-  convoy: 40, builder: 35, raider: 100, corvette: 65, colony: 33, scout: 115,
+  convoy: 40, builder: 35, raider: 100, corvette: 65, colony: 33, scout: 115, survey_probe: 120, mining_barge: 30,
+  mining_belt_station: 15,
   destroyer: 55, cruiser: 45, battleship: 36, dreadnought: 29, titan: 23,
   transport: 30, freighter: 32,
 };
@@ -66,32 +77,90 @@ export const shipMass = (g: GhostView): number =>
   fleetHullMass(g) + (g.own ? fleetCargoUnits(g) * CARGO_MASS_PER_UNIT : 0);
 export const fleetBaseSpeed = (g: GhostView): number => Math.min(...(g.composition?.length
   ? g.composition : [{ kind: g.kind, count: 1 }]).filter(s => s.count > 0).map(stack => {
+    // Drive Tuning speeds every hull; Military Drives and Torch Regime warships.
+    const r = driveResearch(g);
+    const base = HULL_BASE_SPEED[stack.kind] * r.speed * (WARSHIPS.includes(stack.kind) ? r.warshipSpeed : 1);
     const fits = (g.loadouts ?? []).filter(f => f.kind === stack.kind && f.n > 0);
-    const unfitted = fits.reduce((n, f) => n + f.n, 0) < stack.count ? HULL_BASE_SPEED[stack.kind] : Infinity;
-    return Math.min(unfitted, ...fits.map(f => HULL_BASE_SPEED[stack.kind] * (f.modules.includes("survey_drive") ? 1.25 : 1)));
+    const unfitted = fits.reduce((n, f) => n + f.n, 0) < stack.count ? base : Infinity;
+    return Math.min(unfitted, ...fits.map(f => base * (f.modules.includes("survey_drive") ? 1.25 : 1)));
   }));
 export const fleetFuelCapacity = (g: GhostView): number => g.fuel_capacity ?? (fleetHullMass(g)
   + (g.loadouts ?? []).reduce((extra, s) => extra + HULL_MASS[s.kind] * s.n * (tankMultiplier(s.modules) - 1), 0)) * FUEL_PER_HULL_MASS;
 
-// Mirrors the sim's Economy constants. Savings are per distance, in addition
-// to the throttle; do not multiply trip fuel by speed a second time.
-export const ECONOMY_SPEED_FRACTION = 0.25;
-export const ECONOMY_FUEL_MULT = 0.10;
-export const economyCapable = (g: GhostView): boolean => !g.tca && (g.composition?.length
-  ? g.composition.some(s => s.count > 0) && g.composition.every(s => s.count === 0 || isPlayerFreighter(s.kind))
-  : isPlayerFreighter(g.kind));
+// §fuel-overhaul: mirrors ship.rs. Slow flies half speed on the fission store
+// (Uranium) at a quarter of the energy per distance; every formation without
+// a ship of the line can fly it. Savings are per distance, in addition to the
+// throttle; do not multiply trip fuel by speed a second time.
+const SHIPS_OF_THE_LINE: ShipKind[] = ["battleship", "dreadnought", "titan"];
+const WARSHIPS: ShipKind[] = ["raider", "corvette", "destroyer", "cruiser", "battleship", "dreadnought", "titan"];
+const stacksOf = (g: GhostView) => g.composition?.length ? g.composition : [{ kind: g.kind, count: 1 }];
+const researched = (id: string): boolean => !!state.research?.programmes.some(p => p.id === id && p.state === "completed");
+/** The owner's research on its drives (ship.rs FuelResearch). Own fleets
+ * only: a rival's research is unknown, so its figures stay stock. */
+function driveResearch(g: GhostView) {
+  if (!g.own) return { freight: 1, torch: 1, consumption: 1, speed: 1, warshipSpeed: 1 };
+  const torch = researched("prop_expedition_iii_torch_regime");
+  return {
+    freight: researched("prop_line_fusion_freight") ? FUSION_FREIGHT_MULT : 1,
+    torch: torch ? 1.4 : 1,
+    consumption: researched("prop_efficient_burns") ? 0.75 : 1,
+    speed: researched("prop_drive_tuning") ? 1.1 : 1,
+    warshipSpeed: (researched("prop_military_drives") ? 1.2 : 1) * (torch ? 1.3 : 1),
+  };
+}
+export const slowCapable = (g: GhostView): boolean => !g.tca
+  && stacksOf(g).some(s => s.count > 0) && stacksOf(g).every(s => s.count === 0 || !SHIPS_OF_THE_LINE.includes(s.kind));
+export const onUranium = (g: GhostView): boolean => g.transit === "slow" && slowCapable(g);
+export const fusionFreightResearched = (): boolean => researched("prop_line_fusion_freight");
 export const transitLabel = (mode: TransitMode = "full"): string =>
-  mode === "economy" ? "Economy" : mode === "stealth" ? "Stealth" : "Full speed";
-export const cruiseFuelMultiplier = (g: GhostView): number =>
-  g.transit === "economy" && economyCapable(g) ? ECONOMY_FUEL_MULT : 1;
+  mode === "slow" ? "Slow" : mode === "stealth" ? "Stealth" : "Full speed";
+/** The fuel a regime burns: Uranium on Slow, Deuterium otherwise. */
+export const regimeFuel = (g: GhostView): Commodity => onUranium(g) ? "uranium" : "deuterium";
+/** The multiplier on energy per distance on one store, weighed hull by hull
+ * by mass (ship.rs cruise_mult_for): a quarter on Uranium; Fusion Freight's cut
+ * for player freighters and their cargo; Torch Regime on warships. */
+export function cruiseMultFor(g: GhostView, uranium: boolean): number {
+  const r = driveResearch(g);
+  const regime = (freighter: boolean) => uranium ? SLOW_FUEL_MULT : freighter ? r.freight : 1;
+  const stacks = stacksOf(g).filter(s => s.count > 0);
+  const cargo = g.own ? fleetCargoUnits(g) * CARGO_MASS_PER_UNIT : 0;
+  const total = fleetHullMass(g) + cargo;
+  if (total <= 1e-9) return regime(false);
+  const hulls = stacks.reduce((sum, s) => sum + HULL_MASS[s.kind] * s.count
+    * regime(isPlayerFreighter(s.kind)) * (WARSHIPS.includes(s.kind) ? r.torch : 1), 0);
+  return (hulls + cargo * regime(stacks.some(s => isPlayerFreighter(s.kind)))) / total;
+}
+export const cruiseFuelMultiplier = (g: GhostView): number => cruiseMultFor(g, onUranium(g));
+/** Efficient Burns' cut on every burn, jumps included. */
+export const fuelConsumption = (g: GhostView): number => driveResearch(g).consumption;
 export const transitSpeedMultiplier = (g: GhostView): number =>
-  g.transit === "economy" && economyCapable(g) ? ECONOMY_SPEED_FRACTION : g.transit === "stealth" ? 0.5 : 1;
+  onUranium(g) ? SLOW_SPEED_FRACTION : g.transit === "stealth" ? 0.5 : 1;
+/** §fuel-overhaul: the fission store's size (served, else every hull bar the ships of the line). */
+export const fleetUraniumCapacity = (g: GhostView): number => g.uranium_capacity ?? (stacksOf(g)
+  .filter(s => !SHIPS_OF_THE_LINE.includes(s.kind)).reduce((m, s) => m + HULL_MASS[s.kind] * s.count, 0)
+  + (g.loadouts ?? []).filter(s => !SHIPS_OF_THE_LINE.includes(s.kind))
+    .reduce((extra, s) => extra + HULL_MASS[s.kind] * s.n * (tankMultiplier(s.modules) - 1), 0)) * FUEL_PER_HULL_MASS;
+/** The store a fleet's regime burns, as served. */
+export const regimeStore = (g: GhostView): { fuel: Commodity; have: number; capacity: number } => onUranium(g)
+  ? { fuel: "uranium", have: g.uranium ?? 0, capacity: fleetUraniumCapacity(g) }
+  : { fuel: "deuterium", have: g.fuel ?? 0, capacity: fleetFuelCapacity(g) };
+/** Antimatter one jump of `distance` burns from the bottle (mass × distance × 1e-7). */
+export const jumpAntimatter = (g: GhostView, distance: number): number =>
+  FUEL_PER_MASS_DISTANCE * distance * shipMass(g) / JUMP_FUEL_FACTOR * fuelConsumption(g);
+/** §fuel-overhaul: the fusion tank as SPACE, not energy: Deuterium units plus
+ * Helium-3 units (each Helium-3 holds six Deuterium of energy). */
+export function fusionTank(g: GhostView): { deuterium: number; helium3: number; used: number; capacity: number } {
+  const helium3 = g.helium3 ?? 0;
+  const deuterium = Math.max(0, (g.fuel ?? 0) - HELIUM3_FUEL_EQUIV * helium3);
+  return { deuterium, helium3, used: deuterium + helium3, capacity: fleetFuelCapacity(g) };
+}
 
 const SHIP_KIND_LABEL: Record<ShipKind, string> = {
   tiny_freighter: "Tiny Freighter", small_freighter: "Small Freighter", large_freighter: "Large Freighter", heavy_freighter: "Heavy Freighter", bulk_freighter: "Bulk Freighter",
-  convoy: "Medium Freighter", raider: "Interceptor", corvette: "Corvette", colony: "Colony Ship", scout: "Scout",
+  convoy: "Medium Freighter", raider: "Interceptor", corvette: "Corvette", colony: "Colony Ship", scout: "Scout", survey_probe: "Survey Probe", mining_barge: "Mining Barge",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
   transport: "Troop Transport", builder: "Construction Ship", freighter: "Authority Freighter",
+  mining_belt_station: "Mining Belt Station",
 };
 export const shipKindLabel = (kind: ShipKind): string => SHIP_KIND_LABEL[kind] ?? kind;
 
@@ -127,26 +196,75 @@ export function estimatedFuelForLeg(g: GhostView, dest: Vec2): number {
   const warp = FUEL_PER_MASS_DISTANCE * distance * shipMass(g) / WARP_FACTOR;
   const wellDistance = Math.min(distance, HYPERLIMIT_SU * 2);
   const wellSurcharge = FUEL_PER_MASS_DISTANCE * wellDistance * shipMass(g) * (1 - 1 / WARP_FACTOR);
-  return (warp + wellSurcharge) * logisticsMult * cruiseFuelMultiplier(g);
+  return (warp + wellSurcharge) * logisticsMult * cruiseFuelMultiplier(g) * fuelConsumption(g);
 }
 
 
 export function aaaEstimate(g: GhostView): { fuel: number; cost: number } {
-  const capacity = fleetFuelCapacity(g);
-  const room = Math.max(0, capacity - (g.fuel ?? 0));
+  // §fuel-overhaul: the rescue delivers the fuel the fleet's regime burns.
+  const store = regimeStore(g);
+  const room = Math.max(0, store.capacity - store.have);
   const destination = g.path?.at(-1)?.pos;
   const packageFuel = destination
-    ? Math.min(room, estimatedFuelForLeg(g, destination) + capacity * AAA_RESERVE_FRAC)
+    ? Math.min(room, estimatedFuelForLeg(g, destination) + store.capacity * AAA_RESERVE_FRAC)
     : room;
-  const marketFuel = state.market?.prices.find((price) => price.commodity === "fuel")?.price ?? COMMODITY_VALUE.fuel;
+  const marketFuel = state.market?.prices.find((price) => price.commodity === store.fuel)?.price ?? COMMODITY_VALUE[store.fuel];
   return { fuel: packageFuel, cost: AAA_SERVICE_FEE + packageFuel * marketFuel * AAA_FUEL_PRICE_MULT };
 }
 
 
+/** §charting: can this fleet survey a system? A Scout surveys and returns; a
+ * Survey Probe surveys once and is spent. */
+export function surveyCapable(g: Pick<GhostView, "kind" | "composition">): boolean {
+  const surveyor = (kind: ShipKind) => kind === "scout" || kind === "survey_probe";
+  return g.composition ? g.composition.some((c) => surveyor(c.kind) && c.count > 0) : surveyor(g.kind);
+}
+
+/** §belts: does this fleet carry a Mining Barge (and so can work a belt)? */
+export function mineCapable(g: Pick<GhostView, "kind" | "composition">): boolean {
+  return g.composition ? g.composition.some((c) => c.kind === "mining_barge" && c.count > 0) : g.kind === "mining_barge";
+}
+
+/** §pockets: mirror of the sim's PROSPECT_SECS (a prospecting pass's dwell). */
+export const PROSPECT_SECS = 60;
+
+/** §pockets: a fleet with a Scout or a Mining Barge can prospect a belt. */
+export function prospectCapable(g: Pick<GhostView, "kind" | "composition">): boolean {
+  const prospector = (kind: ShipKind) => kind === "scout" || kind === "mining_barge";
+  return g.composition ? g.composition.some((c) => prospector(c.kind) && c.count > 0) : prospector(g.kind);
+}
+
+type BeltDeposit = { resource: Commodity; richness: number; reserves?: number | null };
+/** §belts: where a barge would work in a charted system: the belt and ore
+ * with the most value per second (richness × price), counting the pockets
+ * you have found that still hold ore. Null with no ore belt. */
+export function beltMiningTarget(system: { bodies: { id: number; kind: string; deposits?: BeltDeposit[] | null; pockets?: BeltDeposit[] }[] } | undefined): { body: number; ore: Commodity; pocket: boolean } | null {
+  let best: { body: number; ore: Commodity; pocket: boolean; value: number } | null = null;
+  for (const body of system?.bodies ?? []) {
+    if (body.kind !== "asteroid_belt") continue;
+    const rows = [...(body.deposits ?? []).map(d => ({ d, pocket: false })),
+      ...(body.pockets ?? []).filter(d => (d.reserves ?? 1) > 0).map(d => ({ d, pocket: true }))];
+    for (const { d, pocket } of rows) {
+      const value = d.richness * (COMMODITY_VALUE[d.resource] ?? 0);
+      if (!best || value > best.value) best = { body: body.id, ore: d.resource, pocket, value };
+    }
+  }
+  return best && { body: best.body, ore: best.ore, pocket: best.pocket };
+}
+
+/** A fleet that would SPEND a probe on its survey (no Scout aboard). */
+export function surveySpendsProbe(g: Pick<GhostView, "kind" | "composition">): boolean {
+  const has = (kind: ShipKind) => g.composition ? g.composition.some((c) => c.kind === kind && c.count > 0) : g.kind === kind;
+  return !has("scout") && has("survey_probe");
+}
+
+/** §fuel-overhaul: every hull either has built-in drives (Interceptor, Scout)
+ * or a fitted Jump Drive; mirrors ship.rs can_jump. */
 export function jumpCapable(g: GhostView): boolean {
   const composition = g.composition ?? [];
   return g.own && composition.length > 0
-    && composition.every((c) => c.kind === "raider" || c.kind === "scout");
+    && composition.every((c) => c.count === 0 || c.kind === "raider" || c.kind === "scout"
+      || (g.loadouts ?? []).filter(s => s.kind === c.kind && s.modules.includes("jump_drive")).reduce((n, s) => n + s.n, 0) >= c.count);
 }
 
 
@@ -341,7 +459,9 @@ export function berthed(site: string): GhostView[] {
 /// convoy HULLS carry, and it never consults the flagship. An escorted lot whose
 /// flagship is a warship still hauls.
 export function hauls(g: GhostView): boolean {
-  return isPlayerFreighter(g.kind) || !!g.composition?.some((c) => isPlayerFreighter(c.kind) && c.count > 0);
+  // §belts: a Mining Barge's ore hopper is a hold too, unloaded the same way.
+  const holds = (kind: ShipKind) => isPlayerFreighter(kind) || cargoUnitsPerHull(kind) > 0;
+  return holds(g.kind) || !!g.composition?.some((c) => holds(c.kind) && c.count > 0);
 }
 
 export function dockLoadStock(g: GhostView): [Commodity, number][] {

@@ -1,0 +1,107 @@
+{
+  "triangles": 9336,
+  "renderSections": 7,
+  "zeroAreaGeometry": 0,
+  "zeroAreaTexturedUVs": 0,
+  "nonFiniteValues": 0,
+  "bottomComponents": {
+    "hull | continuous structural spine": {
+      "triangles": 48,
+      "textured": 48,
+      "validUVArea": 48,
+      "bottomViewUVs": 48
+    },
+    "cargo.port.1 | beveled pressure container": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.1 | ventral access hatch": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.2 | beveled pressure container": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.2 | ventral access hatch": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.1 | beveled pressure container": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.1 | ventral access hatch": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.2 | beveled pressure container": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.2 | ventral access hatch": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "bridge | faceted forward pressure cabin": {
+      "triangles": 39,
+      "textured": 39,
+      "validUVArea": 39,
+      "bottomViewUVs": 39
+    },
+    "bridge.port | sensor and maneuvering fairing": {
+      "triangles": 19,
+      "textured": 19,
+      "validUVArea": 19,
+      "bottomViewUVs": 19
+    },
+    "bridge.starboard | sensor and maneuvering fairing": {
+      "triangles": 19,
+      "textured": 19,
+      "validUVArea": 19,
+      "bottomViewUVs": 19
+    },
+    "stern | central drive-service fairing": {
+      "triangles": 28,
+      "textured": 28,
+      "validUVArea": 28,
+      "bottomViewUVs": 28
+    },
+    "engine.port | stepped armored engine casing": {
+      "triangles": 144,
+      "textured": 144,
+      "validUVArea": 144,
+      "bottomViewUVs": 144
+    },
+    "engine.starboard | stepped armored engine casing": {
+      "triangles": 144,
+      "textured": 144,
+      "validUVArea": 144,
+      "bottomViewUVs": 144
+    }
+  },
+  "engineSockets": [
+    "socket.engine.port",
+    "socket.engine.starboard"
+  ],
+  "embeddedImagesMatch": true,
+  "missingUndersideComponents": [],
+  "fullyTexturedUnderside": true,
+  "passed": true
+}

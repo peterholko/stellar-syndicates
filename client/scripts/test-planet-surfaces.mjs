@@ -43,6 +43,10 @@ for (const surface of ["terrestrial", "barren", "desert", "ice", "lava", "ocean"
   assert.ok(planetSurfaceArt(surface).srcset.includes(`/v1/${surface}-1536.webp 1536w`));
 }
 assert.equal(planetSurface("/art/moon-512.png", "home", { ...body, kind: "rocky", habitable: false }), "barren");
+// §marginal: a Marginal world has its own ground; a Marginal ocean borrows the ice ground for now.
+assert.equal(planetSurface("/art/derived/planets/2026-09-08/marginal-512.png?v=1", "home", { ...body, habitable: false }), "marginal");
+assert.equal(planetSurface("/art/derived/planets/2026-09-08/marginal_ocean-512.png?v=1", "home", { ...body, kind: "ocean", habitable: false }), "ice");
+assert.ok(planetSurfaceArt("marginal", true).srcset.includes("/orbit-v1/marginal-1536.webp 1536w"));
 assert.equal(planetSurface("/art/gas_giant-512.png"), null);
 
 let totalBytes = 0;

@@ -1,0 +1,28 @@
+{
+  "source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-0a59136e-705a-40ab-8a50-66dcf9523b81.png",
+  "output": "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/habitable-v1/boreal-world-v2-orbit.png",
+  "original": "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/habitable-v1/boreal-world-v2.png",
+  "prompt": "Extend this planet painting upward only, by adding more outer space above the planet. Output a 1672 × 1181 image: the attached painting is the bottom 941 rows, unchanged, and the top 240 rows are new space.\n\nDo not change anything in the attached painting. Keep the planet, terrain, water, clouds, atmosphere, horizon, stars, colours, lighting, camera angle and painterly style exactly as they are. Do not move, crop, rescale, zoom, straighten or repaint any part of it. The only change is the added space at the top.\n\nThe new space continues the painting's existing sky seamlessly: the same near-black deep space, the same small, sparse white stars at the same size and density, and the atmosphere's thin glow fading out above the horizon exactly as it already does. The seam between the old and new rows must be invisible.\n\nAdd no new objects: no moons, planets, suns, stations, ships, satellites, asteroids, nebulae, galaxies, auroras, lens flares, text, borders or interface.\n\nThe input's top edge moves to y=240 in the taller output; the horizon and all original details move down exactly 240 pixels with it. If the source already has warm upper-left glare, continue its natural falloff without adding any new light source or visible sun disc.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/habitable-v1/boreal-world-v2.png"
+  ],
+  "generatedSkyOriginallyReferenced": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-a83b5216-61bd-450e-b8fe-2eb4f76d6d31.png",
+  "reusedGeneratedSky": true,
+  "processing": "orbit",
+  "assembly": {
+    "method": "Use generated top 240 rows, match seam within new sky only, place original unresampled at y=240",
+    "originalRowsUnchanged": true,
+    "changedOriginalPixels": 0,
+    "sourcePixelSHA256": "a8d8e832a949f9638dab201bb75ee054a0fdae29163c056802286c4ad9e62b8a",
+    "outputOriginalRegionSHA256": "a8d8e832a949f9638dab201bb75ee054a0fdae29163c056802286c4ad9e62b8a"
+  },
+  "verification": {
+    "width": 1672,
+    "height": 1181,
+    "channels": 3,
+    "hasAlpha": false,
+    "fileSHA256": "a33264105bcfd29dbf10511eb2d7e08b81719eacd09afc7a7d26c1eb67cecbcb"
+  },
+  "mode": "builtin-imagegen",
+  "created": "2026-10-09"
+}

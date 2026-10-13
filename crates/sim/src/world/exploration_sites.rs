@@ -79,8 +79,15 @@ impl World {
             let mut hostile_weight = 0.0;
             let mut friendly_weight = fleet.combat_weight();
             let mut nearest: Option<(EntityId, Vec2, f64)> = None;
+            // §founding R3: an escorted hull keeps working through the scripted
+            // founding Privateer. Its guard (on station or mid-sortie) owns that
+            // lesson; fleeing it only forced a manual re-dispatch.
+            let escorted = self.founding_escorted(fleet.owner, id);
             for (&other_id, other) in &self.fleets {
                 if other_id == id || !other.is_combatant() {
+                    continue;
+                }
+                if escorted && other.founding_privateer {
                     continue;
                 }
                 // Match standing system defense's local-light approximation.
@@ -350,7 +357,7 @@ impl World {
                 ),
                 SiteKind::Asteroids => (
                     "Ice comet fragments",
-                    vec![(C::Volatiles, 100), (C::Fuel, 20)],
+                    vec![(C::Volatiles, 100), (C::Deuterium, 20)],
                     vec![],
                     "prop_efficient_burns",
                     0.20,
@@ -1222,14 +1229,15 @@ mod tests {
         let mut threat = Fleet::single(
             pirate,
             PlayerId::PIRATE,
-            ShipKind::Cruiser,
+            ShipKind::Raider,
             pos + Vec2::new(EXPEDITION_LOOKOUT_RANGE - 1.0, 0.0),
             FleetOrder::Idle,
             None,
         );
         // Its CURRENT position crossed the radius, but local light still places
-        // this broadcasting capital outside. A truth-radius test would flee early.
-        threat.vel = Vec2::new(-500.0, 0.0);
+        // it outside. A truth-radius test would flee early. A lone Raider at full
+        // speed is the detection anchor: it is seen at exactly the lookout range.
+        threat.vel = Vec2::new(-ShipKind::Raider.max_speed().max(500.0), 0.0);
         w.fleets.insert(pirate, threat);
         w.autonomous_exploration_safety(&mut Vec::new());
         assert!(matches!(

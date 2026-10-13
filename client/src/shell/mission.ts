@@ -1,23 +1,24 @@
 import type { GhostView, MissionProfile, PendingOrderView } from "../protocol";
 import type { FleetCommand } from "../core/fleetorders";
 
-export const DEFAULT_MISSION: MissionProfile = { priority: "balanced", screening: "automatic", withdrawal: "never" };
+export const DEFAULT_MISSION: MissionProfile = { priority: "balanced", screening: "automatic", withdrawal: "never", formation: "automatic" };
 export const MISSION_FIELDS: { key: keyof MissionProfile; label: string; choices: [string, string][] }[] = [
   { key: "priority", label: "Target priority", choices: [["balanced", "Balanced"], ["missile_ships", "Missile ships"], ["installations", "Installations"], ["transports", "Transports"]] },
-  { key: "screening", label: "Formation role", choices: [["automatic", "Automatic"], ["protect_transports", "Screen transports"]] },
+  { key: "formation", label: "Formation", choices: [["automatic", "Automatic"], ["battle_line", "Battle line"], ["escort_ring", "Escort ring"], ["wedge", "Wedge"], ["free", "Free"]] },
+  { key: "screening", label: "Escort duty", choices: [["automatic", "Automatic"], ["protect_transports", "Screen transports"]] },
   { key: "withdrawal", label: "Withdraw if a hull falls below", choices: [["never", "Never"], ["hull30", "30%"], ["hull50", "50%"], ["hull70", "70%"]] },
 ];
 
 export function missionCommand(g: GhostView, field: string | undefined, value: string | undefined): FleetCommand | null {
   if (!g.own || !MISSION_FIELDS.some(f => f.key === field && f.choices.some(([v]) => v === value))) return null;
-  const mission = { ...(g.mission_profile ?? DEFAULT_MISSION), [field!]: value } as MissionProfile;
+  const mission = { ...DEFAULT_MISSION, ...(g.mission_profile ?? {}), [field!]: value } as MissionProfile;
   return { type: "SetFleetMission", fleet_id: g.id, mission };
 }
 
 export function missionHtml(g: GhostView, orders: { lost?: boolean; configuration?: PendingOrderView["configuration"] }[], mobile = false): string {
   if (!g.own) return "";
   const pending = [...orders].reverse().find(o => !o.lost && o.configuration?.kind === "mission")?.configuration;
-  const current = pending?.kind === "mission" ? pending.mission : g.mission_profile ?? DEFAULT_MISSION;
+  const current = { ...DEFAULT_MISSION, ...(pending?.kind === "mission" ? pending.mission : g.mission_profile ?? {}) };
   const action = mobile ? 'data-mobile-act="fleet-mission"' : 'data-deck-act="fleet-mission"';
   return `<section class="${mobile ? "m-section" : "deck-section"}"><h3>Mission profile${pending ? " · signal in flight" : ""}</h3>${MISSION_FIELDS.map(f =>
     `<div class="${mobile ? "m-action-group" : "deck-command-block"}"><b>${f.label}</b><div class="${mobile ? "m-actions" : "deck-segment"}">${f.choices.map(([v, label]) =>

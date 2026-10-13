@@ -12,9 +12,11 @@ export function mountDeckMarkup(root: HTMLElement): void {
           <span id="deck-pacing"></span>
           <span id="deck-link">offline</span>
         </div>
+        <div id="deck-construction-chip" class="deck-construction-chip" hidden></div>
         <nav id="deck-nav" class="deck-nav" aria-label="Command Deck">
           ${navButton("command", "Command")}
           ${navButton("fleets", "Fleets")}
+          ${navButton("logistics", "Logistics")}
           ${navButton("market", "Market")}
           ${navButton("research", "Research")}
           ${navButton("officers", "Officers")}
@@ -26,12 +28,15 @@ export function mountDeckMarkup(root: HTMLElement): void {
         </nav>
         <button id="deck-profile-open" type="button">Profile</button>
       </header>
+      <div id="deck-construction-menu" class="deck-construction-menu" role="menu" aria-label="Construction across your worlds" hidden></div>
       <div id="deck-nav-overflow" class="deck-nav-overflow" role="menu" hidden>
-        ${overflowButton("rankings", "Rankings")}
+        ${overflowButton("research", "Research")}
+        ${overflowButton("officers", "Officers")}
         ${overflowButton("operations", "Operations")}
         ${overflowButton("syndicate", "Syndicate")}
         ${overflowButton("faction", "Faction")}
         ${overflowButton("log", "Log")}
+        ${overflowButton("rankings", "Rankings")}
       </div>
       <section id="deck-planet-stage" class="deck-planet-stage" aria-label="Planet view" hidden>
         <div id="deck-planet-stage-body" class="deck-planet-stage__body"></div>
@@ -56,6 +61,17 @@ export function mountDeckMarkup(root: HTMLElement): void {
         </header>
         <div id="deck-build-workbench-body" class="deck-build-workbench__body"></div>
       </section>
+      <section id="deck-fleet-workbench" class="deck-build-workbench deck-fleet-workbench" aria-labelledby="deck-fleet-workbench-title" tabindex="-1" hidden>
+        <header class="deck-build-workbench__header">
+          <div>
+            <span>Fleet details</span>
+            <h2 id="deck-fleet-workbench-title">Fleet</h2>
+          </div>
+          <button type="button" data-deck-act="fleet-details-close" aria-label="Close fleet details">✕</button>
+        </header>
+        <div id="deck-fleet-workbench-body" class="deck-build-workbench__body deck-fleet-workbench__body"></div>
+      </section>
+      <aside id="deck-welcome" class="deck-welcome" aria-label="Welcome back report" hidden></aside>
       <section id="deck-toast-lane" class="deck-toast-lane" aria-live="polite"></section>
       <div id="deck-bottom-band" class="deck-bottom-band">
         <section id="deck-command-strip" class="deck-command-strip" aria-live="polite"></section>
@@ -91,7 +107,7 @@ export function mountDeckMarkup(root: HTMLElement): void {
               <kbd>Enter</kbd><span>Confirm the pending fleet order</span>
               <kbd>J / G</kbd><span>Arm Jump / Guard for the selected fleet</span>
               <kbd>[ / ]</kbd><span>Cycle and center your fleets</span>
-              <kbd>M V R P</kbd><span>Market · Fleets · Research · Officers</span>
+              <kbd>M V T R P</kbd><span>Market · Fleets · Logistics · Research · Officers</span>
               <kbd>U Y C K L</kbd><span>Operations · Syndicate · Faction · Rankings · Log</span>
               <kbd>S</kbd><span>Open the selected system's workspace</span>
               <kbd>Esc</kbd><span>Cancel one layer: order · aim · scrub · overlay · workspace · selection</span>
@@ -110,6 +126,37 @@ export function mountDeckMarkup(root: HTMLElement): void {
         </section>
       </div>
     </div>`;
+}
+
+/** Top-bar destinations that fold into More first when the row runs out of
+ * room; Command, Fleets, Logistics and Market always stay. */
+const NAV_FOLD_ORDER = ["faction", "syndicate", "operations", "officers", "log", "research"];
+
+/** Keep every destination reachable: when the row would clip (window width,
+ * credit digits, the construction chip), fold the least-used destinations into
+ * More and list exactly those there. */
+export function fitDeckNav(): void {
+  const nav = document.getElementById("deck-nav"), overflow = document.getElementById("deck-nav-overflow");
+  if (!nav || !overflow) return;
+  const button = (route: string) => nav.querySelector<HTMLButtonElement>(`:scope > [data-route="${route}"]`);
+  nav.classList.remove("has-folds");
+  for (const route of NAV_FOLD_ORDER) button(route)?.classList.remove("is-folded");
+  for (const route of NAV_FOLD_ORDER) {
+    if (nav.scrollWidth <= nav.clientWidth) break;
+    nav.classList.add("has-folds");
+    button(route)?.classList.add("is-folded");
+  }
+  for (const item of overflow.querySelectorAll<HTMLButtonElement>("[data-route]")) {
+    const twin = button(item.dataset.route ?? "");
+    item.hidden = !!twin && !twin.classList.contains("is-folded");
+  }
+  syncNavMoreBadge();
+}
+
+/** A folded destination's alert shows as a dot on More. */
+export function syncNavMoreBadge(): void {
+  const nav = document.getElementById("deck-nav");
+  nav?.querySelector("#deck-nav-more")?.classList.toggle("has-badge", !!nav.querySelector(":scope > .is-folded .deck-nav__badge:not([hidden])"));
 }
 
 function navButton(route: string, text: string): string {

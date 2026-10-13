@@ -24,14 +24,14 @@ class Sprite {
 
 function fixture(text = source, overrides = {}) {
   const ast = ts.createSourceFile("render.ts", text, ts.ScriptTarget.Latest, true);
-  const constants = ["ZOOM_MIN_FACTOR", "ZOOM_MAX_FACTOR", "INITIAL_HOME_ZOOM_FACTOR",
+  const constants = ["ZOOM_MIN_FACTOR", "ZOOM_MAX_FACTOR", "SYSTEM_ZOOM_FACTOR", "INITIAL_HOME_ZOOM_FACTOR",
     "MACHINE_ZOOM_END", "HUB_SIZE_STOPS", "HUB_ART_FILL"];
   const declarations = ast.statements.filter(ts.isVariableStatement)
     .flatMap(n => [...n.declarationList.declarations])
     .filter(n => constants.includes(n.name.getText(ast)));
   assert.equal(declarations.length, constants.length);
   const names = ["viewW", "viewH", "viewportRect", "cameraRect", "setCameraRect",
-    "galaxyBounds", "fitScale", "worldToScreen", "drawHubBody", "hubRenderedPx", "hubHitRadius"];
+    "galaxyBounds", "fitScale", "worldToScreen", "drawHubBody", "hubZoom", "hubRenderedPx", "hubHitRadius"];
   const owner = ast.statements.find(n => ts.isClassDeclaration(n) && n.name?.text === "Renderer");
   const methods = owner.members.filter(n => names.includes(n.name?.getText(ast)));
   assert.equal(methods.length, names.length);
@@ -51,6 +51,7 @@ function fixture(text = source, overrides = {}) {
   renderer.systemScene = { layout() {} };
   renderer.bodyLayer = { addChild() {} };
   renderer.hubText = { position: { set: (x, y) => { renderer.labelX = x; renderer.labelY = y; } } };
+  renderer.hubModel = { place: (...args) => { renderer.placed = args; }, labelDrop: half => half };
   renderer.texHub = { width: 1254 };
   renderer.texStation = { width: 256 };
   renderer.cx = renderer.cy = 0;
@@ -67,7 +68,8 @@ function atZoom(renderer, zoom) {
 
 const stops = [[.9, 44], [4, 64], [24, 120], [96, 180]];
 function checkEndpoints(renderer) {
-  for (const [zoom, size] of [...stops, [.1, 44], [153.6, 180]]) {
+  // Past 96× the station magnifies with the camera like inspected hulls, to the 384× limit.
+  for (const [zoom, size] of [...stops, [.1, 44], [153.6, 288], [192, 360], [384, 720], [768, 720]]) {
     atZoom(renderer, zoom);
     close(renderer.hubRenderedPx(), size, `visible size at ${zoom}x`);
     close(renderer.hubHitRadius(), size / 2, `pick radius at ${zoom}x`);
@@ -86,19 +88,20 @@ for (const [width, height, resolution] of [[1920, 1080, 1], [1366, 768, 1], [390
 const renderer = fixture();
 let previous = 44;
 let maxStep = 0;
-for (let zoom = .45; zoom <= 192; zoom *= 1.02) {
+for (let zoom = .45; zoom <= 500; zoom *= 1.02) {
   atZoom(renderer, zoom);
   const size = renderer.hubRenderedPx();
-  assert.ok(size >= previous - 1e-8 && size >= 44 && size <= 180, `bounded monotone growth at ${zoom}`);
-  maxStep = Math.max(maxStep, size - previous);
+  assert.ok(size >= previous - 1e-8 && size >= 44 && size <= 720, `bounded monotone growth at ${zoom}`);
+  if (zoom <= 96) maxStep = Math.max(maxStep, size - previous);
+  else assert.ok(size <= previous * 1.02 + 1e-6, `past 96× the station grows with the camera, never faster (${zoom})`);
   previous = size;
 }
-assert.ok(maxStep < 1.4, "a 2% camera zoom must not balloon the station");
+assert.ok(maxStep < 1.4, "a 2% camera zoom must not balloon the station on the approach");
 for (const [zoom] of stops) {
   atZoom(renderer, zoom * (1 - 1e-6));
   const before = renderer.hubRenderedPx();
   atZoom(renderer, zoom * (1 + 1e-6));
-  assert.ok(Math.abs(renderer.hubRenderedPx() - before) < 1e-6, `smooth join at ${zoom}x`);
+  assert.ok(Math.abs(renderer.hubRenderedPx() - before) < 1e-3, `continuous at ${zoom}x`);
 }
 
 function checkPanels(renderer) {
@@ -121,7 +124,9 @@ function checkPanels(renderer) {
 }
 checkPanels(fixture());
 
-const asset = source.match(/load\("(\/art\/wormhole[^"]+)"\)/)?.[1];
+assert.match(source, /load\(HUB_MODEL\.sprite\)/, "the renderer loads the catalogued station sprite");
+const catalog = readFileSync(new URL("../src/hub-model.generated.ts", import.meta.url), "utf8");
+const asset = catalog.match(/"sprite": "(\/art\/[^"?]+)/)?.[1];
 assert.ok(asset, "measure the hub asset the renderer actually loads");
 const { data, info } = await sharp(new URL(`../public${asset}`, import.meta.url).pathname)
   .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -147,10 +152,16 @@ function checkDraw(renderer) {
       close(renderer.labelY, renderer.hubSprite.y + renderer.hubSprite.height / 2 + 6,
         "label clears the entire sprite at every zoom and texture resolution");
       assert.ok(renderer.hubSprite.drawScale * 2 < 1, "enough native detail even at 2x DPR");
+      const [flat, x, y, handedZoom] = renderer.placed;
+      assert.equal(flat, renderer.hubSprite, "the live station sits on the drawn sprite");
+      assert.deepEqual([x, y], [renderer.hubSprite.x, renderer.hubSprite.y]);
+      close(handedZoom, zoom, "the live blend follows the hub's own panel-free zoom");
     }
   }
   renderer.texHub = null;
+  renderer.placed = null;
   renderer.drawHubBody();
+  assert.equal(renderer.placed, null, "no live station over the loading fallback");
   close(renderer.hubSprite.drawScale * renderer.texStation.width, 28, "loading fallback unchanged");
   close(Math.max(24, renderer.hubHitRadius()), 24, "fallback retains minimum click target");
   close(renderer.labelY, renderer.hubSprite.y + 14 + 6, "label also clears the loading fallback");
@@ -177,11 +188,11 @@ assert.throws(() => checkPanels(fixture(source.replace(fullFit, "this.fitScale()
 const interpolation = "return from.px + (to.px - from.px) * s;";
 assert.ok(source.includes(interpolation));
 const nativeCap = source.replace(interpolation,
-  "return from.px + ((to.zoom === ZOOM_MAX_FACTOR ? this.texHub.width : to.px) - from.px) * s;");
+  "return from.px + ((to.zoom === SYSTEM_ZOOM_FACTOR ? this.texHub.width : to.px) - from.px) * s;");
 assert.throws(() => checkEndpoints(fixture(nativeCap)), /visible size/);
 assert.throws(() => checkDraw(fixture(source, { HUB_ART_FILL: .93 })), /drawn visible extent/);
-const labelPosition = "h.y + this.hubSprite.height / 2 + 6";
+const labelPosition = "h.y + this.hubModel.labelDrop(this.hubSprite.height / 2) + 6";
 assert.ok(source.includes(labelPosition));
 assert.throws(() => checkDraw(fixture(source.replace(labelPosition, "h.y + 13"))), /label clears/);
 
-console.log(`Hub sizing: 44/64/120/180px visible stops; max 2% zoom step ${maxStep.toFixed(2)}px; panel/DPR stability, texture independence, art/pick calibration, and rollback teeth passed.`);
+console.log(`Hub sizing: 44/64/120/180px visible stops, then with the camera to 720px at 384×; max 2% zoom step ${maxStep.toFixed(2)}px; panel/DPR stability, texture independence, art/pick calibration, and rollback teeth passed.`);

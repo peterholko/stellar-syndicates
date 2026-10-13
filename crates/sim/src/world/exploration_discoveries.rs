@@ -69,13 +69,13 @@ impl World {
                 .filter(|p| region.contains(*p)) else { continue; };
             let (name, kind, task, requirement, costs, cargo, blueprint) = match region.kind {
                 N::MolecularCloud => ("Condensate pocket", SiteKind::Asteroids, ExpeditionTask::Extract,
-                    StudyRequirement::FuelledFreighter, vec![(C::Fuel, 6)], vec![(C::Volatiles, 300)], None),
+                    StudyRequirement::FuelledFreighter, vec![(C::Deuterium, 6)], vec![(C::Volatiles, 300)], None),
                 N::IonNebula => ("Ion resonance lattice", SiteKind::Anomaly, ExpeditionTask::Study,
                     StudyRequirement::ResearchTeam, vec![], vec![], Some(M::NebulaSpectrometer)),
                 N::DustCloud => ("Buried flight recorder", SiteKind::Derelict, ExpeditionTask::Study,
                     StudyRequirement::ResearchTeam, vec![], vec![], Some(M::SurveyDrive)),
                 N::SupernovaRemnant => ("Shielded remnant recovery", SiteKind::Asteroids, ExpeditionTask::Extract,
-                    StudyRequirement::ShieldedFreighter, vec![(C::Polymers, 8), (C::Fuel, 6)],
+                    StudyRequirement::ShieldedFreighter, vec![(C::Polymers, 8), (C::Deuterium, 6)],
                     vec![(C::RareElements, 120), (C::PrecisionComponents, 12)], None),
                 N::PrecursorCloud => ("Fold-space echo", SiteKind::Anomaly, ExpeditionTask::Study,
                     StudyRequirement::ResearchTeam, vec![], vec![], Some(M::SurveyDrive)),
@@ -413,7 +413,7 @@ mod tests {
         let a = ship(&mut w, p, ShipKind::Convoy, site);
         let b = ship(&mut w, p, ShipKind::Convoy, site);
         for id in [a, b] {
-            w.fleets.get_mut(&id).unwrap().add_cargo(C::Fuel, 12);
+            w.fleets.get_mut(&id).unwrap().add_cargo(C::Deuterium, 12);
             w.finish_deep_expedition(id, p, site, ExpeditionTask::Extract, &mut vec![]);
         }
         let recovered: u32 = [a, b].into_iter().map(|id| w.fleets[&id].cargo_stacks().iter().filter(|c| c.commodity == C::Volatiles).map(|c| c.units).sum::<u32>()).sum();
@@ -434,7 +434,7 @@ mod tests {
         let site = w.exploration.sites.values().find(|s| s.details.environment == Some(N::SupernovaRemnant)).unwrap().id;
         identify(&mut w, p, site, scout);
         let f = ship(&mut w, p, ShipKind::Convoy, site);
-        w.fleets.get_mut(&f).unwrap().add_cargo(C::Fuel, 6);
+        w.fleets.get_mut(&f).unwrap().add_cargo(C::Deuterium, 6);
         w.finish_deep_expedition(f, p, site, ExpeditionTask::Extract, &mut vec![]);
         assert_eq!(w.fleets[&f].cargo_units(), 6);
         w.fleets.get_mut(&f).unwrap().add_cargo(C::Polymers, 8);

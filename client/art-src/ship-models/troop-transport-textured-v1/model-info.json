@@ -1,0 +1,30 @@
+{
+  "meshes": 7,
+  "renderSections": 7,
+  "sourceComponents": 88,
+  "triangles": 11072,
+  "exportedVertices": 12552,
+  "dimensionsXYZ": [
+    11.5,
+    3.11,
+    17.75
+  ],
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "embeddedTextures": 3,
+  "axes": "Y up, -Z forward",
+  "source": "../../troop-transport-reference-v1/troop-transport-reference.png",
+  "generator": "Python/NumPy, no Blender",
+  "optimization": "Static parts combined by material; independent turret assemblies retained; exact vertex deduplication; 16-bit indices where possible",
+  "engineCount": 2,
+  "turretCount": 0,
+  "referenceViews": [
+    "front",
+    "back",
+    "top",
+    "bottom",
+    "side"
+  ]
+}

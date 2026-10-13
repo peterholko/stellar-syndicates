@@ -1,10 +1,14 @@
 import {
+  THEATER_EPILOGUE_ROUNDS,
   theaterAttach,
   theaterAvailable,
   theaterClose,
+  theaterFollow,
   theaterResetCamera,
+  theaterSelection,
   theaterSetTime,
   theaterShipAppearance,
+  type TheaterShipInfo,
 } from "../../battletheater";
 import {
   battleReportForRecord,
@@ -13,6 +17,7 @@ import {
   clearBattleCloseTimer,
 } from "../../core/derive/fleet";
 import { fmtDur, informationDelay } from "../../core/derive/format";
+import { advanceLive, liveStart } from "../../core/derive/liveplay";
 import { nearestSystemName, systemName } from "../../core/derive/geo";
 import { latestPendingOrder } from "../../core/derive/orders";
 import {
@@ -22,7 +27,7 @@ import {
   groundTheaterSetTime,
   groundTheaterStep,
 } from "../../groundtheater";
-import { icon } from "../../icons";
+import { icon, label } from "../../icons";
 import {
   countClassLabel,
   type BattleRecordView,
@@ -58,9 +63,15 @@ export class DeckTheaters {
   private battleId: string | null = null;
   private battleRound = 0;
   private battlePlaying = false;
-  private battleSpeed = 4;
+  private battleSpeed = 1;
   private battleLive = false;
+  /// The battle viewer's panel, its observer and its last measured size.
+  private stageMount: HTMLElement | null = null;
+  private stageObserver: ResizeObserver | null = null;
+  private stageSize: { width: number; height: number } | null = null;
   private battleAccum = 0;
+  /// Rounds of epilogue played past a concluded record's last round.
+  private battleEpilogue = 0;
   private battleLastTs = 0;
   private battleLoop = 0;
   private battleSignature = "";
@@ -113,10 +124,13 @@ export class DeckTheaters {
     const running = record.outcome === null;
     const frontier = record.rounds.length - 1;
     this.battleLive = running;
-    this.battleSpeed = running ? 1 : 4;
-    this.battleRound = running ? Math.max(0, frontier) : 0;
+    this.battleSpeed = 1; // replays open at the battle's own pace
+    // Live: a round behind the newest arrival and a little more (liveplay.ts).
+    const start = running ? liveStart(record.rounds, this.ctx.state.tickHz || 30, this.ctx.state.pacingScale) : { round: 0, frac: 0 };
+    this.battleRound = start.round;
     this.battlePlaying = !running && frontier > 0;
-    this.battleAccum = 0;
+    this.battleAccum = start.frac;
+    this.battleEpilogue = 0;
     this.battleLastTs = 0;
     this.battleLastFrontier = frontier;
     this.battleLastArrivalWallMs = performance.now();
@@ -233,6 +247,7 @@ export class DeckTheaters {
         if (!this.battlePlaying && record && this.battleRound >= frontier) this.battleRound = 0;
         this.battlePlaying = !this.battlePlaying;
         this.battleAccum = 0;
+        this.battleEpilogue = 0;
         clearBattleAftermathTimer();
         this.renderBattle(true);
         break;
@@ -242,6 +257,7 @@ export class DeckTheaters {
         this.battlePlaying = false;
         this.battleSpeed = Number(button.dataset.speed) || 1;
         this.battleAccum = 0;
+        this.battleEpilogue = 0;
         clearBattleAftermathTimer();
         this.renderBattle(true);
         break;
@@ -251,6 +267,7 @@ export class DeckTheaters {
         this.battleLive = false;
         this.battlePlaying = false;
         this.battleAccum = 0;
+        this.battleEpilogue = 0;
         clearBattleAftermathTimer();
         this.renderBattle(true);
         break;
@@ -272,6 +289,8 @@ export class DeckTheaters {
         this.hooks.openDoctrine();
         break;
       case "reset-camera": theaterResetCamera(); break;
+      case "follow": theaterFollow(true); this.renderBattle(true); break;
+      case "unfollow": theaterFollow(false); this.renderBattle(true); break;
     }
   }
 
@@ -321,8 +340,30 @@ export class DeckTheaters {
     }, SEMANTIC_TRANSITION_MS);
   }
 
+  /// The canvas is drawn at its panel's size, which the layout alone sets
+  /// (never the canvas), so a resize can't feed back on itself. One read when
+  /// a panel appears, then the observer reports changes.
+  private observeStage(mount: HTMLElement): void {
+    if (this.stageMount === mount) return;
+    this.stageObserver?.disconnect();
+    this.stageMount = mount;
+    const measure = (): boolean => {
+      const width = mount.clientWidth, height = mount.clientHeight;
+      if (width <= 0 || height <= 0 || (width === this.stageSize?.width && height === this.stageSize?.height)) return false;
+      this.stageSize = { width, height };
+      return true;
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    this.stageObserver = new ResizeObserver(() => { if (measure()) this.renderBattle(); });
+    this.stageObserver.observe(mount);
+  }
+
   private finishBattleClose(after?: () => void): void {
     clearBattleCloseTimer();
+    this.stageObserver?.disconnect();
+    this.stageObserver = null;
+    this.stageMount = null;
     this.withdrawal.clear();
     this.battleId = null;
     this.hooks.battleSelectionChanged?.();
@@ -360,24 +401,24 @@ export class DeckTheaters {
     const dt = this.battleLastTs ? Math.min(0.25, (timestamp - this.battleLastTs) / 1_000) : 0;
     if (this.battleLive && frontier >= 0) {
       if (this.battleRound < frontier) {
-        const hz = this.ctx.state.tickHz || 30;
-        const windowSeconds = Math.max(0.2, (record.rounds[this.battleRound + 1].tick - record.rounds[this.battleRound].tick) / hz);
-        // Match sim seconds per wall second (including accelerated playtests),
-        // not replay speed. The arrived frontier still caps every advancement.
-        this.battleAccum += dt * this.ctx.state.pacingScale / windowSeconds;
-        let changed = false;
-        while (this.battleAccum >= 1 && this.battleRound < frontier) {
-          this.battleRound++;
-          this.battleAccum--;
-          changed = true;
-        }
-        if (this.battleRound >= frontier) this.battleAccum = 0;
+        // At the battle's pace (sim seconds per wall second, including
+        // accelerated playtests), trailing the newest arrival so a round that
+        // lands a beat late never stops the hulls (liveplay.ts). The arrived
+        // frontier still caps every advancement.
+        const head = advanceLive({ round: this.battleRound, frac: this.battleAccum }, record.rounds,
+          this.ctx.state.tickHz || 30, this.ctx.state.pacingScale, (timestamp - this.battleLastArrivalWallMs) / 1_000, dt,
+          record.outcome !== null);
+        const changed = head.round !== this.battleRound;
+        this.battleRound = head.round;
+        this.battleAccum = head.frac;
         if (changed) this.renderBattle(true);
       } else {
         this.battleAccum = 0;
         if (record.outcome !== null) {
+          // The fight is over: play its epilogue, then stop.
           this.battleLive = false;
-          this.battlePlaying = false;
+          this.battlePlaying = true;
+          this.battleEpilogue = 0;
           this.renderBattle(true);
         }
       }
@@ -397,12 +438,20 @@ export class DeckTheaters {
       }
       if (this.battleRound >= frontier) {
         this.battleAccum = 0;
-        this.battlePlaying = false;
-        changed = true;
+        // A concluded battle runs a short epilogue past its last record so the
+        // final deaths' breaches, wrecks and debris play out, then stops.
+        const hz = this.ctx.state.tickHz || 30;
+        const lastWindow = frontier > 0 ? Math.max(0.2, (record.rounds[frontier].tick - record.rounds[frontier - 1].tick) / hz) : 0.5;
+        if (record.outcome !== null && this.battleEpilogue < THEATER_EPILOGUE_ROUNDS) {
+          this.battleEpilogue = Math.min(THEATER_EPILOGUE_ROUNDS, this.battleEpilogue + dt * this.battleSpeed / lastWindow);
+        } else {
+          this.battlePlaying = false;
+          changed = true;
+        }
       }
       if (changed) this.renderBattle(true);
     }
-    theaterSetTime(this.battleRound, Math.min(1, this.battleAccum), this.battleLive);
+    this.setTheaterTime();
     this.battleLastTs = timestamp;
     this.battleLoop = requestAnimationFrame((time) => this.tickBattle(time));
   }
@@ -460,7 +509,7 @@ export class DeckTheaters {
       record.id, record.rounds.length, record.outcome, this.battleRound, this.battlePlaying,
       this.battleSpeed, this.battleLive, this.battleSemantic,
       this.battleLastAge === null ? null : Math.ceil(this.battleLastAge), stale,
-      this.withdrawSignature(record.id), Math.floor(wallNow / 1_000),
+      this.withdrawSignature(record.id), Math.floor(wallNow / 1_000), shipCardKey(theaterSelection()),
     ]);
     if (force || signature !== this.battleSignature) {
       this.battleSignature = signature;
@@ -470,9 +519,17 @@ export class DeckTheaters {
     // The Pixi holder is persistent while the card is morph-rendered. Reattach
     // on every render attempt so no chrome rebuild can strand its live canvas.
     const mount = this.battleCard.querySelector<HTMLElement>("[data-battle-theater-mount]");
-    if (mount && theaterAvailable()) theaterAttach(mount, record, this.ctx.state.galaxy?.pirate_id ?? null, undefined, this.ctx.state);
-    else theaterClose();
-    theaterSetTime(this.battleRound, Math.min(1, this.battleAccum), this.battleLive);
+    if (mount && theaterAvailable()) {
+      this.observeStage(mount);
+      theaterAttach(mount, record, this.ctx.state.galaxy?.pirate_id ?? null, this.stageSize ?? undefined, this.ctx.state);
+    } else theaterClose();
+    this.setTheaterTime();
+  }
+
+  /// Replay time for the theater: the round, its progress, and any epilogue.
+  private setTheaterTime(): void {
+    const t = this.battleRound + Math.min(1, this.battleAccum) + this.battleEpilogue;
+    theaterSetTime(Math.floor(t), t - Math.floor(t), this.battleLive);
   }
 
   private battleHtml(record: BattleRecordView, stale: boolean, stalled: boolean): string {
@@ -497,11 +554,14 @@ export class DeckTheaters {
       ? `<div class="deck-theater-stage" data-battle-theater-mount></div>`
       : frame ? truthMap(frame, record.own_side) : "";
     const ticks = running ? "" : record.rounds.map((_entry, index) => `<button type="button" class="deck-theater-tick${index < this.battleRound ? " is-seen" : ""}${index === this.battleRound ? " is-current" : ""}" data-deck-theater-act="round" data-round="${index}" aria-label="Round ${index + 1}"></button>`).join("");
-    const transport = frontier < 0 || running ? "" : `<div class="deck-theater-transport"><button type="button" data-deck-theater-act="play">${this.battlePlaying ? "Pause" : "Play"}</button><span class="deck-theater-speeds">${[1, 4, 16].map((speed) => `<button type="button" data-deck-theater-act="speed" data-speed="${speed}" aria-pressed="${this.battleSpeed === speed}">${speed}×</button>`).join("")}</span><div class="deck-theater-scrub">${ticks}</div></div>`;
+    const transport = frontier < 0 || running ? "" : `<div class="deck-theater-transport"><button type="button" data-deck-theater-act="play">${this.battlePlaying ? "Pause" : "Play"}</button><span class="deck-theater-speeds">${[1, 4].map((speed) => `<button type="button" data-deck-theater-act="speed" data-speed="${speed}" aria-pressed="${this.battleSpeed === speed}">${speed}×</button>`).join("")}</span><div class="deck-theater-scrub">${ticks}</div></div>`;
     const elapsed = round ? Math.max(0, round.tick / (this.ctx.state.tickHz || 30) - record.started_at) : 0;
     const withdraw = this.withdrawHtml(record.id);
     const report = !running && battleReportForRecord(record) ? `<button type="button" data-deck-theater-act="report">Battle aftermath</button>` : "";
-    return `<header class="deck-theater-head"><div><span>${record.raid ? "Raid" : "Battle"} · ${record.fidelity === "participant" ? "participant record" : "sensor estimate"}</span><h2>Engagement ${esc(nearestSystemName(record.pos))}</h2></div><div><b>${esc(counter)}</b><button type="button" data-deck-theater-act="close" aria-label="Close battle theater">✕</button></div></header>${status}${forces}${stage}${notes}${transport}${round ? `<p class="deck-theater-time">At +${fmtDur(elapsed)} into the fight · arrived record round ${this.battleRound + 1}</p>` : ""}${withdraw}<footer class="deck-theater-footer"><button type="button" data-deck-theater-act="reset-camera">Reset camera</button>${record.own_side !== null ? `<button type="button" data-deck-theater-act="doctrine">Fleet doctrine</button>` : ""}${report}<span>Esc closes · replay never advances beyond arrived light.</span></footer>`;
+    // The viewer takes the card's height under the header, its replay
+    // controls beneath it; the status, forces and actions sit beside it on a
+    // wide window and below it on a narrow one (deck.css).
+    return `<header class="deck-theater-head"><div><span>${record.raid ? "Raid" : "Battle"} · ${record.fidelity === "participant" ? "participant record" : "sensor estimate"}</span><h2>Engagement ${esc(nearestSystemName(record.pos))}</h2></div><div><b>${esc(counter)}</b><button type="button" data-deck-theater-act="close" aria-label="Close battle theater">✕</button></div></header><div class="deck-theater-body"><div class="deck-theater-main">${stage}${transport}</div><aside class="deck-theater-info">${shipCardHtml(theaterSelection(), record)}${status}${forces}${notes}${round ? `<p class="deck-theater-time">At +${fmtDur(elapsed)} into the fight · arrived record round ${this.battleRound + 1}</p>` : ""}${withdraw}<footer class="deck-theater-footer"><button type="button" data-deck-theater-act="reset-camera">Reset camera</button>${record.own_side !== null ? `<button type="button" data-deck-theater-act="doctrine">Fleet doctrine</button>` : ""}${report}<span>Esc closes · replay never advances beyond arrived light.</span></footer></aside></div>`;
   }
 
   private withdrawHtml(recordId: string): string {
@@ -549,6 +609,46 @@ export class DeckTheaters {
   private groundRecord(id: string): GroundRecordView | undefined {
     return this.ctx.state.groundRecords.find((record) => record.id === id);
   }
+}
+
+/// What makes the selected hull's card change (hull in whole percents).
+function shipCardKey(info: TheaterShipInfo | null): unknown {
+  return info && [info.cid, Math.round(info.hull * 100), info.status, info.following];
+}
+
+const SHIP_STATUS: Record<TheaterShipInfo["status"], string> = {
+  fighting: "In the fight", arriving: "Arriving", withdrawing: "Withdrawing",
+  leaving: "Leaving the battle", destroyed: "Destroyed",
+};
+
+/// "Mass Driver ×2 · Whipple Armor".
+function fitText(modules: string[]): string {
+  const counts = new Map<string, number>();
+  for (const m of modules) counts.set(m, (counts.get(m) ?? 0) + 1);
+  return [...counts].map(([m, n]) => (n > 1 ? `${label(m)} ×${n}` : label(m))).join(" · ");
+}
+
+/// The selected hull, at the top of the info column: what it is, whose,
+/// what it is doing, its hull and fit, and the follow control.
+function shipCardHtml(info: TheaterShipInfo | null, record: BattleRecordView): string {
+  if (!info) return `<section class="deck-theater-ship is-empty"><span>Click a ship to see it here and follow it.</span></section>`;
+  const pct = Math.round(info.hull * 100);
+  const whose = info.own ? "Your ship"
+    : record.own_side === null ? (info.side === 0 ? "Attackers" : "Defenders") : "Enemy ship";
+  const fit = info.station ? "Station battery" : info.plat ? "Platform battery"
+    : info.fits.length === 0 ? "Unfitted" : info.fits.length === 1 ? fitText(info.fits[0])
+    : `One of: ${info.fits.map(fitText).join(" / ")}`;
+  const name = `${esc(info.label)}${info.flagship ? ` <span>“${esc(info.flagship)}”</span>` : ""}`;
+  const art = info.art ? `<img class="deck-theater-ship-art" src="${escAttr(info.art)}" alt="">` : "";
+  const reps = info.reps > 1 ? `<dt>Drawn for</dt><dd>${info.reps} hulls of this type</dd>` : "";
+  const action = info.following
+    ? `<button type="button" data-deck-theater-act="unfollow">Stop following</button>`
+    : `<button type="button" data-deck-theater-act="follow">Follow</button>`;
+  return `<section class="deck-theater-ship${info.own ? " is-own" : ""}${info.status === "destroyed" ? " is-lost" : ""}">`
+    + `<header>${art}<div><b>${name}</b><small>${whose} · ${SHIP_STATUS[info.status]}${info.following ? " · following" : ""}</small></div></header>`
+    + `<div class="deck-theater-ship-hull${pct < 30 ? " is-critical" : pct < 60 ? " is-low" : ""}"><i><b style="width:${pct}%"></b></i><em>${pct}% hull</em></div>`
+    + `<dl><dt>Fit</dt><dd>${esc(fit)}</dd>${reps}</dl>`
+    + `<div class="deck-theater-ship-actions">${action}</div></section>`;
 }
 
 function sideHtml(record: BattleRecordView, current: RecordCount[], side: 0 | 1, heading: string, pirateId: PlayerId | null): string {

@@ -1,0 +1,16 @@
+{
+  "ship": "destroyer",
+  "triangles": 14532,
+  "texturedTriangles": 2240,
+  "ventralTriangles": 660,
+  "checks": {
+    "allSurfacesAndTexturedUVsHaveArea": true,
+    "ventralProjectionPresent": true,
+    "engineCount": true,
+    "turretCount": true,
+    "threeEmbeddedTextures": true,
+    "gltfValidatorClean": true
+  },
+  "problems": [],
+  "passed": true
+}

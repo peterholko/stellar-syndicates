@@ -1,0 +1,15 @@
+{
+  "name": "stellar-authority-arbiter-asset",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "python3 build_model.py && python3 build_dark_variant.py && node build_preview.mjs",
+    "inspect": "python3 inspect_model.py && python3 inspect_dark_variant.py && python3 build_review_art.py",
+    "validate": "node validate.mjs && node validate.mjs authority-arbiter-dark.glb && node test_asset.mjs && node test_asset.mjs --dark"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "gltf-validator": "2.0.0-dev.3.10",
+    "three": "0.180.0"
+  }
+}

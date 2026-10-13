@@ -1,0 +1,30 @@
+{
+  "meshes": 75,
+  "renderSections": 75,
+  "sourceComponents": 276,
+  "triangles": 51176,
+  "exportedVertices": 48980,
+  "dimensionsXYZ": [
+    11.27,
+    3.34,
+    18.41
+  ],
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "embeddedTextures": 3,
+  "axes": "Y up, -Z forward",
+  "source": "../../dreadnought-reference-v1/dreadnought-reference.png",
+  "generator": "Python/NumPy, no Blender",
+  "optimization": "Static parts combined by material; independent turret assemblies retained; exact vertex deduplication; 16-bit indices where possible",
+  "engineCount": 5,
+  "turretCount": 17,
+  "referenceViews": [
+    "front",
+    "back",
+    "top",
+    "bottom",
+    "side"
+  ]
+}

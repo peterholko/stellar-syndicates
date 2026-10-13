@@ -1,0 +1,11 @@
+Use case: precise-object-edit.
+Edit ONLY the SIDE drawing at the lower right of this Bulk Freighter reference sheet. Leave the title, labels, TOP, BOTTOM, FRONT and BACK drawings completely unchanged.
+
+The side elevation currently has four large silver silos but only two smaller cargo cages; there are two bare X-braced gaps where two cages are missing. The top and bottom views correctly have FOUR small cargo cages on each flank. Correct the SIDE so its four large silos alternate with FOUR smaller silver rectangular cargo cages, all physically attached to the spine.
+
+Make exactly TWO localized insertions:
+1. Fill the bare X-braced gap between the SECOND and THIRD large silver silo with a SHORT SILVER RECTANGULAR CARGO CAGE, matching the small cargo cage already between the first and second silos.
+2. Fill the bare X-braced gap between the FOURTH large silver silo and the stern reactor block with another SHORT SILVER RECTANGULAR CARGO CAGE.
+Retain the two small existing cargo cages between silos 1/2 and silos 3/4. Each cage has a solid light silver body, chamfered corners, inset X-stiffened panel, graphite border and small amber clamp; it is not just an open truss. Fit the new cages into the existing narrow gaps without moving the silos or enlarging the overall ship. Four large silos plus four small cages are visible in strict sequence from left to right, followed by the reactor and one horizontal engine side profile.
+
+Do not modify the one centered engine nozzle in SIDE. Do not change the head-on command pod in FRONT or the eight nozzles in BACK. Preserve image dimensions, composition, detailed industrial drawing style, material colors, texture detail, all other parts and whitespace. Only the two empty side cargo slots are corrected.

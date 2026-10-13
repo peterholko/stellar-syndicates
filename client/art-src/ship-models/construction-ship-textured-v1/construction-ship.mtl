@@ -1,0 +1,43 @@
+newmtl material_0
+Kd 1 1 1
+Ks .25 .25 .25
+Ns 48
+map_Kd textures/construction-ship-basecolor.png
+map_Ke textures/construction-ship-emissive.png
+
+newmtl material_1
+Kd 1 1 1
+Ks .25 .25 .25
+Ns 48
+map_Kd textures/construction-ship-basecolor.png
+map_Ke textures/construction-ship-emissive.png
+
+newmtl material_2
+Kd 0.025 0.03 0.037
+Ks .25 .25 .25
+Ns 48
+
+newmtl material_3
+Kd 0.01 0.014 0.019
+Ks .25 .25 .25
+Ns 48
+
+newmtl material_4
+Kd 0.22 0.25 0.29
+Ks .25 .25 .25
+Ns 48
+
+newmtl material_5
+Kd 0.52 0.3 0.025
+Ks .25 .25 .25
+Ns 48
+
+newmtl material_6
+Kd 0.003 0.15 0.3
+Ks .25 .25 .25
+Ns 48
+
+newmtl material_7
+Kd 0.035 0.055 0.07
+Ks .25 .25 .25
+Ns 48

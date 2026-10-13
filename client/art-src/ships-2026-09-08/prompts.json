@@ -107,6 +107,24 @@
       "existing": "cargo_freighter.png",
       "subject": "An AUTHORITY COMMON-CARRIER FREIGHTER, a very large neutral regulated public cargo transport, unarmed. Distinctive BROAD RECTANGULAR CONTAINER BARGE: four rows of standardized freight modules arranged on two broad parallel decks around a short recessed central service spine, a compact flat blunt forward bridge with a blue-black window slit, and a wide four-engine stern beam. About 0.70 width-to-length ratio, visibly wider and more blocky than the private corporate freighter. Pale silver panels and dark blue structural rails, small warm ochre access fittings, compact cyan running lights. The silhouette is dense, broad, purposeful and unmistakably commercial. No warship wings, no guns.",
       "prompt": "Use case: stylized-concept.\nAsset type: one production-quality transparent raster spaceship hull sprite for Stellar Syndicates, a premium space strategy game.\nPrimary request: redesign this hull as a fresh, distinctive, professionally art-directed hard-surface spaceship. It must read clearly both as a 48–100 pixel galaxy-map sprite and in a closer battle view.\nComposition: strict orthographic TOP-DOWN plan view, camera directly overhead at 90 degrees; ship's nose points exactly UP (12 o'clock), aft engines point DOWN. One complete centered ship on a square canvas, approximately 80–84% of canvas height, at least 8% clear padding on every side. No perspective tilt, no side view. The outer silhouette should be purposeful and unmistakable.\nVisual style: clean high-end rendered hard-surface game art; crisp machined geometry, readable large armor forms with restrained secondary panel detail. Brushed titanium, cool gunmetal, pale silver armor panels, tiny cyan running lights and compact cyan engine apertures; restrained warm brass hardware. Consistent soft upper-left illumination and good value separation for a dark navy map. Neutral lights, no team-color wash.\nBackground: genuinely transparent PNG with real RGBA alpha, including gaps between hull parts. No ground plane, black rectangle, painted checkerboard, smoke, outer halo, scene or starfield. Only tiny engine-aperture glow, no long exhaust plumes. All weapons idle: no beams, shots, impact flashes, battle debris or escorts.\nConstraints: exactly one hull, no text, numbers, labels, logos, watermark, border, circular badge or UI. Do not clone the same fighter shape for every class. No painterly brush marks, crayon edges, excessive micro-greeble noise, organic flesh, toy appearance or recognizable franchise ship. Maximize real native detail without artificially upscaling.\n\nSubject and distinguishing silhouette (takes priority):\nAn AUTHORITY COMMON-CARRIER FREIGHTER, a very large neutral regulated public cargo transport, unarmed. Distinctive BROAD RECTANGULAR CONTAINER BARGE: four rows of standardized freight modules arranged on two broad parallel decks around a short recessed central service spine, a compact flat blunt forward bridge with a blue-black window slit, and a wide four-engine stern beam. About 0.70 width-to-length ratio, visibly wider and more blocky than the private corporate freighter. Pale silver panels and dark blue structural rails, small warm ochre access fittings, compact cyan running lights. The silhouette is dense, broad, purposeful and unmistakably commercial. No warship wings, no guns."
+    },
+    {
+      "kind": "mining_barge",
+      "slug": "mining-barge",
+      "title": "Mining Barge",
+      "existing": "corporate_freighter.png",
+      "approvedReference": "client/art-src/mining-barge-reference-v1/mining-barge.png",
+      "approvedModel": "client/art-src/ship-models/mining-barge-textured-v1/mining-barge.glb",
+      "subject": "Approved Mining Barge, unchanged. Runtime derivatives are rendered from its LOD2 model; no image generation."
+    },
+    {
+      "kind": "mining_belt_station",
+      "slug": "mining-belt-station",
+      "title": "Mining Belt Station",
+      "existing": "construction_tender.png",
+      "approvedReference": "client/art-src/mining-belt-station-reference-v1/mining-belt-station.png",
+      "approvedModel": "client/art-src/ship-models/mining-belt-station-textured-v1/mining-belt-station.glb",
+      "subject": "Approved Mining Belt Station, unchanged. Runtime derivatives are rendered from its LOD2 model; no image generation."
     }
   ]
 }

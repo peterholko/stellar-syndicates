@@ -14,23 +14,33 @@ export const MODULES: { kind: ModuleKind; name: string; label: string; icon: Ico
   { kind: "recon_suite", name: "Recon Suite", icon: "moduleReconSuite", fit: 2, role: "Scout contacts 30k → 60k · sensors 40k; Interceptor sensors 120k su" },
   { kind: "cargo_pods", name: "Cargo Pods", icon: "moduleCargoPods", fit: 2, role: "Doubles this hull's cargo hold · replaces Extended Tanks" },
   { kind: "escort_datalink", name: "Escort Datalink", icon: "moduleEscortDatalink", fit: 2, role: "Corvette · requires Point-Defense Screen · priority intercept at 2× PD reach" },
-  { kind: "fuel_transfer_rig", name: "Fuel Transfer Rig", icon: "moduleFuelTransferRig", fit: 2, role: "Freighter · refuels owned fleets from Fuel cargo · replaces Cargo Pods / Extended Tanks" },
+  { kind: "fuel_transfer_rig", name: "Fuel Transfer Rig", icon: "moduleFuelTransferRig", fit: 2, role: "Freighter · refuels owned fleets from fuel cargo, Antimatter included · replaces Cargo Pods / Extended Tanks" },
   { kind: "survey_drive", name: "Survey Drive", icon: "moduleSurveyDrive", fit: 2, role: "Blueprint · Scout speed +25%, tank capacity −40% · no change to jump timing" },
   { kind: "nebula_spectrometer", name: "Nebula Spectrometer", icon: "moduleNebulaSpectrometer", fit: 2, role: "Blueprint · Scout site contacts 90k su before terrain · deep investigation · no combat sensor" },
   { kind: "prismatic_lance", name: "Prismatic Lance", icon: "modulePrismaticLance", fit: 3, role: "Blueprint · beam damage ×1.45 · countered by Reflective Plating" },
+  { kind: "stasis_web", name: "Stasis Web", icon: "moduleStasisWeb", fit: 2, role: "Battle control · slows the nearest enemy hull in range to half speed" },
+  { kind: "warp_stabilizer", name: "Warp Stabilizer", icon: "moduleWarpStabilizer", fit: 2, role: "Escape · each one shrugs off one tackling Interceptor · on a freighter, one Interceptor of a blockade it runs" },
+  { kind: "interdiction_field", name: "Interdiction Field", icon: "moduleInterdictionField", fit: 3, role: "Destroyer · raises a field that drops fleets out of warp and blocks jumps" },
+  { kind: "jump_drive", name: "Jump Drive", icon: "moduleJumpDrive", fit: 2, role: "Jumps on Antimatter · any hull but ships of the line" },
 ].map(entry => ({ ...entry, kind: entry.kind as ModuleKind, icon: entry.icon as IconKey, label: entry.name }));
 
 export const isBlueprintOnly = (module: ModuleKind): boolean => ["survey_drive", "nebula_spectrometer", "prismatic_lance"].includes(module);
-export const isUtility = (module: ModuleKind): boolean => module === "extended_tanks" || module === "recon_suite" || module === "cargo_pods" || module === "escort_datalink" || module === "fuel_transfer_rig" || module === "survey_drive" || module === "nebula_spectrometer";
+export const isUtility = (module: ModuleKind): boolean => module === "extended_tanks" || module === "recon_suite" || module === "cargo_pods" || module === "escort_datalink" || module === "fuel_transfer_rig" || module === "survey_drive" || module === "nebula_spectrometer" || module === "jump_drive";
 export const utilityProgramme = (module: ModuleKind): string | null => module === "extended_tanks"
   ? "prop_expedition_iii_extended_tanks" : module === "recon_suite" ? "comp_shadow_iv_recon_suite"
     : module === "cargo_pods" ? "hull_cargo_pods" : module === "escort_datalink" ? "hull_line_iii_escort_datalink"
-      : module === "fuel_transfer_rig" ? "prop_expedition_iv_fleet_tenders" : null;
+      : module === "fuel_transfer_rig" ? "prop_expedition_iv_fleet_tenders"
+        : module === "jump_drive" ? "mat_foundry_vi_antimatter_synthesis" : null;
 export const moduleFitsHull = (module: ModuleKind, hull: string): boolean => module === "extended_tanks"
   ? ["scout", "raider", "corvette"].includes(hull) || isPlayerFreighter(hull as ShipKind)
   : module === "recon_suite" ? ["scout", "raider"].includes(hull)
     : module === "survey_drive" || module === "nebula_spectrometer" ? hull === "scout"
-      : module === "cargo_pods" || module === "fuel_transfer_rig" ? isPlayerFreighter(hull as ShipKind) : module === "escort_datalink" ? hull === "corvette" : !isPlayerFreighter(hull as ShipKind);
+      : module === "cargo_pods" || module === "fuel_transfer_rig" ? isPlayerFreighter(hull as ShipKind) : module === "escort_datalink" ? hull === "corvette"
+        : module === "interdiction_field" ? hull === "destroyer"
+          // §fuel-overhaul: any hull without built-in drives, bar the ships of the line.
+          : module === "jump_drive" ? !["raider", "scout", "battleship", "dreadnought", "titan", "freighter", "survey_probe", "mining_belt_station"].includes(hull)
+          // A freighter's one berth may take a stabilizer: the blockade runner.
+          : module === "warp_stabilizer" ? true : !isPlayerFreighter(hull as ShipKind);
 export const tankMultiplier = (modules: ModuleKind[]): number => (modules.includes("extended_tanks") ? 1.75 : 1) * (modules.includes("survey_drive") ? .6 : 1);
 export const cargoMultiplier = (modules: ModuleKind[]): number => modules.includes("cargo_pods") ? 2 : 1;
 export const utilityChange = (from: ModuleKind[], to: ModuleKind[]): boolean =>
@@ -51,7 +61,9 @@ export function hullUtilitySummary(kind: ShipKind, from: ModuleKind[], to: Modul
   if (from.includes("survey_drive") !== to.includes("survey_drive")) parts.push(to.includes("survey_drive") ? "Scout travel +25% · smaller tanks" : "Standard Scout travel speed");
   if (from.includes("nebula_spectrometer") !== to.includes("nebula_spectrometer")) parts.push(to.includes("nebula_spectrometer") ? "Site contacts 90k su · deep investigation" : "Specialist site scanner removed");
   if (from.includes("fuel_transfer_rig") !== to.includes("fuel_transfer_rig")) parts.push(to.includes("fuel_transfer_rig")
-    ? "Mobile refueling · uses Fuel cargo, not propulsion tanks" : "Mobile refueling removed");
+    ? "Mobile refueling · pumps fuel cargo, Antimatter included" : "Mobile refueling removed");
+  if (from.includes("jump_drive") !== to.includes("jump_drive")) parts.push(to.includes("jump_drive")
+    ? "Jumps · Antimatter bottle" : "No jumps");
   if (from.includes("escort_datalink") !== to.includes("escort_datalink")) parts.push(to.includes("escort_datalink")
     ? "Guard-target screening · one extra intercept/step at 2× PD reach" : "Standard point defense");
   if (tankMultiplier(from) !== tankMultiplier(to)) parts.push(`Tank capacity ${Math.round(tankMultiplier(from) * 100)}% → ${Math.round(tankMultiplier(to) * 100)}%`);

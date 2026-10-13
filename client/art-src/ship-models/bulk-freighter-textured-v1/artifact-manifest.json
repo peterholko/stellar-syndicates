@@ -1,0 +1,31 @@
+{
+  "model": "bulk-freighter.glb",
+  "sha256": "bedda8fc0dd471af796aa0d4b439b05a7276bfe42ce153887881b48197efdc86",
+  "modelBytes": 3556080,
+  "viewerEmbedsIdenticalGLB": true,
+  "previewViews": [
+    "perspective",
+    "top",
+    "bottom",
+    "front",
+    "back",
+    "side",
+    "front-quarter",
+    "bottom-quarter"
+  ],
+  "previewResolution": [
+    1600,
+    1200
+  ],
+  "glTFValidation": {
+    "errors": 0,
+    "warnings": 0
+  },
+  "surfaceVerificationPassed": true,
+  "checkedUndersideComponents": 68,
+  "sixteenSolidCargoModules": true,
+  "trussGapsOpen": true,
+  "eightEnginesInOneRow": true,
+  "browserConsoleWarningsAndErrors": [],
+  "observedDrawCalls": 7
+}

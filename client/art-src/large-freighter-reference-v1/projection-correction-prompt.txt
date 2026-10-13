@@ -1,0 +1,20 @@
+Use case: precise-object-edit.
+Image 1 is the EDIT TARGET: the LARGE FREIGHTER five-view reference sheet.
+Image 2 is its authoritative original ship sprite, for component placement only.
+
+Correct the orthographic projection and component alignment in the THREE RIGHT-HAND views only. Preserve the two large TOP and BOTTOM drawings, their exact twin-keel outline, six cargo sections, long empty middle channel, textures, all labels and white page. Do not redesign the ship.
+
+SIDE (bottom right) needs a clean new STRICT LEVEL PORT ELEVATION. Nose LEFT, stern RIGHT, zero yaw/elevation, no roof perspective.
+- Show exactly THREE clearly separate cargo containers, one after another along the near keel. They occupy the middle 60% of length. Each is one broad chamfered rectangle with a dark central retaining strap and gold locks. Leave TWO thin dark coupling seams between the three containers. The three containers have approximately equal lengths. Do not merge two sections into one, do not use one little stub as the third container, do not mistake a retaining strap for a module boundary.
+- Forward projecting cabin and horizontal axial probe occupy the first quarter. Cabin has a modest raised roof and a shallow slanted cyan windshield. Between it and the first cargo section, show the short tapered keel bow at a LOWER height than the cabin roof.
+- Critical engine correction: the current side shows TWO EXHAUST NOZZLES STACKED VERTICALLY. Remove that stack entirely. All FOUR real engines are horizontal and side by side across the beam, so from this exact side camera they overlap. Show ONE horizontal cylindrical engine casing silhouette at the right, ONE centered horizontal thrust axis, and ONE vertical edge-on nozzle rim. No second engine above/below it, no circular cyan exhaust discs facing the side camera. Only a thin cyan line inside the rear edge may show.
+- Keep deep, textured cargo side walls and a low structural keel underneath. All broad horizontal roof surfaces are hidden; only thin bevel edges show.
+- Keep the outer cargo bank's side lights and original silver, graphite and gold treatment.
+
+FRONT (top right) must show true keel-bow END FACES, not the entire overhead triangular keel prows standing upright like tall pyramids.
+Replace the two tall triangular silver roof shapes over the port and starboard cargo ends with LOW, broad, blunt faceted keel-bow caps. They are at cargo roof height and do not tower above the central cabin. Front-facing silver armor, dark edge framing, small vents and gold fittings should cover these surfaces. Retain the central small cyan windshield, shallow faceted nose and tiny round axial probe end; preserve the horizontal X-braced crossbeam and two outboard keel end faces. The central cabin roof is the highest point by a modest amount.
+View exactly head-on at zero elevation. No cargo lid/top surfaces, no upright long probes, no overhead nose planform and no exhaust circles.
+
+BACK (middle right) must be a true level stern elevation. Keep exactly FOUR equal round cyan engine apertures arranged as a LEFT PAIR and RIGHT PAIR, separated by the squat central gold-bordered service cap. Preserve the pair spacing and one common horizontal engine centerline. Remove the upper perspective-looking cargo roofs and the long visible top surfaces of the engine casings. Show only their circular end rims and the wide rectangular cargo rear end faces behind them. Keep the upper outline low and consistent with FRONT and SIDE. Do not add a fifth aperture to the middle or shrink to two engines.
+
+Keep all three corrected elevations coherent in height and component locations with the unchanged TOP/BOTTOM. Preserve the drawing style, panel detail, fully finished ventral surfaces and exact labels: "LARGE FREIGHTER", "TOP", "BOTTOM", "FRONT", "BACK", "SIDE". Exactly five views, no inset, no added text or dimensions.

@@ -1,0 +1,148 @@
+{
+  "id": "authority-arbiter",
+  "name": "Authority Arbiter",
+  "center": [
+    225,
+    485
+  ],
+  "pixelsPerUnit": [
+    25.5,
+    25.5
+  ],
+  "reference": "authority-arbiter-reference-v1/authority-arbiter-reference.png",
+  "sprite": "authority-arbiter-reference-v1/authority-arbiter.png",
+  "triangleBudget": [
+    12000,
+    20000
+  ],
+  "counts": {
+    "haloRings": 1,
+    "haloStruts": 4,
+    "dorsalSpines": 3,
+    "spinalLances": 0,
+    "massDrivers": 1,
+    "accelerationRails": 2,
+    "heavyTwinTurrets": 6,
+    "secondaryTwinTurrets": 8,
+    "pairedPointDefenseMounts": 8,
+    "gunBarrels": 44,
+    "mainEngines": 4,
+    "commandTowers": 1,
+    "closedVentralHangars": 1
+  },
+  "regions": {
+    "top": [
+      45,
+      140,
+      407,
+      795
+    ],
+    "bottom": [
+      485,
+      140,
+      847,
+      795
+    ],
+    "front": [
+      920,
+      83,
+      1708,
+      280
+    ],
+    "back": [
+      920,
+      360,
+      1708,
+      570
+    ],
+    "side": [
+      861,
+      594,
+      1748,
+      813
+    ]
+  },
+  "patches": {
+    "amber": [
+      1780,
+      1764,
+      1868,
+      1788
+    ],
+    "cyan": [
+      1904,
+      1764,
+      1992,
+      1788
+    ],
+    "vent": [
+      1042,
+      1042,
+      1680,
+      2030
+    ],
+    "silver": [
+      18,
+      18,
+      1006,
+      1006
+    ],
+    "brass": [
+      1042,
+      18,
+      2030,
+      1006
+    ],
+    "dark": [
+      18,
+      1042,
+      1006,
+      2030
+    ],
+    "enginewall": [
+      18,
+      1042,
+      1006,
+      2030
+    ],
+    "service": [
+      1042,
+      1042,
+      1680,
+      2030
+    ],
+    "muzzle": [
+      1140,
+      1330,
+      1580,
+      1570
+    ],
+    "grille": [
+      1580,
+      1120,
+      2018,
+      1238
+    ]
+  },
+  "emissiveAmberRegions": [
+    [
+      1285,
+      149,
+      1350,
+      175
+    ],
+    [
+      1388,
+      637,
+      1460,
+      658
+    ],
+    [
+      202,
+      570,
+      245,
+      589
+    ]
+  ],
+  "texturePipeline": "Clean imagegen material swatches, physical face UVs, dedicated light islands; 1024px JPEG albedo and PNG PBR maps"
+}

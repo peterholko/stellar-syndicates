@@ -39,12 +39,13 @@ pub const PD_ATTACK: f64 = 0.5;
 // PD is LITERAL now — each PD-fitted ship rolls intercepts against torpedoes
 // crossing its screen bubble ([`crate::tactical::PD_ROLL_BASE`] × Interception
 // affinity × the Flak-research mod, wired through `SideMods::flak_mult`).
-/// Reflective Plating blunts BEAM damage into the fitted stack by this fraction.
-pub const REFLECT_BLUNT: f64 = 0.35;
+/// Reflective Plating blunts BEAM damage into the fitted stack by this fraction
+/// (battle rules v12; v1–v11 battles keep their frozen 0.35).
+pub const REFLECT_BLUNT: f64 = 0.50;
 /// Whipple Armor blunts DRIVER damage into the fitted stack by this fraction —
 /// hotter than Reflective's, because drivers are opt-in while every ship fires
-/// beams. Tune both against the meta, not each other.
-pub const WHIPPLE_BLUNT: f64 = 0.45;
+/// beams. Tune both against the meta, not each other (v12; v1–v11 keep 0.45).
+pub const WHIPPLE_BLUNT: f64 = 0.60;
 
 /// §modules Part B3: how many module CRATES one convoy hauls in a `TransferModules`
 /// run. Crates are dense compared to people, so a hauler moves a healthy batch —
@@ -106,10 +107,22 @@ pub enum ModuleKind {
     NebulaSpectrometer,
     /// Discovery blueprint: powerful beam, three fitting points; mirrors counter it.
     PrismaticLance,
+    /// Control: slows the nearest enemy hull in range to half speed in battle
+    /// (rules v11), so it is easier to hit and slower to leave.
+    StasisWeb,
+    /// Escape: each one lets the hull shrug off one tackling interceptor when
+    /// it tries to leave a battle (rules v11).
+    WarpStabilizer,
+    /// Destroyer only: deploys an interdiction field, a temporary gravity well
+    /// in open space that drops every fleet crossing it out of warp.
+    InterdictionField,
+    /// §fuel-overhaul utility: a jump drive and antimatter bottle for any hull
+    /// but the ships of the line. Unlocked by Antimatter Synthesis.
+    JumpDrive,
 }
 
 /// Every module kind, in a fixed deterministic order (menus, iteration).
-pub const MODULE_KINDS: [ModuleKind; 13] = [
+pub const MODULE_KINDS: [ModuleKind; 17] = [
     ModuleKind::MassDriver,
     ModuleKind::TorpedoRack,
     ModuleKind::PointDefenseScreen,
@@ -123,6 +136,10 @@ pub const MODULE_KINDS: [ModuleKind; 13] = [
     ModuleKind::SurveyDrive,
     ModuleKind::NebulaSpectrometer,
     ModuleKind::PrismaticLance,
+    ModuleKind::StasisWeb,
+    ModuleKind::WarpStabilizer,
+    ModuleKind::InterdictionField,
+    ModuleKind::JumpDrive,
 ];
 
 impl ModuleKind {
@@ -142,6 +159,10 @@ impl ModuleKind {
             ModuleKind::SurveyDrive => "survey_drive",
             ModuleKind::NebulaSpectrometer => "nebula_spectrometer",
             ModuleKind::PrismaticLance => "prismatic_lance",
+            ModuleKind::StasisWeb => "stasis_web",
+            ModuleKind::WarpStabilizer => "warp_stabilizer",
+            ModuleKind::InterdictionField => "interdiction_field",
+            ModuleKind::JumpDrive => "jump_drive",
         }
     }
 
@@ -164,6 +185,10 @@ impl ModuleKind {
             ModuleKind::SurveyDrive => "Survey Drive",
             ModuleKind::NebulaSpectrometer => "Nebula Spectrometer",
             ModuleKind::PrismaticLance => "Prismatic Lance",
+            ModuleKind::StasisWeb => "Stasis Web",
+            ModuleKind::WarpStabilizer => "Warp Stabilizer",
+            ModuleKind::InterdictionField => "Interdiction Field",
+            ModuleKind::JumpDrive => "Jump Drive",
         }
     }
 
@@ -176,7 +201,7 @@ impl ModuleKind {
     }
 
     pub fn is_utility(self) -> bool {
-        matches!(self, Self::ExtendedTanks | Self::ReconSuite | Self::CargoPods | Self::EscortDatalink | Self::FuelTransferRig | Self::SurveyDrive | Self::NebulaSpectrometer)
+        matches!(self, Self::ExtendedTanks | Self::ReconSuite | Self::CargoPods | Self::EscortDatalink | Self::FuelTransferRig | Self::SurveyDrive | Self::NebulaSpectrometer | Self::JumpDrive)
     }
 
     pub fn blueprint_only(self) -> bool {
@@ -191,6 +216,16 @@ impl ModuleKind {
             Self::CargoPods | Self::FuelTransferRig => kind.is_player_freighter(),
             Self::EscortDatalink => kind == ShipKind::Corvette,
             Self::SurveyDrive | Self::NebulaSpectrometer => kind == ShipKind::Scout,
+            // The interdictor is a destroyer, as it has always been.
+            Self::InterdictionField => kind == ShipKind::Destroyer,
+            // §fuel-overhaul: any hull without built-in drives, bar the ships
+            // of the line (a fold that size needs more than a bottle).
+            Self::JumpDrive => !kind.has_jump_drive() && !kind.is_siege_anchor()
+                && kind.is_buildable()
+                && !matches!(kind, ShipKind::SurveyProbe | ShipKind::MiningBeltStation),
+            // A freighter's one berth may take a stabilizer instead of a
+            // utility: the blockade runner's fit (§blockade-running).
+            Self::WarpStabilizer => true,
             // The player's freighter gains a utility berth, never a hardpoint.
             _ => !kind.is_player_freighter(),
         }
@@ -214,8 +249,12 @@ impl ModuleKind {
             ModuleKind::ReflectivePlating => 2,
             ModuleKind::WhippleArmor => 3,
             ModuleKind::PrismaticLance => 3,
+            ModuleKind::StasisWeb => 2,
+            ModuleKind::WarpStabilizer => 2,
+            ModuleKind::InterdictionField => 3,
             ModuleKind::SurveyDrive | ModuleKind::NebulaSpectrometer => 2,
             ModuleKind::ExtendedTanks | ModuleKind::ReconSuite | ModuleKind::CargoPods | ModuleKind::EscortDatalink | ModuleKind::FuelTransferRig => 2,
+            ModuleKind::JumpDrive => 2,
         }
     }
 
@@ -231,8 +270,11 @@ impl ModuleKind {
             // affinity axis is the screening job — the weapon side rides the
             // Beam family through `Loadout::offense()`.
             ModuleKind::PointDefenseScreen => Family::Interception,
-            ModuleKind::ReflectivePlating | ModuleKind::WhippleArmor => Family::Protection,
+            ModuleKind::ReflectivePlating | ModuleKind::WhippleArmor | ModuleKind::WarpStabilizer => Family::Protection,
+            // Control modules ride the screening axis.
+            ModuleKind::StasisWeb | ModuleKind::InterdictionField => Family::Interception,
             ModuleKind::ExtendedTanks | ModuleKind::ReconSuite | ModuleKind::CargoPods | ModuleKind::EscortDatalink | ModuleKind::FuelTransferRig => Family::Utility,
+            ModuleKind::JumpDrive => Family::Utility,
         }
     }
 }
@@ -373,6 +415,7 @@ impl Loadout {
         self.0.len() as u32 <= kind.module_slots()
             && self.fitting_cost() <= crate::ship::fitting_points(kind)
             && (!self.has_datalink() || self.has_pd())
+            && self.0.iter().filter(|m| **m == ModuleKind::InterdictionField).count() <= 1
             && self.0.iter().all(|m| m.fits_hull(kind)
                 && (!m.is_utility() || self.0.iter().filter(|other| *other == m).count() == 1))
     }
@@ -392,6 +435,9 @@ impl Loadout {
     }
 
     pub fn has_spectrometer(&self) -> bool { self.0.contains(&ModuleKind::NebulaSpectrometer) }
+
+    /// §fuel-overhaul: a fitted Jump Drive.
+    pub fn has_jump_drive(&self) -> bool { self.0.contains(&ModuleKind::JumpDrive) }
 
     /// Tunable: double commodity capacity on the fitted Freighter only. Its
     /// single utility slot makes this a choice against Extended Tanks.

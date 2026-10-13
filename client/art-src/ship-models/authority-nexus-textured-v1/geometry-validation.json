@@ -1,0 +1,23 @@
+{
+  "triangles": 11440,
+  "closedSolidComponents": 391,
+  "intentionalOpenEnergySurfaces": 1,
+  "dedicatedUndersideTriangles": 1176,
+  "finiteAttributes": true,
+  "consistentWinding": true,
+  "nondegenerateTriangles": true,
+  "boundedUVs": true,
+  "fourSeparateStabilizers": true,
+  "portalCenterClear": true,
+  "texturedTowerShells": 8,
+  "noncollapsedTowerUVs": true,
+  "texturedVentralCollarTriangles": 256,
+  "repeatingCollarUVsVerified": true,
+  "texturedPowerCylinders": 40,
+  "texturedReactorRings": 24,
+  "texturedFeedCouplings": 32,
+  "cylinderTextureUVsVerified": true,
+  "minimumHardwareRadius": 3.9165,
+  "collapseAnimationVerified": true,
+  "method": "Independent analysis of exported GLB attributes and welded per-component topology"
+}

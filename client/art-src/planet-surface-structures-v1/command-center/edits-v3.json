@@ -1,0 +1,31 @@
+{
+  "date": "2026-09-27",
+  "mode": "built-in image_gen",
+  "use_case": "background-extraction",
+  "transparent_background": true,
+  "prompt": "Use case: background-extraction. Asset type: transparent PNG building sprite for a strategy game's planetary scene. Image 1 is the EDIT TARGET. Remove the entire painted grey-and-white checkerboard background and replace it with genuine transparent alpha (zero opacity). Preserve the building, its gravel foundation pad, roof equipment, camera, cream and graphite materials, amber trim and cyan lights exactly. Keep entrance panels and nameplates blank: no logos, symbols or lettering. Retain a subtle semi-transparent contact shadow only next to the foundation. Keep the full building and antennas uncut inside a square canvas. Do not recreate checkerboard pixels or any colored backdrop. The deliverable is the same approved building as an actual transparent cutout, ready to overlay on terrain.",
+  "inputs": [
+    "landing-command-unbranded-v2-draft.png",
+    "colony-command-center-unbranded-v2-draft.png",
+    "syndicate-headquarters-unbranded-v2-draft.png"
+  ],
+  "outputs": [
+    "tier-1.png",
+    "tier-2.png",
+    "tier-3.png"
+  ],
+  "generated_sources": [
+    "exec-bced4eb2-0807-4df6-9ce8-fa0f27deb5f6.png",
+    "exec-6de2c1a0-811f-47d1-9d83-6676ad308bbe.png",
+    "exec-8e08f3f2-67be-42fc-a361-fd9957c6ea66.png"
+  ],
+  "validation": {
+    "width": 1254,
+    "height": 1254,
+    "channels": 4,
+    "alphaMin": 0,
+    "alphaMax": 255,
+    "insignia": "none",
+    "derivatives": "resize/format conversion only, preserves generated alpha"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "meshes": 15,
+  "renderSections": 15,
+  "sourceComponents": 85,
+  "triangles": 14532,
+  "exportedVertices": 14346,
+  "dimensionsXYZ": [
+    7.9,
+    3.26,
+    18.9
+  ],
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "embeddedTextures": 3,
+  "axes": "Y up, -Z forward",
+  "source": "../../destroyer-reference-v1/destroyer-reference.png",
+  "generator": "Python/NumPy, no Blender",
+  "optimization": "Static parts combined by material; independent turret assemblies retained; exact vertex deduplication; 16-bit indices where possible",
+  "engineCount": 3,
+  "turretCount": 2,
+  "referenceViews": [
+    "front",
+    "back",
+    "top",
+    "bottom",
+    "side"
+  ]
+}

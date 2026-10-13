@@ -1,12 +1,15 @@
-//! Movement sink: fleets BURN FUEL to move (the Travian-style "armies cost upkeep
-//! to march" sink, §step1 part 2). Dispatching an operation (a ship move, a raid,
-//! a production/standing convoy) draws Fuel from one of the owner's systems,
-//! proportional to distance × fleet mass. A shortfall **LIMITS** the operation
-//! (it simply doesn't dispatch — the ship/order/goods are never lost), so the game
-//! stays async-fair: an offline, fuel-poor player's fleet idles rather than breaks.
+//! Movement sink: fleets BURN FUEL to move, out of stores they carry
+//! (§fuel-overhaul). Three fuels drive three regimes:
 //!
-//! All rates are `const` → deterministic and tunable. Balance is not the goal; a
-//! working "fuel is the thing that makes a spread of systems matter" loop is.
+//! - **Uranium** (the fission store) drives Slow warp: half speed, a quarter of
+//!   the energy per distance. Every hull but the ships of the line carries one.
+//!   Corporations mill it at home from Ferrite Ore.
+//! - **Deuterium** (the fusion tank) drives Full warp and Stealth. Helium-3 fills
+//!   the same tank after Fusion Reactors: one unit of space, six of energy.
+//! - **Antimatter** (the bottle on jump-capable hulls) folds space for jumps.
+//!
+//! A fleet that runs one store dry under way switches to the other; it holds
+//! position (never breaks) only when both are empty. All rates are `const`.
 
 use serde::{Deserialize, Serialize};
 
@@ -42,12 +45,14 @@ impl ShortfallKind {
 /// loaded convoy crossing the core costs a few dozen units. Tunable.
 pub const FUEL_PER_MASS_DISTANCE: f64 = 1.0e-6;
 
-/// Fuel seeded into a new corporation's HOME system stockpile on join — the
-/// starting operating reserve, so fleets move from turn one before any
-/// fuel-bearing system is claimed. The home produces no fuel, so this is the
-/// runway that buys time to expand toward fuel deposits. Tunable.
+/// §fuel-overhaul: the founding kit's fuel, seeded into the HOME stockpile on
+/// join: Uranium for slow freight until the home's mill runs, and a little
+/// Deuterium for a full-speed trip when time is critical. Tunable.
 ///
-/// Sized against STORAGE, because that is what actually binds it.
+/// Sized against STORAGE, because that is what actually binds it: with the
+/// Uranium Mill's goods and a Warp Core added to the kit, the fuel seed shrinks
+/// from the old 60 Fuel to 30, so the kit holds as many units as before. The
+/// founding fleet arrives with full stores of its own.
 /// A system holds 700 units of everything combined and a fresh home already
 /// carries ~190 of starter goods, so a seed scaled for range (1,500, clipped to
 /// the 510 that would fit) did not buy a runway — it filled the warehouse. Ore
@@ -57,12 +62,39 @@ pub const FUEL_PER_MASS_DISTANCE: f64 = 1.0e-6;
 /// continuously, so the silo emptied itself. Once fleets carry their own, the
 /// seed just sits there, and its real cost shows up. This leaves room for the
 /// economy to breathe while still covering a couple of full refills.
-pub const FUEL_HOME_SEED: f64 = 60.0;
+pub const URANIUM_HOME_SEED: f64 = 20.0;
+pub const DEUTERIUM_HOME_SEED: f64 = 10.0;
 
-/// The commodity that fuels movement (and so is the one operation kind that is
-/// EXEMPT from the charge — a convoy hauling Fuel must move without needing Fuel,
-/// or a fuel-starved colony could never be resupplied: a deadlock).
-pub const MOVEMENT_FUEL: Commodity = Commodity::Fuel;
+/// The fusion tank's base fuel: Full warp, Stealth and Fusion Plants III–IV.
+/// Standing-order convoys hauling it skip the tank pre-check, so a dry colony
+/// can always be resupplied.
+pub const MOVEMENT_FUEL: Commodity = Commodity::Deuterium;
+/// The fission store's fuel: Slow warp.
+pub const FISSION_FUEL: Commodity = Commodity::Uranium;
+/// The bottle's fuel: jumps.
+pub const JUMP_FUEL: Commodity = Commodity::Antimatter;
+
+/// §fuel-overhaul: one unit of Helium-3 holds this much Deuterium of energy in
+/// one unit of tank space. Per unit of mass D–He3 fusion yields about four times
+/// D–D, and nearly all of it charged; D–D loses about a third to neutrons, so
+/// the usable ratio is about six. Burning it needs Fusion Reactors. Tunable.
+pub const HELIUM3_FUEL_EQUIV: f64 = 6.0;
+
+/// Slow warp (the Uranium regime) runs at this fraction of formation speed…
+pub const SLOW_SPEED_FRACTION: f64 = 0.5;
+/// …and burns this fraction of Full's energy per distance. A slow trip on
+/// Uranium (5.6 Cr) therefore costs what the old Economy cruise did. Tunable.
+pub const SLOW_FUEL_MULT: f64 = 0.25;
+
+/// §fuel-overhaul: the Fusion Freight research: player freighters burn this
+/// fraction of the Deuterium (and Helium-3) per distance, so full-speed freight
+/// costs what slow freight does. Tunable.
+pub const FUSION_FREIGHT_MULT: f64 = 0.1;
+
+/// Antimatter bottle per unit of hull mass on a jump-capable hull, at least
+/// [`ANTIMATTER_BOTTLE_MIN`] per hull: two full-range jumps. Tunable.
+pub const ANTIMATTER_PER_HULL_MASS: f64 = 0.01;
+pub const ANTIMATTER_BOTTLE_MIN: f64 = 1.0;
 
 /// Tank size per unit of HULL mass.
 ///
@@ -85,7 +117,7 @@ pub const FUEL_PER_HULL_MASS: f64 = 0.035;
 ///
 /// Zero when idle, and it picks up the Stealth throttle for free — half speed
 /// burns half per second and takes twice as long, netting the same total.
-/// Economy cruise applies its separate per-distance multiplier at the fleet
+/// Slow warp applies its separate per-distance multiplier at the fleet
 /// caller; this primitive remains unchanged for Full, Stealth and combat hulls.
 pub fn fuel_tick(mass: f64, base_speed: f64, dt: f64) -> f64 {
     FUEL_PER_MASS_DISTANCE * mass.max(0.0) * base_speed.max(0.0) * dt.max(0.0)

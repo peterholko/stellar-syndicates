@@ -1,0 +1,665 @@
+{
+  "title": "Authority Nexus \u2014 Wormhole Anchor",
+  "generator": "Python/NumPy, no Blender",
+  "model": {
+    "name": "Authority Nexus \u2014 Wormhole Anchor",
+    "triangles": 11440,
+    "renderSections": 28,
+    "sourceComponents": 392,
+    "materials": 10,
+    "dimensionsXYZ": [
+      19.8,
+      6.34,
+      19.8
+    ],
+    "embeddedTextures": 10,
+    "textureResolution": [
+      1536,
+      1024
+    ],
+    "towerTextureResolution": [
+      1254,
+      1254
+    ],
+    "ringTextureResolution": [
+      2172,
+      724
+    ],
+    "powerTextureResolution": [
+      724,
+      2172
+    ],
+    "assemblies": [
+      "structure",
+      "containment-field",
+      "stabilizer-1",
+      "stabilizer-2",
+      "stabilizer-3",
+      "stabilizer-4",
+      "wormhole"
+    ],
+    "animations": [
+      "WormholeCollapse"
+    ],
+    "axes": "Y up, -Z forward",
+    "physicalDiameter": "Unspecified; authored at approximately 20 relative units",
+    "generator": "Python/NumPy; no Blender",
+    "texturing": "Reference-projected hull; locally unwrapped armor, radiator edges, port caps and crowns; textured graphite structure, brass fittings and collars; blue reactor cells with selective emission; derived PBR masks",
+    "optimization": "Static components merged by assembly and material; exact vertex deduplication; 16-bit indices",
+    "note": "Concept reconstruction. Collapse animation affects the portal/field; hull destruction is not authored."
+  },
+  "checks": {
+    "gltf": "Zero errors and warnings",
+    "geometry": "391 closed solid components; one intentional open energy surface",
+    "animation": "Three.js mixer close/reopen cycles passed",
+    "viewer": "Both station exports, disabled preview and all four ship payloads verified in the offline viewer; software renders inspected; browser interaction not exercised",
+    "towerTextures": "All eight shells textured on every face; noncollapsed UVs and sampled color variation verified",
+    "geometryPreserved": "Original per-component triangle positions and normals match exactly in both variants; triangle counts, render sections and embedded texture-image counts unchanged. Digests in texture-validation.json.",
+    "wormhole": "Native offscreen shader compilation/rendering plus pause/resume, close/restore, reduced-motion, time wrapping and resource cleanup tests passed",
+    "traffic": "50 repeated arrivals, pause/restore, diversion/holding, 3695 station-clearance samples and 125202 hull-separation samples passed",
+    "ringTextures": "Underside collar, all 24 reactor rings and 32 feed couplings use brass albedo and metallic-roughness maps; top/bottom faces and angular seams verified",
+    "powerTextures": "40 cyan cylinders including four reactor cores use noncollapsed cylindrical UVs with base color, metallic-roughness and selective emission maps; all sampled for surface variation",
+    "disabled": "Zero glTF errors and warnings; 368 closed solids; portal and field absent; reactor emission zero; seven emergency markers",
+    "disabledRuntime": "Three comparison cycles, power lockout, restored previous power, initial disabled/reduced-motion holding and 5200 damaged-hull clearance samples passed",
+    "textureCoverage": "Every exported triangle audited in both variants: zero untextured physical faces, zero collapsed texture coordinates, sampled color variation on every textured component. Only containment energy and small emergency lamps use uniform colors."
+  },
+  "exports": [
+    {
+      "path": "README.md",
+      "bytes": 16980,
+      "sha256": "10e4f0f3be52819ff968b72767c1a4d246d996c424693002b17c88851187342c"
+    },
+    {
+      "path": "THREE-LICENSE.txt",
+      "bytes": 1081,
+      "sha256": "bfe119ea4fd413f5f7ca3fcd63adb0c4a073ed39daa2fe7d3e6b769e21272601"
+    },
+    {
+      "path": "audit_textures.py",
+      "bytes": 7762,
+      "sha256": "0fd5de892e93c825e690c31fc933df9198c04af48f737aedd18b09da02630af1"
+    },
+    {
+      "path": "authority-nexus-model-sheet.png",
+      "bytes": 2468212,
+      "sha256": "1ca19e50ba5e60ff446b3bbf421b8195dbe47d36dcc7e0dfb6286fd367871aa3"
+    },
+    {
+      "path": "authority-nexus.glb",
+      "bytes": 17092524,
+      "sha256": "0565ddbbe96bed7b2a8432e49253b5f60d6c46a68ee17aa713b18e3658c723ce"
+    },
+    {
+      "path": "authority-nexus.mtl",
+      "bytes": 1109,
+      "sha256": "7e34f2e1635fbcc1e2744a5f562d388ac6cad2c62fcc1500f688ded4b38178f9"
+    },
+    {
+      "path": "authority-nexus.obj",
+      "bytes": 2505122,
+      "sha256": "0c838c33cd146a9ef16cd4018830e02e07a497c08d1a2d9f5254a4344b894e2e"
+    },
+    {
+      "path": "build_disabled.py",
+      "bytes": 8506,
+      "sha256": "31f695eb5acca27490b87d84836bd79b344458437d0e9945b35a765696aa3c9f"
+    },
+    {
+      "path": "build_model.py",
+      "bytes": 33297,
+      "sha256": "cffc62977c943870ab816e0a342b06499ac3ac2ebec28775088fd2e60d7931bc"
+    },
+    {
+      "path": "build_viewer.mjs",
+      "bytes": 2177,
+      "sha256": "9111e2fa1d60c9ad85977449f44e3512233ed0e132c45af5b9f2f8f06331f6a9"
+    },
+    {
+      "path": "concept.png",
+      "bytes": 2812416,
+      "sha256": "f9bc5e1d67659d5793fb6272ee588e7d9e3c7d1e6fd5964e629e01af60a1b572"
+    },
+    {
+      "path": "disabled/authority-nexus-disabled-model-sheet.png",
+      "bytes": 1428523,
+      "sha256": "3859a9ca45ab98a5ecc43a031419b5bdcad8269a5069db76b81674af5d5d81e3"
+    },
+    {
+      "path": "disabled/authority-nexus-disabled.glb",
+      "bytes": 20376460,
+      "sha256": "df98d3bda436a3472d4e05e278ea0abb87212c887c64b023bd4a625879ff9003"
+    },
+    {
+      "path": "disabled/authority-nexus-disabled.mtl",
+      "bytes": 1216,
+      "sha256": "a2797ee419fc37d0f1fac9d04d76fd1cbb8c2fa10669132c6d113af8706f2b95"
+    },
+    {
+      "path": "disabled/authority-nexus-disabled.obj",
+      "bytes": 2135997,
+      "sha256": "70a7f2e4dec33b206c9866b8b89dd37719f007e174696c92fac76eab3bb17e1b"
+    },
+    {
+      "path": "disabled/geometry-validation.json",
+      "bytes": 340,
+      "sha256": "4a13aa7bf4e4241be17b5744507df027214244801caaebacd558586c47e6c94a"
+    },
+    {
+      "path": "disabled/gltf-validation.json",
+      "bytes": 7328,
+      "sha256": "f5ad549037474eed81045eb2154db44111589b4be085ab689d2a3c56cf405283"
+    },
+    {
+      "path": "disabled/model-info.json",
+      "bytes": 1348,
+      "sha256": "197b53ff6786268598f816aeefba543f0f48a53836033e0867bc81f51a462f11"
+    },
+    {
+      "path": "disabled/previews/back.png",
+      "bytes": 478677,
+      "sha256": "80f20e5e488e7b421581fecbdeeb347d90bdbdbe812879fd10776d2b11144925"
+    },
+    {
+      "path": "disabled/previews/bottom-quarter.png",
+      "bytes": 1196913,
+      "sha256": "d961fcfa98ce2e8bb4f2c42745a4334f2f198f7e8c76b1c2607febe7b5476de2"
+    },
+    {
+      "path": "disabled/previews/front.png",
+      "bytes": 485272,
+      "sha256": "0747b5da9cce86b71ccbc29ff877513af155beeea9bc0522643bfa86e254af01"
+    },
+    {
+      "path": "disabled/previews/hero.png",
+      "bytes": 1365360,
+      "sha256": "2d5f39dc1596304e4979f9b4ed5f8d656af1e40867108e62278d75ec6110ca44"
+    },
+    {
+      "path": "disabled/previews/side.png",
+      "bytes": 462262,
+      "sha256": "0f49079161238ed1927a7ac38912f31e5404c7756f32814a56ad728a693dfa7d"
+    },
+    {
+      "path": "disabled/previews/top.png",
+      "bytes": 969555,
+      "sha256": "aa92a5ce6916ca544d1f659ca3d7834e1375487ea53c99566494c2e5418002a6"
+    },
+    {
+      "path": "disabled/runtime-validation.json",
+      "bytes": 487,
+      "sha256": "be10ea592b0dfc630c82edf0c61abed338f1ac52e839a189368ba754761465ef"
+    },
+    {
+      "path": "disabled/texture-generation.json",
+      "bytes": 5282,
+      "sha256": "0184ff14ba4eb97d96b6401d6c5994ae2553242167a1fe6ada52efd12ca9c4b4"
+    },
+    {
+      "path": "disabled/textures/authority-nexus-basecolor.png",
+      "bytes": 2407802,
+      "sha256": "82b816a927fe607f8e7d95e20cec2842b0b6ea6298e3f82879f68eb0d158452d"
+    },
+    {
+      "path": "disabled/textures/authority-nexus-brass-ring-metallic-roughness.png",
+      "bytes": 1512504,
+      "sha256": "b9530efbb3f3d5aae11f48a0a56f7655e51d9a5ec44620b4cd074edc045b0ad9"
+    },
+    {
+      "path": "disabled/textures/authority-nexus-brass-ring.png",
+      "bytes": 3257975,
+      "sha256": "ac47ea9d03c0df834e42f5b0fffd817b78ce30145a6c69f87eadf8857b579c4e"
+    },
+    {
+      "path": "disabled/textures/authority-nexus-emissive.png",
+      "bytes": 69,
+      "sha256": "c47dd9465c00e9a0c8b85e9ea58d3034a0d23b9cf926113602f3460752a4eb96"
+    },
+    {
+      "path": "disabled/textures/authority-nexus-impact.png",
+      "bytes": 3709438,
+      "sha256": "4b2a38d89c4065cc30f5e279cf49cd53e80066ab7c5d19d9275b3cb8f8fb9cd3"
+    },
+    {
+      "path": "disabled/textures/authority-nexus-ivory-metallic-roughness.png",
+      "bytes": 736750,
+      "sha256": "9ebafbec629d22e29a86277c9ec005fb4e44b8569b9ca00acc7fb72baca908c8"
+    },
+    {
+      "path": "disabled/textures/authority-nexus-ivory-panels.png",
+      "bytes": 3605387,
+      "sha256": "fa2c77656ed154723ed923e08b83a402c9de9a424e0d0da2c7d4315395bc4667"
+    },
+    {
+      "path": "disabled/textures/authority-nexus-metallic-roughness.png",
+      "bytes": 967770,
+      "sha256": "4303b711f8452e433489d44476d1e208b7d4c3c7225d92124166ed858a00a22e"
+    },
+    {
+      "path": "disabled/textures/authority-nexus-power-cells-emissive.png",
+      "bytes": 69,
+      "sha256": "c47dd9465c00e9a0c8b85e9ea58d3034a0d23b9cf926113602f3460752a4eb96"
+    },
+    {
+      "path": "disabled/textures/authority-nexus-power-cells-metallic-roughness.png",
+      "bytes": 1166876,
+      "sha256": "04f8c1dd7bcae4a9e7ae4b51569558a9b0c246fac72d368be646a5c43c2eadeb"
+    },
+    {
+      "path": "disabled/textures/authority-nexus-power-cells.png",
+      "bytes": 2307432,
+      "sha256": "a3c7bf130cda387527a2acf273661b3f1e5aa473bef9ef33aaca3bbb1a5d3281"
+    },
+    {
+      "path": "geometry-validation.json",
+      "bytes": 750,
+      "sha256": "9299f8f0d0adbaa1835139291f19fc2be556d5e2728e5a54607b8c56c0ae4481"
+    },
+    {
+      "path": "gltf-validation.json",
+      "bytes": 6174,
+      "sha256": "ba8e1dcc24669c19d36375780a9fc8698c33bfb7d443d6348f7fe95960f0a053"
+    },
+    {
+      "path": "inspect_disabled.py",
+      "bytes": 3814,
+      "sha256": "ec5e95fbd5e27769b9b5736ae163b90fe3c44b1fc72b46fcca3d57316162410d"
+    },
+    {
+      "path": "inspect_model.py",
+      "bytes": 11750,
+      "sha256": "78203f1f74e3c1849609d616bde77485379ffedebe8ac6c9220c17483273758f"
+    },
+    {
+      "path": "inspect_traffic.py",
+      "bytes": 2792,
+      "sha256": "49afd6283500b9e3b161b43cd6214e67be9ea9383bd4347e8c5d197a8adf334b"
+    },
+    {
+      "path": "model-info.json",
+      "bytes": 1254,
+      "sha256": "8c2292bfc8300cf6bb89b039edb5284e63c1686fe3b744a4ead552a8c8fb3312"
+    },
+    {
+      "path": "nexus-state.js",
+      "bytes": 2995,
+      "sha256": "2990643ec1fc6b82d794126c4e5bc7777387407c075dd3a72a5b12310b55ea3e"
+    },
+    {
+      "path": "package.json",
+      "bytes": 415,
+      "sha256": "8da465bda1cbc3315aebc8c00627807939745562df03e4b713dd2d2ac17a8007"
+    },
+    {
+      "path": "power-texture-generation.json",
+      "bytes": 2255,
+      "sha256": "d3e1370743bca02dabbbea6af17f5711d10cbf6e284fa1cbf46f93e0880b7eeb"
+    },
+    {
+      "path": "previews/back.png",
+      "bytes": 470229,
+      "sha256": "35810d087b53b78aed9f129eae03cea23ca325aff866299577310ce07bb1039b"
+    },
+    {
+      "path": "previews/bottom-quarter.png",
+      "bytes": 1406970,
+      "sha256": "41fd8a0c916a65a0a8d8ba139af690e60522615c2cb12bae2bc3645c61bc0580"
+    },
+    {
+      "path": "previews/bottom.png",
+      "bytes": 1085142,
+      "sha256": "0f1852b6c3dd5a8dda6c980527b963f53266fba106b6cea10935d7ddbacd9380"
+    },
+    {
+      "path": "previews/front.png",
+      "bytes": 476610,
+      "sha256": "0b42da1a5b637dbcfd153f58881b685eb55a9cbd860a67a8639982e3a6301fac"
+    },
+    {
+      "path": "previews/hero.png",
+      "bytes": 1498507,
+      "sha256": "1b96dee785165bdc14c356b61edb63f15314c093912ab63a9581f5614592f4d9"
+    },
+    {
+      "path": "previews/portal-off.png",
+      "bytes": 1368365,
+      "sha256": "ba4154d680afe6476bef3029490c9ffe11226a8207b8158ea08012a34283de45"
+    },
+    {
+      "path": "previews/power-core-detail.png",
+      "bytes": 382324,
+      "sha256": "5d136f651a967d43d60d56ce058bbf1a2f6c84fb28d8e5687cf010b16b810c77"
+    },
+    {
+      "path": "previews/rear-quarter.png",
+      "bytes": 1581662,
+      "sha256": "4d23e4f1abe03a077626b58693d5272d62a3089f39a78d720f5dcb4e3f50e401"
+    },
+    {
+      "path": "previews/side.png",
+      "bytes": 479078,
+      "sha256": "9600ff6fc3dab2dc90d9e98c4ea96b04eecb84a39e259803cee5b4be5e164cb6"
+    },
+    {
+      "path": "previews/texture-coverage-detail.png",
+      "bytes": 932168,
+      "sha256": "a83dd3ecb312efe6402345feec20011fb0f6db6f3f5b5639751479a7d8e91ae5"
+    },
+    {
+      "path": "previews/top.png",
+      "bytes": 1186653,
+      "sha256": "1c6622d9a9fef0a72e63f0cc6ad1417b7f6cbac5db4ca14b159065cb0808961f"
+    },
+    {
+      "path": "previews/traffic-hero.png",
+      "bytes": 1500078,
+      "sha256": "5693a35ebaea9722af48666ca83ac96349373149fd19556a4eab9be823806331"
+    },
+    {
+      "path": "previews/traffic-snapshot.json",
+      "bytes": 7262257,
+      "sha256": "00d8a28643f2c881905fa888f029ba34a17175c26827ea11587bf4d858e3e2d1"
+    },
+    {
+      "path": "previews/traffic-top.png",
+      "bytes": 1188244,
+      "sha256": "1442adf71abf6e4f3ffca5caf96194a52329d6178b574f11d15c9bc599b169f0"
+    },
+    {
+      "path": "previews/wormhole-flow-check.png",
+      "bytes": 1619702,
+      "sha256": "85de1f3b37a186a4a963175f5d39d9a7f7535aee1d876f871fb5ab18538c6b8e"
+    },
+    {
+      "path": "reference.png",
+      "bytes": 2407802,
+      "sha256": "82b816a927fe607f8e7d95e20cec2842b0b6ea6298e3f82879f68eb0d158452d"
+    },
+    {
+      "path": "render_core.py",
+      "bytes": 10555,
+      "sha256": "d43215d017a511d129bc98967711bee1b00549168833fb1b75573590240d1e1b"
+    },
+    {
+      "path": "requirements.txt",
+      "bytes": 24,
+      "sha256": "35b34eda44db9d3dc139eed3b75ec638ed0b63c331d0a589611ad031962595fb"
+    },
+    {
+      "path": "ring-texture-generation.json",
+      "bytes": 2405,
+      "sha256": "a9d8e90c4e27b87c816a6aeeb1604526c7a4c4bbcb9c0396aa94450e9ed39e6a"
+    },
+    {
+      "path": "test_asset.mjs",
+      "bytes": 4098,
+      "sha256": "d32831fbca05ecb2060b298c62917bd7992d652fc3822f70749d6a4ae308b8bc"
+    },
+    {
+      "path": "test_disabled.mjs",
+      "bytes": 6102,
+      "sha256": "6209c44cc8d1c78d846176f08a4514698288e6e8417838fb5eaf3b5e97eeaa37"
+    },
+    {
+      "path": "test_traffic.mjs",
+      "bytes": 7148,
+      "sha256": "ce1402855b191b03cbb64fa9426c2afa300ddfb740163bc7e503a33826a48529"
+    },
+    {
+      "path": "test_wormhole.mjs",
+      "bytes": 3463,
+      "sha256": "9393b70202792c26ed103ea3fc6fe9f63c72f89e8bb314efda726aa7b05c6447"
+    },
+    {
+      "path": "texture-audit-before.json",
+      "bytes": 31890,
+      "sha256": "ee69304f748647d4f0faa8d7565b217500d66f289e367ee1b40e604808ee2dbe"
+    },
+    {
+      "path": "texture-validation.json",
+      "bytes": 3158,
+      "sha256": "08ff0a8daa2a4cdc11341514a9164c6c728195e9b2d71139f6a97c9dab5e1cd6"
+    },
+    {
+      "path": "textures/authority-nexus-basecolor.png",
+      "bytes": 2407802,
+      "sha256": "82b816a927fe607f8e7d95e20cec2842b0b6ea6298e3f82879f68eb0d158452d"
+    },
+    {
+      "path": "textures/authority-nexus-brass-ring-metallic-roughness.png",
+      "bytes": 488944,
+      "sha256": "716ab4584f65598016f8028f2e93f034ed280a7fc13ab54668cdecd21baff574"
+    },
+    {
+      "path": "textures/authority-nexus-brass-ring.png",
+      "bytes": 2600338,
+      "sha256": "d444a82e8d33bb022da283db141d880bcb2d92019210bdd341eb9b9b9aed4acb"
+    },
+    {
+      "path": "textures/authority-nexus-emissive.png",
+      "bytes": 280020,
+      "sha256": "1db8dd4a9f65d5f039362369e946d0ee267ce486f651e6a86a5b099973dfd66e"
+    },
+    {
+      "path": "textures/authority-nexus-ivory-metallic-roughness.png",
+      "bytes": 1233900,
+      "sha256": "5a516ec7623b32cb4f185feda4689e407b1b8643e4d11bca07a86817bbc9958e"
+    },
+    {
+      "path": "textures/authority-nexus-ivory-panels.png",
+      "bytes": 2792872,
+      "sha256": "dafdd32a93b3a3d228a517305e50e0472b4791ab6574cff58a1ad547095b7dfd"
+    },
+    {
+      "path": "textures/authority-nexus-metallic-roughness.png",
+      "bytes": 967770,
+      "sha256": "4303b711f8452e433489d44476d1e208b7d4c3c7225d92124166ed858a00a22e"
+    },
+    {
+      "path": "textures/authority-nexus-power-cells-emissive.png",
+      "bytes": 2069730,
+      "sha256": "4a9dbe7ec64412dfc15cee083ef877e568223b317578fc11239e97070b39ef7d"
+    },
+    {
+      "path": "textures/authority-nexus-power-cells-metallic-roughness.png",
+      "bytes": 1206337,
+      "sha256": "73857287de22b8050d10b4cedd899a1cd61192edf1f289e9212419c3358b0f8b"
+    },
+    {
+      "path": "textures/authority-nexus-power-cells.png",
+      "bytes": 2272436,
+      "sha256": "bc4582b8f186307caecf2e58c7afc0fb5dcbc285808c009895d3387406639af2"
+    },
+    {
+      "path": "tower-texture-generation.json",
+      "bytes": 2701,
+      "sha256": "434ceb8da1844111d98a36526e9d3e2548a838af6ead4b01f27c50d461eb918c"
+    },
+    {
+      "path": "traffic-inspection.mjs",
+      "bytes": 2383,
+      "sha256": "f41a5dbf496f678520a6dcd24d3bc6465fdc529c38d4e59367ef35729121257c"
+    },
+    {
+      "path": "traffic-models/interceptor-lod2.glb",
+      "bytes": 987548,
+      "sha256": "7870f44e505c28c83d60fcb92b5caacfa89febd5b3bd18bbd1034447325dbb4b"
+    },
+    {
+      "path": "traffic-models/manifest.json",
+      "bytes": 1166,
+      "sha256": "2dedca536e5dadc6d8ffb647e26e3c667517689674d40be28fd72661806d054f"
+    },
+    {
+      "path": "traffic-models/medium-freighter-lod2.glb",
+      "bytes": 2149528,
+      "sha256": "1e8f612e3a95282769baa78c452100ff63b174c38dbfc1cb29e7b8a95be78c72"
+    },
+    {
+      "path": "traffic-models/small-freighter-lod2.glb",
+      "bytes": 1876280,
+      "sha256": "21c051ba926e8daca3b68b9e1f1b11aa74c868dd3e980f11d21ad928a2609d25"
+    },
+    {
+      "path": "traffic-models/tiny-freighter-lod2.glb",
+      "bytes": 1633140,
+      "sha256": "167b0775b5c3da34aa6eaea5cf071f4d83e70d56323251cb0af0f1b139d1821e"
+    },
+    {
+      "path": "traffic-validation.json",
+      "bytes": 822,
+      "sha256": "4a5f48c5714757b8cce95f65ad89186bdb09bcd8eb99e98b6c0880b770adca95"
+    },
+    {
+      "path": "validate.mjs",
+      "bytes": 1027,
+      "sha256": "b518aee3e7892874af47c2dca55cae08975dfc7c9124dc17ac6e1e3307f57793"
+    },
+    {
+      "path": "viewer-template.html",
+      "bytes": 5647,
+      "sha256": "622403a4052e47ca376c41b78db4949caeb9dbacfd2eca3563360cb57190b465"
+    },
+    {
+      "path": "viewer.html",
+      "bytes": 66490922,
+      "sha256": "7d31270c4e96b62aa6a9586a6b296063b33a1ef92506f0594fc934bf38e4e97f"
+    },
+    {
+      "path": "viewer.js",
+      "bytes": 12576,
+      "sha256": "4388fd76f3dc1a4a3ef621f9d7609c215725ccf65cb817817f7fa9e27fead719"
+    },
+    {
+      "path": "wormhole-effect.js",
+      "bytes": 5307,
+      "sha256": "88d44b64f39c52df2c69576c6d1cf39ac58a1cd747111723e16e611d61d51ed4"
+    },
+    {
+      "path": "wormhole-traffic.js",
+      "bytes": 11251,
+      "sha256": "d65f17781ec23a333361e4125fffdfbf5af24cacad9c8b5b894024cc39477474"
+    },
+    {
+      "path": "wormhole-validation.json",
+      "bytes": 679,
+      "sha256": "81b3e808532420f731a563005b381794a8513e552973a3b5eb90b2b6abaa4282"
+    }
+  ],
+  "revision": "Complete texture coverage audit and repair for both station variants: graphite, brass fittings, caps, radiator edges, crowns and exposed titanium; geometry unchanged",
+  "updatedAt": "2026-10-07T04:14:32.635044+00:00",
+  "runtimeEffect": {
+    "module": "wormhole-effect.js",
+    "type": "Three.js fragment shader",
+    "includedIn": "viewer.html",
+    "embeddedInGlb": false,
+    "additionalTriangles": 0,
+    "additionalRenderSections": 0
+  },
+  "runtimeTraffic": {
+    "module": "wormhole-traffic.js",
+    "includedIn": "viewer.html",
+    "embeddedInStationGlb": false,
+    "shipModels": [
+      "interceptor-lod2.glb",
+      "tiny-freighter-lod2.glb",
+      "small-freighter-lod2.glb",
+      "medium-freighter-lod2.glb"
+    ],
+    "slots": 10,
+    "visibleAtOnce": "up to 7 during steady arrivals; 10 while holding traffic resumes",
+    "lengthsRelativeToStationDiameter": [
+      0.008585858585858586,
+      0.012626262626262626,
+      0.01515151515151515,
+      0.01818181818181818
+    ],
+    "additionalRenderSections": 29,
+    "maximumAdditionalTriangles": 44034,
+    "shipCounts": {
+      "tiny-freighter": 3,
+      "interceptor": 3,
+      "small-freighter": 2,
+      "medium-freighter": 2
+    },
+    "arrivalIntervalSeconds": 3.6
+  },
+  "disabledModel": {
+    "name": "Authority Nexus \u2014 Attack disabled",
+    "triangles": 9856,
+    "renderSections": 32,
+    "sourceComponents": 368,
+    "materials": 12,
+    "dimensionsXYZ": [
+      19.8,
+      6.34,
+      19.8
+    ],
+    "embeddedTextures": 11,
+    "textureResolution": [
+      1536,
+      1024
+    ],
+    "towerTextureResolution": [
+      1254,
+      1254
+    ],
+    "ringTextureResolution": [
+      2172,
+      724
+    ],
+    "powerTextureResolution": [
+      724,
+      2172
+    ],
+    "assemblies": [
+      "structure",
+      "stabilizer-1",
+      "stabilizer-2",
+      "stabilizer-3",
+      "stabilizer-4"
+    ],
+    "animations": [],
+    "axes": "Y up, -Z forward",
+    "physicalDiameter": "Unspecified; authored at approximately 20 relative units",
+    "generator": "Python/NumPy; no Blender",
+    "texturing": "Impact-scorched ivory and brass; textured graphite supports and exposed titanium; repaired local UVs on all physical faces; fractured unpowered reactor cells; seven amber reserve-power markers",
+    "optimization": "Static components merged by assembly and material; exact vertex deduplication; 16-bit indices",
+    "note": "Repairable disabled-state asset. No active portal or reopening animation. Not game-integrated.",
+    "state": "attack-disabled",
+    "damage": [
+      "Stabilizer 2 fractured and capped",
+      "Two scarred impact recesses with exposed ribs",
+      "Portal and containment field absent"
+    ]
+  },
+  "runtimeStates": {
+    "module": "nexus-state.js",
+    "includedIn": "viewer.html",
+    "control": "Attack disabled",
+    "disabledUrlParameter": "state=disabled",
+    "disabledGlb": "disabled/authority-nexus-disabled.glb",
+    "downloadFollowsSelection": true,
+    "damageLocksContainmentPower": true,
+    "trafficHoldsOutsideAperture": true
+  },
+  "textureAudit": {
+    "report": "texture-validation.json",
+    "before": "texture-audit-before.json",
+    "script": "audit_textures.py",
+    "preview": "previews/texture-coverage-detail.png",
+    "models": {
+      "operational": {
+        "physicalTriangles": 9744,
+        "untexturedPhysicalTriangles": 0,
+        "collapsedTexturedTriangles": 0,
+        "geometryNormalsSha256": "444184cb84cd0a0bdb58ee84c0719a1c97f227df4d41d38c34466eae1cf28e50"
+      },
+      "disabled": {
+        "physicalTriangles": 9716,
+        "untexturedPhysicalTriangles": 0,
+        "collapsedTexturedTriangles": 0,
+        "geometryNormalsSha256": "8a0314d2ac3fe613d2cfe75739ed24a90008495dfff5e78fc180ea82af158997"
+      }
+    }
+  }
+}

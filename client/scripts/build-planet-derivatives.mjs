@@ -7,7 +7,14 @@ import sharp from "sharp";
 
 export const PLANET_ART_VERSION = "2026-09-08";
 export const PLANET_ART_SIZES = [32, 64, 128, 256, 512, 1024, 1254];
-export const PLANET_ART_KINDS = ["terrestrial", "desert", "ocean", "ice", "gas_giant", "lava", "barren", "moon"];
+export const PLANET_ART_KINDS = ["terrestrial", "desert", "ocean", "ice", "gas_giant", "lava", "barren", "moon", "marginal", "marginal_ocean"];
+/** Masters by look, relative to art-src. Later looks keep their own dated folder;
+ * marginal_ocean stands in with the ice master until it has its own art. */
+export const PLANET_ART_SOURCES = {
+  ...Object.fromEntries(PLANET_ART_KINDS.slice(0, 8).map(slug => [slug, `planets-${PLANET_ART_VERSION}/${slug}.png`])),
+  marginal: "planets-2026-10-08/marginal-soft-edges-v1.png",
+  marginal_ocean: `planets-${PLANET_ART_VERSION}/ice.png`,
+};
 const clientRoot = fileURLToPath(new URL("..", import.meta.url));
 const recipe = "full-canvas-mitchell-rgba-v1";
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -37,7 +44,6 @@ async function geometry(bytes) {
 }
 
 export async function buildPlanetDerivatives() {
-  const inputRoot = path.join(clientRoot, "art-src", `planets-${PLANET_ART_VERSION}`);
   const outputRoot = path.join(clientRoot, "public", "art", "derived", "planets", PLANET_ART_VERSION);
   await mkdir(outputRoot, { recursive: true });
   const manifestFile = path.join(outputRoot, "manifest.json");
@@ -45,7 +51,7 @@ export async function buildPlanetDerivatives() {
   const manifest = { version: PLANET_ART_VERSION, recipe, sizes: PLANET_ART_SIZES, planets: [] };
   let written = 0;
   for (const slug of PLANET_ART_KINDS) {
-    const source = path.join(inputRoot, `${slug}.png`);
+    const source = path.join(clientRoot, "art-src", PLANET_ART_SOURCES[slug]);
     const bytes = await readFile(source);
     const sourceSha256 = hash(bytes);
     const meta = await sharp(bytes).metadata();
@@ -78,7 +84,7 @@ export async function buildPlanetDerivatives() {
         url: `/art/derived/planets/${PLANET_ART_VERSION}/${file}?v=${sha256.slice(0, 12)}` });
       written++;
     }
-    manifest.planets.push({ slug, source: `art-src/planets-${PLANET_ART_VERSION}/${slug}.png`,
+    manifest.planets.push({ slug, source: `art-src/${PLANET_ART_SOURCES[slug]}`,
       sourceSha256, ...measured, levels });
   }
   await writeChanged(manifestFile, JSON.stringify(manifest, null, 2) + "\n");

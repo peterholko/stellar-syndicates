@@ -33,7 +33,7 @@ mod tests {
         let mut tender = Fleet::single(id, owner, ShipKind::Convoy, pos, FleetOrder::Idle, None);
         tender.set_fitted(ShipKind::Convoy, &Loadout::new(vec![M::FuelTransferRig]), 1);
         tender.fuel = 50.0;
-        tender.add_cargo(C::Fuel, 40);
+        tender.add_cargo(C::Deuterium, 40);
         tender.add_cargo(C::MetallicOre, 7);
         let mut receiver = Fleet::single(target, owner, ShipKind::Raider,
             pos + Vec2::new(100.0, 0.0), FleetOrder::Idle, None);
@@ -80,7 +80,7 @@ mod tests {
         assert_eq!(report(&w, id).requested, 11);
         assert_eq!(report(&w, id).spent, 11);
         assert!((report(&w, id).delivered - 10.25).abs() < 1e-9);
-        assert_eq!(w.fleets[&id].cargo_amount(C::Fuel), 29);
+        assert_eq!(w.fleets[&id].cargo_amount(C::Deuterium), 29);
         assert_eq!(w.fleets[&id].cargo_amount(C::MetallicOre), 7);
         assert_eq!(w.fleets[&id].fuel, 50.0, "never siphon propulsion fuel");
         assert_eq!(w.fleets[&target].fuel, w.fleets[&target].fuel_capacity());
@@ -88,7 +88,7 @@ mod tests {
         let mut restored: World = serde_json::from_str(&saved).unwrap();
         pump(&mut restored, 2.0);
         assert_eq!(report(&restored, id), report(&w, id));
-        assert_eq!(restored.fleets[&id].cargo_amount(C::Fuel), 29, "completion is idempotent across save/load");
+        assert_eq!(restored.fleets[&id].cargo_amount(C::Deuterium), 29, "completion is idempotent across save/load");
     }
 
     #[test]
@@ -99,7 +99,7 @@ mod tests {
             match case {
                 1 => { w.fleets.get_mut(&target).unwrap().owner = PlayerId(906); }
                 2 => { w.fleets.get_mut(&id).unwrap().set_fitted(ShipKind::Convoy, &Loadout::default(), 1); }
-                3 => { w.fleets.get_mut(&id).unwrap().remove_cargo(C::Fuel, 40); }
+                3 => { w.fleets.get_mut(&id).unwrap().remove_cargo(C::Deuterium, 40); }
                 _ => {}
             }
             w.time = w.pending_orders[0].apply_time;
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn tender_exhaustion_releases_the_receivers_existing_order() {
         let (mut w, owner, id, target) = scene();
-        w.fleets.get_mut(&id).unwrap().remove_cargo(C::Fuel, 37);
+        w.fleets.get_mut(&id).unwrap().remove_cargo(C::Deuterium, 37);
         let dest = w.fleets[&target].pos + Vec2::new(50_000.0, 0.0);
         let receiver = w.fleets.get_mut(&target).unwrap();
         receiver.fuel = 0.0;
@@ -128,7 +128,7 @@ mod tests {
         pump(&mut w, 1.0);
         assert_eq!(report(&w, id).phase, Phase::Empty);
         assert_eq!(report(&w, id).delivered, 3.0);
-        assert_eq!(w.fleets[&id].cargo_amount(C::Fuel), 0);
+        assert_eq!(w.fleets[&id].cargo_amount(C::Deuterium), 0);
         assert!(matches!(w.fleets[&target].order, FleetOrder::MoveTo { dest: d } if d == dest));
         pump(&mut w, 1.0);
         assert!(w.fleets[&target].pos.distance(pos) > 0.0);
@@ -142,7 +142,7 @@ mod tests {
         let pos = w.fleets[&id].pos;
         pump(&mut w, 2.0);
         assert!(w.fleets[&id].pos.distance(pos) > 0.0, "tender really travels to its target");
-        assert_eq!(w.fleets[&id].cargo_amount(C::Fuel), 40);
+        assert_eq!(w.fleets[&id].cargo_amount(C::Deuterium), 40);
         let nearby = w.fleets[&id].pos + Vec2::new(100.0, 0.0);
         let receiver = w.fleets.get_mut(&target).unwrap();
         receiver.pos = nearby;
@@ -150,17 +150,17 @@ mod tests {
         w.prepare_tenders();
         assert_eq!(report(&w, id).phase, Phase::Waiting);
         w.resolve_tender_transfers();
-        assert_eq!(w.fleets[&id].cargo_amount(C::Fuel), 40);
+        assert_eq!(w.fleets[&id].cargo_amount(C::Deuterium), 40);
         w.fleets.get_mut(&target).unwrap().vel = Vec2::ZERO;
         pump(&mut w, 0.5);
         assert!(report(&w, id).spent > 0);
         // Installing a different received order immediately removes the hose
         // lock; no service sidecar can continue pumping after cancellation.
         w.fleets.get_mut(&id).unwrap().order = FleetOrder::Idle;
-        let remaining = w.fleets[&id].cargo_amount(C::Fuel);
+        let remaining = w.fleets[&id].cargo_amount(C::Deuterium);
         assert!(!w.prepare_tenders().contains(&target));
         pump(&mut w, 1.0);
-        assert_eq!(w.fleets[&id].cargo_amount(C::Fuel), remaining);
+        assert_eq!(w.fleets[&id].cargo_amount(C::Deuterium), remaining);
     }
 
     #[test]
@@ -199,7 +199,7 @@ mod tests {
         pump(&mut w, 1.0);
         assert_eq!(report(&w, id).phase, Phase::Unsafe);
         assert_eq!(w.fleets[&id].pos, pos, "never chase into the battle");
-        assert_eq!(w.fleets[&id].cargo_amount(C::Fuel), 40);
+        assert_eq!(w.fleets[&id].cargo_amount(C::Deuterium), 40);
         w.engagements.clear();
         pump(&mut w, 1.0);
         assert_eq!(report(&w, id).phase, Phase::Unsafe, "requires deliberate reassignment");
@@ -222,7 +222,7 @@ mod tests {
             assert_eq!(state.fleets[&target].fuel, state.fleets[&target].fuel_capacity());
             assert_eq!(report(state, id).spent + report(state, second).spent, 11);
             assert!((report(state, id).delivered + report(state, second).delivered - 10.25).abs() < 1e-9);
-            assert_eq!(state.fleets[&id].cargo_amount(C::Fuel) + state.fleets[&second].cargo_amount(C::Fuel), 69);
+            assert_eq!(state.fleets[&id].cargo_amount(C::Deuterium) + state.fleets[&second].cargo_amount(C::Deuterium), 69);
         }
     }
 }
@@ -236,13 +236,38 @@ fn terminal(phase: Phase) -> bool {
     matches!(phase, Phase::Complete | Phase::Empty | Phase::Unsafe | Phase::Unavailable)
 }
 
+/// §fuel-overhaul: a tender pumps any fuel it carries into the matching store:
+/// Helium-3 (once the receiver can burn it) and Deuterium into the fusion tank,
+/// Uranium into the fission store, Antimatter into the bottle — the one way to
+/// refill a bottle away from a dock.
+const TENDER_FUELS: [crate::Commodity; 4] = [crate::Commodity::Helium3, crate::Commodity::Deuterium,
+    crate::Commodity::Uranium, crate::Commodity::Antimatter];
+
+fn carries_fuel(fleet: &Fleet) -> bool {
+    TENDER_FUELS.iter().any(|c| fleet.cargo_amount(*c) > 0)
+}
+
+/// The fuel the tender can pump next into `target`, with the receiver's room.
+fn next_pump_fuel(tender: &Fleet, target: &Fleet) -> Option<(crate::Commodity, f64)> {
+    TENDER_FUELS.into_iter().filter(|c| tender.cargo_amount(*c) > 0).find_map(|c| {
+        let room = match c {
+            crate::Commodity::Helium3 if target.fuel_research.helium3 => target.fusion_room(),
+            crate::Commodity::Helium3 => 0.0,
+            crate::Commodity::Deuterium => target.fusion_room(),
+            crate::Commodity::Uranium => (target.uranium_capacity() - target.uranium).max(0.0),
+            _ => (target.antimatter_capacity() - target.antimatter).max(0.0),
+        };
+        (room > 1e-9).then_some((c, room))
+    })
+}
+
 impl World {
     pub(super) fn start_tender_transfer(&mut self, owner: PlayerId, id: EntityId,
         target: EntityId, events: &mut Vec<Event>)
     {
         let valid = id != target
             && self.fleets.get(&id).is_some_and(|f| f.owner == owner && fitted(f)
-                && f.cargo_amount(crate::Commodity::Fuel) > 0)
+                && carries_fuel(f))
             && self.fleets.get(&target).is_some_and(|f| f.owner == owner && !f.disposable);
         if !valid {
             events.push(Event::new(self.time, EventPayload::OrderRejected {
@@ -285,13 +310,13 @@ impl World {
             });
             let phase = if !fitted(fleet) { Phase::Unavailable }
                 else if unsafe_here { Phase::Unsafe }
-                else if fleet.cargo_amount(crate::Commodity::Fuel) == 0 { Phase::Empty }
+                else if !carries_fuel(fleet) { Phase::Empty }
                 else if let Some(target) = self.fleets.get(&transfer.target).filter(|f| f.owner == fleet.owner) {
                     if fleet.pos.distance(target.pos) > TRANSFER_RANGE_SU { Phase::Rendezvous }
                     else if engaged.contains(&transfer.target) { Phase::Unsafe }
                     else if target.vel.length() > 0.5 || matches!(target.order, FleetOrder::Jump { .. }) {
                         Phase::Waiting
-                    } else if target.fuel_capacity() - target.fuel <= 1e-9 { Phase::Complete }
+                    } else if next_pump_fuel(fleet, target).is_none() { Phase::Complete }
                     else { receivers.insert(transfer.target); Phase::Transferring }
                 } else { Phase::Unavailable };
             updates.push((id, phase));
@@ -322,30 +347,36 @@ impl World {
                 || source.pos.distance(target.pos) > TRANSFER_RANGE_SU
                 || source.vel.length() > 0.5 || target.vel.length() > 0.5
                 || matches!(target.order, FleetOrder::Jump { .. }) { continue; }
-            let room = (target.fuel_capacity() - target.fuel).max(0.0);
+            let Some((commodity, room)) = next_pump_fuel(source, target) else {
+                transfer.phase = Phase::Complete;
+                self.fleets.get_mut(&id).unwrap().order = FleetOrder::Refuel { transfer, next_pump };
+                continue;
+            };
             // Cargo is whole units; a partial final can tops off exactly and its
-            // unused fraction is line-purge loss (<1 Fuel). Never round UP tank
+            // unused fraction is line-purge loss (<1 unit). Never round UP tank
             // gain or debit a propulsion tank. Both spent and delivered remain
             // in the report, so this small loss is accounted for, not free fuel.
             transfer.requested = transfer.requested.max(transfer.spent + room.ceil() as u32);
             let due = if self.time + 1e-9 >= next_pump {
                 ((self.time - next_pump).max(0.0) * TRANSFER_UNITS_PER_S).floor() as u32 + 1
             } else { 0 };
-            let units = due.min(room.ceil() as u32).min(source.cargo_amount(crate::Commodity::Fuel));
+            let units = due.min(room.ceil() as u32).min(source.cargo_amount(commodity));
             if units > 0 {
                 let source = self.fleets.get_mut(&id).unwrap();
-                let spent = source.remove_cargo(crate::Commodity::Fuel, units);
+                let spent = source.remove_cargo(commodity, units);
                 let target = self.fleets.get_mut(&transfer.target).unwrap();
-                transfer.delivered += target.refuel(spent as f64);
+                transfer.delivered += match commodity {
+                    crate::Commodity::Uranium => target.refuel_uranium(spent as f64),
+                    crate::Commodity::Antimatter => target.refuel_antimatter(spent as f64),
+                    crate::Commodity::Helium3 => target.refuel_helium3(spent as f64),
+                    _ => target.refuel(spent as f64),
+                };
                 target.stalled = false;
                 transfer.spent += spent;
                 next_pump = self.time + 1.0 / TRANSFER_UNITS_PER_S;
             }
-            let target = &self.fleets[&transfer.target];
-            if target.fuel_capacity() - target.fuel <= 1e-9 {
-                transfer.phase = Phase::Complete;
-            } else if self.fleets[&id].cargo_amount(crate::Commodity::Fuel) == 0 {
-                transfer.phase = Phase::Empty;
+            if next_pump_fuel(&self.fleets[&id], &self.fleets[&transfer.target]).is_none() {
+                transfer.phase = if carries_fuel(&self.fleets[&id]) { Phase::Complete } else { Phase::Empty };
             }
             if terminal(transfer.phase) && transfer.delivered > 0.0 {
                 self.fleets.get_mut(&transfer.target).unwrap().stalled = false;

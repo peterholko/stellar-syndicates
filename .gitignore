@@ -27,3 +27,15 @@ client/node_modules/
 
 # Local dev server logs
 server*.log
+
+# Scratch output (image generation, captures, temp files)
+/output/
+/tmp/
+
+# Ship-model deliveries kept on disk only: archives (up to 333 MB, past
+# GitHub's limit), bundled viewers, LOD experiments and Python caches
+client/art-src/ship-models/**/*.zip
+client/art-src/ship-models/**/viewer.html
+client/art-src/ship-models/*lod-experiment*/
+client/art-src/ship-models/**/__pycache__/
+client/art-src/ship-models/**/*.pyc

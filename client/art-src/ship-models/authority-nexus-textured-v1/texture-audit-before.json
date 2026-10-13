@@ -1,0 +1,1129 @@
+{
+  "operational": {
+    "model": "authority-nexus.glb",
+    "sha256": "d144e49f96a89b3fa69e72909624416616a7e2bbd98aaca46db82857d4cff678",
+    "geometryNormalsSha256": "444184cb84cd0a0bdb58ee84c0719a1c97f227df4d41d38c34466eae1cf28e50",
+    "materials": {
+      "Ventral reference armor and radiators": {
+        "triangles": 1304,
+        "textured": true,
+        "collapsedUV": 384,
+        "components": 100
+      },
+      "Reference armor and port architecture": {
+        "triangles": 2168,
+        "textured": true,
+        "collapsedUV": 336,
+        "components": 72
+      },
+      "Brushed brass fittings": {
+        "triangles": 1520,
+        "textured": false,
+        "collapsedUV": 192,
+        "components": 77
+      },
+      "Powered cyan stabilizer field": {
+        "triangles": 992,
+        "textured": false,
+        "collapsedUV": 0,
+        "components": 25
+      },
+      "Machined brass containment collars": {
+        "triangles": 1824,
+        "textured": true,
+        "collapsedUV": 0,
+        "components": 57
+      },
+      "Ivory titanium panel armor": {
+        "triangles": 944,
+        "textured": true,
+        "collapsedUV": 80,
+        "components": 44
+      },
+      "Graphite structure": {
+        "triangles": 1088,
+        "textured": false,
+        "collapsedUV": 0,
+        "components": 48
+      },
+      "Powered cyan reactor cells": {
+        "triangles": 896,
+        "textured": true,
+        "collapsedUV": 0,
+        "components": 40
+      },
+      "Violet wormhole energy \u2014 independent surface": {
+        "triangles": 704,
+        "textured": true,
+        "collapsedUV": 0,
+        "components": 1
+      }
+    },
+    "collapsedTexturedComponents": [
+      {
+        "component": "port.glass.0",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.0",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.1",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.1",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.2",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.2",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.3",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.3",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.4",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.4",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.5",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.5",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.6",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.6",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.7",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.7",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.8",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.8",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.9",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.9",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.10",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.10",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.11",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.11",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.12",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.12",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.13",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.13",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.14",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.14",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.15",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.15",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.16",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.16",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.17",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.17",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.18",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.18",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.19",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.19",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.20",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.20",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.21",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.21",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.22",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.22",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.23",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.23",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "dock.terrace.0",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.0",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.1",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.1",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.2",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.2",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.3",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.3",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.4",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.4",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.5",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.5",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.6",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.6",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.7",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.7",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.8",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.8",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.9",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.9",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.10",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.10",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.11",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.11",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.12",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.12",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.13",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.13",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.14",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.14",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.15",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.15",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.16",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.16",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.17",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.17",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.18",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.18",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.19",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.19",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.20",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.20",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.21",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.21",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.22",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.22",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.23",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.23",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "stabilizer-1.crown",
+        "material": "Ivory titanium panel armor",
+        "collapsedUV": 20
+      },
+      {
+        "component": "stabilizer-2.crown",
+        "material": "Ivory titanium panel armor",
+        "collapsedUV": 20
+      },
+      {
+        "component": "stabilizer-3.crown",
+        "material": "Ivory titanium panel armor",
+        "collapsedUV": 20
+      },
+      {
+        "component": "stabilizer-4.crown",
+        "material": "Ivory titanium panel armor",
+        "collapsedUV": 20
+      }
+    ]
+  },
+  "disabled": {
+    "model": "disabled/authority-nexus-disabled.glb",
+    "sha256": "4da5c58d23ba47fec1408ef10aaf580bc0a5a8baf298a604b55e01c33b94ae0d",
+    "geometryNormalsSha256": "8a0314d2ac3fe613d2cfe75739ed24a90008495dfff5e78fc180ea82af158997",
+    "materials": {
+      "Ventral reference armor and radiators": {
+        "triangles": 1300,
+        "textured": true,
+        "collapsedUV": 384,
+        "components": 98
+      },
+      "Reference armor and port architecture": {
+        "triangles": 2148,
+        "textured": true,
+        "collapsedUV": 336,
+        "components": 70
+      },
+      "Brushed brass fittings": {
+        "triangles": 1376,
+        "textured": false,
+        "collapsedUV": 144,
+        "components": 65
+      },
+      "Scorched brass containment collars": {
+        "triangles": 1740,
+        "textured": true,
+        "collapsedUV": 0,
+        "components": 54
+      },
+      "Impact-scorched ivory armor": {
+        "triangles": 988,
+        "textured": true,
+        "collapsedUV": 60,
+        "components": 49
+      },
+      "Graphite structure": {
+        "triangles": 1088,
+        "textured": false,
+        "collapsedUV": 0,
+        "components": 48
+      },
+      "Fractured reactor cells / unpowered": {
+        "triangles": 816,
+        "textured": true,
+        "collapsedUV": 0,
+        "components": 36
+      },
+      "Emergency amber markers / reserve power": {
+        "triangles": 140,
+        "textured": false,
+        "collapsedUV": 0,
+        "components": 7
+      },
+      "Exposed torn titanium": {
+        "triangles": 140,
+        "textured": false,
+        "collapsedUV": 24,
+        "components": 9
+      },
+      "Scorched impact recesses / exposed machinery": {
+        "triangles": 120,
+        "textured": true,
+        "collapsedUV": 0,
+        "components": 2
+      }
+    },
+    "collapsedTexturedComponents": [
+      {
+        "component": "port.glass.0",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.0",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.1",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.1",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.2",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.2",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.3",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.3",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.4",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.4",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.5",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.5",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.6",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.6",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.7",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.7",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.8",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.8",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.9",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.9",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.10",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.10",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.11",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.11",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.12",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.12",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.13",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.13",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.14",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.14",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.15",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.15",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.16",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.16",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.17",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.17",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.18",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.18",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.19",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.19",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.20",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.20",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.21",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.21",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.22",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.22",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "port.glass.23",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 4
+      },
+      {
+        "component": "belly.radiator.23",
+        "material": "Ventral reference armor and radiators",
+        "collapsedUV": 12
+      },
+      {
+        "component": "dock.terrace.0",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.0",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.1",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.1",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.2",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.2",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.3",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.3",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.4",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.4",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.5",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.5",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.6",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.6",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.7",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.7",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.8",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.8",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.9",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.9",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.10",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.10",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.11",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.11",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.12",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.12",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.13",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.13",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.14",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.14",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.15",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.15",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.16",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.16",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.17",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.17",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.18",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.18",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.19",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.19",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.20",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.20",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.21",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.21",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.22",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.22",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "dock.terrace.23",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 6
+      },
+      {
+        "component": "port.glass.23",
+        "material": "Reference armor and port architecture",
+        "collapsedUV": 8
+      },
+      {
+        "component": "stabilizer-1.crown",
+        "material": "Impact-scorched ivory armor",
+        "collapsedUV": 20
+      },
+      {
+        "component": "stabilizer-3.crown",
+        "material": "Impact-scorched ivory armor",
+        "collapsedUV": 20
+      },
+      {
+        "component": "stabilizer-4.crown",
+        "material": "Impact-scorched ivory armor",
+        "collapsedUV": 20
+      }
+    ]
+  }
+}

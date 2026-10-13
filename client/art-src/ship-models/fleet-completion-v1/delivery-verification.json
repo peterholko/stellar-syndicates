@@ -1,0 +1,52 @@
+{
+  "galleryLinksChecked": 57,
+  "missingLinks": [],
+  "referencesMatchModelPackages": true,
+  "assets": [
+    {
+      "ship": "destroyer",
+      "reference": "/Users/peter/projects/stellar-syndicates/client/art-src/destroyer-reference-v1/destroyer-reference.png",
+      "model": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/destroyer-textured-v1/destroyer.glb"
+    },
+    {
+      "ship": "battleship",
+      "reference": "/Users/peter/projects/stellar-syndicates/client/art-src/battleship-reference-v1/battleship-reference.png",
+      "model": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/battleship-textured-v1/battleship.glb"
+    },
+    {
+      "ship": "dreadnought",
+      "reference": "/Users/peter/projects/stellar-syndicates/client/art-src/dreadnought-reference-v1/dreadnought-reference.png",
+      "model": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/dreadnought-textured-v1/dreadnought.glb"
+    },
+    {
+      "ship": "scout",
+      "reference": "/Users/peter/projects/stellar-syndicates/client/art-src/scout-reference-v1/scout-reference.png",
+      "model": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/scout-textured-v1/scout.glb"
+    },
+    {
+      "ship": "colony-ship",
+      "reference": "/Users/peter/projects/stellar-syndicates/client/art-src/colony-ship-reference-v1/colony-ship-reference.png",
+      "model": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/colony-ship-textured-v1/colony-ship.glb"
+    },
+    {
+      "ship": "troop-transport",
+      "reference": "/Users/peter/projects/stellar-syndicates/client/art-src/troop-transport-reference-v1/troop-transport-reference.png",
+      "model": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/troop-transport-textured-v1/troop-transport.glb"
+    },
+    {
+      "ship": "construction-ship",
+      "reference": "/Users/peter/projects/stellar-syndicates/client/art-src/construction-ship-reference-v1/construction-ship-reference.png",
+      "model": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/construction-ship-textured-v1/construction-ship.glb"
+    },
+    {
+      "ship": "medium-freighter",
+      "reference": "/Users/peter/projects/stellar-syndicates/client/art-src/medium-freighter-reference-v1/medium-freighter-reference.png",
+      "model": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/medium-freighter-textured-v1/medium-freighter.glb"
+    },
+    {
+      "ship": "authority-freighter",
+      "reference": "/Users/peter/projects/stellar-syndicates/client/art-src/authority-freighter-reference-v1/authority-freighter-reference.png",
+      "model": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/authority-freighter-textured-v1/authority-freighter.glb"
+    }
+  ]
+}

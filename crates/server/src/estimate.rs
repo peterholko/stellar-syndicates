@@ -51,6 +51,15 @@ pub struct EstimateInputs {
     composition_age: f64,
     defenses_age: Option<f64>,
     platform_tiers: Option<u32>,
+    /// §orbital-defense: the scouted station level covering the target.
+    station_level: Option<u32>,
+    /// Each side's station hardpoints as the viewer knows them: a scouted
+    /// rival station stands whole and stock-fitted (its damage and fits can't
+    /// be seen from here, and over-estimating the enemy is the safe side).
+    stations: [Vec<sim::station::MountSpec>; 2],
+    /// The fight would be at a world (the target within platform cover of a
+    /// system): which side holds it (0 the viewer, 1 the target's side).
+    world_side: Option<u8>,
 }
 
 /// Project the engagement `attacker` (one of `viewer`'s fleets) vs `target`,
@@ -138,12 +147,14 @@ pub fn prepare_estimate(
     // the target's ghost position — aged, honest ("scouted N ago").
     let mut defenses_age = None;
     let mut platform_tiers = None;
+    let mut station_level = None;
+    let mut stations: [Vec<sim::station::MountSpec>; 2] = [Vec::new(), Vec::new()];
     if world.players.contains_key(&viewer) {
         let intel = world.information.intel(viewer, cc, c, now);
         let covering = intel
             .values()
             .filter(|snap| {
-                snap.defense_tier > 0
+                (snap.defense_tier > 0 || snap.station_level > 0)
                     && snap.observed_at + sim::transit::delay(snap.pos, cc, c) <= now
                     && snap.pos.distance(ghost.pos) <= sim::build::DEFENSE_PLATFORM_RADIUS
             })
@@ -156,6 +167,11 @@ pub fn prepare_estimate(
             target_forces = target_forces.with_platform(snap.defense_tier, 0.0);
             defenses_age = Some((now - snap.observed_at).max(0.0));
             platform_tiers = Some(snap.defense_tier);
+            if snap.station_level > 0 {
+                station_level = Some(snap.station_level);
+                let whole = vec![sim::station::Mount::default(); sim::station::level(snap.station_level).map_or(0, |l| l.hardpoints as usize)];
+                stations[1] = sim::station::mount_specs(snap.station_level, &whole);
+            }
         }
     }
 
@@ -228,6 +244,17 @@ pub fn prepare_estimate(
     // Deterministic per (galaxy, attacker, target): the readout is stable
     // between refreshes; the spread comes from the k derived rollout seeds.
     let base_seed = world.config.seed ^ attacker.0.rotate_left(17) ^ target.0.rotate_left(41);
+    // Rules v14: a fight inside a system is fought at its world. Star
+    // positions are public; ownership is the viewer's arrived picture.
+    let world_side = world
+        .systems
+        .iter()
+        .filter(|s| s.pos.distance(ghost.pos) <= sim::build::DEFENSE_PLATFORM_RADIUS)
+        .min_by(|a, b| a.pos.distance(ghost.pos).total_cmp(&b.pos.distance(ghost.pos)))
+        .map(|s| {
+            let held_by_viewer = world.information.site(s.id, cc, c, now).is_some_and(|r| r.system.owner == Some(viewer));
+            if held_by_viewer { 0 } else { 1 }
+        });
     Some(EstimateInputs {
         setup,
         missions: own.mission_profile.map(|m| (attacker, m)).into_iter()
@@ -240,6 +267,9 @@ pub fn prepare_estimate(
         composition_age,
         defenses_age,
         platform_tiers,
+        station_level,
+        stations,
+        world_side,
     })
 }
 
@@ -247,7 +277,10 @@ pub fn prepare_estimate(
 /// over the prepared inputs. Owns all its data (no borrows), so the server hands
 /// this to `spawn_blocking` — a burst of estimate clicks can't stall the tick.
 pub fn run_estimate(inp: EstimateInputs) -> EngagementEstimate {
-    let dist = sim::tactical::project_distribution_with_missions(&inp.setup, inp.base_seed, 32, &inp.missions);
+    let dist = match inp.world_side {
+        Some(home) => sim::tactical::project_distribution_at_world(&inp.setup, inp.base_seed, 32, &inp.missions, home, &inp.stations),
+        None => sim::tactical::project_distribution_with_missions(&inp.setup, inp.base_seed, 32, &inp.missions),
+    };
     let band = |b: &[sim::tactical::LossBand]| -> Vec<crate::protocol::LossRange> {
         b.iter()
             .map(|x| crate::protocol::LossRange {
@@ -270,6 +303,7 @@ pub fn run_estimate(inp: EstimateInputs) -> EngagementEstimate {
         composition_age: inp.composition_age,
         defenses_age: inp.defenses_age,
         platform_tiers: inp.platform_tiers,
+        station_level: inp.station_level,
         win_pct: Some(dist.a_win_pct),
         runs: Some(dist.runs),
         own_loss_bands: band(&dist.a_bands),

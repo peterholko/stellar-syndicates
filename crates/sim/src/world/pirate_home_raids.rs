@@ -238,7 +238,7 @@ mod tests {
         w.players.get_mut(&owner).unwrap().joined_tick = 0;
         let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
         sys.stockpile = BTreeMap::from([(Commodity::Electronics, 1000.0),
-            (Commodity::MetallicOre, 41.0), (Commodity::Fuel, 40.0), (Commodity::Provisions, 40.0)]);
+            (Commodity::MetallicOre, 41.0), (Commodity::Deuterium, 40.0), (Commodity::Provisions, 40.0)]);
         let from = home_pos + Vec2::new(20_000.0, 0.0);
         w.systems.iter_mut().find(|s| s.id == base).unwrap().pos = from;
         let fleet = w.spawn_pirate_pack(1, from);
@@ -399,7 +399,7 @@ mod tests {
         w.time = w.pirate_home_raids[&fleet].depart_at;
         w.fleets.get_mut(&fleet).unwrap().pos = w.pirate_home_raids[&fleet].pos;
         w.systems.iter_mut().find(|s| s.id == home).unwrap().stockpile
-            = BTreeMap::from([(Commodity::Electronics, 50.0), (Commodity::MetallicOre, 41.0), (Commodity::Fuel, 40.0)]);
+            = BTreeMap::from([(Commodity::Electronics, 50.0), (Commodity::MetallicOre, 41.0), (Commodity::Deuterium, 40.0)]);
         w.tick_pirate_home_raids(&mut Vec::new());
         w.resolve_blockades(&mut Vec::new());
         assert_eq!(w.pirate_home_raids[&fleet].allowance[&Commodity::Electronics], 5);
@@ -415,7 +415,7 @@ mod tests {
         }
         assert_eq!(w.fleets[&fleet].cargo_units(), 6);
         let stock = &w.systems.iter().find(|s| s.id == home).unwrap().stockpile;
-        assert_eq!(stock[&Commodity::Fuel], 40.0);
+        assert_eq!(stock[&Commodity::Deuterium], 40.0);
         assert_eq!(stock[&Commodity::MetallicOre], 40.0);
         assert_eq!(stock[&Commodity::Electronics], 495.0);
         assert_eq!(serde_json::to_value(&w.pirate_home_raids).unwrap(), serde_json::to_value(&resumed.pirate_home_raids).unwrap());

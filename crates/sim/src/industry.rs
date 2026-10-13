@@ -5,16 +5,119 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const MAX_STOPS: usize = 8;
+/// §fuel-overhaul: the most a depot rule may keep at one port.
+pub const DEPOT_MAX_TARGET: u32 = 2_000;
+/// §fuel-overhaul: how often the Authority reviews depot rules (sim seconds).
+pub const DEPOT_CHECK_SECS: f64 = 30.0;
+
+/// §fuel-overhaul: a FUEL DEPOT standing rule — "keep `target` of `commodity`
+/// at `system`". The Authority reviews it at the Hub on its own light-delayed
+/// picture of the port, buys the shortfall on the Exchange and books it out on
+/// its next freight departure, billing price plus the freight fee. Fuels only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DepotRule {
+    pub system: EntityId,
+    pub commodity: Commodity,
+    pub target: u32,
+}
+
+/// The goods a depot rule may stock.
+pub fn is_depot_fuel(c: Commodity) -> bool {
+    matches!(c, Commodity::Uranium | Commodity::Deuterium | Commodity::Helium3 | Commodity::Antimatter)
+}
 pub const MAX_RESERVATIONS: usize = 8;
 pub const OUTPOST_BUILD_S: f64 = 60.0;
 pub const SKIM_RANGE_SU: f64 = 1_500.0;
-pub const SKIM_FUEL_PER_S: f64 = 1.0;
+/// §fuel-overhaul: Ramscoop skims Helium-3 at gas giants — the energy of the
+/// old 1 Fuel a second.
+pub const SKIM_HELIUM3_PER_S: f64 = 1.0 / crate::fuel::HELIUM3_FUEL_EQUIV;
+/// §belts: bulk-equivalent ore one Mining Barge cuts per second before research
+/// (Deep Bores, Strip Rigs). A dense ore comes out in proportionally fewer
+/// units (`production::ore_bulk_ratio`), as from a mine.
+pub const BARGE_ORE_PER_S: f64 = 0.25;
+/// §belts: every barge working one deposit, whatever corporation it flies for,
+/// shares at most this multiple of the deposit's natural rate. Upkeep is cheap,
+/// so this is what limits ship mining, and what makes miners compete.
+pub const SHIP_YIELD_MULT: f64 = 3.0;
+/// §belts phase 6: a corporation's cumulative mining, for the balancing
+/// harness and the admin views. Units are whole-or-fractional ore units as
+/// they left the ground (dense ores in their own, fewer units). Sim truth:
+/// never on a player's wire.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MiningStats {
+    /// Cut by Mining Barges, by ore.
+    #[serde(default)]
+    pub barge: BTreeMap<Commodity, f64>,
+    /// Extracted by colony structures on asteroid belts, by ore.
+    #[serde(default)]
+    pub belt_colony: BTreeMap<Commodity, f64>,
+    /// Extracted by colony structures on planets and moons, by ore.
+    #[serde(default)]
+    pub planet_colony: BTreeMap<Commodity, f64>,
+    /// The part of all of the above that came out of found pockets.
+    #[serde(default)]
+    pub pocket: BTreeMap<Commodity, f64>,
+    #[serde(default)]
+    pub prospect_passes: u32,
+    #[serde(default)]
+    pub pockets_found: u32,
+    #[serde(default)]
+    pub strikes: u32,
+    /// Ore freighters took out of stations, by hand or on a route.
+    #[serde(default)]
+    pub station_hauled: f64,
+}
+
+/// §belts: a Mining Belt Station takes this long to anchor, and to unanchor.
+pub const ANCHOR_SECS: f64 = 60.0;
+
+/// §belts: where a Mining Belt Station stands in its anchoring. A station
+/// flies to the belt's star (`Approaching`), anchors within `SKIM_RANGE_SU` of
+/// it (`Anchoring`, then `Anchored`), and takes as long to come free
+/// (`Unanchoring`). From `Anchoring` on it cannot move, merge or split.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnchorPhase {
+    Approaching,
+    Anchoring,
+    Anchored,
+    Unanchoring,
+}
+
+/// §belts: a station's anchor at one belt.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Anchor {
+    pub system: EntityId,
+    pub body: u32,
+    pub phase: AnchorPhase,
+    /// Sim time the current phase began.
+    pub since: f64,
+}
+
+impl Anchor {
+    /// Anchoring, anchored or unanchoring: the station is fixed in place.
+    pub fn locked(&self) -> bool {
+        self.phase != AnchorPhase::Approaching
+    }
+}
+
+/// §pockets: a prospecting pass dwells this long within `SKIM_RANGE_SU` of the
+/// star, loud like a survey.
+pub const PROSPECT_SECS: f64 = 60.0;
+/// §pockets: each pass finds each hidden pocket with this chance. Tunable.
+pub const POCKET_FIND_CHANCE: f64 = 0.5;
+/// §pockets: a barge at work strikes a hidden pocket now and then — mining is
+/// slow prospecting. The chance per barge-hour of cutting. Tunable.
+pub const STRIKE_CHANCE_PER_BARGE_HOUR: f64 = 0.10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FreightPort {
     System { id: EntityId },
     Hub,
+    /// §belts: one of the owner's Mining Belt Stations. A station stop only
+    /// loads: it takes ore from the station's hold.
+    Station { id: EntityId },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -34,7 +137,7 @@ pub struct FreightRoute {
     pub escort: Option<EntityId>,
     pub repeat: bool,
     /// Remember cruise with the route. Old saves/bookings retain Full; new UI
-    /// and bot routes explicitly choose Economy, never by rewriting old saves.
+    /// and bot routes explicitly choose Slow, never by rewriting old saves.
     #[serde(default)]
     pub transit: crate::ship::TransitMode,
     /// Optional cash cap per Hub visit, including fees. Purchases fill that
@@ -101,7 +204,7 @@ impl ColonyProjectKind {
                 (Machinery, 40.0),
             ],
             Self::AgriculturalExport => &[(Alloys, 70.0), (Polymers, 50.0), (Machinery, 40.0)],
-            Self::DeepExtraction => &[(Alloys, 100.0), (DriveAssemblies, 15.0), (Machinery, 60.0)],
+            Self::DeepExtraction => &[(Alloys, 100.0), (WarpCore, 15.0), (Machinery, 60.0)],
         }
     }
     pub fn build_secs(self) -> f64 {
@@ -114,7 +217,7 @@ impl ColonyProjectKind {
         match self {
             Self::OrbitalAssembly => &[
                 (Commodity::HullSections, 0.3),
-                (Commodity::DriveAssemblies, 0.12),
+                (Commodity::WarpCore, 0.12),
             ],
             Self::AgriculturalExport => &[(Commodity::Provisions, 3.0)],
             Self::DeepExtraction => &[], // determined by the actual finite deposit
@@ -125,9 +228,12 @@ impl ColonyProjectKind {
         // Per operational second. These are new specialized processes, not a
         // blanket multiplier on every colony line. Transport still matters.
         match self {
-            Self::OrbitalAssembly => &[(Composites, 0.6), (PrecisionComponents, 0.25), (Fuel, 0.3)],
-            Self::AgriculturalExport => &[(Biomass, 2.5), (Polymers, 0.1), (Fuel, 0.05)],
-            Self::DeepExtraction => &[(Fuel, 0.15), (Machinery, 0.025)],
+            // §rare-materials: its Warp Cores carry the Drive Works' Iridium.
+            // §fuel-overhaul: no project burns fuel; the Warp Core output needs
+            // Fusion Reactors (checked where the project runs).
+            Self::OrbitalAssembly => &[(Composites, 0.58), (PrecisionComponents, 0.25), (Iridium, 0.012)],
+            Self::AgriculturalExport => &[(Biomass, 2.5), (Polymers, 0.1)],
+            Self::DeepExtraction => &[(Machinery, 0.025)],
         }
     }
 }
@@ -222,6 +328,34 @@ pub enum FleetIndustry {
         cargo_fraction: f64,
         status: String,
     },
+    /// §belts: Mining Barges working one ore of a belt. `status` is
+    /// travelling, mining, full, depleted, unsafe or claimed.
+    Mine {
+        system: EntityId,
+        body: u32,
+        ore: Commodity,
+        /// §pockets: working a found pocket of `ore`, not the belt's own.
+        #[serde(default)]
+        pocket: bool,
+        /// §belts: this tick's cut went into the corporation's anchored station.
+        #[serde(default)]
+        to_station: bool,
+        /// Units cut over the job's life, into the stockpile or the hold.
+        mined: f64,
+        /// The part of a unit carried into the next tick.
+        fraction: f64,
+        status: String,
+    },
+    /// §pockets: a Scout or Mining Barge prospecting a charted belt for its
+    /// hidden pockets. `status` is travelling, prospecting or unsafe; the job
+    /// ends when the pass completes and its report heads home.
+    Prospect {
+        system: EntityId,
+        body: u32,
+        /// Seconds of dwell banked on this pass.
+        dwell: f64,
+        status: String,
+    },
 }
 pub fn outpost_costs() -> &'static [(Commodity, u32)] {
     &[
@@ -245,7 +379,7 @@ pub struct IndustryCatalog {
     pub projects: Vec<ProjectSpec>,
     pub outpost_costs: Vec<(Commodity, u32)>,
     pub outpost_build_secs: f64,
-    pub skim_fuel_per_s: f64,
+    pub skim_helium3_per_s: f64,
     pub max_stops: usize,
 }
 pub fn catalog() -> IndustryCatalog {
@@ -267,7 +401,7 @@ pub fn catalog() -> IndustryCatalog {
         .collect(),
         outpost_costs: outpost_costs().to_vec(),
         outpost_build_secs: OUTPOST_BUILD_S,
-        skim_fuel_per_s: SKIM_FUEL_PER_S,
+        skim_helium3_per_s: SKIM_HELIUM3_PER_S,
         max_stops: MAX_STOPS,
     }
 }

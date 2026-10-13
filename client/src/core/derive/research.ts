@@ -1,6 +1,6 @@
 // Shared research derivations extracted from the desktop shell.
 
-import type { ProgrammeView, ResearchDynView, ResearchView } from "../../protocol";
+import type { Commodity, ProgrammeView, ResearchDynView, ResearchView } from "../../protocol";
 import type { Net } from "../../net";
 import { state } from "../../state";
 
@@ -23,6 +23,17 @@ export function sendResearchQueue(ids: string[]): void {
   const net = netSource();
   if (net) net.send({ type: "SetResearchQueue", queue: ids });
 }
+
+
+// §rare-materials: what a programme draws, per hour at research rate 1 (one
+// staffed Tier I Academy), with a good listed twice merged into one row.
+export function researchSuppliesPerHour(programme: Pick<ProgrammeView, "supplies">): [Commodity, number][] {
+  const merged = new Map<Commodity, number>();
+  for (const [good, perSecond] of programme.supplies ?? []) merged.set(good, (merged.get(good) ?? 0) + perSecond * 3600);
+  return [...merged];
+}
+
+export const supplyAmount = (perHour: number): string => perHour >= 10 ? Math.round(perHour).toLocaleString() : perHour.toFixed(1);
 
 
 // §node: one-line description of what a node's bonus does (by slug). Used in the

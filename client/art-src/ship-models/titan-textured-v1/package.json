@@ -1,0 +1,16 @@
+{
+  "name": "titan-model-preview",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "models": "python3 prepare_textures.py && python3 build_model.py",
+    "build": "node build_preview.mjs",
+    "validate": "node validate.mjs",
+    "check:surfaces": "python3 verify_surfaces.py"
+  },
+  "devDependencies": {
+    "three": "0.180.0",
+    "esbuild": "0.25.10",
+    "gltf-validator": "2.0.0-dev.3.10"
+  }
+}

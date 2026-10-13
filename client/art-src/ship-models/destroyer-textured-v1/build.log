@@ -1,0 +1,31 @@
+python3 prepare_textures.py
+Packed native reference artwork into three 2048px PBR maps, with a dedicated underside projection.
+
+python3 build_model.py
+{
+  "meshes": 15,
+  "renderSections": 15,
+  "sourceComponents": 85,
+  "triangles": 14532,
+  "exportedVertices": 14346,
+  "dimensionsXYZ": [
+    7.9,
+    3.26,
+    18.9
+  ],
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "embeddedTextures": 3,
+  "axes": "Y up, -Z forward",
+  "source": "../../destroyer-reference-v1/destroyer-reference.png",
+  "generator": "Python/NumPy, no Blender",
+  "optimization": "Static parts combined by material; independent turret assemblies retained; exact vertex deduplication; 16-bit indices where possible"
+}
+
+node validate.mjs
+0 errors; 0 warnings; 23 informational notes.
+
+node build_preview.mjs
+Built standalone viewer.html with embedded GLB and renderer.

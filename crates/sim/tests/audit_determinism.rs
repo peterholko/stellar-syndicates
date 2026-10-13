@@ -59,7 +59,7 @@ fn drive(w: &mut World, ticks: u64) {
         if t % 37 == 0 {
             cmds.push(Command::MarketBuy {
                 player_id: a,
-                commodity: Fuel,
+                commodity: Deuterium,
                 units: 20,
                 max_unit_price: None,
             });
@@ -75,7 +75,7 @@ fn drive(w: &mut World, ticks: u64) {
             cmds.push(Command::BookFreightOut {
                 player_id: a,
                 system: sys,
-                commodity: Fuel,
+                commodity: Deuterium,
                 units: 10,
             });
         }

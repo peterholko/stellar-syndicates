@@ -1,0 +1,12 @@
+{
+  "id": "ground/desert",
+  "mode": "built-in image_gen",
+  "prompt": "Use case: stylized-concept.\nAsset type: ONE standalone biome GROUND layer, square transparent PNG, approximately 1024 x 1024, for use underneath a separate colony building sprite.\nPrimary request: a modest natural ground transition patch with an EMPTY flat center for a building, no building in this image. True fully transparent alpha outside the patch, irregular softly feathered edge. The patch is a thin surface texture, not a floating terrain island: no thickness, cutaway walls, curb, raised slab or platform.\nInput image 1: biome terrain/color/lighting reference ONLY. Do not copy the whole landscape, horizon, sky, water, distant hills or tree forests.\nLayout: a high-oblique ground footprint, view about 55 degrees downward. Center at canvas x=50%, y=65%; softly irregular diamond-like patch occupying roughly x=9–91%, y=35–91%, with transparent area above. Quiet compacted natural earth/grit in the middle where the future building will sit, richer low biome texture near the fringe. Entire patch and feathering well inset, nothing touches any canvas edge. Matte diffuse soft upper-left light, no hard directional building shadow because no building is present.\nNo structures, foundations shaped as buildings, roads, paths leaving the patch, markings, text, people, vehicles, trees, tall vegetation, opaque sky/background or checkerboard. No smooth hard oval sticker rim.\nInput image 2: footprint alignment and soft alpha edge REFERENCE only. Match its overall empty flat patch layout and camera, but replace all its surface material with this requested biome.\nBiome: desert. Compacted warm desert sand, windblown fine grit and scattered sun-bleached small stones, sparse to no vegetation.\nIf the landscape reference contains any man-made pads or roads, IGNORE them completely; output only natural empty ground.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/surfaces/desert-surface-v1.png",
+    "/Users/peter/projects/stellar-syndicates/output/imagegen/surface-structures-v2/grounds/boreal-world.png"
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-e47d0f9b-3495-4014-9632-5e7afa8b686e.png",
+  "file": "grounds/desert.png"
+}

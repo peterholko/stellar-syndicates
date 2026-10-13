@@ -3,7 +3,7 @@
 // verification); in M3 it becomes a delayed, fogged picture.
 
 import type {
-  EmplacementView, AnchorView, CaptainRosterView, CharterView, FleetDoctrine, FoundingView, FreightView, GalaxyInfo, GhostView, JumpDepartureView, MarketView, PathPointView, PendingOrderView, PlayerId, StandingOrder, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
+  EmplacementView, InterdictionFieldView, AnchorView, CaptainRosterView, CharterLedgerView, CharterView, FleetDoctrine, FoundingView, FreightView, GalaxyInfo, GhostView, JumpDepartureView, MarketView, PathPointView, PendingOrderView, PlayerId, StandingOrder, DepotRule, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
 import { defaultDoctrine } from "./protocol";
 import type { FleetCommand } from "./core/fleetorders";
 import { emptyTransactions, type TransactionHistoryState } from "./core/derive/transactions";
@@ -137,6 +137,8 @@ export interface ViewState {
   jumpDepartures: JumpDepartureView[];
   /// §emplacements: your own structures standing in open space.
   emplacements: EmplacementView[];
+  /// Interdiction fields whose light has arrived (anyone's: they are public).
+  interdictionFields: InterdictionFieldView[];
   market: MarketView | null;
   /// Client-accumulated history of the (light-delayed) hub prices the player has
   /// OBSERVED, per commodity — the data source for the Market sparklines. This is
@@ -155,6 +157,11 @@ export interface ViewState {
   charter: CharterView | null;
   /// Server-authoritative new-corporation programme and founder safety.
   founding: FoundingView | null;
+  /// §founding R10: the charter ledger once it opens (first guarded export).
+  charterLedger: CharterLedgerView | null;
+  /** §founding R7: the scripted Privateer's id, kept after the bounty report
+   * clears it from the served guide, so its defeat notice can name it. */
+  lastFoundingPrivateer: string | null;
   /// §perf Part B: the static charter band ladder — arrives once in Welcome.
   charterLadder: [string, number][];
   /// §perf Part B: the static research programme catalog — arrives once in
@@ -162,6 +169,8 @@ export interface ViewState {
   researchCatalog: import("./protocol").ProgrammeInfo[];
   /// The player's own standing logistics orders (§15), fresh from the View.
   standingOrders: StandingOrder[];
+  /** §fuel-overhaul: the corp's fuel depot rules (served with standing orders). */
+  depotRules: DepotRule[];
   /// The player's own fleet doctrine (§16), fresh from the View.
   doctrine: FleetDoctrine;
   /// §order-lifecycle: every own in-flight order, grouped by fleet and sorted
@@ -257,6 +266,7 @@ export function initialState(): ViewState {
     captainCapacity: 1,
     jumpDepartures: [],
     emplacements: [],
+    interdictionFields: [],
     market: null,
     priceHistory: {},
     lastPriceSampleAt: -1,
@@ -265,9 +275,12 @@ export function initialState(): ViewState {
     freight: null,
     charter: null,
     founding: null,
+    charterLedger: null,
+    lastFoundingPrivateer: null,
     charterLadder: [],
     researchCatalog: [],
     standingOrders: [],
+    depotRules: [],
     doctrine: defaultDoctrine(),
     pendingOrders: new Map(),
     battles: [],

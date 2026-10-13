@@ -51,7 +51,9 @@ fn utilities_have_real_early_unlocks_and_strict_hull_limits() {
     }
     assert!(Loadout::new(vec![M::ExtendedTanks]).validate(ShipKind::Convoy));
     for m in crate::module::MODULE_KINDS {
-        assert_eq!(Loadout::new(vec![m]).validate(ShipKind::Convoy), matches!(m, M::ExtendedTanks | M::CargoPods | M::FuelTransferRig));
+        // The utilities, and a Warp Stabilizer for running blockades.
+        assert_eq!(Loadout::new(vec![m]).validate(ShipKind::Convoy),
+            matches!(m, M::ExtendedTanks | M::CargoPods | M::FuelTransferRig | M::WarpStabilizer | M::JumpDrive));
     }
     for hull in [ShipKind::Freighter, ShipKind::Colony, ShipKind::Titan, ShipKind::Builder] {
         assert!(!Loadout::new(vec![M::ExtendedTanks]).validate(hull));

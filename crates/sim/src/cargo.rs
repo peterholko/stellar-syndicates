@@ -4,8 +4,12 @@
 //! two-tier information model).
 //!
 //! The industrial web separates five mineable ore families from their refined
-//! materials. Raw exports need no refinery; refining consumes fuel and staffed
+//! materials. Raw exports need no refinery; refining draws power and staffed
 //! capacity. Legacy Silicates/Rare Elements deposits remain mineable in saves.
+//!
+//! §fuel-overhaul: ships burn three fuels. Uranium (milled from Ferrite Ore)
+//! drives slow warp, Deuterium (today's Fuel, renamed) full warp, Helium-3 the
+//! long-range fusion burn, and Antimatter folds space for jumps.
 
 use serde::{Deserialize, Serialize};
 
@@ -33,12 +37,14 @@ pub enum Commodity {
     Volatiles,
     Biomass,
     // ── Processed ────────────────────────────────────────────────────────────
-    /// MetallicOre + Fuel, in a Smelter.
+    /// MetallicOre, in a Smelter.
     Alloys,
     Electronics,
     Polymers,
-    /// Volatiles-derived only, in a Fuel Refinery.
-    Fuel,
+    /// §fuel-overhaul: the full-warp and fusion-plant fuel (formerly "Fuel").
+    /// Refined from Volatiles in a Deuterium Refinery, or bought at the Hub.
+    #[serde(alias = "fuel")]
+    Deuterium,
     /// Biomass-derived only, in an Agroplex.
     Provisions,
     // ── Advanced ─────────────────────────────────────────────────────────────
@@ -47,7 +53,10 @@ pub enum Commodity {
     Composites,
     HullSections,
     PrecisionComponents,
-    DriveAssemblies,
+    /// §fuel-overhaul: the Authority's Warp Core (formerly Drive Assemblies).
+    /// Every warp hull needs one; colonies make them only after Fusion Reactors.
+    #[serde(alias = "drive_assemblies")]
+    WarpCore,
     // Append only: preserve historical enum ordering as well as wire slugs.
     CupriteOre,
     TitaniumOre,
@@ -55,10 +64,32 @@ pub enum Commodity {
     RareMetalOre,
     ConductiveMetals,
     Titanium,
+    // §belt-ores: mixed ores that occur only in asteroid belts. Each refines
+    // into goods the web already makes, in a different mix (EVE's lesson:
+    // many ores, few minerals). Planets keep the original five.
+    OlivineOre,
+    BorniteOre,
+    IlmeniteOre,
+    // §pockets: the rare pocket-only ores and the top-end materials they
+    // refine into. Found only by prospecting a belt's hidden pockets.
+    IridiumOre,
+    /// An ice: harvested like Volatiles, refined in the Smelter.
+    Helium3Ice,
+    VoidCrystal,
+    Iridium,
+    Helium3,
+    ExoticMatter,
+    // §fuel-overhaul.
+    /// Slow-warp fission fuel, milled from Ferrite Ore.
+    Uranium,
+    /// Jump fuel. The Authority sells it until Antimatter Synthesis.
+    Antimatter,
+    /// The heart of a Fusion Plant (tiers III–VI). Imported until Fusion Reactors.
+    FusionCore,
 }
 
 impl Commodity {
-    pub const ALL: [Commodity; 22] = [
+    pub const ALL: [Commodity; 34] = [
         Commodity::MetallicOre,
         Commodity::RareElements,
         Commodity::Silicates,
@@ -67,24 +98,36 @@ impl Commodity {
         Commodity::Alloys,
         Commodity::Electronics,
         Commodity::Polymers,
-        Commodity::Fuel,
+        Commodity::Deuterium,
         Commodity::Provisions,
         Commodity::Machinery,
         Commodity::Armaments,
         Commodity::Composites,
         Commodity::HullSections,
         Commodity::PrecisionComponents,
-        Commodity::DriveAssemblies,
+        Commodity::WarpCore,
         Commodity::CupriteOre,
         Commodity::TitaniumOre,
         Commodity::CrystallineOre,
         Commodity::RareMetalOre,
         Commodity::ConductiveMetals,
         Commodity::Titanium,
+        Commodity::OlivineOre,
+        Commodity::BorniteOre,
+        Commodity::IlmeniteOre,
+        Commodity::IridiumOre,
+        Commodity::Helium3Ice,
+        Commodity::VoidCrystal,
+        Commodity::Iridium,
+        Commodity::Helium3,
+        Commodity::ExoticMatter,
+        Commodity::Uranium,
+        Commodity::Antimatter,
+        Commodity::FusionCore,
     ];
 
     /// New deposits contain ores, not already-separated refined materials.
-    pub const RAW: [Commodity; 7] = [
+    pub const RAW: [Commodity; 13] = [
         Commodity::MetallicOre,
         Commodity::CupriteOre,
         Commodity::TitaniumOre,
@@ -92,6 +135,12 @@ impl Commodity {
         Commodity::RareMetalOre,
         Commodity::Volatiles,
         Commodity::Biomass,
+        Commodity::OlivineOre,
+        Commodity::BorniteOre,
+        Commodity::IlmeniteOre,
+        Commodity::IridiumOre,
+        Commodity::Helium3Ice,
+        Commodity::VoidCrystal,
     ];
 
     /// Which rung of the industrial web this commodity sits on.
@@ -103,7 +152,13 @@ impl Commodity {
             | Commodity::CrystallineOre
             | Commodity::RareMetalOre
             | Commodity::Volatiles
-            | Commodity::Biomass => CommodityTier::Raw,
+            | Commodity::Biomass
+            | Commodity::OlivineOre
+            | Commodity::BorniteOre
+            | Commodity::IlmeniteOre
+            | Commodity::IridiumOre
+            | Commodity::Helium3Ice
+            | Commodity::VoidCrystal => CommodityTier::Raw,
             Commodity::Alloys
             | Commodity::RareElements
             | Commodity::Silicates
@@ -111,11 +166,16 @@ impl Commodity {
             | Commodity::Titanium
             | Commodity::Electronics
             | Commodity::Polymers
-            | Commodity::Fuel
-            | Commodity::Provisions => CommodityTier::Processed,
+            | Commodity::Deuterium
+            | Commodity::Provisions
+            | Commodity::Iridium
+            | Commodity::Helium3
+            | Commodity::ExoticMatter
+            | Commodity::Uranium
+            | Commodity::Antimatter => CommodityTier::Processed,
             Commodity::Machinery | Commodity::Armaments | Commodity::Composites
             | Commodity::HullSections | Commodity::PrecisionComponents
-            | Commodity::DriveAssemblies => CommodityTier::Advanced,
+            | Commodity::WarpCore | Commodity::FusionCore => CommodityTier::Advanced,
         }
     }
 
@@ -130,26 +190,46 @@ impl Commodity {
             Commodity::Alloys => "alloys",
             Commodity::Electronics => "electronics",
             Commodity::Polymers => "polymers",
-            Commodity::Fuel => "fuel",
+            Commodity::Deuterium => "deuterium",
             Commodity::Provisions => "provisions",
             Commodity::Machinery => "machinery",
             Commodity::Armaments => "armaments",
             Commodity::Composites => "composites",
             Commodity::HullSections => "hull_sections",
             Commodity::PrecisionComponents => "precision_components",
-            Commodity::DriveAssemblies => "drive_assemblies",
+            Commodity::WarpCore => "warp_core",
             Commodity::CupriteOre => "cuprite_ore",
             Commodity::TitaniumOre => "titanium_ore",
             Commodity::CrystallineOre => "crystalline_ore",
             Commodity::RareMetalOre => "rare_metal_ore",
             Commodity::ConductiveMetals => "conductive_metals",
             Commodity::Titanium => "titanium",
+            Commodity::OlivineOre => "olivine_ore",
+            Commodity::BorniteOre => "bornite_ore",
+            Commodity::IlmeniteOre => "ilmenite_ore",
+            Commodity::IridiumOre => "iridium_ore",
+            Commodity::Helium3Ice => "helium3_ice",
+            Commodity::VoidCrystal => "void_crystal",
+            Commodity::Iridium => "iridium",
+            Commodity::Helium3 => "helium3",
+            Commodity::ExoticMatter => "exotic_matter",
+            Commodity::Uranium => "uranium",
+            Commodity::Antimatter => "antimatter",
+            Commodity::FusionCore => "fusion_core",
         }
     }
 
     pub fn is_ore(self) -> bool {
         matches!(self, Self::MetallicOre | Self::CupriteOre | Self::TitaniumOre
-            | Self::CrystallineOre | Self::RareMetalOre)
+            | Self::CrystallineOre | Self::RareMetalOre
+            | Self::OlivineOre | Self::BorniteOre | Self::IlmeniteOre
+            | Self::IridiumOre | Self::VoidCrystal)
+    }
+
+    /// Smelter feedstock: every ore, plus Helium-3 ice, which is harvested
+    /// like Volatiles but refined in the Smelter.
+    pub fn is_smeltable(self) -> bool {
+        self.is_ore() || self == Self::Helium3Ice
     }
 
     /// Prose only: stored orders, stockpiles and network identifiers use slug().
@@ -157,6 +237,8 @@ impl Commodity {
         match self {
             Self::MetallicOre => "ferrite ore".into(),
             Self::RareMetalOre => "rare-metal ore".into(),
+            Self::Helium3Ice => "helium-3 ice".into(),
+            Self::Helium3 => "helium-3".into(),
             _ => self.slug().replace('_', " "),
         }
     }
@@ -196,8 +278,8 @@ mod tests {
         }
     }
 
-    /// The tier classification partitions all 22 exactly (7 raw / 9 processed /
-    /// 6 advanced), and RAW matches the Raw tier.
+    /// The tier classification partitions all 34 exactly (13 raw / 14 processed /
+    /// 7 advanced), and RAW matches the Raw tier.
     #[test]
     fn tiers_partition_the_catalog() {
         let raw = Commodity::ALL
@@ -212,7 +294,7 @@ mod tests {
             .iter()
             .filter(|c| c.tier() == CommodityTier::Advanced)
             .count();
-        assert_eq!((raw, processed, advanced), (7, 9, 6));
+        assert_eq!((raw, processed, advanced), (13, 14, 7));
         for c in Commodity::RAW {
             assert_eq!(c.tier(), CommodityTier::Raw);
         }

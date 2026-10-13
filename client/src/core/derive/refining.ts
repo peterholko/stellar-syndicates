@@ -29,10 +29,11 @@ export function refiningEstimate(st: RefiningContext, system: SystemStateView, b
   const costs = inputs.map(([c,n]) => quote(c,n,"buy"));
   const sales = outputs.map(([c,n]) => quote(c,n,"sell"));
   if (raw === null || [...costs,...sales].some(n => n === null)) return null;
-  const fuelCost = costs.reduce<number>((n,x) => n + x!,0);
-  const refined = sales.reduce<number>((n,x) => n + x!,0) - fuelCost;
-  return { ore, units, raw, refined, difference: refined - raw, fuelCost,
-    fuel: inputs.find(([c]) => c === "fuel")?.[1] ?? 0, outputs,
+  // §fuel-overhaul: smelting burns no fuel (it draws power); any other input
+  // a recipe takes is bought at the Hub and charged against the batch.
+  const inputCost = costs.reduce<number>((n,x) => n + x!,0);
+  const refined = sales.reduce<number>((n,x) => n + x!,0) - inputCost;
+  return { ore, units, raw, refined, difference: refined - raw, inputCost, inputs, outputs,
     seconds: site.work_rate > 0 ? work / (recipe.rate * site.work_rate) : null,
     workforce: site.tier, built: site.built, recovery: site.recovery,
     priceAge: st.market.staleness,

@@ -1,0 +1,53 @@
+{
+  "sheets": [
+    {
+      "file": "01-exploration-sites.png",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "mode": "RGB",
+      "sha256": "0f7b6922621e5f06dacb548eed7d6893e663469dd83dbb912b1f9574e79f80b6",
+      "nonBinaryPixels": 489034,
+      "exactBinaryPalette": false,
+      "dimensionsCorrect": true
+    },
+    {
+      "file": "02-contracts-part-1.png",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "mode": "RGB",
+      "sha256": "033eb3bcdf9def373711dbb6b5d0d0313f12a70c2c23e753c4a36523e1540d2a",
+      "nonBinaryPixels": 500578,
+      "exactBinaryPalette": false,
+      "dimensionsCorrect": true
+    },
+    {
+      "file": "03-contracts-part-2.png",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "mode": "RGB",
+      "sha256": "dec7d5837f774d2e12bfd11571431f0f3ddea1fe15ef843bf940ac1e36992634",
+      "nonBinaryPixels": 443581,
+      "exactBinaryPalette": false,
+      "dimensionsCorrect": true
+    },
+    {
+      "file": "04-contract-issuers.png",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "mode": "RGB",
+      "sha256": "285d401cf6cc379c8876a78c6997467e0675260e84c674c2cac130c715ea7d05",
+      "nonBinaryPixels": 471388,
+      "exactBinaryPalette": false,
+      "dimensionsCorrect": true
+    }
+  ],
+  "note": "Source art is complete. Exact two-color palette cleanup remains; no raster pixels were changed programmatically."
+}

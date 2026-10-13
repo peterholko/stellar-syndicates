@@ -58,19 +58,19 @@ fn bunkerage_adds_real_tank_space_without_creating_fuel() {
         assert_eq!(w.fleets[&id].fuel, fuel, "research adds space, not free fuel");
         let home = w.players[&owner].home_system.unwrap();
         let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
-        sys.stockpile.insert(C::Fuel, 100.0);
+        sys.stockpile.insert(C::Deuterium, 100.0);
         w.fleets.get_mut(&id).unwrap().pos = sys.pos;
         w.refuel_docked(&mut vec![]);
         assert!((w.fleets[&id].fuel - capacity * 1.25).abs() < 1e-9);
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
-        assert!((sys.stockpile[&C::Fuel] - (100.0 - capacity * 0.25)).abs() < 1e-9);
+        assert!((sys.stockpile[&C::Deuterium] - (100.0 - capacity * 0.25)).abs() < 1e-9);
     }
 }
 
 #[test]
 fn efficient_burns_reduces_physical_burn_and_extends_reported_range() {
     for (kind, transit) in [(ShipKind::Scout, crate::ship::TransitMode::Full),
-        (ShipKind::TinyFreighter, crate::ship::TransitMode::Economy)]
+        (ShipKind::TinyFreighter, crate::ship::TransitMode::Slow)]
     {
         let (mut w, owner, id) = scene(kind);
         complete(&mut w, owner, "prop_bunkerage");
@@ -81,10 +81,10 @@ fn efficient_burns_reduces_physical_burn_and_extends_reported_range() {
             f.transit = transit;
             f.order = FleetOrder::MoveTo { dest: f.pos + Vec2::new(100_000.0, 0.0) };
             f.drive_state = crate::ship::DriveState::Cruising(crate::transit::Regime::Warp);
-            let before = f.fuel;
+            let before = f.propulsion_store();
             let range = f.range_at(crate::transit::WARP_FACTOR);
             for _ in 0..30 { state.integrate_movement(&mut vec![]); }
-            (before - state.fleets[&id].fuel, range, state.fleets[&id].pos)
+            (before - state.fleets[&id].propulsion_store(), range, state.fleets[&id].pos)
         };
         let (old, old_range, old_pos) = burn(&mut plain);
         let (new, new_range, new_pos) = burn(&mut w);
@@ -128,7 +128,10 @@ fn new_hulls_inherit_fuel_research_and_hub_topups_are_still_paid() {
     let mut events = vec![];
     w.refuel_docked(&mut events);
     assert!(w.players[&owner].credits < before);
-    assert!((w.fleets[&id].fuel - 262.0).abs() < 1e-9, "the market sells whole units, never free fractional fuel");
-    assert!(events.iter().any(|e| matches!(e.payload, EventPayload::HubFuelPurchased { fleet, units: 52, .. } if fleet == id)));
+    // §fuel-overhaul: whole units, rounded UP so the tank fills; the spill
+    // (half a unit here) is paid for, never free fuel.
+    assert!((w.fleets[&id].fuel - 262.5).abs() < 1e-9);
+    assert!(events.iter().any(|e| matches!(e.payload, EventPayload::HubFuelPurchased {
+        fleet, commodity: C::Deuterium, units: 53, .. } if fleet == id)));
 }
 }

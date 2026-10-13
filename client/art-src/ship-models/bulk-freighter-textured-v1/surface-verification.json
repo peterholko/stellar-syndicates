@@ -1,0 +1,660 @@
+{
+  "triangles": 36200,
+  "renderSections": 7,
+  "zeroAreaGeometry": 0,
+  "zeroAreaTexturedUVs": 0,
+  "nonFiniteValues": 0,
+  "bottomComponents": {
+    "spine.1 | dorsal distribution housing": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "spine.1 | ventral service housing": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "spine.2 | dorsal distribution housing": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "spine.2 | ventral service housing": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "spine.3 | dorsal distribution housing": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "spine.3 | ventral service housing": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "spine.4 | dorsal distribution housing": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "spine.4 | ventral service housing": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.1 | mineral silo": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "cargo.port.1 | silo sump hatch 63": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.1 | silo sump hatch 155": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.1 | rectangular cargo cage": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.1 | cage ventral inspection panel": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.2 | mineral silo": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "cargo.port.2 | silo sump hatch 63": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.2 | silo sump hatch 155": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.2 | rectangular cargo cage": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.2 | cage ventral inspection panel": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.3 | mineral silo": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "cargo.port.3 | silo sump hatch 63": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.3 | silo sump hatch 155": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.3 | rectangular cargo cage": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.3 | cage ventral inspection panel": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.4 | mineral silo": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "cargo.port.4 | silo sump hatch 63": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.4 | silo sump hatch 155": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.4 | rectangular cargo cage": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.4 | cage ventral inspection panel": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.1 | mineral silo": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "cargo.starboard.1 | silo sump hatch 299": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.1 | silo sump hatch 391": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.1 | rectangular cargo cage": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.1 | cage ventral inspection panel": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.2 | mineral silo": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "cargo.starboard.2 | silo sump hatch 299": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.2 | silo sump hatch 391": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.2 | rectangular cargo cage": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.2 | cage ventral inspection panel": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.3 | mineral silo": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "cargo.starboard.3 | silo sump hatch 299": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.3 | silo sump hatch 391": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.3 | rectangular cargo cage": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.3 | cage ventral inspection panel": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.4 | mineral silo": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "cargo.starboard.4 | silo sump hatch 299": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.4 | silo sump hatch 391": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.4 | rectangular cargo cage": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.4 | cage ventral inspection panel": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "bridge | faceted command pod": {
+      "triangles": 34,
+      "textured": 34,
+      "validUVArea": 34,
+      "bottomViewUVs": 34
+    },
+    "bridge.port | sensor fairing": {
+      "triangles": 13,
+      "textured": 13,
+      "validUVArea": 13,
+      "bottomViewUVs": 13
+    },
+    "bridge.starboard | sensor fairing": {
+      "triangles": 13,
+      "textured": 13,
+      "validUVArea": 13,
+      "bottomViewUVs": 13
+    },
+    "bridge | ventral access hatch": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "drive | eight-engine support": {
+      "triangles": 28,
+      "textured": 28,
+      "validUVArea": 28,
+      "bottomViewUVs": 28
+    },
+    "stern | central reactor-service fairing": {
+      "triangles": 28,
+      "textured": 28,
+      "validUVArea": 28,
+      "bottomViewUVs": 28
+    },
+    "drive.port.1 | radiator housing": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "drive.port.2 | radiator housing": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "drive.port.3 | radiator housing": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "drive.starboard.1 | radiator housing": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "drive.starboard.2 | radiator housing": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "drive.starboard.3 | radiator housing": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "engine.1 | armored engine casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "engine.2 | armored engine casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "engine.3 | armored engine casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "engine.4 | armored engine casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "engine.5 | armored engine casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "engine.6 | armored engine casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "engine.7 | armored engine casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "engine.8 | armored engine casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    }
+  },
+  "engineSockets": [
+    "socket.engine.1",
+    "socket.engine.2",
+    "socket.engine.3",
+    "socket.engine.4",
+    "socket.engine.5",
+    "socket.engine.6",
+    "socket.engine.7",
+    "socket.engine.8"
+  ],
+  "embeddedImagesMatch": true,
+  "missingUndersideComponents": [],
+  "fullyTexturedUnderside": true,
+  "openTrussRays": [
+    {
+      "referencePixel": [
+        200,
+        167
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        200,
+        210
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        200,
+        307
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        200,
+        350
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        200,
+        448
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        200,
+        491
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        200,
+        589
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        200,
+        632
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        254,
+        167
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        254,
+        210
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        254,
+        307
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        254,
+        350
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        254,
+        448
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        254,
+        491
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        254,
+        589
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        254,
+        632
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        230,
+        178
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        227,
+        300
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        227,
+        440
+      ],
+      "surfaceHits": 0
+    },
+    {
+      "referencePixel": [
+        230,
+        597
+      ],
+      "surfaceHits": 0
+    }
+  ],
+  "trussGapsOpen": true,
+  "cargoModules": {
+    "cargo.port.1 | mineral silo": {
+      "closedManifold": true,
+      "signedVolume": 12.167560577392578
+    },
+    "cargo.port.1 | rectangular cargo cage": {
+      "closedManifold": true,
+      "signedVolume": 3.932072877883911
+    },
+    "cargo.port.2 | mineral silo": {
+      "closedManifold": true,
+      "signedVolume": 12.167561531066895
+    },
+    "cargo.port.2 | rectangular cargo cage": {
+      "closedManifold": true,
+      "signedVolume": 3.9320716857910156
+    },
+    "cargo.port.3 | mineral silo": {
+      "closedManifold": true,
+      "signedVolume": 12.167561531066895
+    },
+    "cargo.port.3 | rectangular cargo cage": {
+      "closedManifold": true,
+      "signedVolume": 3.932070732116699
+    },
+    "cargo.port.4 | mineral silo": {
+      "closedManifold": true,
+      "signedVolume": 12.167559623718262
+    },
+    "cargo.port.4 | rectangular cargo cage": {
+      "closedManifold": true,
+      "signedVolume": 3.9320714473724365
+    },
+    "cargo.starboard.1 | mineral silo": {
+      "closedManifold": true,
+      "signedVolume": 12.167561531066895
+    },
+    "cargo.starboard.1 | rectangular cargo cage": {
+      "closedManifold": true,
+      "signedVolume": 3.932072877883911
+    },
+    "cargo.starboard.2 | mineral silo": {
+      "closedManifold": true,
+      "signedVolume": 12.167561531066895
+    },
+    "cargo.starboard.2 | rectangular cargo cage": {
+      "closedManifold": true,
+      "signedVolume": 3.9320716857910156
+    },
+    "cargo.starboard.3 | mineral silo": {
+      "closedManifold": true,
+      "signedVolume": 12.167560577392578
+    },
+    "cargo.starboard.3 | rectangular cargo cage": {
+      "closedManifold": true,
+      "signedVolume": 3.9320709705352783
+    },
+    "cargo.starboard.4 | mineral silo": {
+      "closedManifold": true,
+      "signedVolume": 12.167561531066895
+    },
+    "cargo.starboard.4 | rectangular cargo cage": {
+      "closedManifold": true,
+      "signedVolume": 3.9320709705352783
+    }
+  },
+  "sixteenSolidCargoModules": true,
+  "cargoSockets": [
+    "socket.cargo.port.1.silo",
+    "socket.cargo.port.1.cage",
+    "socket.cargo.port.2.silo",
+    "socket.cargo.port.2.cage",
+    "socket.cargo.port.3.silo",
+    "socket.cargo.port.3.cage",
+    "socket.cargo.port.4.silo",
+    "socket.cargo.port.4.cage",
+    "socket.cargo.starboard.1.silo",
+    "socket.cargo.starboard.1.cage",
+    "socket.cargo.starboard.2.silo",
+    "socket.cargo.starboard.2.cage",
+    "socket.cargo.starboard.3.silo",
+    "socket.cargo.starboard.3.cage",
+    "socket.cargo.starboard.4.silo",
+    "socket.cargo.starboard.4.cage"
+  ],
+  "eightEnginesInOneRow": true,
+  "passed": true
+}

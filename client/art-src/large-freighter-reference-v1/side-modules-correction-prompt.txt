@@ -1,0 +1,17 @@
+Use case: precise-object-edit.
+Edit ONLY the cargo bank in the lower-right SIDE drawing of this Large Freighter reference sheet.
+Preserve every other pixel as closely as possible: TOP, BOTTOM, FRONT, BACK, title, labels, white background, the SIDE cockpit/nose at left, and the single overlapping engine silhouette at right.
+
+The SIDE cargo bank still reads as two long boxes plus a short stub. Replace this cargo bank with EXACTLY THREE equally long, separate rectangular containers. Their order is front container, middle container, rear container. Their height and length are equal. There must be TWO obvious narrow full-height dark coupling GAPS, dividing the bank into three equal lengths.
+
+On this 1774-by-887 image, the SIDE cargo region is approximately x=1140 to x=1618, y=680 to y=798.
+Use these approximate silhouettes:
+1. First container x=1143–1294, y=682–793.
+2. Middle container x=1305–1456, y=682–793.
+3. Rear container x=1467–1618, y=682–793.
+Leave clearly visible dark mechanical coupling seams in x=1295–1304 and x=1457–1466. The whole bank remains joined by a narrow dark keel below it.
+
+Each container has chamfered corners, graphite edge framing, two broad silver panel halves, ONE dark vertical retaining strap in its center, a small gold top/bottom lock and restrained panel seams. Thus the THREE central straps are approximately at x=1219, x=1381 and x=1543; these straps must NOT be mistaken for the two inter-container gaps. Three complete repeated box modules with a gap between each, not two modules with extra straps.
+Maintain existing textures and colors, tiny cyan edge lights, shallow bevels and strict level side projection. No wide top surfaces.
+Do not alter the cockpit, move or duplicate the engine, add another ship, or add any new text. Exactly the existing five labeled views remain.
+The corrected side must show the near-side THREE cargo containers corresponding to the three sections on one keel in the unchanged TOP drawing.

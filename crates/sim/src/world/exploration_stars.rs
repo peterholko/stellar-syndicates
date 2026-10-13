@@ -113,6 +113,16 @@ impl World {
                 bodies,
                 crate::galaxy::claim_cost_for(&deposits),
             ));
+            if nearby.is_some() && i % 2 == 0 {
+                // §belts: the rocky local stop keeps a belt with ore. The
+                // founding charter's barge lesson mines it once the local
+                // surveys have charted it: close enough that a barge with a
+                // full hold comes home on one tank. Its own keyed stream.
+                let mut belt_rng = Rng::keyed_id(self.config.seed, "local-stop-belt-v1", i as u64);
+                let belt_frontier = crate::belts::frontier_at(pos, self.config.galaxy_radius);
+                let belt = crate::belts::prospect_belt(&mut belt_rng, belt_frontier);
+                crate::belts::add_belts(self.systems.last_mut().unwrap(), vec![belt]);
+            }
             self.exploration_systems.insert(id);
             // Exotic-star rewards keep matching the public star artwork.
             if let Some(bonus) = crate::node::node_bonus_for(id) {
@@ -221,14 +231,18 @@ fn sparse_body(id: u32, name: String, kind: BodyKind, parent: Option<u32>) -> Bo
         name,
         kind,
         parent,
+        belt: None,
         habitable: false,
         profile: PlanetaryProfile::default(),
         deposits: Vec::new(),
+        pockets: Vec::new(),
+        prospected: Default::default(),
         structures: BTreeMap::new(),
         population: 0.0,
         migration_policy: Default::default(),
         inbound_migrants: 0,
         assignments: BTreeMap::new(),
+        grid: Default::default(),
     }
 }
 
@@ -256,8 +270,9 @@ mod tests {
                 let mut baseline = config.clone();
                 baseline.exploration_system_count = 0;
                 let old = World::new(baseline);
+                let added = config.exploration_system_count as usize;
                 let new = World::new(config);
-                assert_eq!(new.systems.len(), old.systems.len() * 2);
+                assert_eq!(new.systems.len(), old.systems.len() + added);
                 assert_eq!(
                     &new.systems[..old.systems.len()],
                     old.systems.as_slice(),
@@ -295,8 +310,13 @@ mod tests {
                 let names: BTreeSet<_> = new.systems.iter().map(|s| &s.name).collect();
                 assert_eq!(names.len(), new.systems.len());
                 for s in &new.systems[old.systems.len()..] {
-                    assert!((1..=3).contains(&s.bodies.len()));
-                    assert!(s.all_deposits().count() <= 1);
+                    // §belts: sparse stars may also carry bare belts. Only a
+                    // home's local survey stop keeps a belt with ore, for the
+                    // founding charter's barge lesson.
+                    assert!((1..=3).contains(&s.bodies.iter().filter(|b| !b.is_belt()).count()));
+                    let local = new.home_slots.iter().any(|h| h.pos.distance(s.pos) <= 34_000.0);
+                    assert!(local || s.bodies.iter().filter(|b| b.is_belt()).all(|b| b.deposits.is_empty()));
+                    assert!(s.bodies.iter().filter(|b| !b.is_belt()).flat_map(|b| &b.deposits).count() <= 1);
                     assert!(s.all_deposits().all(|d| d.resource != Commodity::Biomass));
                     assert!(s.pos.length() <= new.config.galaxy_radius);
                     assert!(
@@ -407,7 +427,8 @@ mod tests {
         let config: SimConfig = serde_json::from_value(old_config).unwrap();
         assert_eq!(config.exploration_system_count, 0);
         let mut old = World::new(config);
+        let before = old.systems.len();
         old.fixup_after_load();
-        assert_eq!(old.systems.len(), 32);
+        assert_eq!(old.systems.len(), before, "a reload never retrofits stars");
     }
 }

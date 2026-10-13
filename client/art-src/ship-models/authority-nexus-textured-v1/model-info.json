@@ -1,0 +1,47 @@
+{
+  "name": "Authority Nexus \u2014 Wormhole Anchor",
+  "triangles": 11440,
+  "renderSections": 28,
+  "sourceComponents": 392,
+  "materials": 10,
+  "dimensionsXYZ": [
+    19.8,
+    6.34,
+    19.8
+  ],
+  "embeddedTextures": 10,
+  "textureResolution": [
+    1536,
+    1024
+  ],
+  "towerTextureResolution": [
+    1254,
+    1254
+  ],
+  "ringTextureResolution": [
+    2172,
+    724
+  ],
+  "powerTextureResolution": [
+    724,
+    2172
+  ],
+  "assemblies": [
+    "structure",
+    "containment-field",
+    "stabilizer-1",
+    "stabilizer-2",
+    "stabilizer-3",
+    "stabilizer-4",
+    "wormhole"
+  ],
+  "animations": [
+    "WormholeCollapse"
+  ],
+  "axes": "Y up, -Z forward",
+  "physicalDiameter": "Unspecified; authored at approximately 20 relative units",
+  "generator": "Python/NumPy; no Blender",
+  "texturing": "Reference-projected hull; locally unwrapped armor, radiator edges, port caps and crowns; textured graphite structure, brass fittings and collars; blue reactor cells with selective emission; derived PBR masks",
+  "optimization": "Static components merged by assembly and material; exact vertex deduplication; 16-bit indices",
+  "note": "Concept reconstruction. Collapse animation affects the portal/field; hull destruction is not authored."
+}

@@ -1,0 +1,29 @@
+{
+  "asset": "marginal-soft-edges-v1.png",
+  "use_case": "precise-object-edit",
+  "generated_with": "built-in imagegen; Sharp used to restore the exact source alpha channel and preserve original atmosphere-edge pixels",
+  "edit_target": "marginal.png",
+  "selected_image": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-474e0223-3bfd-46b7-9d5f-290d882b1e8c.png",
+  "initial_prompt": "Use case: precise-object-edit.\nEDIT the attached transparent marginal-world planet sprite. Make ONE very specific rendering correction: soften the blocky, stair-stepped, angular mosaic boundaries BETWEEN SURFACE COLOR REGIONS.\n\nKeep this exact planet and geography. Preserve the existing canvas1254 ×1254, globe diameter, position, silhouette, framing, illumination, shadows, palette and contrast. Preserve all THREE slate-teal seas in their exact current positions and shapes with their pale salt basins; both white polar caps; the TWO faint cloud wisps; and the same thin blue atmospheric edge. Preserve the original alpha mask exactly. No cropping, resizing, rotation, changed lighting, shifted geography, extra features or redesigned continents.\n\nONLY REPAINT THE REGION BOUNDARIES: Where the cool khaki highlands, dusty sage plains, grey patches and white polar ice meet, replace the visibly angular tiled, square, serrated, stair-step boundaries with smoothly flowing ORGANIC HAND-PAINTED EDGES and gentle local color blending. Follow the same broad contours and footprints of the existing regions. Smooth away pixel-sized corners and larger mosaic blocks; no hard geometric stepping or grid-like fragments. The transitions should feel calmly brushed and softly feathered into one another while the large land regions remain readable. Preserve the existing details away from these transitions. Do not blur the entire globe or change the seas, clouds, atmosphere or lighting. Do not add more detail to compensate for smoothing.\n\nSTRICTLY NO added texture, grain, noise, relief, brushstroke ridges, speckling, tiny flecks, small new patches, cracks, craters, hills, islands, features or objects. No labels, text, border or watermark.\n\nDeliver exactly ONE square1254 ×1254 RGBA PNG with the same genuinely transparent background. Change surface-boundary rendering only; everything else stays as in the input.",
+  "final_prompt": "Refine ONLY the surface-region boundary rendering of this exact planet sprite. Keep its1254 ×1254 framing, globe size and position, original lighting and colors, THREE slate-teal seas and their salt basins, TWO cloud wisps, polar caps and thin atmospheric rim precisely as shown. Retain transparent background and the same silhouette.\n\nThe previous smoothing is not yet sufficient: small sawtooth, tiled, angular and square-edged fragments remain along the sage/khaki/grey/white region boundaries. Remove ALL of those blocky transitions. Repaint each region transition as a continuous soft ORGANIC CURVE with smooth painterly color blending. Coarse mosaic cells, little tessellated paint chips and stepped contours must disappear from the transitions. The existing large region footprints stay in exactly the same places and retain the same broad shapes; smooth their local perimeters rather than redrawing geography. Let the boundaries dissolve gently into nearby tones with quiet airbrushed or soft hand-painted transitions. Do not replace blockiness with small dabs, flecks, stippling, noise or extra detail.\n\nKeep seas and cloud wisps unchanged. Keep white polar caps with the same extent, only smoothing jagged region edges where their ice meets land. Preserve the atmospheric rim and celestial lighting unchanged. Do not add any features. Do not change global sharpness, crop, scale, orientation, saturation or contrast. Do not create visible brushstroke texture. Just finish removing the blocky surface-region edges so the planet reads as a softly painted sphere instead of a tiled or faceted surface.\n\nDeliver one1254 ×1254 square RGBA PNG with transparent background and no text or other objects.",
+  "initial_candidate": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-8edcdf01-aaf0-426a-b96b-a0cf961b1476.png",
+  "preservation": {
+    "alpha": "Every alpha sample is copied unchanged from marginal.png.",
+    "framing": "Original1254×1254 canvas; no resampling, resizing, rotation or cropping.",
+    "atmosphere": "Preserve source RGB for pixels whose alpha is below250 and within6 pixels inward of that boundary; smooth transition to the generated interior over the next12 pixels."
+  },
+  "verification": {
+    "path": "/Users/peter/projects/stellar-syndicates/client/art-src/planets-2026-10-08/marginal-soft-edges-v1.png",
+    "size": [
+      1254,
+      1254
+    ],
+    "format": "RGBA PNG",
+    "alphaPixelsChecked": 1572516,
+    "alphaMismatches": 0,
+    "sourceAlphaSha256": "08ff6a0c5217f1fb55b3225da715c44d3eef82b85f99c7a70bfba317ebb4e823",
+    "outputAlphaSha256": "08ff6a0c5217f1fb55b3225da715c44d3eef82b85f99c7a70bfba317ebb4e823",
+    "fileSha256": "0f0dce6eafdeabc45dc1e602116abc7632e31aaaf6a5990cdb5da5bfc6e8e2aa",
+    "bytes": 2480160
+  }
+}

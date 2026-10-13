@@ -1,0 +1,250 @@
+{
+  "triangles": 14524,
+  "renderSections": 7,
+  "zeroAreaGeometry": 0,
+  "zeroAreaTexturedUVs": 0,
+  "nonFiniteValues": 0,
+  "bottomComponents": {
+    "keel.port | load-bearing core": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "keel.port | tapered forward bow": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.1 | beveled pressure container": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.1 | ventral access hatch": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.2 | beveled pressure container": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.2 | ventral access hatch": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.3 | beveled pressure container": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.3 | ventral access hatch": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "keel.starboard | load-bearing core": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "keel.starboard | tapered forward bow": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.1 | beveled pressure container": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.1 | ventral access hatch": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.2 | beveled pressure container": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.2 | ventral access hatch": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.3 | beveled pressure container": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.3 | ventral access hatch": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "yoke | forward central coupler": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "bridge | faceted command cabin": {
+      "triangles": 39,
+      "textured": 39,
+      "validUVArea": 39,
+      "bottomViewUVs": 39
+    },
+    "bridge.port | sensor fairing": {
+      "triangles": 16,
+      "textured": 16,
+      "validUVArea": 16,
+      "bottomViewUVs": 16
+    },
+    "bridge.starboard | sensor fairing": {
+      "triangles": 16,
+      "textured": 16,
+      "validUVArea": 16,
+      "bottomViewUVs": 16
+    },
+    "yoke.port | transverse drive beam": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "yoke.starboard | transverse drive beam": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "stern | central reactor-service fairing": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "drive.port | armored twin-engine mount": {
+      "triangles": 16,
+      "textured": 16,
+      "validUVArea": 16,
+      "bottomViewUVs": 16
+    },
+    "drive.starboard | armored twin-engine mount": {
+      "triangles": 16,
+      "textured": 16,
+      "validUVArea": 16,
+      "bottomViewUVs": 16
+    },
+    "engine.port.outer | stepped armored engine casing": {
+      "triangles": 112,
+      "textured": 112,
+      "validUVArea": 112,
+      "bottomViewUVs": 112
+    },
+    "engine.port.inner | stepped armored engine casing": {
+      "triangles": 112,
+      "textured": 112,
+      "validUVArea": 112,
+      "bottomViewUVs": 112
+    },
+    "engine.starboard.inner | stepped armored engine casing": {
+      "triangles": 112,
+      "textured": 112,
+      "validUVArea": 112,
+      "bottomViewUVs": 112
+    },
+    "engine.starboard.outer | stepped armored engine casing": {
+      "triangles": 112,
+      "textured": 112,
+      "validUVArea": 112,
+      "bottomViewUVs": 112
+    }
+  },
+  "engineSockets": [
+    "socket.engine.port.outer",
+    "socket.engine.port.inner",
+    "socket.engine.starboard.inner",
+    "socket.engine.starboard.outer"
+  ],
+  "embeddedImagesMatch": true,
+  "missingUndersideComponents": [],
+  "fullyTexturedUnderside": true,
+  "openChannelRays": [
+    {
+      "x": -0.6,
+      "z": -1.6,
+      "surfaceHits": 0
+    },
+    {
+      "x": -0.6,
+      "z": 0.6,
+      "surfaceHits": 0
+    },
+    {
+      "x": -0.6,
+      "z": 3.2,
+      "surfaceHits": 0
+    },
+    {
+      "x": 0,
+      "z": -1.6,
+      "surfaceHits": 0
+    },
+    {
+      "x": 0,
+      "z": 0.6,
+      "surfaceHits": 0
+    },
+    {
+      "x": 0,
+      "z": 3.2,
+      "surfaceHits": 0
+    },
+    {
+      "x": 0.6,
+      "z": -1.6,
+      "surfaceHits": 0
+    },
+    {
+      "x": 0.6,
+      "z": 0.6,
+      "surfaceHits": 0
+    },
+    {
+      "x": 0.6,
+      "z": 3.2,
+      "surfaceHits": 0
+    }
+  ],
+  "centralChannelOpen": true,
+  "cargoSockets": [
+    "socket.cargo.port.1",
+    "socket.cargo.port.2",
+    "socket.cargo.port.3",
+    "socket.cargo.starboard.1",
+    "socket.cargo.starboard.2",
+    "socket.cargo.starboard.3"
+  ],
+  "fourSeparateEnginesInOnePlane": true,
+  "passed": true
+}

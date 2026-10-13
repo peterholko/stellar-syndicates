@@ -24,6 +24,11 @@ impl World {
             .unwrap_or((0, 0.0))
     }
 
+    /// §orbital-defense: the hardpoints still firing at `site`'s station.
+    pub(super) fn station_live_at(&self, site: Option<EntityId>) -> u32 {
+        site.and_then(|id| self.systems.iter().find(|s| s.id == id)).map_or(0, |s| s.live_mounts())
+    }
+
     pub(super) fn prepare_battle_support(&mut self) {
         let ids: Vec<_> = self.engagements.keys().copied().collect();
         for id in ids {

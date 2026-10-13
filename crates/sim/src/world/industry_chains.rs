@@ -5,7 +5,7 @@ use crate::cargo::Commodity as C;
 use crate::production::{Assignment, CONVERTERS};
 
 const FACTORIES: [K; 4] = [K::CompositeWorks, K::HullFabricator, K::PrecisionWorks, K::DriveWorks];
-const GOODS: [C; 4] = [C::Composites, C::HullSections, C::PrecisionComponents, C::DriveAssemblies];
+const GOODS: [C; 4] = [C::Composites, C::HullSections, C::PrecisionComponents, C::WarpCore];
 
 fn rig() -> (World, PlayerId, EntityId) {
     let mut w = World::new(SimConfig::for_players(123, 4));
@@ -104,8 +104,10 @@ fn component_research_gates_factory_receipt_without_a_syndicate() {
 
 #[test]
 fn all_structure_unlocks_gate_receipt_until_research_is_completed() {
-    let gated: Vec<_> = K::ALL.into_iter().filter(|kind| kind.research_prerequisite().is_some()).collect();
-    assert_eq!(gated.len(), 18);
+    // The legacy platform is never built, research or not.
+    let gated: Vec<_> = K::ALL.into_iter()
+        .filter(|kind| kind.research_prerequisite().is_some() && *kind != K::DefensePlatform).collect();
+    assert_eq!(gated.len(), 19, "§fuel-overhaul: + the Antimatter Plant");
     for kind in gated {
         let (mut w, owner, home) = rig();
         let research = kind.research_prerequisite().unwrap();
@@ -180,7 +182,7 @@ fn existing_unresearched_industry_survives_a_save_and_keeps_producing() {
     s.set_tier(K::Smelter, 1);
     s.assign(K::Smelter, Assignment::crew(1));
     s.stockpile.insert(C::MetallicOre, 100.0);
-    s.stockpile.insert(C::Fuel, 100.0);
+    s.stockpile.insert(C::Deuterium, 100.0);
     w = serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
     w.fixup_after_load();
     assert!(!w.players[&owner].research.has("mat_enrichment"));
@@ -219,14 +221,15 @@ fn both_component_branches_feed_a_drive_without_mining_manufactured_goods() {
     let (mut w, _, home) = rig();
     let s = site_mut(&mut w, home);
     for kind in FACTORIES { s.set_tier(kind, 1); s.assign(kind, Assignment::crew(1)); }
-    for good in [C::Alloys, C::Polymers, C::Silicates, C::Electronics, C::Machinery, C::RareElements, C::Fuel, C::Titanium] {
+    // §fuel-overhaul: no factory burns fuel; the heat-heavy ones draw power.
+    for good in [C::Alloys, C::Polymers, C::Silicates, C::Electronics, C::Machinery, C::RareElements, C::Titanium, C::Iridium] {
         s.stockpile.insert(good, 40.0);
     }
     for _ in 0..300 { w.accrue_production(&mut Vec::new()); }
     assert!(stock(&w, home, C::HullSections) > 0.0);
-    assert!(stock(&w, home, C::DriveAssemblies) > 0.0);
+    assert!(stock(&w, home, C::WarpCore) > 0.0);
     for good in GOODS { assert!(crate::production::extraction_structure(good).is_none()); }
-    for good in [C::Alloys, C::Polymers, C::Silicates, C::Electronics, C::Machinery, C::RareElements, C::Fuel, C::Titanium] {
+    for good in [C::Alloys, C::Polymers, C::Silicates, C::Electronics, C::Machinery, C::RareElements, C::Titanium, C::Iridium] {
         assert!(stock(&w, home, good) < 40.0, "the branches must use {good:?}");
     }
 }

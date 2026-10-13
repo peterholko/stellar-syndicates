@@ -19,6 +19,9 @@ pub fn hull_mass(kind: ShipKind) -> f64 {
         ShipKind::Corvette => 800.0,
         ShipKind::Colony => 6000.0,
         ShipKind::Scout => 80.0,
+        ShipKind::SurveyProbe => 40.0,
+        ShipKind::MiningBarge => 3500.0,
+        ShipKind::MiningBeltStation => 12000.0,
         ShipKind::Destroyer => 2000.0,
         ShipKind::Cruiser => 4000.0,
         ShipKind::Battleship => 8000.0,
@@ -41,6 +44,9 @@ pub fn max_speed(kind: ShipKind) -> f64 {
         ShipKind::Corvette => 65.0,
         ShipKind::Colony => 33.0,
         ShipKind::Scout => 115.0,
+        ShipKind::SurveyProbe => 120.0,
+        ShipKind::MiningBarge => 30.0,
+        ShipKind::MiningBeltStation => 15.0,
         ShipKind::Destroyer => 55.0,
         ShipKind::Cruiser => 45.0,
         ShipKind::Battleship => 36.0,
@@ -89,6 +95,11 @@ pub fn offense(loadout: &Loadout) -> (DamageType, f64) {
         (DamageType::Beam, 1.0)
     }
 }
+
+/// Armour blunts (v1–v11): Reflective Plating's share of a beam hit and
+/// Whipple Armor's share of a driver hit, before protection affinity.
+pub const REFLECT_BLUNT: f64 = 0.35;
+pub const WHIPPLE_BLUNT: f64 = 0.45;
 
 pub fn featured(kind: ShipKind) -> bool {
     matches!(

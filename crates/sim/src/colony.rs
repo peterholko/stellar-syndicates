@@ -95,6 +95,10 @@ pub const POP_CAP_PER_HABITAT_TIER: f64 = 0.025;
 /// inflow, so the honest legacy rate is zero.
 pub const POP_GROWTH_PER_S: f64 = 0.0;
 
+/// §gaia: Living Terraces house fewer people per tier than a Habitat (20,000
+/// before the world's size and environment multipliers); their job is food.
+pub const TERRACE_POP_PER_TIER: f64 = 0.020;
+
 /// A colony ship plants one 1,000-person workforce cohort.
 pub const COLONY_FOUNDING_POP: f64 = 0.001;
 

@@ -18,6 +18,7 @@ const source = readFileSync(new URL("../src/shell/deck/theaters.ts", import.meta
 const ordersSource = readFileSync(new URL("../src/core/derive/orders.ts", import.meta.url), "utf8");
 const withdrawSource = readFileSync(new URL("../src/shell/battlewithdraw.ts", import.meta.url), "utf8");
 const history = compile(readFileSync(new URL("../src/battlehistory.ts", import.meta.url), "utf8"), {});
+const liveplay = compile(readFileSync(new URL("../src/core/derive/liveplay.ts", import.meta.url), "utf8"), {});
 const round = (i) => ({ tick: i * 15, counts: [[], []], notes: [], dealt: [0, 0] });
 const record = () => ({
   id: "15s-battle", pos: { x: 30_000, y: 0 }, started_at: 0,
@@ -28,6 +29,7 @@ const record = () => ({
 function fixture(pacingScale = 1, completed = false, semantic = true) {
   let now = 1_000, nextTimer = 0;
   const timers = new Map(), displayed = [], routes = [], sent = [];
+  const selection = { info: null, follows: [] };
   const viewerTimers = { close: null, aftermath: null };
   const clearTimer = (field) => { timers.delete(viewerTimers[field]); viewerTimers[field] = null; };
   const node = () => {
@@ -52,11 +54,14 @@ function fixture(pacingScale = 1, completed = false, semantic = true) {
   }[id] ?? {}) });
   const dependencies = {
     "../../battletheater": { theaterAvailable: () => false, theaterClose() {},
-      theaterSetTime: (round, frac, live) => displayed.push({ round, frac, live }) },
+      theaterSetTime: (round, frac, live) => displayed.push({ round, frac, live }),
+      theaterSelection: () => selection.info, theaterFollow: (on) => { selection.follows.push(on); } },
     "../../core/derive/fleet": { ...fleetHelpers, battleReportForRecord: () => ({ id: 7 }), battleViewerTimers: viewerTimers,
       clearBattleAftermathTimer: () => clearTimer("aftermath"), clearBattleCloseTimer: () => clearTimer("close") },
     "../../core/derive/format": { fmtDur: (s) => `${s}s`, informationDelay: (s) => `${s}s information delay` },
     "../../core/derive/geo": { nearestSystemName: () => "Freya" },
+    "../../core/derive/liveplay": liveplay,
+    "../../icons": { icon: () => "", label: (slug) => slug.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) },
     "../../groundtheater": { groundTheaterClose() {} },
     "../../state": clock,
     "../../core/derive/orders": orders,
@@ -86,7 +91,8 @@ function fixture(pacingScale = 1, completed = false, semantic = true) {
   };
   const click = (action, values = {}) => theater.battleClick({ target: { closest: (selector) =>
     selector === "[data-deck-theater-act]" ? { dataset: { deckTheaterAct: action, ...values } } : null } });
-  return { theater, renderer, state, battle, root, card, displayed, routes, timers, step, click, sent, ctx, dependencies };
+  return { theater, renderer, state, battle, root, card, displayed, routes, timers, step, click, sent, ctx, dependencies,
+    performance: { now: () => now }, selection };
 }
 
 const cases = [];
@@ -211,7 +217,7 @@ test("mobile live battle uses the same delay and explicit confirmation", () => {
     "../../core/derive/fleet": { ...f.dependencies["../../core/derive/fleet"], sideFamily: () => "beam" },
   };
   const { MobileBattleTheater } = compile(readFileSync(new URL("../src/shell/mobile/battle.ts", import.meta.url), "utf8"), {
-    require: name => deps[name] ?? {},
+    require: name => deps[name] ?? {}, performance: f.performance,
   });
   const entry = { id: "battle", props: { id: f.battle.id } };
   let html = "";
@@ -244,7 +250,7 @@ test("final report does not expose replay controls before the ending plays", () 
   noReplayControls(f.card.innerHTML);
   assert.doesNotMatch(f.card.innerHTML, />COMPLETE</);
   for (const action of ["play", "speed", "round"]) {
-    f.click(action, { speed: "16", round: "0" });
+    f.click(action, { speed: "4", round: "0" });
     assert.equal(f.theater.battleLive, true, "late/forged replay clicks cannot interrupt the live ending");
   }
 });
@@ -259,6 +265,61 @@ test("live playback follows 4x game pace, without passing arrived light", () => 
   f.step(2);
   assert.equal(f.theater.battleRound, 9, "hold the last arrival, never simulate ahead");
   assert.equal(f.theater.battleLive, true, "no outcome has arrived");
+});
+
+test("live playback trails the newest round, so a late round never stops the hulls", () => {
+  // Rounds arrive every 0.5 s on the server's 100 ms update beat, a beat early
+  // or late at random. The playhead may ease, never stall.
+  const f = fixture();
+  let seed = 11;
+  const rand = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const arrivals = new Map();
+  for (let k = 2; k <= 40; k++) arrivals.set(30 * (k - 1) + 6 * (rand() < .25 ? 1 : rand() < .33 ? -1 : 0), k);
+  const position = () => f.theater.battleRound + f.theater.battleAccum;
+  let previous = position(), stalls = 0, slowest = Infinity, fastest = 0, nearest = Infinity, farthest = 0;
+  for (let frame = 1; frame <= 30 * 40; frame++) {
+    if (arrivals.has(frame)) { f.battle.rounds.push(round(arrivals.get(frame))); f.theater.onViewTick(); }
+    f.step(1 / 60);
+    const now = position(), pace = (now - previous) * 30; // a round per 0.5 s is 1/30 round a frame
+    if (frame > 30) {
+      if (now <= previous) stalls++;
+      slowest = Math.min(slowest, pace); fastest = Math.max(fastest, pace);
+      nearest = Math.min(nearest, f.battle.rounds.length - 1 - now); farthest = Math.max(farthest, f.battle.rounds.length - 1 - now);
+    }
+    previous = now;
+  }
+  assert.equal(stalls, 0, "a round landing a beat late never stops the playback");
+  assert.ok(slowest >= .8 - 1e-9 && fastest <= 1.25 + 1e-9, `speed eases within 0.8–1.25× (${slowest.toFixed(2)}–${fastest.toFixed(2)})`);
+  assert.ok(nearest > 0 && farthest < 3, `it trails the newest round (${nearest.toFixed(2)}–${farthest.toFixed(2)} rounds)`);
+  // A burst of late rounds (a hidden tab, a stalled link) jumps back to the
+  // live edge rather than racing through it.
+  for (let k = 41; k <= 52; k++) f.battle.rounds.push(round(k));
+  f.theater.onViewTick(); f.step(1 / 60);
+  const behind = f.battle.rounds.length - 1 - position();
+  assert.ok(behind > .5 && behind < 2, `a burst snaps the playhead near the edge (${behind.toFixed(2)} rounds behind)`);
+});
+
+test("the selected ship's card: what it is, whose, its hull and fit, and the follow control", () => {
+  const f = fixture();
+  assert.match(f.card.innerHTML, /deck-theater-ship is-empty[^>]*><span>Click a ship to see it here and follow it\./);
+  f.selection.info = { cid: 4, side: 0, own: true, kind: "titan", label: "Titan", art: "/art/titan.webp", hull: .27,
+    reps: 1, station: 0, plat: false, fits: [["mass_driver", "mass_driver", "whipple_armor"]], flagship: "Aurora",
+    status: "fighting", following: true };
+  f.theater.onViewTick();
+  const card = f.card.innerHTML;
+  assert.match(card, /<aside class="deck-theater-info"><section class="deck-theater-ship is-own">/, "first in the info column");
+  assert.match(card, /<b>Titan <span>“Aurora”<\/span><\/b><small>Your ship · In the fight · following<\/small>/);
+  assert.match(card, /deck-theater-ship-hull is-critical"><i><b style="width:27%"><\/b><\/i><em>27% hull<\/em>/);
+  assert.match(card, /<dt>Fit<\/dt><dd>Mass Driver ×2 · Whipple Armor<\/dd>/);
+  assert.match(card, /data-deck-theater-act="unfollow">Stop following/);
+  f.click("unfollow");
+  assert.deepEqual(f.selection.follows, [false]);
+  f.selection.info = { ...f.selection.info, side: 1, own: false, following: false, status: "destroyed", fits: [["mass_driver"], ["torpedo_rack"]] };
+  f.theater.onViewTick();
+  assert.match(f.card.innerHTML, /deck-theater-ship is-lost/);
+  assert.match(f.card.innerHTML, /Enemy ship · Destroyed</);
+  assert.match(f.card.innerHTML, /One of: Mass Driver \/ Torpedo Rack/);
+  assert.match(f.card.innerHTML, /data-deck-theater-act="follow">Follow/);
 });
 
 test("the delayed final window plays, then the viewer stays open", () => {
@@ -284,11 +345,14 @@ test("the delayed final window plays, then the viewer stays open", () => {
   assert.equal(f.routes.at(-1).params.report, "battle");
 });
 
-test("opening a completed historical replay retains transport and 4x default", () => {
+test("opening a completed historical replay retains transport at 1x, with 1x and 4x only", () => {
   const f = fixture(4, true);
   assert.equal(f.theater.battleLive, false);
-  assert.equal(f.theater.battleSpeed, 4);
+  assert.equal(f.theater.battleSpeed, 1, "a replay opens at the battle's own pace");
   assert.match(f.card.innerHTML, /data-deck-theater-act="speed"/);
+  assert.match(f.card.innerHTML, /data-speed="1" aria-pressed="true"/);
+  assert.match(f.card.innerHTML, /data-speed="4"/);
+  assert.doesNotMatch(f.card.innerHTML, /data-speed="16"/, "no 16x");
   assert.match(f.card.innerHTML, /data-deck-theater-act="round"/);
 });
 

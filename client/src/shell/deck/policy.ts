@@ -13,9 +13,10 @@ import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext } from "../types";
 import type { DeckRoute } from "./router";
-import { industryHtml, industryStandingVisible, industryUiSignature, showStandingIndustry, handleIndustryAction, handleIndustryInput } from "../industry";
+import { focusIndustryFleet, industryHtml, industryServedSignature, industryStandingVisible, industryUiSignature, showStandingIndustry, handleIndustryAction, handleIndustryInput } from "../industry";
 
 interface PolicyHooks {
+  go(route: DeckRoute): void;
   notice(html: string): void;
 }
 
@@ -94,7 +95,11 @@ export class DeckPolicyRoutes {
   ) {}
 
   render(route: DeckRoute | null, force = false): boolean {
-    if (route?.name !== "logistics" && route?.name !== "doctrine") return false;
+    if (route?.name !== "logistics" && route?.name !== "doctrine") {
+      // A preset applies each time its route opens, not once per session.
+      this.appliedPreset = "";
+      return false;
+    }
     if (route.name === "logistics") this.applyRoutePreset(route);
     this.repairForm();
     const state = this.ctx.state;
@@ -102,7 +107,7 @@ export class DeckPolicyRoutes {
       route, this.source, this.destination, this.commodity, this.triggerKind,
       this.amount, this.floor, this.sellOnArrival, this.logisticsFeedback, this.doctrineFeedback,
       state.standingOrders, state.doctrine,
-      state.systems, state.ghosts.filter(g => g.own), state.research, industryUiSignature(state),
+      state.systems, state.ghosts.filter(g => g.own), state.research, industryUiSignature(state), industryServedSignature(state),
     ]);
     if (!force && signature === this.signature) return true;
     if (renderDeferred(this.root.id, () => this.render(route, true))) return true;
@@ -115,6 +120,11 @@ export class DeckPolicyRoutes {
     if (route?.name !== "logistics" && route?.name !== "doctrine") return false;
     const action = button.dataset.deckAct;
     if (handleIndustryAction(button, this.ctx)) { this.render(route, true); return true; }
+    if (route.name === "logistics" && action === "logistics-market") {
+      // The first shipment's leftovers are bought at the Exchange.
+      this.hooks.go({ name: "market", query: { tab: "exchange" } });
+      return true;
+    }
     if (route.name === "logistics" && action === "standing-clear") {
       const id = Number(button.dataset.order);
       if (!Number.isFinite(id)) return true;
@@ -243,6 +253,7 @@ export class DeckPolicyRoutes {
     const preset = JSON.stringify(route.query ?? {});
     if (!route.query || preset === this.appliedPreset) return;
     if (route.query.source || route.query.destination || route.query.commodity) showStandingIndustry(this.ctx.state);
+    if (route.query.fleet) focusIndustryFleet(this.ctx.state, route.query.fleet);
     if (route.query.source) this.source = route.query.source;
     if (route.query.destination) this.destination = route.query.destination;
     if (isCommodity(route.query.commodity)) this.commodity = route.query.commodity;

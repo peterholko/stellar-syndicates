@@ -1,0 +1,184 @@
+{
+  "triangles": 19360,
+  "renderSections": 23,
+  "zeroAreaGeometry": 0,
+  "zeroAreaTexturedUVs": 0,
+  "nonFiniteValues": 0,
+  "bottomComponents": {
+    "hull | continuous armored pressure body": {
+      "triangles": 108,
+      "textured": 108,
+      "bottomViewUVs": 108
+    },
+    "deck | central foredeck armor": {
+      "triangles": 28,
+      "textured": 28,
+      "bottomViewUVs": 28
+    },
+    "deck | aft central armor terrace": {
+      "triangles": 34,
+      "textured": 34,
+      "bottomViewUVs": 34
+    },
+    "keel | deep segmented ventral armor": {
+      "triangles": 42,
+      "textured": 42,
+      "bottomViewUVs": 42
+    },
+    "armor.port | forward shelf": {
+      "triangles": 13,
+      "textured": 13,
+      "bottomViewUVs": 13
+    },
+    "armor.port | broad mid shoulder": {
+      "triangles": 16,
+      "textured": 16,
+      "bottomViewUVs": 16
+    },
+    "armor.port | aft stepped shoulder": {
+      "triangles": 25,
+      "textured": 25,
+      "bottomViewUVs": 25
+    },
+    "armor.port | lower shoulder flange": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "keel.port.1 | ventral maintenance armor": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "keel.port.2 | ventral maintenance armor": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "keel.port.3 | ventral maintenance armor": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "keel.port.4 | ventral maintenance armor": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "armor.starboard | forward shelf": {
+      "triangles": 13,
+      "textured": 13,
+      "bottomViewUVs": 13
+    },
+    "armor.starboard | broad mid shoulder": {
+      "triangles": 16,
+      "textured": 16,
+      "bottomViewUVs": 16
+    },
+    "armor.starboard | aft stepped shoulder": {
+      "triangles": 25,
+      "textured": 25,
+      "bottomViewUVs": 25
+    },
+    "armor.starboard | lower shoulder flange": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "keel.starboard.1 | ventral maintenance armor": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "keel.starboard.2 | ventral maintenance armor": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "keel.starboard.3 | ventral maintenance armor": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "keel.starboard.4 | ventral maintenance armor": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "bridge | recessed command blister": {
+      "triangles": 24,
+      "textured": 24,
+      "bottomViewUVs": 24
+    },
+    "stern | central service fairing": {
+      "triangles": 30,
+      "textured": 30,
+      "bottomViewUVs": 30
+    },
+    "stern | dorsal service access": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "engineblock.port | hollow armored housing": {
+      "triangles": 36,
+      "textured": 36,
+      "bottomViewUVs": 36
+    },
+    "engineblock.port | dorsal armor lid": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "engineblock.port | ventral service plate": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "engineblock.starboard | hollow armored housing": {
+      "triangles": 36,
+      "textured": 36,
+      "bottomViewUVs": 36
+    },
+    "engineblock.starboard | dorsal armor lid": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "engineblock.starboard | ventral service plate": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    }
+  },
+  "embeddedImagesMatch": true,
+  "missingUndersideComponents": [],
+  "fullyTexturedUnderside": true,
+  "closedHullAndEngineBlocks": {
+    "hull | continuous armored pressure body": {
+      "closedManifold": true,
+      "signedVolume": 189.0183563232422
+    },
+    "engineblock.port | hollow armored housing": {
+      "closedManifold": true,
+      "signedVolume": 25.861793518066406
+    },
+    "engineblock.starboard | hollow armored housing": {
+      "closedManifold": true,
+      "signedVolume": 25.861791610717773
+    }
+  },
+  "threeSolidPrimaryBodies": true,
+  "fourEnginesAcrossStern": true,
+  "fourTallRecessedApertures": true,
+  "assemblies": {
+    "hull": 7,
+    "turret.port.1": 4,
+    "turret.port.2": 4,
+    "turret.starboard.1": 4,
+    "turret.starboard.2": 4
+  },
+  "fourIndependentTurretAssemblies": true,
+  "eightWeaponSockets": true,
+  "passed": true
+}

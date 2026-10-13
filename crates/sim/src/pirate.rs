@@ -39,7 +39,8 @@ impl PirateFaction {
     pub fn mission(self) -> crate::doctrine::MissionProfile {
         use crate::doctrine::*;
         MissionProfile { priority: TargetPriority::Transports, screening: ScreeningRole::Automatic,
-            withdrawal: if self == Self::Rift { DamageWithdrawal::Hull50 } else { DamageWithdrawal::Never } }
+            withdrawal: if self == Self::Rift { DamageWithdrawal::Hull50 } else { DamageWithdrawal::Never },
+            formation: Formation::Automatic }
     }
     pub fn patrol(self, count: u32) -> Vec<(crate::ShipKind, crate::Loadout, u32)> {
         use crate::{ShipKind as H, ModuleKind as M, Loadout};

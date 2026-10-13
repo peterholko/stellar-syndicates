@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use sim::{EntityId, PlayerId};
 
@@ -36,6 +36,41 @@ pub struct ServerStatus {
     pub galaxy_systems: usize,
     pub tick: u64,
     pub sim_time: f64,
+}
+
+/// One corporation's holdings for the operator dashboard. Read from server
+/// truth, so it never reaches a player; only the admin API serves it.
+#[derive(Debug, Clone, Serialize)]
+pub struct CorporationStats {
+    #[serde(skip)]
+    pub player_id: PlayerId,
+    pub name: String,
+    pub bot: bool,
+    pub home: Option<String>,
+    pub systems: u32,
+    /// Bodies with people living on them.
+    pub worlds: u32,
+    /// Millions, as the game shows it.
+    pub population: f64,
+    pub fleets: u32,
+    pub ships: u32,
+    pub credits: f64,
+    pub valuation: f64,
+    /// The founding charter as the game sees it now; the admin API reads the
+    /// recorded history instead, so this never goes out directly.
+    #[serde(skip)]
+    pub tutorial: Option<crate::tutorial::TutorialProgress>,
+}
+
+/// The game loop's answer to the operator dashboard.
+#[derive(Debug, Clone)]
+pub struct AdminSnapshot {
+    /// Changes when the galaxy is reset.
+    pub galaxy_id: String,
+    pub sim_time: f64,
+    /// Game seconds per wall second.
+    pub pacing: f64,
+    pub corporations: Vec<CorporationStats>,
 }
 
 /// Per-connection identifier, unique for the lifetime of the process.
@@ -139,6 +174,8 @@ pub enum GameInput {
     Disconnect { conn_id: ConnId },
     /// A player intent arrived on a connection.
     Intent { conn_id: ConnId, msg: ClientMsg },
+    /// The operator dashboard asks for every corporation's holdings.
+    AdminStats { reply: oneshot::Sender<AdminSnapshot> },
 }
 
 /// The connection registry, owned exclusively by the game loop.
@@ -283,6 +320,17 @@ impl GameHandle {
     /// connection will notice via its own closed channel).
     pub fn send(&self, input: GameInput) {
         let _ = self.tx.send(input);
+    }
+
+    /// Holdings and tutorial progress for the operator dashboard, or `None`
+    /// if the loop does not answer promptly.
+    pub async fn admin_snapshot(&self) -> Option<AdminSnapshot> {
+        let (reply, answer) = oneshot::channel();
+        self.send(GameInput::AdminStats { reply });
+        tokio::time::timeout(std::time::Duration::from_secs(3), answer)
+            .await
+            .ok()?
+            .ok()
     }
 }
 

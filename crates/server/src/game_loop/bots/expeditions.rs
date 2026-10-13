@@ -13,7 +13,7 @@ impl Observation {
         let burn = |a, b| self.fuel_per_mass(a, b) * H::Colony.hull_mass();
         let reserve = tank * 0.05;
         if burn(from, to) + reserve <= fuel { return Some(to); }
-        let ports: Vec<_> = self.sites.iter().filter(|s| s.system.free_stock(C::Fuel) > 1.0
+        let ports: Vec<_> = self.sites.iter().filter(|s| s.system.free_stock(C::Deuterium) + s.system.free_stock(C::Uranium) > 1.0
             && s.system.blockade.is_none()).map(|s| s.system.pos)
             .chain(std::iter::once(self.hub)).collect();
         let mut queue = std::collections::VecDeque::new();
@@ -33,17 +33,25 @@ impl Observation {
         }
         None
     }
+    /// §fuel-overhaul: warp fuel a Scout needs between two points. The jumps
+    /// between the well approaches burn Antimatter from the bottle; a Scout
+    /// whose bottle can't cover them warps the whole way.
     pub(super) fn scout_leg(&self, fleet: &GhostView, from: Vec2, to: Vec2) -> f64 {
         let distance = from.distance(to);
-        if distance <= 4_000.0 { return self.leg(fleet, from, to, 0); }
+        if distance <= 4_000.0 || !self.can_jump_leg(fleet, distance) { return self.leg(fleet, from, to, 0); }
         let dir = (to - from).normalized();
-        // Pay ordinary impulse/warp for both well approaches and the existing
-        // jump tariff between them. Playtest jumps are free for EVERY player;
-        // restoring the global tariff automatically changes this budget too.
-        self.leg(fleet, from, from + dir * 2_000.0, 0)
-            + self.leg(fleet, to - dir * 2_000.0, to, 0)
-            + sim::fuel::fuel_cost(distance, hull_mass(fleet)) / sim::transit::JUMP_FUEL_FACTOR
-                * sim::research::mod_of(&self.research, sim::research::ModKey::FuelConsumption) * 1.15
+        self.leg(fleet, from, from + dir * 2_000.0, 0) + self.leg(fleet, to - dir * 2_000.0, to, 0)
+    }
+
+    /// Antimatter one jump of `distance` burns from this fleet's bottle.
+    pub(super) fn jump_antimatter(&self, fleet: &GhostView, distance: f64) -> f64 {
+        sim::fuel::fuel_cost(distance, hull_mass(fleet)) / sim::transit::JUMP_FUEL_FACTOR
+            * sim::research::mod_of(&self.research, sim::research::ModKey::FuelConsumption)
+    }
+
+    /// The bottle covers the jumps of a `distance` leg (in full-range hops).
+    pub(super) fn can_jump_leg(&self, fleet: &GhostView, distance: f64) -> bool {
+        fleet.antimatter.unwrap_or(0.0) >= self.jump_antimatter(fleet, distance) * 1.05
     }
 
     fn outside_wells(&self, pos: Vec2) -> bool {
@@ -89,7 +97,7 @@ impl Bot {
             p.now - s.intel.observed_at > 1_800.0 && !self.avoided.contains_key(&s.id)
                 && !self.reconnaissance.values().any(|m| m.system == s.id)
                 && !p.threatened(s.pos) && p.safe_departure(scout, s.pos)
-                && scout.fuel.unwrap_or(0.0) >= p.scout_leg(scout, scout.pos, s.pos)
+                && store(scout) >= p.scout_leg(scout, scout.pos, s.pos)
                     + p.scout_leg(scout, s.pos, p.home.system.pos) + p.arrival_reserve(scout))
             .min_by(|a, b| scout.pos.distance(a.pos).total_cmp(&scout.pos.distance(b.pos)));
         let Some(site) = target else { return (false, None); };
@@ -133,7 +141,12 @@ impl Bot {
                 })
             }).find(|point| point.distance(dest) < distance - 1.0 && p.outside_wells(*point)
                 && (self.returns.contains_key(&fleet.id) || !p.threatened(*point)))?;
-            Command::JumpShip { player_id: p.owner, ship_id: fleet.id, dest: point }
+            // §fuel-overhaul: jump only when the bottle covers it; else warp.
+            if p.can_jump_leg(fleet, fleet.pos.distance(point)) {
+                Command::JumpShip { player_id: p.owner, ship_id: fleet.id, dest: point }
+            } else {
+                Command::MoveShip { player_id: p.owner, ship_id: fleet.id, dest: point }
+            }
         };
         // Wait through spool AND the destination report; an owner-only presumed
         // bookmark is not arrival evidence for issuing another jump.
@@ -149,8 +162,42 @@ impl Bot {
             * sim::research::mod_of(&p.research, sim::research::ModKey::FuelCapacity);
         p.colony_leg(p.home.system.pos, s.pos, tank, tank).is_some()
     }
+    /// §charter v3: the charter's survey stop still waits for a report, and no
+    /// probe is already on its way to it.
+    pub(super) fn charter_probe_due(&self, p: &Observation) -> Option<EntityId> {
+        if p.founding_stage != sim::FoundingStage::SurveyCandidates { return None; }
+        p.survey_candidates.iter().copied()
+            .find(|id| !p.surveyed.contains(id) && self.ready(&format!("probe:{id}"), p.now))
+    }
+
+    /// A Survey Probe is a one-way drone: it flies to the charter's stop and is
+    /// spent charting it, so a threat near the stop doesn't hold it back. A
+    /// spare probe charts the nearest uncharted star instead.
+    fn probes(&mut self, p: &Observation) -> Option<Command> {
+        for probe in p.own().filter(|g| g.kind == H::SurveyProbe && !g.stalled) {
+            let key = format!("fleet:{}", probe.id);
+            if !self.ready(&key, p.now) || probe.survey_progress.is_some() || probe.vel.length_sq() > 1.0 { continue; }
+            let reach = |pos: Vec2| store(probe) >= p.scout_leg(probe, probe.pos, pos) + p.arrival_reserve(probe);
+            let target = self.charter_probe_due(p)
+                .and_then(|id| p.chart.iter().find(|(s, _)| *s == id).copied())
+                .filter(|(_, pos)| reach(*pos))
+                .or_else(|| p.chart.iter().filter(|(id, pos)| !p.surveyed.contains(id) && !self.avoided.contains_key(id)
+                    && !p.threatened(*pos) && reach(*pos))
+                    .min_by(|(_, a), (_, b)| probe.pos.distance(*a).total_cmp(&probe.pos.distance(*b))).copied());
+            let Some((system_id, pos)) = target else { continue; };
+            // Until its report could have landed: flight, dwell and light home.
+            let report = probe.pos.distance(pos) / H::SurveyProbe.max_speed() + p.round_trip(pos) + 600.0;
+            self.waits.insert(format!("probe:{system_id}"), p.now + report);
+            self.wait(key, p, probe.pos);
+            self.status = "sending a Survey Probe to chart a stop".into();
+            return Some(Command::SurveySystem { player_id: p.owner, fleet_id: probe.id, system_id });
+        }
+        None
+    }
+
     pub(super) fn scouts(&mut self, p: &Observation) -> Option<Command> {
         if p.opening_local_work() { return None; }
+        if let Some(command) = self.probes(p) { return Some(command); }
         for scout in p.own().filter(|g| g.kind == H::Scout && !g.stalled) {
             let key = format!("fleet:{}", scout.id);
             if !self.ready(&key, p.now) || p.fighting.contains(&scout.id) { continue; }
@@ -211,7 +258,7 @@ impl Bot {
                 && !self.avoided.contains_key(id) && !self.surveys.values().any(|other| other == id)
                 && !p.threatened(*pos)
                 && (!p.threatened(scout.pos) || p.safe_departure(scout, *pos))
-                && scout.fuel.unwrap_or(0.0) >= p.scout_leg(scout, scout.pos, *pos)
+                && store(scout) >= p.scout_leg(scout, scout.pos, *pos)
                     + p.scout_leg(scout, *pos, p.home.system.pos) + p.arrival_reserve(scout))
                 // The founder's two named surveys unlock expansion; arbitrary
                 // nearby surveys do not. Prioritize those PLAYER-KNOWN leads,
@@ -258,7 +305,7 @@ impl Bot {
             && p.own().filter(|g| g.kind.is_player_freighter()).count() >= p.sites.len()
             && self.cash(p) >= p.operating_reserve() * (1.5 + p.sites.len() as f64 / self.priorities().expansion) + (H::Colony.hull_mass()
                 * sim::fuel::FUEL_PER_HULL_MASS * sim::research::mod_of(&p.research, sim::research::ModKey::FuelCapacity)
-                * p.price(C::Fuel) * 1.25).max(5_000.0)
+                * p.price(C::Uranium) * 1.25).max(5_000.0)
             && p.prospects.iter().any(|s| !self.avoided.contains_key(&s.id) && !p.threatened(s.pos) && Self::reachable_prospect(p, s))
     }
 
@@ -288,13 +335,13 @@ impl Bot {
             // Refill at a reachable berth rather than waiting forever for a
             // tank that cannot refill in open space at the discarded target.
             if fleet.vel.length_sq() > 1.0 { continue; }
-            let step = p.colony_leg(fleet.pos, target.pos, fleet.fuel.unwrap_or(0.0), p.tank(fleet));
+            let step = p.colony_leg(fleet.pos, target.pos, store(fleet), p.tank(fleet));
             if step.is_none() {
                 if let Some(cmd) = self.return_for_fuel(p, fleet) { return Some(cmd); }
             }
             if let Some(dest) = step.filter(|dest| {
                 let bunker = if dest.distance(p.hub) < sim::transit::HYPERLIMIT {
-                    p.tank(fleet) * p.price(C::Fuel) * 1.25
+                    p.tank(fleet) * p.price(regime_fuel(fleet)) * 1.25
                 } else { 0.0 };
                 self.cash(p) > p.operating_reserve() + bunker + 3_000.0
             }) {

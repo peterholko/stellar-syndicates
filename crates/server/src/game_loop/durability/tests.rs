@@ -97,7 +97,7 @@ async fn crash_restores_only_the_saved_instant_including_orders_and_delayed_ligh
     game.handle_input(GameInput::Intent {
         conn_id: 1,
         msg: ClientMsg::MarketBuy {
-            commodity: sim::Commodity::Fuel,
+            commodity: sim::Commodity::Deuterium,
             units: 2,
             max_unit_price: None,
         },

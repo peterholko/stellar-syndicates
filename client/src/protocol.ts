@@ -91,7 +91,12 @@ export type ShipKind =
   | "builder"
   // §TCA: the Authority's common carrier — never buildable by a corporation.
   | "freighter"
-  | "tiny_freighter" | "small_freighter" | "large_freighter" | "heavy_freighter" | "bulk_freighter";
+  | "tiny_freighter" | "small_freighter" | "large_freighter" | "heavy_freighter" | "bulk_freighter"
+  // §charting: the crewless one-way survey drone.
+  | "survey_probe"
+  | "mining_barge"
+  // §belts: the barges' anchored ore depot.
+  | "mining_belt_station";
 
 // Mirrors ShipKind::cargo_units. "convoy" is the save-compatible Medium hull;
 // "freighter" is Authority-only and never belongs to this player cargo family.
@@ -100,6 +105,8 @@ export const isPlayerFreighter = (kind: ShipKind): boolean => PLAYER_FREIGHTERS.
 export const cargoUnitsPerHull = (kind: ShipKind): number => ({
   tiny_freighter: 50, small_freighter: 150, convoy: 400,
   large_freighter: 1000, heavy_freighter: 2500, bulk_freighter: 6000,
+  mining_barge: 150, // §belts: an ore hopper, not a freighter
+  mining_belt_station: 3000, // §belts: six ore silos
 } as Partial<Record<ShipKind, number>>)[kind] ?? 0;
 
 // A resource deposit on a system. §explore: NO LONGER public — the exact geology
@@ -141,9 +148,13 @@ export interface StockSlot {
 // An owner-only in-progress build at a system (§step1). `key` = what's building
 // ("convoy"|"raider"|"extractor"); completion time is an estimate, null when waiting/paused.
 export interface BuildState {
+  /// §construction: the sim's job id (absent on old servers), for CancelBuild.
+  id?: number;
   /// §bodies: the body this job builds on / displays at.
   body_id: number;
   key: string;
+  // Original shipbuilding yard, from this same arrived report. Missing on old servers.
+  yard?: string;
   // Actual construction start from the same delayed report; absent while queued
   // and for legacy jobs with unknown starts.
   start_time?: number | null;
@@ -164,9 +175,12 @@ export interface BodyView {
   population_capacity?: number | null;
   id: number;
   name: string;
-  /// rocky | terrestrial | ocean | ice | gas_giant
+  /// rocky | terrestrial | ocean | ice | gas_giant | asteroid_belt
   kind: string;
   parent: number | null;
+  /// §belts: an asteroid belt's type and picture. Belts arrive only once the
+  /// viewer has surveyed (charted) the system.
+  belt?: { kind: "stony" | "metallic" | "icy" | "shattered"; radius: number; width: number } | null;
   habitable: boolean;
   size: "tiny" | "small" | "medium" | "large" | "huge";
   environment: "gaia" | "terran" | "marginal" | "hostile" | "uninhabitable";
@@ -178,6 +192,7 @@ export interface BodyView {
   population_growth_mult: number;
   provisions_mult: number;
   construction_time_mult: number;
+  structure_build_time_mult?: number | null;
   mineral_extraction_mult: number | null;
   /// Owner-only exact live capacities (null for rivals to avoid population leaks).
   resource_slots: number | null;
@@ -185,14 +200,41 @@ export interface BodyView {
   infrastructure_slots: number | null;
   ship_build_time_mult: number | null;
   deposits: Deposit[] | null;
+  /// §pockets: the hidden pockets of this belt YOUR corporation has found
+  /// (absent when none). Never another corporation's finds.
+  pockets?: Deposit[];
+  /// §pockets: your prospecting passes reported here (absent when none).
+  prospected?: number;
   structures: Record<string, number>;
   population: number;
   /// Owner-only immigration state. Rivals receive `closed` and zero inbound.
   migration_policy: MigrationPolicy;
   inbound_migrants: number;
+  /// §power: owner-only, this planet's grid as reported.
+  power?: PowerView | null;
+}
+
+/// §power: one planet's grid — MW drawn against MW available, the factor on
+/// every powered structure here, and its plant's burn (units/s of `fuel`).
+/// §fuel-overhaul: `fuel` is null on a Solar Array, which burns nothing.
+export interface PowerView {
+  demand: number;
+  supply: number;
+  power: number;
+  burn: number;
+  fuel: Commodity | null;
+  no_fuel: boolean;
 }
 
 export type MigrationPolicy = "closed" | "managed" | "open" | "priority";
+
+/// §fuel-overhaul: keep `target` units of a fuel at one of your systems; the
+/// Authority buys and ships the shortfall.
+export interface DepotRule {
+  system: EntityId;
+  commodity: Commodity;
+  target: number;
+}
 
 export interface ColonyOpportunityView {
   role: "population_world" | "mining_world" | "fuel_complex" | "electronics_center" | "agricultural_exporter" | "shipbuilding_center" | "strategic_outpost";
@@ -220,6 +262,8 @@ export interface AssignmentView {
   staffing: number;
   skill: number;
   food: number;
+  /// §power: the planet's grid (1 for structures that draw none).
+  power?: number;
   site: number;
   recovery?: number;
   /// (commodity, units/s) at the factors above.
@@ -247,7 +291,8 @@ export interface RefiningSiteView {
   work_rate: number;
 }
 
-export type FreightPort = { kind: "system"; id: EntityId } | { kind: "hub" };
+/** §belts: a station stop names one of your Mining Belt Stations; it only loads. */
+export type FreightPort = { kind: "system"; id: EntityId } | { kind: "hub" } | { kind: "station"; id: EntityId };
 export type Manifest = Partial<Record<Commodity, number>>;
 export interface RouteStop { port: FreightPort; load: Manifest; unload: Manifest; sell: boolean }
 export interface FreightRoute { name: string; stops: RouteStop[]; fuel_reserve: number; escort: EntityId | null; repeat: boolean; transit?: TransitMode; shopping_budget?: number | null }
@@ -264,10 +309,19 @@ export interface SiteIndustry {
 export type FleetIndustry =
   | { kind: "route"; run: { route: FreightRoute; stop: number; phase: string; remaining_load: Manifest; remaining_unload: Manifest; visits: number; hold?: string | null } }
   | { kind: "deploy"; system: EntityId; body: number; outpost: OutpostKind; commodity: Commodity; work: number }
-  | { kind: "skim"; system: EntityId; harvested: number; cargo_fraction: number; status: string };
+  | { kind: "skim"; system: EntityId; harvested: number; cargo_fraction: number; status: string }
+  /** §belts: Mining Barges working one ore of a belt. status: travelling, mining,
+   *  full, depleted, unsafe or claimed. `pocket`: a found pocket of the ore. */
+  | { kind: "mine"; system: EntityId; body: number; ore: Commodity; pocket?: boolean; to_station?: boolean; mined: number; fraction: number; status: string }
+  /** §pockets: a Scout or barge prospecting a belt. status: travelling,
+   *  prospecting or unsafe; `dwell` counts toward PROSPECT_SECS. */
+  | { kind: "prospect"; system: EntityId; body: number; dwell: number; status: string };
+/** §belts: a station's anchor. phase: approaching (flying to the star),
+ *  anchoring (60 s), anchored, or unanchoring (60 s). `since` is sim time. */
+export interface StationAnchor { system: EntityId; body: number; phase: "approaching" | "anchoring" | "anchored" | "unanchoring"; since: number }
 export interface IndustryCatalog {
   projects: { kind: ColonyProjectKind; costs: [Commodity, number][]; inputs: [Commodity, number][]; outputs: [Commodity, number][]; workers: number; build_secs: number }[];
-  outpost_costs: [Commodity, number][]; outpost_build_secs: number; skim_fuel_per_s: number; max_stops: number;
+  outpost_costs: [Commodity, number][]; outpost_build_secs: number; skim_helium3_per_s: number; max_stops: number;
 }
 
 export interface SystemStateView {
@@ -282,11 +336,30 @@ export interface SystemStateView {
   /// sim always allowed concurrent jobs; rivals always get an empty list.
   builds: BuildState[];
   /// BLOCKADE state (§contestable-territory), fog-safe: present only for the two
-  /// participants — the besieger (`by_me`) and the owner (light-delayed). Third
-  /// parties get null. `by` = the blockading corp; `since` = onset sim-time;
-  /// `siege_since` = when the (defense-suppressed) capture clock started (§Part 2),
-  /// null if the siege can't progress yet. Progress = (now−siege_since)/siege_secs.
-  blockade: { by: PlayerId; since: number; by_me: boolean; siege_since: number | null } | null;
+  /// participants — the besieger (`by_me`) and the owner — from their arrived
+  /// report of the system. Third parties get null. `by` = the blockading corp
+  /// (`by_name` its name); `since` = when hostile fleets took station. Stages
+  /// (core/derive/blockade.ts): CONTESTED while `held_since` is null (the
+  /// defense still fights; shipping runs), HELD once set (defense beaten:
+  /// logistics cut, stores stripped), a SIEGE while `siege_since` is set.
+  /// Capture clock progress = (now − siege_since) / `siege_secs` (garrison and
+  /// battleship included; null → GalaxyInfo.siege_secs). `capturable` is false
+  /// at a home system. While held, `catch` is the chance it runs down a
+  /// freighter trying to slip past (the owner's Blockade Runners research
+  /// included; the besieger sees it against an unmodified freighter), and
+  /// `catch_stabilized` the same with a Warp Stabilizer on every hull.
+  blockade: {
+    by: PlayerId;
+    by_name: string;
+    since: number;
+    by_me: boolean;
+    held_since: number | null;
+    siege_since: number | null;
+    siege_secs: number | null;
+    capturable: boolean;
+    catch?: number;
+    catch_stabilized?: number;
+  } | null;
   /// §ground: what a LANDING here would have to beat. Fog-safe and populated for
   /// exactly two viewers — the owner (their building) and whoever is currently
   /// blockading (their fleet is overhead measuring it). Null for everyone else.
@@ -306,6 +379,8 @@ export interface SystemStateView {
     /// belongs to the bombardment rather than to the men.
     landing?: LandingOddsView | null;
   } | null;
+  /** §orbital-defense: owner-only; absent without a station. */
+  station?: StationView | null;
   /// Extractor upgrades built here (owner-only; rivals see 0).
   extractor_tier: number;
   /// Orbital Warehouse tiers built here (§buildings step 2) — owner-only; rivals see 0.
@@ -426,8 +501,38 @@ export interface BuildOption {
   costs: StockSlot[];
   build_secs: number;
   research_prerequisite?: string;
+  research_alternatives?: string[];
+  tiers?: StructureTierOption[];
+  /** The proposed level's yard requirement, merged in from `tiers`. */
+  requires?: { yard: string; tier: number } | null;
+  consumes_slot?: boolean;
+  min_population?: number;
+  /** §gaia: the environment a world must have (Living Terraces: "gaia"). */
+  requires_environment?: BodyView["environment"];
+  description?: string;
   conversion?: ConversionRecipe;
   refining_recipes?: ConversionRecipe[];
+}
+
+export interface StructureTierOption {
+  tier: number;
+  label: string;
+  costs: StockSlot[];
+  build_secs: number;
+  research_prerequisite?: string | null;
+  description: string;
+  /** A yard the system must already hold for this level (§orbital-defense). */
+  requires?: { yard: string; tier: number } | null;
+}
+
+/** §orbital-defense: the system's station as its owner knows it (the arrived
+ * site report). One entry per hardpoint: its fit (empty = the stock beam
+ * battery) and its hull fraction (0 = knocked out). */
+export interface StationView {
+  level: number;
+  name: string;
+  body_id: number;
+  mounts: { modules: ModuleKind[]; health: number; offline: boolean }[];
 }
 
 export interface GalaxyInfo {
@@ -513,11 +618,15 @@ export interface ConversionRecipe {
 
 export type Commodity =
   | "cuprite_ore" | "titanium_ore" | "crystalline_ore" | "rare_metal_ore"
+  | "olivine_ore" | "bornite_ore" | "ilmenite_ore"                              // §belts: belt-only ores
+  | "iridium_ore" | "helium3_ice" | "void_crystal"                               // §pockets: pocket-only ores
+  | "iridium" | "helium3" | "exotic_matter"                                      // §pockets: their materials
   | "conductive_metals" | "titanium"
   | "metallic_ore" | "rare_elements" | "silicates" | "volatiles" | "biomass" // historical slugs; metallic_ore displays as Ferrite Ore
-  | "alloys" | "electronics" | "polymers" | "fuel" | "provisions"                 // processed
+  | "alloys" | "electronics" | "polymers" | "deuterium" | "provisions"            // processed
   | "machinery" | "armaments" | "composites" | "hull_sections"
-  | "precision_components" | "drive_assemblies";                                // advanced
+  | "precision_components" | "warp_core"                                        // advanced
+  | "uranium" | "antimatter" | "fusion_core";                                   // §fuel-overhaul
 
 export interface CargoView {
   commodity: Commodity;
@@ -738,6 +847,8 @@ export interface MissionProfile {
   priority: "balanced" | "missile_ships" | "installations" | "transports";
   screening: "automatic" | "protect_transports";
   withdrawal: "never" | "hull30" | "hull50" | "hull70";
+  // The shape the fleet holds in battle (battle rules v10).
+  formation?: "automatic" | "battle_line" | "escort_ring" | "wedge" | "free";
 }
 export type PirateFaction = "ashwake" | "ironclad" | "rift";
 export type CombatObjective = "disable_fire_control" | "disable_supply" | "hold_extraction" | "break_blockade" | "protect_evacuation";
@@ -824,7 +935,11 @@ export type ModuleKind =
   | "fuel_transfer_rig"
   | "survey_drive"
   | "nebula_spectrometer"
-  | "prismatic_lance";
+  | "prismatic_lance"
+  | "stasis_web"
+  | "warp_stabilizer"
+  | "interdiction_field"
+  | "jump_drive";
 
 // §modules Part B: one FITTED stack of a fleet — `n` ships of `kind` all carrying
 // `modules` (sorted; never empty). Revealed under the same rule as CompCount.
@@ -838,6 +953,20 @@ export interface LoadoutStack {
 // as). The two-tier intel ladder: `count_class` (size bucket) is ALWAYS present;
 // `composition` (exact kinds + counts) only for your own fleets or a rival fleet
 // inside your sensor coverage — never leaking the true count outside it.
+/// An interdiction field in open space, as its arrived light reports it.
+/// Fleets inside move on thrusters and can't jump.
+export interface InterdictionFieldView {
+  id: string;
+  pos: Vec2;
+  radius: number;
+  /// Raised by one of your fleets.
+  own: boolean;
+  fleet: string;
+  /// When it lapses at the latest (it collapses sooner if its destroyer
+  /// leaves or is lost).
+  expires_at: number;
+}
+
 /// §emplacements: one structure standing in open space.
 export interface EmplacementView {
   id: string;
@@ -982,9 +1111,18 @@ export interface GhostView {
   jump_presumed?: JumpPresumptionView | null;
   /// Speed at that retarded moment (su/s).
   speed?: number;
-  /** Owner-only bunker telemetry from this same delayed sighting. */
+  /** Owner-only bunker telemetry from this same delayed sighting. §fuel-overhaul:
+   *  `fuel` is the fusion tank in Deuterium of energy (Helium-3 counted six per
+   *  unit); `fuel_capacity` its space. */
   fuel?: number | null;
   fuel_capacity?: number | null;
+  helium3?: number | null;
+  /** The fission store: Uranium, burned by Slow warp. */
+  uranium?: number | null;
+  uranium_capacity?: number | null;
+  /** The antimatter bottle on jump-capable hulls. */
+  antimatter?: number | null;
+  antimatter_capacity?: number | null;
   /** Owner-only: the served fleet picture is held for lack of carried fuel. */
   stalled?: boolean;
   /** AAA has accepted this fleet's callout and its tender is outbound. */
@@ -1041,10 +1179,15 @@ export interface GhostView {
   posture: EngagementPosture | null;
   mission_profile?: MissionProfile | null;
   industry?: FleetIndustry | null;
+  /** §belts: OWNER-ONLY — a Mining Belt Station's anchor at a belt. */
+  anchor?: StationAnchor | null;
   pirate_faction?: PirateFaction | null;
   // §explore Part 2: SURVEY DWELL progress (0..1) — OWNER-ONLY (your fleet's own
   // order state); null/absent when not dwelling. Drives the progress ring.
   survey_progress?: number | null;
+  /// OWN fleets only: when its interdiction field generator can raise another
+  /// field (absent: ready, or it carries none), as of this picture.
+  interdiction_ready?: number | null;
   expedition?: { site: EntityId; task: ExpeditionTask } | null;
   // §syndicates Part 1: this fleet's owner is a SYNDICATE ally as WE know it
   // (light-delayed membership) — drives the friendly ally tint/pip.
@@ -1069,6 +1212,11 @@ export interface GhostView {
   revealed?: boolean;
   /// §TCA: OWNER-ONLY — whether this blockading fleet engages Authority freight.
   engage_freight?: boolean | null;
+  /** Owner-only, on a freighter fleet: it runs a held blockade at its
+   * destination instead of waiting outside. Absent on any other fleet. */
+  run_blockades?: boolean | null;
+  /** Owner-only: the system whose held blockade this delivery waits outside. */
+  held_outside?: EntityId | null;
   /** Owner-only transit setting carried by this served fleet report. */
   transit?: TransitMode | null;
 }
@@ -1076,7 +1224,7 @@ export interface GhostView {
 // A fleet's transit throttle (§Part 4). `full` = formation speed (loud at flank);
 // `stealth` = creep at STEALTH_FRACTION (quiet, ~2× trip); freighter `economy`
 // = 25% speed AND 10% fuel per journey. Missing legacy settings remain full.
-export type TransitMode = "full" | "stealth" | "economy";
+export type TransitMode = "full" | "stealth" | "slow";
 
 // Total ship count implied by a ghost: exact when composition is known,
 // otherwise null (you only have the bucket).
@@ -1115,6 +1263,13 @@ export type ClientMsg =
   | { type: "SetRefiningReserve"; system_id: EntityId; ore: number; fuel: number }
   | { type: "DeployOutpost"; fleet_id: EntityId; system_id: EntityId; body_id: number; outpost: OutpostKind; commodity: Commodity }
   | { type: "SkimFuel"; fleet_id: EntityId; system_id: EntityId }
+  | { type: "MineBelt"; fleet_id: EntityId; system_id: EntityId; body_id: number; ore: Commodity; pocket?: boolean }
+  /// §pockets: a Scout or Mining Barge prospects a charted belt for hidden pockets.
+  | { type: "ProspectBelt"; fleet_id: EntityId; system_id: EntityId; body_id: number }
+  /// §belts: anchor a lone Mining Belt Station at a charted belt; unanchor; load beside it.
+  | { type: "AnchorStation"; fleet_id: EntityId; system_id: EntityId; body_id: number }
+  | { type: "UnanchorStation"; fleet_id: EntityId }
+  | { type: "StationLoad"; fleet_id: EntityId; station_id: EntityId; commodity: Commodity; units: number }
   | { type: "ReserveProject"; system_id: EntityId; target: ProjectTarget; reserve: boolean }
   | { type: "StartColonyProject"; system_id: EntityId; body_id: number; project: ColonyProjectKind; commodity: Commodity }
   | { type: "SetColonyProjectActive"; system_id: EntityId; project: ColonyProjectKind; active: boolean }
@@ -1143,8 +1298,12 @@ export type ClientMsg =
   | { type: "HaulToMarketHub"; fleet_id: EntityId; sell_on_arrival: boolean }
   | { type: "HaulToSystem"; fleet_id: EntityId; system: EntityId }
   | { type: "RequestFuelRescue"; fleet_id: EntityId }
+  | { type: "SetDepotRule"; system_id: EntityId; commodity: Commodity; target: number }
   | { type: "RefuelFleet"; fleet_id: EntityId; target_id: EntityId }
+  | { type: "DeployInterdiction"; fleet_id: EntityId }
   | { type: "SetEngageFreight"; fleet_id: EntityId; on: boolean }
+  | { type: "SetRunBlockades"; fleet_id: EntityId; on: boolean }
+  | { type: "FitStation"; system_id: EntityId; mount: number; fit: ModuleKind[] }
   | { type: "PayReinstatement"; points: number }
   | { type: "MarketSell"; commodity: Commodity; units: number; min_unit_price?: number | null }
   | { type: "PlaceLimitOrder"; side: Side; commodity: Commodity; units: number; limit_price: number }
@@ -1170,6 +1329,8 @@ export type ClientMsg =
   | { type: "SellModule"; module: ModuleKind; n: number; from_system: EntityId }
   // §economy: the 16 structure slugs (the server accepts legacy slugs via alias).
   | { type: "DevelopSystem"; system_id: EntityId; upgrade: string; body_id?: number }
+  // §construction: cancel a structure still waiting for its world's work slot.
+  | { type: "CancelBuild"; system_id: EntityId; job_id: number }
   | { type: "SetAssignment"; system_id: EntityId; structure: string; workers: number; specialists?: Record<string, number>; body_id?: number; refining_ore?: Commodity }
   | { type: "SetMigrationPolicy"; system_id: EntityId; body_id: number; policy: MigrationPolicy }
   | { type: "RelocateMigrants"; from_system: EntityId; from_body: number; to_system: EntityId; to_body: number }
@@ -1401,6 +1562,8 @@ export interface ProgrammeInfo {
   name: string;
   blurb: string;
   cost: number;
+  /** §rare-materials: goods each Academy draws per rate-second while funding it. */
+  supplies: [Commodity, number][];
 }
 export interface ActiveResearchView {
   id: string;
@@ -1417,6 +1580,8 @@ export interface AcademyRow {
   staffing: number;
   skill: number;
   food: number;
+  /// §power: the planet's grid.
+  power?: number;
   rate: number;
   supplied: boolean;
 }
@@ -1432,6 +1597,7 @@ export interface ProgrammeView {
   cost: number;
   gate: GateProgressView | null;
   recovered_data?: number;
+  supplies?: [Commodity, number][];
 }
 export interface GateProgressView {
   label: string;
@@ -1511,6 +1677,8 @@ export interface EngagementEstimate {
   composition_age: number; // age of the target sighting (s)
   defenses_age: number | null; // age of the scouted-defenses snapshot (s), if any
   platform_tiers: number | null;
+  /** §orbital-defense: the scouted station level folded in, if any. */
+  station_level?: number | null;
   // §tactical T4: distribution readout. Absent from pre-Monte-Carlo servers.
   win_pct?: number | null; // % of rollouts the attacker wins
   runs?: number | null; // rollout count (k)
@@ -1526,7 +1694,7 @@ export interface LossRange {
 }
 
 // §order-lifecycle: the flavor of a light-delayed order (mirrors sim OrderKind).
-export type OrderKind = "move" | "hold" | "jump" | "construct" | "demolish" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey" | "guard" | "defend" | "load" | "unload" | "haul" | "configure" | "refit" | "reorganize" | "assign" | "refuel";
+export type OrderKind = "move" | "hold" | "jump" | "construct" | "demolish" | "raid" | "recall" | "withdraw" | "blockade" | "attack" | "survey" | "guard" | "defend" | "load" | "unload" | "haul" | "configure" | "refit" | "reorganize" | "assign" | "refuel" | "interdict";
 
 // §battles-take-time: an ongoing battle as this player perceives it, light-gated.
 // ONE battle entity = ONE map icon at `pos`; `participants` are the fleet ids
@@ -1585,12 +1753,40 @@ export interface RoundRecordView {
 
 // §tactical T3: keyframe payloads (battle-local arena coords, ±~1400).
 export interface KeyframeView {
-  ships: { cid?: number; side: number; kind: ShipKind; x: number; y: number; hp: number; plat?: boolean }[];
+  /** `station`: a station hardpoint, with its station's level. */
+  ships: { cid?: number; side: number; kind: ShipKind; x: number; y: number; hp: number; plat?: boolean; station?: number }[];
   torpedoes: { side: number; x: number; y: number; n: number }[];
-  deaths: { step: number; side: number; kind: ShipKind; x: number; y: number }[];
+  deaths: { step: number; side: number; kind: ShipKind; x: number; y: number; cid?: number }[];
   // Already-resolved, capped beam/driver attempts. Empty = no shots; absent =
   // legacy frame, never permission to invent successful hits. Same light gate.
   gunfire?: { side: number; from: number; to: number; weapon: "beam" | "driver"; damage: number }[];
+  // Every torpedo in flight (oldest first, capped per side) with a stable id;
+  // absent = a frame from before torpedoes were recorded one by one.
+  torps?: KfTorpedoView[];
+  // How each torpedo that ended this step ended. Resolved evidence, like gunfire.
+  torp_ends?: KfTorpedoEndView[];
+  // Rules v9: every large-hull wreck section on the field (physical wreckage).
+  wrecks?: KfWreckView[];
+  // Rules v9: hulls that rammed wreckage this step, and the damage taken.
+  rams?: KfRamView[];
+  // Rules v11: interceptors holding a hull that is trying to leave.
+  tackles?: KfLinkView[];
+  // Rules v11: stasis webs slowing their targets.
+  webs?: KfLinkView[];
+  /// Rules v14: the defended world the battle is fought at (arena units),
+  /// the side holding it; hulls round it and torpedoes burst on it.
+  world?: { x: number; y: number; r: number; side: 0 | 1 };
+}
+/** One hull acting on another (battle-local combatant ids). */
+export interface KfLinkView { from: number; to: number }
+export interface KfWreckView { hull: number; piece: number; x: number; y: number; r: number }
+export interface KfRamView { cid: number; hull: number; piece: number; x: number; y: number; damage: number }
+export interface KfTorpedoView { id: number; side: number; to: number; x: number; y: number }
+export interface KfTorpedoEndView {
+  id: number; side: number; to: number; x: number; y: number;
+  end: "hit" | "miss" | "intercepted" | "dry" | "wreck";
+  by?: number; // the point-defense hull that shot it down
+  damage?: number; // actual hull damage (hits only)
 }
 export interface BattleRecordView {
   id: EntityId;
@@ -1706,7 +1902,8 @@ export interface PendingOrderView {
     | { kind: "transit"; mode: TransitMode }
     | { kind: "posture"; posture: EngagementPosture }
     | { kind: "mission"; mission: MissionProfile }
-    | { kind: "engage_freight"; on: boolean };
+    | { kind: "engage_freight"; on: boolean }
+    | { kind: "run_blockades"; on: boolean };
   /// Owner-only intended route from the served sighting to a fixed destination.
   /// Positions only: this line never claims the fleet advanced along it.
   intent_path?: Vec2[];
@@ -1733,7 +1930,10 @@ export type FoundingStage =
   | "build_second_freighter"
   | "grow_business"
   | "local_recovery"
-  | "prepare_export";
+  | "prepare_export"
+  | "build_barge"
+  | "mine_belt"
+  | "haul_ore";
 
 export interface FoundingView {
   stage: FoundingStage;
@@ -1752,6 +1952,24 @@ export interface FoundingView {
   opening_exports: Commodity[];
   /** Assigned prospects only; their economic details remain survey-gated. */
   survey_candidates: EntityId[];
+  /** The Authority already replaced the starter Freighter once. */
+  freighter_replaced?: boolean;
+  /** Charter stipends paid so far, in milestone order. */
+  stipends?: { stage: FoundingStage; title: string; credits: number }[];
+  /** A hull that turned back from the recovery site (report arrived). */
+  turned_back?: EntityId | null;
+  /** §belts: the charted belt the barge lesson points at. */
+  belt_target?: { system: EntityId; body: number } | null;
+}
+
+export type LedgerMetric = "syndicate" | "limit_orders" | "population" | "storage" | "refining"
+  | "hulls" | "freighters" | "contracts" | "research" | "systems" | "tier_two" | "power_plants";
+
+/** The charter ledger: the next goals after founding, three at a time. */
+export interface CharterLedgerView {
+  done: number;
+  total: number;
+  goals: { id: string; title: string; detail: string; metric: LedgerMetric; progress: number; target: number; reward: number }[];
 }
 
 // Server → client.
@@ -1794,6 +2012,7 @@ export type ServerMsg =
       /// §emplacements: your own structures standing in open space. Undelayed —
       /// you know where you put them.
       emplacements?: EmplacementView[];
+      interdiction_fields?: InterdictionFieldView[];
       market: MarketView;
       wallet: WalletView;
       /// §TCA: the Market Hub freight desk — timetable, per-destination terms,
@@ -1802,6 +2021,8 @@ export type ServerMsg =
       /// §TCA Phase 2: YOUR charter standing and band. Owner-only.
       charter: CharterView;
       founding: FoundingView;
+      /** §founding R10: present once the charter ledger opens. */
+      charter_ledger?: CharterLedgerView;
       doctrine: FleetDoctrine;
       // §order-lifecycle — the player's own in-flight order timestamps (owner-only).
       pending_orders: PendingOrderView[];
@@ -1828,6 +2049,8 @@ export type ServerMsg =
       type: "Sections";
       exploration_journal?: ExplorationJournalEntry[];
       standing_orders?: StandingOrder[];
+      /// §fuel-overhaul: the corp's fuel depot rules (sent with standing orders).
+      depot_rules?: DepotRule[];
       battle_reports?: BattleReportView[];
       capture_reports?: CaptureReportView[];
       rankings?: RankingRow[];

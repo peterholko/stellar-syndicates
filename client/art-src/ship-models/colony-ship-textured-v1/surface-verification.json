@@ -1,0 +1,16 @@
+{
+  "ship": "colony-ship",
+  "triangles": 27896,
+  "texturedTriangles": 16820,
+  "ventralTriangles": 8108,
+  "checks": {
+    "allSurfacesAndTexturedUVsHaveArea": true,
+    "ventralProjectionPresent": true,
+    "engineCount": true,
+    "turretCount": true,
+    "threeEmbeddedTextures": true,
+    "gltfValidatorClean": true
+  },
+  "problems": [],
+  "passed": true
+}

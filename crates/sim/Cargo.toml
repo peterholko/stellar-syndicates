@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
+# Software sin/cos/atan2/pow for the battle engine (rules v16+, see dmath.rs).
+libm = "0.2.16"
 
 [dev-dependencies]
 serde_json.workspace = true

@@ -1,0 +1,18 @@
+{
+  "source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-77c11597-6535-49e5-87dc-fc1f1e6038ac.png",
+  "output": "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/habitable-v1/archipelago-world-v2.png",
+  "prompt": "Use case: precise-object-edit.\nEdit this planet-surface painting (Image 1, 1672 × 941). Keep the composition, camera, horizon, planetary curvature, lighting, colours, starfield and painterly style exactly, and output the same 1672 × 941 framing.\nWiden the open ground in the middle distance. In the band between about 55% and 80% of the image height, across the central two-thirds of the width, on the main island, turn the forest patches and small hills of the central lowland into one continuous open grassy plain, keeping its beaches, lagoons, coastal hills and the surrounding islands. The result needs enough level, open ground for a settlement of about 17 buildings. Keep the large lakes, rivers, cliffs, coasts and forests elsewhere, so the world still reads as itself.\nNo buildings, roads, paths, fields, plots, ruins, vehicles, text or interface.\n",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/habitable-v1/archipelago-world.png"
+  ],
+  "processing": "painting",
+  "verification": {
+    "width": 1672,
+    "height": 941,
+    "channels": 3,
+    "hasAlpha": false,
+    "fileSHA256": "1e1f92e4d62414691f5fb5ea7d6036e590f2a222483f7f54c5a033e3b7d546c0"
+  },
+  "mode": "builtin-imagegen",
+  "created": "2026-10-09"
+}

@@ -1,0 +1,141 @@
+{
+  "ship": "mining_belt_station",
+  "approvedSource": "client/art-src/ship-models/mining-belt-station-textured-v1/mining-belt-station.glb",
+  "approvedSourceSha256": "0f28b34cec04f8f8680c553b4a1fa8140b5051b61c12a09b35e429c5990f6a9d",
+  "sourceAndAllExistingArtUnchanged": true,
+  "existingFilesHashChecked": 4806,
+  "changedExistingArt": [],
+  "gameTriangles": 8420,
+  "levels": [
+    {
+      "level": "lod0",
+      "triangles": 14536,
+      "drawCalls": 2,
+      "sha256": "83588be8494e7b3d4decfc092f8cbcbc3406ebd284113758d1dd5835ab87c591"
+    },
+    {
+      "level": "lod1",
+      "triangles": 9211,
+      "drawCalls": 2,
+      "sha256": "b34e86ae9cb06bf431c97ec57473c6102a8acde77c44b00144aafc6c6f2fb8cf"
+    },
+    {
+      "level": "lod2",
+      "triangles": 8420,
+      "drawCalls": 2,
+      "sha256": "5b0ff427be5116c768d12d9a8a13ead14413f9dcdf20969481fc9bb765c3d9ab"
+    }
+  ],
+  "mass": 12000,
+  "comparisonLengthRatio": 4.7508414663802245,
+  "sockets": [
+    "socket.docking.barge.port",
+    "socket.docking.barge.starboard",
+    "socket.docking.hauler",
+    "socket.anchor.1",
+    "socket.anchor.2",
+    "socket.anchor.3",
+    "socket.anchor.4"
+  ],
+  "engineSockets": 0,
+  "weaponSockets": 0,
+  "geometryVerification": "../interceptor-lod-experiment-v1/mining-belt-station-geometry-verification.json",
+  "onlyInternalProtectedTrianglesRemoved": 428,
+  "textureSHA256": [
+    "ebc429b30b2714b037e712ece225d034cbc7712de9cc3c14be84b97f2a2b06c7",
+    "c4a98edb5330b8df965be1a15ad96a49e8c6c26cfc09820505a5e38130fa48de",
+    "68b251dc4808766fa31b3cd3fc8ab4d63b7f1a10fe2bc24857a72994ee237e1f"
+  ],
+  "atlasTilesVerified": 40,
+  "modelValidation": {
+    "optimizedGLBs": 60,
+    "errors": 0,
+    "warnings": 0
+  },
+  "lineupChecks": 129,
+  "gameViewsBaked": [
+    "top",
+    "perspective",
+    "bottom"
+  ],
+  "existingBakedViewsRetained": 57,
+  "checks": [
+    {
+      "command": "npx tsc --noEmit",
+      "exitCode": 0,
+      "seconds": 3.91
+    },
+    {
+      "command": "npm run test:ship-models",
+      "exitCode": 0,
+      "seconds": 6.02
+    },
+    {
+      "command": "npm run test:ship-art",
+      "exitCode": 0,
+      "seconds": 3.22
+    },
+    {
+      "command": "npm run test:map-ship-sizes",
+      "exitCode": 0,
+      "seconds": 1.24
+    },
+    {
+      "command": "npm run test:battle-models",
+      "exitCode": 0,
+      "seconds": 3.86
+    },
+    {
+      "command": "npm run test:fleet-panel",
+      "exitCode": 0,
+      "seconds": 0.92
+    },
+    {
+      "command": "npm run test:system-view",
+      "exitCode": 0,
+      "seconds": 1.19
+    }
+  ],
+  "captures": {
+    "mining-belt-station-map-comparison.jpg": {
+      "sha256": "9f7055213151941e8a77fb592f819985ef8dec2a02558f20c33dcbebe8202c7e",
+      "size": [
+        2055,
+        1107
+      ],
+      "format": "JPEG"
+    },
+    "mining-belt-station-fleet-panel.jpg": {
+      "sha256": "7cfb1a144676ade0836573c3499ecb5c898c51f2df80d3a490e57957695d245c",
+      "size": [
+        2055,
+        1107
+      ],
+      "format": "JPEG"
+    },
+    "mining-belt-station-system-view.jpg": {
+      "sha256": "9e5ead9687aca316daafd7598a02525b80edd5f19f3ee915c3571ab66a7afd0e",
+      "size": [
+        2055,
+        1107
+      ],
+      "format": "JPEG"
+    }
+  },
+  "browserWarningsAndErrors": [],
+  "previewUrls": {
+    "map": "http://127.0.0.1:8780/scripts/ship-model-fixture.html?comparison=mining-belt-station",
+    "fleet": "http://127.0.0.1:8783/?fleet=105&details=1",
+    "system": "http://127.0.0.1:8780/scripts/ship-model-fixture.html?system=mining-belt",
+    "lineup": "http://127.0.0.1:8770/viewer.html?ship=mining-belt-station&formation=all"
+  },
+  "notes": [
+    "No Blender, image generation, texture repainting or upscaling.",
+    "All visible primary structure triangles retained, including every silo surface, open cradle, gantry and anchor frame. Lower levels remove only wholly buried structural faces and simplify small fittings.",
+    "Original textures, UV attributes, all seven socket nodes and exact extremal bounds are retained at every detail level.",
+    "Map sizing retains freight base 86 and class cap 180 at 96x; battle and lab display sizes retain the 12,000-mass rule.",
+    "Acceptance captures use the production renderers and fleet controller in isolated loopback fixtures. System View shows an anchored station beside a Mining Barge working the same belt.",
+    "TypeScript was rerun successfully after the final System View fixture edits; the new station System View assertions also passed.",
+    "Survey Probe still uses its existing Scout stand-in."
+  ]
+}

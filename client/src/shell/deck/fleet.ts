@@ -1,7 +1,10 @@
 import { isPlayerFreighter } from "../../protocol";
+import { blockadeStatus, heldOutsideStatus, runBlockadesCopy } from "../../core/derive/blockade";
+import { FIELD_FUEL, FIELD_RADIUS_SU, FIELD_SECONDS, interdictionReason, interdictorCapable } from "../../core/derive/interdiction";
 import { captainTitle, captainXpFloor, fleetCommandLoad } from "../../core/derive/captains";
 import { missionCommand, missionHtml, pirateFactionHtml } from "../mission";
 import { fleetIndustryHtml } from "../industry";
+import { anchorStatus, isStation } from "../../core/derive/belts";
 import { dispatchWarnings, fleetReadiness } from "../../core/derive/readiness";
 import {
   AAA_SERVICE_FEE,
@@ -11,15 +14,18 @@ import {
   dockLoadStock,
   dockedAtSystem,
   estimatedFuelForLeg,
-  economyCapable,
+  slowCapable,
   fleetBaseSpeed,
   fleetCargoCapacity,
-  fleetFuelCapacity,
   FUEL_PER_MASS_DISTANCE,
+  fleetUraniumCapacity,
   guardCapable,
   hauls,
   jumpCapable,
+  regimeStore,
+  fusionTank,
   shipKindLabel,
+  transitLabel,
   shipMass,
   transitSpeedMultiplier,
   WARP_FACTOR,
@@ -31,7 +37,7 @@ import { MODULES, utilityChange } from "../../core/derive/equipment";
 import { utilityWorkshop } from "../../core/derive/market";
 import { tenderStatus } from "../../core/derive/tenders";
 import { fuelTransferHtml } from "../fueltransfer";
-import { orderEtaRange, orderObject, orderPoint } from "../../core/derive/orders";
+import { orderEtaRange, orderObject, orderPoint, SHIP_STATS } from "../../core/derive/orders";
 import { jumpRangeAt } from "../../core/derive/nebula";
 import type { CoreEvent } from "../../core/events";
 import { jumpDepartureKey } from "../../core/session";
@@ -88,16 +94,28 @@ export class DeckFleetRoutes {
   private readonly estimates = new Map<string, EngagementEstimate>();
   private readonly estimateAttacker = new Map<string, string>();
   private readonly refitChoices = new Map<string, { to: string; n: number }>();
+  /** The fleet whose details workbench is open (one at a time). */
+  private details: string | null = null;
+  /** The hull the details stage shows, per fleet; the flagship by default. */
+  private readonly detailsHull = new Map<string, ShipKind>();
+  private lastRoute: DeckRoute | null = null;
 
   constructor(
     private readonly root: HTMLElement,
     private readonly ctx: CoreContext,
     private readonly hooks: FleetHooks,
+    /** The details workbench body (`#deck-fleet-workbench-body`). */
+    private readonly detailsRoot: HTMLElement | null = null,
   ) {}
 
   render(route: DeckRoute | null, force = false): boolean {
-    if (route?.name !== "fleet") return false;
+    this.lastRoute = route;
+    if (route?.name !== "fleet") {
+      this.closeDetails();
+      return false;
+    }
     const id = route.params?.id ?? "";
+    if (this.details && this.details !== id) this.closeDetails();
     const fleet = this.ctx.state.ghosts.find((entry) => entry.id === id);
     const active = document.activeElement;
     if (!force && active instanceof HTMLElement && this.root.contains(active)
@@ -111,6 +129,7 @@ export class DeckFleetRoutes {
       this.requestedTransit.get(id), this.posture.get(id), this.confirms.get(id),
       this.loadCommodity.get(id), this.loadQuantity.get(id), this.haulDestination.get(id),
       [...this.estimates.values()].filter((entry) => entry.target === id || entry.attacker === id),
+      this.details, this.detailsHull.get(id),
     ]);
     if (!force && signature === this.signature) return true;
     if (renderDeferred(this.root.id, () => this.render(route, true))) return true;
@@ -118,25 +137,77 @@ export class DeckFleetRoutes {
     if (route.params?.object === "emplacement" || (!fleet && this.ctx.state.emplacements.some((entry) => entry.id === id))) {
       const emplacement = this.ctx.state.emplacements.find((entry) => entry.id === id);
       setHtml(this.root, emplacement ? this.emplacementReadoutHtml(emplacement) : this.expiredSpecialHtml("Installation report expired"));
+      this.closeDetails();
       return true;
     }
     if (route.params?.object === "jump-departure" || (!fleet && this.ctx.state.jumpDepartures.some((entry) => jumpDepartureKey(entry) === id))) {
       const departure = this.ctx.state.jumpDepartures.find((entry) => jumpDepartureKey(entry) === id);
       setHtml(this.root, departure ? this.jumpDepartureHtml(id, departure) : this.expiredSpecialHtml("Jump departure report expired"));
+      this.closeDetails();
       return true;
     }
     if (!fleet) {
       setHtml(this.root, this.contactLostHtml());
+      this.closeDetails();
       return true;
     }
     this.reconcileConfiguration(fleet);
     this.selectForRoute(fleet);
     setHtml(this.root, this.fleetHtml(fleet));
+    this.renderDetails(fleet);
     return true;
+  }
+
+  /** Open a fleet's details workbench (the guide opens it for the Recon fit). */
+  openDetails(id: string): void {
+    this.details = id;
+    this.signature = "";
+    if (this.lastRoute?.name === "fleet" && this.lastRoute.params?.id === id) this.render(this.lastRoute, true);
+  }
+
+  /** Close the details workbench. True when one was open, so Esc stops here. */
+  closeDetails(): boolean {
+    const open = this.details !== null;
+    this.details = null;
+    const shell = this.detailsShell();
+    if (shell && !shell.hidden) shell.hidden = true;
+    if (open) this.signature = "";
+    return open;
+  }
+
+  private detailsShell(): HTMLElement | null {
+    return this.detailsRoot?.closest?.<HTMLElement>("#deck-fleet-workbench") ?? null;
+  }
+
+  private renderDetails(g: GhostView): void {
+    const shell = this.detailsShell();
+    if (!this.detailsRoot || !shell) return;
+    if (this.details !== g.id || !g.own) {
+      if (!shell.hidden) shell.hidden = true;
+      return;
+    }
+    const title = shell.querySelector<HTMLElement>("#deck-fleet-workbench-title");
+    if (title) title.textContent = fleetTitle(g);
+    setHtml(this.detailsRoot, this.detailsHtml(g));
+    shell.hidden = false;
+  }
+
+  /** A control in the workspace panel or the details workbench. */
+  private find<T extends Element>(selector: string): T | null {
+    return this.root.querySelector<T>(selector) ?? this.detailsRoot?.querySelector<T>(selector) ?? null;
   }
 
   handleAction(button: HTMLButtonElement, route: DeckRoute | null): boolean {
     if (route?.name !== "fleet") return false;
+    if (button.dataset.deckAct === "fleet-logistics" && button.dataset.fleet) {
+      this.hooks.go({ name: "logistics", query: { fleet: button.dataset.fleet } });
+      return true;
+    }
+    if (button.dataset.deckAct === "fleet-details-close") {
+      this.closeDetails();
+      this.render(route, true);
+      return true;
+    }
     if (button.dataset.deckAct === "fleet-special-center") {
       const id = route.params?.id ?? "";
       const position = route.params?.object === "emplacement"
@@ -150,9 +221,20 @@ export class DeckFleetRoutes {
     const action = button.dataset.deckAct;
     if (!action?.startsWith("fleet-")) return false;
     const command = action.slice(6);
-    if (command === "mission" && fleet.own) {
+    if (command === "details" && fleet.own) {
+      if (this.details === fleet.id) this.closeDetails();
+      else this.details = fleet.id;
+    } else if (command === "hull" && fleet.own) {
+      const kind = button.dataset.kind as ShipKind;
+      if ((fleet.composition ?? []).some((entry) => entry.kind === kind && entry.count > 0)) this.detailsHull.set(fleet.id, kind);
+    } else if (command === "mission" && fleet.own) {
       const order = missionCommand(fleet, button.dataset.field, button.dataset.value);
       if (order) this.ctx.intent.beginFleetCommand(order);
+    } else if (command === "unanchor" && fleet.own) {
+      this.ctx.intent.beginFleetCommand({ type: "UnanchorStation", fleet_id: fleet.id });
+    } else if (command === "station-load" && fleet.own && button.dataset.into && button.dataset.commodity) {
+      this.ctx.intent.beginFleetCommand({ type: "StationLoad", fleet_id: button.dataset.into, station_id: fleet.id,
+        commodity: button.dataset.commodity as Commodity, units: Number(button.dataset.units) || 0 });
     } else if (command === "select-order") {
       const id = Number(button.dataset.order);
       this.ctx.state.selectedOrderId = this.ctx.state.selectedOrderId === id ? null : id;
@@ -171,9 +253,11 @@ export class DeckFleetRoutes {
       this.ctx.intent.beginFleetCommand({ type: "RecallRaid", raider_id: fleet.id });
     } else if (command === "withdraw" && fleet.own) {
       this.ctx.intent.beginFleetCommand({ type: "Withdraw", fleet_id: fleet.id });
+    } else if (command === "interdict" && fleet.own) {
+      this.ctx.intent.beginFleetCommand({ type: "DeployInterdiction", fleet_id: fleet.id });
     } else if (command === "transit" && fleet.own) {
       const mode = button.dataset.mode as TransitMode;
-      if (mode === "full" || mode === "stealth" || mode === "economy" && economyCapable(fleet)) {
+      if (mode === "full" || mode === "stealth" || mode === "slow" && slowCapable(fleet)) {
         this.ctx.intent.beginFleetCommand({ type: "SetFleetTransit", fleet_id: fleet.id, mode });
       }
     } else if (command === "dock" && fleet.own) {
@@ -194,6 +278,8 @@ export class DeckFleetRoutes {
     } else if (command === "authority" && fleet.own) {
       const on = button.dataset.on === "1";
       this.ctx.intent.beginFleetCommand({ type: "SetEngageFreight", fleet_id: fleet.id, on });
+    } else if (command === "run-blockades" && fleet.own) {
+      this.ctx.intent.beginFleetCommand({ type: "SetRunBlockades", fleet_id: fleet.id, on: button.dataset.on === "1" });
     } else if (command === "confirm-cancel") {
       this.clearConfirm(fleet.id);
     } else if (command === "refit" && fleet.own) {
@@ -206,7 +292,7 @@ export class DeckFleetRoutes {
     } else if (command === "fuel-rescue" && fleet.own) {
         this.ctx.intent.beginFleetCommand({ type: "RequestFuelRescue", fleet_id: fleet.id });
     } else if (command === "refuel" && fleet.own) {
-      const target = this.root.querySelector<HTMLSelectElement>("[data-tender-target]")?.value;
+      const target = this.find<HTMLSelectElement>("[data-tender-target]")?.value;
       if (target) {
         this.tenderTarget.set(fleet.id, target);
         this.ctx.intent.beginFleetCommand({ type: "RefuelFleet", fleet_id: fleet.id, target_id: target });
@@ -227,11 +313,11 @@ export class DeckFleetRoutes {
     } else if (command === "flagship") {
       this.setConfirm(fleet.id, "flagship");
     } else if (command === "flagship-save") {
-      const input = this.root.querySelector<HTMLInputElement>("[data-fleet-flagship-name]");
+      const input = this.find<HTMLInputElement>("[data-fleet-flagship-name]");
       this.ctx.send({ type: "NameFlagship", name: input?.value.trim() ?? "" });
       this.clearConfirm(fleet.id);
     } else if (command === "estimate" && !fleet.own) {
-      const select = this.root.querySelector<HTMLSelectElement>("[data-fleet-estimate-attacker]");
+      const select = this.find<HTMLSelectElement>("[data-fleet-estimate-attacker]");
       const attacker = select?.value;
       if (attacker) {
         this.estimateAttacker.set(fleet.id, attacker);
@@ -309,12 +395,81 @@ export class DeckFleetRoutes {
     return `<section class="deck-page deck-fleet"><header class="deck-page__lead"><span>${esc(role)}</span><h2>${icon(fleetHeaderIcon(g), "md")} ${esc(title)}</h2>${g.own ? "" : "<p>Only information carried by arrived light is shown.</p>"}</header><div class="deck-stat-grid deck-fleet__stats">${stats}</div>${g.own ? this.ownHtml(g) : this.rivalHtml(g)}</section>`;
   }
 
+  /** The everyday panel: what the fleet is doing, the commands players reach
+   * for, fuel and cargo. Everything else lives in the details workbench. */
   private ownHtml(g: GhostView): string {
-    const orders = this.ordersHtml(g);
-    const command = this.commandHtml(g);
-    const payload = this.compositionHtml(g) + this.fuelHtml(g) + this.refitHtml(g);
     const cargo = hauls(g) ? `<section class="deck-section" aria-label="Cargo and hauling">${this.cargoHtml(g)}${this.logisticsHtml(g)}</section>` : "";
-    return `${this.readinessHtml(g)}${fleetIndustryHtml(g, this.ctx.state)}${this.jobHtml(g)}${command}${fuelTransferHtml(g, this.ctx.state, this.tenderTarget.get(g.id))}${orders}${cargo}<section class="deck-section"><header><h3>Fleet</h3></header>${payload}${this.mergeHtml(g)}</section>${this.policyHtml(g)}${this.captainHtml(g)}`;
+    return `${this.alertsHtml(g)}${fleetIndustryHtml(g, this.ctx.state)}${this.stationHtml(g)}${this.jobHtml(g)}${this.commandHtml(g)}${this.ordersHtml(g)}<section class="deck-section deck-fleet__fuel" aria-label="Fuel">${this.fuelHtml(g)}</section>${cargo}${this.detailsEntryHtml(g)}`;
+  }
+
+  /** §belts: a Mining Belt Station's anchor, its hold, the barges unloading
+   * into it, and loading a freighter parked beside it. */
+  private stationHtml(g: GhostView): string {
+    if (!isStation(g)) return "";
+    const st = this.ctx.state, a = g.anchor;
+    const belt = a ? st.systems.find((s) => s.id === a.system)?.bodies.find((b) => b.id === a.body)?.name ?? systemName(a.system) : "";
+    const held = fleetCargoManifest(g), total = held.reduce((n, c) => n + c.units, 0);
+    const pending = (st.pendingOrders.get(g.id) ?? []).some((o) => !o.lost && liveSimTime() < o.arrives_at);
+    const status = a ? `${anchorStatus(a, liveSimTime())} · ${belt}` : "Not anchored · open a charted belt to anchor";
+    const barges = a?.phase === "anchored" ? st.ghosts.filter((b) => b.own && b.industry?.kind === "mine"
+      && b.industry.system === a.system && b.industry.body === a.body).length : 0;
+    const unanchor = a && a.phase !== "unanchoring"
+      ? `<button type="button" data-deck-act="fleet-unanchor" ${pending ? "disabled" : ""}>${a.phase === "approaching" ? "Stop anchoring" : "Unanchor"}</button>` : "";
+    // A freighter of yours beside the station takes its largest stack.
+    const top = [...held].sort((x, y) => y.units - x.units)[0];
+    const loads = top ? st.ghosts.filter((f) => f.own && !f.tca && f.id !== g.id && !isStation(f) && fleetCargoCapacity(f) > 0
+      && Math.hypot(f.pos.x - g.pos.x, f.pos.y - g.pos.y) <= 260).slice(0, 3).map((f) => {
+      const room = fleetCargoCapacity(f) - fleetCargoManifest(f).reduce((n, c) => n + c.units, 0);
+      const n = Math.min(room, top.units);
+      return n > 0 ? `<button type="button" data-deck-act="fleet-station-load" data-into="${esc(f.id)}" data-commodity="${top.commodity}" data-units="${n}" ${pending ? "disabled" : ""}>Load ${fmt(n)} ${esc(label(top.commodity))} into ${esc(shipKindLabel(f.kind))} ${esc(f.id)}</button>` : "";
+    }).join("") : "";
+    return `<section class="deck-section deck-station" aria-label="Station"><div class="deck-station__line"><b>${esc(status)}</b>`
+      + `<span>Hold ${fmt(total)} / ${fmt(fleetCargoCapacity(g))}${barges ? ` · ${barges} barge${barges > 1 ? "s" : ""} unloading` : ""}</span></div>`
+      + (unanchor || loads ? `<div class="deck-world-actions">${unanchor}${loads}</div>` : "") + `</section>`;
+  }
+
+  /** What the fleet is doing, and anything that blocks it. */
+  private alertsHtml(g: GhostView): string {
+    const warnings = dispatchWarnings(g, g.path?.at(-1)?.pos);
+    const damage = (g.damage ?? 0) > .001 ? `<div class="deck-alert ${(g.damage ?? 0) > .5 ? "deck-alert--bad" : ""}"><b>Hull integrity ${Math.round((1 - (g.damage ?? 0)) * 100)}%</b><span>Damage persists until foundry service.</span></div>` : "";
+    const supply = g.supplied === false ? `<div class="deck-alert deck-alert--bad"><b>Out of supply</b><span>Immobilized until Provisions arrive.</span></div>` : "";
+    return `<p class="deck-fleet__activity"><span>Assignment</span><b>${esc(this.activity(g))}</b></p>${warnings.length ? `<div class="deck-dispatch-warning" role="status">${warnings.map(esc).join("<br>")}</div>` : ""}${damage}${supply}`;
+  }
+
+  private detailsEntryHtml(g: GhostView): string {
+    const open = this.details === g.id;
+    return `<button type="button" class="deck-fleet__details" data-deck-act="fleet-details" aria-expanded="${open}">${icon(fleetHeaderIcon(g), "md")}<span><b>${open ? "Hide fleet details" : "Fleet details"}</b><small>3D view · composition · equipment · officer · standing orders</small></span></button>`;
+  }
+
+  /** The details workbench: the hull on show in 3D, then everything the
+   * everyday panel leaves out. */
+  private detailsHtml(g: GhostView): string {
+    const stacks = [...(g.composition ?? [])].filter((entry) => entry.count > 0)
+      .sort((a, b) => FLAGSHIP_ORDER.indexOf(a.kind) - FLAGSHIP_ORDER.indexOf(b.kind));
+    const chosen = this.detailsHull.get(g.id);
+    const hull = stacks.some((entry) => entry.kind === chosen) ? chosen! : stacks[0]?.kind ?? g.kind;
+    const stats = SHIP_STATS[hull];
+    const hulls = stacks.length > 1
+      ? `<div class="deck-fleet-details__hulls" role="group" aria-label="Hulls in this fleet">${stacks.map((entry) => `<button type="button" data-deck-act="fleet-hull" data-kind="${entry.kind}" aria-pressed="${entry.kind === hull}">${icon(shipKindIcon(entry.kind), "sm")}<span>${esc(shipKindLabel(entry.kind))}</span><em>×${entry.count}</em></button>`).join("")}</div>`
+      : "";
+    const spec = `<div class="deck-fleet-details__spec"><div><small>${stacks.length > 1 ? "On show" : "Hull"}</small><h3>${esc(shipKindLabel(hull))}</h3><p>${esc(stats?.role ?? "Fleet hull")}</p></div>${stats ? `<div class="deck-hull-stats">${stat("Impulse", `${fmt(stats.speed)} su/s`)}${stat("Hull", fmt(stats.hull))}${stat("Attack", fmt(stats.atk))}${stat("Defense", fmt(stats.def))}</div>` : ""}</div>`;
+    const fleet = `<section class="deck-section deck-fleet-details__wide"><header><h3>Fleet</h3></header>${this.compositionHtml(g)}${this.refitHtml(g)}${this.mergeHtml(g)}</section>`;
+    const mission = missionHtml(g, this.ctx.state.pendingOrders.get(g.id) ?? []);
+    return `<div class="deck-fleet deck-fleet-details"><div class="deck-fleet-details__hero"><ship-model-preview class="is-hero" kind="${hull}" turntable></ship-model-preview>${hulls}</div>${spec}<div class="deck-fleet-details__grid">${this.readinessHtml(g)}${this.captainHtml(g)}${fleet}${this.moreCommandsHtml(g)}${this.policyHtml(g)}${mission ? `<div class="deck-fleet-details__wide">${mission}</div>` : ""}</div></div>`;
+  }
+
+  /** Commands most fleets never need: interdiction, construction, tending. */
+  private moreCommandsHtml(g: GhostView): string {
+    const queue = this.ctx.state.pendingOrders.get(g.id) ?? [];
+    const pending = (kind: (typeof queue)[number]["kind"]) => queue.some((order) => !order.lost && order.kind === kind);
+    const items: string[] = [];
+    if (interdictorCapable(g)) items.push(commandButton("fleet-interdict", "Raise interdiction field",
+      `Fleets within ${fmt(FIELD_RADIUS_SU)} su drop out of warp and can't jump, for up to ${FIELD_SECONDS / 60} min while this fleet holds station · ${FIELD_FUEL} Deuterium.`,
+      "", pending("interdict") ? "Interdiction order already in flight." : interdictionReason(g, this.ctx.state)));
+    const service = g.kind === "builder" ? this.emplaceHtml(g) : "";
+    const tender = fuelTransferHtml(g, this.ctx.state, this.tenderTarget.get(g.id));
+    if (!items.length && !service && !tender) return "";
+    return `<section class="deck-section"><header><h3>More commands</h3></header>${items.length ? `<div class="deck-command-grid">${items.join("")}</div>` : ""}${service}${tender}</section>`;
   }
 
   private readinessHtml(g: GhostView): string {
@@ -323,7 +478,8 @@ export class DeckFleetRoutes {
     const warnings = dispatchWarnings(g, dest);
     return `<section class="deck-section deck-readiness" aria-label="Fleet readiness"><header><h3>Readiness</h3><small>${esc(informationDelay(g.age))}</small></header>
       <dl><div><dt>Hull</dt><dd>${r.hull === null ? "Unknown" : `${Math.round(r.hull * 100)}%`}</dd></div>
-      <div><dt>Fuel</dt><dd>${r.fuel === null ? "Unknown" : `${fmt(r.fuel)} / ${fmt(r.fuelCapacity)}`}</dd></div>
+      <div><dt>${esc(label(r.fuelKind))}</dt><dd>${r.fuel === null ? "Unknown" : r.fuelKind === "deuterium" ? fusionTankLine(g) : `${fmt(r.fuel)} / ${fmt(r.fuelCapacity)}`}</dd></div>
+      ${r.antimatterCapacity > 0 ? `<div><dt>Antimatter</dt><dd>${r.antimatter === null ? "Unknown" : `${r.antimatter.toFixed(1)} / ${r.antimatterCapacity.toFixed(1)}`}</dd></div>` : ""}
       <div><dt>Cargo space</dt><dd>${r.cargoCapacity ? `${fmt(r.cargoFree)} free / ${fmt(r.cargoCapacity)}` : "No hold"}</dd></div>
       <div><dt>Captain</dt><dd>${r.captain ? esc(`${captainTitle(r.captain.title)} ${r.captain.name}`) : "Unassigned"}</dd></div>
       <div class="deck-readiness__assignment"><dt>Assignment</dt><dd>${esc(this.activity(g))}</dd></div></dl>
@@ -366,34 +522,43 @@ export class DeckFleetRoutes {
     const movingOrder = queue.some((order) => !order.lost && ["move", "jump", "guard", "defend", "raid", "attack", "recall", "withdraw", "haul"].includes(order.kind));
     const hasCourse = !!g.fuel_transfer || !!this.ctx.state.orders[g.id] || !!g.path?.length || Math.hypot(g.vel.x, g.vel.y) >= .5 || movingOrder;
     items.push(commandButton("fleet-move", "Move", "Choose a destination on the map.", "is-primary", pending("move") ? "Move order already in flight." : ""));
-    const jumpReason = !jumpCapable(g)
-      ? "All hulls must carry compatible jump drives."
-      : g.docked
-      ? "Undock before spooling."
-      : gravityWellAt(g.pos, this.ctx.state)
-        ? "Served sighting is inside a gravity well."
-        : pending("jump") ? "Jump order already in flight." : "";
-    items.push(commandButton("fleet-jump", "Set jump destination", `Range ${fmt(jumpRangeAt(this.ctx.state.galaxy, g.pos))} su · choose on map.`, "is-primary", jumpReason));
-    if (!g.docked || economyCapable(g)) {
+    if (jumpCapable(g)) {
+      const jumpReason = g.docked
+        ? "Undock before spooling."
+        : gravityWellAt(g.pos, this.ctx.state)
+          ? "Served sighting is inside a gravity well."
+          : pending("jump") ? "Jump order already in flight." : "";
+      items.push(commandButton("fleet-jump", "Set jump destination", `Range ${fmt(jumpRangeAt(this.ctx.state.galaxy, g.pos))} su · choose on map.`, "is-primary", jumpReason));
+    }
+    if (!g.docked || slowCapable(g)) {
       const requested = this.requestedTransit.get(g.id);
       const current = requested ?? g.transit ?? "full";
       const waiting = pending("configure");
-      const hint = waiting ? "Requested setting awaits a served fleet report." : "Stealth trades speed for a smaller detection signature.";
-      const economy = economyCapable(g) ? `<button type="button" data-deck-act="fleet-transit" data-mode="economy" title="${waiting ? escAttr(hint) : "25% speed, 10% Fuel per journey. Four times the travel time."}" aria-pressed="${current === "economy"}" ${waiting ? "disabled" : ""}>Economy</button>` : "";
-      transit = `<div class="deck-command-block deck-fleet-setting${waiting ? " is-pending" : ""}" title="${escAttr(hint)}"><b>Transit${waiting ? " · signal in flight" : ""}</b><div class="deck-segment"><button type="button" data-deck-act="fleet-transit" data-mode="full" title="${waiting ? escAttr(hint) : "Travel at full speed."}" aria-pressed="${current === "full"}" ${waiting ? "disabled" : ""}>Full speed</button>${economy}<button type="button" data-deck-act="fleet-transit" data-mode="stealth" title="${escAttr(hint)}" aria-pressed="${current === "stealth"}" ${waiting ? "disabled" : ""}>Stealth</button></div></div>`;
+      const hint = waiting ? "Requested setting awaits a served fleet report." : "Stealth runs dark: half speed, the quietest signature.";
+      // §fuel-overhaul: Slow is the Uranium regime; Full and Stealth burn Deuterium.
+      const slow = slowCapable(g) ? `<button type="button" data-deck-act="fleet-transit" data-mode="slow" title="${waiting ? escAttr(hint) : "½ speed · Uranium · ¼ the energy per su."}" aria-pressed="${current === "slow"}" ${waiting ? "disabled" : ""}>Slow</button>` : "";
+      transit = `<div class="deck-command-block deck-fleet-setting${waiting ? " is-pending" : ""}" title="${escAttr(hint)}"><b>Transit${waiting ? " · signal in flight" : ""}</b><div class="deck-segment"><button type="button" data-deck-act="fleet-transit" data-mode="full" title="${waiting ? escAttr(hint) : "Full speed · Deuterium."}" aria-pressed="${current === "full"}" ${waiting ? "disabled" : ""}>Full speed</button>${slow}<button type="button" data-deck-act="fleet-transit" data-mode="stealth" title="${waiting ? escAttr(hint) : "½ speed · Deuterium · quietest."}" aria-pressed="${current === "stealth"}" ${waiting ? "disabled" : ""}>Stealth</button></div></div>`;
     }
     const dock = nearestKnownDock(g);
     if (!g.docked) items.push(commandButton("fleet-dock", "Initiate docking", dock ? `${dock.name} · ${fmt(dock.distance)} su` : "Nearest known friendly berth.", "is-primary", pending("move") ? "Move or docking order already in flight." : !dock ? "No known friendly berth." : ""));
-    const guardReason = !guardCapable(g)
-      ? "Requires a combat fleet."
-      : !this.ctx.state.ghosts.some((candidate) => candidate.own && candidate.id !== g.id && !candidate.docked)
+    if (guardCapable(g)) {
+      const guardReason = !this.ctx.state.ghosts.some((candidate) => candidate.own && candidate.id !== g.id && !candidate.docked)
         ? "No undocked friendly fleet to guard."
         : pending("guard") ? "Guard order already in flight." : "";
-    items.push(commandButton("fleet-guard", g.guard_target ? "Reassign guard" : "Guard a fleet", g.guard_target ? `Currently guarding ${shipKindLabel(this.ctx.state.ghosts.find((entry) => entry.id === g.guard_target)?.kind ?? "convoy")}` : "Choose a friendly fleet on the map.", "", guardReason));
-    if (!g.docked) items.push(commandButton("fleet-hold", "Hold position", "Cancel the current course when this signal arrives.", "is-danger", pending("hold") ? "Hold order already in flight." : !hasCourse ? "No active course to cancel." : ""));
-    items.push(commandButton("fleet-recall", "Recall raid", "Break pursuit and return toward home.", "is-danger", pending("recall") ? "Recall already in flight." : !this.ctx.state.raids[g.id] ? "Fleet has no active raid or intercept." : ""));
+      items.push(commandButton("fleet-guard", g.guard_target ? "Reassign guard" : "Guard a fleet", g.guard_target ? `Currently guarding ${shipKindLabel(this.ctx.state.ghosts.find((entry) => entry.id === g.guard_target)?.kind ?? "convoy")}` : "Choose a friendly fleet on the map.", "", guardReason));
+    }
+    if (!g.docked && (hasCourse || pending("hold"))) items.push(commandButton("fleet-hold", "Hold position", "Cancel the current course when this signal arrives.", "is-danger", pending("hold") ? "Hold order already in flight." : ""));
+    // Urgent verbs appear only while they apply. A fleet on a Blockade order
+    // (the only order that carries engage_freight) lifts it by coming home;
+    // that recall is the same light-delayed order.
+    const blockading = g.engage_freight !== null && g.engage_freight !== undefined;
+    if (blockading) {
+      items.push(commandButton("fleet-recall", "Lift blockade", "Break off and bring the fleet home when this signal arrives; the blockade ends when it leaves station.", "is-danger", pending("recall") ? "Recall already in flight." : ""));
+    } else if (this.ctx.state.raids[g.id] || pending("recall")) {
+      items.push(commandButton("fleet-recall", "Recall raid", "Break pursuit and return toward home.", "is-danger", pending("recall") ? "Recall already in flight." : ""));
+    }
     if (this.ctx.state.battles.some((battle) => battle.participants.includes(g.id))) items.push(commandButton("fleet-withdraw", "Withdraw from battle", "Attempt to disengage on the next eligible combat round.", "is-danger", pending("withdraw") ? "Withdraw order already in flight." : ""));
-    const service = (g.kind === "builder" ? this.emplaceHtml(g) : "") + (g.stalled || g.rescue_inbound ? this.rescueHtml(g) : "");
+    const service = g.stalled || g.rescue_inbound ? this.rescueHtml(g) : "";
     return `<section class="deck-section"><header><h3>Commands</h3></header><div class="deck-command-grid">${items.join("")}</div>${transit}${service}</section>`;
   }
 
@@ -416,14 +581,34 @@ export class DeckFleetRoutes {
     return `<div class="deck-fleet-flagship"><span>Flagship <b>${esc(current || "unnamed")}</b></span><button type="button" data-deck-act="fleet-flagship">${current ? "Rename" : "Name"}</button></div>`;
   }
 
+  /** §fuel-overhaul: one gauge per store the fleet carries: the fission store
+   * (Uranium, Slow), the fusion tank (Deuterium, Helium-3 at six per unit) and
+   * the antimatter bottle (jumps). The store the throttle burns is marked. */
   private fuelHtml(g: GhostView): string {
-    const fuel = Math.max(0, g.fuel ?? 0);
-    const capacity = fleetFuelCapacity(g);
-    const pct = capacity > 0 ? fuel / capacity * 100 : 0;
+    const store = regimeStore(g);
+    const gauge = (key: "uranium" | "deuterium" | "antimatter", text: string | null, used: number, capacity: number, tip = "") => {
+      const pct = capacity > 0 ? Math.max(0, Math.min(100, used / capacity * 100)) : 0;
+      const burning = key === store.fuel ? " · burning" : "";
+      return `<div class="deck-subhead"${tip ? ` title="${escAttr(tip)}"` : ""}><b>${icon(key, "sm")} ${label(key)}${burning}</b><span>${text ?? "report unavailable"}</span></div><div class="deck-meter"><i style="width:${pct.toFixed(1)}%"></i></div>`;
+    };
+    const uraniumCapacity = fleetUraniumCapacity(g);
+    // The fusion tank shows SPACE: a Helium-3 unit fills one, for six of Deuterium's energy.
+    const tank = fusionTank(g);
+    const tankText = g.fuel == null ? null : tank.helium3 > 0
+      ? `${fmt(tank.deuterium)} + ${fmt(tank.helium3)} He-3 / ${fmt(tank.capacity)}` : `${fmt(tank.deuterium)} / ${fmt(tank.capacity)}`;
+    const gauges = (uraniumCapacity > 0 ? gauge("uranium", g.uranium == null ? null : `${fmt(Math.max(0, g.uranium))} / ${fmt(uraniumCapacity)}`, g.uranium ?? 0, uraniumCapacity) : "")
+      + gauge("deuterium", tankText, tank.used, tank.capacity, tank.helium3 > 0 ? "Helium-3 holds six times Deuterium's energy per unit of tank." : "")
+      + ((g.antimatter_capacity ?? 0) > 0 ? gauge("antimatter", g.antimatter == null ? null : `${g.antimatter.toFixed(1)} / ${g.antimatter_capacity!.toFixed(1)}`, g.antimatter ?? 0, g.antimatter_capacity!) : "");
+    // Range or this leg's cost in each mode the fleet can fly.
     const dest = this.ctx.state.orders[g.id] ?? g.path?.at(-1)?.pos;
-    const burn = FUEL_PER_MASS_DISTANCE * 1000 * shipMass(g) / WARP_FACTOR * cruiseFuelMultiplier(g);
-    const detail = dest ? `Current leg needs ~${fmt(estimatedFuelForLeg(g, dest))}` : `Warp burn ~${burn.toFixed(1)} / 1k su`;
-    return `<div class="deck-subhead"><b>${icon("fuel", "sm")} Fuel</b><span>${g.fuel == null ? "report unavailable" : `${fmt(fuel)} / ${fmt(capacity)}`}</span></div><div class="deck-meter"><i style="width:${Math.max(0, Math.min(100, pct)).toFixed(1)}%"></i></div><p class="deck-muted">${esc(detail)} · ${esc(informationDelay(g.age))}.</p>`;
+    const modes: TransitMode[] = slowCapable(g) ? ["slow", "full"] : ["full"];
+    const detail = modes.map((transit) => {
+      const v = { ...g, transit }, fuel = regimeStore(v);
+      if (dest) return `${transitLabel(transit)} ~${fmt(estimatedFuelForLeg(v, dest))} ${label(fuel.fuel)}`;
+      const perSu = FUEL_PER_MASS_DISTANCE * shipMass(v) / WARP_FACTOR * cruiseFuelMultiplier(v);
+      return `${transitLabel(transit)} ~${fmt(perSu > 0 ? fuel.have / perSu / 1000 : 0)}k su`;
+    }).join(" · ");
+    return `${gauges}<p class="deck-muted">${dest ? "Leg" : "Range"} · ${esc(detail)} · ${esc(informationDelay(g.age))}.</p>`;
   }
 
   private captainHtml(g: GhostView): string {
@@ -465,7 +650,7 @@ export class DeckFleetRoutes {
       const preview = selected ? refitPreview(g, stack.kind, stack.modules, selected, quantity)
         : stack.modules.includes("extended_tanks") && refitFuelBlocked(g, stack.modules, []) ? "Use fuel before removing tanks"
         : stack.modules.includes("cargo_pods") && refitCargoBlocked(g, stack.kind, stack.modules, [], 1) ? "Unload cargo before removing pods" : "";
-      return `<div class="deck-refit-row" data-refit-row data-ship="${stack.kind}" data-from="${escAttr(fitKey(stack.modules))}"><span><b>${stack.n}× ${esc(shipKindLabel(stack.kind))}</b><small>${esc(fitName(stack.modules))}</small></span>${options ? `<select data-refit-target>${options}</select><input data-refit-count type="number" min="1" max="${maximum}" value="${quantity}"><button type="button" data-deck-act="fleet-refit" ${busy ? "disabled" : ""}>Refit</button>` : `<em>No stocked legal change</em>`}<small data-refit-preview style="grid-column:1/-1">${esc(preview)}</small></div>`;
+      return `<div class="deck-refit-row" data-refit-row data-ship="${stack.kind}" data-from="${escAttr(fitKey(stack.modules))}"><span><b>${stack.n}× ${esc(shipKindLabel(stack.kind))}</b><small>${esc(fitName(stack.modules))}</small></span>${options ? `<select data-refit-target>${options}</select><input data-refit-count type="number" min="1" max="${maximum}" value="${quantity}"><button type="button" data-deck-act="fleet-refit" data-coach="refit" ${busy ? "disabled" : ""}>Refit</button>` : `<em>No stocked legal change</em>`}<small data-refit-preview style="grid-column:1/-1">${esc(preview)}</small></div>`;
     }).join("");
     const stock = REFIT_MODULES.filter((module) => (ledger[module] ?? 0) > 0).map((module) => `${label(module)} ${ledger[module]}`).join(" · ") || "ledger empty";
     return `<div class="deck-subhead"><b>Equipment · ${esc(systemName(dock!.id))}</b><span>${esc(stock)}</span></div><div class="deck-refit-list">${rows}</div>${busy ? `<p class="deck-warning">Fleet must be idle with no command in flight.</p>` : ""}`;
@@ -521,8 +706,13 @@ export class DeckFleetRoutes {
       const hint = waiting ? "Requested setting awaits a served fleet report." : "Local blockade policy; changing it is information-delayed.";
       rows.push(`<div class="deck-command-block${waiting ? " is-pending" : ""}" title="${escAttr(hint)}"><b>Authority freight${waiting ? " · signal in flight" : ""}</b><button type="button" data-deck-act="fleet-authority" data-on="${current ? "0" : "1"}" title="${escAttr(hint)}" aria-pressed="${current}" ${waiting ? "disabled" : ""}>${current ? "Engaging" : "Ignoring"} arriving Authority freighters</button></div>`);
     }
-    return (rows.length ? `<section class="deck-section"><header><h3>Standing policy</h3></header>${rows.join("")}</section>` : "")
-      + missionHtml(g, this.ctx.state.pendingOrders.get(g.id) ?? []);
+    if (g.run_blockades !== null && g.run_blockades !== undefined) {
+      const current = pendingConfiguration?.kind === "run_blockades" ? pendingConfiguration.on : g.run_blockades;
+      const copy = runBlockadesCopy(current);
+      const hint = waiting ? "Requested setting awaits a served fleet report." : copy.hint;
+      rows.push(`<div class="deck-command-block${waiting ? " is-pending" : ""}" title="${escAttr(hint)}"><b>Blockades${waiting ? " · signal in flight" : ""}</b><button type="button" data-deck-act="fleet-run-blockades" data-on="${current ? "0" : "1"}" title="${escAttr(hint)}" aria-pressed="${current}" ${waiting ? "disabled" : ""}>${copy.label}</button></div>`);
+    }
+    return rows.length ? `<section class="deck-section"><header><h3>Standing policy</h3></header>${rows.join("")}</section>` : "";
   }
 
   private mergeHtml(g: GhostView): string {
@@ -581,7 +771,7 @@ export class DeckFleetRoutes {
     if (g.rescue_inbound) return `<div class="deck-command-block"><b>AAA rescue active</b><small>Physical tender dispatched from the Market Hub.</small></div>`;
     const quote = aaaEstimate(g);
     const affordable = (this.ctx.state.wallet?.credits ?? 0) + 1e-6 >= quote.cost;
-    const hint = `${affordable ? "" : "Not enough credits. "}3× market Fuel price + ${fmt(AAA_SERVICE_FEE)} Cr callout.`;
+    const hint = `${affordable ? "" : "Not enough credits. "}${fmt(quote.fuel)} ${label(regimeStore(g).fuel)} at 3× market + ${fmt(AAA_SERVICE_FEE)} Cr callout.`;
     return `<div class="deck-command-block" title="${escAttr(hint)}"><b>Out of fuel</b><button type="button" data-deck-act="fleet-fuel-rescue" title="${escAttr(hint)}" ${affordable ? "" : "disabled"}>Call AAA · ~${fmt(quote.cost)} Cr</button></div>`;
   }
 
@@ -595,7 +785,7 @@ export class DeckFleetRoutes {
     const outbound = (this.ctx.state.pendingOrders.get(g.id) ?? []).find((order) => !order.lost && liveSimTime() < order.arrives_at);
     if (outbound) return outbound.kind === "configure" ? "Configuration signal outbound" : `${label(outbound.kind)} signal outbound`;
     if (g.jump_presumed) return "Presumed at jump destination";
-    if (g.jump_spool) return g.jump_spool.waiting_for_fuel ? "Jump ready · awaiting fuel" : "Jump drive spooling";
+    if (g.jump_spool) return "Jump drive spooling";
     if (g.rescue_inbound) return "AAA rescue active";
     if (g.fuel_transfer) return tenderStatus(g);
     if (g.defend_system) {
@@ -609,6 +799,8 @@ export class DeckFleetRoutes {
     if (g.stalled) return "Out of fuel · holding";
     if (g.job) return `${g.job.kind === "demolishing" ? "Demolishing" : "Constructing"} ${Math.round(g.job.progress * 100)}%`;
     if (this.ctx.state.raids[g.id]) return "Raiding";
+    if (g.engage_freight !== null && g.engage_freight !== undefined) return blockadeStatus(g, this.ctx.state);
+    if (g.held_outside) return heldOutsideStatus(g, this.ctx.state);
     if (this.ctx.state.orders[g.id]) return "En route";
     if (g.route?.length) return "Hauling";
     return g.docked ? "Docked" : Math.hypot(g.vel.x, g.vel.y) < .5 ? "Holding station" : "Under way";
@@ -793,9 +985,15 @@ function fitKey(modules: ModuleKind[]): string { return [...modules].sort().join
 function fitName(modules: ModuleKind[]): string { return modules.length ? modules.map((entry) => label(entry)).join(" + ") : "Stock"; }
 function normalizeDock(value: string): string { return value.startsWith("E") ? value.slice(1) : value; }
 
+/** The fusion tank as space: "12 + 40.5 He-3 / 52.5". */
+function fusionTankLine(g: GhostView): string {
+  const t = fusionTank(g);
+  return t.helium3 > 0 ? `${fmt(t.deuterium)} + ${fmt(t.helium3)} He-3 / ${fmt(t.capacity)}` : `${fmt(t.deuterium)} / ${fmt(t.capacity)}`;
+}
+
 function driveLabel(g: GhostView): string {
   if (g.jump_presumed) return "Jump complete · awaiting report";
-  if (g.jump_spool) return g.jump_spool.waiting_for_fuel ? "Jump ready · awaiting fuel" : `Jump spooling · ${Math.ceil(g.jump_spool.remaining)}s`;
+  if (g.jump_spool) return `Jump spooling · ${Math.ceil(g.jump_spool.remaining)}s`;
   if (g.stalled) return "Fuel exhausted · holding";
   const drive = g.drive;
   if (typeof drive === "object" && "cruising" in drive && drive.cruising === "warp") return "Warp";
@@ -818,6 +1016,7 @@ function fleetHeaderIcon(g: GhostView): IconKey {
 function shipKindIcon(kind: ShipKind): IconKey {
   const icons: Partial<Record<ShipKind, IconKey>> = {
     scout: "scout",
+    survey_probe: "scout", // §charting: borrows the Scout icon until its own art exists
     raider: "raider",
     corvette: "corvette",
     convoy: "convoy",

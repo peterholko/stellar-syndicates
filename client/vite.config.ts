@@ -18,5 +18,13 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    // The operator dashboard is its own page; it shares nothing with the game
+    // bundle beyond the design tokens.
+    rollupOptions: {
+      input: {
+        index: "index.html",
+        admin: "admin.html",
+      },
+    },
   },
 });

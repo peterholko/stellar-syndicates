@@ -1,0 +1,59 @@
+{
+  "id": "living_terraces/tier-4",
+  "mode": "built-in image_gen",
+  "prompt": "Use case: stylized-concept.\nAsset type: ONE standalone planetary building-layer sprite, square transparent PNG, approximately 1024 x 1024.\nPurpose: reusable architecture above a SEPARATE biome ground layer. Produce BUILDING ONLY, not a diorama. Genuine zero-alpha transparency around the building; preserve translucent soft shadow. No baked soil, gravel apron, moss, grass, rocks around the site, concrete base tile, raised platform, roads, path, border or landscape. Small integral ramps/steps/support feet belonging to the structure are allowed. Planted roofs and terrace gardens are PART OF THE BUILDING and are allowed; nothing grows around it.\nStyle: the approved Boreal/Temperate structures, grounded near-future frontier engineering. Soft semi-realistic environmental 3D rendering, matte weathered steel, warm cream and pale-stone panels with grey-green trim, restrained amber service lights and warm windows. Large readable forms, no ink outlines, no cel shading, plastic gloss, extreme contrast, excessive greebles or neon. No text, logos, Authority branding, numerals, UI, people, vehicles or spacecraft.\nCamera and lighting: elevated front-left three-quarter view about 55 degrees above the ground plane; more roof than wall, mild perspective; front and right walls visible. Soft upper-left daylight, neutral/cool fill and semi-transparent soft lower-right cast/contact shadow attached to the feet.\nFraming/alignment: complete compact structure centered in a square. Building width about 65–70% of canvas, with ample transparent margin. Ground footprint centred at approximately x=50%, y=65%; near/front foot at y≈82%, far/rear foot at y≈45%. A stable site anchor, not a floating base. Never crop. Keep the same compact footprint through all tiers; add height and terraces, not a sprawling campus.\nInput image 1 is the house style for frontier HOUSING (panels, windows, roof equipment, scale). Input image 2 is the house style for living crops under glass. Create a NEW building family in that shared style; do not copy either building. Use those two images for materials and rendering, not for their canvas occupancy; follow the requested transparent margins and alignment.\nFamily identity: stepped garden housing for a lush Gaia world. Homes built as stepped terraces, each step's roof a planted garden of vegetable beds, low shrubs and small fruit trees, with warm-lit windows and small glazed sunrooms on the step faces. Cream and pale-stone walls, grey-green steel trim, slim irrigation piping. A recognizable stepped, green-topped silhouette that reads as \"people live here and grow their own food\", clearly different from the grey Habitat blocks and the barrel-vaulted Agroplex greenhouses.\nTier progression for context (do NOT draw a lineup): 1 low two-step terrace; 2 three stepped terraces; 3 four levels around a planted courtyard; 4 five levels with rooftop orchards; 5 stepped garden pyramid with a glass atrium; 6 tall terraced garden ziggurat with a waterfall.\nOutput exactly the single requested tier alone, transparent RGBA PNG, never a contact sheet.\nInput image 3 is the preceding Living Terraces courtyard tier. Preserve its cream-and-grey-green housing family, garden planters, warm windows and compact integrated site as it grows upward. It is only a continuity reference; draw one upgraded building.\nSubject: LIVING TERRACES — TIER 4 of 6.\nThis tier specifically: five stepped levels with rooftop orchards and a glazed walkway between wings.\nExactly five stepped residential levels. A clearly visible enclosed glazed walkway connects the two attached wings above the internal courtyard. Small fruit-tree orchards grow on the building's roof terraces. The footprint stays compact; keep the floors relatively low so the complete structure fits with generous transparent margins.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/habitat/tier-1.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/agroplex/tier-1.png",
+    "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-e9e1b39a-fd5b-4a59-8a18-280a234d7674.png"
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-8448ca5a-fbf8-484f-9826-7902ae540fb6.png",
+  "file": "buildings/living_terraces/tier-4.png",
+  "postprocessing": "Sharp normalized size and site anchor on a transparent1024×1024 canvas, preserving the soft alpha shadow.",
+  "verification": {
+    "file": "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/living_terraces/tier-4.png",
+    "size": [
+      1024,
+      1024
+    ],
+    "mode": "RGBA",
+    "zero_alpha_pixels": 709382,
+    "partial_alpha_pixels": 338645,
+    "opaque_pixels": 549,
+    "canvas_edge_max_alpha": 0,
+    "visible_bounds": {
+      "left": 159,
+      "top": 124,
+      "right": 891,
+      "bottom": 841,
+      "width": 732,
+      "height": 717
+    },
+    "solid_bounds": {
+      "left": 161,
+      "top": 126,
+      "right": 862,
+      "bottom": 839,
+      "width": 701,
+      "height": 713
+    },
+    "solid_width_fraction": 0.6845703125,
+    "solid_bottom_fraction": 0.8193359375,
+    "bytes": 1125050,
+    "sha256": "a22f08c66f93b57bdbb716b266fbc06cb9c6f8224261f7033ab029482d6f27c2",
+    "normalization": {
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "scale_x": 0.6476823638042475,
+      "scale_y": 0.6476823638042475,
+      "canvas_offset": [
+        95,
+        79
+      ],
+      "kind": "building"
+    }
+  }
+}

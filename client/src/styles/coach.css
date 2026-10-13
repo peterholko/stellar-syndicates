@@ -1,0 +1,32 @@
+/* §founding R5: the guide's pointer at the control it leads to. Never takes
+   input; sits above workspaces, below dialogs and the hover card. */
+.coach-ring {
+  position: fixed;
+  z-index: calc(var(--z-overlay) + 5);
+  border: 2px solid var(--accent);
+  border-radius: calc(var(--deck-radius) + 3px);
+  box-shadow: 0 0 0 4px rgba(79, 195, 255, 0.18), 0 0 18px rgba(79, 195, 255, 0.45);
+  pointer-events: none;
+  animation: coach-pulse 1.4s ease-in-out infinite;
+}
+.coach-bubble {
+  position: fixed;
+  z-index: calc(var(--z-overlay) + 6);
+  max-width: 260px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--deck-radius);
+  background: var(--panel-bg);
+  box-shadow: var(--panel-shadow);
+  color: var(--ink);
+  font-size: var(--fs-body);
+  line-height: 1.35;
+  pointer-events: none;
+}
+@keyframes coach-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(79, 195, 255, 0.18), 0 0 18px rgba(79, 195, 255, 0.45); }
+  50% { box-shadow: 0 0 0 7px rgba(79, 195, 255, 0.08), 0 0 26px rgba(79, 195, 255, 0.6); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .coach-ring { animation: none; }
+}

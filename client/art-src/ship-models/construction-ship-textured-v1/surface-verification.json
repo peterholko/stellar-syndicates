@@ -1,0 +1,16 @@
+{
+  "ship": "construction-ship",
+  "triangles": 10340,
+  "texturedTriangles": 2308,
+  "ventralTriangles": 748,
+  "checks": {
+    "allSurfacesAndTexturedUVsHaveArea": true,
+    "ventralProjectionPresent": true,
+    "engineCount": true,
+    "turretCount": true,
+    "threeEmbeddedTextures": true,
+    "gltfValidatorClean": true
+  },
+  "problems": [],
+  "passed": true
+}

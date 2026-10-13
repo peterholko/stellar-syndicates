@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+import { commandCenter } from "./command-center-fixture.mjs";
 
 const src = path => readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
 const state = { research: { programmes: [] }, ghosts: [], playerId: "1", systems: [] };
@@ -27,7 +28,7 @@ const fixtures = [
   ["composite_works", "composites", "mat_prefab_construction", .3, [["alloys", 1], ["polymers", .75], ["silicates", .5]]],
   ["hull_fabricator", "hull_sections", "mat_prefab_construction", .18, [["composites", 1.2], ["machinery", .5], ["titanium", .6]]],
   ["precision_works", "precision_components", "mat_autoforges", .2, [["electronics", 1], ["machinery", .5], ["rare_elements", .5]]],
-  ["drive_works", "drive_assemblies", "mat_autoforges", .12, [["precision_components", 1.25], ["composites", 1], ["fuel", 1]]],
+  ["drive_works", "warp_core", "mat_foundry_iv_fusion_reactors", .12, [["precision_components", 1.25], ["composites", .82], ["iridium", .1]]],
 ];
 for (const [key, output, research, rate, inputs] of fixtures) {
   const opt = { key, label: icons.label(key), build_secs: 30,
@@ -64,15 +65,33 @@ for (const [key, output, research, rate, inputs] of fixtures) {
   const art = icons.structureIcon(key);
   assert.notEqual(art, "build");
   assert.equal(icons.isPlaceholder(art), false);
-  assert.ok(icons.commodityIcon(output).includes(`/resource/${output}.png`));
-  for (const [path, size] of [[`structures/${key}`, 128], [`resource/${output}`, 64]]) {
+  // §fuel-overhaul: the Warp Core keeps the Drive Assemblies art until its own lands.
+  const goodArt = output === "warp_core" ? "drive_assemblies" : output;
+  assert.ok(icons.commodityIcon(output).includes(`/resource/${goodArt}.png`));
+  for (const [path, size] of [[`structures/${key}`, 128], [`resource/${goodArt}`, 64]]) {
     const png = readFileSync(new URL(`../public/art/ui_icons/${path}.png`, import.meta.url));
     assert.equal(png.readUInt32BE(16), size);
     assert.equal(png.readUInt32BE(20), size);
   }
 }
 assert.equal(market.conversionSummary({ key: "habitat" }), "");
-assert.equal(new Set(market.COMMODITIES).size, 22);
+
+// §gaia: Living Terraces grow only on Gaia worlds and farm with no input basket.
+{
+  const opt = { key: "living_terraces", label: "Living Terraces", build_secs: 30, requires_environment: "gaia",
+    costs: [{ commodity: "alloys", units: 30 }], conversion: { output: "provisions", rate: 1.2, inputs: [] } };
+  const body = { id: 0, structures: {}, environment: "terran", infrastructure_slots: 3, construction_time_mult: 1 };
+  const system = { id: "home", structures: {}, builds: [], bodies: [body], stockpile: [{ commodity: "alloys", units: 30 }] };
+  const pools = market.bodyPoolUsage(body, system);
+  assert.equal(market.structOption(opt, system, body, pools).buildable, false, "a Terran world is refused");
+  assert.match(market.structOption(opt, system, body, pools).reason, /Grows only on Gaia worlds/);
+  body.environment = "gaia";
+  assert.equal(market.structOption(opt, system, body, pools).buildable, true, "a Gaia world takes it");
+  assert.equal(market.POOL_OF.living_terraces, "infrastructure");
+  assert.equal(colony.PRODUCTION_INPUTS.living_terraces.length, 0, "no input basket");
+  assert.match(market.conversionSummary(opt), /^No inputs → 1 Provisions · base 72\/min/);
+}
+assert.equal(new Set(market.COMMODITIES).size, 34, "22 goods, the three belt ores, the three pocket ores and their materials, and the fuel overhaul's Uranium, Antimatter and Fusion Core");
 
 // Welcome supplies the gates and names; View supplies completion. Exercise the
 // shared builder helper used by BOTH shells, not a parallel UI-only rule list.
@@ -80,13 +99,12 @@ const unlocks = [
   ["prop_bunkerage", "Bunkerage", ["volatile_harvester", "fuel_refinery"]],
   ["mat_enrichment", "Enrichment", ["smelter", "chemical_works"]],
   ["comp_signal_libraries", "Signal Libraries", ["electronics_fabricator"]],
-  ["mat_autoforges", "Autoforges", ["machine_works", "precision_works", "drive_works"]],
+  ["mat_autoforges", "Autoforges", ["machine_works", "precision_works", "drive_works", "naval_drydock"]],
   ["mat_prefab_construction", "Prefab Construction", ["composite_works", "hull_fabricator"]],
   ["weap_munitions_lines", "Munitions Lines", ["armaments_complex"]],
-  ["weap_fire_control", "Fire Control", ["defense_platform", "garrison"]],
+  ["weap_fire_control", "Fire Control", ["orbital_defense", "garrison"]],
   ["comp_sensor_gain", "Sensor Gain", ["sensor_array"]],
   ["hull_drydock_efficiency", "Drydock Efficiency", ["ordnance_foundry"]],
-  ["hull_modular_berths", "Modular Berths", ["naval_drydock"]],
   ["hull_line_vii_dreadnought", "Dreadnought", ["capital_slipway"]],
   ["mat_foundry_iv_orbital_yards", "Orbital Yards", ["orbital_warehouse"]],
 ];
@@ -111,6 +129,69 @@ state.research.programmes = [];
 for (const key of starter) {
   assert.equal(market.structOption({ key, costs: [] }, system, body, pools).buildable, true, `${key}: founding stays accessible`);
 }
+const orbitalOption = { key: "naval_drydock", costs: [], research_prerequisite: "mat_autoforges",
+  research_alternatives: ["hull_modular_berths"] };
+state.researchCatalog.push({ id: "hull_modular_berths", name: "Modular Berths" });
+assert.equal(market.structOption(orbitalOption, system, body, pools).reason, "Requires Autoforges or Modular Berths research.");
+for (const id of [orbitalOption.research_prerequisite, ...orbitalOption.research_alternatives]) {
+  state.research.programmes = [{ id, state: "active" }];
+  assert.equal(market.structureResearched(orbitalOption), false, "no speculative unlock");
+  state.research.programmes[0].state = "completed";
+  assert.equal(market.structOption(orbitalOption, system, body, pools).buildable, true, `${id}: civilian and legacy unlocks agree with server`);
+}
+// §orbital-defense: the station ladder's gates mirror the sim — each level's
+// research and yard, one station per system, one Star Fortress per corporation.
+{
+  const level = (tier, label, research, requires = null) => ({ tier, label, costs: [], research_prerequisite: research, requires });
+  const ladder = { key: "orbital_defense", costs: [], research_prerequisite: "weap_fire_control", tiers: [
+    level(1, "Defense Platform", "weap_fire_control"), level(2, "Orbital Battery", "weap_orbital_batteries"),
+    level(3, "Defense Station", "weap_cm_iii_defense_stations", { yard: "ordnance_foundry", tier: 1 }),
+    level(4, "Citadel", "weap_cm_v_grand_batteries", { yard: "naval_drydock", tier: 1 }),
+    level(5, "Star Fortress", "weap_cm_v_star_fortress", { yard: "capital_slipway", tier: 1 })] };
+  const world = { ...body, id: 0, structures: { orbital_defense: 2 } };
+  const moon = { ...body, id: 7, structures: {} };
+  const fort = { id: "fort", owner: "1", structures: { naval_drydock: 1 }, builds: [], bodies: [world, moon], stockpile: [] };
+  const gate = (b = world) => market.structOption(ladder, fort, b, market.bodyPoolUsage(b, fort));
+  state.research.programmes = [{ id: "weap_fire_control", state: "completed" }, { id: "weap_orbital_batteries", state: "completed" }];
+  assert.equal(gate().reason, "Requires Weap Cm Iii Defense Stations research.", "each level names its own programme");
+  state.research.programmes.push({ id: "weap_cm_iii_defense_stations", state: "completed" },
+    { id: "weap_cm_v_grand_batteries", state: "completed" }, { id: "weap_cm_v_star_fortress", state: "completed" });
+  assert.equal(gate().reason, "Needs Ordnance Foundry tier 1 somewhere in this system (have 0).");
+  fort.structures.ordnance_foundry = 1;
+  assert.equal(gate().buildable, true, "Defense Station: researched, with its foundry");
+  assert.equal(gate(moon).reason, "The system's station orbits another world; raise that one.");
+  fort.builds.push({ key: "orbital_defense", body_id: 0 });
+  assert.equal(gate(moon).buildable, false, "a queued level holds the station's world too");
+  fort.builds = [];
+  world.structures.orbital_defense = 4;
+  assert.match(gate().reason, /Capital Slipway tier 1/);
+  fort.structures.capital_slipway = 1;
+  assert.equal(gate().buildable, true);
+  state.systems = [fort, { id: "far", owner: "1", station: { level: 4, name: "Citadel", mounts: [] },
+    builds: [{ key: "orbital_defense", body_id: 3 }] }];
+  assert.equal(gate().reason, "Your corporation already has its Star Fortress.", "one standing or rising");
+  state.systems[1].builds = [];
+  assert.equal(gate().buildable, true, "a Citadel elsewhere isn't a fortress");
+  state.systems[1] = { id: "rival", owner: "2", station: { level: 5, name: "Star Fortress", mounts: [] }, builds: [] };
+  assert.equal(gate().buildable, true, "a rival's fortress doesn't count");
+  world.structures.orbital_defense = 5;
+  assert.equal(gate().reason, "The Star Fortress is the station's top level.");
+  state.systems = [];
+  state.research.programmes = [];
+}
+assert.equal(icons.label("naval_drydock"), "Orbital Shipyard");
+for (const [key, tier] of [["large_freighter", 1], ["heavy_freighter", 2], ["bulk_freighter", 3]]) {
+  assert.equal(market.SHIP_YARD[key].yard, "naval_drydock");
+  assert.equal(market.SHIP_YARD[key].tier, tier);
+}
+const yardSystem = { ...system, structures: { shipyard: 1, naval_drydock: 1 },
+  builds: [{ key: "large_freighter", yard: "shipyard", body_id: 0 }] };
+state.research.programmes = [{ id: "prop_line_express_charters", state: "completed" }];
+assert.equal(market.shipOption({ key: "large_freighter", costs: [] }, yardSystem).slipsFull, false);
+assert.equal(market.shipOption({ key: "tiny_freighter", costs: [] }, yardSystem).slipsFull, true,
+  "legacy work occupies its reported original yard in both builders");
+yardSystem.builds.push({ key: "large_freighter", yard: "naval_drydock", body_id: 0 });
+assert.equal(market.shipOption({ key: "large_freighter", costs: [] }, yardSystem).slipsFull, true);
 
 // Render the real catalogues: missing/unfinished research hides a structure
 // even if a stale route or previous selection still points at it. Unaffordable
@@ -196,3 +277,31 @@ assert.equal(market.bodyPoolUsage(berthBody,berthSystem).infrastructure.used,1);
 assert.match(market.structOption(berthOption,berthSystem,berthBody,berthPools).reason,/one tier/);
 delete berthBody.structures.service_berth;delete berthBody.structures.warehouse;
 assert.match(market.structOption(berthOption,berthSystem,berthBody,berthPools).reason,/Requires a Warehouse/);
+
+const commandBody = { id: 1, kind: "terrestrial", population: .002, structures: { command_center: 1 },
+  infrastructure_slots: 2, construction_time_mult: 1, structure_build_time_mult: .9 };
+const commandSystem = { id: "home", structures: {}, builds: [], bodies: [commandBody], stockpile: [] };
+const commandDetail = () => [
+  DeckEmpireRoutes.prototype.structureDetail.call({}, commandSystem, commandBody, commandCenter, market.bodyPoolUsage(commandBody, commandSystem)),
+  MobileParitySurfaces.prototype.structureDetail.call({}, "home", commandSystem, commandBody, commandCenter, market.bodyPoolUsage(commandBody, commandSystem)),
+];
+for (const html of commandDetail()) {
+  assert.match(html, /Colony Command Center/);
+  assert.match(html, /no extra slot/i);
+  assert.match(html, /270s/);
+  assert.match(html, /tier-2-128.webp/);
+}
+commandBody.structures.command_center = 2;
+state.research.programmes = [];
+for (const html of commandDetail()) {
+  assert.match(html, /Syndicate Headquarters/);
+  assert.match(html, /Requires Prefab Construction research/);
+  assert.match(html, /120/);
+  assert.match(html, /tier-3-128.webp/);
+}
+commandBody.structures.command_center = 3;
+for (const html of commandDetail()) {
+  assert.match(html, /Maximum level built or queued/);
+  assert.doesNotMatch(html, /[Tt]ier 4|Queue build|Construction requirements|need 120/);
+}
+console.log("Command Center desktop/mobile panels: exact next-level identity, duration, materials, research gate and no fictitious fourth upgrade pass.");

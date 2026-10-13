@@ -16,7 +16,10 @@ const catalog = JSON.parse(text.slice(text.indexOf("= ") + 2, text.lastIndexOf("
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 assert.deepEqual(PLANET_ART_SIZES, [32, 64, 128, 256, 512, 1024, 1254]);
 assert.deepEqual(manifest.planets.map(p => p.slug), PLANET_ART_KINDS);
-assert.equal(new Set(manifest.planets.map(p => p.sourceSha256)).size, 8, "distinct art for every body type");
+assert.equal(new Set(manifest.planets.map(p => p.sourceSha256)).size, 9, "distinct art for every body type but the stand-in");
+// §marginal: a marginal ocean world borrows the ice master until it has its own art.
+assert.equal(manifest.planets.find(p => p.slug === "marginal_ocean").sourceSha256, manifest.planets.find(p => p.slug === "ice").sourceSha256);
+assert.equal(manifest.planets.find(p => p.slug === "marginal").source, "art-src/planets-2026-10-08/marginal-soft-edges-v1.png");
 let checked = 0;
 for (const planet of manifest.planets) {
   assert.deepEqual(catalog[planet.slug], { anchor: planet.anchor, visualRatio: planet.visualRatio,
@@ -67,9 +70,9 @@ for (const planet of manifest.planets) {
     checked++;
   }
 }
-assert.equal(checked, 56);
+assert.equal(checked, 70);
 const files = [manifestFile, catalogFile, ...manifest.planets.flatMap(p => p.levels.map(l => new URL(l.file, output)))];
 const mtimes = await Promise.all(files.map(async file => (await stat(file)).mtimeMs));
-assert.deepEqual(await buildPlanetDerivatives(), { sources: 8, variants: 56, written: 0 });
+assert.deepEqual(await buildPlanetDerivatives(), { sources: 10, variants: 70, written: 0 });
 assert.deepEqual(await Promise.all(files.map(async file => (await stat(file)).mtimeMs)), mtimes);
-console.log("Planet art: 8 distinct masters / 56 RGBA variants; transparent edges, direct Mitchell sampling, common geometry and idempotent build pass.");
+console.log("Planet art: 9 distinct masters (10 looks) / 70 RGBA variants; transparent edges, direct Mitchell sampling, common geometry and idempotent build pass.");

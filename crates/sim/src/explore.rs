@@ -241,7 +241,7 @@ pub fn converter_site_mult(body: &Body, kind: StructureKind, trait_: Option<Syst
     (body.converter_yield_mult(kind) * system).min(NATURAL_SPECIALTY_CAP)
 }
 
-fn population_score(body: &Body) -> f64 {
+pub(crate) fn population_score(body: &Body) -> f64 {
     let home_capacity =
         BodySize::Large.habitat_capacity_mult() * Environment::Terran.habitat_capacity_mult();
     let capacity = body.habitat_capacity_mult() / home_capacity;

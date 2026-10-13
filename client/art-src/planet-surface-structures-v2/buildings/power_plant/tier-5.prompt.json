@@ -1,0 +1,60 @@
+{
+  "id": "power_plant/tier-5",
+  "mode": "built-in image_gen",
+  "revision": "fusion-without-solar-panels",
+  "prompt": "Use case: stylized-concept.\nAsset type: ONE standalone planetary building-layer sprite, square transparent PNG, approximately 1024 x 1024.\nPurpose: reusable architecture above a SEPARATE biome ground layer. Produce BUILDING ONLY, not a diorama. Genuine zero-alpha transparency around the building; preserve translucent soft shadow. No baked soil, gravel apron, grass, rocks around the site, concrete base tile, raised platform, roads, path, border or landscape. Small integral ramps, steps, pipe racks and support feet belonging to the structure are allowed.\nStyle: the approved new Boreal/Temperate structures, grounded near-future frontier engineering. Soft semi-realistic environmental 3D rendering, matte weathered steel, pale-stone and slate panels with dark grey trim, restrained amber service lights and a few warm windows. Large readable forms, no ink outlines, no cel shading, plastic gloss, extreme contrast, excessive greebles or neon. No text, logos, Authority branding, numerals, UI, people, vehicles or spacecraft. No lightning bolts or glowing energy effects; power reads through the machinery.\nCamera and lighting: elevated front-left three-quarter view about 55 degrees above the ground plane; more roof than wall, mild perspective; front and right walls visible. Soft upper-left daylight, neutral/cool fill and semi-transparent soft lower-right cast/contact shadow attached to the feet.\nFraming/alignment: complete compact structure centered in a square. Building width about 94% of the canvas (x \u2248 4\u201398%), never cropped. Keep the ground footprint centred at approximately x=50%; its near/front foot reaches y\u224888%, and its far/rear foot y\u224845%. This is a reusable stable site anchor, not a floating base. Keep a similar physical site footprint through upgrades; add height and reactor mass, not a sprawling campus.\nOutput exactly one structure, no tier lineup/contact sheet.\nInput image 1 is the house style for HEAVY INDUSTRY (tanks, pipework, panels, scale). Input image 2 is the house style for hot process plant (halls, heavy machinery). Create a NEW building family in that shared style; do not copy either building.\nSubject: POWER PLANT \u2014 TIER 5 of 6.\nFamily identity: the planet's power station. Tiers I\u2013II are SOLAR ARRAYS: tilted rows of dark blue-grey photovoltaic panels on steel stands, an inverter house with a low ridged roof, and a fenced transformer yard of insulators and busbars. No stacks, tanks or furnaces: sunlight burns nothing. Tiers III\u2013VI are FUSION PLANTS: a massive domed or toroidal reactor hall ringed by field-coil housings, a heavy shielded core block at its heart, banks of pale radiator fins and a transformer yard. No solar panels and no stacks on the fusion tiers. III\u2013IV store Deuterium in squat insulated tanks; V\u2013VI add frosted cryogenic Helium-3 tanks. A recognizable power-station silhouette, clearly different from the Fuel Refinery's distillation towers and the Smelter's furnace halls.\nThis tier specifically: a Helium-3 fusion plant: a broad toroidal reactor hall under a ribbed dome, frosted cryogenic Helium-3 tanks and wide radiator banks. No solar panels.\nTier family progression for context (do NOT draw a lineup): 1: a small solar array, three short rows of panels, a small inverter house and a small transformer yard; 2: a larger solar array, five panel rows climbing to a taller inverter hall, a wider transformer yard; 3: a first fusion plant: one compact domed reactor hall ringed with field-coil housings, two squat insulated Deuterium tanks and a bank of radiator fins; 4: a larger fusion plant: a taller domed reactor hall, a control block, four Deuterium tanks and taller radiator banks; 5: a Helium-3 fusion plant: a broad toroidal reactor hall under a ribbed dome, frosted cryogenic Helium-3 tanks and wide radiator banks; 6: a great Helium-3 fusion plant: a larger toroidal reactor hall with a second reactor hall beside it, tall radiator banks and a row of frosted cryogenic tanks, on the same compact site.\nOutput: exactly the requested tier alone, genuine transparent PNG.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/fuel_refinery/tier-1.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/smelter/tier-1.png"
+  ],
+  "reference_sha256": {
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/fuel_refinery/tier-1.png": "dd19fca47cab72e4444decb136f7cda6fc2098c69a14e0b429070a2ee9d47e6c",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/smelter/tier-1.png": "186c7de11d9dfd3a1d3747d60f2f865fdd6ea441948198866b577daafd24e085"
+  },
+  "transparent_background": true,
+  "initial_generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-9b05691f-e575-4bfb-b7f0-9e1944bfd158.png",
+  "generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-78ea9b23-c791-413e-baa9-3340a55a42bc.png",
+  "file": "buildings/power_plant/tier-5.png",
+  "source_brief": "docs/power-plant-art-prompt.md",
+  "brief_normalization": "Uses the user-provided fusion prompt: removes panel stands and add panels wording from the shared framing lines.",
+  "verification": {
+    "size": [
+      1254,
+      1254
+    ],
+    "mode": "RGBA",
+    "fullyTransparentPixels": 707759,
+    "partiallyTransparentPixels": 864489,
+    "solidBounds": [
+      15,
+      112,
+      1238,
+      1153
+    ],
+    "solidWidthFraction": 0.9753,
+    "lowestSolidFraction": 0.9195,
+    "sha256": "1722cb8b3e3f282bac5c9ac8aa1c668f9fa2302cd52b7f428ed229385a5a09cb",
+    "nativeBytesPreserved": true,
+    "visualCheck": {
+      "noSolarPanels": true,
+      "noStacks": true,
+      "transformerYardVisible": true,
+      "reactorHalls": 1,
+      "fuelTanks": 4
+    }
+  },
+  "edits": [
+    {
+      "prompt": "Use case: precise-object-edit. Complete this tier V Helium-3 FUSION POWER PLANT by adding a compact transformer yard. Integrate a SMALL open fenced electrical bay beside the front control house, containing two squat ribbed transformers, ceramic insulators and metal busbars. Use only integral structure/support feet, no ground slab. Preserve the existing large ribbed reactor dome and toroidal hall, field-coil housings, FOUR frosted cryogenic tanks and wide radiator-fin banks, the camera, materials and lighting. Keep the entire site compact. Improve edge spacing so the WHOLE building including the new electrical bay sits between x=3% and x=97% of the square image, with its lowest solid foot around y=88% and all pieces fully visible. Do not crop. The tanks and radiator banks must stay distinct from each other. No solar panels anywhere, no stacks, no terrain, no base tile, no text or extra objects. One native-resolution square RGBA PNG with genuine zero-alpha surroundings and a faint translucent attached contact shadow.",
+      "referenced_image_paths": [
+        "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-9b05691f-e575-4bfb-b7f0-9e1944bfd158.png"
+      ]
+    },
+    {
+      "prompt": "Use case: precise-object-edit. Framing correction only for this existing transparent building sprite. Preserve all architecture and machinery, the four frosted tanks, one ribbed reactor dome, radiator banks, transformer yard, camera, textures, colors and lighting. Give the complete building a little more transparent breathing room: about 3% clear space at both left and right edges, and about 12% clear space below the lowest front support foot. Keep the building large and readable, about 94% of the square canvas wide. Place it slightly higher within the square, without changing its viewpoint, proportions or rearranging parts. No crop, no extra architecture, no solar panels, no stacks, no text or ground tile. One native-resolution square RGBA PNG with real zero-alpha background and the existing soft attached translucent shadow.",
+      "referenced_image_paths": [
+        "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-009cef1a-dd44-4752-8d74-ca1801150d03.png"
+      ]
+    }
+  ]
+}

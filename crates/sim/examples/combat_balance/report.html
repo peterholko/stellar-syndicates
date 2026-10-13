@@ -1,0 +1,700 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet Balance Matrix</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>
+/* Layout: a fleet analyst's report in one 1200px column. Findings first, then
+   the two answers (weapons, hull sizes) side by side, the standings, every
+   matchup, and the cost ledger the budgets come from. */
+:root {
+  --bg: #f2f4f7;
+  --panel: #ffffff;
+  --ink: #142131;
+  --muted: #5b6878;
+  --rule: #d6dce4;
+  --accent: #24427e;
+  --win: #1d62b4;
+  --even: #eceff3;
+  --loss: #c2541a;
+  --good: #2b7a4b;
+  --warn: #a8700f;
+  --bad: #b3261e;
+  --font-display: "Saira Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --font-body: "Source Sans 3", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c1218; --panel: #131b25; --ink: #e4e9ef; --muted: #93a1b2; --rule: #263241;
+    --accent: #93b2ff; --win: #4f9bf0; --even: #1a2330; --loss: #ef8648;
+    --good: #5cc28a; --warn: #e1ad48; --bad: #f2786d; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c1218; --panel: #131b25; --ink: #e4e9ef; --muted: #93a1b2; --rule: #263241;
+  --accent: #93b2ff; --win: #4f9bf0; --even: #1a2330; --loss: #ef8648;
+  --good: #5cc28a; --warn: #e1ad48; --bad: #f2786d; color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 400 15px/1.5 var(--font-body);
+  padding-inline: 16px; padding-block: 24px 64px;
+}
+table, input, button, select { font: inherit; color: inherit; }
+.wrap { max-width: 1200px; margin: 0 auto; display: grid; gap: 28px; }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 600; letter-spacing: 0.01em; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(30px, 5vw, 42px); line-height: 1.05; }
+h2 { font-size: 24px; line-height: 1.15; }
+h3 { font-size: 17px; line-height: 1.2; }
+p { margin: 0; max-width: 72ch; }
+.muted { color: var(--muted); }
+.eyebrow { font: 600 12px/1.2 var(--font-display); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.num { font-variant-numeric: tabular-nums; }
+header { display: grid; gap: 10px; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 14px; }
+
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 8px; }
+.tab {
+  border: 1px solid var(--rule); background: var(--panel); border-radius: 6px; cursor: pointer;
+  padding: 6px 14px; display: grid; text-align: left; line-height: 1.2;
+}
+.tab b { font: 600 16px/1.2 var(--font-display); letter-spacing: 0.02em; }
+.tab span { font-size: 12px; color: var(--muted); }
+.tab[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.tab:focus-visible, .seg button:focus-visible, td.cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+section { display: grid; gap: 14px; min-width: 0; }
+.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 18px; display: grid; gap: 14px; min-width: 0; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 18px; }
+.head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 10px; }
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; background: transparent; padding: 5px 10px; cursor: pointer; font-size: 13px; color: var(--muted); }
+.seg button + button { border-left: 1px solid var(--rule); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--panel); }
+
+/* Findings */
+.findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 12px; }
+.finding { border: 1px solid var(--rule); border-left: 4px solid var(--muted); border-radius: 6px; padding: 12px 14px; background: var(--panel); display: grid; gap: 6px; align-content: start; }
+.finding[data-level="good"] { border-left-color: var(--good); }
+.finding[data-level="warn"] { border-left-color: var(--warn); }
+.finding[data-level="bad"] { border-left-color: var(--bad); }
+.finding .big { font: 600 26px/1.1 var(--font-display); }
+.finding p { font-size: 14px; }
+.pill { display: inline-block; font: 600 11px/1 var(--font-body); letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 6px; border-radius: 4px; border: 1px solid currentColor; }
+.pill.good { color: var(--good); } .pill.warn { color: var(--warn); } .pill.bad { color: var(--bad); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 13px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--rule); white-space: nowrap; }
+
+/* Heatmaps */
+.scroll { overflow-x: auto; max-width: 100%; }
+table.heat { border-collapse: separate; border-spacing: 2px; }
+table.heat th { font: 600 13px/1.15 var(--font-display); letter-spacing: 0.02em; color: var(--muted); padding: 2px 6px; white-space: nowrap; }
+table.heat th.row { text-align: right; }
+table.heat td { text-align: center; font-variant-numeric: tabular-nums; border-radius: 3px; }
+table.big td { width: 46px; height: 34px; font-size: 13px; font-weight: 600; }
+table.small td { width: 26px; height: 22px; font-size: 11px; }
+.legend { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+.ramp { width: 160px; height: 10px; border-radius: 3px; }
+.multiples { display: flex; flex-wrap: wrap; gap: 14px 18px; }
+.multiples figure { margin: 0; display: grid; gap: 4px; }
+.multiples figcaption { font: 600 13px/1.2 var(--font-display); letter-spacing: 0.03em; }
+
+table.matrix { border-collapse: separate; border-spacing: 1px; }
+table.matrix th { font: 500 12px/1.1 var(--font-display); letter-spacing: 0.02em; color: var(--muted); white-space: nowrap; }
+table.matrix thead th { vertical-align: bottom; padding: 4px 0; height: 108px; }
+table.matrix thead th span { writing-mode: vertical-rl; transform: rotate(180deg); display: inline-block; }
+table.matrix tbody th { text-align: right; padding: 0 8px 0 0; font-size: 13px; position: sticky; left: 0; background: var(--panel); z-index: 1; }
+table.matrix td.cell { width: 30px; min-width: 30px; height: 24px; font-size: 11px; text-align: center; font-variant-numeric: tabular-nums; cursor: pointer; border-radius: 2px; }
+table.matrix .gap-l { border-left: 5px solid var(--panel); }
+table.matrix tr.gap-t > * { border-top: 5px solid var(--panel); }
+table.matrix td.diag { opacity: 0.45; }
+table.matrix td.hot { outline: 2px solid var(--ink); outline-offset: -1px; }
+.detail { border-top: 1px solid var(--rule); padding-top: 12px; display: grid; gap: 8px; min-height: 120px; }
+.detail .vs { font: 600 19px/1.2 var(--font-display); }
+.detail dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; font-size: 14px; }
+.detail dt { color: var(--muted); }
+.detail dd { margin: 0; min-width: 0; }
+
+/* Standings */
+table.list { border-collapse: collapse; width: 100%; font-size: 14px; }
+table.list th { text-align: left; font: 600 12px/1.2 var(--font-display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+table.list td { padding: 7px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+table.list td.r, table.list th.r { text-align: right; font-variant-numeric: tabular-nums; }
+.name { font-weight: 600; }
+.sub { font-size: 12.5px; color: var(--muted); }
+.bar { position: relative; height: 8px; background: var(--even); border-radius: 4px; min-width: 90px; margin-top: 6px; }
+.bar i { position: absolute; inset: 0 auto 0 0; border-radius: 4px; }
+.bar s { position: absolute; top: -3px; bottom: -3px; width: 1px; left: 50%; background: var(--muted); text-decoration: none; }
+
+svg text { fill: var(--muted); font: 12px var(--font-body); }
+svg .axis { stroke: var(--rule); }
+svg .grid { stroke: var(--rule); stroke-dasharray: 2 3; }
+ul.notes { margin: 0; padding-left: 18px; display: grid; gap: 6px; max-width: 80ch; }
+code { font: 13px ui-monospace, "SF Mono", Menlo, monospace; background: var(--even); padding: 1px 5px; border-radius: 4px; }
+pre { margin: 0; overflow-x: auto; background: var(--even); padding: 10px 12px; border-radius: 6px; font: 13px/1.45 ui-monospace, "SF Mono", Menlo, monospace; }
+@media (prefers-reduced-motion: no-preference) { .tab, .seg button { transition: background-color 120ms, box-shadow 120ms; } }
+</style>
+
+<div class="wrap" id="app">
+  <header>
+    <div class="eyebrow">Stellar Syndicates · combat balance</div>
+    <h1>Fleet Balance Matrix</h1>
+    <p class="muted">Every fleet type against every other at equal cost, fought in both roles on the live battle engine. Read it to see which weapons and hull sizes earn their price, and which matchups are decided before the shooting starts.</p>
+    <div class="meta num" id="meta"></div>
+  </header>
+  <nav class="tabs" id="tabs" aria-label="Fight size"></nav>
+  <section id="findings-section">
+    <div class="head"><h2>What stands out</h2><span class="muted" id="tier-note"></span></div>
+    <div class="findings" id="findings"></div>
+  </section>
+  <section class="panel" id="targets"></section>
+  <div class="two">
+    <section class="panel" id="weapons"></section>
+    <section class="panel" id="hulls"></section>
+  </div>
+  <section class="panel" id="standings"></section>
+  <section class="panel" id="escapes"></section>
+  <section class="panel" id="matrix"></section>
+  <section class="panel" id="costs"></section>
+  <section class="panel" id="method"></section>
+</div>
+
+<script>
+const REPORT = /*__COMBAT_BALANCE_REPORT__*/null;
+
+const HULL_NAMES = { interceptor: "Interceptors", corvette: "Corvettes", destroyer: "Destroyers", cruiser: "Cruisers",
+  battleship: "Battleships", dreadnought: "Dreadnoughts", titan: "Titans" };
+const HULL_SHORT = { interceptor: "Int", corvette: "Corv", destroyer: "Dest", cruiser: "Cru",
+  battleship: "BB", dreadnought: "Dread", titan: "Titan" };
+const WEAPONS = ["beam", "driver", "torpedo"];
+const WEAPON_NAMES = { beam: "Beams", driver: "Drivers", torpedo: "Torpedoes" };
+const WEAPON_SHORT = { beam: "beam", driver: "drv", torpedo: "torp" };
+const DOCTRINE_SHORT = { wolfpack: "Wolfpack", screened_battleships: "Screened BB", armoured_cruisers: "Armored Cru",
+  brawler_corvettes: "Brawlers", battle_group: "Battle group", escorted_battleships: "Escorted BB",
+  stabilized_battleships: "Stabilized BB", web_interceptors: "Web Int", dreadnought_screen: "Dread screen" };
+const MODULE_NAMES = { mass_driver: "Mass Driver", torpedo_rack: "Torpedo Rack", point_defense_screen: "PD Screen",
+  reflective_plating: "Reflective", whipple_armor: "Whipple", stasis_web: "Stasis Web", warp_stabilizer: "Warp Stabilizer",
+  interdiction_field: "Interdiction Field" };
+
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pct = (x) => (x == null ? "–" : Math.round(x * 100) + "%");
+const credits = (v) => v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : v >= 1e4 ? Math.round(v / 1e3) + "k" : v >= 1e3 ? (v / 1e3).toFixed(1) + "k" : String(Math.round(v));
+const mean = (xs) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+
+const state = { tier: 0, metric: "score", hullMode: "best", weaponMode: "same", cell: null };
+try {
+  const saved = JSON.parse(localStorage.getItem("fleet-balance-view") || "{}");
+  Object.assign(state, saved, { cell: null });
+} catch (e) { /* storage blocked: defaults */ }
+function remember() {
+  try { localStorage.setItem("fleet-balance-view", JSON.stringify({ tier: state.tier, metric: state.metric, hullMode: state.hullMode, weaponMode: state.weaponMode })); } catch (e) { /* fine */ }
+}
+
+// --- Color ------------------------------------------------------------------
+let C = {};
+function hex(s) {
+  s = s.replace("#", "").trim();
+  if (s.length === 3) s = s.split("").map((c) => c + c).join("");
+  return [0, 2, 4].map((i) => parseInt(s.slice(i, i + 2), 16));
+}
+function readColors() {
+  const cs = getComputedStyle(document.documentElement);
+  for (const k of ["win", "even", "loss", "ink", "panel", "warn", "muted", "accent"]) C[k] = hex(cs.getPropertyValue("--" + k));
+}
+const lerp = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+const css = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
+function diverging(x) {
+  x = Math.max(0, Math.min(1, x));
+  const t = Math.pow(Math.abs(x - 0.5) * 2, 0.85);
+  return x >= 0.5 ? lerp(C.even, C.win, t) : lerp(C.even, C.loss, t);
+}
+function sequential(x, to) { return lerp(C.even, to, Math.max(0, Math.min(1, x))); }
+function inkOn(c) {
+  const l = (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+  return l > 0.56 ? "#0f161e" : "#ffffff";
+}
+function paint(td, c) { td.style.background = css(c); td.style.color = inkOn(c); }
+
+// --- Data helpers -------------------------------------------------------------
+const tier = () => REPORT.tiers[state.tier];
+const archOf = (t, i) => REPORT.archetypes[t.archetypes[i]];
+const shortName = (a) => a.hull === "doctrine" ? (DOCTRINE_SHORT[a.key] || a.name) : `${HULL_SHORT[a.hull]} ${WEAPON_SHORT[a.weapon]}`;
+const hullLabel = (kind) => (REPORT.hulls.find((h) => h.kind === kind) || { label: kind }).label;
+function fitLabel(fit) {
+  if (!fit) return "stock beams";
+  const counts = {};
+  fit.split("+").forEach((m) => { counts[m] = (counts[m] || 0) + 1; });
+  return Object.entries(counts).map(([m, n]) => (n > 1 ? n + "× " : "") + (MODULE_NAMES[m] || m)).join(" + ");
+}
+function fleetText(f) {
+  return f.squadrons.map((s) => `${s.count}× ${hullLabel(s.kind)} (${fitLabel(s.fit)})`).join(" + ");
+}
+function pureIndex(t) {
+  const m = {};
+  t.archetypes.forEach((ai, i) => {
+    const a = REPORT.archetypes[ai];
+    if (a.hull !== "doctrine") (m[a.hull] = m[a.hull] || {})[a.weapon] = i;
+  });
+  return m;
+}
+function extremes(t, i) {
+  const s = t.table.score[i];
+  let best = -1, worst = -1;
+  s.forEach((v, j) => {
+    if (j === i) return;
+    if (best < 0 || v > s[best]) best = j;
+    if (worst < 0 || v < s[worst]) worst = j;
+  });
+  return { best, worst };
+}
+
+// --- Header and tabs ------------------------------------------------------------
+function renderHeader() {
+  const r = REPORT;
+  const parts = [
+    `Battle rules v${r.rules}`,
+    `${r.seeds} fights per pairing in each role`,
+    `${r.archetypes.length} fleet types`,
+    `Generated ${esc(r.generated)}`,
+  ];
+  if (r.baseline) parts.push(`Compared with rules v${r.baseline.rules} (${esc(r.baseline.generated)})`);
+  $("#meta").innerHTML = parts.map((p) => `<span>${p}</span>`).join("");
+  $("#tabs").innerHTML = r.tiers.map((t, i) =>
+    `<button class="tab" type="button" id="tab-${t.key}" aria-pressed="${i === state.tier}" data-tier="${i}"><b>${esc(t.name)}</b><span class="num">${credits(t.budget)} credits a side</span></button>`).join("");
+}
+
+// --- Findings ---------------------------------------------------------------------
+function renderFindings() {
+  const t = tier(), tb = t.table, n = t.archetypes.length;
+  const order = [...Array(n).keys()].sort((a, b) => tb.field[b] - tb.field[a]);
+  const top = order[0];
+  const cards = [];
+  const strong = order.filter((i) => tb.field[i] > 0.6);
+  cards.push({
+    level: tb.field[top] > 0.7 ? "bad" : tb.field[top] > 0.6 ? "warn" : "good",
+    eyebrow: "Strongest fleet type",
+    big: `${esc(archOf(t, top).name)}`,
+    text: `Scores ${pct(tb.field[top])} against the rest of the field on average. ${strong.length > 1
+      ? `${strong.length} types score above 60%: ${strong.slice(1, 4).map((i) => esc(archOf(t, i).name)).join(", ")}${strong.length > 4 ? " and more" : ""}.`
+      : strong.length === 1 ? "It is the only type above 60%." : "Nothing scores above 60%."}`,
+  });
+  const mixed = order.filter((i) => tb.mix[i] >= 0.01).sort((a, b) => tb.mix[b] - tb.mix[a]);
+  cards.push({
+    level: mixed.length >= 4 ? "good" : mixed.length >= 2 ? "warn" : "bad",
+    eyebrow: "Equilibrium mix",
+    big: mixed.length === 1 ? "One type" : `${mixed.length} of ${n} types`,
+    text: (mixed.length === 1
+      ? "A player who knew this table would only ever build this. Every other type loses to it or to a blend that contains it."
+      : "The blend no opponent can exploit. Types outside it are beaten by some mix of these whatever the opponent builds.")
+      + `<span class="chips" style="margin-top:6px">${mixed.map((i) => `<span class="chip num">${esc(archOf(t, i).name)} ${pct(tb.mix[i])}</span>`).join("")}</span>`,
+  });
+  let pairs = 0, blowouts = 0, close = 0;
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+    pairs++;
+    const s = tb.score[i][j];
+    if (s >= 0.9 || s <= 0.1) blowouts++;
+    if (s >= 0.35 && s <= 0.65) close++;
+  }
+  const share = blowouts / Math.max(1, pairs);
+  cards.push({
+    level: share > 0.5 ? "bad" : share > 0.25 ? "warn" : "good",
+    eyebrow: "Decided in advance",
+    big: pct(share),
+    text: `of pairings go 90/10 or worse, so the fleet choice settles the fight. ${pct(close / Math.max(1, pairs))} are within 35–65%, where numbers, formation and tactics still matter.`,
+  });
+  const weak = order.filter((i) => tb.field[i] < 0.3);
+  cards.push({
+    level: weak.length > n / 3 ? "bad" : weak.length > 0 ? "warn" : "good",
+    eyebrow: "Not worth building",
+    big: `${weak.length} of ${n}`,
+    text: weak.length ? `score under 30% against the field: ${weak.slice(0, 5).map((i) => esc(archOf(t, i).name)).join(", ")}${weak.length > 5 ? ` and ${weak.length - 5} more` : ""}.` : "Every type scores at least 30% against the field.",
+  });
+  let att = 0, def = 0, runs = 0;
+  t.cells.forEach((row, i) => { const c = row[i]; att += c.attacker_won; def += c.defender_won; runs += c.runs; });
+  const bias = Math.abs(att - def) / Math.max(1, runs);
+  cards.push({
+    level: bias > 0.3 ? "bad" : bias > 0.15 ? "warn" : "good",
+    eyebrow: "Role advantage in mirror matches",
+    big: `${pct(att / runs)} / ${pct(def / runs)}`,
+    text: `Attacker / defender wins when a fleet meets its own type. Even sides should split close to evenly; a gap means the approach or the anchor decides fights.`,
+  });
+  const stuck = [];
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) if (tb.undecided[i][j] >= 0.2) stuck.push([i, j]);
+  stuck.sort((a, b) => tb.undecided[b[0]][b[1]] - tb.undecided[a[0]][a[1]]);
+  const lengths = [];
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (i !== j) lengths.push(tb.steps[i][j]);
+  lengths.sort((a, b) => a - b);
+  cards.push({
+    level: stuck.length > pairs * 0.1 ? "bad" : stuck.length ? "warn" : "good",
+    eyebrow: "Fight length",
+    big: `${Math.round(lengths[Math.floor(lengths.length / 2)] || 0)} rounds`,
+    text: `is the typical fight (median of the matchups; the engine stops at ${REPORT.step_cap}). ${stuck.length
+      ? `${stuck.length} pairing${stuck.length > 1 ? "s" : ""} hit the cap undecided in 20%+ of fights, worst ${esc(archOf(t, stuck[0][0]).name)} v ${esc(archOf(t, stuck[0][1]).name)} (${pct(tb.undecided[stuck[0][0]][stuck[0][1]])}).`
+      : "No pairing hits the cap in 20% of its fights."}`,
+  });
+  $("#findings").innerHTML = cards.map((c) => `<article class="finding" data-level="${c.level}">
+      <div class="eyebrow">${c.eyebrow} <span class="pill ${c.level}">${{ good: "fine", warn: "watch", bad: "problem" }[c.level]}</span></div>
+      <div class="big num">${c.big}</div><p>${c.text}</p></article>`).join("");
+  $("#tier-note").textContent = `${t.name}: ${credits(t.budget)} credits a side, ${n} fleet types fit this budget`;
+}
+
+// --- Targets ----------------------------------------------------------------------
+const CHECK_GROUPS = { counter: "Counter", field: "No dominant type", mix: "Broad mix", blowouts: "Decided in advance",
+  undecided: "Stalemates", ladder: "Capital ladder" };
+function renderTargets() {
+  const t = tier(), el = $("#targets"), checks = t.targets || [];
+  if (!checks.length) { el.hidden = true; return; }
+  el.hidden = false;
+  const met = checks.filter((c) => c.pass).length;
+  const value = (c) => (c.kind === "mix" ? String(c.value) : pct(c.value))
+    + (c.trade != null ? ` <span class="muted">· trade ${pct(c.trade)}</span>` : "");
+  const rows = checks.map((c) => `<tr>
+      <td><span class="pill ${c.pass ? "good" : "bad"}">${c.pass ? "met" : "missed"}</span></td>
+      <td><div class="name">${esc(c.label)}</div><div class="sub">${CHECK_GROUPS[c.kind] || ""}</div></td>
+      <td class="r num">${value(c)}</td>
+      <td class="muted">${esc(c.goal)}</td></tr>`).join("");
+  el.innerHTML = `<div class="head"><div><div class="eyebrow">Targets</div><h2>${met} of ${checks.length} met at this size</h2></div></div>
+    <p class="muted">The agreed design goals. Each counter beats what it counters at equal cost, winning most fights and most of the value traded. No fleet type dominates the field, the equilibrium mix stays broad, few pairings are settled before the shooting starts, few fights stall, and each capital class beats the one below it by a modest margin (both sides choosing their best weapon fits).</p>
+    <div class="scroll"><table class="list">
+      <thead><tr><th>Status</th><th>Target</th><th class="r">Measured</th><th>Goal</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+}
+
+// --- Small heatmap helper ----------------------------------------------------------
+function heatTable(cls, rows, cols, value, opts = {}) {
+  const table = document.createElement("table");
+  table.className = "heat " + cls;
+  let html = "<thead><tr><th></th>" + cols.map((c) => `<th scope="col">${c}</th>`).join("") + "</tr></thead><tbody>";
+  rows.forEach((r, i) => {
+    html += `<tr><th scope="row" class="row">${r}</th>`;
+    cols.forEach((_, j) => { html += `<td data-i="${i}" data-j="${j}"></td>`; });
+    html += "</tr>";
+  });
+  table.innerHTML = html + "</tbody>";
+  table.querySelectorAll("td").forEach((td) => {
+    const v = value(+td.dataset.i, +td.dataset.j);
+    if (v == null || Number.isNaN(v)) { td.textContent = "–"; td.style.color = "var(--muted)"; return; }
+    paint(td, diverging(v));
+    td.textContent = Math.round(v * 100);
+    if (opts.title) td.title = opts.title(+td.dataset.i, +td.dataset.j, v);
+  });
+  return table;
+}
+function legend(left, right) {
+  const stops = [0, 0.25, 0.5, 0.75, 1].map((x) => css(diverging(x))).join(",");
+  return `<div class="legend"><span>${left}</span><span class="ramp" style="background:linear-gradient(90deg,${stops})"></span><span>${right}</span></div>`;
+}
+
+// --- Weapons ------------------------------------------------------------------------
+function renderWeapons() {
+  const t = tier(), s = t.table.score, idx = pureIndex(t);
+  const hulls = REPORT.hull_classes.filter((h) => idx[h]);
+  const cell = (w1, w2) => {
+    const xs = [];
+    if (state.weaponMode === "same") {
+      hulls.forEach((h) => { const a = idx[h][w1], b = idx[h][w2]; if (a != null && b != null) xs.push(s[a][b]); });
+    } else {
+      hulls.forEach((h1) => hulls.forEach((h2) => { const a = idx[h1][w1], b = idx[h2][w2]; if (a != null && b != null) xs.push(s[a][b]); }));
+    }
+    return mean(xs);
+  };
+  const el = $("#weapons");
+  el.innerHTML = `<div class="head"><div><div class="eyebrow">Question one</div><h2>Torpedoes, beams or mass drivers?</h2></div>
+      <div class="seg" role="group" aria-label="Compare weapons"><button type="button" data-weapon-mode="same" aria-pressed="${state.weaponMode === "same"}">Same hull</button><button type="button" data-weapon-mode="any" aria-pressed="${state.weaponMode === "any"}">Any hull</button></div></div>
+    <p class="muted">Row weapon's share of the points against the column weapon at equal cost, ${state.weaponMode === "same" ? "each hull class against its own class with the other weapon, averaged over the classes" : "averaged over every pairing of hull classes"}. Every weapon fit carries as many launchers as the hull takes; beams are the stock gun and use no slot.</p>
+    <div class="scroll" id="weapon-main"></div>
+    ${legend("row loses", "row wins")}
+    <h3>By hull class</h3>
+    <div class="multiples" id="weapon-multiples"></div>`;
+  $("#weapon-main").append(heatTable("big", WEAPONS.map((w) => WEAPON_NAMES[w]), WEAPONS.map((w) => WEAPON_NAMES[w]),
+    (i, j) => (i === j ? 0.5 : cell(WEAPONS[i], WEAPONS[j]))));
+  const multiples = $("#weapon-multiples");
+  hulls.forEach((h) => {
+    const fig = document.createElement("figure");
+    fig.innerHTML = `<figcaption>${HULL_NAMES[h]}</figcaption>`;
+    fig.append(heatTable("small", WEAPONS.map((w) => WEAPON_SHORT[w]), WEAPONS.map((w) => WEAPON_SHORT[w]), (i, j) => {
+      const a = idx[h][WEAPONS[i]], b = idx[h][WEAPONS[j]];
+      return a == null || b == null ? null : s[a][b];
+    }, { title: (i, j, v) => `${HULL_NAMES[h]}: ${WEAPON_NAMES[WEAPONS[i]].toLowerCase()} v ${WEAPON_NAMES[WEAPONS[j]].toLowerCase()} ${Math.round(v * 100)}%` }));
+    multiples.append(fig);
+  });
+}
+
+// --- Hulls --------------------------------------------------------------------------
+function renderHulls() {
+  const t = tier(), s = t.table.score, idx = pureIndex(t);
+  const classes = REPORT.hull_classes;
+  const present = classes.map((h) => !!idx[h]);
+  const el = $("#hulls");
+  el.innerHTML = `<div class="head"><div><div class="eyebrow">Question two</div><h2>Capital ships or interceptors?</h2></div>
+      <div class="seg" role="group" aria-label="Hull comparison"><button type="button" data-hull-mode="best" aria-pressed="${state.hullMode === "best"}">Best fit each</button><button type="button" data-hull-mode="average" aria-pressed="${state.hullMode === "average"}">Average fit</button></div></div>
+    <p class="muted">${state.hullMode === "best"
+      ? "Row hull class against the column class at equal cost, both sides choosing their best weapon fit (mixing fits if neither has a sure answer): what the row can guarantee."
+      : "Row hull class against the column class at equal cost, averaged over the three weapon fits on each side."}</p>
+    <div class="scroll" id="hull-main"></div>
+    ${legend("row loses", "row wins")}
+    <h3>Score against the field, by hull size</h3>
+    <div class="scroll" id="hull-chart"></div>`;
+  const value = (i, j) => {
+    if (!present[i] || !present[j]) return null;
+    if (state.hullMode === "best") return t.hull_games[i][j];
+    const xs = [];
+    WEAPONS.forEach((w1) => WEAPONS.forEach((w2) => {
+      const a = idx[classes[i]][w1], b = idx[classes[j]][w2];
+      if (a != null && b != null) xs.push(s[a][b]);
+    }));
+    return mean(xs);
+  };
+  $("#hull-main").append(heatTable("big", classes.map((h) => HULL_NAMES[h]), classes.map((h) => HULL_SHORT[h]), value));
+  $("#hull-chart").innerHTML = fieldChart(t, idx);
+}
+function fieldChart(t, idx) {
+  const classes = REPORT.hull_classes;
+  const W = 520, H = 230, L = 40, Rm = 12, T = 12, B = 40;
+  const x = (i) => L + (i + 0.5) * (W - L - Rm) / classes.length;
+  const y = (v) => T + (1 - v) * (H - T - B);
+  const colors = { beam: css(C.accent), driver: css(C.loss), torpedo: css(C.win) };
+  const dash = { beam: "", driver: "6 4", torpedo: "2 3" };
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" style="max-width:100%;height:auto" role="img" aria-label="Field score by hull class for each weapon">`;
+  [0, 0.25, 0.5, 0.75, 1].forEach((v) => {
+    svg += `<line class="${v === 0.5 ? "axis" : "grid"}" x1="${L}" x2="${W - Rm}" y1="${y(v)}" y2="${y(v)}"/>`;
+    svg += `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v * 100}%</text>`;
+  });
+  classes.forEach((h, i) => { svg += `<text x="${x(i)}" y="${H - B + 18}" text-anchor="middle">${HULL_SHORT[h]}</text>`; });
+  WEAPONS.forEach((w) => {
+    const pts = classes.map((h, i) => (idx[h] && idx[h][w] != null ? [x(i), y(t.table.field[idx[h][w]])] : null)).filter(Boolean);
+    if (!pts.length) return;
+    svg += `<polyline fill="none" stroke="${colors[w]}" stroke-width="2.2" stroke-dasharray="${dash[w]}" points="${pts.map((p) => p.join(",")).join(" ")}"/>`;
+    pts.forEach((p) => { svg += `<circle cx="${p[0]}" cy="${p[1]}" r="3.6" fill="${colors[w]}"/>`; });
+  });
+  let lx = L + 6;
+  WEAPONS.forEach((w) => {
+    svg += `<line x1="${lx}" x2="${lx + 22}" y1="${H - 8}" y2="${H - 8}" stroke="${colors[w]}" stroke-width="2.2" stroke-dasharray="${dash[w]}"/><text x="${lx + 28}" y="${H - 4}">${WEAPON_NAMES[w]}</text>`;
+    lx += 110;
+  });
+  return svg + "</svg>";
+}
+
+// --- Standings ----------------------------------------------------------------------
+function renderStandings() {
+  const t = tier(), tb = t.table, n = t.archetypes.length;
+  const order = [...Array(n).keys()].sort((a, b) => tb.field[b] - tb.field[a]);
+  const rows = order.map((i, rank) => {
+    const a = archOf(t, i), f = t.fleets[i], { best, worst } = extremes(t, i);
+    const field = tb.field[i];
+    const c = diverging(field);
+    const off = f.cost / t.budget - 1;
+    return `<tr>
+      <td class="r muted">${rank + 1}</td>
+      <td><div class="name">${esc(a.name)}</div><div class="sub">${esc(fleetText(f))}</div></td>
+      <td class="r"><b>${pct(field)}</b><div class="bar"><i style="width:${(field * 100).toFixed(1)}%;background:${css(c)}"></i><s></s></div></td>
+      <td class="r">${tb.mix[i] >= 0.001 ? pct(tb.mix[i]) : '<span class="muted">0</span>'}</td>
+      <td><div>${best >= 0 ? esc(archOf(t, best).name) : "–"}</div><div class="sub num">${best >= 0 ? pct(tb.score[i][best]) : ""}</div></td>
+      <td><div>${worst >= 0 ? esc(archOf(t, worst).name) : "–"}</div><div class="sub num">${worst >= 0 ? pct(tb.score[i][worst]) : ""}</div></td>
+      <td class="r">${credits(f.cost)}<div class="sub">${off >= 0 ? "+" : "−"}${Math.abs(off * 100).toFixed(0)}%</div></td>
+    </tr>`;
+  }).join("");
+  $("#standings").innerHTML = `<div class="head"><div><div class="eyebrow">Standings</div><h2>Every fleet type against the field</h2></div></div>
+    <p class="muted">Field score: the average share of the points against every other type, in both roles (a win counts 1, a mutual kill or an undecided fight ½). Equilibrium: the type's share of the unexploitable mix. Cost: what the fleet actually costs in whole hulls, against the ${credits(t.budget)} budget.</p>
+    <div class="scroll"><table class="list">
+      <thead><tr><th class="r">#</th><th>Fleet type and what it fields</th><th class="r">Field score</th><th class="r">Equilibrium</th><th>Best against</th><th>Worst against</th><th class="r">Cost</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+}
+
+// --- Catch and hold -------------------------------------------------------------------
+function renderEscapes() {
+  const t = tier(), e = t.escapes, el = $("#escapes");
+  if (!e || !e.runners.length || !e.hunters.length) { el.hidden = true; return; }
+  el.hidden = false;
+  const name = (i) => REPORT.archetypes[i];
+  el.innerHTML = `<div class="head"><div><div class="eyebrow">Catch and hold</div><h2>Can a fleet get away?</h2></div></div>
+    <p class="muted">Each fleet on the left tries to leave the moment the fight starts, while the fleet on top closes in at equal cost. The square shows how much of its value gets away. Interceptors tackle: a fleeing hull can't cross the edge of the fight while more of them are in range than it carries Warp Stabilizers, so it stays and gets shot until the tacklers die or it does.</p>
+    <div class="scroll" id="escape-grid"></div>
+    ${legend("caught or sunk", "got away")}`;
+  const table = heatTable("big", e.runners.map((i) => esc(name(i).name)), e.hunters.map((i) => esc(shortName(name(i)))),
+    (r, h) => e.cells[r][h].escaped,
+    { title: (r, h) => { const c = e.cells[r][h]; return `${name(e.runners[r]).name} leaving ${name(e.hunters[h]).name}: got away ${pct(c.escaped)}, held at the cap ${pct(c.held)}, lost ${pct(c.lost)}, median ${Math.round(c.median_steps)} rounds`; } });
+  $("#escape-grid").append(table);
+}
+
+// --- Full matrix --------------------------------------------------------------------
+const METRICS = {
+  score: { label: "Win share", note: "Row's share of the points against the column over both roles. Blue: the row wins." },
+  trade: { label: "Value trade", note: "Row's share of all the value destroyed between the two (50% is an even trade). Blue: the row trades well." },
+  attacking: { label: "Attacking wins", note: "How often the row wins when it is the attacker closing on the column." },
+  steps: { label: "Fight length", note: "Median rounds when the row attacks the column. Darker: longer." },
+  undecided: { label: "Undecided", note: "Share of the pair's fights still going at the engine's cap. Darker: more stalemates." },
+  delta: { label: "Change vs baseline", note: "Win share now minus the baseline report. Blue: the row gained." },
+};
+function metricValue(t, i, j) {
+  const tb = t.table;
+  switch (state.metric) {
+    case "trade": return tb.trade[i][j];
+    case "attacking": return tb.attacking[i][j];
+    case "steps": return tb.steps[i][j];
+    case "undecided": return tb.undecided[i][j];
+    case "delta": {
+      const base = REPORT.baseline && REPORT.baseline.scores[t.key];
+      const v = base && base[`${archOf(t, i).key}|${archOf(t, j).key}`];
+      return v == null ? null : tb.score[i][j] - v;
+    }
+    default: return tb.score[i][j];
+  }
+}
+function renderMatrix() {
+  const t = tier(), n = t.archetypes.length;
+  if (state.metric === "delta" && !REPORT.baseline) state.metric = "score";
+  const metrics = Object.entries(METRICS).filter(([k]) => k !== "delta" || REPORT.baseline);
+  const groups = t.archetypes.map((ai) => REPORT.archetypes[ai].hull);
+  const gapBefore = (i) => i > 0 && groups[i] !== groups[i - 1];
+  let html = `<div class="head"><div><div class="eyebrow">Every matchup</div><h2>Row against column</h2></div>
+      <div class="seg" role="group" aria-label="Matrix shows">${metrics.map(([k, m]) => `<button type="button" data-metric="${k}" aria-pressed="${state.metric === k}">${m.label}</button>`).join("")}</div></div>
+    <p class="muted">${METRICS[state.metric].note} Hover or tap a square for the fights behind it.</p>
+    <div class="scroll"><table class="matrix"><thead><tr><th></th>`;
+  for (let j = 0; j < n; j++) html += `<th scope="col" class="${gapBefore(j) ? "gap-l" : ""}" title="${esc(archOf(t, j).name)}"><span>${esc(shortName(archOf(t, j)))}</span></th>`;
+  html += "</tr></thead><tbody>";
+  for (let i = 0; i < n; i++) {
+    html += `<tr class="${gapBefore(i) ? "gap-t" : ""}"><th scope="row">${esc(archOf(t, i).name)}</th>`;
+    for (let j = 0; j < n; j++) html += `<td class="cell${gapBefore(j) ? " gap-l" : ""}${i === j ? " diag" : ""}" tabindex="0" data-i="${i}" data-j="${j}"></td>`;
+    html += "</tr>";
+  }
+  html += `</tbody></table></div><div class="detail" id="detail" aria-live="polite"></div>`;
+  $("#matrix").innerHTML = html;
+  const maxSteps = Math.max(1, ...t.table.steps.flat());
+  document.querySelectorAll("#matrix td.cell").forEach((td) => {
+    const i = +td.dataset.i, j = +td.dataset.j, v = metricValue(t, i, j);
+    if (v == null) { td.textContent = "·"; td.style.color = "var(--muted)"; return; }
+    switch (state.metric) {
+      case "steps": paint(td, sequential(Math.sqrt(v / maxSteps), C.accent)); td.textContent = Math.round(v); break;
+      case "undecided": paint(td, sequential(Math.sqrt(v), C.warn)); td.textContent = Math.round(v * 100); break;
+      case "delta": paint(td, diverging(0.5 + v)); td.textContent = (v > 0 ? "+" : "") + Math.round(v * 100); break;
+      default: paint(td, diverging(v)); td.textContent = Math.round(v * 100);
+    }
+  });
+  const pick = state.cell && state.cell[0] < n && state.cell[1] < n ? state.cell : first(t);
+  showDetail(pick[0], pick[1]);
+}
+function first(t) {
+  // Open on the most lopsided pairing involving the strongest type.
+  const tb = t.table;
+  const top = tb.field.indexOf(Math.max(...tb.field));
+  const { best } = extremes(t, top);
+  return [top, Math.max(0, best)];
+}
+function showDetail(i, j) {
+  const t = tier(), tb = t.table;
+  state.cell = [i, j];
+  document.querySelectorAll("#matrix td.hot").forEach((td) => td.classList.remove("hot"));
+  const td = document.querySelector(`#matrix td[data-i="${i}"][data-j="${j}"]`);
+  if (td) td.classList.add("hot");
+  const A = archOf(t, i), B = archOf(t, j);
+  const att = t.cells[i][j], def = t.cells[j][i];
+  const dealt = att.lost[1] + def.lost[0], taken = att.lost[0] + def.lost[1];
+  const ratio = taken > 0 ? (dealt / taken).toFixed(dealt / taken >= 10 ? 0 : 1) + "×" : dealt > 0 ? "no losses" : "–";
+  const line = (won, lost, c, steps) => `won ${won} · lost ${lost} · both destroyed ${c.both_destroyed} · undecided ${c.undecided} · median ${Math.round(steps)} rounds`;
+  const base = REPORT.baseline && REPORT.baseline.scores[t.key] && REPORT.baseline.scores[t.key][`${A.key}|${B.key}`];
+  $("#detail").innerHTML = `<div class="vs">${esc(A.name)} <span class="muted">v</span> ${esc(B.name)}</div>
+    <dl class="num">
+      <dt>Win share</dt><dd><b>${pct(tb.score[i][j])}</b> <span class="muted">(95% interval ${pct(tb.low[i][j])}–${pct(tb.high[i][j])}, ${att.runs + def.runs} fights)</span>${base != null ? ` <span class="muted">· baseline ${pct(base)}</span>` : ""}</dd>
+      <dt>Attacking</dt><dd>${line(att.attacker_won, att.defender_won, att, tb.steps[i][j])}</dd>
+      <dt>Defending</dt><dd>${line(def.defender_won, def.attacker_won, def, tb.steps[j][i])}</dd>
+      <dt>Value trade</dt><dd>destroyed ${credits(dealt / (att.runs + def.runs))} · lost ${credits(taken / (att.runs + def.runs))} a fight on average (${ratio})</dd>
+      <dt>Row fleet</dt><dd>${esc(fleetText(t.fleets[i]))} · ${credits(t.fleets[i].cost)}</dd>
+      <dt>Column fleet</dt><dd>${esc(fleetText(t.fleets[j]))} · ${credits(t.fleets[j].cost)}</dd>
+    </dl>`;
+}
+
+// --- Costs ----------------------------------------------------------------------------
+function hours(h) {
+  if (h < 1 / 60) return Math.round(h * 3600) + " s";
+  if (h < 1) return Math.round(h * 60) + " min";
+  return (h >= 10 ? Math.round(h) : h.toFixed(1)) + " h";
+}
+function renderCosts() {
+  const r = REPORT;
+  const rows = r.hulls.map((h) => `<tr>
+      <td><div class="name">${esc(h.label)}</div><div class="sub">${h.affinity.length ? esc(h.affinity.join(", ")) : "no affinity"}</div></td>
+      <td class="r">${credits(h.value)}</td>
+      <td class="r">${hours(h.build_hours)}</td>
+      <td class="r">${h.aboard.toLocaleString()}</td>
+      <td class="r">${credits(h.upkeep_day)}</td>
+      <td class="r">${(h.value / h.upkeep_day).toFixed(1)}</td>
+      <td class="r">${h.hp.toLocaleString()}</td>
+      <td class="r">${Math.round(h.hp / h.value * 1e4).toLocaleString()}</td>
+      <td class="r">${h.attack}</td>
+      <td class="r">${(h.attack / h.value * 1e4).toFixed(1)}</td>
+      <td class="r">${h.speed}</td>
+      <td class="r">${h.turn == null ? "free" : h.turn.toFixed(2)}</td>
+      <td class="r">${h.slots} / ${h.points}</td>
+    </tr>`).join("");
+  const mods = r.modules.map((m) => `<tr><td class="name">${esc(m.label)}</td><td class="r">${credits(m.value)}</td><td class="r">${m.points}</td><td>${esc(m.effect)}</td></tr>`).join("");
+  $("#costs").innerHTML = `<div class="head"><div><div class="eyebrow">The cost model</div><h2>What every hull and module costs</h2></div></div>
+    <p class="muted">Every fleet is priced in credits: each hull's and module's build recipe at the reference market prices. Build time and crew upkeep are listed beside it. The matchups match build cost only, so these two columns are levers the table does not count.</p>
+    <div class="scroll"><table class="list">
+      <thead><tr><th>Hull</th><th class="r">Cost</th><th class="r">Yard time</th><th class="r">Aboard</th><th class="r">Food a day</th><th class="r">Days to eat its cost</th><th class="r">Hull</th><th class="r">Hull per 10k</th><th class="r">Attack</th><th class="r">Attack per 10k</th><th class="r">Speed</th><th class="r">Turn rad/round</th><th class="r">Slots / points</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <div class="scroll"><table class="list">
+      <thead><tr><th>Module</th><th class="r">Cost</th><th class="r">Fitting points</th><th>Effect</th></tr></thead>
+      <tbody>${mods}</tbody></table></div>`;
+}
+
+function renderMethod() {
+  const r = REPORT;
+  $("#method").innerHTML = `<div class="head"><div><div class="eyebrow">Method</div><h2>How it is measured</h2></div></div>
+    <ul class="notes">
+      <li>Each fleet type is built to the budget in whole hulls (dearest hull first, rounding carried into the next part), so actual costs sit within 15% of it; a type that cannot get that close sits the size out (no titan in a skirmish).</li>
+      <li>Every pairing is fought ${r.seeds} times with each side attacking, on the same engine and kernel as the in-game battle estimate (rules v${r.rules}): open space, no platforms, no research, default missions (so Automatic formations), fought to the death or to the ${r.step_cap}-round cap.</li>
+      <li>A win scores 1, a mutual kill or an undecided fight ½. Intervals are 95% Wilson intervals over the ${2 * r.seeds} fights of a pairing, about ±${Math.round(98 / Math.sqrt(2 * r.seeds))} points at 50%.</li>
+      <li>The equilibrium mix solves the matchup table as a two-player game (each side picks a fleet type without seeing the other's). Types outside the mix are beaten by some blend of the others whatever the opponent picks.</li>
+      <li>Weapon fits carry as many launchers as the hull's slots and fitting points allow, since copies stack. Beams are the stock gun and need no module.</li>
+      <li>Catch and hold: the fleet on the left withdraws from the first round while the other closes, ${r.seeds} times per pair. It counts as away once its hulls are past the edge of the fight, alive.</li>
+    </ul>
+    <pre>cargo run --release -p sim --example combat_balance -- --seeds ${r.seeds} --baseline docs/balance/combat-balance-v${r.rules}.json</pre>`;
+}
+
+// --- Wiring -------------------------------------------------------------------------
+function render() {
+  readColors();
+  renderHeader();
+  renderFindings();
+  renderTargets();
+  renderWeapons();
+  renderHulls();
+  renderStandings();
+  renderEscapes();
+  renderMatrix();
+  renderCosts();
+  renderMethod();
+}
+document.addEventListener("click", (e) => {
+  const tab = e.target.closest("[data-tier]");
+  if (tab) { state.tier = +tab.dataset.tier; state.cell = null; remember(); render(); return; }
+  const m = e.target.closest("[data-metric]");
+  if (m) { state.metric = m.dataset.metric; remember(); renderMatrix(); return; }
+  const hm = e.target.closest("[data-hull-mode]");
+  if (hm) { state.hullMode = hm.dataset.hullMode; remember(); renderHulls(); return; }
+  const wm = e.target.closest("[data-weapon-mode]");
+  if (wm) { state.weaponMode = wm.dataset.weaponMode; remember(); renderWeapons(); return; }
+  const td = e.target.closest("#matrix td.cell");
+  if (td) showDetail(+td.dataset.i, +td.dataset.j);
+});
+const hover = (e) => {
+  const td = e.target.closest && e.target.closest("#matrix td.cell");
+  if (td) showDetail(+td.dataset.i, +td.dataset.j);
+};
+document.addEventListener("mouseover", hover);
+document.addEventListener("focusin", hover);
+
+if (!REPORT) {
+  $("#app").innerHTML = '<header><h1>Fleet Balance Matrix</h1><p>This is the report template. Run <code>cargo run --release -p sim --example combat_balance</code> to fill it.</p></header>';
+} else {
+  if (state.tier >= REPORT.tiers.length) state.tier = 0;
+  render();
+  const rerender = () => render();
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", rerender);
+  new MutationObserver(rerender).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+}
+</script>

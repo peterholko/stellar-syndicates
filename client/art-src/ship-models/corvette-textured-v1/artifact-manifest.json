@@ -1,0 +1,34 @@
+{
+  "model": "corvette.glb",
+  "sha256": "37af152456b94699f5a67c471326bd61065dab9a77763699ff5200133878f417",
+  "modelBytes": 2440384,
+  "reference": "../../corvette-reference-v1/corvette-reference.png",
+  "referenceSha256": "fb9e89385be9882c2fed6f4bdd706960819f02842df6e4bca02410747af9308a",
+  "viewerEmbedsIdenticalGLB": true,
+  "previewViews": [
+    "perspective",
+    "top",
+    "bottom",
+    "front",
+    "back",
+    "side",
+    "front-quarter",
+    "bottom-quarter"
+  ],
+  "previewResolution": [
+    1600,
+    1200
+  ],
+  "glTFValidation": {
+    "errors": 0,
+    "warnings": 0
+  },
+  "surfaceVerificationPassed": true,
+  "checkedUndersideComponents": 33,
+  "fiveClosedPrimaryBodies": true,
+  "twoCircularRecessedExhausts": true,
+  "separateTurretAssemblies": 4,
+  "weaponSockets": 8,
+  "browserConsoleWarningsAndErrors": [],
+  "observedDrawCalls": 23
+}

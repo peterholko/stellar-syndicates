@@ -4,9 +4,15 @@ import path from "node:path";
 import sharp from "sharp";
 import { buildStarDerivatives } from "./build-star-derivatives.mjs";
 import { buildShipDerivatives } from "./build-ship-derivatives.mjs";
+import { buildHubModelAssets } from "./build-hub-model-assets.mjs";
+import { buildMapGlyphs } from "./build-map-glyphs.mjs";
 import { buildPlanetDerivatives } from "./build-planet-derivatives.mjs";
 import { buildPlanetWorkbenchArt } from "./build-planet-workbench-art.mjs";
 import { buildStructureTierArt } from "./build-structure-tier-art.mjs";
+import { buildStationArt } from "./build-station-art.mjs";
+import { buildCommandCenterArt } from "./build-command-center-art.mjs";
+import { buildPlanetShipyardArt } from "./build-planet-shipyard-art.mjs";
+import { buildPlanetSurfaceStructureArt } from "./build-planet-surface-structure-art.mjs";
 import { buildFoundingStoryArt } from "./build-founding-story-art.mjs";
 
 const clientRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -191,6 +197,27 @@ async function buildResourceIcons() {
   return { sources: sources.length, written };
 }
 
+// §belts: one chunk master per belt type (the Stony type keeps the original
+// sprite). 256 px for the System View's scattered chunks, 512 px for the belt's
+// world panel. Masters keep the cluster at ~43% of the canvas, like the
+// original, so CHUNK_ART_FILL holds for every type.
+async function buildBeltChunks() {
+  const sourceDir = path.join(sourceArt, "belt-chunks-v1");
+  const outputDir = path.join(publicArt, "derived", "belt-chunks", "v1");
+  await mkdir(outputDir, { recursive: true });
+  const sources = (await readdir(sourceDir)).filter((name) => name.endsWith(".png")).sort();
+  const transparent = { r: 0, g: 0, b: 0, alpha: 0 };
+  let written = 0;
+  for (const name of sources) {
+    for (const size of [256, 512]) {
+      written += Number(await derive(path.join(sourceDir, name),
+        path.join(outputDir, `${path.basename(name, ".png")}-${size}.png`),
+        (image) => image.resize(size, size, { fit: "contain", background: transparent }).png({ compressionLevel: 9 })));
+    }
+  }
+  return { sources: sources.length, written };
+}
+
 async function buildNebulas() {
   const sourceDir = path.join(sourceArt, "nebulas");
   const outputDir = path.join(publicArt, "nebulas");
@@ -210,10 +237,17 @@ async function buildNebulas() {
   return { sources: sources.length, written };
 }
 
-const [captains, lore, pwa, structures, nebulas, login, resources, stars, ships, planets, planetWorkbench, structureTiers, foundingStory, authority] = await Promise.all([
+const [captains, lore, pwa, structures, nebulas, login, resources, stars, ships, planets, planetWorkbench, structureTiers, foundingStory, authority, commandCenters, planetShipyards, surfaceStructures, stations, hub, glyphs, beltChunks] = await Promise.all([
   buildCaptains(), buildLore(), buildPwaIcons(), buildStructureIcons(), buildNebulas(), buildLoginBackgrounds(),
   buildResourceIcons(), buildStarDerivatives(), buildShipDerivatives(), buildPlanetDerivatives(),
   buildPlanetWorkbenchArt(), buildStructureTierArt(), buildFoundingStoryArt(), buildAuthoritySeal(),
+  buildCommandCenterArt(),
+  buildPlanetShipyardArt(),
+  buildPlanetSurfaceStructureArt(),
+  buildStationArt(),
+  buildHubModelAssets(),
+  buildMapGlyphs(),
+  buildBeltChunks(),
 ]);
 console.log(
   `art derivatives: ${captains.sources} captain portraits (${captains.written} written), ` +
@@ -221,6 +255,10 @@ console.log(
   `${pwa.sources} PWA icons (${pwa.written} written), ` +
   `${structures.sources} structure icons (${structures.written} written), ` +
   `${structureTiers.sources} structure tiers (${structureTiers.written} written), ` +
+  `${commandCenters.sources} command center levels (${commandCenters.written} written), ` +
+  `${planetShipyards.sources} planet shipyard levels (${planetShipyards.written} written), ` +
+  `${surfaceStructures.sources} surface structures/biome layers (${surfaceStructures.written} written), ` +
+  `${stations.sources} defense station levels (${stations.written} written), ` +
   `${resources.sources} resource icons (${resources.written} written), ` +
   `${nebulas.sources} nebula textures (${nebulas.written} written), ` +
   `${login.sources} login backgrounds (${login.written} written), ` +
@@ -229,5 +267,8 @@ console.log(
   `${planets.sources} planet masters / ${planets.variants} sizes (${planets.written} written), ` +
   `planet workbench (${planetWorkbench.written} written), ` +
   `${foundingStory.sources} founding story scenes (${foundingStory.written} written), ` +
-  `${authority.sources} Authority seal (${authority.written} written)`,
+  `${authority.sources} Authority seal (${authority.written} written), ` +
+  `hub station ${(hub.glbBytes / 1e6).toFixed(2)} MB (${hub.written} written), ` +
+  `${glyphs.glyphs} map glyphs (${glyphs.written} written), ` +
+  `${beltChunks.sources} belt chunk types (${beltChunks.written} written)`,
 );

@@ -4,7 +4,8 @@ use crate::{doctrine::{MissionProfile, TargetPriority, ScreeningRole}, module::{
 use std::collections::BTreeMap;
 
 impl TacticalState {
-    pub fn open_current(seed: u64, battle: u64, a: &[(EntityId, Ship)], d: &[(EntityId, Ship)],
+    /// Frozen v6 constructor (new battles open on the current rules: `open_current`).
+    pub(crate) fn open_v6(seed: u64, battle: u64, a: &[(EntityId, Ship)], d: &[(EntityId, Ship)],
         tiers: u32, pool: f64, bearing: Vec2) -> Self {
         let mut state = Self::open_v5(seed, battle, a, d, tiers, pool, bearing);
         let Rules::V5 { maneuver_seed } = state.rules else { unreachable!() };
@@ -13,7 +14,7 @@ impl TacticalState {
     }
 
     pub(crate) fn set_missions(&mut self, missions: BTreeMap<EntityId, MissionProfile>) -> bool {
-        if !matches!(self.rules, Rules::V6 { .. }) || self.missions == missions { return false; }
+        if !matches!(self.rules, Rules::V6 { .. } | Rules::V7 { .. } | Rules::V8 { .. } | Rules::V9 { .. } | Rules::V10 { .. } | Rules::V11 { .. } | Rules::V12 { .. } | Rules::V13 { .. } | Rules::V14 { .. } | Rules::V15 { .. } | Rules::V16 { .. }) || self.missions == missions { return false; }
         self.missions = missions;
         true
     }
@@ -21,7 +22,7 @@ impl TacticalState {
     pub fn withdrawn_mission_fleets(&self) -> Vec<EntityId> {
         self.mission_retreats.iter().copied().filter(|fid| {
             let mut survivors = self.combatants.iter().filter(|c| c.hp > 0.0 && c.origin.is_some_and(|o| o.0 == *fid));
-            survivors.clone().next().is_some() && survivors.all(|c| c.pos.length() >= WITHDRAW_EXIT_RADIUS)
+            survivors.clone().next().is_some() && survivors.all(|c| c.pos.length() >= self.exit_radius())
         }).collect()
     }
 
@@ -29,12 +30,12 @@ impl TacticalState {
         !self.mission_retreats.is_empty() && self.combatants.iter().any(|c| c.side == side && !c.platform)
             && self.combatants.iter().filter(|c| c.side == side && c.hp > 0.0).all(|c|
                 !c.platform && c.origin.is_some_and(|o| self.mission_retreats.contains(&o.0))
-                && c.pos.length() >= WITHDRAW_EXIT_RADIUS)
+                && c.pos.length() >= self.exit_radius())
     }
 }
 
 pub(super) fn update_retreats(state: &mut TacticalState) {
-    if !matches!(state.rules, Rules::V6 { .. }) { return; }
+    if !matches!(state.rules, Rules::V6 { .. } | Rules::V7 { .. } | Rules::V8 { .. } | Rules::V9 { .. } | Rules::V10 { .. } | Rules::V11 { .. } | Rules::V12 { .. } | Rules::V13 { .. } | Rules::V14 { .. } | Rules::V15 { .. } | Rules::V16 { .. }) { return; }
     for c in &state.combatants {
         if c.hp <= 0.0 || c.platform { continue; }
         if let Some((fleet, _)) = c.origin
@@ -65,7 +66,8 @@ pub(super) fn target_weight(state: &TacticalState, shooter: &Combatant, target: 
 pub(super) fn desired_point(state: &TacticalState, i: usize, seed: u64) -> Vec2 {
     let c = &state.combatants[i];
     if c.origin.is_some_and(|o| state.mission_retreats.contains(&o.0)) {
-        return state.bearing * if c.side == 0 { WITHDRAW_EXIT_RADIUS * 1.5 } else { -WITHDRAW_EXIT_RADIUS * 1.5 };
+        let exit = state.exit_radius() * 1.5;
+        return state.bearing * if c.side == 0 { exit } else { -exit };
     }
     if !state.withdrawing[c.side as usize] && c.kind.attack_weight() > 0.0
         && c.origin.and_then(|o| state.missions.get(&o.0)).is_some_and(|m| m.screening == ScreeningRole::ProtectTransports)
@@ -77,16 +79,19 @@ pub(super) fn desired_point(state: &TacticalState, i: usize, seed: u64) -> Vec2 
     v4::desired_point(state, i, seed)
 }
 
+#[allow(dead_code)] // archived rules remain executable for regression comparisons
 pub fn simulate_engagement(setup: &ProjSetup, seed: u64) -> SimOutcome {
     let Rules::V3 { maneuver_seed } = v3::rules(seed, PROJECTION_BATTLE_ID) else { unreachable!() };
     super::v1::simulate_engagement_with_rules(setup, seed, Rules::V6 { maneuver_seed })
 }
+#[allow(dead_code)]
 pub fn project_distribution(setup: &ProjSetup, seed: u64, k: u32) -> Distribution {
     super::v1::project_distribution_using(setup, seed, k, simulate_engagement)
 }
 
 /// Estimation receives only profiles in the observer's arrived picture. Unknown
 /// enemy instructions remain the baseline; never consult live fleet truth here.
+#[allow(dead_code)]
 pub fn project_distribution_with_missions(setup: &ProjSetup, seed: u64, k: u32,
     missions: &BTreeMap<EntityId, MissionProfile>) -> Distribution {
     super::v1::project_distribution_using(setup, seed, k, |s, seed| {
@@ -101,7 +106,7 @@ mod tests {
     use crate::{ShipKind as H, doctrine::DamageWithdrawal};
 
     fn scene() -> TacticalState {
-        TacticalState::open_current(99, 21,
+        TacticalState::open_v6(99, 21,
             &[(EntityId(1), Ship::new(0, H::Raider, Loadout::default())),
               (EntityId(2), Ship::new(0, H::Corvette, Loadout::default())),
               (EntityId(3), Ship::new(0, H::Convoy, Loadout::default()))],

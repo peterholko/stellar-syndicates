@@ -1,0 +1,24 @@
+{
+  "source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-760ff717-4ab3-41e4-b64d-1476703cc1e8.png",
+  "output": "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/surfaces/ocean-surface-v1-v2.png",
+  "prompt": "Use case: precise-object-edit. Asset: empty hostile ocean-world surface painting, exactly 1672 x 941.\n\nImage 1 is the EDIT TARGET and AUTHORITATIVE ISLAND PLACEMENT. Keep its entire broad, central midground island exactly where it is, at the same large size and shape. It must remain a huge smooth open island spanning the middle-lower band, around y=500–700, with ample flat empty interior for a full 17-building settlement. Keep its horizon, camera elevation, planetary arc and crop unchanged.\nImage 2 is ONLY the approved hostile ocean world's COLOR, LIGHTING AND MATERIAL reference. Use its rich deep-blue water, grey-brown bare rock, warm upper-left illumination, bright thin atmospheric edge and realistic cinematic style.\n\nChange Image 1's biome into Image 2's hostile ocean biome: remove EVERY bit of snow, frost, white ice, floating ice floes, sage vegetation, lichen and moss. The central island becomes completely barren grey-brown stone and gravel, with a broad smooth level center, no boulder fields, jagged spires, pits, ridges, cliffs or ponds across that center. The surrounding sea becomes the rich deep-blue water of Image 2, with subtle turquoise shallow shore water and natural small waves, no sea ice. Preserve the main island's exact large footprint and its position from Image 1, not the tiny islands of Image 2. Retain a few small distant rocky islets and the natural low rocky coastline. Use soft natural surface mottling, no regular manufactured panels.\nNo grass, trees, greenery, structures, roads, paths, plots, platforms, marks, buildings, vehicles, text or interface. Opaque full-frame painting. No camera change, no added objects in the sky.",
+  "originalPrompt": "Use case: precise-object-edit.\nEdit this planet-surface painting (Image 1, 1672 × 941). Keep the composition, camera, horizon, planetary curvature, lighting, colours, starfield and painterly style exactly, and output the same 1672 × 941 framing.\nWiden the open ground in the middle distance. In the band between about 55% and 80% of the image height, across the central two-thirds of the width, replace the small jagged islets with one or two broad, low, flat islands of bare grey-brown rock and gravel, smooth and level on top (no spires, pits or cliffs). Keep open deep-blue sea around them and a few small rocky islets elsewhere. This is a hostile world: no grass, trees or greenery. The result needs enough level, open ground for a settlement of about 17 buildings. Keep the large lakes, rivers, cliffs, coasts and forests elsewhere, so the world still reads as itself.\nNo buildings, roads, paths, fields, plots, ruins, vehicles, text or interface.\n",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/surfaces/marginal-ocean-surface-v1.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/surfaces/ocean-surface-v1.png"
+  ],
+  "processing": "painting",
+  "discardedDrafts": [
+    "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-45c25945-3459-4dc8-a0b5-247f563cf963.png",
+    "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-57ac3da6-6a9f-45cb-b92e-6a6032db02d9.png"
+  ],
+  "verification": {
+    "width": 1672,
+    "height": 941,
+    "channels": 3,
+    "hasAlpha": false,
+    "fileSHA256": "e347156285b0cd20073d2a76dd1b54eca71cd4098e8425c0fec0954d16c9c3c2"
+  },
+  "mode": "builtin-imagegen",
+  "created": "2026-10-09"
+}

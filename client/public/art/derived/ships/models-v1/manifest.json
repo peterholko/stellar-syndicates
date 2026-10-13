@@ -1,0 +1,895 @@
+{
+  "version": "models-v1",
+  "recipe": "lod2-ortho-pbr-visible-length-v1",
+  "sizes": [
+    128,
+    256,
+    512,
+    1024,
+    1254
+  ],
+  "ships": {
+    "raider": {
+      "source": "art-src/ship-models/game-ready-v1/raider-top.png",
+      "sourceSha256": "69d084bdae7534ceaa28241c2d2cacec31c38acc60d2fef5c83c4cecca7653a9",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/interceptor-lod2.glb",
+      "modelSha256": "7870f44e505c28c83d60fcb92b5caacfa89febd5b3bd18bbd1034447325dbb4b",
+      "triangles": 1664,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.77734375,
+      "calib": 0.870347377232143,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 16409,
+          "url": "/art/derived/ships/models-v1/raider-128.png?v=2b2f6e6ccc3b"
+        },
+        {
+          "size": 256,
+          "bytes": 54283,
+          "url": "/art/derived/ships/models-v1/raider-256.png?v=67804823fc1f"
+        },
+        {
+          "size": 512,
+          "bytes": 182718,
+          "url": "/art/derived/ships/models-v1/raider-512.png?v=4c36b4688cab"
+        },
+        {
+          "size": 1024,
+          "bytes": 630946,
+          "url": "/art/derived/ships/models-v1/raider-1024.png?v=b8760d28da9b"
+        },
+        {
+          "size": 1254,
+          "bytes": 755712,
+          "url": "/art/derived/ships/models-v1/raider-1254.png?v=69d084bdae75"
+        }
+      ]
+    },
+    "scout": {
+      "source": "art-src/ship-models/game-ready-v1/scout-top.png",
+      "sourceSha256": "13a5706528a4c99a16bfd45420faf295274e7a200fa0b46b9f38aef279a345c1",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/scout-lod2.glb",
+      "modelSha256": "387074756c2bc4aa5e507f761fd28b553874c5eb6e3fcdffbf37fc378d1a747f",
+      "triangles": 3330,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.83203125,
+      "calib": 0.9315778459821429,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8660,
+          "url": "/art/derived/ships/models-v1/scout-128.png?v=d5500f5481ba"
+        },
+        {
+          "size": 256,
+          "bytes": 29342,
+          "url": "/art/derived/ships/models-v1/scout-256.png?v=3d77a64e27d9"
+        },
+        {
+          "size": 512,
+          "bytes": 100818,
+          "url": "/art/derived/ships/models-v1/scout-512.png?v=81e66d8976ba"
+        },
+        {
+          "size": 1024,
+          "bytes": 351140,
+          "url": "/art/derived/ships/models-v1/scout-1024.png?v=87bb7282e239"
+        },
+        {
+          "size": 1254,
+          "bytes": 391674,
+          "url": "/art/derived/ships/models-v1/scout-1254.png?v=13a5706528a4"
+        }
+      ]
+    },
+    "corvette": {
+      "source": "art-src/ship-models/game-ready-v1/corvette-top.png",
+      "sourceSha256": "fde7b6cf65ace493ac63ff72ee6d2f0955e228d595ce2baaec0a06ea1cb3119f",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/corvette-lod2.glb",
+      "modelSha256": "50643f38d71e6f21aa71e4540d623cf61da991d00ad63f7e27cc08ee8cc6362a",
+      "triangles": 7020,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.77734375,
+      "calib": 0.870347377232143,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 18339,
+          "url": "/art/derived/ships/models-v1/corvette-128.png?v=e7e97e3b617d"
+        },
+        {
+          "size": 256,
+          "bytes": 62736,
+          "url": "/art/derived/ships/models-v1/corvette-256.png?v=cdd0f67844ad"
+        },
+        {
+          "size": 512,
+          "bytes": 216988,
+          "url": "/art/derived/ships/models-v1/corvette-512.png?v=3a2a74408bc5"
+        },
+        {
+          "size": 1024,
+          "bytes": 754254,
+          "url": "/art/derived/ships/models-v1/corvette-1024.png?v=e6634f3ef695"
+        },
+        {
+          "size": 1254,
+          "bytes": 893389,
+          "url": "/art/derived/ships/models-v1/corvette-1254.png?v=fde7b6cf65ac"
+        }
+      ]
+    },
+    "colony": {
+      "source": "art-src/ship-models/game-ready-v1/colony-top.png",
+      "sourceSha256": "b5ab6d931cb7da0bb33f66aa808a7cd549330dee2a4b74c9dbacab8f86fc26d9",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/colony-ship-lod2.glb",
+      "modelSha256": "0b7fa06b173a9ce4455a6f01f0a2e5b96da4cd6ea81fdf020f5d0fa446d4bcaf",
+      "triangles": 6186,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.875,
+      "calib": 0.9796875,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 18483,
+          "url": "/art/derived/ships/models-v1/colony-128.png?v=8895b9d1b219"
+        },
+        {
+          "size": 256,
+          "bytes": 64899,
+          "url": "/art/derived/ships/models-v1/colony-256.png?v=4d7f0c26b6ef"
+        },
+        {
+          "size": 512,
+          "bytes": 230941,
+          "url": "/art/derived/ships/models-v1/colony-512.png?v=bb5f38bf6cdb"
+        },
+        {
+          "size": 1024,
+          "bytes": 836037,
+          "url": "/art/derived/ships/models-v1/colony-1024.png?v=f1e911e21c25"
+        },
+        {
+          "size": 1254,
+          "bytes": 1010516,
+          "url": "/art/derived/ships/models-v1/colony-1254.png?v=b5ab6d931cb7"
+        }
+      ]
+    },
+    "builder": {
+      "source": "art-src/ship-models/game-ready-v1/builder-top.png",
+      "sourceSha256": "e7ad2cb05d233716f0e197caaa5322c6e887e3986e99a73f9b72dc2c3f4452d7",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/construction-ship-lod2.glb",
+      "modelSha256": "f6fe90749531f4418d73f18cf7efc418d5662ff9d07f48c8bae19800ebcbbbfe",
+      "triangles": 4688,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.875,
+      "calib": 0.9796875,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 16255,
+          "url": "/art/derived/ships/models-v1/builder-128.png?v=c2d2c8252ec0"
+        },
+        {
+          "size": 256,
+          "bytes": 54200,
+          "url": "/art/derived/ships/models-v1/builder-256.png?v=205d36c94d5c"
+        },
+        {
+          "size": 512,
+          "bytes": 188666,
+          "url": "/art/derived/ships/models-v1/builder-512.png?v=4f420d432ae8"
+        },
+        {
+          "size": 1024,
+          "bytes": 675980,
+          "url": "/art/derived/ships/models-v1/builder-1024.png?v=792d81e9838f"
+        },
+        {
+          "size": 1254,
+          "bytes": 802314,
+          "url": "/art/derived/ships/models-v1/builder-1254.png?v=e7ad2cb05d23"
+        }
+      ]
+    },
+    "transport": {
+      "source": "art-src/ship-models/game-ready-v1/transport-top.png",
+      "sourceSha256": "29d60f67bea7fe1a5d1476479c685e76d384ca69dff88d33fd835bd9ee1929d3",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/troop-transport-lod2.glb",
+      "modelSha256": "322574af0c2dbc4fdefd7bf3f02a663562ad9e8ed41633537d5780fdebec6a89",
+      "triangles": 6378,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.8203125,
+      "calib": 0.91845703125,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 20475,
+          "url": "/art/derived/ships/models-v1/transport-128.png?v=03fd438fbcbb"
+        },
+        {
+          "size": 256,
+          "bytes": 69931,
+          "url": "/art/derived/ships/models-v1/transport-256.png?v=7ebf45933789"
+        },
+        {
+          "size": 512,
+          "bytes": 239707,
+          "url": "/art/derived/ships/models-v1/transport-512.png?v=328ab528397f"
+        },
+        {
+          "size": 1024,
+          "bytes": 823574,
+          "url": "/art/derived/ships/models-v1/transport-1024.png?v=2642f56c451b"
+        },
+        {
+          "size": 1254,
+          "bytes": 957389,
+          "url": "/art/derived/ships/models-v1/transport-1254.png?v=29d60f67bea7"
+        }
+      ]
+    },
+    "destroyer": {
+      "source": "art-src/ship-models/game-ready-v1/destroyer-top.png",
+      "sourceSha256": "3d1db5e9e3d98834c3386aaa4e9641056cd9f3e15232330e9b79b91e355dacc7",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/destroyer-lod2.glb",
+      "modelSha256": "54d85abce51663b2d86e1ab4be581a7ccb82e4b9c2cff6870e3bb0f87e3bfb0c",
+      "triangles": 4780,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.77734375,
+      "calib": 0.870347377232143,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 11975,
+          "url": "/art/derived/ships/models-v1/destroyer-128.png?v=ac6c8533ba84"
+        },
+        {
+          "size": 256,
+          "bytes": 41821,
+          "url": "/art/derived/ships/models-v1/destroyer-256.png?v=4234ff6ab34b"
+        },
+        {
+          "size": 512,
+          "bytes": 149946,
+          "url": "/art/derived/ships/models-v1/destroyer-512.png?v=b5f30e7a8936"
+        },
+        {
+          "size": 1024,
+          "bytes": 540877,
+          "url": "/art/derived/ships/models-v1/destroyer-1024.png?v=207cd24a8535"
+        },
+        {
+          "size": 1254,
+          "bytes": 640657,
+          "url": "/art/derived/ships/models-v1/destroyer-1254.png?v=3d1db5e9e3d9"
+        }
+      ]
+    },
+    "cruiser": {
+      "source": "art-src/ship-models/game-ready-v1/cruiser-top.png",
+      "sourceSha256": "5475c698a9087de6dd93170590a2f5baf5ee29fcae3998da91a36be472783ab7",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/cruiser-lod2.glb",
+      "modelSha256": "af03c35126bdd92501889e77c738d5c18123dfaf8a7b0817b2b808de2e308e38",
+      "triangles": 5374,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.77734375,
+      "calib": 0.870347377232143,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 16163,
+          "url": "/art/derived/ships/models-v1/cruiser-128.png?v=2572742710fc"
+        },
+        {
+          "size": 256,
+          "bytes": 57263,
+          "url": "/art/derived/ships/models-v1/cruiser-256.png?v=67548bdd91bd"
+        },
+        {
+          "size": 512,
+          "bytes": 205724,
+          "url": "/art/derived/ships/models-v1/cruiser-512.png?v=5daf07173983"
+        },
+        {
+          "size": 1024,
+          "bytes": 741503,
+          "url": "/art/derived/ships/models-v1/cruiser-1024.png?v=00610530f9a2"
+        },
+        {
+          "size": 1254,
+          "bytes": 857120,
+          "url": "/art/derived/ships/models-v1/cruiser-1254.png?v=5475c698a908"
+        }
+      ]
+    },
+    "battleship": {
+      "source": "art-src/ship-models/game-ready-v1/battleship-top.png",
+      "sourceSha256": "71c19a9ac8046b77bb6c9012350158da3079cd0d76486c6acc5182bd283a55c8",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/battleship-lod2.glb",
+      "modelSha256": "c810b3d3d942c1c8da8b02846dcd77a7786a8c55bf1444cf7f8b531de7ddc7e7",
+      "triangles": 11270,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.77734375,
+      "calib": 0.870347377232143,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 18458,
+          "url": "/art/derived/ships/models-v1/battleship-128.png?v=a0d46d48d195"
+        },
+        {
+          "size": 256,
+          "bytes": 64484,
+          "url": "/art/derived/ships/models-v1/battleship-256.png?v=256415343580"
+        },
+        {
+          "size": 512,
+          "bytes": 231268,
+          "url": "/art/derived/ships/models-v1/battleship-512.png?v=52248088c8c5"
+        },
+        {
+          "size": 1024,
+          "bytes": 834031,
+          "url": "/art/derived/ships/models-v1/battleship-1024.png?v=0d19e363000f"
+        },
+        {
+          "size": 1254,
+          "bytes": 999815,
+          "url": "/art/derived/ships/models-v1/battleship-1254.png?v=71c19a9ac804"
+        }
+      ]
+    },
+    "dreadnought": {
+      "source": "art-src/ship-models/game-ready-v1/dreadnought-top.png",
+      "sourceSha256": "bddda9b64c2aa59d031f9ac9945e7270f24fbae3c432394aff42707e3e9bdd9c",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/dreadnought-lod2.glb",
+      "modelSha256": "62aef8f980c95de619d170edb14e3506f377608a7d8542162f509ee1381473f5",
+      "triangles": 16036,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.77734375,
+      "calib": 0.870347377232143,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 22658,
+          "url": "/art/derived/ships/models-v1/dreadnought-128.png?v=a0ec93fb6cc3"
+        },
+        {
+          "size": 256,
+          "bytes": 78567,
+          "url": "/art/derived/ships/models-v1/dreadnought-256.png?v=ddfc2330491d"
+        },
+        {
+          "size": 512,
+          "bytes": 280015,
+          "url": "/art/derived/ships/models-v1/dreadnought-512.png?v=7b8a4502eabe"
+        },
+        {
+          "size": 1024,
+          "bytes": 1003936,
+          "url": "/art/derived/ships/models-v1/dreadnought-1024.png?v=1d6c250fc85c"
+        },
+        {
+          "size": 1254,
+          "bytes": 1157864,
+          "url": "/art/derived/ships/models-v1/dreadnought-1254.png?v=bddda9b64c2a"
+        }
+      ]
+    },
+    "titan": {
+      "source": "art-src/ship-models/game-ready-v1/titan-top.png",
+      "sourceSha256": "1daadb0d68cc80865900c5cae8611db3d9e56097b16495da3e8a2d59f4708d74",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/titan-lod2.glb",
+      "modelSha256": "2d189d512ce6d9b98b6b71515d2a812aac3daa066ecdb2c1de52caf5d350e8d7",
+      "triangles": 7946,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.77734375,
+      "calib": 0.870347377232143,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 16958,
+          "url": "/art/derived/ships/models-v1/titan-128.png?v=009e69a5ede3"
+        },
+        {
+          "size": 256,
+          "bytes": 59827,
+          "url": "/art/derived/ships/models-v1/titan-256.png?v=053a44b211b7"
+        },
+        {
+          "size": 512,
+          "bytes": 220717,
+          "url": "/art/derived/ships/models-v1/titan-512.png?v=2dd03429814f"
+        },
+        {
+          "size": 1024,
+          "bytes": 815513,
+          "url": "/art/derived/ships/models-v1/titan-1024.png?v=1a5067712335"
+        },
+        {
+          "size": 1254,
+          "bytes": 1008001,
+          "url": "/art/derived/ships/models-v1/titan-1254.png?v=1daadb0d68cc"
+        }
+      ]
+    },
+    "freighter": {
+      "source": "art-src/ship-models/game-ready-v1/freighter-top.png",
+      "sourceSha256": "043cf56f52b3e7c6f6736e88f3372a6c9cf968988080b8822ac5015305f11c39",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/authority-freighter-lod2.glb",
+      "modelSha256": "9a4038f31e548579ca7ad8d1753d0e604da921659852816b8db97d24187468e5",
+      "triangles": 11368,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.82421875,
+      "calib": 0.9228306361607144,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 24221,
+          "url": "/art/derived/ships/models-v1/freighter-128.png?v=62b2f6d26804"
+        },
+        {
+          "size": 256,
+          "bytes": 84981,
+          "url": "/art/derived/ships/models-v1/freighter-256.png?v=2b7b6d35fea0"
+        },
+        {
+          "size": 512,
+          "bytes": 305545,
+          "url": "/art/derived/ships/models-v1/freighter-512.png?v=dc3886d1c1dd"
+        },
+        {
+          "size": 1024,
+          "bytes": 1092626,
+          "url": "/art/derived/ships/models-v1/freighter-1024.png?v=8651a860ba8e"
+        },
+        {
+          "size": 1254,
+          "bytes": 1358714,
+          "url": "/art/derived/ships/models-v1/freighter-1254.png?v=043cf56f52b3"
+        }
+      ]
+    },
+    "mining_barge": {
+      "source": "art-src/ship-models/game-ready-v1/mining_barge-top.png",
+      "sourceSha256": "13788967e6c60a6326c4c0d21c73cc09f5b968a77a9f59875b4dfbc5f7f4aea3",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/mining-barge-lod2.glb",
+      "modelSha256": "60db092d5a953a4fdb15949f56b7eee845da4e30c344ec3fc2d6a4659147b54b",
+      "triangles": 4970,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.8515625,
+      "calib": 0.9534458705357143,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 24861,
+          "url": "/art/derived/ships/models-v1/mining_barge-128.png?v=49eb278cb069"
+        },
+        {
+          "size": 256,
+          "bytes": 88008,
+          "url": "/art/derived/ships/models-v1/mining_barge-256.png?v=c3209154063f"
+        },
+        {
+          "size": 512,
+          "bytes": 317889,
+          "url": "/art/derived/ships/models-v1/mining_barge-512.png?v=5d95b566ae3a"
+        },
+        {
+          "size": 1024,
+          "bytes": 1158521,
+          "url": "/art/derived/ships/models-v1/mining_barge-1024.png?v=3e453d8f0540"
+        },
+        {
+          "size": 1254,
+          "bytes": 1413832,
+          "url": "/art/derived/ships/models-v1/mining_barge-1254.png?v=13788967e6c6"
+        }
+      ]
+    },
+    "mining_belt_station": {
+      "source": "art-src/ship-models/game-ready-v1/mining_belt_station-top.png",
+      "sourceSha256": "9e825fd1bd4f15c9b069bb8e86c2918ad94c51e66916813ee371e693a9930daf",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/mining-belt-station-lod2.glb",
+      "modelSha256": "5b0ff427be5116c768d12d9a8a13ead14413f9dcdf20969481fc9bb765c3d9ab",
+      "triangles": 8420,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.875,
+      "calib": 0.9796875,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 19468,
+          "url": "/art/derived/ships/models-v1/mining_belt_station-128.png?v=7ccf75d48b01"
+        },
+        {
+          "size": 256,
+          "bytes": 65790,
+          "url": "/art/derived/ships/models-v1/mining_belt_station-256.png?v=df24f4ea920a"
+        },
+        {
+          "size": 512,
+          "bytes": 226866,
+          "url": "/art/derived/ships/models-v1/mining_belt_station-512.png?v=1d2fdda0f648"
+        },
+        {
+          "size": 1024,
+          "bytes": 802641,
+          "url": "/art/derived/ships/models-v1/mining_belt_station-1024.png?v=f23c81b155f6"
+        },
+        {
+          "size": 1254,
+          "bytes": 1020987,
+          "url": "/art/derived/ships/models-v1/mining_belt_station-1254.png?v=9e825fd1bd4f"
+        }
+      ]
+    },
+    "tiny_freighter": {
+      "source": "art-src/ship-models/game-ready-v1/tiny_freighter-top.png",
+      "sourceSha256": "74201aeb544f561b6d6372bf53b65e6f20330cf7d4e17201ebf64bfd1dde7e46",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/tiny-freighter-lod2.glb",
+      "modelSha256": "167b0775b5c3da34aa6eaea5cf071f4d83e70d56323251cb0af0f1b139d1821e",
+      "triangles": 3624,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.8515625,
+      "calib": 0.9534458705357143,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 15272,
+          "url": "/art/derived/ships/models-v1/tiny_freighter-128.png?v=1bbcfcccc98c"
+        },
+        {
+          "size": 256,
+          "bytes": 51646,
+          "url": "/art/derived/ships/models-v1/tiny_freighter-256.png?v=4447ca002114"
+        },
+        {
+          "size": 512,
+          "bytes": 174763,
+          "url": "/art/derived/ships/models-v1/tiny_freighter-512.png?v=5493e7c85c34"
+        },
+        {
+          "size": 1024,
+          "bytes": 598472,
+          "url": "/art/derived/ships/models-v1/tiny_freighter-1024.png?v=6dfd73504978"
+        },
+        {
+          "size": 1254,
+          "bytes": 746169,
+          "url": "/art/derived/ships/models-v1/tiny_freighter-1254.png?v=74201aeb544f"
+        }
+      ]
+    },
+    "small_freighter": {
+      "source": "art-src/ship-models/game-ready-v1/small_freighter-top.png",
+      "sourceSha256": "baec9a68b46261deafbd0f93dde878ee7204d3729bb5b4a8d096768086e0e9c1",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/small-freighter-lod2.glb",
+      "modelSha256": "21c051ba926e8daca3b68b9e1f1b11aa74c868dd3e980f11d21ad928a2609d25",
+      "triangles": 5506,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.8515625,
+      "calib": 0.9534458705357143,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 17495,
+          "url": "/art/derived/ships/models-v1/small_freighter-128.png?v=01448a51f9a9"
+        },
+        {
+          "size": 256,
+          "bytes": 56955,
+          "url": "/art/derived/ships/models-v1/small_freighter-256.png?v=8521cc9fdaf3"
+        },
+        {
+          "size": 512,
+          "bytes": 192774,
+          "url": "/art/derived/ships/models-v1/small_freighter-512.png?v=1f625343a484"
+        },
+        {
+          "size": 1024,
+          "bytes": 657156,
+          "url": "/art/derived/ships/models-v1/small_freighter-1024.png?v=ea454cdb591f"
+        },
+        {
+          "size": 1254,
+          "bytes": 777276,
+          "url": "/art/derived/ships/models-v1/small_freighter-1254.png?v=baec9a68b462"
+        }
+      ]
+    },
+    "convoy": {
+      "source": "art-src/ship-models/game-ready-v1/convoy-top.png",
+      "sourceSha256": "f9443dc1e83b0560fed6301625ebe7ec08860e05848c185f1e5a2079e2ea8c01",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/medium-freighter-lod2.glb",
+      "modelSha256": "1e8f612e3a95282769baa78c452100ff63b174c38dbfc1cb29e7b8a95be78c72",
+      "triangles": 8234,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.8515625,
+      "calib": 0.9534458705357143,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 17738,
+          "url": "/art/derived/ships/models-v1/convoy-128.png?v=07df7fc817bc"
+        },
+        {
+          "size": 256,
+          "bytes": 60392,
+          "url": "/art/derived/ships/models-v1/convoy-256.png?v=e2090d36f6fc"
+        },
+        {
+          "size": 512,
+          "bytes": 202194,
+          "url": "/art/derived/ships/models-v1/convoy-512.png?v=b3dbaa83a2e8"
+        },
+        {
+          "size": 1024,
+          "bytes": 685604,
+          "url": "/art/derived/ships/models-v1/convoy-1024.png?v=6ebb43713804"
+        },
+        {
+          "size": 1254,
+          "bytes": 829931,
+          "url": "/art/derived/ships/models-v1/convoy-1254.png?v=f9443dc1e83b"
+        }
+      ]
+    },
+    "large_freighter": {
+      "source": "art-src/ship-models/game-ready-v1/large_freighter-top.png",
+      "sourceSha256": "b55e59bf4b56393e3985c3a4cbeace91c546e167e56f385c90eb502e364e9530",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/large-freighter-lod2.glb",
+      "modelSha256": "5c5cb24f1da6938edcde756cc5f0332a8e5f6bbc4c9e26870ef2ac1a77d30adf",
+      "triangles": 7984,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.8515625,
+      "calib": 0.9534458705357143,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 18441,
+          "url": "/art/derived/ships/models-v1/large_freighter-128.png?v=4f180dd8b282"
+        },
+        {
+          "size": 256,
+          "bytes": 62379,
+          "url": "/art/derived/ships/models-v1/large_freighter-256.png?v=e2e4fab7af92"
+        },
+        {
+          "size": 512,
+          "bytes": 214227,
+          "url": "/art/derived/ships/models-v1/large_freighter-512.png?v=e09a7a42152f"
+        },
+        {
+          "size": 1024,
+          "bytes": 745400,
+          "url": "/art/derived/ships/models-v1/large_freighter-1024.png?v=1ec0ea23da11"
+        },
+        {
+          "size": 1254,
+          "bytes": 925265,
+          "url": "/art/derived/ships/models-v1/large_freighter-1254.png?v=b55e59bf4b56"
+        }
+      ]
+    },
+    "heavy_freighter": {
+      "source": "art-src/ship-models/game-ready-v1/heavy_freighter-top.png",
+      "sourceSha256": "b9b0f533046c5efb3fe7176b2dc2c208e3fe0971906f1d6e7d6520f59fc0090f",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/heavy-freighter-lod2.glb",
+      "modelSha256": "7c86106824b26414aeb51018d45a73fc1d08eee7cac1c4caf10fb03091a65bab",
+      "triangles": 9192,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.8515625,
+      "calib": 0.9534458705357143,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 17797,
+          "url": "/art/derived/ships/models-v1/heavy_freighter-128.png?v=9b425fac5dbd"
+        },
+        {
+          "size": 256,
+          "bytes": 61874,
+          "url": "/art/derived/ships/models-v1/heavy_freighter-256.png?v=8477ce1df47a"
+        },
+        {
+          "size": 512,
+          "bytes": 217682,
+          "url": "/art/derived/ships/models-v1/heavy_freighter-512.png?v=cec5f63ea531"
+        },
+        {
+          "size": 1024,
+          "bytes": 774335,
+          "url": "/art/derived/ships/models-v1/heavy_freighter-1024.png?v=f45e5f3ed647"
+        },
+        {
+          "size": 1254,
+          "bytes": 951726,
+          "url": "/art/derived/ships/models-v1/heavy_freighter-1254.png?v=b9b0f533046c"
+        }
+      ]
+    },
+    "bulk_freighter": {
+      "source": "art-src/ship-models/game-ready-v1/bulk_freighter-top.png",
+      "sourceSha256": "f5cfa3902e5a5a672339fdc97fde679894ecfe22f298b5af8cee5409c5913b56",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/bulk-freighter-lod2.glb",
+      "modelSha256": "5f9ac9343518ed2eed3fbc39fb2bfebbac8d45c4e282fd1528d6ce1c0e0093ab",
+      "triangles": 21442,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.8515625,
+      "calib": 0.9534458705357143,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 18694,
+          "url": "/art/derived/ships/models-v1/bulk_freighter-128.png?v=013ede4a74d7"
+        },
+        {
+          "size": 256,
+          "bytes": 61304,
+          "url": "/art/derived/ships/models-v1/bulk_freighter-256.png?v=f123d8bb9dfb"
+        },
+        {
+          "size": 512,
+          "bytes": 203250,
+          "url": "/art/derived/ships/models-v1/bulk_freighter-512.png?v=7f46e029a2ca"
+        },
+        {
+          "size": 1024,
+          "bytes": 675751,
+          "url": "/art/derived/ships/models-v1/bulk_freighter-1024.png?v=ba006cbb1f7a"
+        },
+        {
+          "size": 1254,
+          "bytes": 817423,
+          "url": "/art/derived/ships/models-v1/bulk_freighter-1254.png?v=f5cfa3902e5a"
+        }
+      ]
+    }
+  },
+  "formations": {
+    "raider_wing": {
+      "sourceSha256": "69d084bdae7534ceaa28241c2d2cacec31c38acc60d2fef5c83c4cecca7653a9",
+      "bytes": 205146,
+      "url": "/art/derived/ships/models-v1/fleet_raider_wing.png?v=22e2a3284242"
+    },
+    "raider_squadron": {
+      "sourceSha256": "69d084bdae7534ceaa28241c2d2cacec31c38acc60d2fef5c83c4cecca7653a9",
+      "bytes": 226029,
+      "url": "/art/derived/ships/models-v1/fleet_raider_squadron.png?v=957e08e9fa65"
+    },
+    "raider_armada": {
+      "sourceSha256": "69d084bdae7534ceaa28241c2d2cacec31c38acc60d2fef5c83c4cecca7653a9",
+      "bytes": 241920,
+      "url": "/art/derived/ships/models-v1/fleet_raider_armada.png?v=c6593d2dbdb2"
+    },
+    "scout_wing": {
+      "sourceSha256": "13a5706528a4c99a16bfd45420faf295274e7a200fa0b46b9f38aef279a345c1",
+      "bytes": 112610,
+      "url": "/art/derived/ships/models-v1/fleet_scout_wing.png?v=c4852422740f"
+    },
+    "scout_squadron": {
+      "sourceSha256": "13a5706528a4c99a16bfd45420faf295274e7a200fa0b46b9f38aef279a345c1",
+      "bytes": 123171,
+      "url": "/art/derived/ships/models-v1/fleet_scout_squadron.png?v=d760cadeda96"
+    },
+    "scout_armada": {
+      "sourceSha256": "13a5706528a4c99a16bfd45420faf295274e7a200fa0b46b9f38aef279a345c1",
+      "bytes": 133447,
+      "url": "/art/derived/ships/models-v1/fleet_scout_armada.png?v=e3351023eac6"
+    },
+    "corvette_wing": {
+      "sourceSha256": "fde7b6cf65ace493ac63ff72ee6d2f0955e228d595ce2baaec0a06ea1cb3119f",
+      "bytes": 241417,
+      "url": "/art/derived/ships/models-v1/fleet_corvette_wing.png?v=61833d7981ab"
+    },
+    "corvette_squadron": {
+      "sourceSha256": "fde7b6cf65ace493ac63ff72ee6d2f0955e228d595ce2baaec0a06ea1cb3119f",
+      "bytes": 261644,
+      "url": "/art/derived/ships/models-v1/fleet_corvette_squadron.png?v=5785a664bb08"
+    },
+    "corvette_armada": {
+      "sourceSha256": "fde7b6cf65ace493ac63ff72ee6d2f0955e228d595ce2baaec0a06ea1cb3119f",
+      "bytes": 282475,
+      "url": "/art/derived/ships/models-v1/fleet_corvette_armada.png?v=b1031b17a181"
+    },
+    "freighter_wing": {
+      "sourceSha256": "f9443dc1e83b0560fed6301625ebe7ec08860e05848c185f1e5a2079e2ea8c01",
+      "bytes": 226677,
+      "url": "/art/derived/ships/models-v1/fleet_freighter_wing.png?v=ca3d72f146ae"
+    },
+    "freighter_squadron": {
+      "sourceSha256": "f9443dc1e83b0560fed6301625ebe7ec08860e05848c185f1e5a2079e2ea8c01",
+      "bytes": 248375,
+      "url": "/art/derived/ships/models-v1/fleet_freighter_squadron.png?v=2d6170ad13e8"
+    },
+    "freighter_armada": {
+      "sourceSha256": "f9443dc1e83b0560fed6301625ebe7ec08860e05848c185f1e5a2079e2ea8c01",
+      "bytes": 270173,
+      "url": "/art/derived/ships/models-v1/fleet_freighter_armada.png?v=28774a1cfd75"
+    }
+  }
+}

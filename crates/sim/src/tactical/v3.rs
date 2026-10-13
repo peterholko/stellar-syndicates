@@ -102,10 +102,10 @@ pub(super) fn desired_point(state: &TacticalState, i: usize, seed: u64) -> Vec2 
     } else {
         state.bearing
     };
-    let (s, co) = pass.lead.sin_cos();
+    let (s, co) = state.math().sin_cos(pass.lead);
     let ahead = Vec2::new(dir.x * co - dir.y * s, dir.x * s + dir.y * co);
     let ring = state.preferred_band(c).min(GUN_STANDOFF) * 0.95 * pass.radius;
-    v1::inside_ring_point(near, ahead, ring, if pass.lead >= 0.0 { 1.0 } else { -1.0 })
+    v1::inside_ring_point(near, ahead, ring, if pass.lead >= 0.0 { 1.0 } else { -1.0 }, state.math())
 }
 
 #[cfg(test)]
@@ -318,8 +318,10 @@ mod tests {
             project_distribution(&setup, 55, 1).median,
             simulate_engagement(&setup, 55)
         );
+        // v4–v6 kept these maneuvers verbatim (v7 changes weapon reach, so
+        // its own tests cover it).
         assert_eq!(
-            crate::tactical::simulate_engagement(&setup, 55),
+            super::super::v6::simulate_engagement(&setup, 55),
             simulate_engagement(&setup, 55)
         );
         let a = duel(1);

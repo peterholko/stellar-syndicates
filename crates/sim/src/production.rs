@@ -37,7 +37,8 @@ pub fn tier_throughput(tier: u32) -> f64 {
 pub fn extraction_structure(c: Commodity) -> Option<StructureKind> {
     match c {
         Commodity::Biomass => Some(StructureKind::Bioharvester),
-        Commodity::Volatiles => Some(StructureKind::VolatileHarvester),
+        // §pockets: Helium-3 ice is harvested with the Volatiles around it.
+        Commodity::Volatiles | Commodity::Helium3Ice => Some(StructureKind::VolatileHarvester),
         c if c.is_mineable_mineral() => {
             Some(StructureKind::MiningComplex)
         }
@@ -60,13 +61,17 @@ pub const EXTRACTION_FOOD_FLOOR: f64 = 0.5;
 #[serde(default)]
 pub struct ProductionMods {
     pub extraction: f64,
+    /// Strip Rigs: extraction on moons and asteroid belts.
+    pub extraction_moons: f64,
     pub processing: f64,
     pub ore_recovery: f64,
+    /// Structure-time research is emitted with the same delayed site report.
+    pub structure_build_time: f64,
 }
 
 impl Default for ProductionMods {
     fn default() -> Self {
-        Self { extraction: 1.0, processing: 1.0, ore_recovery: 1.0 }
+        Self { extraction: 1.0, extraction_moons: 1.0, processing: 1.0, ore_recovery: 1.0, structure_build_time: 1.0 }
     }
 }
 
@@ -103,6 +108,10 @@ impl Converter {
             // to turn a silicate smelter into a rare-elements faucet (§ore-ladder).
             Commodity::CrystallineOre => &[(Commodity::RareElements, 0.05)],
             Commodity::RareMetalOre => &[(Commodity::ConductiveMetals, 0.7)],
+            // §belt-ores: the mixed ores pay out in a second good.
+            Commodity::OlivineOre => &[(Commodity::Alloys, 0.5)],
+            Commodity::BorniteOre => &[(Commodity::RareElements, 0.08)],
+            Commodity::IlmeniteOre => &[(Commodity::Titanium, 0.25)],
             _ => &[],
         }
     }
@@ -113,7 +122,8 @@ impl Converter {
 }
 
 /// Standing Smelter recipes. Choose one per body, not one per cargo shipment.
-/// All use the ordinary workforce, fuel, research and planetary yield rules.
+/// All use the ordinary workforce, power, research and planetary yield rules.
+/// §fuel-overhaul: no recipe burns fuel; the Smelter draws double power instead.
 /// Base-price margins are opportunities, not guarantees after market flow and freight.
 ///
 /// §ore-density: the ORE draw per batch is each ore's DENSITY. A bulk ore
@@ -126,16 +136,36 @@ impl Converter {
 /// — EVE's shape: Veldspar to Arkonor is hundreds of times per unit and a
 /// handful of times per cubic metre. The accrual cap guard bounds the units a
 /// dense batch nets into storage.
-pub const ORE_REFINING: [Converter; 5] = [
+pub const ORE_REFINING: [Converter; 11] = [
     CONVERTERS[0],
     Converter { structure: StructureKind::Smelter, output: Commodity::ConductiveMetals,
-        rate: 0.75, inputs: &[(Commodity::CupriteOre, 1.0), (Commodity::Fuel, 0.2)] },
+        rate: 0.75, inputs: &[(Commodity::CupriteOre, 1.0)] },
     Converter { structure: StructureKind::Smelter, output: Commodity::Titanium,
-        rate: 0.5, inputs: &[(Commodity::TitaniumOre, 0.4), (Commodity::Fuel, 0.3)] },
+        rate: 0.5, inputs: &[(Commodity::TitaniumOre, 0.4)] },
     Converter { structure: StructureKind::Smelter, output: Commodity::Silicates,
-        rate: 1.0, inputs: &[(Commodity::CrystallineOre, 1.5), (Commodity::Fuel, 0.1)] },
+        rate: 1.0, inputs: &[(Commodity::CrystallineOre, 1.5)] },
     Converter { structure: StructureKind::Smelter, output: Commodity::RareElements,
-        rate: 0.4, inputs: &[(Commodity::RareMetalOre, 0.05), (Commodity::Fuel, 0.35)] },
+        rate: 0.4, inputs: &[(Commodity::RareMetalOre, 0.05)] },
+    // §belt-ores. Olivine: Silicates with half an Alloy per batch.
+    Converter { structure: StructureKind::Smelter, output: Commodity::Silicates,
+        rate: 1.0, inputs: &[(Commodity::OlivineOre, 1.5)] },
+    // Bornite: Conductive Metals with a Rare Elements trace — two of the three
+    // Electronics inputs from one ore.
+    Converter { structure: StructureKind::Smelter, output: Commodity::ConductiveMetals,
+        rate: 0.75, inputs: &[(Commodity::BorniteOre, 1.25)] },
+    // Ilmenite: iron-titanium ore. Alloys first, with a quarter of Titanium —
+    // Titanium nearer the core than Titanium ore, at half the Smelter rate.
+    Converter { structure: StructureKind::Smelter, output: Commodity::Alloys,
+        rate: 1.0, inputs: &[(Commodity::IlmeniteOre, 1.5)] },
+    // §pockets: the rare pocket ores, each into its own top-end material.
+    // Rarer is denser: five Helium-3 a unit of ice, ten Iridium a unit of ore,
+    // twenty Exotic Matter a Void crystal.
+    Converter { structure: StructureKind::Smelter, output: Commodity::Helium3,
+        rate: 0.5, inputs: &[(Commodity::Helium3Ice, 0.2)] },
+    Converter { structure: StructureKind::Smelter, output: Commodity::Iridium,
+        rate: 0.4, inputs: &[(Commodity::IridiumOre, 0.1)] },
+    Converter { structure: StructureKind::Smelter, output: Commodity::ExoticMatter,
+        rate: 0.3, inputs: &[(Commodity::VoidCrystal, 0.05)] },
 ];
 
 /// Ore units a BULK refining batch draws — the density every other ore is
@@ -166,8 +196,29 @@ pub fn assigned_converter(kind: StructureKind, assignment: Option<&Assignment>) 
         let ore = assignment.and_then(|a| a.refining_ore).unwrap_or(Commodity::MetallicOre);
         return ORE_REFINING.iter().find(|r| r.inputs[0].0 == ore);
     }
+    // §fuel-overhaul: a Drive Works line makes Warp Cores unless set to Fusion
+    // Cores (the same per-line recipe field as the Smelter's ore).
+    if kind == StructureKind::DriveWorks
+        && assignment.and_then(|a| a.refining_ore) == Some(Commodity::FusionCore)
+    {
+        return Some(&FUSION_CORE_CONVERTER);
+    }
     converter_for(kind)
 }
+
+/// §fuel-overhaul: what a Drive Works line may make.
+pub fn is_drive_works_product(c: Commodity) -> bool {
+    matches!(c, Commodity::WarpCore | Commodity::FusionCore)
+}
+
+/// §fuel-overhaul: the Drive Works' second recipe — a Fusion Plant's core,
+/// slower than a Warp Core; the basket clears by about a fifth.
+pub const FUSION_CORE_CONVERTER: Converter = Converter {
+    structure: StructureKind::DriveWorks,
+    output: Commodity::FusionCore,
+    rate: 0.08,
+    inputs: &[(Commodity::PrecisionComponents, 2.0), (Commodity::Composites, 0.6), (Commodity::Iridium, 0.4)],
+};
 
 /// One default conversion per industrial structure. Smelters may instead run
 /// exactly one of ORE_REFINING's standing recipes, never all five concurrently.
@@ -176,12 +227,20 @@ pub fn assigned_converter(kind: StructureKind, assignment: Option<&Assignment>) 
 /// (~0.4 raw/s) converters run INPUT-BOUND — the rate ceiling starts to matter
 /// when bulk raws are IMPORTED, which is exactly what makes a supplied forge
 /// world an engine (and its supply line a target). Tunable.
-pub const CONVERTERS: [Converter; 11] = [
+pub const CONVERTERS: [Converter; 14] = [
     Converter {
         structure: StructureKind::Smelter,
         output: Commodity::Alloys,
         rate: 1.0,
-        inputs: &[(Commodity::MetallicOre, 1.5), (Commodity::Fuel, 0.3)],
+        inputs: &[(Commodity::MetallicOre, 1.5)],
+    },
+    // §fuel-overhaul: the Uranium Mill sifts fissile grains out of Ferrite Ore —
+    // two Uranium per ore, enough for about ten slow Tiny round trips an hour.
+    Converter {
+        structure: StructureKind::UraniumMill,
+        output: Commodity::Uranium,
+        rate: 0.05,
+        inputs: &[(Commodity::MetallicOre, 0.5)],
     },
     Converter {
         structure: StructureKind::ElectronicsFabricator,
@@ -200,7 +259,7 @@ pub const CONVERTERS: [Converter; 11] = [
     },
     Converter {
         structure: StructureKind::FuelRefinery,
-        output: Commodity::Fuel,
+        output: Commodity::Deuterium,
         rate: 0.8,
         inputs: &[(Commodity::Volatiles, 1.0)],
     },
@@ -210,6 +269,14 @@ pub const CONVERTERS: [Converter; 11] = [
         rate: 1.2,
         inputs: &[(Commodity::Biomass, 1.0)],
     },
+    // §gaia: Living Terraces farm their own gardens — the Agroplex's rate with
+    // no Biomass basket. Gaia-only, so the free input is the world's gift.
+    Converter {
+        structure: StructureKind::LivingTerraces,
+        output: Commodity::Provisions,
+        rate: 1.2,
+        inputs: &[],
+    },
     Converter {
         structure: StructureKind::MachineWorks,
         output: Commodity::Machinery,
@@ -217,7 +284,6 @@ pub const CONVERTERS: [Converter; 11] = [
         inputs: &[
             (Commodity::Alloys, 1.2),
             (Commodity::Electronics, 0.6),
-            (Commodity::Fuel, 0.4),
         ],
     },
     Converter {
@@ -252,9 +318,20 @@ pub const CONVERTERS: [Converter; 11] = [
     },
     Converter {
         structure: StructureKind::DriveWorks,
-        output: Commodity::DriveAssemblies,
+        output: Commodity::WarpCore,
         rate: 0.12,
-        inputs: &[(Commodity::PrecisionComponents, 1.25), (Commodity::Composites, 1.0), (Commodity::Fuel, 1.0)],
+        // §rare-materials: Iridium for the hot end, in place of Composites at
+        // equal base value. §fuel-overhaul: no furnace fuel (double power).
+        inputs: &[(Commodity::PrecisionComponents, 1.25), (Commodity::Composites, 0.82),
+            (Commodity::Iridium, 0.1)],
+    },
+    // §fuel-overhaul: the last tech's factory. Two Deuterium and ten times a
+    // factory's power per unit: antimatter is always a net energy loss.
+    Converter {
+        structure: StructureKind::AntimatterPlant,
+        output: Commodity::Antimatter,
+        rate: 0.005,
+        inputs: &[(Commodity::Deuterium, 2.0)],
     },
 ];
 
@@ -311,6 +388,10 @@ pub enum SuspendReason {
     NoInputs,
     /// The stockpile is at the storage cap — output idles (nothing destroyed).
     StorageFull,
+    /// A founding camp's food line is holding: Provisions + Biomass already
+    /// cover the camp's reserve, so the small warehouse keeps room for ore.
+    /// A deliberate, quiet pause — never a timeline alarm.
+    FoodReserve,
 }
 
 impl SuspendReason {
@@ -319,6 +400,7 @@ impl SuspendReason {
             SuspendReason::NoFood => "no_food",
             SuspendReason::NoInputs => "no_inputs",
             SuspendReason::StorageFull => "storage_full",
+            SuspendReason::FoodReserve => "food_reserve",
         }
     }
 }
@@ -350,7 +432,8 @@ pub fn food_factor(kind: StructureKind, state: crate::colony::FoodState) -> f64 
         StructureKind::Bioharvester
         | StructureKind::VolatileHarvester
         | StructureKind::MiningComplex
-        | StructureKind::Agroplex => eff.max(EXTRACTION_FOOD_FLOOR),
+        | StructureKind::Agroplex
+        | StructureKind::LivingTerraces => eff.max(EXTRACTION_FOOD_FLOOR),
         StructureKind::MachineWorks | StructureKind::ArmamentsComplex
         | StructureKind::CompositeWorks | StructureKind::HullFabricator
         | StructureKind::PrecisionWorks | StructureKind::DriveWorks => {
@@ -402,7 +485,13 @@ mod tests {
     /// on Rare-metal ore, the densest.
     #[test]
     fn converter_baskets_never_net_add_units() {
-        for conv in CONVERTERS.iter() {
+        // §gaia: Living Terraces are a farm, not a factory: they grow food from
+        // crews alone, so like extraction the accrual cap guard bounds them
+        // (`living_terraces::full_storage_idles_living_terraces`).
+        // §fuel-overhaul: the Uranium Mill sifts two fissile units from an ore,
+        // a dense-ore refinery in all but name; the same guard bounds it.
+        for conv in CONVERTERS.iter().filter(|c| !matches!(c.structure,
+            StructureKind::LivingTerraces | StructureKind::UraniumMill)) {
             let total_in: f64 = conv.inputs.iter().map(|(_, per)| per).sum();
             assert!(
                 total_in >= conv.outputs().map(|(_, units)| units).sum::<f64>() - 1e-12,

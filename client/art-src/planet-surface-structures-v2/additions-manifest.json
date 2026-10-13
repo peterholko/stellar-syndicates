@@ -1,0 +1,310 @@
+{
+  "version": 1,
+  "scope": "Additions and replacements after the original v2 review set (Oct 2026), approved by Peter in conversation. Same entry shape as source-manifest.json. A replacement takes the place of the original entry for the same family and tier; the original master stays on disk and in source-manifest.json as provenance.",
+  "buildings": [
+    {
+      "id": "living_terraces/tier-1",
+      "family": "living_terraces",
+      "tier": 1,
+      "name": "Living Terraces",
+      "identity": "Stepped garden housing for a Gaia world: planted terrace roofs, warm windows, glazed sunrooms, cream and pale-stone walls with grey-green trim.",
+      "description": "a low two-step terrace of garden homes with planted roofs and one glazed sunroom",
+      "file": "buildings/living_terraces/tier-1.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-86bf3968-183e-44b6-8add-d98d347ecbe1.png",
+      "promptFile": "buildings/living_terraces/tier-1.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1024,
+        "height": 1024,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.6897258758544922,
+        "edgeMax": 0,
+        "boundsAlpha16": {
+          "left": 157,
+          "top": 153,
+          "right": 908,
+          "bottom": 844
+        },
+        "bytes": 1047753,
+        "sha256": "8c831c6ab1d7fb9f360f42ba389d9050bb1131ce1b4cf9811780db851e007ca4"
+      }
+    },
+    {
+      "id": "living_terraces/tier-2",
+      "family": "living_terraces",
+      "tier": 2,
+      "name": "Living Terraces",
+      "identity": "Stepped garden housing for a Gaia world: planted terrace roofs, warm windows, glazed sunrooms, cream and pale-stone walls with grey-green trim.",
+      "description": "three stepped terraces with roof gardens and a small rainwater cistern",
+      "file": "buildings/living_terraces/tier-2.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-d42e7f40-a457-4260-a0e5-7d185b88d73a.png",
+      "promptFile": "buildings/living_terraces/tier-2.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1024,
+        "height": 1024,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.6759109497070312,
+        "edgeMax": 0,
+        "boundsAlpha16": {
+          "left": 160,
+          "top": 92,
+          "right": 898,
+          "bottom": 840
+        },
+        "bytes": 1132810,
+        "sha256": "ce5c89e50d77416e3016ed10b643d8851d3935ebf12aa30ef6f94c88b00ff7f2"
+      }
+    },
+    {
+      "id": "living_terraces/tier-3",
+      "family": "living_terraces",
+      "tier": 3,
+      "name": "Living Terraces",
+      "identity": "Stepped garden housing for a Gaia world: planted terrace roofs, warm windows, glazed sunrooms, cream and pale-stone walls with grey-green trim.",
+      "description": "four stepped levels wrapped around a small planted courtyard, greenery spilling over the edges",
+      "file": "buildings/living_terraces/tier-3.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-e9e1b39a-fd5b-4a59-8a18-280a234d7674.png",
+      "promptFile": "buildings/living_terraces/tier-3.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1024,
+        "height": 1024,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.689600944519043,
+        "edgeMax": 0,
+        "boundsAlpha16": {
+          "left": 160,
+          "top": 142,
+          "right": 882,
+          "bottom": 840
+        },
+        "bytes": 1104852,
+        "sha256": "dea96fd947cf5436945b066d460927739e440af2ecc644bf3c9e70e12f49baad"
+      }
+    },
+    {
+      "id": "living_terraces/tier-4",
+      "family": "living_terraces",
+      "tier": 4,
+      "name": "Living Terraces",
+      "identity": "Stepped garden housing for a Gaia world: planted terrace roofs, warm windows, glazed sunrooms, cream and pale-stone walls with grey-green trim.",
+      "description": "five stepped levels with rooftop orchards and a glazed walkway between wings",
+      "file": "buildings/living_terraces/tier-4.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-8448ca5a-fbf8-484f-9826-7902ae540fb6.png",
+      "promptFile": "buildings/living_terraces/tier-4.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1024,
+        "height": 1024,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.6765193939208984,
+        "edgeMax": 0,
+        "boundsAlpha16": {
+          "left": 160,
+          "top": 124,
+          "right": 886,
+          "bottom": 840
+        },
+        "bytes": 1125050,
+        "sha256": "a22f08c66f93b57bdbb716b266fbc06cb9c6f8224261f7033ab029482d6f27c2"
+      }
+    },
+    {
+      "id": "living_terraces/tier-5",
+      "family": "living_terraces",
+      "tier": 5,
+      "name": "Living Terraces",
+      "identity": "Stepped garden housing for a Gaia world: planted terrace roofs, warm windows, glazed sunrooms, cream and pale-stone walls with grey-green trim.",
+      "description": "a stepped garden pyramid of cascading planted terraces around a central glass atrium",
+      "file": "buildings/living_terraces/tier-5.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-2e64d166-43c1-4530-8133-7d95997c8552.png",
+      "promptFile": "buildings/living_terraces/tier-5.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1024,
+        "height": 1024,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.6761102676391602,
+        "edgeMax": 0,
+        "boundsAlpha16": {
+          "left": 160,
+          "top": 96,
+          "right": 879,
+          "bottom": 840
+        },
+        "bytes": 1154232,
+        "sha256": "e5b54b5fb2a27805a4a5dbe982d0e9fe5d35eac2303dd25eb7d20891c63f7c04"
+      }
+    },
+    {
+      "id": "living_terraces/tier-6",
+      "family": "living_terraces",
+      "tier": 6,
+      "name": "Living Terraces",
+      "identity": "Stepped garden housing for a Gaia world: planted terrace roofs, warm windows, glazed sunrooms, cream and pale-stone walls with grey-green trim.",
+      "description": "a tall stepped garden ziggurat with lush terraces on every level, small trees on the upper steps and a thin waterfall falling between levels",
+      "file": "buildings/living_terraces/tier-6.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-e3f039e0-11f1-42bd-8ff3-d26b1563f19b.png",
+      "promptFile": "buildings/living_terraces/tier-6.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1024,
+        "height": 1024,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.6510581970214844,
+        "edgeMax": 0,
+        "boundsAlpha16": {
+          "left": 160,
+          "top": 77,
+          "right": 889,
+          "bottom": 841
+        },
+        "bytes": 1220533,
+        "sha256": "9643b0898f959a4c7490321e0f8d88f0393fb70ec25984c8a86a6a695f2f1bf1"
+      }
+    }
+  ],
+  "biomes": [
+    {
+      "key": "marginal",
+      "reference": "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/surfaces/marginal-surface-v1.png",
+      "description": "Cold, dry, thin-aired ground: compacted dun and cool khaki soil, low dusty sage-green lichen, pale salt-crusted spots, small grey stones, faint frost.",
+      "file": "grounds/marginal.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-548ed73d-f030-4de9-8650-9a8bbcd92117.png",
+      "promptFile": "grounds/marginal.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1024,
+        "height": 1024,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 254,
+        "transparentFraction": 0.7227382659912109,
+        "edgeMax": 0,
+        "boundsAlpha16": {
+          "left": 97,
+          "top": 363,
+          "right": 921,
+          "bottom": 924
+        },
+        "bytes": 1025832,
+        "sha256": "7e57110583739ae10e052ede860c630192a8431e53e08d1d596747c4b11c238d"
+      }
+    }
+  ],
+  "replacements": [
+    {
+      "id": "agroplex/tier-4",
+      "family": "agroplex",
+      "tier": 4,
+      "name": "Agroplex",
+      "identity": "Low glazed crop-production bays with grey-green ribs, visible green crop rows, compact rear packing/control room and squat nutrient tank. Recognizable greenhouse silhouette.",
+      "description": "the three glazed growing bays of tier 3 now carry a second glazed gallery deck along their full length, reached by an external stair and lift tower, with a larger nutrient tank",
+      "replaces": "buildings/agroplex/tier-4.png",
+      "file": "buildings/agroplex/tier-4-v2.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-05aff8df-9f97-439f-87c3-b35476e40aae.png",
+      "promptFile": "buildings/agroplex/tier-4-v2.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1024,
+        "height": 1024,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.5460233688354492,
+        "edgeMax": 0,
+        "boundsAlpha16": {
+          "left": 29,
+          "top": 153,
+          "right": 995,
+          "bottom": 902
+        },
+        "bytes": 1581649,
+        "sha256": "7f1510e24da21643753566a08db283780446ee7266bd0ee4ef812cb74443ad9e"
+      }
+    },
+    {
+      "id": "agroplex/tier-5",
+      "family": "agroplex",
+      "tier": 5,
+      "name": "Agroplex",
+      "identity": "Low glazed crop-production bays with grey-green ribs, visible green crop rows, compact rear packing/control room and squat nutrient tank. Recognizable greenhouse silhouette.",
+      "description": "a three-deck glass growing hall: stacked glazed galleries with grey-green ribs and crop rows on every deck, around a central service and climate core; low growing bays and nutrient tanks at its foot",
+      "replaces": "buildings/agroplex/tier-5.png",
+      "file": "buildings/agroplex/tier-5-v2.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-8c2c9f2c-1ee8-43f9-a87b-d1b1934f3c33.png",
+      "promptFile": "buildings/agroplex/tier-5-v2.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1024,
+        "height": 1024,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.4592323303222656,
+        "edgeMax": 0,
+        "boundsAlpha16": {
+          "left": 29,
+          "top": 53,
+          "right": 1001,
+          "bottom": 901
+        },
+        "bytes": 1844440,
+        "sha256": "cfbf836f1775996fd38d0818253cfcc504f45cf34e1ab41148b2c565f949d4f7"
+      }
+    },
+    {
+      "id": "agroplex/tier-6",
+      "family": "agroplex",
+      "tier": 6,
+      "name": "Agroplex",
+      "identity": "Low glazed crop-production bays with grey-green ribs, visible green crop rows, compact rear packing/control room and squat nutrient tank. Recognizable greenhouse silhouette.",
+      "description": "a vertical farm: a tall glazed growing tower of stacked crop decks with a rooftop climate plant, rising from low greenhouse bays, with twin nutrient tanks",
+      "replaces": "buildings/agroplex/tier-6.png",
+      "file": "buildings/agroplex/tier-6-v2.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-2d77d75f-c999-402e-be4f-6c8fee34d4ec.png",
+      "promptFile": "buildings/agroplex/tier-6-v2.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1024,
+        "height": 1024,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.5250263214111328,
+        "edgeMax": 0,
+        "boundsAlpha16": {
+          "left": 29,
+          "top": 89,
+          "right": 997,
+          "bottom": 901
+        },
+        "bytes": 1624532,
+        "sha256": "8eb85fc1e4f1c54c88f940e94c6713d4521a7e0b0e3b0aa114f53ce2fd136b9d"
+      }
+    }
+  ]
+}

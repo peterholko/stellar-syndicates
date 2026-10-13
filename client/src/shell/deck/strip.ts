@@ -1,4 +1,4 @@
-import { economyCapable, guardCapable, jumpCapable, shipKindLabel } from "../../core/derive/fleet";
+import { slowCapable, guardCapable, jumpCapable, shipKindLabel } from "../../core/derive/fleet";
 import { gravityWellAt, nearestKnownDock } from "../../core/derive/geo";
 import { intentSummary } from "../../core/derive/orders";
 import { intentReadinessWarnings } from "../../core/derive/readiness";
@@ -122,6 +122,13 @@ export class DeckCommandStrip {
     } else if (action === "cancel-armed") {
       if (this.ctx.intent.intentAiming.jump) this.ctx.intent.clearJumpAiming();
       if (this.ctx.intent.intentAiming.guard) this.ctx.intent.clearGuardAiming();
+    } else if (action === "guard-pick") {
+      const guard = this.ctx.intent.intentAiming.guard;
+      const charge = this.ctx.state.ghosts.find((entry) => entry.own && entry.id === button.dataset.targetId);
+      if (guard && charge && charge.id !== guard) {
+        this.ctx.intent.clearGuardAiming(true);
+        this.ctx.intent.beginPendingIntent({ verb: "guard", shipId: guard, targetId: charge.id, dest: charge.pos });
+      }
     } else if (action === "center" && fleetId) {
       const target = this.ctx.state.ghosts.find((entry) => entry.id === fleetId);
       if (target) this.ctx.renderer.centerOnWorld(target.pos);
@@ -142,7 +149,7 @@ export class DeckCommandStrip {
       this.ctx.intent.beginFleetCommand({ type: "HoldFleet", ship_id: fleet.id });
     } else if (action === "transit" && fleet) {
       const mode = button.dataset.mode as TransitMode | undefined;
-      if (mode !== "full" && mode !== "stealth" && !(mode === "economy" && economyCapable(fleet))) return;
+      if (mode !== "full" && mode !== "stealth" && !(mode === "slow" && slowCapable(fleet))) return;
       this.ctx.intent.beginFleetCommand({ type: "SetFleetTransit", fleet_id: fleet.id, mode });
     } else if (action === "recall" && fleet) {
       this.ctx.intent.beginFleetCommand({ type: "RecallRaid", raider_id: fleet.id });
@@ -158,7 +165,7 @@ export class DeckCommandStrip {
       `<div class="deck-command-strip__summary">${esc(summary)}</div>` +
       (warnings.length ? `<div class="deck-dispatch-warning" role="status">${warnings.map(esc).join("<br>")}</div>` : "") +
       `<div class="deck-command-strip__actions">` +
-        `<button type="button" class="is-primary" data-deck-command="confirm">Confirm <kbd>Enter</kbd></button>` +
+        `<button type="button" class="is-primary" data-deck-command="confirm" data-coach="confirm-order">Confirm <kbd>Enter</kbd></button>` +
         `<button type="button" data-deck-command="cancel-intent">Cancel <kbd>Esc</kbd></button>` +
       `</div></div>`;
   }
@@ -171,10 +178,20 @@ export class DeckCommandStrip {
     const fleet = this.ctx.state.ghosts.find((entry) => entry.id === shipId);
     const detail = mode === "jump"
       ? `click a destination within ${Math.round(fleet ? jumpRangeAt(this.ctx.state.galaxy, fleet.pos) : 0).toLocaleString()} su`
-      : "click another one of your fleet markers";
+      : "pick a fleet below or click its marker";
+    // §founding R3/R5: list the candidates, docked ones included, so guarding
+    // never depends on hitting a tiny (or covered) marker on the map.
+    const charges = mode === "guard"
+      ? this.ctx.state.ghosts.filter((entry) => entry.own && entry.id !== shipId && !entry.tca)
+      : [];
+    const picks = charges.length
+      ? `<div class="deck-command-strip__picks">${charges.map((entry) =>
+        `<button type="button" data-deck-command="guard-pick" data-target-id="${esc(entry.id)}" data-coach="guard-pick">${esc(shipKindLabel(entry.kind))} · ${esc(entry.id)}${entry.docked ? " · docked" : ""}</button>`).join("")}</div>`
+      : "";
     return `<div class="deck-command-strip__frame deck-command-strip__frame--armed">` +
       `<div class="deck-command-strip__mode">${mode.toUpperCase()} AIMING</div>` +
       `<div class="deck-command-strip__summary">${fleet ? esc(shipKindLabel(fleet.kind)) : "Fleet"} · ${esc(detail)} · Esc cancels</div>` +
+      picks +
       `<div class="deck-command-strip__actions"><button type="button" data-deck-command="cancel-armed">Cancel <kbd>Esc</kbd></button></div>` +
       `</div>`;
   }
@@ -227,14 +244,15 @@ export class DeckCommandStrip {
         : pending("guard") ? "Guard order already in flight." : "";
     const dockReason = fleet.docked ? "Already docked." : pending("move") ? "Move or docking order already in flight." : dock ? "" : "No known friendly berth.";
     const holdReason = fleet.docked ? "Docked fleets are already stationary." : pending("hold") ? "Hold order already in flight." : hasCourse ? "" : "No active course to cancel.";
-    const recallReason = pending("recall") ? "Recall already in flight." : this.ctx.state.raids[fleet.id] ? "" : "Fleet has no active raid/intercept.";
+    const blockading = fleet.engage_freight !== null && fleet.engage_freight !== undefined;
+    const recallReason = pending("recall") ? "Recall already in flight." : this.ctx.state.raids[fleet.id] || blockading ? "" : "Fleet has no active raid/intercept.";
     return [
       this.verb("move", "Move", "Click map", pending("move") ? "Move order already in flight." : ""),
       this.verb("dock", "Dock", dock ? dock.name : "Nearest berth", dockReason),
       this.verb("jump", "Jump", this.ctx.state.galaxy ? `${Math.round(jumpRangeAt(this.ctx.state.galaxy, fleet.pos)).toLocaleString()} su` : "Range unavailable", jumpReason),
       this.verb("guard", "Guard", "Choose fleet", guardReason),
       this.verb("hold", "Hold", "Cancel course", holdReason),
-      this.verb("recall", "Recall", "Break off", recallReason),
+      this.verb("recall", blockading ? "Lift" : "Recall", blockading ? "End the blockade · come home" : "Break off", recallReason),
     ].join("");
   }
 
@@ -255,9 +273,9 @@ export class DeckCommandStrip {
     const hint = pending ? "Configuration signal in flight." : "Choose the fleet's standing transit mode.";
     return `<span class="deck-command-transit${pending ? " is-pending" : ""}" role="group" aria-label="Transit mode" title="${esc(hint)}">` +
       `<span>Transit${pending ? " · sent" : ""}</span>` +
-      `<button type="button" data-deck-command="transit" data-mode="full" aria-pressed="${current === "full"}" ${pending ? "disabled" : ""} aria-label="Set full-speed transit" title="${pending ? esc(hint) : "Travel at full speed."}">Full</button>` +
-      (economyCapable(fleet) ? `<button type="button" data-deck-command="transit" data-mode="economy" aria-pressed="${current === "economy"}" ${pending ? "disabled" : ""} title="${pending ? esc(hint) : "25% speed, 10% Fuel per journey."}">Economy</button>` : "") +
-      `<button type="button" data-deck-command="transit" data-mode="stealth" aria-pressed="${current === "stealth"}" ${pending ? "disabled" : ""} aria-label="Set stealth transit" title="${pending ? esc(hint) : "Trade speed for a smaller detection signature."}">Stealth</button></span>`;
+      `<button type="button" data-deck-command="transit" data-mode="full" aria-pressed="${current === "full"}" ${pending ? "disabled" : ""} aria-label="Set full-speed transit" title="${pending ? esc(hint) : "Full speed · Deuterium."}">Full</button>` +
+      (slowCapable(fleet) ? `<button type="button" data-deck-command="transit" data-mode="slow" aria-pressed="${current === "slow"}" ${pending ? "disabled" : ""} title="${pending ? esc(hint) : "½ speed · Uranium · ¼ the energy per su."}">Slow</button>` : "") +
+      `<button type="button" data-deck-command="transit" data-mode="stealth" aria-pressed="${current === "stealth"}" ${pending ? "disabled" : ""} aria-label="Set stealth transit" title="${pending ? esc(hint) : "½ speed · Deuterium · quietest."}">Stealth</button></span>`;
   }
 
   private hasCourse(fleet: GhostView): boolean {

@@ -1,0 +1,30 @@
+{
+  "meshes": 35,
+  "renderSections": 35,
+  "sourceComponents": 181,
+  "triangles": 33772,
+  "exportedVertices": 32044,
+  "dimensionsXYZ": [
+    11.72,
+    4.11,
+    18.7
+  ],
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "embeddedTextures": 3,
+  "axes": "Y up, -Z forward",
+  "source": "../../battleship-reference-v1/battleship-reference.png",
+  "generator": "Python/NumPy, no Blender",
+  "optimization": "Static parts combined by material; independent turret assemblies retained; exact vertex deduplication; 16-bit indices where possible",
+  "engineCount": 6,
+  "turretCount": 7,
+  "referenceViews": [
+    "front",
+    "back",
+    "top",
+    "bottom",
+    "side"
+  ]
+}

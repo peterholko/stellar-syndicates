@@ -1,22 +1,27 @@
 import { commodityIcon, label, structureImage } from "../../icons";
-import type { AssignmentView, BodyView, BuildOption, ClientMsg, Commodity, SystemInfo, SystemStateView } from "../../protocol";
-import { assignedRecipe, POOL_LABEL, recipeOutputs } from "../../core/derive/market";
+import type { AssignmentView, BodyView, BuildOption, ClientMsg, Commodity, ShipKind, SystemInfo, SystemStateView } from "../../protocol";
+import { assignedRecipe, defaultRecipeKey, POOL_LABEL, recipeKey, recipeOutputs, recipeSelectable, structureBuildSeconds, structureLevel, type Pool } from "../../core/derive/market";
+import { fmtBuildDur } from "../../core/derive/format";
+import { drawMW, gridLine, maxLevel, mw, POWERED_STRUCTURES, romanTier, type StructureJob } from "../../core/derive/worldbuild";
 import { PlanetSites } from "./planet-sites";
 import { refiningComparison } from "../refining";
 import type { RefiningContext } from "../../core/derive/refining";
-import { planetSurface, planetSurfaceArt, type HabitableSurface } from "../../planet-surfaces";
+import { planetSurface, planetSurfaceArt } from "../../planet-surfaces";
+import { PLANET_SITES } from "../../planet-sites.generated";
+import { hasOrbitalShipConstruction, isOrbitalYard, orbitalYardAddress, planetStructureImage } from "../../planet-structure-art";
+import { SHIP_MODELS } from "../../ship-models.generated";
 export { planetSurface } from "../../planet-surfaces";
 
 const ART = "/art/derived/planet-workbench/v1/";
-/** The rendered footprint width for srcset selection: 11.5% of the image plane,
- * which is the map area beside the standard system rail. Height-limited windows
- * render smaller and merely fetch a sharper sprite than needed. */
-const FOOTPRINT_SIZES = "calc(11.5vw - 64px)";
+/** The largest sprite/ground layer is 1.22 × the 130px footprint. The actual
+ * image plane can be height-limited; a conservative responsive hint still avoids
+ * fetching full masters or undersized art on high-DPI screens. */
+const FOOTPRINT_SIZES = "(min-width: 2300px) 160px, (min-width: 1125px) calc(9.15vw - 50px), 9.15vw";
 type PlanetTab = "structures" | "population" | "survey";
 const TABS: readonly PlanetTab[] = ["structures", "population", "survey"];
 const EXTRACTION: Record<string, readonly Commodity[]> = {
-  mining_complex: ["metallic_ore", "cuprite_ore", "titanium_ore", "crystalline_ore", "rare_metal_ore", "silicates", "rare_elements"],
-  volatile_harvester: ["volatiles"], bioharvester: ["biomass"],
+  mining_complex: ["metallic_ore", "cuprite_ore", "titanium_ore", "crystalline_ore", "rare_metal_ore", "olivine_ore", "bornite_ore", "ilmenite_ore", "iridium_ore", "void_crystal", "silicates", "rare_elements"],
+  volatile_harvester: ["volatiles", "helium3_ice"], bioharvester: ["biomass"],
 };
 
 export interface PlanetPanelModel {
@@ -31,10 +36,47 @@ export interface PlanetPanelModel {
   descriptions: Readonly<Record<string, string>>;
   populationHtml: string;
   surveyHtml: string;
-  developmentHtml: string;
-  /** This world's own construction jobs (owner only); empty when nothing applies. */
-  queueHtml: string;
+  /** §construction: the bar pinned under the header (owner only; empty otherwise). */
+  constructionHtml: string;
+  /** While the world builder is open it replaces the management column. */
+  builderHtml: string;
+  /** The work slot, orders in flight and the builder's pick, for the scene and rows. */
+  construction: PlanetConstruction | null;
   economy?: RefiningContext;
+  /** A siege of THIS world from the served, participant-only fields: drawn on
+   * the painting (bombardment, landing craft) with its status banner. */
+  siege?: PlanetSiege | null;
+  /** §planet-orbit: fleets berthed at a facility on this world (the System
+   * View's berth rule), drawn in its sky. */
+  docked?: readonly PlanetDockedFleet[];
+}
+
+export interface PlanetConstruction {
+  line: readonly StructureJob[];
+  /** Orders this client sent that no report has shown yet; new buildings carry their site. */
+  pending: readonly { key: string; tier: number; slot: number | null }[];
+  /** The structure picked in the open build sheet. `fresh`: a new building that
+   * needs a site; `placing`: the sheet is folded away while one is chosen. */
+  build: { key: string; tier: number; fresh: boolean; pool: Pool | null; site: number | null; placing: boolean } | null;
+}
+
+export interface PlanetDockedFleet {
+  id: string;
+  kind: ShipKind;
+  own: boolean;
+  /** Hulls in the fleet when known (own fleets, sensor-covered rivals). */
+  count: number | null;
+  name: string;
+  selected: boolean;
+}
+
+export interface PlanetSiege {
+  caption: string;
+  detail: string;
+  /** 0..1 of the garrison pinned: sets how many impacts flash. */
+  suppression: number;
+  /** The landing record to follow, when marines are down. */
+  landingId: string | null;
 }
 
 export interface PlanetStructure {
@@ -46,69 +88,51 @@ export interface PlanetStructure {
   assignment?: AssignmentView;
   outputs: [Commodity, number][];
   status: string;
+  hasShipConstruction: boolean;
   x: number;
   y: number;
-  /** Row recession for the sprite; see footprintAddress. */
+  /** Depth recession for the sprite; see footprintAddress. */
   scale: number;
 }
 
-/** Footprint addresses on the 16:9 artwork, in percent. Every surface painting shares
- * one composition: black sky above a planetary limb whose haze sits at ~19% height in
- * the middle and curves down to ~32% at both edges, terrain below. Columns are 12%
- * apart (a footprint is at most 11.5% wide), so only rows within a column need
- * vertical clearance, and rows sit at least 21% apart. Row 0 is lowered toward the
- * edges so a sprite never pokes into the haze. These are the initial kind addresses;
- * PlanetSites preserves each world's assigned addresses as capacity grows. */
+/** Footprint addresses on the 16:9 artwork, in percent. Each surface painting has
+ * its own 24 addresses, generated by scripts/build-planet-sites.mjs from the
+ * painting itself so every building stands on open land, never on forest, water,
+ * lava, cliffs or rock; slots 0, 1, 2, 3, 7 and 18 hold the opening colony at the
+ * heart of the most open ground. These are fixed art coordinates, never
+ * recalculated from a viewport or report; PlanetSites keeps each world's assigned
+ * slots as capacity grows. */
+function siteAddress(surface: string, slot: number): readonly [number, number] | undefined {
+  const sites = PLANET_SITES[surface]?.sites;
+  // Unknown future kinds beyond the 24 generated slots share the last address.
+  return sites?.[Math.min(sites.length - 1, Math.max(0, slot))];
+}
+/** A gas giant shows its globe, not a horizon: orbital infrastructure keeps an
+ * even spread around it at one size. */
 const COLUMNS: readonly number[] = [7, 19, 31, 43, 55, 67, 79, 91];
-const LAND_ROWS: readonly (readonly number[])[] = [
+const ORBIT_ROWS: readonly (readonly number[])[] = [
   [46, 42, 39.5, 38, 38, 39.5, 42, 46],
   [68, 64, 61.5, 60, 60, 61.5, 64, 68],
   [89, 86, 83.5, 82, 82, 83.5, 86, 89],
 ];
-/** The ocean painting is mostly water: two island groups (left middle, right middle)
- * and two shorelines (bottom left, bottom right). Its slots reorder the columns so the
- * common surface kinds (mines, harvesters, agroplex, habitat) land on ground and the
- * offshore-plausible kinds (fuel rig, shipyard, dock) take open water. */
-const OCEAN_COLUMNS: readonly number[] = [67, 19, 31, 79, 91, 55, 43, 7];
-const OCEAN_ROWS: readonly (readonly number[])[] = [
-  [46, 41, 41, 46, 46, 44, 43, 46],
-  [68, 64, 65, 68, 68, 65, 64, 67],
-  [89, 89, 89, 89, 89, 87, 86, 88],
-];
 
-/** The new paintings have lakes and cliffs in different places. Reorder the
- * same spaced grid so the opening mine, farms, quarters and storehouse occupy
- * foreground land; coastal/orbital industry can use the outlying addresses.
- * These are fixed art coordinates, never recalculated from a viewport/report. */
-const HABITABLE_ADDRESSES: Record<HabitableSurface, readonly number[]> = {
-  "highland-plateau": [10, 11, 12, 13, 14, 15, 8, 9, 16, 17, 19, 20, 21, 22, 23, 0, 1, 2, 18, 3, 4, 5, 6, 7],
-  "savanna-world": [10, 11, 12, 13, 8, 9, 15, 17, 16, 14, 19, 20, 21, 22, 23, 0, 1, 2, 18, 3, 4, 5, 6, 7],
-  "volcanic-highlands": [12, 13, 14, 15, 10, 11, 20, 21, 22, 23, 18, 19, 4, 5, 6, 7, 0, 1, 3, 2, 8, 9, 16, 17],
-  "boreal-world": [11, 12, 13, 14, 8, 9, 10, 15, 16, 17, 2, 19, 20, 21, 22, 23, 0, 1, 18, 3, 4, 5, 6, 7],
-  "archipelago-world": [11, 12, 13, 14, 21, 2, 4, 10, 5, 6, 9, 1, 7, 15, 0, 8, 16, 17, 3, 18, 19, 20, 22, 23],
-  "temperate-basin": [10, 11, 12, 13, 14, 15, 8, 9, 16, 17, 19, 20, 21, 22, 23, 0, 1, 2, 18, 3, 4, 5, 6, 7],
-};
-
-/** Sprite scale per row, back to front. Every painting is an oblique near-orbital
- * view, so equal ground looks about half as wide near the limb as in the
- * foreground; footprints recede the same way instead of sitting on the terrain at
- * one size. Anchors are untouched: only the sprite, its shadow, its ring and its
- * badges take the scale. Globes have no horizon, so orbital infrastructure keeps
- * scale 1. */
-const ROW_SCALE: readonly number[] = [0.55, 0.78, 1];
+/** Sprite scale for an address's height on the painting. Every painting is an
+ * oblique near-orbital view, so equal ground looks smaller toward the limb;
+ * footprints recede the same way instead of sitting on the terrain at one size.
+ * Mirrored in scripts/build-planet-sites.mjs, which spaces the addresses with it.
+ * The CSS derives each footprint's haze from the same scale. */
+export function siteScale(y: number): number {
+  return Math.round(100 * Math.min(1, Math.max(0.6, 0.64 + (y / 100 - 0.5) * 1.15))) / 100;
+}
 
 export interface FootprintAddress { x: number; y: number; scale: number }
 
 export function footprintAddress(surface: string | null, slot: number): FootprintAddress {
-  const addresses = HABITABLE_ADDRESSES[surface as HabitableSurface];
-  if (addresses) slot = addresses[Math.min(addresses.length - 1, slot)];
+  const site = surface === null ? undefined : siteAddress(surface, slot);
+  if (site) return { x: site[0], y: site[1], scale: siteScale(site[1]) };
   const column = slot % COLUMNS.length;
-  // Unknown future kinds beyond the 24 authored slots share the last row.
-  const row = Math.min(LAND_ROWS.length - 1, Math.floor(slot / COLUMNS.length));
-  const scale = surface === null ? 1 : ROW_SCALE[row];
-  return surface === "ocean"
-    ? { x: OCEAN_COLUMNS[column], y: OCEAN_ROWS[row][column], scale }
-    : { x: COLUMNS[column], y: LAND_ROWS[row][column], scale };
+  const row = Math.min(ORBIT_ROWS.length - 1, Math.floor(slot / COLUMNS.length));
+  return { x: COLUMNS[column], y: ORBIT_ROWS[row][column], scale: 1 };
 }
 
 /** Fixed addresses on the 16:9 artwork, not viewport coordinates or slot promises.
@@ -121,7 +145,7 @@ export function planetStructures(model: PlanetPanelModel): PlanetStructure[] {
   const extra = Object.keys(model.body.structures).filter(key => !order.includes(key)).sort();
   const keys = [...order, ...extra];
   const surface = planetSurface(model.art, model.system.id, model.body);
-  return keys.flatMap((key, index) => {
+  const structures = keys.flatMap((key, index) => {
     const tier = model.body.structures[key] ?? 0;
     if (tier <= 0) return [];
     const assignment = model.report.assignments.find(line => line.body_id === model.body.id && line.structure === key);
@@ -146,9 +170,27 @@ export function planetStructures(model: PlanetPanelModel): PlanetStructure[] {
     const camp = model.body.founding_camp;
     const campTitle = camp && tier === 1 ? key === "habitat" ? camp.completed.includes("quarters") ? "Permanent Quarters" : "Founding Quarters"
       : key === "warehouse" && !camp.completed.includes("storehouse") ? "Camp Storehouse" : null : null;
-    return [{ key, title: campTitle ?? assignment?.title ?? model.catalog.find(option => option.key === key)?.label ?? label(key),
-      tier, workers, staffable, assignment, outputs, status, ...footprintAddress(surface, index) }];
+    const option = model.catalog.find(option => option.key === key);
+    return [{ key, title: campTitle ?? assignment?.title ?? (option ? structureLevel(option, tier).label : label(key)),
+      tier, workers, staffable, assignment, outputs, status,
+      hasShipConstruction: key === "naval_drydock" && hasOrbitalShipConstruction(model.report.builds, model.body.id),
+      ...(orbitalYardAddress(key, tier, surface !== null) ?? footprintAddress(surface, index)) }];
   });
+  positionAttachments(structures);
+  return structures;
+}
+
+/** §orbital-defense: a station climbs levels of a named ladder, not tiers. */
+const tierText = (item: { key: string; tier: number }): string =>
+  item.key === "orbital_defense" ? `Level ${item.tier} of 5` : `Tier ${item.tier}`;
+
+/** An attachment uses its parent's address, not a 25th ground plot or a second
+ * storage building. Its small clickable sprite is offset within that site by
+ * CSS, and remains selectable in the management list as before. */
+function positionAttachments(structures: PlanetStructure[]): void {
+  const warehouse = structures.find(item => item.key === "warehouse");
+  const berth = structures.find(item => item.key === "service_berth");
+  if (warehouse && berth) Object.assign(berth, { x: warehouse.x, y: warehouse.y, scale: warehouse.scale });
 }
 
 type Posting = { workers: number; specialists: Record<string, number>; refining_ore?: Commodity };
@@ -160,6 +202,12 @@ type Review = Posting & { key: string; previous: string };
  * same served model through one selection/draft controller. Local selection and order
  * drafts only: sending a directive cannot advance the visible economy; a matching
  * arrived assignment is the only evidence that clears its pending marker. */
+/** §power: the planet's grid line for the world header. */
+function gridHtml(body: BodyView): string {
+  const grid = gridLine(body);
+  return grid ? `<span class="deck-planet__grid${grid.short ? " is-short" : ""}" title="${esc(grid.tip)}">${esc(grid.text)}</span>` : "";
+}
+
 export class PlanetPanel {
   private context = "";
   private selected = "";
@@ -169,11 +217,15 @@ export class PlanetPanel {
   private pending = new Map<string, Posting>();
   private review: Review | null = null;
   private focusRequest = "";
-  private buildSites = false;
   private sites = new PlanetSites();
 
   availableSite(model: PlanetPanelModel, slot: number) {
     return this.sites.snapshot(model).free.find(site => site.slot === slot);
+  }
+
+  /** Where a new building of `pool` goes when no site is chosen. */
+  firstFreeSite(model: PlanetPanelModel, pool: Pool): number | null {
+    return this.sites.snapshot(model).free.find(site => site.pool === pool)?.slot ?? null;
   }
 
   preferSite(model: PlanetPanelModel, key: string, slot: number): void {
@@ -199,20 +251,20 @@ export class PlanetPanel {
       this.drafts.clear();
       this.oreDrafts.clear();
       this.review = null;
-      this.buildSites = false;
     }
     if (!model.mine) {
       this.tab = "survey";
       this.drafts.clear();
       this.review = null;
-      this.buildSites = false;
     }
     const structures = planetStructures(model);
     const layout = this.sites.snapshot(model);
     for (const item of structures) {
       const site = layout.occupied.find(site => site.key === item.key);
-      if (site) Object.assign(item, footprintAddress(planetSurface(model.art, model.system.id, model.body), site.slot));
+      const surface = planetSurface(model.art, model.system.id, model.body);
+      if (site) Object.assign(item, orbitalYardAddress(item.key, item.tier, surface !== null) ?? footprintAddress(surface, site.slot));
     }
+    positionAttachments(structures);
     if (!structures.some(item => item.key === this.selected)) {
       this.selected = structures.find(item => item.outputs.length)?.key ?? structures[0]?.key ?? "";
       this.review = null;
@@ -229,11 +281,16 @@ export class PlanetPanel {
       const key = this.key(model, item.key);
       const pending = this.pending.get(key);
       if (pending && item.workers === pending.workers && sameSpecialists(item.assignment?.specialists ?? {}, pending.specialists)
-        && (!pending.refining_ore || pending.refining_ore === (item.assignment?.refining_ore ?? "metallic_ore"))) this.pending.delete(key);
-      if (this.oreDrafts.get(key) === (item.assignment?.refining_ore ?? "metallic_ore")) this.oreDrafts.delete(key);
+        && (!pending.refining_ore || pending.refining_ore === (item.assignment?.refining_ore ?? defaultRecipeKey(item.key)))) this.pending.delete(key);
+      if (this.oreDrafts.get(key) === (item.assignment?.refining_ore ?? defaultRecipeKey(item.key))) this.oreDrafts.delete(key);
       const draft = this.drafts.get(key);
       if (draft !== undefined && (draft === item.workers || draft > item.tier)) this.drafts.delete(key);
-      if (this.review?.key === key && this.review.previous !== postingFingerprint(item)) this.review = null;
+      // A report newer than the review keeps it, flagged stale: the panel says
+      // so and blocks Confirm until it is updated. Once nothing differs, drop it.
+      if (this.review?.key === key && this.review.previous !== postingFingerprint(item) && this.review.workers === item.workers
+        && (this.review.refining_ore ?? defaultRecipeKey(item.key)) === (recipeSelectable(item.key) ? item.assignment?.refining_ore ?? defaultRecipeKey(item.key) : defaultRecipeKey(item.key))) {
+        this.review = null;
+      }
     }
     return structures;
   }
@@ -250,18 +307,11 @@ export class PlanetPanel {
       return true;
     }
     if (!model.mine) return true;
-    if (action === "planet-build-sites") {
-      this.buildSites = !this.buildSites;
-      this.tab = "structures";
-      this.review = null;
-      return true;
-    }
     if (action === "planet-select") {
       if (structures.some(item => item.key === data.structure)) {
         this.selected = data.structure!;
         if (this.tab === "population" || this.tab === "survey") this.tab = "structures";
         this.review = null;
-        this.buildSites = false;
       }
       return true;
     }
@@ -269,19 +319,29 @@ export class PlanetPanel {
     if (!selected?.staffable || this.tab !== "structures") return true;
     const key = this.key(model, selected.key);
     const draft = this.drafts.get(key) ?? selected.workers;
-    const ore = this.oreDrafts.get(key) ?? selected.assignment?.refining_ore ?? "metallic_ore";
-    const oreChanged = selected.key === "smelter" && ore !== (selected.assignment?.refining_ore ?? "metallic_ore");
+    const ore = this.oreDrafts.get(key) ?? selected.assignment?.refining_ore ?? defaultRecipeKey(selected.key);
+    const selectable = recipeSelectable(selected.key);
+    const oreChanged = selectable && ore !== (selected.assignment?.refining_ore ?? defaultRecipeKey(selected.key));
+    // Any change to the plan opens its review right under the stepper; the
+    // review is what Confirm sends. A report that arrives in between makes it
+    // stale: the review then refreshes (visibly) instead of sending.
+    const reviewPlan = (workers: number, refining: Commodity): Review | null =>
+      workers !== selected.workers || (selectable && refining !== (selected.assignment?.refining_ore ?? defaultRecipeKey(selected.key)))
+        ? { key, workers, specialists: { ...(selected.assignment?.specialists ?? {}) },
+          ...(selectable ? { refining_ore: refining } : {}), previous: postingFingerprint(selected) }
+        : null;
     if (action === "planet-workers") {
       const delta = Number(data.delta);
-      if (delta === -1 || delta === 1) this.drafts.set(key, Math.max(0, Math.min(selected.tier, draft + delta)));
-      this.review = null;
-    } else if (action === "planet-ore" && selected.key === "smelter") {
+      const next = delta === -1 || delta === 1 ? Math.max(0, Math.min(selected.tier, draft + delta)) : draft;
+      this.drafts.set(key, next);
+      this.review = reviewPlan(next, ore);
+    } else if (action === "planet-ore" && selectable) {
       const recipes = model.catalog.find(o => o.key === selected.key)?.refining_recipes ?? [];
-      if (recipes.some(r => r.inputs[0]?.[0] === data.ore)) this.oreDrafts.set(key, data.ore as Commodity);
-      this.review = null;
-    } else if (action === "planet-review" && (draft !== selected.workers || oreChanged)) {
-      this.review = { key, workers: draft, specialists: { ...(selected.assignment?.specialists ?? {}) },
-        ...(selected.key === "smelter" ? { refining_ore: ore } : {}), previous: postingFingerprint(selected) };
+      const next = recipes.some(r => recipeKey(selected.key, r) === data.ore) ? data.ore as Commodity : ore;
+      this.oreDrafts.set(key, next);
+      this.review = reviewPlan(draft, next);
+    } else if (action === "planet-review") {
+      this.review = draft !== selected.workers || oreChanged ? reviewPlan(draft, ore) : null;
     } else if (action === "planet-cancel") {
       this.review = null;
       this.drafts.delete(key);
@@ -304,29 +364,63 @@ export class PlanetPanel {
     const structures = this.sync(model);
     const selected = structures.find(item => item.key === this.selected);
     const surface = planetSurface(model.art, model.system.id, model.body);
-    const surfaceArt = surface ? planetSurfaceArt(surface) : null;
+    const surfaceArt = surface ? planetSurfaceArt(surface, true) : null;
     const background = surfaceArt
       ? `<img class="deck-planet__surface" src="${surfaceArt.src}" srcset="${surfaceArt.srcset}" sizes="(min-width: 1125px) calc(100vw - 552px), 100vw" alt="${esc(model.body.name)} landscape" draggable="false">`
       : `<img class="deck-planet__globe" src="${esc(model.art)}" alt="${esc(model.body.name)}" draggable="false">`;
     const position = (item: FootprintAddress) => `--planet-x:${item.x}%;--planet-y:${item.y}%;--planet-scale:${item.scale}`;
-    const footprints = structures.map(item => `<button id="planet-spot-${esc(item.key)}" type="button" class="deck-planet__building" style="${position(item)}" data-deck-act="planet-select" data-structure="${esc(item.key)}" aria-label="Inspect ${esc(item.title)}" aria-pressed="${item.key === this.selected}" aria-controls="planet-structure-detail">${structureImage(item.key, item.tier, "lg", undefined, "", FOOTPRINT_SIZES)}</button>`).join("");
-    const badge = selected && !this.buildSites ? `<div class="deck-planet__selection" style="${position(selected)};--planet-output-height:${selected.outputs.length > 2 ? 84 : 44}px">
+    // §orbital-defense: the station's square art grows with its level.
+    const station = (key: string, level: number) => key === "orbital_defense" ? [" is-station", `;--station-level:${level}`] : ["", ""];
+    // §construction: the scene shows the work slot where it happens.
+    const line = model.construction?.line ?? [];
+    const orders = model.construction?.pending ?? [];
+    const build = model.construction?.build ?? null;
+    // §build-sheet: free sites always show for the owner, as quiet + marks that
+    // name their kind on hover; placing lights the pick's kind.
+    const placing = !!build?.placing;
+    const nameOf = (key: string) => { const option = model.catalog.find(entry => entry.key === key); return option ? structureLevel(option, 1).label : label(key); };
+    const pill = (job: StructureJob, text: string) => job.active
+      ? `<span class="deck-planet__pill">${ring(job.progress)}${esc(text)} · <b>${eta(job.readyIn)}</b></span>`
+      : `<span class="deck-planet__pill is-waiting"><i>${job.position}</i>${esc(text)}</span>`;
+    const upgradePill = (key: string) => {
+      const job = line.find(entry => entry.key === key);
+      const order = orders.find(entry => entry.key === key);
+      return job ? pill(job, `↑ ${romanTier(job.tier)}`) : order ? `<span class="deck-planet__pill is-sent">↑ ${romanTier(order.tier)} · order sent</span>` : "";
+    };
+    const footprints = structures.map(item => `<button id="planet-spot-${esc(item.key)}" type="button" class="deck-planet__building${isOrbitalYard(item.key) ? " is-space" : item.key === "service_berth" ? " is-attachment" : ""}${station(item.key, item.tier)[0]}${build && !build.fresh && build.key === item.key ? " is-build-pick" : ""}" style="${position(item)}${station(item.key, item.tier)[1]}" data-deck-act="planet-select" data-structure="${esc(item.key)}" aria-label="Inspect ${esc(item.title)}${isOrbitalYard(item.key) ? " · in orbit" : item.key === "service_berth" ? " · Warehouse attachment" : ""}${item.hasShipConstruction ? " · ship under construction" : ""}" aria-pressed="${item.key === this.selected}" aria-controls="planet-structure-detail">${planetStructureImage(item.key, item.tier, isOrbitalYard(item.key) ? "18vw" : FOOTPRINT_SIZES, item.hasShipConstruction, surface)}${upgradePill(item.key)}</button>`).join("");
+    const badge = selected && !build ? `<div class="deck-planet__selection${isOrbitalYard(selected.key) ? " is-space" : ""}" style="${position(selected)};--planet-output-height:${selected.outputs.length > 2 ? 84 : 44}px">
       <button type="button" class="deck-planet__workforce-badge" data-deck-act="planet-select" data-structure="${esc(selected.key)}" aria-label="${esc(selected.title)}${selected.staffable ? `: ${selected.workers} workforce assigned` : ""}"><span>${esc(selected.title)}</span>${selected.staffable ? `<b>${selected.workers}</b>${workforceIcon()}` : ""}</button>
       ${selected.outputs.length ? `<div class="deck-planet__output-badge" aria-label="Reported output">${outputHtml(selected.outputs)}</div>` : ""}
     </div>` : "";
     const sites = this.sites.snapshot(model);
-    const emptySites = this.buildSites ? sites.free.map(site => `<button id="planet-site-${site.slot}" type="button" class="deck-planet__site is-${site.pool}" style="${position(footprintAddress(surface, site.slot))}" data-deck-act="world-build-site" data-slot="${site.slot}" data-pool="${site.pool}" aria-label="Build in available ${POOL_LABEL[site.pool]} slot" title="${POOL_LABEL[site.pool]} slot"><b>+</b><small>${site.pool === "infrastructure" ? "Infra" : site.pool === "industrial" ? "Industry" : "Resource"}</small></button>`).join("") : "";
+    // Orders in flight hold their site; the builder's pick previews on the
+    // chosen site, or the one it would take when none is chosen.
+    const held = new Set(orders.flatMap(order => order.slot === null || model.body.structures[order.key] ? [] : [order.slot]));
+    const ghostSlot = placing && build?.fresh && build.pool && !isOrbitalYard(build.key)
+      ? build.site ?? sites.free.find(site => site.pool === build.pool && !held.has(site.slot))?.slot ?? null : null;
+    const emptySites = model.mine ? sites.free.filter(site => !held.has(site.slot) && site.slot !== ghostSlot).map(site => {
+      const match = placing && !!build?.fresh && site.pool === build.pool;
+      const text = match ? "Place here" : `Free ${POOL_LABEL[site.pool]} site`;
+      return `<button id="planet-site-${site.slot}" type="button" class="deck-planet__site is-free is-${site.pool}${placing ? match ? " is-match" : " is-dim" : ""}" style="${position(footprintAddress(surface, site.slot))}" data-deck-act="world-build-site" data-slot="${site.slot}" data-pool="${site.pool}" aria-label="${match ? `Place ${esc(nameOf(build!.key))} here` : `Build on this free ${POOL_LABEL[site.pool]} site`}"><b>+</b><small>${text}</small></button>`;
+    }).join("") : "";
     const construction = sites.occupied.filter(site => !model.body.structures[site.key!]).map(site => {
       const job = model.report.builds.find(job => job.body_id === model.body.id && job.key === site.key)!;
+      const entry = line.find(candidate => candidate.key === site.key);
       const name = model.catalog.find(option => option.key === site.key)?.label ?? label(site.key!);
       const status = job.queued ? "Queued" : job.complete_time === null ? "Paused" : "Building";
-      return `<div id="planet-construction-${esc(site.key!)}" class="deck-planet__site is-construction" style="${position(footprintAddress(surface, site.slot))}" role="img" aria-label="${status}: ${esc(name)}" title="${esc(name)} · ${status}">${structureImage(site.key!, 1, "lg")}<small>${status}</small></div>`;
+      return `<div id="planet-construction-${esc(site.key!)}" class="deck-planet__site is-construction${entry && !entry.active ? " is-waiting" : ""}${isOrbitalYard(site.key!) ? " is-space" : ""}${station(site.key!, 1)[0]}" style="${position(orbitalYardAddress(site.key!, 1, surface !== null) ?? footprintAddress(surface, site.slot))}${station(site.key!, 1)[1]}" role="img" aria-label="${status}: ${esc(name)}" title="${esc(name)} · ${status}">${planetStructureImage(site.key!, 1, isOrbitalYard(site.key!) ? "18vw" : FOOTPRINT_SIZES, false, surface)}${entry ? pill(entry, name) : `<small>${status}</small>`}</div>`;
     }).join("");
+    const sent = orders.filter(order => order.slot !== null && !model.body.structures[order.key] && !line.some(job => job.key === order.key))
+      .map(order => `<div class="deck-planet__site is-construction is-sent" style="${position(footprintAddress(surface, order.slot!))}" role="img" aria-label="Order sent: ${esc(nameOf(order.key))}">${planetStructureImage(order.key, 1, FOOTPRINT_SIZES, false, surface)}<span class="deck-planet__pill is-sent">${esc(nameOf(order.key))} · order sent</span></div>`).join("");
+    const ghost = build && ghostSlot !== null ? `<div class="deck-planet__site is-construction is-ghost" style="${position(footprintAddress(surface, ghostSlot))}" role="img" aria-label="${esc(nameOf(build.key))} would be built here">${planetStructureImage(build.key, 1, FOOTPRINT_SIZES, false, surface)}<span class="deck-planet__pill is-ghost"><b>${esc(nameOf(build.key))}</b>${build.site === null ? " · suggested site" : " · this site"}</span></div>` : "";
+    const siege = model.siege ? siegeOverlay(model.siege, structures, model.body.id) : "";
+    const orbit = orbitFleetsHtml(model.docked ?? [], surface !== null);
     // Sibling worlds come from the same arrived system report as the scene.
     const worlds = model.report.bodies.map(body => `<button id="planet-world-${body.id}" type="button" data-deck-act="world-switch" data-body="${body.id}"${body.id === model.body.id ? ' aria-current="page"' : ""}>${esc(body.name)}</button>`).join("");
-    return `<div class="deck-planet-scene" aria-label="${esc(model.body.name)} planet view">
-      <nav id="planet-worlds" class="deck-planet__worlds" aria-label="Worlds in ${esc(model.system.name)}"><span>${esc(model.system.name)} · worlds</span>${worlds}${model.mine ? `<button type="button" class="deck-planet__sites-toggle" data-deck-act="planet-build-sites" aria-pressed="${this.buildSites}">${this.buildSites ? "Done" : "Build sites"}</button>` : ""}</nav>
-      <div class="deck-planet__scene${surface ? "" : " is-orbital"}" aria-label="${surface ? "Planet surface" : "Orbital infrastructure"}"><div class="deck-planet__canvas">${background}${footprints}${construction}${emptySites}${badge}${this.buildSites && !sites.free.length ? '<span class="deck-planet__sites-empty">No free slots</span>' : ""}</div></div>
+    return `<div class="deck-planet-scene${build && !placing ? " is-building" : ""}" aria-label="${esc(model.body.name)} planet view">
+      <nav id="planet-worlds" class="deck-planet__worlds" aria-label="Worlds in ${esc(model.system.name)}"><span>${esc(model.system.name)} · worlds</span>${worlds}${model.mine && !build ? `<button type="button" class="deck-planet__sites-toggle" data-deck-act="world-build" data-mode="structures">Build</button>` : ""}</nav>
+      <div class="deck-planet__scene${surface ? "" : " is-orbital"}" aria-label="${surface ? "Planet surface" : "Orbital infrastructure"}"><div class="deck-planet__canvas">${background}${footprints}${construction}${sent}${ghost}${emptySites}${orbit}${siege}${badge}${placing && !sites.free.length ? '<span class="deck-planet__sites-empty">No free slots</span>' : ""}</div></div>
+      ${model.builderHtml}
     </div>`;
   }
 
@@ -338,26 +432,49 @@ export class PlanetPanel {
     const assignedHere = structures.reduce((sum, item) => sum + item.workers, 0);
     const free = model.report.workforce ? Math.max(0, model.report.workforce.units - model.report.workforce.posted) : null;
     const tabs = TABS.filter(tab => model.mine || tab === "survey").map(tab => `<button type="button" data-deck-act="planet-tab" data-tab="${tab}" aria-selected="${this.tab === tab}" aria-controls="planet-page">${label(tab)}${tab === "structures" ? ` <small>${structures.length}</small>` : ""}</button>`).join("");
+    const line = model.construction?.line ?? [];
+    const orders = model.construction?.pending ?? [];
     const list = structures.length ? structures.map(item => {
       const pending = this.pending.has(this.key(model, item.key));
+      // §construction: an upgrade under way reads on the building's own row.
+      const job = line.find(entry => entry.key === item.key);
+      const order = orders.find(entry => entry.key === item.key);
+      const work = job ? job.active ? ` · <span class="deck-planet__upgrading">upgrading to ${romanTier(job.tier)} · ${eta(job.readyIn)}</span>`
+        : ` · upgrade to ${romanTier(job.tier)} queued #${job.position}` : order ? " · upgrade order sent" : "";
       return `<button id="planet-row-${esc(item.key)}" type="button" class="deck-planet__row" data-deck-act="planet-select" data-structure="${esc(item.key)}" aria-pressed="${item.key === this.selected}" aria-controls="planet-structure-detail">
-        ${structureImage(item.key, item.tier, "md")}<span class="deck-planet__row-name"><b>${esc(item.title)}</b><small>${pending ? "Order sent · awaiting report" : `Tier ${item.tier} · ${esc(item.status)}`}</small></span>
+        ${structureImage(item.key, item.tier, "md")}<span class="deck-planet__row-name"><b>${esc(item.title)}</b><small>${pending ? "Order sent · awaiting report" : `${tierText(item)} · ${esc(item.status)}${work}`}</small></span>
         <span class="deck-planet__row-values">${outputHtml(item.outputs)}${item.staffable ? `<span class="deck-planet__staffed-value">${item.workers} ${workforceIcon()}</span>` : item.outputs.length ? "" : "—"}</span></button>`;
-    }).join("") : `<div class="deck-empty-inline">No structures built.</div>`;
+    }).join("") + this.risingRows(model, structures) : this.risingRows(model, structures) || `<div class="deck-empty-inline">No structures built.</div>`;
     const page = this.tab === "survey" ? model.surveyHtml
       : this.tab === "population" ? model.populationHtml
       : `<div class="deck-planet__management"><section class="deck-planet__list" aria-label="Planet structures">${list}</section>${selected ? this.detailHtml(model, selected) : ""}</div>`;
-    const development = model.mine && this.tab === "structures"
-      ? `<div class="deck-planet__development">${model.developmentHtml}${model.queueHtml}</div>` : "";
     const delay = model.delay === null ? "Unknown" : model.delay < 1 ? "<1s" : `~${Math.ceil(model.delay)}s`;
     return `<section class="deck-page deck-planet" aria-label="${esc(model.body.name)} planet management">
-      <header class="deck-page__lead deck-planet__lead"><img class="deck-planet__art" src="${esc(model.art)}" alt="" draggable="false"><span>${esc(model.system.name)} · World</span><h2>${esc(model.body.name)}</h2><p><span>${esc(label(model.body.environment))} · ${esc(label(model.body.size))}${model.body.geology ? ` · ${esc(label(model.body.geology))}` : ""}</span><span class="deck-planet__delay">Information delay <b>${delay}</b></span></p></header>
-      ${model.mine ? `<div class="deck-planet__workforce-summary"><span>${workforceIcon()} Workforce <b>${assignedHere}</b> assigned here</span><span class="deck-planet__available">${free === null ? "—" : free} available in system</span></div>` : ""}
+      <header class="deck-page__lead deck-planet__lead"><img class="deck-planet__art" src="${esc(model.art)}" alt="" draggable="false"><span>${esc(model.system.name)} · World</span><h2>${esc(model.body.name)}</h2><p><span>${model.body.belt ? esc(model.body.belt.kind === "shattered" ? "Shattered world" : `${label(model.body.belt.kind)} belt`) : `${esc(label(model.body.environment))} · ${esc(label(model.body.size))}`}${model.body.geology ? ` · ${esc(label(model.body.geology))}` : ""}</span><span class="deck-planet__delay">Information delay <b>${delay}</b></span></p></header>
+      ${model.mine ? model.constructionHtml : ""}
+      ${model.mine ? `<div class="deck-planet__workforce-summary"><span>${workforceIcon()} Workforce <b>${assignedHere}</b> assigned here</span><span class="deck-planet__available">${free === null ? "—" : free} available in system</span>${gridHtml(model.body)}</div>` : ""}
       <nav class="deck-tabs deck-planet__tabs" aria-label="Planet management">${tabs}</nav>
       <div id="planet-page">${page}</div>
-      ${model.mine && model.body.founding_camp ? `<section class="camp-summary"><b>Founding Camp · ${model.body.founding_camp.completed.length}/4 developments</b><p>Housing ${Math.round((model.body.population_capacity ?? .003) * 1e6).toLocaleString()} · ${model.report.storage_cap} goods of system storage. Prospect, improve the mine, expand storage or prepare the next workforce cohort.</p><button type="button" data-settlement-open data-system="${esc(model.system.id)}" data-body="${model.body.id}">Settlement projects</button></section>` : ""}
-      ${development}
+      ${model.mine && model.body.founding_camp ? `<section class="camp-summary"><b>Founding Camp · ${model.body.founding_camp.completed.length}/4 developments</b><p>Housing ${Math.round((model.body.population_capacity ?? .003) * 1e6).toLocaleString()} · ${model.report.storage_cap} goods of system storage. Prospect, improve the mine, expand storage or prepare the next workforce cohort.</p><button type="button" data-settlement-open data-coach="settlement-projects" data-system="${esc(model.system.id)}" data-body="${model.body.id}">Settlement projects</button></section>` : ""}
     </section>`;
+  }
+
+  /** §construction: new buildings still rising (or ordered) list beneath the
+   * built ones, so the list is the whole picture. Not selectable until built. */
+  private risingRows(model: PlanetPanelModel, structures: readonly PlanetStructure[]): string {
+    if (this.tab !== "structures") return "";
+    const built = new Set(structures.map(item => item.key));
+    const title = (key: string, tier: number) => {
+      const option = model.catalog.find(entry => entry.key === key);
+      return `${option ? structureLevel(option, 1).label : label(key)} ${romanTier(tier)}`;
+    };
+    const line = (model.construction?.line ?? []).filter(job => !job.project && !built.has(job.key));
+    const sent = (model.construction?.pending ?? []).filter(order => !built.has(order.key) && !line.some(job => job.key === order.key));
+    const row = (key: string, tier: number, status: string, progress: number | null) => `<div class="deck-planet__row is-rising" role="group" aria-label="${esc(title(key, tier))}: ${esc(status)}">
+        ${structureImage(key, tier, "md")}<span class="deck-planet__row-name"><b>${esc(title(key, tier))}</b><small>${esc(status)}</small>${progress === null ? "" : `<span class="deck-queue-progress" aria-hidden="true"><i style="width:${progress.toFixed(1)}%"></i></span>`}</span><span class="deck-planet__row-values"></span></div>`;
+    return line.map(job => row(job.key, job.tier, job.active ? `Under construction · ${eta(job.readyIn)}`
+      : `Queued #${job.position}${job.startsIn !== null && job.startsIn > 0.5 ? ` · starts in ${fmtBuildDur(job.startsIn)}` : " · starts next"}`, job.active ? job.progress : null)).join("")
+      + sent.map(order => row(order.key, order.tier, "Order sent · awaiting report", null)).join("");
   }
 
   private detailHtml(model: PlanetPanelModel, item: PlanetStructure): string {
@@ -365,40 +482,69 @@ export class PlanetPanel {
     const draft = this.drafts.get(key) ?? item.workers;
     const pending = this.pending.get(key);
     const option = model.catalog.find(option => option.key === item.key);
-    const ore = this.oreDrafts.get(key) ?? item.assignment?.refining_ore ?? "metallic_ore";
+    const description = option ? structureLevel(option, item.tier).description : undefined;
+    const ore = this.oreDrafts.get(key) ?? item.assignment?.refining_ore ?? defaultRecipeKey(item.key);
     const recipe = assignedRecipe(option, ore);
+    const product = item.key === "drive_works";
     const compareRecipe = item.key === "smelter" ? recipe : item.key === "mining_complex"
       ? model.catalog.find(o => o.key === "smelter")?.refining_recipes?.find(r => model.body.deposits?.some(d => d.resource === r.inputs[0][0])) : undefined;
     const comparison = model.economy && model.mine ? refiningComparison(model.economy, model.report, model.body.id, compareRecipe) : "";
-    const changed = draft !== item.workers || (item.key === "smelter" && ore !== (item.assignment?.refining_ore ?? "metallic_ore"));
-    const refining = option?.refining_recipes?.length ? `<div class="deck-planet__refining"><small>Standing refining recipe</small><div class="deck-planet__ore-options">${option.refining_recipes.map(r => `<button type="button" data-deck-act="planet-ore" data-ore="${r.inputs[0][0]}" aria-pressed="${r.inputs[0][0] === ore}">${resourceIcon(r.inputs[0][0])}${esc(label(r.inputs[0][0]))}</button>`).join("")}</div><small>${recipe ? `${recipe.inputs.map(([c,n]) => `${n} ${label(c)}`).join(" + ")} → ${recipeOutputs(recipe).map(([c,n]) => `${n} ${label(c)}`).join(" + ")}` : ""}</small></div>` : "";
+    const changed = draft !== item.workers || (recipeSelectable(item.key) && ore !== (item.assignment?.refining_ore ?? defaultRecipeKey(item.key)));
+    const refining = option?.refining_recipes?.length ? `<div class="deck-planet__refining"><small>${product ? "Product" : "Standing refining recipe"}</small><div class="deck-planet__ore-options">${option.refining_recipes.map(r => recipeKey(item.key, r)).map(c => `<button type="button" data-deck-act="planet-ore" data-ore="${c}" aria-pressed="${c === ore}">${resourceIcon(c)}${esc(label(c))}</button>`).join("")}</div><small>${recipe ? `${recipe.inputs.map(([c,n]) => `${n} ${label(c)}`).join(" + ")} → ${recipeOutputs(recipe).map(([c,n]) => `${n} ${label(c)}`).join(" + ")}` : ""}</small></div>` : "";
     const specialists = Object.entries(item.assignment?.specialists ?? {}).filter(([, count]) => count > 0);
-    const review = this.review?.key === key;
+    const review = this.review?.key === key ? this.review : null;
+    const stale = !!review && review.previous !== postingFingerprint(item);
     const overposted = !!model.report.workforce && model.report.workforce.posted - item.workers + draft > model.report.workforce.units;
-    const action = review
-      ? `<div class="deck-planet__confirm" role="group" aria-label="Review workforce assignment"><b>${item.workers} → ${draft} workforce</b><span>${model.delay === null ? "Order delay unknown" : `Order travel ~${Math.ceil(model.delay)}s`} · updates after response</span>${overposted ? `<span class="deck-planet__warning">Not enough free workforce; assignments will share capacity.</span>` : ""}<div><button type="button" class="is-primary" data-deck-act="planet-confirm">Confirm assignment</button><button type="button" data-deck-act="planet-cancel">Cancel</button></div></div>`
-      : `<button type="button" class="is-primary" data-deck-act="planet-review" ${!changed ? "disabled" : ""}>${!changed ? "No changes" : "Review assignment"}</button>`;
+    const confirm = review && changed
+      ? `<div class="deck-planet__confirm" role="group" aria-label="Review workforce assignment"><div><b>${item.workers} → ${review.workers} workforce</b>${recipeSelectable(item.key) ? `<small>${product ? "Make" : "Refine"} ${esc(label(review.refining_ore ?? defaultRecipeKey(item.key)))} · takes effect when the order arrives</small>` : ""}<small>${model.delay === null ? "Order delay unknown" : `Order travel ~${Math.ceil(model.delay)}s`} · updates after response</small>${stale ? `<small class="deck-planet__warning">A newer report arrived · check the change</small>` : ""}${overposted ? `<small class="deck-planet__warning">Not enough free workforce; assignments will share capacity.</small>` : ""}</div><div class="deck-planet__confirm-actions">${stale ? `<button type="button" class="is-primary" data-deck-act="planet-review">Update</button>` : `<button type="button" class="is-primary" data-deck-act="planet-confirm">Confirm</button>`}<button type="button" data-deck-act="planet-cancel">Cancel</button></div></div>`
+      : "";
     return `<aside id="planet-structure-detail" class="deck-planet__detail" aria-label="Selected structure">
-      <header>${structureImage(item.key, item.tier, "lg")}<div><small>Tier ${item.tier}</small><h3>${esc(item.title)}</h3><span class="${item.status === "Operating" || item.status === "Automatic" ? "deck-planet__good" : "deck-planet__warning"}">${esc(item.status)}</span></div></header>
-      <p>${esc(model.descriptions[item.key] ?? "Planetary infrastructure.")}</p>
+      <header>${structureImage(item.key, item.tier, "lg")}<div><small>${tierText(item)}</small><h3>${esc(item.title)}</h3><span class="${item.status === "Operating" || item.status === "Automatic" ? "deck-planet__good" : "deck-planet__warning"}">${esc(item.status)}</span></div></header>
+      <p>${esc(description ?? model.descriptions[item.key] ?? "Planetary infrastructure.")}</p>
+      ${item.hasShipConstruction ? `<small>Ship under construction · reported build queue. The hull remains in its berth while work is paused.</small>` : ""}
+      ${item.key === "command_center" ? `<small>Local administration only. Ships, research and signal travel are unchanged. Bonuses apply to newly ordered structures, not already queued work.</small>` : ""}
+      ${item.key === "power_plant" ? `<small>Own slot · one per planet · no crew</small>` : POWERED_STRUCTURES.has(item.key) ? `<small>Draws ${mw(drawMW(item.key, item.tier))} MW${(model.body.power?.power ?? 1) < 0.999 ? ` · Power ${Math.round((model.body.power?.power ?? 1) * 100)}%` : ""}</small>` : ""}
       ${item.key === "warehouse" && (model.body.structures.service_berth ?? 0) > 0 ? `<small>Attached Service Berth · utility fittings · no extra slot</small>` : ""}
       ${refining}${comparison}
-      ${item.staffable ? `<div class="deck-planet__assignment"><div><b>Assigned workforce</b><small>Capacity ${item.tier}</small></div><div class="deck-stepper"><button type="button" data-deck-act="planet-workers" data-delta="-1" aria-label="Decrease assigned workforce" ${draft <= 0 ? "disabled" : ""}>−</button><b aria-label="Planned workforce">${draft}</b><button type="button" data-deck-act="planet-workers" data-delta="1" aria-label="Increase assigned workforce" ${draft >= item.tier ? "disabled" : ""}>+</button></div><small>1 workforce = 1,000 populace</small>${specialists.length ? `<small>Specialists: ${specialists.map(([kind, count]) => `${count} ${esc(label(kind))}`).join(" · ")}</small>` : ""}</div>` : ""}
+      ${item.staffable ? `<div class="deck-planet__assignment"><div class="deck-planet__assignment-row"><div><b>Assigned workforce</b><small>Capacity ${item.tier}</small></div><div class="deck-stepper"><button type="button" data-deck-act="planet-workers" data-delta="-1" aria-label="Decrease assigned workforce" ${draft <= 0 ? "disabled" : ""}>−</button><b aria-label="Planned workforce">${draft}</b><button type="button" data-deck-act="planet-workers" data-delta="1" data-coach="staff-plus" aria-label="Increase assigned workforce" ${draft >= item.tier ? "disabled" : ""}>+</button></div></div>${confirm}<small>1 workforce = 1,000 populace</small>${specialists.length ? `<small>Specialists: ${specialists.map(([kind, count]) => `${count} ${esc(label(kind))}`).join(" · ")}</small>` : ""}</div>` : ""}
       ${item.outputs.length ? `<div class="deck-planet__reported"><small>Reported output</small><div>${outputHtml(item.outputs)}</div></div>` : ""}
-      ${recipe ? `<div class="deck-planet__inputs"><small>Inputs</small><div>${recipe.inputs.map(([good]) => resourceIcon(good)).join("")}</div></div>` : ""}
-      ${review && item.key === "smelter" ? `<small>Refine ${esc(label(this.review!.refining_ore ?? "metallic_ore"))} · takes effect when the order arrives</small>` : ""}
+      ${recipe?.inputs.length ? `<div class="deck-planet__inputs"><small>Inputs</small><div>${recipe.inputs.map(([good]) => resourceIcon(good)).join("")}</div></div>` : ""}
       ${pending ? `<div class="deck-planet__pending" role="status">${pending.workers} workforce${pending.refining_ore ? ` · ${esc(label(pending.refining_ore))}` : ""} requested · awaiting report</div>` : ""}
-      ${item.staffable ? action : ""}
+      ${model.mine ? this.upgradeHtml(model, item, option) : ""}
     </aside>`;
+  }
+
+  /** §build-sheet: the building's next level; Upgrade opens the build sheet on it. */
+  private upgradeHtml(model: PlanetPanelModel, item: PlanetStructure, option: BuildOption | undefined): string {
+    if (!option) return "";
+    const ordered = (model.construction?.line ?? []).filter(job => job.key === item.key).length
+      + (model.construction?.pending ?? []).filter(order => order.key === item.key).length;
+    const next = item.tier + ordered + 1;
+    if (next > maxLevel(option)) return `<div class="deck-planet__upgrade"><span>Top level</span></div>`;
+    const level = structureLevel(option, next);
+    const costs = (level.costs ?? []).map(cost => `${cost.units} ${label(cost.commodity)}`).join(", ");
+    const seconds = structureBuildSeconds(level, model.body);
+    return `<div class="deck-planet__upgrade"><span>Level ${romanTier(next)}<small>${esc(costs || "No goods")}${Number.isFinite(seconds) ? ` · ${fmtBuildDur(seconds)}` : ""}</small></span><button type="button" class="is-primary" data-deck-act="world-build" data-mode="structures" data-select="${esc(item.key)}">Upgrade to ${romanTier(next)}</button></div>`;
   }
 }
 
 function postingFingerprint(item: PlanetStructure): string {
-  return JSON.stringify([item.workers, item.tier, item.assignment?.refining_ore ?? "metallic_ore", Object.entries(item.assignment?.specialists ?? {}).sort()]);
+  return JSON.stringify([item.workers, item.tier, item.assignment?.refining_ore ?? defaultRecipeKey(item.key), Object.entries(item.assignment?.specialists ?? {}).sort()]);
 }
 function sameSpecialists(a: Record<string, number>, b: Record<string, number>): boolean {
   return JSON.stringify(Object.entries(a).filter(([, n]) => n > 0).sort()) === JSON.stringify(Object.entries(b).filter(([, n]) => n > 0).sort());
 }
+/** A small progress ring for a construction pill (0–100, unknown reads empty). */
+function ring(progress: number | null): string {
+  const pct = Math.max(0, Math.min(100, progress ?? 0)).toFixed(1);
+  return `<svg class="deck-planet__ring" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8"/><circle cx="10" cy="10" r="8" pathLength="100" stroke-dasharray="${pct} 100"/></svg>`;
+}
+
+/** Time left in sim seconds, as the construction queue reads it. */
+function eta(seconds: number | null): string {
+  return seconds === null ? "—" : seconds <= 0.5 ? "completing" : fmtBuildDur(seconds);
+}
+
 function workforceIcon(): string {
   return `<img class="deck-planet__workforce-icon" src="${ART}workforce-128.png" srcset="${ART}workforce-128.png 1x, ${ART}workforce-256.png 2x" alt="Workforce" title="Workforce">`;
 }
@@ -415,4 +561,82 @@ function rateText(rate: number): string {
 }
 function esc(text: string): string {
   return text.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]!));
+}
+
+/** Bombardment flashes on this world's own buildings (else seeded open
+ * ground), troop craft dropping while a landing is fought, and the siege
+ * banner. Markup is stable between reports so the morph keeps animations
+ * running; only the banner text changes as the arrived numbers move. */
+/** §planet-orbit: up to this many docked fleets are drawn in the world's sky;
+ * the rest fold into "+N in orbit". */
+export const ORBIT_FLEETS_SHOWN = 3;
+/** A docked hull's visible length, in percent of the scene's width: the class
+ * ladder, compressed so a titan never rivals the yards it berths at. */
+const ORBIT_HULL: Record<ShipKind, number> = {
+  scout: 3.6, survey_probe: 2.8, mining_barge: 4.8, raider: 4.2, corvette: 4.6, tiny_freighter: 4, small_freighter: 4.6, convoy: 5.4,
+  large_freighter: 6, heavy_freighter: 6.6, bulk_freighter: 7.2, freighter: 6, colony: 6.4, transport: 5.6,
+  builder: 5.2, destroyer: 5.6, cruiser: 6.8, battleship: 8, dreadnought: 9, titan: 10.5, mining_belt_station: 7.6,
+};
+/** Sky slots, in the ground frame's percent: warships by the Orbital Shipyard,
+ * capital ships by the Capital Slipway, everything else between them. A gas
+ * giant's globe fills the middle, so its slots sit in the corners. */
+const ORBIT_SLOTS = {
+  painted: [{ x: 38, y: -4 }, { x: 62, y: -4 }, { x: 50, y: 3 }],
+  globe: [{ x: 12, y: 16 }, { x: 88, y: 16 }, { x: 88, y: 36 }],
+};
+const ORBIT_MORE = { painted: { x: 50, y: 9 }, globe: { x: 88, y: 48 } };
+const CAPITAL_HULLS: ReadonlySet<ShipKind> = new Set(["battleship", "dreadnought", "titan"]);
+const WARSHIP_HULLS: ReadonlySet<ShipKind> = new Set(["raider", "corvette", "destroyer", "cruiser"]);
+
+/** Which docked fleets are drawn, in which sky slot, and how many fold away:
+ * the selected fleet first, then your own, then the larger hulls. */
+export function orbitFleets(docked: readonly PlanetDockedFleet[]): { shown: { fleet: PlanetDockedFleet; slot: number }[]; more: number } {
+  const order = [...docked].sort((a, b) => Number(b.selected) - Number(a.selected) || Number(b.own) - Number(a.own)
+    || ORBIT_HULL[b.kind] - ORBIT_HULL[a.kind] || a.id.localeCompare(b.id));
+  const taken = new Set<number>();
+  const shown = order.slice(0, ORBIT_FLEETS_SHOWN).map(fleet => {
+    const preferred = CAPITAL_HULLS.has(fleet.kind) ? 1 : WARSHIP_HULLS.has(fleet.kind) ? 0 : 2;
+    const slot = taken.has(preferred) ? [0, 1, 2].find(i => !taken.has(i))! : preferred;
+    taken.add(slot);
+    return { fleet, slot };
+  });
+  return { shown, more: docked.length - shown.length };
+}
+
+function orbitFleetsHtml(docked: readonly PlanetDockedFleet[], painted: boolean): string {
+  if (!docked.length) return "";
+  const { shown, more } = orbitFleets(docked);
+  const slots = painted ? ORBIT_SLOTS.painted : ORBIT_SLOTS.globe;
+  const ships = shown.map(({ fleet, slot }) => {
+    const at = slots[slot];
+    const many = fleet.count !== null && fleet.count > 1;
+    const name = `${fleet.name}${many ? ` ×${fleet.count}` : ""} · docked in orbit`;
+    return `<button type="button" class="deck-planet__orbit-ship${fleet.own ? " is-own" : ""}" style="--planet-x:${at.x}%;--planet-y:${at.y}%;--orbit-hull:${ORBIT_HULL[fleet.kind]}" data-deck-act="world-fleet-open" data-fleet="${esc(fleet.id)}" aria-pressed="${fleet.selected}" aria-label="${esc(name)}" title="${esc(name)}"><img src="${esc(SHIP_MODELS[fleet.kind].poster)}" alt="" draggable="false" decoding="async">${many ? `<small>×${fleet.count}</small>` : ""}</button>`;
+  }).join("");
+  const at = painted ? ORBIT_MORE.painted : ORBIT_MORE.globe;
+  const rest = more > 0 ? `<span class="deck-planet__orbit-more" style="--planet-x:${at.x}%;--planet-y:${at.y}%">+${more} in orbit</span>` : "";
+  return `<div class="deck-planet__orbit-fleets" aria-label="Fleets docked in orbit">${ships}${rest}</div>`;
+}
+
+function siegeOverlay(siege: PlanetSiege, structures: readonly PlanetStructure[], bodyId: number): string {
+  const targets = structures.filter((item) => !isOrbitalYard(item.key) && Number.isFinite(item.x) && Number.isFinite(item.y))
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const count = siege.suppression > 0.02 ? Math.min(8, 2 + Math.round(siege.suppression * 6)) : 0;
+  let seed = (bodyId * 2654435761) >>> 0;
+  const rnd = () => { seed = (Math.imul(seed ^ (seed >>> 15), 0x2c1b3c6d) + 0x6d2b79f5) >>> 0; return seed / 4294967296; };
+  const impacts = Array.from({ length: count }, (_, i) => {
+    const at = targets.length ? targets[i % targets.length] : null;
+    const x = at ? at.x + (rnd() - 0.5) * 5 : 18 + rnd() * 64;
+    const y = at ? at.y - 2 + (rnd() - 0.5) * 4 : 48 + rnd() * 36;
+    return `<span class="deck-planet__impact" style="--planet-x:${x.toFixed(1)}%;--planet-y:${y.toFixed(1)}%;--impact-delay:${(i * 0.37 + rnd() * 0.5).toFixed(2)}s"></span>`;
+  }).join("");
+  const landers = siege.landingId ? [0, 1, 2].map((i) => {
+    const at = targets[i % Math.max(1, targets.length)];
+    const x = at ? at.x + (i - 1) * 4 : 40 + i * 10;
+    const y = at ? at.y : 62;
+    return `<span class="deck-planet__lander" style="--planet-x:${x.toFixed(1)}%;--lander-y:${y.toFixed(1)}%;--lander-delay:${(i * 0.9).toFixed(2)}s"></span>`;
+  }).join("") : "";
+  const follow = siege.landingId
+    ? `<button type="button" data-deck-act="watch-ground" data-ground="${esc(siege.landingId)}">Follow landing · delayed</button>` : "";
+  return `<div class="deck-planet__siege" aria-label="${esc(siege.caption)}">${impacts}${landers}<div class="deck-planet__siege-banner" role="status"><b>⛔ ${esc(siege.caption)}</b>${siege.detail ? `<span>${esc(siege.detail)}</span>` : ""}${follow}</div></div>`;
 }

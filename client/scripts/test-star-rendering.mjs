@@ -96,13 +96,20 @@ class Text extends Container { constructor({ text, style }) { super(); this.text
 const pixi = { Container, Graphics, Sprite, Text, Texture: { EMPTY: {} },
   TextStyle: class { constructor(style) { Object.assign(this, style); } }, Assets: { load: () => new Promise(() => {}) } };
 const planetArt = compile(source("planetart.ts"), { "./planet-art.generated": compile(source("planet-art.generated.ts")) });
-const systems = compile(source("systemview.ts"), { "./stars": stars, "./prng": prng, "./planetart": planetArt, "pixi.js": pixi });
+const layout = compile(source("systemlayout.ts"));
+const bodyFx = compile(source("systembodyfx.ts"), { "pixi.js": pixi, "./systemlayout": layout });
+const systems = compile(source("systemview.ts"), { "./stars": stars, "./prng": prng, "./planetart": planetArt, "pixi.js": pixi,
+  "./systemlayout": layout, "./systembodyfx": bodyFx,
+  "./systemstarfx": compile(source("systemstarfx.ts"), { "pixi.js": pixi, "./systembodyfx": bodyFx, "./systemlayout": layout }),
+  "./systemtrafficlayer": compile(source("systemtrafficlayer.ts"), { "pixi.js": pixi, "./protocol": compile(source("protocol.ts")),
+    "./systemlayout": layout, "./systembodyfx": bodyFx }),
+  "./planet-structure-art": { hasOrbitalShipConstruction: () => false }, "./icons": { label: (s) => s } });
 
 const renderSource = source("render.ts");
 const ast = ts.createSourceFile("render.ts", renderSource, ts.ScriptTarget.Latest, true);
 const owner = ast.statements.find(n => ts.isClassDeclaration(n) && n.name?.text === "Renderer");
 const method = name => owner.members.find(n => n.name?.getText(ast) === name);
-const constantNames = ["BAND_SIZE", "BODY_ZOOM_START", "ZOOM_MAX_FACTOR", "SHIP_NATIVE_ZOOM_START", "MACHINE_ZOOM_END", "BODY_HIT_CAP_PX"];
+const constantNames = ["BAND_SIZE", "BODY_ZOOM_START", "ZOOM_MAX_FACTOR", "SYSTEM_ZOOM_FACTOR", "SHIP_NATIVE_ZOOM_START", "MACHINE_ZOOM_END", "BODY_HIT_CAP_PX"];
 const constants = ast.statements.filter(ts.isVariableStatement).flatMap(n => [...n.declarationList.declarations])
   .filter(n => constantNames.includes(n.name.getText(ast)));
 assert.equal(constants.length, constantNames.length);
@@ -148,10 +155,11 @@ for (const [width, height, resolution] of [[390, 844, 2], [1366, 768, 1], [1920,
     const systemArt = art.starArtwork("system", st.slug);
     close(scene.starSprite.scale.x * scene.starSprite.texture.width * systemArt.visualRatio * scene.worldRoot.scale.x,
       .17 * .42 * Math.min(width, height), "unchanged System View visible diameter");
-    for (const zoom of [.9, 4, 24, 72, 80, 88, 96, 153.6]) {
+    for (const zoom of [.9, 4, 24, 72, 80, 88, 96, 153.6, 192, 384, 614.4]) {
       renderer.scale = zoom;
       const diameter = renderer.starDiameters(sys).rendered;
       assert.ok(diameter <= scene.starVisibleDiameterPx(), "galaxy never exceeds the system star's existing cap");
+      if (zoom >= 96) close(diameter, scene.starVisibleDiameterPx(), "star still reaches its system-view size at 96×");
       renderer.drawStar(st, sys, { x: 310, y: 270 }, diameter);
       const sprite = renderer.systemBodies.get(sys.id);
       const mapArt = art.starArtwork("galaxy", st.slug);

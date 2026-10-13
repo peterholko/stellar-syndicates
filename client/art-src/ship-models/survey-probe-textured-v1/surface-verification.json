@@ -1,0 +1,93 @@
+{
+  "triangles": 2448,
+  "components": 50,
+  "closedComponents": 50,
+  "dedicatedBottomTriangles": 308,
+  "finiteAttributes": true,
+  "unitNormals": true,
+  "consistentWinding": true,
+  "nondegenerateTriangles": true,
+  "noncollapsedBottomUVs": true,
+  "positiveVolumes": {
+    "hull.armored-core": 1.9875419,
+    "hull.dorsal-plates": 0.39501237,
+    "ventral.service-plating": 0.26791897,
+    "hull.port.cheek": 0.16128609,
+    "radiator.port.folded-panel": 0.059125,
+    "hull.starboard.cheek": 0.16128609,
+    "radiator.starboard.folded-panel": 0.059125,
+    "sensor.neck": 0.09092899,
+    "sensor.forward-dish": 0.37617795,
+    "engine.main.housing": 0.35921322,
+    "hull.dorsal-service-cap": 0.00285862,
+    "ventral.access-hatch.1": 0.00645525,
+    "ventral.access-hatch.2": 0.00645525,
+    "ventral.access-hatch.3": 0.00645525,
+    "radiator.port.hinge": 0.00445477,
+    "radiator.starboard.hinge": 0.00445477,
+    "sensor.optical-eye": 0.02373861,
+    "sensor.rim-clamp.1": 0.001326,
+    "sensor.rim-clamp.2": 0.001326,
+    "sensor.rim-clamp.3": 0.001326,
+    "sensor.rim-clamp.4": 0.001326,
+    "antenna.port.forward.boom": 0.0133853,
+    "antenna.port.forward.root-collar": 0.00753303,
+    "antenna.port.forward.silver-sleeve": 0.00582761,
+    "antenna.port.forward.sleeve-band": 0.00219294,
+    "antenna.port.forward.tip-housing": 0.00291684,
+    "antenna.port.forward.cyan-indicator": 0.00010105,
+    "antenna.port.aft.boom": 0.01192923,
+    "antenna.port.aft.root-collar": 0.00671357,
+    "antenna.port.aft.silver-sleeve": 0.00519368,
+    "antenna.port.aft.sleeve-band": 0.00195439,
+    "antenna.port.aft.tip-housing": 0.00259954,
+    "antenna.port.aft.cyan-indicator": 9.006e-05,
+    "antenna.starboard.forward.boom": 0.0133853,
+    "antenna.starboard.forward.root-collar": 0.00753303,
+    "antenna.starboard.forward.silver-sleeve": 0.00582761,
+    "antenna.starboard.forward.sleeve-band": 0.00219294,
+    "antenna.starboard.forward.tip-housing": 0.00291684,
+    "antenna.starboard.forward.cyan-indicator": 0.00010105,
+    "antenna.starboard.aft.boom": 0.01192923,
+    "antenna.starboard.aft.root-collar": 0.00671357,
+    "antenna.starboard.aft.silver-sleeve": 0.00519368,
+    "antenna.starboard.aft.sleeve-band": 0.00195439,
+    "antenna.starboard.aft.tip-housing": 0.00259954,
+    "antenna.starboard.aft.cyan-indicator": 9.006e-05,
+    "engine.main.mount": 0.03650401,
+    "engine.main.collar.1": 0.00354444,
+    "engine.main.collar.2": 0.00354445,
+    "engine.main.nozzle-rim": 0.01247733,
+    "engine.main.aperture": 0.00320062
+  },
+  "method": "Independent checks on exported GLB buffers; welded position topology per authored component",
+  "observedFeatureCounts": {
+    "sensorDishes": 1,
+    "antennaBooms": 4,
+    "radiatorFins": 2,
+    "mainEngines": 1,
+    "guns": 0
+  },
+  "allPhysicalTrianglesTextured": true,
+  "allPhysicalTrianglesHaveAreaUVs": true,
+  "minimumUVTriangleArea": 3.579225449357182e-07,
+  "texturedDownwardTriangles": 505,
+  "socketNodes": [
+    {
+      "name": "socket.engine.main",
+      "translation": [
+        0.0,
+        -0.015,
+        2.828333333333333
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    }
+  ]
+}

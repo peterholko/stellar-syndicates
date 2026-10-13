@@ -388,6 +388,19 @@
 .m-founding.is-minimized { width: auto; max-width: calc(100vw - 16px); }
 .m-founding.is-minimized header > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .m-founding.is-minimized .m-founding__body { display: none; }
+/* §founding R4/R7: under way, one next step, optional work while you wait. */
+.m-founding__progress { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; }
+.m-founding__progress li { position: relative; padding-left: 12px; color: var(--info); font-size: 11px; line-height: 1.35; }
+.m-founding__progress li::before { content: "▸"; position: absolute; left: 0; color: var(--accent); }
+.m-founding__next { display: grid; gap: 5px; padding: 8px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: rgba(255,255,255,.03); }
+.m-founding__next > small { color: var(--positive); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
+.m-founding__next.is-blocked { border-color: rgba(255, 180, 84, .5); }
+.m-founding__next.is-blocked > small { color: var(--warn); }
+.m-founding__next > b { font-size: 12px; }
+.m-founding__next > em { color: var(--accent); font-size: 11px; font-style: normal; }
+.m-founding__waiting { display: grid; gap: 5px; }
+.m-founding__waiting > small { color: var(--dim); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
+.m-founding__waiting > button { min-height: 44px; }
 
 .m-list { display: grid; gap: 7px; }
 .m-list-row {
@@ -438,6 +451,8 @@
 .m-action-grid .battle-withdraw-confirm > div { display: flex; flex-wrap: wrap; gap: 7px; }
 .m-action-grid button,
 .m-primary,
+.m-founding__body button,
+.m-feature-card button,
 .m-service-row button,
 .m-decision button,
 .m-order button,
@@ -461,6 +476,8 @@ button.m-primary, .m-action-grid button.m-primary, .m-decision button.m-primary,
 
 .m-order { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,.055); font-size: 12px; }
 .m-order > span { display: grid; gap: 2px; color: var(--dim); text-align: right; }
+.m-order.is-pocket { box-shadow: inset 2px 0 0 var(--accent-2); }
+.m-order.is-pocket b { color: var(--accent-2); }
 .m-order > span:first-child { color: var(--ink); text-align: left; }
 .m-order small { color: var(--dim); }
 .m-order button { min-height: 44px; }
@@ -562,6 +579,9 @@ button.m-primary, .m-action-grid button.m-primary, .m-decision button.m-primary,
 .m-feature-card small, .m-card header small, .m-build-detail header small { color: var(--accent); font-size: 10px; letter-spacing: .06em; }
 .m-feature-card b, .m-card > b { font-size: 13px; }
 .m-feature-card span, .m-card > span { color: var(--dim); font-size: 11px; line-height: 1.4; }
+.m-card > .m-supplies { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.m-card > .m-supplies .icon { width: 16px; height: 16px; object-fit: contain; }
+.m-card > .m-supplies b { margin-right: 6px; color: var(--text); }
 .m-card header { display: flex; justify-content: space-between; gap: 8px; }
 .m-card header em { color: var(--dim); font-size: 10px; font-style: normal; text-transform: uppercase; }
 .m-card p, .m-build-detail p { margin: 0; color: var(--dim); font-size: 12px; line-height: 1.45; }
@@ -749,6 +769,8 @@ button.m-primary, .m-action-grid button.m-primary, .m-decision button.m-primary,
 .m-battle .bv-theater-holder canvas { width: 100%; height: 100%; object-fit: contain; }
 .m-battle .bv-theater-tip { position: absolute; z-index: 3; max-width: 170px; padding: 5px 7px; border: 1px solid var(--field-bd); border-radius: 5px; background: rgba(5,7,13,.93); color: var(--ink); font-size: 11px; pointer-events: none; }
 .m-battle .bv-theater-hint { position: absolute; left: 7px; bottom: 7px; max-width: 58%; color: var(--dim); font-size: 11px; pointer-events: none; }
+.m-battle .bv-theater-view { position: absolute; top: 7px; right: 7px; z-index: 4; min-height: 44px; padding: 5px 8px; border: 1px solid rgba(255,255,255,.2); border-radius: 7px; background: rgba(5,7,13,.8); color: var(--ink); font: inherit; font-size: 11px; }
+.m-battle .bv-theater-view[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .m-battle .bv-theater-banner { position: absolute; inset: 9px auto auto 50%; z-index: 3; transform: translateX(-50%); padding: 4px 8px; border-radius: 5px; background: rgba(5,7,13,.84); color: var(--ink); font-size: 12px; white-space: nowrap; }
 .m-battle-truth { aspect-ratio: 1; max-height: 330px; margin-inline: auto; border: 1px solid var(--field-bd); border-radius: 10px; background: #05070d; }
 .m-battle-truth svg { display: block; width: 100%; height: 100%; }
@@ -809,9 +831,16 @@ button.m-primary, .m-action-grid button.m-primary, .m-decision button.m-primary,
 
 .m-join[hidden] { display: none; }
 
+.m-build-row .m-ship-hull { flex: 0 0 48px; width: 48px; height: 48px; object-fit: contain; }
+
 .m-join__art::after { content: ""; position: absolute; inset: 0; background: #03081066; }
 
 @media (max-width: 360px) {
   .m-tabs button > small { font-size: 10px; }
   .m-tabs button > span { font-size: 15px; }
 }
+
+/* §power: a planet's grid; amber while it browns out. */
+.m-grid-line { color: var(--dim); font-size: 11px; font-style: normal; font-variant-numeric: tabular-nums; }
+div.m-grid-line { margin: 0 0 8px; }
+.m-grid-line.is-short { color: var(--warn); }

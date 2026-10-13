@@ -1,0 +1,54 @@
+{
+  "generator": "Python/NumPy reference-to-mesh pipeline; no Blender",
+  "referenceMethod": "Built-in image generation tool, conditioned on the original pirate sprites",
+  "ships": [
+    {
+      "id": "privateer-raider",
+      "title": "Privateer Raider",
+      "triangles": 3476,
+      "renderSections": 5,
+      "sourceComponents": 56,
+      "model": "../privateer-raider-textured-v1/privateer-raider.glb",
+      "glbSha256": "893c358e9fcb32947d33affa168a247e87dd9ee1e2f655d4506985da943cad85",
+      "referenceSha256": "56235c897ad6296c8e799e58435322cd736e03de48a497d79f793973d5d8f43d",
+      "validation": {
+        "gltfErrors": 0,
+        "gltfWarnings": 0,
+        "closedComponents": 56,
+        "dedicatedBottomTriangles": 358
+      }
+    },
+    {
+      "id": "pirate-corsair",
+      "title": "Pirate Corsair",
+      "triangles": 2928,
+      "renderSections": 5,
+      "sourceComponents": 39,
+      "model": "../pirate-corsair-textured-v1/pirate-corsair.glb",
+      "glbSha256": "2d61b52d0b04fb3cd485e2b88aa1e2b8c6a0702f5aeee0702df9c9bb08b2a59c",
+      "referenceSha256": "f4854f8ed987dd32c41f0a2600a1ec7467126920c68ee08ac5d7e8fa8a322455",
+      "validation": {
+        "gltfErrors": 0,
+        "gltfWarnings": 0,
+        "closedComponents": 39,
+        "dedicatedBottomTriangles": 378
+      }
+    },
+    {
+      "id": "pirate-boarding-raider",
+      "title": "Pirate Boarding Raider",
+      "triangles": 4092,
+      "renderSections": 6,
+      "sourceComponents": 66,
+      "model": "../pirate-boarding-raider-textured-v1/pirate-boarding-raider.glb",
+      "glbSha256": "9ac8fde5e10f5fb5ca7894c0cbafee21c8721797d17a8eb79efc8e6626abe80a",
+      "referenceSha256": "d9dba1d855e5b2568ea0de4033bd6385114a37f3c3827e7566ee333e6ff65efc",
+      "validation": {
+        "gltfErrors": 0,
+        "gltfWarnings": 0,
+        "closedComponents": 66,
+        "dedicatedBottomTriangles": 507
+      }
+    }
+  ]
+}

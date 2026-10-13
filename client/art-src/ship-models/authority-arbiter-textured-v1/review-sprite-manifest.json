@@ -1,0 +1,49 @@
+{
+  "asset": "Authority Arbiter",
+  "variant": "dark-imperial",
+  "stage": "art-review, not live game catalog",
+  "sourceModel": "authority-arbiter-dark.glb",
+  "sourceSHA256": "3472d243a2a2004d7ab703e1798fde92033d7a017b70ad6f9206b44f672c3af8",
+  "projection": "Orthographic top, nose up",
+  "frameLengthToHullLength": 1.12,
+  "triangles": 19388,
+  "rendering": "Actual GLB geometry, materials and textures; software inspection lighting, not a WebGL/PBR bake",
+  "outputs": [
+    {
+      "file": "sprites/authority-arbiter-dark-top-1024.png",
+      "size": [
+        1024,
+        1024
+      ],
+      "bytes": 463363,
+      "sha256": "9b0e6b3f0c502054e53e8e020fd32206f5a8d637fcec38e7878d037c841b2f50"
+    },
+    {
+      "file": "sprites/authority-arbiter-dark-top-512.png",
+      "size": [
+        512,
+        512
+      ],
+      "bytes": 142727,
+      "sha256": "bb6011ff7a8f9b11b2090eadf8f887149b363c6b8b239041b44ae5602e96dad7"
+    },
+    {
+      "file": "sprites/authority-arbiter-dark-top-256.png",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 46156,
+      "sha256": "f2ef86a763e09ae1d89d56a7ffd971f3b84566b355fb01381d5dcd2c6402044b"
+    },
+    {
+      "file": "sprites/authority-arbiter-dark-top-128.png",
+      "size": [
+        128,
+        128
+      ],
+      "bytes": 15558,
+      "sha256": "1b6953f4716eb8b0998f6f2f1cb438f4ccf70e1b5f6e16c38e580560c62cae05"
+    }
+  ]
+}

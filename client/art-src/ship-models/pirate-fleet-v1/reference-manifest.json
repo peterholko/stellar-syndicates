@@ -1,0 +1,17 @@
+[
+  {
+    "id": "privateer-raider",
+    "reference": "client/art-src/privateer-raider-reference-v1/privateer-raider-reference.png",
+    "sha256": "56235c897ad6296c8e799e58435322cd736e03de48a497d79f793973d5d8f43d"
+  },
+  {
+    "id": "pirate-corsair",
+    "reference": "client/art-src/pirate-corsair-reference-v1/pirate-corsair-reference.png",
+    "sha256": "f4854f8ed987dd32c41f0a2600a1ec7467126920c68ee08ac5d7e8fa8a322455"
+  },
+  {
+    "id": "pirate-boarding-raider",
+    "reference": "client/art-src/pirate-boarding-raider-reference-v1/pirate-boarding-raider-reference.png",
+    "sha256": "d9dba1d855e5b2568ea0de4033bd6385114a37f3c3827e7566ee333e6ff65efc"
+  }
+]

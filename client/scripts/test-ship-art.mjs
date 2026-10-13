@@ -20,11 +20,16 @@ const art = compile(await source("shipart.ts"), { require: () => generated });
 const close = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-9,
   `${message}: ${actual} != ${expected}`);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
-const manifest = JSON.parse(await readFile(new URL("public/art/derived/ships/2026-09-08/manifest.json", client), "utf8"));
+const manifest = JSON.parse(await readFile(new URL("public/art/derived/ships/models-v1/manifest.json", client), "utf8"));
 const kinds = ["raider", "convoy", "scout", "corvette", "colony", "builder", "transport",
   "destroyer", "cruiser", "battleship", "dreadnought", "titan", "freighter",
-  "tiny_freighter", "small_freighter", "large_freighter", "heavy_freighter", "bulk_freighter"];
-assert.deepEqual(Object.keys(generated.SHIP_ART).sort(), [...kinds].sort());
+  "tiny_freighter", "small_freighter", "large_freighter", "heavy_freighter", "bulk_freighter", "mining_barge", "mining_belt_station"];
+// The Survey Probe still borrows Scout art; every other kind has its own master.
+const standIns = { survey_probe: "scout" };
+assert.deepEqual(Object.keys(generated.SHIP_ART).sort(), [...kinds, ...Object.keys(standIns)].sort());
+for (const [kind, from] of Object.entries(standIns)) assert.deepEqual(generated.SHIP_ART[kind], generated.SHIP_ART[from]);
+assert.notDeepEqual(generated.SHIP_ART.mining_barge, generated.SHIP_ART.small_freighter, "Mining Barge has its own art");
+assert.notDeepEqual(generated.SHIP_ART.mining_belt_station, generated.SHIP_ART.builder, "Mining Belt Station has its own art");
 let checked = 0;
 for (const kind of kinds) {
   const hull = manifest.ships[kind];
@@ -41,9 +46,10 @@ for (const kind of kinds) {
     assert.ok(level.size <= 1254, "No artificial enlargement");
     assert.ok(level.url.endsWith(hash(bytes).slice(0, 12)), "Content-versioned runtime URL");
     if (level.size === 1254) assert.equal(hash(bytes), hash(master), `${kind}: native tier is byte-identical`);
-    const actual = await hullGeometry(bytes);
-    // The Battleship's thin nose antenna loses ~3px at 128px. Calibration stays
-    // keyed to the master, so this minification detail never changes its size.
+    // The Scout's long aerials cover fractions of a pixel at 128px. Verify
+    // their coverage rather than demanding half-opaque pixels at that tier.
+    // Native calibration and the renderer's fixed anchor stay unchanged.
+    const actual = await hullGeometry(bytes, level.size === 128 ? 16 : 128);
     assert.ok(Math.abs(actual.lengthRatio - geometry.lengthRatio) * level.size <= 3,
       `${kind}/${level.size}: resampling must not erase hull length`);
     for (let axis = 0; axis < 2; axis++) assert.ok(
@@ -57,7 +63,7 @@ for (const kind of kinds) {
     assert.equal(art.shipArtUrl(kind, pixels, resolution), expected.url, `${kind}: smallest adequate native tier at ${resolution}×`);
   }
   for (const size of [128, 256]) {
-    const file = new URL(`public/art/derived/ships/2026-09-08/panels/${kind}-${size}.png`, client);
+    const file = new URL(`public/art/derived/ships/models-v1/panels/${kind}-${size}.png`, client);
     const meta = await sharp(await readFile(file)).metadata();
     assert.ok(meta.hasAlpha && meta.width === size && meta.height === size);
   }
@@ -87,7 +93,7 @@ const ratios = { raider: 1, corvette: 1.5, destroyer: 2.5, cruiser: 4, battleshi
 function checkBattleScale(sizeFor) {
   for (const [kind, ratio] of Object.entries(ratios)) {
     const appearance = theater.theaterShipAppearance(battle, 0, kind, "pirate");
-    assert.match(appearance.url, /\/derived\/ships\/2026-09-08\//);
+    assert.match(appearance.url, /\/derived\/ships\/models-v1\//);
     const length = sizeFor(kind) * appearance.calib * art.shipArtwork(kind).lengthRatio;
     const reference = sizeFor("raider") * art.shipArtwork("raider").referenceRatio;
     close(length / reference, ratio, `${kind}: battle hierarchy`);
@@ -101,8 +107,8 @@ const privateer = theater.theaterShipAppearance(battle, 1, "raider", "pirate");
 assert.equal(privateer.label, "Privateer");
 assert.match(privateer.url, /privateer_raider_ship|pirate_corsair|pirate_boarding_raider/);
 assert.ok([.73, .70].includes(privateer.calib), "Pirate size/art stays independent");
-for (const kind of ["convoy", "freighter", "colony", "builder", "transport", "scout"]) {
-  const masses = { convoy: 4500, freighter: 6000, colony: 6000, builder: 2500, transport: 7000, scout: 80 };
+for (const kind of ["convoy", "freighter", "colony", "builder", "transport", "scout", "mining_barge", "mining_belt_station"]) {
+  const masses = { convoy: 4500, freighter: 6000, colony: 6000, builder: 2500, transport: 7000, scout: 80, mining_barge: 3500, mining_belt_station: 12000 };
   close(theater.spritePx(kind), Math.max(10, Math.min(64, 7 * (masses[kind] / 100) ** .4)), `${kind}: established battle sizing`);
 }
 const icons = compile(await source("icons.ts"));

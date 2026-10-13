@@ -3,6 +3,9 @@ import type { Rect } from "../types";
 import { DECK_ROUTES, type DeckCrumb, type DeckRoute, type DeckWidth } from "./router";
 
 const WIDTH_KEY = "stellarSyndicates.deck.width.";
+/** Routes that float over the map as a centred panel instead of a right rail. */
+const POPOUTS: ReadonlySet<DeckRoute["name"]> = new Set(["market", "logistics"]);
+export const isPopoutRoute = (route: DeckRoute | null): boolean => !!route && POPOUTS.has(route.name);
 
 export class DeckWorkspace {
   private route: DeckRoute | null = null;
@@ -37,7 +40,7 @@ export class DeckWorkspace {
   }
 
   toggleWidth(): void {
-    if (!this.route || this.route.name === "market" || this.route.name === "world") return;
+    if (!this.route || isPopoutRoute(this.route) || this.route.name === "world") return;
     const next: DeckWidth = this.root.dataset.width === "wide" ? "standard" : "wide";
     this.root.dataset.width = next;
     try { localStorage.setItem(WIDTH_KEY + this.widthPreferenceKey(this.route), next); } catch { /* storage is optional */ }
@@ -58,10 +61,10 @@ export class DeckWorkspace {
           ...[strip, founding, zoom].filter((node) => this.visible(node)).map((node) => node!.getBoundingClientRect().top),
         )
       : window.innerHeight;
-    // The Market floats like the construction workbench; it is not a right
-    // rail. Reserving its left edge would both pan the galaxy and feed its own
-    // centered width back into --deck-workspace-inset on each layout pass.
-    const workspaceLeft = !this.route || this.route.name === "market" || this.root.getAttribute("aria-hidden") === "true"
+    // The Market and Logistics float like the construction workbench; they are
+    // not a right rail. Reserving a left edge would both pan the galaxy and feed
+    // the centered width back into --deck-workspace-inset on each layout pass.
+    const workspaceLeft = !this.route || isPopoutRoute(this.route) || this.root.getAttribute("aria-hidden") === "true"
       ? window.innerWidth
       : this.root.getBoundingClientRect().left;
     return { x: 0, y: top, w: Math.max(1, workspaceLeft), h: Math.max(1, bottom - top) };
@@ -102,7 +105,7 @@ export class DeckWorkspace {
   private storedWidth(route: DeckRoute): DeckWidth {
     // Every entry point uses the workbench size, including hub inspection and
     // old saved standard-width preferences. Other routes keep their rail sizes.
-    if (route.name === "market") return "wide";
+    if (isPopoutRoute(route)) return "wide";
     // A world's scene lives in the map area beside this column; a wide column
     // would crush it, so the planet route always keeps the system rail width.
     if (route.name === "world") return "standard";
@@ -146,7 +149,7 @@ export class DeckWorkspace {
   }
 
   private syncWidthButton(): void {
-    this.width.hidden = this.route?.name === "market" || this.route?.name === "world";
+    this.width.hidden = isPopoutRoute(this.route) || this.route?.name === "world";
     const wide = this.root.dataset.width === "wide";
     this.width.textContent = wide ? "↤" : "↔";
     this.width.setAttribute("aria-label", wide ? "Use standard workspace width" : "Use wide workspace width");

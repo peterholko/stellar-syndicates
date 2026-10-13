@@ -1,0 +1,21 @@
+{
+  "meshes": 23,
+  "renderSections": 23,
+  "sourceComponents": 137,
+  "triangles": 20700,
+  "exportedVertices": 20752,
+  "dimensionsXYZ": [
+    9.92,
+    3.0579,
+    14.24
+  ],
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "embeddedTextures": 3,
+  "axes": "Y up, -Z forward",
+  "source": "../../corvette-reference-v1/corvette-reference.png",
+  "generator": "Python/NumPy, no Blender",
+  "optimization": "Static parts combined by material; four turret assemblies retained; exact vertex deduplication; 16-bit indices where possible"
+}

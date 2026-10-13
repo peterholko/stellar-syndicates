@@ -37,7 +37,7 @@ function fleetListIcon(fleet: GhostView): IconKey {
   if (fleetExactCount(fleet) !== 1) return "fleet";
   const kind = fleet.composition?.find((stack) => stack.count === 1)?.kind ?? fleet.kind;
   const icons: Partial<Record<ShipKind, IconKey>> = {
-    scout: "scout", raider: "raider", corvette: "corvette", convoy: "convoy", colony: "colony",
+    scout: "scout", survey_probe: "scout", raider: "raider", corvette: "corvette", convoy: "convoy", colony: "colony",
     tiny_freighter: "tiny_freighter", small_freighter: "small_freighter", large_freighter: "large_freighter", heavy_freighter: "heavy_freighter", bulk_freighter: "bulk_freighter",
     builder: "builder", transport: "transport",
     destroyer: "destroyer", cruiser: "cruiser", battleship: "battleship",

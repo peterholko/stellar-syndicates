@@ -1,0 +1,21 @@
+{
+  "meshes": 7,
+  "renderSections": 7,
+  "sourceComponents": 655,
+  "triangles": 36200,
+  "exportedVertices": 45752,
+  "dimensionsXYZ": [
+    9.81,
+    2.488,
+    19.515
+  ],
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "embeddedTextures": 3,
+  "axes": "Y up, -Z forward",
+  "source": "../../bulk-freighter-reference-v1/bulk-freighter-reference.png",
+  "generator": "Python/NumPy, no Blender",
+  "optimization": "Static parts combined by material; exact vertex deduplication; 16-bit indices where possible"
+}

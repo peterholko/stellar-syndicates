@@ -72,7 +72,7 @@ impl Bot {
                     return Some(Command::MoveShip { player_id: p.owner, ship_id: f.id, dest: yard.system.pos });
                 }
             }
-            if f.damage.unwrap_or(0.0) > 0.2 || f.fuel.unwrap_or(0.0) < p.tank(f) * 0.3 {
+            if f.damage.unwrap_or(0.0) > 0.2 || store(f) < p.tank(f) * 0.3 {
                 if let Some(cmd) = self.return_for_fuel(p, f) { return Some(cmd); }
             }
         }
@@ -142,7 +142,7 @@ impl Bot {
     fn can_sortie(&self, p: &Observation, f: &GhostView, dest: Vec2, enemy: f64) -> bool {
         let margin = 1.8 - self.priorities().military * 0.15;
         strength(f).is_some_and(|power| power >= enemy.max(H::Raider.combat_weight() * 0.5) * margin)
-            && f.fuel.unwrap_or(0.0) >= p.leg(f, f.pos, dest, 0) + p.sites.iter()
+            && store(f) >= p.leg(f, f.pos, dest, 0) + p.sites.iter()
                 .map(|s| p.leg(f, dest, s.system.pos, 0)).min_by(f64::total_cmp).unwrap_or(f64::INFINITY)
                 + p.arrival_reserve(f)
     }
@@ -175,7 +175,7 @@ impl Bot {
             let peace = matches!(c.target, Target::System(id) if p.military_sites.iter().any(|s|
                 s.id == id && s.owner.is_some_and(|o| p.relations.get(&o) != Some(&RelationState::War))));
             if p.now > c.deadline || target.is_none() || peace || leader.damage.unwrap_or(0.0) > 0.2
-                || leader.fuel.unwrap_or(0.0) < p.tank(leader) * 0.25 {
+                || store(leader) < p.tank(leader) * 0.25 {
                 let id = match c.target { Target::Fleet(id) | Target::System(id) => id };
                 self.avoided.insert(id, p.now + 1_800.0);
                 self.campaign = None;
@@ -226,6 +226,7 @@ impl Bot {
                 priority: sim::doctrine::TargetPriority::Balanced,
                 screening: sim::doctrine::ScreeningRole::ProtectTransports,
                 withdrawal: sim::doctrine::DamageWithdrawal::Hull50,
+                formation: sim::doctrine::Formation::Automatic,
             };
             if fleet.mission_profile != Some(mission) {
                 self.wait(format!("fleet:{}", fleet.id), p, fleet.pos);

@@ -1,0 +1,91 @@
+[
+  {
+    "level": "lod0",
+    "triangles": 20144,
+    "vertices": 25440,
+    "drawCalls": 7,
+    "bytes": 3217712
+  },
+  {
+    "level": "lod1",
+    "triangles": 14012,
+    "vertices": 20541,
+    "drawCalls": 7,
+    "bytes": 3024152
+  },
+  {
+    "level": "lod2",
+    "triangles": 11368,
+    "vertices": 18090,
+    "drawCalls": 7,
+    "bytes": 2929848
+  }
+]
+
+{
+  "sourceUnchanged": true,
+  "levels": {
+    "lod0": {
+      "triangles": 20144,
+      "boundsMaxDeviation": 0.0,
+      "boundsTolerance": 0,
+      "checks": {
+        "finiteAttributes": true,
+        "texturesByteIdentical": true,
+        "materialDefinitionsIdentical": true,
+        "socketNodesUnchanged": true,
+        "boundsWithinTolerance": true,
+        "protectedTrianglesUnchanged": true,
+        "expectedRenderSections": true,
+        "meshWorldTransformsUnchangedAtRest": true,
+        "unitNormals": true,
+        "everyTrianglePositionNormalUVAndMaterialUnchanged": true,
+        "protectedTrianglesFound": true,
+        "onlyOriginalVertexAttributesUsed": true,
+        "noCollapsedGeometryOrTexturedUVs": true,
+        "dedicatedBottomProjectionPreserved": true
+      }
+    },
+    "lod1": {
+      "triangles": 14012,
+      "boundsMaxDeviation": 0.0,
+      "boundsTolerance": 0.017849998474121095,
+      "checks": {
+        "finiteAttributes": true,
+        "texturesByteIdentical": true,
+        "materialDefinitionsIdentical": true,
+        "socketNodesUnchanged": true,
+        "boundsWithinTolerance": true,
+        "protectedTrianglesUnchanged": true,
+        "expectedRenderSections": true,
+        "meshWorldTransformsUnchangedAtRest": true,
+        "unitNormals": true,
+        "protectedTrianglesFound": true,
+        "onlyOriginalVertexAttributesUsed": true,
+        "noCollapsedGeometryOrTexturedUVs": true,
+        "dedicatedBottomProjectionPreserved": true
+      }
+    },
+    "lod2": {
+      "triangles": 11368,
+      "boundsMaxDeviation": 0.0,
+      "boundsTolerance": 0.017849998474121095,
+      "checks": {
+        "finiteAttributes": true,
+        "texturesByteIdentical": true,
+        "materialDefinitionsIdentical": true,
+        "socketNodesUnchanged": true,
+        "boundsWithinTolerance": true,
+        "protectedTrianglesUnchanged": true,
+        "expectedRenderSections": true,
+        "meshWorldTransformsUnchangedAtRest": true,
+        "unitNormals": true,
+        "protectedTrianglesFound": true,
+        "onlyOriginalVertexAttributesUsed": true,
+        "noCollapsedGeometryOrTexturedUVs": true,
+        "dedicatedBottomProjectionPreserved": true
+      }
+    }
+  },
+  "passed": true
+}

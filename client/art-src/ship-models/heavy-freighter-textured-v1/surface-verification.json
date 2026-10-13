@@ -1,0 +1,222 @@
+{
+  "triangles": 19564,
+  "renderSections": 7,
+  "zeroAreaGeometry": 0,
+  "zeroAreaTexturedUVs": 0,
+  "nonFiniteValues": 0,
+  "bottomComponents": {
+    "hull | continuous armored pressure body": {
+      "triangles": 28,
+      "textured": 28,
+      "validUVArea": 28,
+      "bottomViewUVs": 28
+    },
+    "cargo.port.1 | ventral service plate": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.port.2 | ventral service plate": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.1 | ventral service plate": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.starboard.2 | ventral service plate": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "spine | continuous service keel": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "spine | ventral inspection rail": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "bridge | faceted command prow": {
+      "triangles": 40,
+      "textured": 40,
+      "validUVArea": 40,
+      "bottomViewUVs": 40
+    },
+    "bridge.port | sensor fairing": {
+      "triangles": 16,
+      "textured": 16,
+      "validUVArea": 16,
+      "bottomViewUVs": 16
+    },
+    "bridge.starboard | sensor fairing": {
+      "triangles": 16,
+      "textured": 16,
+      "validUVArea": 16,
+      "bottomViewUVs": 16
+    },
+    "bridge | ventral access cover": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "crane.port | folded longitudinal carrier": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "crane.port | hinge block 1": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "crane.port | hinge block 2": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "crane.port | hinge block 3": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "crane.port | hinge block 4": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "crane.starboard | folded longitudinal carrier": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "crane.starboard | hinge block 1": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "crane.starboard | hinge block 2": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "crane.starboard | hinge block 3": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "crane.starboard | hinge block 4": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "drive | armored eight-engine support": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "stern | central reactor-service fairing": {
+      "triangles": 34,
+      "textured": 34,
+      "validUVArea": 34,
+      "bottomViewUVs": 34
+    },
+    "engine.port.outer.upper | stepped armored casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "engine.port.outer.lower | stepped armored casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "engine.port.inner.upper | stepped armored casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "engine.port.inner.lower | stepped armored casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "engine.starboard.inner.upper | stepped armored casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "engine.starboard.inner.lower | stepped armored casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "engine.starboard.outer.upper | stepped armored casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    },
+    "engine.starboard.outer.lower | stepped armored casing": {
+      "triangles": 96,
+      "textured": 96,
+      "validUVArea": 96,
+      "bottomViewUVs": 96
+    }
+  },
+  "engineSockets": [
+    "socket.engine.port.outer.upper",
+    "socket.engine.port.outer.lower",
+    "socket.engine.port.inner.upper",
+    "socket.engine.port.inner.lower",
+    "socket.engine.starboard.inner.upper",
+    "socket.engine.starboard.inner.lower",
+    "socket.engine.starboard.outer.upper",
+    "socket.engine.starboard.outer.lower"
+  ],
+  "embeddedImagesMatch": true,
+  "missingUndersideComponents": [],
+  "fullyTexturedUnderside": true,
+  "pressureHullClosedManifold": true,
+  "pressureHullSignedVolume": 133.8091583251953,
+  "cargoSockets": [
+    "socket.cargo.port.1",
+    "socket.cargo.port.2",
+    "socket.cargo.starboard.1",
+    "socket.cargo.starboard.2"
+  ],
+  "craneSockets": [
+    "socket.crane.port",
+    "socket.crane.starboard"
+  ],
+  "eightEnginesInFourColumnsAndTwoTiers": true,
+  "passed": true
+}

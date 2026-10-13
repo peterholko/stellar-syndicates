@@ -1,5 +1,6 @@
 import "./styles/tokens.css";
 import "./styles/settlement.css";
+import "./ship-model-preview";
 import { SettlementUI } from "./settlement";
 import { accounts } from "./auth";
 

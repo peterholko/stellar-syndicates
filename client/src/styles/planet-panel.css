@@ -23,17 +23,29 @@
 /* Landscape, structures and their badges use ONE fitted 16:9 image plane. Keep
    the entire artwork visible: independently cropping it or reflowing footprints
    would slide buildings across terrain when the window's aspect ratio changes.
-   Front-row footprints are 7.5% of this plane (the anchor columns remain 12%
-   apart), capped at 130px; each address also carries --planet-scale (planet.ts),
-   so rows nearer the limb render smaller and the colony recedes with the terrain. */
+   A scale-1 footprint is 7.5% of this plane, capped at 130px; each address also
+   carries --planet-scale (planet.ts), so buildings nearer the limb render smaller
+   and the colony recedes with the terrain. The generated addresses are spaced
+   for these sizes (scripts/build-planet-sites.mjs). */
 .deck-planet__canvas { container: planet-canvas / inline-size; --planet-building: clamp(36px, 7.5cqw, 130px); position: absolute; left: 50%; top: 50%; width: min(100cqw, calc(100cqh * 16 / 9)); aspect-ratio: 16 / 9; transform: translate(-50%, -50%); border-radius: inherit; }
 .deck-planet__surface { width: 100%; height: 100%; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; }
+/* §planet-orbit: a painted world carries 240 rows of space above its original
+   1672 × 941 painting (1672 × 1181 in all). The canvas stays the 16:9 ground
+   frame every address, haze rule and badge is written in; the painting reaches
+   up out of it into the space band, where orbit sits at negative y. The canvas
+   sits half the band low, so ground and space fit the scene together. */
+.deck-planet__scene:not(.is-orbital) .deck-planet__canvas { width: min(100cqw, calc(100cqh * 1672 / 1181)); transform: translate(-50%, calc(-50% + 12.7524%)); }
+.deck-planet__scene:not(.is-orbital) .deck-planet__surface { top: -25.5048%; bottom: auto; height: 125.5048%; }
 .deck-planet__globe { position: absolute; width: 80%; height: 90%; left: 10%; top: 5%; object-fit: contain; pointer-events: none; opacity: .85; }
-.deck-planet__building, .deck-planet__site, .deck-planet__selection { --planet-footprint: calc(var(--planet-building) * var(--planet-scale, 1)); }
-/* The hit target keeps the front-row size on every row; only the sprite, its
-   shadow and its ring take --planet-footprint, so a back-row building stays as
-   easy to click as a front-row one. No box chrome: selection is a ground ring. */
-.deck .deck-planet__building { position: absolute; left: var(--planet-x); top: var(--planet-y); width: var(--planet-building); height: var(--planet-building); min-height: 0; padding: 0; transform: translate(-50%, -50%); border: 0; border-radius: 0; background: transparent; isolation: isolate; }
+/* Haze grows with distance: 0 at full scale, rising as a footprint recedes toward
+   the limb. It is derived from the depth scale because both measure the same
+   distance. */
+.deck-planet__building, .deck-planet__site, .deck-planet__selection { --planet-footprint: calc(var(--planet-building) * var(--planet-scale, 1)); --planet-haze: clamp(0, (1 - var(--planet-scale, 1)) / .3, 1.5); }
+/* The hit target is the building's own box (80% × 72% of the sprite square), the
+   same box the address generator keeps apart, so neighbouring footprints never
+   steal each other's clicks. The sprite, its shadow and its ring overflow it at
+   full --planet-footprint. No box chrome: selection is a ground ring. */
+.deck .deck-planet__building { position: absolute; left: var(--planet-x); top: var(--planet-y); width: calc(var(--planet-footprint) * .8); height: calc(var(--planet-footprint) * .72); min-height: 0; padding: 0; transform: translate(-50%, -50%); border: 0; border-radius: 0; background: transparent; isolation: isolate; }
 .deck .deck-planet__building:hover { background: transparent; }
 .deck .deck-planet__canvas .deck-planet__building:focus-visible { outline: 0; }
 /* Grounding. ::before is an ambient-occlusion ellipse under the base, leaning
@@ -42,34 +54,67 @@
    ellipse on the ground plane, not a frame around the sprite. Both sit behind the
    sprite, so the front arc reads as the building standing inside it. */
 .deck-planet__building::before, .deck-planet__building::after { content: ""; position: absolute; z-index: 0; left: 50%; top: 50%; width: calc(var(--planet-footprint) * .92); height: calc(var(--planet-footprint) * .46); transform: translate(calc(-50% + var(--planet-footprint) * .03), calc(-50% + var(--planet-footprint) * .17)); border-radius: 50%; pointer-events: none; }
-.deck-planet__building::before { background: radial-gradient(ellipse at center, rgba(4, 10, 18, .55) 0%, rgba(4, 10, 18, .3) 40%, rgba(4, 10, 18, 0) 70%); }
+.deck-planet__building::before { background: radial-gradient(ellipse at center, rgba(4, 10, 18, .55) 0%, rgba(4, 10, 18, .3) 40%, rgba(4, 10, 18, 0) 70%); opacity: calc(1 - var(--planet-haze, 0) * .25); }
 .deck-planet__building::after { width: var(--planet-footprint); height: calc(var(--planet-footprint) * .5); border: var(--deck-focus-ring) solid var(--dim); box-shadow: 0 0 0 1px rgba(4, 10, 18, .55), inset 0 0 0 1px rgba(4, 10, 18, .35); opacity: 0; transition: opacity .12s ease-out; }
 .deck-planet__building:hover::after { opacity: .85; }
 .deck-planet__building:is([aria-pressed="true"], :focus-visible)::after { opacity: 1; border-color: var(--accent); box-shadow: 0 0 0 1px rgba(4, 10, 18, .55), inset 0 0 0 1px rgba(4, 10, 18, .35), 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent); }
-.deck-planet__building > .icon { position: absolute; z-index: 1; left: 50%; top: 50%; width: var(--planet-footprint); height: var(--planet-footprint); transform: translate(-50%, -50%); object-fit: contain; filter: brightness(var(--planet-building-brightness, 1)) drop-shadow(calc(var(--planet-footprint) * .045) calc(var(--planet-footprint) * .06) calc(var(--planet-footprint) * .03) rgba(4, 10, 18, .5)); pointer-events: none; }
+.deck-planet__building > .icon { position: absolute; z-index: 1; left: 50%; top: 50%; width: var(--planet-footprint); height: var(--planet-footprint); transform: translate(-50%, -50%); object-fit: contain; filter: brightness(calc(var(--planet-building-brightness, 1) * (1 + var(--planet-haze, 0) * .05))) saturate(calc(1 - var(--planet-haze, 0) * .3)) contrast(calc(1 - var(--planet-haze, 0) * .12)) drop-shadow(calc(var(--planet-footprint) * .045) calc(var(--planet-footprint) * .06) calc(var(--planet-footprint) * .03) rgba(4, 10, 18, .5)); pointer-events: none; }
 .deck-planet__building:is(:hover, :focus-visible) { --planet-building-brightness: 1.15; }
+/* Shared architecture sits on a separate natural biome transition. These PNG
+   masters already contain their contact/cast shadows: do not add another black
+   halo. Keep their native framing and the gallery's 82%-building/ground ratio;
+   the ground extends softly beyond the hit box, never capturing a click. */
+.planet-structure-ground { position: absolute; z-index: 0; left: 50%; top: 50%; width: calc(var(--planet-footprint) / .82); height: calc(var(--planet-footprint) / .82); transform: translate(-47.56%, -44.28%); object-fit: contain; pointer-events: none; filter: saturate(calc(1 - var(--planet-haze, 0) * .3)) contrast(calc(1 - var(--planet-haze, 0) * .12)); }
+.deck-planet__building:has(> .planet-structure-art)::before { display: none; }
+.deck-planet__building > .planet-structure-art { filter: brightness(calc(var(--planet-building-brightness, 1) * (1 + var(--planet-haze, 0) * .05))) saturate(calc(1 - var(--planet-haze, 0) * .3)) contrast(calc(1 - var(--planet-haze, 0) * .12)); }
+.deck-planet__site.is-construction > .planet-structure-ground { opacity: .35; }
+/* Service Berth is a small lean-to on the Warehouse's existing site. It has its
+   own selection target and staffing controls, but never a separate ground pad. */
+.deck .deck-planet__building.is-attachment { z-index: 2; width: calc(var(--planet-footprint) * .32); height: calc(var(--planet-footprint) * .32); margin-left: calc(var(--planet-footprint) * .31); margin-top: calc(var(--planet-footprint) * .17); }
+.deck-planet__building.is-attachment > .icon { width: calc(var(--planet-footprint) * .46); height: calc(var(--planet-footprint) * .46); }
+.deck-planet__building.is-attachment::after { width: calc(var(--planet-footprint) * .46); height: calc(var(--planet-footprint) * .25); transform: translate(-50%, -20%); }
+.deck-planet__selection { z-index: 3; }
 /* Orbital infrastructure floats beside a globe: nothing to stand on, so it keeps a
    pale edge against black space and a plain drop instead of a ground shadow. */
 .deck-planet__scene.is-orbital .deck-planet__building::before { display: none; }
 .deck-planet__scene.is-orbital .deck-planet__building > .icon { filter: brightness(var(--planet-building-brightness, 1)) drop-shadow(0 0 1px rgba(228, 235, 242, .7)) drop-shadow(0 3px 3px rgba(0, 0, 0, .85)); }
-/* Sites recede with their row too, but never below a legible 56px unless the
-   whole plane is that small. */
-.deck .deck-planet__site { position: absolute; left: var(--planet-x); top: var(--planet-y); transform: translate(-50%, -50%); width: max(var(--planet-footprint), min(var(--planet-building), 56px)); height: max(var(--planet-footprint), min(var(--planet-building), 56px)); min-height: 0; padding: var(--space-1); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-1); border: 1px dashed currentColor; border-radius: var(--space-1); background: rgba(7, 15, 26, .65); color: var(--accent); box-sizing: border-box; }
+/* Sites use the same box as a building at that address, so neighbouring markers
+   never overlap; they stay at least 48 × 40px unless the whole plane is smaller. */
+.deck .deck-planet__site { position: absolute; left: var(--planet-x); top: var(--planet-y); transform: translate(-50%, -50%); width: max(calc(var(--planet-footprint) * .8), min(var(--planet-building), 48px)); height: max(calc(var(--planet-footprint) * .72), min(var(--planet-building), 40px)); min-height: 0; padding: var(--space-1); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-1); border: 1px dashed currentColor; border-radius: var(--space-1); background: rgba(7, 15, 26, .65); color: var(--accent); box-sizing: border-box; }
 .deck-planet__site.is-resource { color: var(--positive); }
 .deck-planet__site.is-industrial, .deck-planet__site.is-construction { color: var(--warn); }
 .deck-planet__site > b { font-size: var(--fs-page); line-height: 1; }
 .deck-planet__site > small { font-size: var(--fs-fine); }
 .deck .deck-planet__site:is(:hover, :focus-visible) { border-style: solid; background: var(--panel); }
 .deck-planet__site.is-construction { pointer-events: auto; }
-.deck-planet__site.is-construction > .icon { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .35; object-fit: contain; }
+.deck-planet__site.is-construction > .icon { position: absolute; left: 50%; top: 50%; width: var(--planet-footprint); height: var(--planet-footprint); transform: translate(-50%, -50%); opacity: .35; object-fit: contain; pointer-events: none; }
 .deck-planet__site.is-construction > small { position: relative; padding: var(--space-1); background: var(--panel); }
 .deck-planet__sites-empty { position: absolute; top: var(--space-3); left: var(--space-3); padding: var(--space-2); background: var(--panel); color: var(--dim); }
+/* §build-sheet: a free site is a quiet dashed ellipse with a +; its kind shows
+   on hover, and placing lights the sites a pick can take. */
+.deck .deck-planet__site.is-free { width: calc(var(--planet-footprint) * .78); height: calc(var(--planet-footprint) * .39); min-width: 28px; min-height: 16px; padding: 0; gap: 0; border: 1.5px dashed color-mix(in srgb, currentColor 75%, transparent); border-radius: 50%; background: rgba(7, 15, 26, .3); }
+.deck-planet__site.is-free > b { font-size: var(--fs-title); }
+.deck-planet__site.is-free > small { position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%); padding: 1px var(--space-2); border: 1px solid var(--field-bd); border-radius: 999px; background: rgba(5, 7, 13, .88); color: var(--ink); font-size: 11px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .12s; }
+.deck-planet__site.is-free:is(:hover, :focus-visible, .is-match) > small { opacity: 1; }
+.deck .deck-planet__site.is-free:is(:hover, :focus-visible) { border-style: solid; background: color-mix(in srgb, currentColor 18%, transparent); }
+.deck .deck-planet__site.is-free.is-dim { pointer-events: none; }
 .deck-planet__selection { position: absolute; inset: 0; pointer-events: none; }
 .deck .deck-planet__workforce-badge { position: absolute; left: clamp(110px, var(--planet-x), calc(100% - 110px)); top: calc(var(--planet-y) - var(--planet-footprint) / 2 - var(--space-1)); transform: translate(-50%, -100%); display: flex; align-items: center; gap: var(--space-2); max-width: min(220px, calc(100% - var(--space-4))); padding: var(--space-1) var(--space-2); min-height: var(--deck-control-height); border-color: var(--accent); background: var(--panel); pointer-events: auto; }
 .deck-planet__workforce-badge > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-fine); }
 .deck-planet__workforce-badge > b { padding-left: var(--space-2); border-left: 1px solid var(--border); }
 .deck-planet__workforce-icon { width: var(--deck-control-height); height: var(--space-6); object-fit: contain; flex: 0 0 auto; vertical-align: middle; }
 .deck-planet__output-badge { position: absolute; left: clamp(110px, var(--planet-x), calc(100% - 110px)); top: min(calc(var(--planet-y) + var(--planet-footprint) / 2 + var(--space-1)), calc(100% - var(--planet-output-height, 44px))); transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-1) var(--space-2); width: max-content; max-width: min(220px, calc(100% - var(--space-4))); padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--space-1); background: var(--panel); pointer-events: auto; }
+/* These two facilities are in the starfield, not on a surface plot. Dimensions
+   are tied to the same fitted painting: 18% wide × 10% tall, centered at y=7%,
+   wholly above the painted limb. No ground shadow, depth haze or flattened ring. */
+.deck .deck-planet__building.is-space, .deck .deck-planet__site.is-space { width: 18cqw; height: 5.625cqw; }
+/* §orbital-defense: the station's art is square, from a Defense Platform's 4.2cqw to a Star Fortress's 9cqw. */
+.deck .deck-planet__building.is-space.is-station, .deck .deck-planet__site.is-space.is-station { width: calc(3cqw + var(--station-level, 1) * 1.2cqw); height: calc(3cqw + var(--station-level, 1) * 1.2cqw); }
+.deck-planet__building.is-space::before { display: none; }
+.deck-planet__building.is-space::after { width: 100%; height: 100%; transform: translate(-50%, -50%); border-radius: 6px; }
+.deck-planet__building.is-space > .icon, .deck-planet__site.is-space > .icon { width: 100%; height: 100%; object-fit: contain; filter: brightness(var(--planet-building-brightness, 1)); }
+.deck .deck-planet__selection.is-space .deck-planet__workforce-badge { top: calc(var(--planet-y) + 2.8125cqw + var(--space-1)); transform: translateX(-50%); }
+.deck .deck-planet__site.is-space > small { position: absolute; top: 100%; white-space: nowrap; }
 .deck-planet__rate { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
 .deck-planet__rate b, .deck-planet__good { color: var(--positive); font-variant-numeric: tabular-nums; }
 .deck-planet__rate small { color: var(--dim); font-size: var(--fs-fine); }
@@ -86,6 +131,9 @@
 .deck-planet__workforce-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2); background: var(--field-bg); border: 1px solid var(--border); border-radius: var(--space-1); }
 .deck-planet__workforce-summary > span { display: inline-flex; align-items: center; gap: var(--space-2); }
 .deck-planet__available { color: var(--positive); font-size: var(--fs-fine); }
+/* §power: the planet's grid; amber while it browns out. */
+.deck-planet__grid { color: var(--dim); font-size: var(--fs-fine); font-variant-numeric: tabular-nums; }
+.deck-planet__grid.is-short { color: var(--warn); }
 .deck-planet__tabs { flex-wrap: wrap; }
 .deck-planet__tabs small { color: var(--dim); }
 .deck-planet #planet-page { display: grid; gap: var(--space-3); }
@@ -108,14 +156,17 @@
 .deck-planet__detail small { color: var(--dim); font-size: var(--fs-fine); }
 .deck-planet__detail > button { padding: var(--space-2); }
 .deck-planet__assignment { display: grid; gap: var(--space-2); }
-.deck-planet__assignment > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
-.deck-planet__assignment .deck-stepper { display: grid; grid-template-columns: var(--deck-control-height) 1fr var(--deck-control-height); text-align: center; }
+/* The label and its stepper share one row; − and + sit right beside the number. */
+.deck-planet__assignment-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.deck-planet__assignment-row > div:first-child { display: grid; gap: var(--space-1); }
+.deck-planet__assignment .deck-stepper { display: grid; grid-template-columns: var(--deck-control-height) minmax(calc(var(--deck-control-height) * 1.25), auto) var(--deck-control-height); align-items: center; text-align: center; font-variant-numeric: tabular-nums; }
 .deck-planet__reported, .deck-planet__inputs { display: grid; gap: var(--space-1); }
 .deck-planet__reported > div, .deck-planet__inputs > div { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.deck-planet__confirm { display: grid; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--accent); border-radius: var(--space-1); }
-.deck-planet__confirm > span { color: var(--dim); font-size: var(--fs-fine); }
-.deck-planet__confirm > div { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.deck-planet__confirm button { flex: 1; padding: var(--space-1) var(--space-2); }
+/* The change under review, directly beneath the stepper: summary, then Confirm. */
+.deck-planet__confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--accent); border-radius: var(--space-1); }
+.deck-planet__confirm > div:first-child { display: grid; gap: var(--space-1); min-width: 0; }
+.deck-planet__confirm-actions { display: flex; gap: var(--space-2); }
+.deck-planet__confirm button { padding: var(--space-1) var(--space-3); }
 .deck-planet__pending, .deck-planet__warning { color: var(--warn); font-size: var(--fs-fine); }
 .deck-planet__development { display: grid; gap: var(--space-3); border-top: 1px solid var(--border); padding-top: var(--space-3); }
 .deck-planet__development .deck-stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -125,9 +176,212 @@
 }
 @media (pointer: coarse) {
   .deck .deck-planet button { min-height: 44px; }
-  .deck-planet__assignment .deck-stepper { grid-template-columns: 44px 1fr 44px; }
+  .deck-planet__assignment .deck-stepper { grid-template-columns: 44px minmax(52px, auto) 44px; }
 }
 .deck-planet__refining { display: grid; gap: var(--space-2, 8px); }
 .deck-planet__ore-options { display: flex; flex-wrap: wrap; gap: var(--space-1, 4px); }
 .deck-planet__ore-options button { display: flex; align-items: center; gap: 4px; }
 .deck-planet__ore-options button[aria-pressed="true"] { border-color: #8fe3a0; color: #8fe3a0; }
+
+/* §system-view siege: the besieged world's painting under fire. Flashes sit on
+   the colony's own buildings; landers drop from the sky while marines fight;
+   the banner states the participant-only siege status (and follows a landing). */
+.deck-planet__siege { position: absolute; inset: 0; z-index: 3; pointer-events: none; border-radius: inherit; overflow: hidden; }
+.deck-planet__siege::before { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 62%, transparent 52%, rgba(120, 12, 12, .3) 100%); }
+/* A painted world's siege reaches up through its space band: the tint covers
+   the whole painting, the banner rides above the yards, landers drop from high. */
+.deck-planet__scene:not(.is-orbital) .deck-planet__siege { overflow: visible; }
+.deck-planet__scene:not(.is-orbital) .deck-planet__siege::before { top: -25.5048%; border-radius: inherit; background: radial-gradient(ellipse at 50% 70%, transparent 52%, rgba(120, 12, 12, .3) 100%); }
+.deck-planet__scene:not(.is-orbital) .deck-planet__siege-banner { top: -24.5%; }
+.deck-planet__scene:not(.is-orbital) .deck-planet__lander { --lander-from: -20%; }
+.deck-planet__siege-banner { position: absolute; left: 50%; top: 3.5%; width: max-content; max-width: 96%; box-sizing: border-box; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; padding: 6px 12px; border: 1px solid rgba(255, 77, 77, .55); border-radius: 6px; background: rgba(8, 4, 6, .82); color: #ffd1c8; font: 600 11px/1.3 ui-monospace, monospace; letter-spacing: .04em; pointer-events: auto; }
+.deck-planet__siege-banner b { color: #ff6b5c; }
+.deck-planet__siege-banner span { color: #ffb347; }
+.deck .deck-planet__siege-banner button { min-height: 0; padding: 3px 8px; font-size: 11px; line-height: 1.3; }
+.deck-planet__impact { position: absolute; left: var(--planet-x); top: var(--planet-y); width: clamp(14px, 3.2cqw, 54px); aspect-ratio: 1; transform: translate(-50%, -50%); border-radius: 50%; opacity: 0; background: radial-gradient(circle, rgba(255, 244, 214, .95) 0%, rgba(255, 170, 90, .7) 32%, rgba(120, 40, 20, 0) 70%); }
+.deck-planet__impact::after { content: ""; position: absolute; left: 50%; bottom: 40%; width: 70%; height: 140%; transform: translateX(-50%); border-radius: 50% 50% 40% 40%; background: radial-gradient(ellipse at 50% 80%, rgba(60, 54, 52, .55), rgba(60, 54, 52, 0) 70%); opacity: 0; }
+.deck-planet__lander { position: absolute; left: var(--planet-x); top: 0; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 11px solid #ffe08a; filter: drop-shadow(0 0 4px rgba(255, 224, 138, .8)); opacity: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .deck-planet__impact { animation: planet-impact 2.8s var(--impact-delay, 0s) infinite ease-out; }
+  .deck-planet__impact::after { animation: planet-smoke 2.8s var(--impact-delay, 0s) infinite ease-out; }
+  .deck-planet__lander { animation: planet-lander 3.4s var(--lander-delay, 0s) infinite cubic-bezier(.4, .1, .7, .9); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .deck-planet__impact { opacity: .5; }
+  .deck-planet__lander { top: calc(var(--lander-y) - 8%); opacity: .8; }
+}
+@keyframes planet-impact { 0% { opacity: 0; transform: translate(-50%, -50%) scale(.25); } 6% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 30% { opacity: .55; } 100% { opacity: 0; transform: translate(-50%, -50%) scale(1.7); } }
+@keyframes planet-smoke { 0%, 8% { opacity: 0; transform: translate(-50%, 0) scale(.6); } 30% { opacity: .75; } 100% { opacity: 0; transform: translate(-50%, -60%) scale(1.5); } }
+@keyframes planet-lander { 0% { top: var(--lander-from, -4%); opacity: 0; } 12% { opacity: 1; } 85% { opacity: 1; } 100% { top: calc(var(--lander-y) - 6%); opacity: 0; } }
+
+/* §planet-orbit: fleets docked at this world hang in its sky beside the yards,
+   as the System View berths them. The three-quarter renders look down on the
+   hulls the way the painting looks down on the planet. At most three are drawn;
+   the rest fold into a "+N in orbit" tag. */
+.deck-planet__orbit-fleets { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.deck .deck-planet__orbit-ship { position: absolute; left: var(--planet-x); top: var(--planet-y); width: calc(var(--orbit-hull) * 1cqw / .72); height: auto; aspect-ratio: 1; min-height: 0; padding: 0; transform: translate(-50%, -50%); border: 0; border-radius: 50%; background: transparent; pointer-events: auto; }
+.deck .deck-planet__orbit-ship:hover { background: transparent; }
+.deck-planet__orbit-ship > img { display: block; width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .6)); pointer-events: none; }
+.deck-planet__orbit-ship:is(:hover, :focus-visible) > img { filter: brightness(1.15) drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 55%, transparent)); }
+.deck .deck-planet__orbit-ship:focus-visible { outline: 0; }
+.deck-planet__orbit-ship[aria-pressed="true"] > img { filter: drop-shadow(0 0 7px color-mix(in srgb, var(--accent) 85%, transparent)) drop-shadow(0 2px 3px rgba(0, 0, 0, .6)); }
+.deck-planet__orbit-ship > small { position: absolute; right: 14%; bottom: 22%; padding: 0 5px; border: 1px solid #3b5268; border-radius: 8px; background: rgba(5, 8, 14, .78); color: #dbeaf5; font: 600 10px/1.5 ui-monospace, monospace; }
+.deck-planet__orbit-more { position: absolute; left: var(--planet-x); top: var(--planet-y); transform: translate(-50%, -50%); padding: 2px 8px; border: 1px solid #3b5268; border-radius: 10px; background: rgba(5, 8, 14, .72); color: #cfe6f5; font: 600 11px/1.4 ui-monospace, monospace; white-space: nowrap; }
+
+/* §construction: the world's work slot, pinned under its header while the
+   column scrolls. The column scroller is padded, so pin flush with its edge. */
+.deck-construction { position: sticky; top: calc(var(--space-3) * -1); z-index: 3; display: grid; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--field-bd); border-radius: var(--deck-radius); background: var(--panel); box-shadow: var(--panel-shadow); }
+.deck-construction > header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); }
+.deck-construction h3 { margin: 0; color: var(--accent); font-size: var(--fs-fine); letter-spacing: .1em; text-transform: uppercase; }
+.deck-construction > header > small { color: var(--dim); font-size: var(--fs-fine); }
+.deck-construction__actions { display: flex; gap: var(--space-2); margin-left: auto; }
+.deck-construction__job { display: grid; grid-template-columns: var(--deck-control-height) minmax(0, 1fr) auto; gap: var(--space-2); align-items: center; }
+.deck-construction__job > .icon { width: var(--deck-control-height); height: var(--deck-control-height); object-fit: contain; }
+.deck-construction__job > div { display: grid; gap: var(--space-1); min-width: 0; }
+.deck-construction__job small { color: var(--dim); font-size: var(--fs-fine); }
+.deck-construction__job small.is-warn { color: var(--warn); }
+.deck-construction__job > em { color: var(--positive); font-style: normal; font-variant-numeric: tabular-nums; }
+.deck-construction__job.is-sent { padding: var(--space-1) var(--space-2); border: 1px dashed var(--field-bd); border-radius: var(--space-1); }
+.deck-construction__job.is-sent > .icon { opacity: .45; }
+.deck-construction__job.is-sent > em { color: var(--dim); }
+.deck-construction__idle { margin: 0; color: var(--dim); font-size: var(--fs-fine); }
+.deck .deck-construction__more { display: flex; justify-content: space-between; gap: var(--space-2); width: 100%; padding: var(--space-1) var(--space-2); color: var(--dim); font-size: var(--fs-fine); text-align: left; }
+.deck-construction__more b { color: var(--ink); }
+.deck-construction__queue { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.deck-construction__queue li { display: grid; grid-template-columns: var(--space-6) var(--space-6) minmax(0, 1fr) auto; gap: var(--space-2); align-items: center; padding: var(--space-1) var(--space-2); border-radius: var(--space-1); background: var(--field-bg); }
+.deck-construction__queue li > div { display: grid; min-width: 0; }
+.deck-construction__queue small { color: var(--dim); font-size: var(--fs-fine); }
+.deck-construction__queue .icon { width: var(--space-6); height: var(--space-6); object-fit: contain; }
+.deck-construction__pos { color: var(--dim); font-size: var(--fs-fine); text-align: center; }
+.deck-construction__confirm { display: flex; gap: var(--space-1); }
+.deck .deck-construction button.is-danger { border-color: var(--negative); color: var(--negative); }
+.deck-construction__note, .deck-construction__note-inline { margin: 0; color: var(--fg-stale); font-size: var(--fs-fine); }
+.deck-construction__hulls { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); padding-top: var(--space-1); border-top: 1px solid var(--border); font-size: var(--fs-fine); }
+.deck-construction__hulls small { color: var(--dim); }
+
+/* Buildings still rising list beneath the built ones. */
+.deck .deck-planet__row.is-rising { border: 1px dashed var(--border); border-radius: var(--deck-radius); }
+.deck-planet__row.is-rising > .icon { opacity: .5; filter: grayscale(.5); }
+.deck-planet__row.is-rising small, .deck-planet__upgrading { color: var(--accent); }
+
+/* §build-sheet: building opens across the planet view. The sheet shares the
+   scene's grid cell, below the worlds strip, and dims the planet behind it; the
+   world column with its construction bar stays in view beside it. */
+.deck-planet-scene > .deck-planet__scene { grid-row: 2; grid-column: 1; transition: filter .2s ease; }
+.deck-planet-scene.is-building > .deck-planet__scene { filter: brightness(.42) saturate(.7); pointer-events: none; }
+.deck-bsheet { container: build-sheet / inline-size; grid-row: 2; grid-column: 1; position: relative; z-index: 4; display: flex; flex-direction: column; justify-self: center; width: calc(100% - var(--space-3) * 2); max-width: 1240px; min-height: 0; margin: var(--space-3) 0; border: 1px solid var(--field-bd); border-radius: 10px; background: rgba(9, 14, 26, .9); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: 0 24px 60px rgba(0, 0, 0, .55); overflow: hidden; }
+@media (prefers-reduced-motion: no-preference) {
+  .deck-bsheet { animation: deck-bsheet-in .18s ease-out; }
+  @keyframes deck-bsheet-in { from { opacity: 0; transform: translateY(10px); } }
+}
+.deck-bsheet__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-3); border-bottom: 1px solid var(--border); }
+.deck-bsheet__head h2 { margin: 0; font-size: var(--fs-title); }
+.deck-bsheet__head > .is-primary { margin-left: auto; }
+.deck-bsheet__tabs { display: flex; flex-wrap: wrap; gap: var(--space-2); flex: 1 1 340px; }
+.deck .deck-bsheet__tab { flex: 1 1 110px; max-width: 200px; display: grid; gap: var(--space-1); padding: var(--space-1) var(--space-2); text-align: left; background: var(--field-bg); }
+.deck-bsheet__tab b { display: flex; justify-content: space-between; gap: var(--space-2); font-weight: 600; }
+.deck-bsheet__tab small { color: var(--dim); font-weight: 400; font-variant-numeric: tabular-nums; }
+.deck .deck-bsheet__tab[aria-selected="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--field-bg)); }
+.deck .deck-bsheet__tab:disabled { opacity: .35; }
+.deck-bsheet__meter { display: block; height: 3px; overflow: hidden; border-radius: 2px; background: var(--field-bd); }
+.deck-bsheet__meter i { display: block; height: 100%; background: var(--accent); }
+.deck-bsheet__meter.is-full i { background: var(--warn); }
+.deck-bsheet__site { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 7%, transparent); font-size: var(--fs-fine); }
+.deck-bsheet__body { flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 330px); min-height: 0; }
+/* Card groups size to their cards and center: a sparse tab sits its Upgrade and
+   New groups side by side in the middle; a full one wraps into centered rows. */
+.deck-bsheet__list { overflow: auto; overscroll-behavior: contain; display: flex; flex-wrap: wrap; justify-content: center; align-content: flex-start; gap: var(--space-4) var(--space-6); padding: var(--space-4) var(--space-3); min-width: 0; }
+.deck-bsheet__sec { flex: 0 1 auto; display: grid; justify-items: center; align-content: start; gap: var(--space-2); min-width: 0; max-width: 100%; }
+.deck-bsheet__sec.is-blocked { flex-basis: 100%; }
+.deck-bsheet__sec h3 { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); align-items: baseline; margin: 0; color: var(--dim); font-size: var(--fs-fine); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.deck-bsheet__sec h3 small { color: var(--fg-stale); font-size: var(--fs-fine); font-weight: 400; letter-spacing: 0; text-transform: none; }
+.deck-bsheet__sec > p { margin: 0; color: var(--fg-stale); font-size: var(--fs-fine); }
+.deck .deck-bsheet__more { border-color: transparent; background: transparent; color: var(--dim); }
+.deck .deck-bsheet__more:hover { color: var(--ink); }
+.deck-bsheet__cards { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); max-width: 100%; }
+.deck .deck-bsheet__card { flex: 0 0 172px; position: relative; display: grid; gap: 2px; align-content: start; min-height: 0; padding: 0 0 var(--space-2); text-align: left; border: 1px solid transparent; border-radius: 8px; background: var(--field-bg); overflow: hidden; }
+.deck .deck-bsheet__card:hover { background: color-mix(in srgb, var(--ink) 5%, var(--field-bg)); }
+.deck .deck-bsheet__card[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--field-bg)); }
+.deck-bsheet__card > b { padding: 0 var(--space-2); font-weight: 600; }
+.deck-bsheet__card.is-blocked > b { color: var(--dim); }
+.deck-bsheet__card.is-blocked .deck-bsheet__art > img { opacity: .3; filter: grayscale(1); }
+/* Building art stands on the world's own ground patch, as on the planet: the
+   ground layer is sized from --planet-footprint (see .planet-structure-ground). */
+.deck-bsheet__art { --planet-footprint: 116px; position: relative; display: block; height: 120px; overflow: hidden; pointer-events: none; }
+.deck-bsheet__art > .icon { position: absolute; left: 50%; top: 50%; width: var(--planet-footprint); height: var(--planet-footprint); transform: translate(-50%, -50%); object-fit: contain; }
+.deck-bsheet__level, .deck-bsheet__status { position: absolute; top: 6px; padding: 1px 7px; border-radius: 999px; font-size: 11px; line-height: 16px; white-space: nowrap; }
+.deck-bsheet__level { right: 6px; border: 1px solid var(--field-bd); background: rgba(5, 7, 13, .85); }
+.deck-bsheet__status { left: 6px; background: color-mix(in srgb, var(--accent) 26%, var(--bg)); }
+.deck-bsheet__status.is-quiet { border: 1px solid var(--field-bd); background: rgba(5, 7, 13, .85); color: var(--dim); }
+.deck-bsheet__line { display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--space-2); padding: 0 var(--space-2); color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+.deck-bsheet__line .icon { width: 14px; height: 14px; margin-right: 2px; vertical-align: -3px; }
+.deck-bsheet__line .is-short { color: var(--negative); }
+.deck-bsheet__why { padding: 0 var(--space-2); color: var(--warn); font-size: 11px; }
+.deck-bsheet__detail { overflow: auto; overscroll-behavior: contain; display: grid; align-content: start; gap: var(--space-3); min-width: 0; padding: var(--space-3) var(--space-4) var(--space-4); border-left: 1px solid var(--border); background: rgba(5, 8, 16, .35); }
+.deck-bsheet__hero { --planet-footprint: 190px; height: 170px; margin: calc(var(--space-1) * -1) calc(var(--space-2) * -1) 0; }
+.deck-bsheet__ladder { display: grid; grid-template-columns: repeat(var(--levels, 6), minmax(0, 1fr)); gap: var(--space-1); }
+.deck-bsheet__rung { display: grid; justify-items: center; gap: 1px; padding: 3px 0 2px; border: 1px solid transparent; border-radius: 6px; color: var(--fg-stale); font-size: 11px; }
+.deck-bsheet__rung > .icon { width: 40px; height: 40px; object-fit: contain; opacity: .35; filter: grayscale(.7); }
+.deck-bsheet__rung.is-have { color: var(--dim); }
+.deck-bsheet__rung.is-have > .icon, .deck-bsheet__rung.is-next > .icon { opacity: 1; filter: none; }
+.deck-bsheet__rung.is-next { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent); color: var(--accent); }
+.deck-bsheet__rung.is-research { border-style: dashed; border-color: var(--field-bd); }
+.deck-bsheet__title h3 { margin: 0; font-size: var(--fs-title); }
+.deck-bsheet__title p { margin: 2px 0 0; color: var(--dim); font-size: var(--fs-fine); }
+.deck-bsheet__title .is-warn, .deck-bsheet__when.is-warn { color: var(--warn); }
+.deck-bsheet__desc { margin: 0; }
+.deck-bsheet__facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px var(--space-3); margin: 0; font-size: var(--fs-fine); }
+.deck-bsheet__facts dt { color: var(--dim); }
+.deck-bsheet__facts dd { margin: 0; }
+.deck-bsheet__facts dd b { color: var(--positive); font-weight: 600; }
+.deck-bsheet__costs { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.deck-bsheet__costs li { display: flex; align-items: center; gap: var(--space-2); }
+.deck-bsheet__costs .icon { width: 18px; height: 18px; }
+.deck-bsheet__costs small { margin-left: auto; color: var(--dim); font-size: var(--fs-fine); }
+.deck-bsheet__costs li.is-short small { color: var(--negative); }
+.deck-bsheet__where { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2); border-radius: var(--deck-radius); background: var(--field-bg); font-size: var(--fs-fine); }
+.deck-bsheet__when { margin: 0; color: var(--dim); font-size: var(--fs-fine); }
+.deck-bsheet__actions { display: grid; gap: var(--space-2); }
+.deck .deck-bsheet__actions > .is-primary { min-height: calc(var(--deck-control-height) + var(--space-1)); font-weight: 600; }
+/* A narrower stage keeps Queue in view beside the cards with a slimmer detail;
+   only a very narrow one stacks the detail under the cards. */
+@container build-sheet (max-width: 760px) {
+  .deck-bsheet__body { grid-template-columns: minmax(0, 1fr) 236px; }
+  .deck .deck-bsheet__card { flex-basis: 124px; }
+  .deck-bsheet__card .deck-bsheet__art { --planet-footprint: 90px; height: 94px; }
+  .deck-bsheet__detail { padding: var(--space-3); }
+  .deck-bsheet__hero { --planet-footprint: 150px; height: 136px; }
+  .deck-bsheet__rung > .icon { width: 30px; height: 30px; }
+}
+@container build-sheet (max-width: 520px) {
+  .deck-bsheet__body { grid-template-columns: minmax(0, 1fr); overflow: auto; }
+  .deck-bsheet__list, .deck-bsheet__detail { overflow: visible; }
+  .deck-bsheet__detail { border-left: 0; border-top: 1px solid var(--border); }
+}
+/* Placing: the sheet folds into this bar while a lit site is chosen. */
+.deck-bsheet-place { grid-row: 2; grid-column: 1; align-self: end; justify-self: center; position: relative; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); max-width: calc(100% - var(--space-6)); margin-bottom: var(--space-4); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); border: 1px solid var(--accent); border-radius: 999px; background: rgba(5, 7, 13, .88); box-shadow: 0 10px 30px rgba(0, 0, 0, .5); }
+.deck .deck-bsheet-place button { border-radius: 999px; }
+/* The construction bar answers the sheet while it is open. */
+.deck-construction.is-building { border-color: color-mix(in srgb, var(--accent) 45%, var(--field-bd)); }
+/* A selected building's next level, opening the sheet on it. */
+.deck-planet__upgrade { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2); border-radius: var(--deck-radius); background: var(--field-bg); }
+.deck-planet__upgrade small { display: block; color: var(--dim); font-size: var(--fs-fine); }
+
+/* On the planet: progress where the work happens. */
+.deck-planet__pill { position: absolute; left: 50%; top: calc(50% + var(--planet-footprint) * .28); z-index: 2; transform: translateX(-50%); display: inline-flex; align-items: center; gap: var(--space-1); padding: 1px var(--space-2) 1px var(--space-1); border: 1px solid var(--field-bd); border-radius: 999px; background: rgba(7, 15, 26, .88); color: var(--ink); font-size: 11px; line-height: 16px; white-space: nowrap; pointer-events: none; }
+.deck-planet__pill b { color: var(--positive); font-weight: 600; }
+.deck-planet__pill > i { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--field-bd); font-size: 10px; font-style: normal; }
+.deck-planet__pill.is-waiting, .deck-planet__pill.is-sent { color: var(--dim); }
+.deck-planet__pill.is-ghost { border-color: var(--accent); }
+.deck-planet__pill.is-ghost b { color: var(--accent); }
+.deck-planet__ring { flex: none; width: 14px; height: 14px; transform: rotate(-90deg); }
+.deck-planet__ring circle { fill: none; stroke: var(--field-bd); stroke-width: 3; }
+.deck-planet__ring circle + circle { stroke: var(--positive); stroke-linecap: round; }
+.deck-planet__site.is-construction.is-waiting > .icon { opacity: .22; filter: grayscale(.8); }
+.deck .deck-planet__site.is-sent { color: var(--dim); }
+.deck-planet__site.is-sent > .icon { opacity: .18; filter: grayscale(1); }
+.deck .deck-planet__site.is-ghost { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); }
+.deck-planet__site.is-ghost > .icon { opacity: .4; }
+.deck .deck-planet__site.is-match { border-style: solid; color: var(--accent); box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 45%, transparent); }
+.deck .deck-planet__site.is-dim { opacity: .35; }
+.deck .deck-planet__building.is-build-pick::after { opacity: 1; border-color: var(--accent); }

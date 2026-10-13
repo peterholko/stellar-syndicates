@@ -24,6 +24,11 @@
 .deck-nav button { position: relative; flex: 0 0 auto; padding-inline: var(--space-2); font-size: var(--fs-fine); }
 .deck-nav button[aria-current="page"] { border-color: var(--accent); color: var(--accent); }
 .deck-nav__more { display: none; }
+/* Folded by fitNav when the row would clip; More lists exactly those. */
+.deck-nav > button.is-folded { display: none; }
+/* More stays pinned in view even if the row still clips, so folded destinations stay reachable. */
+.deck-nav.has-folds > .deck-nav__more { display: block; position: sticky; right: 0; z-index: 1; }
+.deck-nav__more.has-badge::after { content: ""; position: absolute; top: calc(var(--space-1) * -1); right: calc(var(--space-1) * -1); width: var(--space-2); height: var(--space-2); border-radius: 50%; background: var(--negative); }
 #deck-profile-open { flex: 0 0 auto; padding-inline: var(--space-2); font-size: var(--fs-fine); }
 .deck-nav-overflow { position: fixed; z-index: var(--z-command); top: calc(var(--deck-topbar-height) + var(--space-1)); right: var(--space-3); min-width: calc(var(--space-6) * 6); padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); pointer-events: auto; }
 .deck-nav-overflow:not([hidden]) { display: grid; gap: var(--space-1); }
@@ -35,12 +40,14 @@
 .deck-workspace:is([data-route="system"], [data-route="world"], [data-route="build"], [data-route="fleet"], [data-route="fleets"])[data-width="standard"] { width: min(var(--deck-workspace-system), calc(100vw - var(--space-6) - var(--space-1))); }
 .deck-workspace[data-width="wide"] { width: min(65vw, var(--deck-workspace-wide), calc(100vw - var(--space-6) - var(--space-1))); }
 /* Shared floating-panel base; planet-panel.css makes World details full-screen. */
-.deck-build-workbench, .deck-workspace[data-route="market"] { position: fixed; z-index: var(--z-workspace); top: calc(var(--deck-topbar-height) + var(--space-3)); right: auto; bottom: max(calc(var(--deck-control-height) + var(--space-6)), calc(var(--deck-workbench-bottom-inset, 0px) + var(--space-3))); left: calc((100vw - var(--deck-workspace-inset, 0px)) / 2); width: min(var(--deck-build-workbench-max), calc(100vw - var(--deck-workspace-inset, 0px) - var(--space-6))); min-width: 0; transform: translateX(-50%); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); pointer-events: auto; }
-.deck-workspace[data-route="market"][aria-hidden="true"] { display: none; }
-.deck-workspace[data-route="market"] .deck-workspace__header { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto; }
-.deck-workspace[data-route="market"] .deck-workspace__header > [data-deck-act="back"], .deck-workspace[data-route="market"] .deck-workspace__header h1 { grid-row: 1; }
-.deck-workspace[data-route="market"] .deck-workspace__header > [data-deck-act="close"] { grid-column: 3; grid-row: 1; }
-.deck-workspace[data-route="market"] .deck-breadcrumb, .deck-workspace[data-route="market"] [data-deck-act="width"] { display: none; }
+.deck-build-workbench, .deck-workspace:is([data-route="market"], [data-route="logistics"]) { position: fixed; z-index: var(--z-workspace); top: calc(var(--deck-topbar-height) + var(--space-3)); right: auto; bottom: max(calc(var(--deck-control-height) + var(--space-6)), calc(var(--deck-workbench-bottom-inset, 0px) + var(--space-3))); left: calc((100vw - var(--deck-workspace-inset, 0px)) / 2); width: min(var(--deck-build-workbench-max), calc(100vw - var(--deck-workspace-inset, 0px) - var(--space-6))); min-width: 0; transform: translateX(-50%); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); pointer-events: auto; }
+.deck-workspace:is([data-route="market"], [data-route="logistics"])[aria-hidden="true"] { display: none; }
+.deck-workspace:is([data-route="market"], [data-route="logistics"]) .deck-workspace__header { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto; }
+.deck-workspace:is([data-route="market"], [data-route="logistics"]) .deck-workspace__header > [data-deck-act="back"], .deck-workspace:is([data-route="market"], [data-route="logistics"]) .deck-workspace__header h1 { grid-row: 1; }
+.deck-workspace:is([data-route="market"], [data-route="logistics"]) .deck-workspace__header > [data-deck-act="close"] { grid-column: 3; grid-row: 1; }
+.deck-workspace:is([data-route="market"], [data-route="logistics"]) .deck-breadcrumb, .deck-workspace:is([data-route="market"], [data-route="logistics"]) [data-deck-act="width"] { display: none; }
+/* §logistics: route planning needs more room than the Market's workbench. */
+.deck-workspace[data-route="logistics"] { width: min(var(--deck-workspace-wide), calc(100vw - var(--deck-workspace-inset, 0px) - var(--space-6))); }
 .deck-build-workbench[hidden] { display: none; }
 .deck-build-workbench__header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
 .deck-build-workbench__header > div { display: grid; gap: var(--space-1); }
@@ -90,6 +97,8 @@
 .deck-alert { display: grid; gap: var(--space-1); padding: var(--space-2) var(--space-3); border: 1px solid var(--warn); border-radius: var(--deck-radius); background: rgba(255, 180, 84, .08); }
 .deck-alert span { color: var(--dim); }
 .deck-alert--bad { border-color: var(--negative); }
+.deck-alert--warn { border-color: var(--warn); }
+.deck-alert--info { border-color: var(--info); background: rgba(127, 212, 255, .07); }
 .deck-world-list, .deck-assignment-list { display: grid; gap: var(--space-1); }
 .deck-world { width: 100%; display: grid; grid-template-columns: minmax(140px, 1.1fr) minmax(120px, 1fr) minmax(90px, .7fr); align-items: center; gap: var(--space-2); padding: var(--space-2); text-align: left; }
 .deck-world__identity { display: flex; min-width: 0; align-items: center; gap: var(--space-2); }
@@ -98,6 +107,8 @@
 .deck-world__deposits { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
 .deck-world__deposits > span { color: var(--ink); }
 .deck-world__meta { text-align: right; }
+.deck-world__grid { font-variant-numeric: tabular-nums; }
+.deck-world__grid.is-short { color: var(--warn); }
 .deck-opportunities { display: grid; gap: var(--space-2); }
 .deck-opportunity { display: grid; gap: var(--space-1); padding: var(--space-2); border-left: var(--space-1) solid var(--accent); background: var(--field-bg); }
 .deck-opportunity.is-jackpot { border-color: var(--warn); }
@@ -147,6 +158,7 @@
 .deck-builder { display: grid; grid-template-columns: minmax(260px, .8fr) minmax(360px, 1.2fr); min-height: 0; border: 1px solid var(--border); border-radius: var(--deck-radius); overflow: clip; }
 .deck-builder__commit { position: sticky; top: 0; grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2); border-bottom: 1px solid var(--border); background: var(--panel-bg); box-shadow: var(--panel-shadow); }
 .deck-builder__commit > span { display: grid; min-width: 0; gap: var(--space-1); }
+.deck-builder__commit { z-index: 2; }
 .deck-builder__commit small { color: var(--dim); font-size: var(--fs-fine); text-transform: uppercase; letter-spacing: .06em; }
 .deck-builder__commit b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .deck-builder__commit > button.is-primary { width: min(calc(var(--space-6) * 5), 50%); flex: 0 0 auto; border-color: var(--positive); color: var(--positive); }
@@ -232,6 +244,17 @@
 .deck-deposit > span { display: flex; align-items: center; gap: var(--space-2); }
 .deck-deposit > span > span { display: grid; gap: var(--space-1); }
 .deck-deposit small, .deck-deposit em { color: var(--dim); font-size: var(--fs-fine); font-style: normal; }
+/* §pockets: a found pocket reads as a find, with the violet accent. */
+.deck-deposit.is-pocket { box-shadow: inset 2px 0 0 var(--accent-2); }
+.deck-deposit.is-pocket b { color: var(--accent-2); }
+.deck-prospected { margin: var(--space-2) 0 0; }
+/* §belts: your station at a belt, and the station section of its fleet panel. */
+.deck-belt-station { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2); margin-bottom: var(--space-2); border: 1px solid var(--border); border-radius: 6px; }
+.deck-belt-station > span { display: flex; align-items: center; gap: var(--space-2); }
+.deck-belt-station .icon { width: 32px; height: 32px; object-fit: contain; flex: none; }
+.deck-belt-station small, .deck-belt-station em { color: var(--dim); font-size: var(--fs-fine); font-style: normal; }
+.deck-station__line { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-1) var(--space-3); margin-bottom: var(--space-2); }
+.deck-station__line span { color: var(--dim); font-size: var(--fs-fine); }
 .deck-world-actions, .deck-policy { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
 .deck-world-actions button.is-primary { border-color: var(--positive); color: var(--positive); }
 .deck-policy > span { margin-right: auto; color: var(--dim); font-size: var(--fs-fine); }
@@ -343,6 +366,35 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 .deck-fleet-order.is-lost { border: 1px solid var(--negative); border-radius: var(--deck-radius); color: var(--negative); }
 .deck-fleet-order.is-current { border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
 .deck-command-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* The everyday fleet panel: what it is doing, and the way into its details. */
+.deck-fleet__activity { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); margin: 0; padding: var(--space-2) var(--space-3); border-left: var(--space-1) solid var(--accent); background: var(--field-bg); }
+.deck-fleet__activity > span { color: var(--dim); font-size: var(--fs-fine); }
+.deck-fleet__activity > b { font-weight: 500; text-align: right; }
+.deck-fleet__fuel > .deck-subhead { margin-top: 0; }
+.deck-fleet__fuel > p { margin: 0; }
+/* Pinned to the foot of the workspace so the way in stays in reach when cargo lengthens the panel. */
+.deck-fleet__details { position: sticky; bottom: 0; z-index: 1; width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-3); padding: var(--space-3); text-align: left; border-color: var(--accent); box-shadow: 0 calc(var(--space-3) * -1) var(--space-4) calc(var(--space-1) * -1) var(--panel-bg); }
+.deck-fleet__details > span { display: grid; gap: var(--space-1); }
+.deck-fleet__details small { color: var(--dim); font-size: var(--fs-fine); }
+.deck-fleet__details[aria-expanded="true"] { background: color-mix(in srgb, var(--accent) 12%, var(--field-bg)); }
+/* The fleet details workbench (same place and size as the construction one):
+   the hull on show in 3D, then the fleet's full record. */
+.deck-fleet-details { display: grid; gap: var(--space-4); }
+.deck-fleet-details__hero { display: grid; gap: var(--space-2); }
+.deck-fleet-details ship-model-preview.is-hero { margin: 0; --ship-preview-height: clamp(240px, 40vh, 440px); }
+.deck-fleet-details__hulls { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-1); }
+.deck-fleet-details__hulls button { display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-3); }
+.deck-fleet-details__hulls button em { color: var(--accent); font-style: normal; }
+.deck-fleet-details__hulls button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.deck-fleet-details__spec { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); align-items: center; gap: var(--space-4); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
+.deck-fleet-details__spec small { color: var(--accent); font-size: var(--fs-fine); letter-spacing: .08em; text-transform: uppercase; }
+.deck-fleet-details__spec h3 { margin: var(--space-1) 0; font-size: var(--fs-title); }
+.deck-fleet-details__spec p { margin: 0; color: var(--dim); line-height: 1.4; }
+.deck-fleet-details__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); align-items: start; }
+.deck-fleet-details__wide { grid-column: 1 / -1; }
+@container (max-width: 640px) {
+  .deck-fleet-details__grid, .deck-fleet-details__spec { grid-template-columns: minmax(0, 1fr); }
+}
 .deck-fleet-action { display: grid; min-width: 0; }
 .deck-fleet-action > button { padding: var(--space-2); }
 .deck-fleet-action > button:disabled { pointer-events: none; }
@@ -378,7 +430,7 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 .deck-captain__portrait { display: block; width: calc(var(--space-6) * 2); height: calc(var(--space-6) * 2); border-radius: var(--deck-radius); object-fit: cover; }
 .deck-captain__body > div { display: grid; gap: var(--space-2); }
 .deck-captain__body small { color: var(--dim); font-size: var(--fs-fine); }
-.deck-captain__stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-1); }
+.deck-captain__stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(130px, 100%), 1fr)); gap: var(--space-1); }
 .deck-captain__stats > div { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-1); padding: var(--space-1); background: var(--field-bg); }
 .deck-captain__stats span { color: var(--dim); font-size: var(--fs-fine); }
 .deck-captain__stats button { min-height: 0; padding: var(--space-1); }
@@ -467,6 +519,10 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 .deck-research-cost { display: flex; justify-content: space-between; gap: var(--space-3); margin: 0; padding-top: var(--space-2); border-top: 1px solid var(--border); }
 .deck-research-cost dt { color: var(--dim); }
 .deck-research-cost dd { margin: 0; }
+.deck-research-supplies { align-items: center; padding-top: 0; border-top: 0; }
+.deck-research-supplies dd { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-1) var(--space-3); }
+.deck-research-supplies dd span { display: inline-flex; align-items: center; gap: var(--space-1); }
+.deck-research-supplies .icon { width: 18px; height: 18px; object-fit: contain; }
 .deck-research-dossier { color: var(--positive); font-size: var(--fs-fine); }
 .deck-research-requirements { display: grid; gap: var(--space-2); }
 .deck-research-requirements h4, .deck-research-requirements p { margin: 0; font-size: var(--fs-fine); }
@@ -583,7 +639,7 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 .deck-founding__body { min-height: 0; display: grid; gap: var(--space-2); padding: 0 var(--space-2) var(--space-2); overflow-y: auto; overscroll-behavior: contain; }
 .deck-founding__body > p { margin: 0; color: var(--dim); line-height: 1.4; }
 .deck-founding__body > button.is-primary { border-color: var(--positive); color: var(--positive); }
-.deck-founding.is-minimized { width: min(250px, 100%); }
+.deck-founding.is-minimized { width: min(300px, 100%); }
 .deck-founding.is-minimized .deck-founding__body, .deck-founding.is-minimized > header em { display: none; }
 .deck-founding__prospects { display: grid; gap: var(--space-1); }
 .deck-founding__prospects button { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); padding: var(--space-2); text-align: left; }
@@ -762,6 +818,24 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 .deck-theater-backdrop { position: absolute; inset: 0; background: rgba(3, 6, 12, .86); backdrop-filter: blur(var(--space-1)); }
 .deck-theater-card { position: relative; width: min(1140px, calc(100vw - var(--space-6) * 2)); max-height: calc(100dvh - var(--space-6) * 2); display: grid; gap: var(--space-2); padding: var(--space-3); overflow: auto; border: 1px solid var(--border); border-top: var(--space-1) solid var(--warn); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); pointer-events: auto; }
 .deck-theater-card--ground { width: min(940px, calc(100vw - var(--space-6) * 2)); border-top-color: var(--ground); }
+/* The battle card: the viewer under the header, the canvas drawn at its
+   panel's size. Narrow windows stack the status, forces and actions below it;
+   wide ones put them in a column beside it and give the viewer every pixel of
+   height under the header. */
+.deck-theater-card--battle { width: min(1680px, calc(100vw - var(--space-6) * 2)); }
+.deck-theater-body, .deck-theater-main, .deck-theater-info { display: grid; gap: var(--space-2); align-content: start; min-width: 0; }
+.deck-theater-body { gap: var(--space-3); }
+.deck-theater-card--battle .deck-theater-stage { height: clamp(360px, calc(100dvh - 170px), 1200px); }
+@media (min-width: 1200px) {
+  .deck-theater-card--battle { height: calc(100dvh - var(--space-6) * 2); grid-template-rows: auto minmax(0, 1fr); }
+  .deck-theater-overlay.is-semantic .deck-theater-card--battle { height: 100dvh; }
+  .deck-theater-card--battle .deck-theater-body { grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: minmax(0, 1fr); align-content: stretch; min-height: 0; }
+  .deck-theater-card--battle .deck-theater-main { grid-template-rows: minmax(0, 1fr) auto; align-content: stretch; min-height: 0; }
+  .deck-theater-card--battle .deck-theater-stage, .deck-theater-card--battle .deck-theater-truth { height: auto; min-height: 0; }
+  .deck-theater-card--battle .deck-theater-truth svg { height: 100%; }
+  .deck-theater-card--battle .deck-theater-info { min-height: 0; overflow: auto; }
+  .deck-theater-card--battle .deck-theater-forces { grid-template-columns: minmax(0, 1fr); }
+}
 .deck-theater-overlay.is-semantic { padding: 0; }
 .deck-theater-overlay.is-semantic .deck-theater-card { width: 100vw; max-height: 100dvh; min-height: 100dvh; border-radius: 0; }
 .deck-theater-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
@@ -778,6 +852,26 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 .deck-theater-live.is-complete { border-color: var(--border); background: var(--field-bg); }
 .deck-theater-live.is-complete i { background: var(--warn); box-shadow: none; animation: none; }
 @keyframes deck-theater-pulse { 50% { opacity: .45; } }
+/* The selected hull: what it is, whose, what it's doing, hull and fit. */
+.deck-theater-ship { display: grid; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border); border-left: var(--space-1) solid var(--rival); border-radius: var(--deck-radius); background: var(--field-bg); }
+.deck-theater-ship.is-own { border-left-color: var(--accent); }
+.deck-theater-ship.is-lost { opacity: .6; }
+.deck-theater-ship.is-empty { border-left-color: var(--border); color: var(--dim); font-size: var(--fs-fine); }
+.deck-theater-ship header { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.deck-theater-ship-art { width: calc(var(--space-6) * 2); height: calc(var(--space-6) * 2); flex: 0 0 auto; object-fit: contain; }
+.deck-theater-ship header div { display: grid; gap: 2px; min-width: 0; }
+.deck-theater-ship header b span { color: var(--dim); font-weight: 400; }
+.deck-theater-ship header small { color: var(--dim); font-size: var(--fs-fine); }
+.deck-theater-ship-hull { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); }
+.deck-theater-ship-hull i { height: var(--space-2); overflow: hidden; border-radius: var(--deck-radius); background: var(--border); }
+.deck-theater-ship-hull b { display: block; height: 100%; background: var(--positive); }
+.deck-theater-ship-hull.is-low b { background: var(--warn); }
+.deck-theater-ship-hull.is-critical b { background: var(--negative); }
+.deck-theater-ship-hull em { color: var(--ink); font-size: var(--fs-fine); font-style: normal; }
+.deck-theater-ship dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px var(--space-2); margin: 0; font-size: var(--fs-fine); }
+.deck-theater-ship dt { color: var(--dim); }
+.deck-theater-ship dd { margin: 0; }
+.deck-theater-ship-actions { display: flex; gap: var(--space-1); }
 .deck-theater-forces { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--space-3); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
 .deck-theater-forces > span { color: var(--dim); font-size: var(--fs-fine); text-transform: uppercase; }
 .deck-theater-side { display: grid; min-width: 0; gap: var(--space-1); }
@@ -799,6 +893,9 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 .bv-theater-holder canvas { display: block; max-width: 100%; }
 .bv-theater-tip { position: absolute; max-width: min(200px, 70%); padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); color: var(--ink); font-size: var(--fs-fine); line-height: 1.35; pointer-events: none; }
 .bv-theater-hint { position: absolute; right: var(--space-2); bottom: var(--space-1); color: var(--dim); font-size: var(--fs-fine); letter-spacing: .04em; opacity: .75; pointer-events: none; }
+.bv-theater-view { position: absolute; top: var(--space-2); right: var(--space-2); padding: 2px var(--space-2); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); color: var(--dim); font-size: var(--fs-fine); letter-spacing: .04em; cursor: pointer; }
+.bv-theater-view:hover { color: var(--ink); }
+.bv-theater-view[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .bv-theater-banner { position: absolute; top: var(--space-3); left: 50%; transform: translateX(-50%); color: var(--battle-highlight); font-size: var(--fs-title); font-weight: 700; letter-spacing: .14em; text-shadow: 0 0 var(--space-3) rgba(255, 160, 90, .8); white-space: nowrap; pointer-events: none; }
 .deck-theater-notes { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .deck-theater-notes span { display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); border-left: var(--space-1) solid var(--warn); border-radius: var(--deck-radius); background: rgba(255, 180, 84, .08); font-size: var(--fs-fine); }
@@ -829,9 +926,73 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 
 @media (max-width: 1150px) {
   .deck-stats > span:nth-child(2) { display: none; }
-  .deck-nav > [data-route="operations"],
-  .deck-nav > [data-route="syndicate"],
-  .deck-nav > [data-route="faction"],
-  .deck-nav > [data-route="log"] { display: none; }
-  .deck-nav__more { display: block; }
 }
+
+/* §founding R4/R7: the plan card — under way, one next step, optional work. */
+.deck-founding__progress { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-1); }
+.deck-founding__progress li { position: relative; padding-left: 14px; color: var(--info); font-size: var(--fs-fine); line-height: 1.35; }
+.deck-founding__progress li::before { content: "▸"; position: absolute; left: 0; color: var(--accent); }
+.deck-founding__next { display: grid; gap: var(--space-1); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
+.deck-founding__next > small { color: var(--positive); font-size: var(--fs-fine); text-transform: uppercase; letter-spacing: .06em; }
+.deck-founding__next.is-blocked { border-color: var(--warn); }
+.deck-founding__next.is-blocked > small { color: var(--warn); }
+.deck-founding__next > em { color: var(--accent); font-style: normal; font-size: var(--fs-fine); }
+.deck-founding__next > p { margin: 0; color: var(--dim); line-height: 1.4; }
+.deck-founding__next > button.is-primary { border-color: var(--positive); color: var(--positive); }
+.deck-founding__waiting { display: grid; gap: var(--space-1); }
+.deck-founding__waiting > button:not(.deck-founding__waiting-toggle) { display: grid; text-align: left; padding: var(--space-2); }
+.deck-founding__waiting > button > span { display: grid; gap: 2px; }
+.deck-founding__waiting small { color: var(--dim); font-size: var(--fs-fine); }
+.deck-founding__waiting-toggle { justify-self: start; color: var(--dim); font-size: var(--fs-fine); }
+/* §founding R5: a build workbench needs the height; the card shrinks to its header. */
+.deck:is(:has(#deck-build-workbench:not([hidden])), :has(.deck-workspace[data-route="logistics"]:not([aria-hidden="true"]))) .deck-founding .deck-founding__body { display: none; }
+.deck:is(:has(#deck-build-workbench:not([hidden])), :has(.deck-workspace[data-route="logistics"]:not([aria-hidden="true"]))) .deck-founding { width: min(300px, 100%); }
+.deck-founding > header > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deck-command-progress__steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-size: var(--fs-fine); color: var(--dim); }
+.deck-command-progress__steps li { display: flex; gap: var(--space-2); }
+.deck-command-progress__steps li.is-done { color: var(--positive); }
+/* §founding R3/R5: guard targets as buttons, docked fleets included. */
+.deck-command-strip__picks { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.deck-command-strip__picks button { font-size: var(--fs-fine); }
+/* §founding R10/R12: the charter ledger. */
+.deck-charter-ledger__goals { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: var(--space-2); }
+.deck-charter-ledger__goal { display: grid; gap: var(--space-1); align-content: start; min-width: 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
+.deck-charter-ledger__goal > header { display: flex; justify-content: space-between; gap: var(--space-2); align-items: baseline; }
+.deck-charter-ledger__goal > header em { color: var(--positive); font-style: normal; font-size: var(--fs-fine); white-space: nowrap; }
+.deck-charter-ledger__goal > p { margin: 0; color: var(--dim); font-size: var(--fs-fine); line-height: 1.4; }
+.deck-charter-ledger__goal > small { color: var(--dim); font-size: var(--fs-fine); font-variant-numeric: tabular-nums; }
+.deck-charter-ledger__bar { height: var(--space-1); overflow: hidden; border-radius: var(--space-1); background: var(--border); }
+.deck-charter-ledger__bar i { display: block; height: 100%; background: var(--positive); }
+/* §founding R11: the charter report on return. Centered over the map area,
+   clear of the workspace; dismissed for the session by any of its buttons. */
+.deck-welcome { position: fixed; z-index: var(--z-toast); top: calc(var(--deck-topbar-height) + var(--space-3)); left: var(--space-3); right: calc(var(--deck-workspace-inset, 0px) + var(--space-3)); width: min(420px, calc(100vw - var(--space-6))); margin: 0 auto; border: 1px solid var(--positive); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); }
+.deck-welcome[hidden] { display: none; }
+.deck-welcome > header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); color: var(--positive); font-size: var(--fs-fine); text-transform: uppercase; letter-spacing: .06em; }
+.deck-welcome > header button { min-height: var(--deck-control-height); width: var(--deck-control-height); padding: 0; }
+.deck-welcome__body { display: grid; gap: var(--space-3); padding: 0 var(--space-3) var(--space-3); }
+.deck-welcome__body section { display: grid; gap: var(--space-1); }
+.deck-welcome__body small { color: var(--dim); font-size: var(--fs-fine); text-transform: uppercase; letter-spacing: .06em; }
+.deck-welcome__body ul { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-1); }
+.deck-welcome__body li { position: relative; padding-left: 14px; line-height: 1.4; }
+.deck-welcome__body li::before { content: "▸"; position: absolute; left: 0; color: var(--accent); }
+.deck-welcome__body p { margin: 0; color: var(--dim); line-height: 1.4; }
+.deck-welcome__next { padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
+.deck-welcome__body footer { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.deck-welcome__body footer .is-primary { border-color: var(--positive); color: var(--positive); }
+.deck:has(.deck-overlay:not([hidden])) .deck-welcome { visibility: hidden; }
+
+/* §construction: every developed world's work slot, from the top bar. The bar
+   clips overflow, so the menu is a fixed sibling anchored under the chip. */
+.deck-construction-chip { flex: none; }
+.deck .deck-construction-chip__button { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 26px; padding: 2px var(--space-3) 2px var(--space-1); border-radius: 999px; font-size: var(--fs-fine); white-space: nowrap; }
+.deck-construction-chip__button .icon { width: 20px; height: 20px; }
+.deck-construction-chip__button b { color: var(--ink); }
+.deck-construction-chip__button b.is-idle { color: var(--warn); }
+.deck .deck-construction-chip__button[aria-expanded="true"] { border-color: var(--accent); }
+.deck-construction-menu { position: fixed; z-index: var(--z-command); top: calc(var(--deck-topbar-height) + var(--space-1)); left: var(--space-3); width: min(380px, calc(100vw - var(--space-6))); padding: var(--space-2); border: 1px solid var(--field-bd); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); pointer-events: auto; }
+.deck-construction-menu:not([hidden]) { display: grid; gap: var(--space-1); }
+.deck-construction-menu > p { margin: 0 0 var(--space-1); color: var(--dim); font-size: var(--fs-fine); }
+.deck-construction-menu__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2); align-items: center; padding: var(--space-1) var(--space-2); border-radius: var(--space-1); background: var(--field-bg); }
+.deck-construction-menu__row > span { display: grid; min-width: 0; }
+.deck-construction-menu__row small { color: var(--dim); font-size: var(--fs-fine); }
+.deck-construction-menu__row.is-idle small { color: var(--warn); }

@@ -66,6 +66,7 @@ impl Bot {
         for site in &p.sites {
             if self.freight_homes.values().any(|id| *id == site.system.id) { continue; }
             let donor = p.own().filter(|f| f.kind.is_player_freighter() && f.docked.is_some()
+                && !self.belt_haulers.contains_key(&f.id)
                 && f.vel.length_sq() < 1.0 && !p.fighting.contains(&f.id)
                 && self.ready(&format!("fleet:{}", f.id), p.now)
                 && !matches!(&f.industry, Some(FleetIndustry::Route { run }) if run.phase != RoutePhase::Complete))
@@ -74,7 +75,7 @@ impl Bot {
             if let Some(id) = donor { self.freight_homes.insert(id, site.system.id); }
         }
         for f in p.own().filter(|f| f.kind.is_player_freighter()) {
-            if self.freight_homes.contains_key(&f.id) { continue; }
+            if self.freight_homes.contains_key(&f.id) || self.belt_haulers.contains_key(&f.id) { continue; }
             let site = p.sites.iter().min_by(|a, b| {
                 let score = |site: &sim::information::SiteReport| {
                     let assigned = self.freight_homes.values().filter(|id| **id == site.system.id).count();
@@ -93,7 +94,7 @@ impl Bot {
     }
 
     fn intercolony_route(&mut self, p: &Observation) -> Option<Command> {
-        for fleet in p.own().filter(|f| f.kind.is_player_freighter() && !f.stalled) {
+        for fleet in p.own().filter(|f| f.kind.is_player_freighter() && !f.stalled && !self.belt_haulers.contains_key(&f.id)) {
             let key = format!("fleet:{}", fleet.id);
             if !self.ready(&key, p.now) || p.fighting.contains(&fleet.id) || self.returns.contains_key(&fleet.id) { continue; }
             if matches!(&fleet.industry, Some(FleetIndustry::Route { run })
@@ -101,7 +102,7 @@ impl Bot {
             let Some(source) = p.sites.iter().find(|s| fleet.docked.as_deref() == Some(s.system.id.to_string().as_str())) else { continue; };
             let local = p.at_site(source);
             let reserve = self.desired_stock(&local, self.site_project(p, source));
-            let mut economy = fleet.clone(); economy.transit = Some(sim::ship::TransitMode::Economy);
+            let mut economy = fleet.clone(); economy.transit = Some(p.freight_transit());
             let mut best = None;
             for dest in p.sites.iter().filter(|s| s.system.id != source.system.id && s.system.blockade.is_none()) {
                 if p.threatened(dest.system.pos) { continue; }
@@ -111,7 +112,7 @@ impl Bot {
                     .min(dest.system.storage_headroom().floor().max(0.0) as u32);
                 let mut manifest = BTreeMap::new();
                 let mut goods: Vec<_> = wanted.iter().collect();
-                goods.sort_by_key(|(c, _)| (**c != C::Provisions && **c != C::Fuel, **c));
+                goods.sort_by_key(|(c, _)| (**c != C::Provisions && !FUELS.contains(*c), **c));
                 for (&good, &target) in goods {
                     let spare = (source.system.free_stock(good) - reserve.get(&good).copied().unwrap_or(0.0)).floor().max(0.0) as u32;
                     let need = (target - remote.stock(good) - remote.inbound(good) as f64 - remote.carried_home(good) as f64
@@ -124,9 +125,13 @@ impl Bot {
                 let outbound = p.leg(&economy, source.system.pos, dest.system.pos, units);
                 let return_burn = p.leg(&economy, dest.system.pos, source.system.pos, 0);
                 let escort = p.own().find(|f| f.guard_target == Some(fleet.id));
-                if fleet.fuel.unwrap_or(0.0) < outbound + p.arrival_reserve(fleet)
-                    || dest.system.free_stock(C::Fuel) < return_burn && fleet.fuel.unwrap_or(0.0) < outbound + return_burn + p.arrival_reserve(fleet)
-                    || escort.is_some_and(|g| g.fuel.unwrap_or(0.0) < p.leg(g, source.system.pos, dest.system.pos, 0) * 2.0 + p.arrival_reserve(g)) { continue; }
+                let have = store(&economy);
+                if have < outbound + p.arrival_reserve(fleet)
+                    || dest.system.free_stock(regime_fuel(&economy)) < return_burn && have < outbound + return_burn + p.arrival_reserve(fleet)
+                    || escort.is_some_and(|g| {
+                        let (fuel, mult) = p.escort_burn(g, on_uranium(&economy));
+                        fuel < p.fuel_per_mass(source.system.pos, dest.system.pos) * hull_mass(g) * mult * 2.0 + p.arrival_reserve(g)
+                    }) { continue; }
                 let value = manifest.iter().map(|(&c, &n)| p.price(c) * n as f64).sum::<f64>()
                     / (1.0 + source.system.pos.distance(dest.system.pos) / 80_000.0);
                 if best.as_ref().is_none_or(|(v, _, _)| value > *v) { best = Some((value, dest, manifest)); }
@@ -142,7 +147,7 @@ impl Bot {
                 return Some(Command::SetFreightRoute { player_id: p.owner, fleet_id: fleet.id,
                     route: Some(FreightRoute { name: "Inter-colony supply".into(), repeat: false,
                         shopping_budget: None,
-                        transit: sim::ship::TransitMode::Economy, fuel_reserve: p.arrival_reserve(fleet),
+                        transit: p.freight_transit(), fuel_reserve: p.arrival_reserve(fleet),
                         escort: p.own().find(|g| g.guard_target == Some(fleet.id)).map(|g| g.id),
                         stops: vec![RouteStop { port: FreightPort::System { id: source.system.id },
                             load: manifest.clone(), unload, sell: false },
@@ -163,7 +168,7 @@ impl Bot {
         }
         // Rebase spare/returning freighters to their assigned port. Only idle
         // reported berths qualify; don't overwrite an in-flight delivery.
-        for fleet in p.own().filter(|f| f.kind.is_player_freighter() && !f.stalled) {
+        for fleet in p.own().filter(|f| f.kind.is_player_freighter() && !f.stalled && !self.belt_haulers.contains_key(&f.id)) {
             let key = format!("fleet:{}", fleet.id);
             if !self.ready(&key, p.now) || fleet.vel.length_sq() > 1.0 || p.fighting.contains(&fleet.id)
                 || matches!(&fleet.industry, Some(FleetIndustry::Route { run }) if run.phase != RoutePhase::Complete && run.hold.is_none()) { continue; }

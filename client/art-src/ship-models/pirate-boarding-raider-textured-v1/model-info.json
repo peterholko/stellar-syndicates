@@ -1,0 +1,22 @@
+{
+  "meshes": 6,
+  "renderSections": 6,
+  "sourceComponents": 66,
+  "triangles": 4092,
+  "exportedVertices": 5595,
+  "dimensionsXYZ": [
+    13.075,
+    3.9925,
+    19.75
+  ],
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "embeddedTextures": 3,
+  "axes": "Y up, -Z forward",
+  "source": "../../pirate-boarding-raider-reference-v1/pirate-boarding-raider-reference.png",
+  "detailLevel": "low-poly authored mesh",
+  "generator": "Python/NumPy, no Blender",
+  "optimization": "Static parts combined by material; independent turret assemblies retained; exact vertex deduplication; 16-bit indices where possible"
+}

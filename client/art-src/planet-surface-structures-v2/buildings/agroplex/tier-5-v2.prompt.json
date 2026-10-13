@@ -1,0 +1,58 @@
+{
+  "id": "agroplex/tier-5-v2",
+  "mode": "built-in image_gen",
+  "prompt": "Use case: stylized-concept.\nAsset type: ONE standalone planetary building-layer sprite, square transparent PNG, approximately 1024 x 1024.\nPurpose: reusable architecture above a SEPARATE biome ground layer. Produce BUILDING ONLY, not a diorama. Genuine zero-alpha transparency around the building; preserve translucent soft shadow. No baked soil, gravel apron, moss, grass, rocks around the site, concrete base tile, raised platform, roads, path, border or landscape. Small integral ramps/steps/support feet belonging to the structure are allowed.\nStyle: the approved new Boreal/Temperate structures, grounded near-future frontier engineering. Soft semi-realistic environmental 3D rendering, matte weathered steel, subdued grey/slate/forest-green panels, restrained amber/cyan service lights. Large readable forms, no ink outlines, no cel shading, plastic gloss, extreme contrast, excessive greebles or neon. No text, logos, Authority branding, numerals, UI, people, vehicles or spacecraft.\nCamera and lighting: elevated front-left three-quarter view about 55 degrees above the ground plane; more roof than wall, mild perspective; front and right walls visible. Soft upper-left daylight, neutral/cool fill and semi-transparent soft lower-right cast/contact shadow attached to the feet.\nFraming/alignment (match the approved Agroplex tiers 1-3 exactly): solid building width about94% of the canvas (x about3–97%), centred at x=50%. Its near/front foot, the lowest solid point, at y about88%. Same ground footprint as tier3: the low greenhouse bays stay at ground level and all new height grows upward from them. Keep at least3% transparent margin above the tallest point; if a tower would rise higher, make it slimmer or lower, never shrink the footprint, never crop. At1024 square this means solid building spans approximately x31–993, front foot at y901, tallest solid feature below y31. Prioritize that fixed bay footprint and camera over making the building look taller.\nOutput exactly one structure, no tier lineup/contact sheet.\nInput image1 is the approved Agroplex tier3. Keep its architecture, materials, grey-green ribs, glazing, visible crop rows, nutrient tanks and finish; this is the same building family upgraded, not a new design. Input image2, when attached, is the tier just below this one; grow from it.\nFamily identity: low glazed crop-production bays with grey-green ribs, visible green crop rows, compact packing/control rooms and squat nutrient tanks. Recognizable industrial greenhouse silhouette. Crops grow only under glass: no planted roofs, roof gardens, trees or stepped garden terraces (those belong to a different building).\nTier family progression for context (do NOT draw a lineup): 1: two low attached greenhouse bays; 2: two reinforced glazed bays with a taller rear packing room; 3: three compact growing bays with a raised climate core; 4: the three bays carry a second glazed gallery deck; 5: a three-deck glass growing hall around a central service core; 6: a vertical-farm tower of stacked glazed crop decks rising from the same bays, same compact site.\nOutput: exactly the requested tier alone, genuine transparent RGBA PNG.\nSubject: AGROPLEX — TIER 5 of 6.\nThis tier specifically: a three-deck glass growing hall: three stacked glazed galleries with grey-green ribs and crop rows visible on every deck, around a central service and climate core with ducts; low growing bays and nutrient tanks still at its foot.\nShow exactly THREE readable glazed production galleries stacked vertically, with structural grey-green deck bands and green crop rows visible through the glazing on every gallery. Organize the attached glass growing hall around the central industrial service/climate core and visible ducts. Retain the recognizable low greenhouse bays, ground-level front entrances, small ramps and nutrient tanks at its foot; do not lift them onto a solid raised plinth. Image2 is the new Tier4 and supplies the preceding structural upgrade. Add height upward while preserving the same three-bay site scale and94% canvas width. No outdoor crops, no housing windows, no terrace planters or garden roofs.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/agroplex/tier-3.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/agroplex/tier-4-v2.png"
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-8c2c9f2c-1ee8-43f9-a87b-d1b1934f3c33.png",
+  "file": "buildings/agroplex/tier-5-v2.png",
+  "postprocessing": "Normalized to1024×1024 with solid width94%, centered horizontally and front foot88%. The footprint is not reduced to accommodate height; overly tall artwork is rejected for revision.",
+  "verification": {
+    "file": "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/agroplex/tier-5-v2.png",
+    "size": [
+      1024,
+      1024
+    ],
+    "mode": "RGBA",
+    "zero_alpha_pixels": 481540,
+    "partial_alpha_pixels": 566747,
+    "opaque_pixels": 289,
+    "canvas_edge_max_alpha": 0,
+    "visible_bounds": {
+      "left": 28,
+      "top": 53,
+      "right": 1008,
+      "bottom": 904,
+      "width": 980,
+      "height": 851
+    },
+    "solid_bounds": {
+      "left": 31,
+      "top": 54,
+      "right": 992,
+      "bottom": 900,
+      "width": 961,
+      "height": 846
+    },
+    "solid_width_fraction": 0.9384765625,
+    "solid_bottom_fraction": 0.87890625,
+    "bytes": 1844440,
+    "sha256": "cfbf836f1775996fd38d0818253cfcc504f45cf34e1ab41148b2c565f949d4f7",
+    "normalization": {
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "scale_x": 0.8041436925647452,
+      "scale_y": 0.8041436925647452,
+      "canvas_offset": [
+        0,
+        -41
+      ],
+      "kind": "agroplex"
+    }
+  }
+}

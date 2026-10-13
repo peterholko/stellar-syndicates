@@ -118,6 +118,27 @@ pub enum ShipKind {
     HeavyFreighter,
     #[serde(rename = "bulk_freighter")]
     BulkFreighter,
+    /// §charting: THE SURVEY PROBE — a cheap, crewless, one-way craft. It flies
+    /// to a system, surveys it like a Scout, sends the report home at light
+    /// speed and is SPENT doing it. Lets a corporation chart many systems at
+    /// once without risking Scouts; it has no guns and no armour, so anything
+    /// that catches it destroys it.
+    #[serde(rename = "survey_probe")]
+    SurveyProbe,
+    /// §belts: THE MINING BARGE — the belt line's working miner (EVE's
+    /// Retriever). Ordered to a charted asteroid belt, it works within
+    /// [`crate::industry::SKIM_RANGE_SU`] of the star and fills its own small
+    /// hold, or the stockpile when the system is yours. No guns, a poor
+    /// hauler: a freighter, or a trip home, takes the ore to market.
+    #[serde(rename = "mining_barge")]
+    MiningBarge,
+    /// §belts: THE MINING BELT STATION — a slow ore depot that ANCHORS at a
+    /// charted belt (EVE's Rorqual with its core deployed). Barges at that belt
+    /// unload into its 3,000-unit hold; freighters collect by hand or on a
+    /// freight route. No guns and a tough hull: a big, still target that
+    /// warships guard. Anchored, it cannot move, merge or split.
+    #[serde(rename = "mining_belt_station")]
+    MiningBeltStation,
 }
 
 /// Mass added per unit of cargo carried. Under the constant-speed movement model
@@ -149,6 +170,8 @@ impl ShipKind {
             Self::LargeFreighter => 1_000,
             Self::HeavyFreighter => 2_500,
             Self::BulkFreighter => 6_000,
+            Self::MiningBarge => 150, // §belts: an ore hopper, not a cargo bay
+            Self::MiningBeltStation => 3_000, // §belts: six ore silos
             _ => 0,
         }
     }
@@ -169,6 +192,9 @@ impl ShipKind {
             ShipKind::Corvette => 800.0,
             ShipKind::Colony => 6000.0, // heavy civilian hull — fuel-∝-mass bites
             ShipKind::Scout => 80.0,
+            ShipKind::SurveyProbe => 40.0, // §charting: a crewless drone, the lightest hull
+            ShipKind::MiningBarge => 3_500.0, // §belts: cutters, hoppers and a small hold
+            ShipKind::MiningBeltStation => 12_000.0, // §belts: silos, cradles and a gantry
             // §ladder: anchored to the Corvette (800) — 2.5× / 5× / 10× / 20× /
             // 40×. Mass drives fuel cost, so the capital fuel burn emerges here.
             ShipKind::Destroyer => 2_000.0,
@@ -204,7 +230,10 @@ impl ShipKind {
             ShipKind::Raider => 100.0,
             ShipKind::Corvette => 65.0, // keeps station with convoys, can't chase raiders
             ShipKind::Colony => 33.0,   // slowest civilian — the long, visible voyage
-            ShipKind::Scout => 115.0,   // the fastest thing flying — still < c/2
+            ShipKind::Scout => 115.0,   // the fastest crewed hull — still < c/2
+            ShipKind::SurveyProbe => 120.0, // §charting: a drone edges past it, still < c/2
+            ShipKind::MiningBarge => 30.0, // §belts: as slow as a Bulk Freighter
+            ShipKind::MiningBeltStation => 15.0, // §belts: station-keeping thrusters, not a drive
             // §ladder: each rung slower than the last (0.85 / 0.70 / 0.55 /
             // 0.45 / 0.35 × the Corvette's 65) — a capital ARRIVES, it never
             // chases. All far below c = 300.
@@ -220,7 +249,8 @@ impl ShipKind {
 
     /// Whether this kind BROADCASTS under the Convention (visible galaxy-wide,
     /// light-delayed). Corporate Convoys may run silent; the Authority's
-    /// Freighter always transmits. One source of truth for the View's gating.
+    /// Freighter always transmits. Pirates sit outside the Convention, so a
+    /// pirate fleet never broadcasts whatever it flies ([`Fleet::broadcasts`]).
     pub fn broadcasts(self) -> bool {
         // Corvettes (a DECLARED escort deters) and colony ships (a declared
         // civilian settlement vessel — expansion is telegraphed) broadcast;
@@ -251,9 +281,22 @@ impl ShipKind {
         self == ShipKind::Raider || self.is_player_freighter()
     }
 
-    /// Jump drives are carried only by the two dark reconnaissance/strike hulls.
+    /// Built-in jump drives are carried only by the two dark
+    /// reconnaissance/strike hulls. §fuel-overhaul: any other hull but the ships
+    /// of the line can fit a Jump Drive module after Antimatter Synthesis.
     pub fn has_jump_drive(self) -> bool {
         matches!(self, ShipKind::Raider | ShipKind::Scout)
+    }
+
+    /// §fuel-overhaul: a jump-capable hull's antimatter bottle: two full-range
+    /// jumps of the bare hull, at least [`crate::fuel::ANTIMATTER_BOTTLE_MIN`].
+    pub fn antimatter_bottle(self) -> f64 {
+        (self.hull_mass() * crate::fuel::ANTIMATTER_PER_HULL_MASS).max(crate::fuel::ANTIMATTER_BOTTLE_MIN)
+    }
+
+    /// Battleship-or-heavier ship of the line ([`is_siege_anchor`]).
+    pub fn is_siege_anchor(self) -> bool {
+        is_siege_anchor(self)
     }
 
     /// Multiplier on `config.sensor_range` when this hull accompanies a mobile
@@ -286,12 +329,15 @@ impl ShipKind {
                 | ShipKind::HeavyFreighter | ShipKind::BulkFreighter => 0.0,
             ShipKind::Colony => 0.0,   // colonists, not soldiers
             ShipKind::Scout => 0.0,    // dies if engaged — speed is its armor
+            ShipKind::SurveyProbe => 0.0, // no guns: a drone
+            ShipKind::MiningBarge => 0.0, // cutters are not guns
+            ShipKind::MiningBeltStation => 0.0, // §belts: a depot, not a fort
             // §ladder: raw broadside climbs the ladder — but per Armaments
             // spent it DECLINES past the Cruiser (the efficiency invariant).
             ShipKind::Destroyer => 2.4,
             ShipKind::Cruiser => 4.5,
             ShipKind::Battleship => 8.0,
-            ShipKind::Dreadnought => 12.0,
+            ShipKind::Dreadnought => 15.0, // battle rules v12 (was 12)
             ShipKind::Titan => 24.0,
             ShipKind::Transport => 0.0, // troopers do not fight ships
             ShipKind::Freighter => 0.0, // an unarmed common carrier
@@ -309,6 +355,11 @@ impl ShipKind {
                 | ShipKind::HeavyFreighter | ShipKind::BulkFreighter => 1.0,
             ShipKind::Colony => 1.0, // a fat civilian hull — escort it
             ShipKind::Scout => 0.0,  // no armor at all
+            ShipKind::SurveyProbe => 0.0, // nor has a probe
+            ShipKind::MiningBarge => 1.0, // a working civilian hull, like a freighter
+            // §belts: a tough hull, a cruiser's worth, so a lone raider can't
+            // gut it before its guard arrives.
+            ShipKind::MiningBeltStation => 6.0,
             // §ladder: capitals are defense-heavier than they are gun-heavy —
             // presence means being HARD TO REMOVE. Hull derives from this.
             ShipKind::Destroyer => 2.6,
@@ -364,11 +415,15 @@ impl ShipKind {
     }
 
     /// §modules Part B: how many MODULE slots this hull carries. Warships fit
-    /// modules; a player Freighter has one utility-only berth. §ladder: capitals
+    /// modules; a player Freighter has one berth, for a utility or a Warp
+    /// Stabilizer (the blockade runner). §ladder: capitals
     /// are where COMBINATIONS live — slots and points both climb. Tunable.
     pub fn module_slots(self) -> u32 {
         match self {
             ShipKind::Builder => 0, // no hardpoints — its fittings ARE the crane
+            ShipKind::SurveyProbe => 0, // a sealed, single-use drone
+            ShipKind::MiningBarge => 1, // one utility berth, like a freighter
+            ShipKind::MiningBeltStation => 0, // §belts: its fittings ARE the silos
             ShipKind::Corvette => 2,
             ShipKind::Raider => 2,
             ShipKind::Scout => 1,
@@ -397,6 +452,9 @@ impl ShipKind {
 pub fn fitting_points(kind: ShipKind) -> u32 {
     match kind {
         ShipKind::Builder => 0,
+        ShipKind::SurveyProbe => 0,
+        ShipKind::MiningBarge => 2,
+        ShipKind::MiningBeltStation => 0,
         ShipKind::Scout => 2,
         ShipKind::Convoy => 2,
         ShipKind::TinyFreighter | ShipKind::SmallFreighter | ShipKind::LargeFreighter
@@ -469,6 +527,7 @@ pub fn requires_hull_unlock(kind: ShipKind) -> bool {
             | ShipKind::Battleship
             | ShipKind::Dreadnought
             | ShipKind::Titan
+            | ShipKind::MiningBeltStation
     )
 }
 
@@ -486,7 +545,7 @@ pub fn is_siege_anchor(kind: ShipKind) -> bool {
 /// then convoy (trade), corvette (escort), raider (teeth), scout (eyes). A
 /// fleet-of-one resolves to that ship's own kind, so nothing changes for the
 /// N=1 world. Highest precedence first.
-pub const FLAGSHIP_PRECEDENCE: [ShipKind; 18] = [
+pub const FLAGSHIP_PRECEDENCE: [ShipKind; 21] = [
     // §ladder: a capital OUTRANKS everything — a fleet with a Titan IS the
     // Titan (its name, its sprite, its label), down the ladder from there.
     ShipKind::Titan,
@@ -498,12 +557,17 @@ pub const FLAGSHIP_PRECEDENCE: [ShipKind; 18] = [
     // civilian hulls it travels with, so a fleet carrying one is drawn as one.
     ShipKind::Transport,
     ShipKind::Colony,
+    // §belts: a station is the biggest civilian thing in any fleet it joins.
+    ShipKind::MiningBeltStation,
     ShipKind::BulkFreighter,
     ShipKind::HeavyFreighter,
     ShipKind::LargeFreighter,
     ShipKind::Convoy,
     ShipKind::SmallFreighter,
     ShipKind::TinyFreighter,
+    // §belts: a mining fleet is drawn as its barge unless it hauls with a
+    // freighter, but ahead of the escort riding with it.
+    ShipKind::MiningBarge,
     // A freighter fleet is pure freighters (never mixed with player ships), so its
     // rank here only names how a lone Authority hull is drawn — a hauler.
     ShipKind::Freighter,
@@ -512,11 +576,12 @@ pub const FLAGSHIP_PRECEDENCE: [ShipKind; 18] = [
     // The working hull: shown only when nothing above it rides along.
     ShipKind::Builder,
     ShipKind::Scout,
+    ShipKind::SurveyProbe,
 ];
 
 /// All ship kinds, in a fixed deterministic order (composition iteration,
 /// damage-pool distribution, report ordering). Kept in sync with [`ShipKind`].
-pub const ALL_SHIP_KINDS: [ShipKind; 18] = [
+pub const ALL_SHIP_KINDS: [ShipKind; 21] = [
     ShipKind::Convoy,
     ShipKind::Raider,
     ShipKind::Corvette,
@@ -535,6 +600,9 @@ pub const ALL_SHIP_KINDS: [ShipKind; 18] = [
     ShipKind::LargeFreighter,
     ShipKind::HeavyFreighter,
     ShipKind::BulkFreighter,
+    ShipKind::SurveyProbe,
+    ShipKind::MiningBarge,
+    ShipKind::MiningBeltStation,
 ];
 
 /// The fastest flying speed across every ship kind — the single number the
@@ -628,6 +696,9 @@ pub fn crew_size(kind: ShipKind) -> u32 {
         ShipKind::BulkFreighter => 80,
         ShipKind::Builder => 30,
         ShipKind::Scout => 4,
+        ShipKind::SurveyProbe => 0, // crewless: it eats nothing
+        ShipKind::MiningBarge => 15,
+        ShipKind::MiningBeltStation => 60,
         ShipKind::Colony => 50,
         ShipKind::Transport => 40,
         ShipKind::Raider => 12,
@@ -749,24 +820,22 @@ pub const SCOUT_INTEL_RENOTIFY_S: f64 = 60.0;
 /// Seconds a patrolling ship waits at each waypoint before moving on.
 const PATROL_DWELL: f64 = 2.5;
 
-/// Economy freighters trade turnaround for range. Tunable: 25% of Full speed
-/// and 10% of Full fuel PER DISTANCE, hence 2.5% of Full's burn per second.
-pub const ECONOMY_SPEED_FRACTION: f64 = 0.25;
-pub const ECONOMY_FUEL_MULT: f64 = 0.10;
-
-/// A fleet's TRANSIT THROTTLE (§Part 4): the stealth-vs-speed choice. `Full`
-/// (default, behavior-preserving) runs at the formation speed and lights up the
-/// fleet's signature at flank; `Stealth` creeps at `STEALTH_FRACTION` of it (~2×
-/// trip time) to stay quiet. Applies to MoveTo/Patrol; pursuit is always Full
-/// (v1). Economy is for all-freighter formations only; it saves fuel as well
-/// as slowing travel. serde default = Full keeps old snapshots loading.
+/// A fleet's TRANSIT THROTTLE (§Part 4, §fuel-overhaul): which drive regime
+/// and fuel it flies on.
+/// - `Full` runs at formation speed on the fusion tank (Deuterium, Helium-3)
+///   and lights up the fleet's signature at flank.
+/// - `Stealth` creeps at `STEALTH_FRACTION` on the same tank to stay quiet;
+///   half the burn per second over twice the time, so the same trip energy.
+/// - `Slow` runs at [`crate::fuel::SLOW_SPEED_FRACTION`] on the fission store
+///   (Uranium), burning [`crate::fuel::SLOW_FUEL_MULT`] of Full's energy per
+///   distance. Every formation without a ship of the line can fly it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransitMode {
     #[default]
     Full,
     Stealth,
-    Economy,
+    Slow,
 }
 
 impl TransitMode {
@@ -775,7 +844,7 @@ impl TransitMode {
         match self {
             TransitMode::Full => 1.0,
             TransitMode::Stealth => crate::detection::STEALTH_FRACTION,
-            TransitMode::Economy => ECONOMY_SPEED_FRACTION,
+            TransitMode::Slow => crate::fuel::SLOW_SPEED_FRACTION,
         }
     }
 }
@@ -1094,10 +1163,25 @@ pub struct PursuitPlan {
 pub(crate) struct FuelResearch {
     pub capacity: f64,
     pub consumption: f64,
+    /// §fuel-overhaul: Fusion Freight's multiplier on a player freighter
+    /// hull's fusion burn, and its cargo's (1 until researched).
+    pub freighter_fusion: f64,
+    /// §fuel-overhaul: Fusion Reactors lets fusion tanks take Helium-3.
+    pub helium3: bool,
+    /// Torch Regime's multiplier on a warship hull's cruise burn (never on
+    /// freighters, and never on a jump).
+    pub warship_burn: f64,
+    /// Drive Tuning: every hull's speed.
+    pub speed: f64,
+    /// Military Drives and Torch Regime: a warship hull's speed.
+    pub warship_speed: f64,
 }
 
 impl Default for FuelResearch {
-    fn default() -> Self { Self { capacity: 1.0, consumption: 1.0 } }
+    fn default() -> Self {
+        Self { capacity: 1.0, consumption: 1.0, freighter_fusion: 1.0, helium3: false,
+            warship_burn: 1.0, speed: 1.0, warship_speed: 1.0 }
+    }
 }
 
 impl FuelResearch {
@@ -1106,6 +1190,11 @@ impl FuelResearch {
         Self {
             capacity: mods.get(&crate::research::ModKey::FuelCapacity).copied().unwrap_or(1.0),
             consumption: mods.get(&crate::research::ModKey::FuelConsumption).copied().unwrap_or(1.0),
+            freighter_fusion: mods.get(&crate::research::ModKey::FreighterFusionBurn).copied().unwrap_or(1.0),
+            helium3: state.completed.contains(crate::power::FUSION_RESEARCH),
+            warship_burn: mods.get(&crate::research::ModKey::WarshipBurn).copied().unwrap_or(1.0),
+            speed: mods.get(&crate::research::ModKey::SpeedAll).copied().unwrap_or(1.0),
+            warship_speed: mods.get(&crate::research::ModKey::SpeedWarship).copied().unwrap_or(1.0),
         }
     }
 }
@@ -1208,8 +1297,22 @@ pub struct Fleet {
     /// Carrying it deletes all of that. A fleet cannot move without fuel because
     /// moving IS decrementing a number it holds, and range stops being a
     /// bookkeeping question and becomes a property of the formation.
+    ///
+    /// §fuel-overhaul: this is the FUSION TANK, counted in Deuterium of energy.
+    /// It includes any Helium-3 aboard (each unit [`crate::fuel::HELIUM3_FUEL_EQUIV`]
+    /// of energy in one unit of space), so `fuel` can exceed the tank's space.
     #[serde(default)]
     pub fuel: f64,
+    /// §fuel-overhaul: Helium-3 units inside the fusion tank (their energy is
+    /// already counted in `fuel`). Space used = Deuterium + Helium-3 units.
+    #[serde(default)]
+    pub helium3: f64,
+    /// §fuel-overhaul: the FISSION STORE (Uranium), burned by Slow warp.
+    #[serde(default)]
+    pub uranium: f64,
+    /// §fuel-overhaul: the ANTIMATTER BOTTLE on jump-capable hulls.
+    #[serde(default)]
+    pub antimatter: f64,
     /// Runtime cache, not a saved upgrade or a fuel grant. Rebuilt from the
     /// owner's research; old snapshots need no new authoritative fields.
     #[serde(skip)]
@@ -1240,7 +1343,7 @@ pub struct Fleet {
     /// carrying the remainder forward.
     #[serde(default)]
     pub damage: BTreeMap<ShipKind, f64>,
-    /// TRANSIT THROTTLE: Full (default), Stealth or freighter Economy. Governs move speed
+    /// TRANSIT THROTTLE: Full (default), Stealth or Slow (Uranium). Governs move speed
     /// and, via the retarded velocity, the fleet's detection signature.
     #[serde(default)]
     pub transit: TransitMode,
@@ -1278,6 +1381,9 @@ pub struct Fleet {
     pub mission_profile: crate::doctrine::MissionProfile,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub industry: Option<crate::industry::FleetIndustry>,
+    /// §belts: a Mining Belt Station's anchor at a belt (none for any other hull).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<crate::industry::Anchor>,
     /// §syndicates Part 3: when this fleet is an ALLY GARRISON (stationed at an
     /// ally's system), whether the HOST is currently feeding it its Provisions
     /// upkeep. Recomputed every tick (like `habitat_fed`); UNFED = its defense
@@ -1322,6 +1428,22 @@ pub struct Fleet {
     /// default `false` so every old snapshot loads with today's behaviour.
     #[serde(default)]
     pub engage_freight: bool,
+    /// Standing policy for a freighter fleet: when a held blockade cuts off the
+    /// system it is delivering to, RUN the blockade instead of holding outside
+    /// it until it lifts (§blockade-running). serde default `false`, so
+    /// deliveries wait a blockade out as they always have.
+    #[serde(default)]
+    pub run_blockades: bool,
+    /// The blockaded system this passage has already rolled against: one roll
+    /// per crossing of its run zone. Cleared when the fleet leaves the zone or
+    /// stops in it, so going in and coming back out are separate runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blockade_run: Option<EntityId>,
+    /// This delivery is WAITING OUTSIDE the held blockade of this system: it
+    /// holds on the standoff ring and hasn't arrived, so its mission stays
+    /// open until the blockade lifts (or it is set to run it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_outside: Option<EntityId>,
     /// §TCA Part 5: this hull was AUTO-SPAWNED for one special one-way delivery and
     /// is CONSUMED when it arrives. Standing orders and ordinary commodity
     /// shipments no longer set this flag: they use a real player hull or Authority
@@ -1363,10 +1485,9 @@ impl Fleet {
     ) -> Self {
         let mut composition = BTreeMap::new();
         composition.insert(kind, 1);
-        // A hull LEAVES THE SLIP FUELLED. The build already charged the yard for
-        // the ship; billing the first tank separately would only add a step that
-        // is never interesting to fail, and a fleet that spawned empty could not
-        // move off its own pad. Every tank after this one is bought at a dock.
+        // A fleet-of-one starts with full base stores: the founding fleet,
+        // replacements and scripted hulls. §fuel-overhaul: a hull built at a yard
+        // is emptied at launch and fills at the yard's dock (`launch_empty`).
         let hull_mass = kind.hull_mass();
         Fleet {
             id,
@@ -1388,6 +1509,9 @@ impl Fleet {
             marines_spent: 0,
             warp: false,
             fuel: hull_mass * crate::fuel::FUEL_PER_HULL_MASS,
+            helium3: 0.0,
+            uranium: if kind.is_siege_anchor() { 0.0 } else { hull_mass * crate::fuel::FUEL_PER_HULL_MASS },
+            antimatter: if kind.has_jump_drive() { kind.antimatter_bottle() } else { 0.0 },
             fuel_research: FuelResearch::default(),
             regime: crate::transit::Regime::Thrusters,
             drive_state: DriveState::default(),
@@ -1402,14 +1526,28 @@ impl Fleet {
             pirate_faction: None,
             mission_profile: crate::doctrine::MissionProfile::default(),
             industry: None,
+            anchor: None,
             garrison_fed: true,
             supplied: true,
             plunder_frac: 0.0,
             fought: false,
             loadouts: BTreeMap::new(),
             engage_freight: false,
+            run_blockades: false,
+            blockade_run: None,
+            held_outside: None,
             disposable: false,
         }
+    }
+
+    /// §fuel-overhaul: a fleet-of-one flying Slow on Uranium (the founding
+    /// freighter's default regime).
+    pub fn single_slow(id: EntityId, owner: PlayerId, kind: ShipKind, pos: Vec2,
+        order: FleetOrder, cargo: Option<Cargo>) -> Self
+    {
+        let mut fleet = Self::single(id, owner, kind, pos, order, cargo);
+        fleet.transit = TransitMode::Slow;
+        fleet
     }
 
     // --- §roster: the ROSTER is truth; composition/loadouts are its cache ------
@@ -1740,9 +1878,12 @@ impl Fleet {
 
     /// A fleet BROADCASTS (Convention, visible galaxy-wide) if ANY member kind
     /// broadcasts. A corporate Convoy remains dark; the Authority's Freighter
-    /// remains public even in a mixed formation.
+    /// remains public even in a mixed formation. Pirates are outlaws, not
+    /// signatories: their Corvettes and capitals run dark like their Raiders and
+    /// are found only by detection, never shown galaxy-wide. The View, pickets
+    /// and defenses all read this one rule.
     pub fn broadcasts(&self) -> bool {
-        self.composition.keys().any(|k| k.broadcasts())
+        !self.owner.is_pirate() && self.composition.keys().any(|k| k.broadcasts())
     }
 
     /// A mobile sensor source exists for an Interceptor, Freighter, or a Scout
@@ -1752,13 +1893,40 @@ impl Fleet {
     }
 
     /// A mixed formation jumps only when every hull carries a drive.
+    /// The fewest Warp Stabilizers any live hull carries: a fleet slips a
+    /// tackle only when every hull can.
+    pub fn min_stabilizers(&self) -> usize {
+        self.ships.iter().filter(|s| s.hp > 0.0)
+            .map(|s| s.loadout.modules().iter().filter(|m| **m == crate::module::ModuleKind::WarpStabilizer).count())
+            .min()
+            .unwrap_or(0)
+    }
+
+    /// Every hull must carry a jump drive: built in (Interceptor, Scout) or a
+    /// fitted Jump Drive (§fuel-overhaul).
     pub fn can_jump(&self) -> bool {
-        !self.composition.is_empty() && self.composition.keys().all(|k| k.has_jump_drive())
+        !self.composition.is_empty() && self.composition.iter().all(|(k, n)| {
+            *n == 0 || k.has_jump_drive() || self.loadouts.get(k).is_some_and(|fits| {
+                fits.iter()
+                    .filter(|(key, _)| crate::module::Loadout::from_key(key).has_jump_drive())
+                    .map(|(_, c)| *c).sum::<u32>() >= *n
+            })
+        })
     }
 
     /// §explore: is this fleet ACTIVELY SURVEYING (in the dwell window)? Drives
     /// the loudness multiplier through the one shared signature path — true only
     /// while the dwell clock runs, never during the approach.
+    /// §belts: survey dwells and belt mining are LOUD work; both take the
+    /// ×1.5 signature factor (`explore::SURVEY_SIGNATURE_FACTOR`).
+    pub fn loud_work(&self) -> bool {
+        self.surveying()
+            || matches!(&self.industry,
+                Some(crate::industry::FleetIndustry::Mine { status, .. }) if status == "mining")
+            || matches!(&self.industry,
+                Some(crate::industry::FleetIndustry::Prospect { status, .. }) if status == "prospecting")
+    }
+
     pub fn surveying(&self) -> bool {
         matches!(
             self.order,
@@ -2007,12 +2175,116 @@ impl Fleet {
         (self.hull_mass() + extra_mass) * crate::fuel::FUEL_PER_HULL_MASS * self.fuel_research.capacity
     }
 
-    /// Fill from a supply, returning what was actually taken.
+    /// §fuel-overhaul: the FISSION STORE's size, by the same rule as the tank but
+    /// counting only hulls that carry one (every hull but the ships of the line).
+    pub fn uranium_capacity(&self) -> f64 {
+        let base: f64 = self.composition.iter()
+            .filter(|(kind, _)| !kind.is_siege_anchor())
+            .map(|(kind, n)| kind.hull_mass() * *n as f64).sum();
+        let extra_mass: f64 = self.loadouts.iter().filter(|(kind, _)| !kind.is_siege_anchor())
+            .map(|(kind, fits)| {
+                fits.iter().map(|(key, n)| kind.hull_mass() * *n as f64
+                    * (crate::module::Loadout::from_key(key).fuel_capacity_mult() - 1.0)).sum::<f64>()
+            }).sum();
+        (base + extra_mass) * crate::fuel::FUEL_PER_HULL_MASS * self.fuel_research.capacity
+    }
+
+    /// §fuel-overhaul: the ANTIMATTER BOTTLE: two full-range jumps per
+    /// jump-capable hull (built-in drives or a fitted Jump Drive).
+    pub fn antimatter_capacity(&self) -> f64 {
+        self.composition.iter().filter(|(_, n)| **n > 0).map(|(kind, n)| {
+            let fitted = self.loadouts.get(kind).map(|fits| fits.iter()
+                .filter(|(key, _)| crate::module::Loadout::from_key(key).has_jump_drive())
+                .map(|(_, c)| *c).sum::<u32>()).unwrap_or(0);
+            let drives = if kind.has_jump_drive() { *n } else { fitted.min(*n) };
+            kind.antimatter_bottle() * drives as f64
+        }).sum()
+    }
+
+    /// §fuel-overhaul: empty every store (a hull fresh off the slip).
+    pub fn launch_empty(&mut self) {
+        self.fuel = 0.0;
+        self.helium3 = 0.0;
+        self.uranium = 0.0;
+        self.antimatter = 0.0;
+    }
+
+    /// Fusion-tank SPACE in use: Deuterium units plus Helium-3 units.
+    pub fn fusion_space_used(&self) -> f64 {
+        (self.fuel - (crate::fuel::HELIUM3_FUEL_EQUIV - 1.0) * self.helium3).max(0.0)
+    }
+
+    /// Free fusion-tank space.
+    pub fn fusion_room(&self) -> f64 {
+        (self.fuel_capacity() - self.fusion_space_used()).max(0.0)
+    }
+
+    /// Fill the fusion tank with Deuterium from a supply, returning what was
+    /// actually taken.
     pub fn refuel(&mut self, available: f64) -> f64 {
-        let room = (self.fuel_capacity() - self.fuel).max(0.0);
-        let taken = room.min(available.max(0.0));
+        let taken = self.fusion_room().min(available.max(0.0));
         self.fuel += taken;
         taken
+    }
+
+    /// Fill the fusion tank with Helium-3 units (one unit of space each, six of
+    /// energy), returning the units taken. Needs Fusion Reactors.
+    pub fn refuel_helium3(&mut self, available: f64) -> f64 {
+        if !self.fuel_research.helium3 {
+            return 0.0;
+        }
+        let taken = self.fusion_room().min(available.max(0.0));
+        self.fuel += taken * crate::fuel::HELIUM3_FUEL_EQUIV;
+        self.helium3 += taken;
+        taken
+    }
+
+    /// Fill the fission store with Uranium, returning what was taken.
+    pub fn refuel_uranium(&mut self, available: f64) -> f64 {
+        let taken = (self.uranium_capacity() - self.uranium).max(0.0).min(available.max(0.0));
+        self.uranium += taken;
+        taken
+    }
+
+    /// Fill the antimatter bottle, returning what was taken.
+    pub fn refuel_antimatter(&mut self, available: f64) -> f64 {
+        let taken = (self.antimatter_capacity() - self.antimatter).max(0.0).min(available.max(0.0));
+        self.antimatter += taken;
+        taken
+    }
+
+    /// Burn fusion energy: Deuterium first, the dense Helium-3 last.
+    pub fn burn_fusion(&mut self, energy: f64) {
+        let equiv = crate::fuel::HELIUM3_FUEL_EQUIV;
+        let deuterium = (self.fuel - equiv * self.helium3).max(0.0);
+        if energy > deuterium {
+            self.helium3 = (self.helium3 - (energy - deuterium) / equiv).max(0.0);
+        }
+        self.fuel = (self.fuel - energy).max(0.0);
+        self.helium3 = self.helium3.min(self.fuel / equiv);
+    }
+
+    /// Deuterium units in the fusion tank (energy not held as Helium-3).
+    pub fn deuterium(&self) -> f64 {
+        (self.fuel - crate::fuel::HELIUM3_FUEL_EQUIV * self.helium3).max(0.0)
+    }
+
+    /// The store the current throttle burns: Uranium on Slow, else the tank.
+    pub fn propulsion_store(&self) -> f64 {
+        if self.burns_uranium() { self.uranium } else { self.fuel }
+    }
+
+    /// That store's full size (the fusion tank's at Deuterium energy).
+    pub fn propulsion_capacity(&self) -> f64 {
+        if self.burns_uranium() { self.uranium_capacity() } else { self.fuel_capacity() }
+    }
+
+    /// §fuel-overhaul: what an escort burns while flying formation on a charge:
+    /// the charge's Uranium regime when it can fly it, else its own fusion tank.
+    /// Returns (burns Uranium, energy-per-distance multiplier).
+    pub fn formation_burn(&self, charge_slow: bool) -> (bool, f64) {
+        let uranium = charge_slow && self.can_slow();
+        (uranium, self.cruise_mult_for(uranium) * self.fuel_research.consumption)
     }
 
     /// How far this fleet can still go at `factor` (1 on thrusters,
@@ -2023,37 +2295,62 @@ impl Fleet {
         if per_second <= 1e-12 {
             return f64::INFINITY;
         }
-        (self.fuel / per_second) * self.transit_speed() * factor
+        (self.propulsion_store() / per_second) * self.transit_speed() * factor
     }
 
-    /// Only freight engines have Economy cruise. Recheck composition so merging
-    /// a warship into an economy fleet cannot give it a freight fuel discount.
-    pub fn can_economy_cruise(&self) -> bool {
+    /// §fuel-overhaul: every formation without a ship of the line can fly Slow
+    /// on Uranium. Rechecked live, so merging a capital in ends it.
+    pub fn can_slow(&self) -> bool {
         self.composition.iter().any(|(_, n)| *n > 0)
-            && self.composition.iter().all(|(kind, n)| *n == 0 || kind.is_player_freighter())
+            && self.composition.iter().all(|(kind, n)| *n == 0 || !kind.is_siege_anchor())
     }
 
+    /// Flying Slow on the fission store this tick.
+    pub fn burns_uranium(&self) -> bool {
+        self.transit == TransitMode::Slow && self.can_slow()
+    }
+
+    /// The throttle's multiplier on energy per distance.
     pub fn cruise_fuel_mult(&self) -> f64 {
-        if self.transit == TransitMode::Economy && self.can_economy_cruise() {
-            ECONOMY_FUEL_MULT
-        } else { 1.0 }
+        self.cruise_mult_for(self.burns_uranium())
     }
 
-    /// Research and the selected freight throttle compose once, both in the
-    /// physical burn and in range/route estimates. Captain bonuses are separate.
+    /// The multiplier on energy per distance on one store, weighed hull by hull
+    /// by mass, since burn is proportional to mass: on Uranium a quarter for
+    /// every hull; on the fusion tank, Fusion Freight's cut for each player
+    /// freighter and the cargo it carries, so an escort riding along costs its
+    /// own share and no more. Torch Regime makes warship hulls thirstier on
+    /// either store.
+    pub fn cruise_mult_for(&self, uranium: bool) -> f64 {
+        let total = self.mass();
+        if total <= 1e-9 {
+            return if uranium { crate::fuel::SLOW_FUEL_MULT } else { 1.0 };
+        }
+        let regime = |freighter: bool| if uranium { crate::fuel::SLOW_FUEL_MULT }
+            else if freighter { self.fuel_research.freighter_fusion } else { 1.0 };
+        let hulls: f64 = self.composition.iter().filter(|(_, n)| **n > 0).map(|(kind, n)| {
+            let torch = if kind.is_combatant() { self.fuel_research.warship_burn } else { 1.0 };
+            kind.hull_mass() * *n as f64 * regime(kind.is_player_freighter()) * torch
+        }).sum();
+        (hulls + self.cargo_mass() * regime(self.has_freighter())) / total
+    }
+
+    /// Research and the selected throttle compose once, both in the physical
+    /// burn and in range/route estimates. Captain bonuses are separate.
     pub fn propulsion_fuel_mult(&self) -> f64 {
         self.cruise_fuel_mult() * self.fuel_research.consumption
     }
 
-    pub fn jump_fuel_cost(&self, distance: f64) -> f64 {
+    /// §fuel-overhaul: Antimatter a jump of `distance` burns from the bottle.
+    pub fn jump_antimatter_cost(&self, distance: f64) -> f64 {
         crate::fuel::fuel_cost(distance, self.mass()) / crate::transit::JUMP_FUEL_FACTOR
             * self.fuel_research.consumption
     }
 
-    /// Formation speed × throttle. Economy's fuel saving is separate: simply
+    /// Formation speed × throttle. Slow's fuel saving is separate: simply
     /// halving speed and burn/second would leave total trip fuel unchanged.
     pub fn transit_speed(&self) -> f64 {
-        let throttle = if self.transit == TransitMode::Economy && !self.can_economy_cruise() {
+        let throttle = if self.transit == TransitMode::Slow && !self.can_slow() {
             1.0
         } else { self.transit.fraction() };
         self.max_speed() * throttle
@@ -2064,6 +2361,7 @@ impl Fleet {
     /// samples). Dark fleets only; a broadcaster's is unused.
     pub fn signature(&self) -> f64 {
         crate::detection::signature(&self.composition, self.vel.length(), self.max_speed())
+            * crate::detection::transit_quiet(self.transit)
     }
 
     /// FORMATION speed (GDD §14.2): the SLOWEST member sets the pace — the
@@ -2077,11 +2375,15 @@ impl Fleet {
             .iter()
             .filter(|(_, n)| **n > 0)
             .map(|(kind, count)| {
+                // Drive Tuning speeds every hull; Military Drives and Torch
+                // Regime speed warships.
+                let base = kind.max_speed() * self.fuel_research.speed
+                    * if kind.is_combatant() { self.fuel_research.warship_speed } else { 1.0 };
                 let fits = self.loadouts.get(kind);
                 let fitted = fits.map(|f| f.values().sum::<u32>()).unwrap_or(0);
-                let unfitted = if fitted < *count { kind.max_speed() } else { f64::INFINITY };
+                let unfitted = if fitted < *count { base } else { f64::INFINITY };
                 fits.into_iter().flat_map(|f| f.iter()).filter(|(_, n)| **n > 0)
-                    .map(|(key, _)| kind.max_speed() * crate::module::Loadout::from_key(key).speed_mult())
+                    .map(|(key, _)| base * crate::module::Loadout::from_key(key).speed_mult())
                     .fold(unfitted, f64::min)
             })
             .fold(f64::INFINITY, f64::min);
@@ -2128,7 +2430,7 @@ impl Fleet {
 
     /// Advance this fleet one timestep at simulation time `time`. Moves at the
     /// FORMATION constant speed (slowest member sets the pace), scaled by the
-    /// transit throttle (Full/Stealth/freighter Economy).
+    /// transit throttle (Full/Stealth/Slow).
     pub fn advance(&mut self, time: f64, dt: f64, env: &crate::transit::TransitEnv<'_>) {
         let heading = if self.vel.length_sq() > 1e-9 {
             self.vel
@@ -2360,7 +2662,8 @@ mod tests {
     fn every_hull_feeds_its_people_at_the_colony_ration_rate() {
         for kind in ALL_SHIP_KINDS {
             let f = fleet(&[(kind, 1)], None);
-            assert!(crew_size(kind) > 0, "{kind:?} has an operating crew");
+            // §charting: the Survey Probe is the one crewless hull — it eats nothing.
+            assert!(crew_size(kind) > 0 || kind == ShipKind::SurveyProbe, "{kind:?} has an operating crew");
             assert_eq!(f.crew_count(), crew_size(kind));
             let expected = f.provisions_headcount() as f64 / 1_000_000.0
                 * crate::colony::PROVISIONS_PER_MILLION_PER_S;
@@ -2387,7 +2690,7 @@ mod tests {
             "cargo, throttle and hull damage do not change crew headcount");
         let mut freight = fleet(&[(ShipKind::TinyFreighter, 1)], None);
         let normal = freight.upkeep_per_sec();
-        freight.transit = TransitMode::Economy;
+        freight.transit = TransitMode::Slow;
         assert_eq!(freight.upkeep_per_sec(), normal);
     }
 
@@ -2494,6 +2797,18 @@ mod tests {
         // Raiders and/or scouts only → dark.
         assert!(!fleet(&[(ShipKind::Raider, 3)], None).broadcasts());
         assert!(!fleet(&[(ShipKind::Raider, 2), (ShipKind::Scout, 1)], None).broadcasts());
+    }
+
+    #[test]
+    fn pirates_never_broadcast_but_the_authority_always_declares() {
+        let warships = [(ShipKind::Corvette, 2), (ShipKind::Destroyer, 1), (ShipKind::Cruiser, 1)];
+        let mut pirates = fleet(&warships, None);
+        pirates.owner = crate::ids::PlayerId::PIRATE;
+        assert!(!pirates.broadcasts(), "an outlaw pack runs dark whatever it flies");
+        let mut authority = fleet(&[(ShipKind::Corvette, 1)], None);
+        authority.owner = crate::ids::PlayerId::TCA;
+        assert!(authority.broadcasts(), "Authority warships keep declaring themselves");
+        assert!(fleet(&warships, None).broadcasts(), "a corporation's warships still broadcast");
     }
 
     #[test]

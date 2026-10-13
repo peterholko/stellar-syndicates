@@ -15,9 +15,10 @@
 //!     closed) connection is detected and torn down instead of hanging forever;
 //!   * teardown of the writer task is **time-bounded**.
 
+use std::net::SocketAddr;
 use std::time::Duration;
 
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
@@ -27,6 +28,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::{MissedTickBehavior, interval, timeout};
 use tracing::{debug, warn};
 
+use crate::activity::{Activity, ClientInfo};
 use crate::auth::{AuthError, AuthSession, AuthStore, AUTH_REQUIRED_CLOSE_CODE};
 use crate::protocol::{ClientMsg, ServerMsg};
 use crate::session::{GameHandle, GameInput, OUTBOUND_CAPACITY};
@@ -55,16 +57,19 @@ pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(handle): State<GameHandle>,
     State(auth): State<AuthStore>,
+    State(activity): State<Activity>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, AuthError> {
     // Both the HTTP handshake and its Origin are authenticated. Join is only
     // readiness/cadence, never authority to choose a corporation by public name.
     auth.check_origin(&headers)?;
     let session = auth.authenticate(&headers).await?;
+    let client = ClientInfo::new(peer.ip(), &headers, auth.device(&headers));
     Ok(ws.protocols([wire::SUBPROTOCOL])
         .max_message_size(wire::MAX_CLIENT_FRAME)
         .max_frame_size(wire::MAX_CLIENT_FRAME)
-        .on_upgrade(move |socket| handle_socket(socket, handle, session)))
+        .on_upgrade(move |socket| handle_socket(socket, handle, session, Some((activity, client)))))
 }
 
 /// Serialize one `ServerMsg` and write it to the socket. `Ok(())` means the
@@ -85,7 +90,13 @@ async fn write_msg(ws_tx: &mut SplitSink<WebSocket, Message>, msg: &ServerMsg) -
         .map_err(|_| ())
 }
 
-async fn handle_socket(mut socket: WebSocket, handle: GameHandle, session: AuthSession) {
+/// `audit` records the stay for the operator dashboard; transport tests pass `None`.
+async fn handle_socket(
+    mut socket: WebSocket,
+    handle: GameHandle,
+    session: AuthSession,
+    audit: Option<(Activity, ClientInfo)>,
+) {
     if socket.protocol().is_none_or(|protocol| protocol != wire::SUBPROTOCOL) {
         let _ = socket.send(Message::Close(Some(CloseFrame {
             code: wire::PROTOCOL_CLOSE_CODE,
@@ -180,6 +191,7 @@ async fn handle_socket(mut socket: WebSocket, handle: GameHandle, session: AuthS
     });
 
     let mut joined = false;
+    let mut play = None;
 
     loop {
         if *reader_auth_rx.borrow() || tokio::time::Instant::now() >= auth_deadline { break; }
@@ -216,6 +228,9 @@ async fn handle_socket(mut socket: WebSocket, handle: GameHandle, session: AuthS
                         continue;
                     }
                     joined = true;
+                    play = audit.as_ref().map(|(activity, client)| {
+                        activity.begin(session.account.id, client.clone())
+                    });
                     handle.send(GameInput::Connect {
                         conn_id,
                         player_id: session.account.player_id(),
@@ -228,6 +243,9 @@ async fn handle_socket(mut socket: WebSocket, handle: GameHandle, session: AuthS
                 }
                 Ok(other) => {
                     if joined {
+                        if let Some(play) = &play {
+                            play.record(&other);
+                        }
                         handle.send(GameInput::Intent {
                             conn_id,
                             msg: other,
@@ -264,6 +282,7 @@ async fn handle_socket(mut socket: WebSocket, handle: GameHandle, session: AuthS
     if joined {
         handle.send(GameInput::Disconnect { conn_id });
     }
+    drop(play);
     drop(out_tx);
     if timeout(Duration::from_secs(2), &mut writer).await.is_err() {
         writer.abort();

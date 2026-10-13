@@ -29,11 +29,11 @@ vm.runInNewContext(compile("planet-surfaces.ts"), { exports: surfaces, require: 
 const dependencies = name => ({ "./icons": icons, "./planet-surfaces": surfaces, "./core/derive/fleet": { WARP_FACTOR: 5 } })[name];
 vm.runInNewContext(compile("settlement.ts"), { exports, require: dependencies, document });
 const { SettlementUI, SETTLEMENT_PROJECTS, FOUNDING_PROFILES, FOUNDING_STORY, projectStatus } = exports;
-assert.equal(FOUNDING_STORY.length, 3, "the prologue stays short");
+assert.equal(FOUNDING_STORY.length, 4, "the prologue includes the frontier warning before world selection");
 assert.equal(FOUNDING_STORY[1].title, "Stellar Charter");
 assert.equal(FOUNDING_STORY[1].text, "{corporation} has been granted a stellar charter by the Terran Charter Authority, the privilege to settle a new planet. Two thousand settlers are ready to begin a new life under your leadership. The Authority will not forget what you owe.");
 assert.deepEqual(Array.from(FOUNDING_STORY, slide => slide.art), FOUNDING_STORY_ART);
-assert.equal(new Set(FOUNDING_STORY.map(slide => slide.art)).size, 3);
+assert.equal(new Set(FOUNDING_STORY.map(slide => slide.art)).size, FOUNDING_STORY.length);
 const provenance = JSON.parse(readFileSync(resolve(root, "art-src/founding-intro-v1/prompts.json"), "utf8"));
 assert.equal(provenance.mode, "built-in image_gen");
 assert.deepEqual(provenance.images.map(image => image.slug), FOUNDING_STORY_ART);
@@ -95,7 +95,7 @@ for (const [i, slide] of FOUNDING_STORY.entries()) {
   }
   assert.doesNotMatch(dialog.innerHTML, /Your colony clock starts/);
   if (state.link === "online") assert.doesNotMatch(dialog.innerHTML, /role="status"/, "no empty reminder row remains");
-  assert.ok(dialog.innerHTML.includes(`Prologue · ${i + 1} / 3`));
+  assert.ok(dialog.innerHTML.includes(`Prologue · ${i + 1} / ${FOUNDING_STORY.length}`));
   assert.ok(dialog.innerHTML.includes(`/founding-intro/v1/${slide.art}-1280.webp`));
   assert.match(dialog.innerHTML, /width="1672" height="941" alt="[^\"]+"/);
   assert.match(dialog.innerHTML, /srcset="[^\"]*768w[^\"]*1280w[^\"]*1672w/);
@@ -104,8 +104,8 @@ for (const [i, slide] of FOUNDING_STORY.entries()) {
   dialog.scrollTop = 100; click("skip"); assert.match(dialog.innerHTML, /Choose where/);
   assert.equal(dialog.scrollTop, 0, "navigation resets the story scroll");
   click("land"); assert.equal(sent.length, 0, "profile choice still needs a separate confirmation");
-  click("back"); assert.ok(dialog.innerHTML.includes(FOUNDING_STORY[2].title));
-  for (let previous = 2; previous > i; previous--) click("back");
+  click("back"); assert.ok(dialog.innerHTML.includes(FOUNDING_STORY.at(-1).title));
+  for (let previous = FOUNDING_STORY.length - 1; previous > i; previous--) click("back");
   if (i === 1) {
     state.link = "offline"; ui.connectionChanged();
     assert.match(dialog.innerHTML, /keep reading/);
@@ -173,7 +173,7 @@ click("next");
 assert.ok(dialog.innerHTML.includes("Nova Industries has been granted"), "a different account uses its own corporation name");
 assert.doesNotMatch(dialog.innerHTML, /Atlas Ventures/);
 ui.endSession();
-console.log("Settlement UI: three illustrated slides, personalized and escaped charter names, responsive art, manual navigation, skip, confirmation, duplicate clicks, reconnect, project requirements and served-only progress passed.");
+console.log("Settlement UI: four illustrated slides, personalized and escaped charter names, responsive art, manual navigation, skip, confirmation, duplicate clicks, reconnect, project requirements and served-only progress passed.");
 
 if (process.argv.includes("--serve")) {
   const previewState = { ...state, systems: [] };

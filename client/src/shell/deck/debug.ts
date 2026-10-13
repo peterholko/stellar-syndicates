@@ -1,5 +1,7 @@
-import type { BattleRecordView, CountClass, KeyframeView, ShipKind } from "../../protocol";
+import type { BattleRecordView, BattleView, BodyView, CountClass, GhostView, GroundRecordView, KeyframeView, ShipKind, SystemStateView } from "../../protocol";
 import type { CoreContext } from "../types";
+import { liveSimTime } from "../../state";
+import { deriveSystemPicture, type SystemPicture } from "../../systemtraffic";
 
 type DebugWindow = Window & typeof globalThis & { __ss?: Record<string, unknown> };
 
@@ -19,19 +21,25 @@ export function installDeckDebug(
   const install = (record: BattleRecordView): void => {
     ctx.state.battleRecords = ctx.state.battleRecords.filter((entry) => entry.id !== record.id).concat(record);
   };
-  const theaterDemo = (titanDown = false, big = false): BattleRecordView => {
-    if (liveTimer !== null) {
-      window.clearInterval(liveTimer);
-      liveTimer = null;
-    }
-    const record = buildTheaterDemo(titanDown, big);
+  const stopLive = (): void => {
+    if (liveTimer !== null) window.clearInterval(liveTimer);
+    liveTimer = null;
+  };
+  /** Open a real engine fight (`mixed`, `swarm`, `torpedo`, `titan`: see
+   * /dev/battles/index.json), or the old hand-scripted demo with
+   * `theaterDemo("scripted", titanDown?, big?)`. Engine fights are recorded on
+   * the current battle rules by the server's `battle_fixtures` test. */
+  const theaterDemo = async (fight = "mixed", titanDown = false, big = false): Promise<BattleRecordView> => {
+    stopLive();
+    const record = fight === "scripted" ? buildTheaterDemo(titanDown, big) : await engineFight(fight);
     install(record);
     openBattle(record.id);
     return record;
   };
-  const theaterDemoLive = (intervalMs = 1800): BattleRecordView => {
-    if (liveTimer !== null) window.clearInterval(liveTimer);
-    const full = buildTheaterDemo(false, false);
+  /** The same fight arriving round by round, as a live battle's light does. */
+  const theaterDemoLive = async (intervalMs = 1800, fight = "mixed"): Promise<BattleRecordView> => {
+    stopLive();
+    const full = fight === "scripted" ? buildTheaterDemo(false, false) : await engineFight(fight);
     let upto = Math.min(2, full.rounds.length);
     const update = (): void => {
       const record: BattleRecordView = {
@@ -55,8 +63,7 @@ export function installDeckDebug(
     return full;
   };
   const theaterDemoSemantic = (): BattleRecordView => {
-    if (liveTimer !== null) window.clearInterval(liveTimer);
-    liveTimer = null;
+    stopLive();
     const full = buildTheaterDemo(false, false);
     const record: BattleRecordView = {
       ...full,
@@ -77,6 +84,23 @@ export function installDeckDebug(
     return record;
   };
 
+  /** A synthetic System View picture for the star in view: berths at every
+   * kind of facility, near-zone traffic, an inbound pirate, an own freighter
+   * and a rival just leaving, a battle in orbit, a wreck field and a siege with
+   * a landing. Rendering only — nothing is sent,
+   * and served Views never touch it. `systemDemo(false)` restores truth. */
+  const systemDemo = (on = true): SystemPicture | null => {
+    const mode = ctx.renderer.viewMode;
+    if (!on || mode.type !== "system") {
+      ctx.renderer.setSystemDemo(null);
+      return null;
+    }
+    const built = buildSystemDemo(ctx, mode.systemId);
+    if (!built) return null;
+    ctx.renderer.setSystemDemo(built);
+    return built.picture;
+  };
+
   const installed = {
     ...previous,
     state: ctx.state,
@@ -85,6 +109,7 @@ export function installDeckDebug(
     theaterDemo,
     theaterDemoLive,
     theaterDemoSemantic,
+    systemDemo,
     openBattleViewer: openBattle,
     openGroundViewer: openGround,
   };
@@ -93,6 +118,18 @@ export function installDeckDebug(
     if (liveTimer !== null) window.clearInterval(liveTimer);
     if (target.__ss === installed) target.__ss = previous;
   };
+}
+
+/** A real engine fight from client/public/dev/battles (the server's
+ * `battle_fixtures` test writes them), under a demo id. */
+async function engineFight(name: string): Promise<BattleRecordView> {
+  const response = await fetch(`/dev/battles/${encodeURIComponent(name)}.json`);
+  if (!response.ok) {
+    const index = await fetch("/dev/battles/index.json").then((r) => (r.ok ? r.json() : []), () => []) as { name: string }[];
+    throw new Error(`No engine fight "${name}". Try: ${index.map((entry) => entry.name).join(", ") || "mixed"}, or "scripted".`);
+  }
+  const record = await response.json() as BattleRecordView;
+  return { ...record, id: `engine-${name}` };
 }
 
 function buildTheaterDemo(titanDown: boolean, big: boolean): BattleRecordView {
@@ -185,4 +222,99 @@ function buildTheaterDemo(titanDown: boolean, big: boolean): BattleRecordView {
     light_frontier_tick: (roundCount - 1) * 15,
     outcome: "target_destroyed",
   };
+}
+
+function buildSystemDemo(ctx: CoreContext, systemId: string): { picture: SystemPicture; report: SystemStateView } | null {
+  const state = ctx.state;
+  const system = state.galaxy?.systems.find((entry) => entry.id === systemId);
+  const real = state.systems.find((entry) => entry.id === systemId);
+  if (!system || !real || !state.galaxy || !real.bodies.length) return null;
+  const now = liveSimTime();
+  const me = state.playerId ?? "1";
+  const rival = "demo-rival";
+  const pirate = state.galaxy.pirate_id ?? "demo-pirate";
+  const bodies: BodyView[] = real.bodies.map((body) => ({ ...body, structures: { ...body.structures } }));
+  const main = bodies.find((body) => body.population > 0) ?? bodies.find((body) => body.habitable) ?? bodies[0];
+  main.population = Math.max(main.population, 1.4);
+  Object.assign(main.structures, { naval_drydock: 3, capital_slipway: 1, defense_platform: 3, orbital_warehouse: 2, sensor_array: 2, shipyard: 2, garrison: 1 });
+  const moon = bodies.find((body) => body.parent !== null) ?? bodies.find((body) => body !== main) ?? main;
+  moon.structures.mining_complex = Math.max(1, moon.structures.mining_complex ?? 0);
+  const report: SystemStateView = {
+    ...real,
+    owner: me,
+    bodies,
+    builds: [{ key: "cruiser", body_id: main.id, yard: "naval_drydock", complete_time: null }],
+    converters: [{ body_id: moon.id, structure: "smelter", title: "Smelter", tier: 1, status: "needs_crew" }],
+    defense_tier: 3,
+    food_state: "well_supplied",
+    blockade: { by: rival, by_name: "Vesper Combine", since: now - 900, by_me: false, held_since: now - 700,
+      siege_since: now - 0.43 * (state.galaxy.siege_secs || 600), siege_secs: state.galaxy.siege_secs || 600, capturable: true },
+    ground: { garrison_tier: 2, garrison_fed: true, suppression: 0.37, marines_needed: 40 },
+  };
+  const star = system.pos;
+  const at = (dx: number, dy: number) => ({ x: star.x + dx, y: star.y + dy });
+  const toward = (pos: { x: number; y: number }, speed: number) => {
+    const d = Math.hypot(star.x - pos.x, star.y - pos.y) || 1;
+    return { x: (star.x - pos.x) / d * speed, y: (star.y - pos.y) / d * speed };
+  };
+  const ghost = (id: string, kind: ShipKind, opts: Partial<GhostView> & { n?: number } = {}): GhostView => {
+    const n = opts.n ?? 1;
+    const own = opts.own ?? false;
+    return {
+      id, kind, owner: own ? me : rival, pos: star, vel: { x: 0, y: 0 }, age: 0, own, jumped: false,
+      route: null, passengers: {}, cargo: null, count_class: n === 1 ? "one" : n <= 3 ? "two_to_three" : "four_to_seven",
+      composition: own || opts.composition !== undefined ? [{ kind, count: n }] : null,
+      signature: null, posture: null, ...opts,
+    } as GhostView;
+  };
+  const berth = `E${systemId}`;
+  // An own freighter that left 45 s ago for the nearest other star.
+  const other = state.galaxy.systems.filter((entry) => entry.id !== systemId)
+    .sort((a, b) => Math.hypot(a.pos.x - star.x, a.pos.y - star.y) - Math.hypot(b.pos.x - star.x, b.pos.y - star.y))[0];
+  const away = other ? Math.atan2(other.pos.y - star.y, other.pos.x - star.x) : 2.76;
+  const leaving = at(Math.cos(away) * 2750, Math.sin(away) * 2750);
+  const ghosts: GhostView[] = [
+    ghost("demo-1", "raider", { own: true, docked: berth }),
+    ghost("demo-2", "scout", { own: true, docked: berth }),
+    ghost("demo-3", "tiny_freighter", { own: true, docked: berth }),
+    ghost("demo-4", "cruiser", { own: true, docked: berth, n: 3 }),
+    ghost("demo-5", "convoy", { own: true, docked: berth, n: 2 }),
+    ghost("demo-6", "freighter", { tca: true, owner: "tca", docked: berth }),
+    ghost("demo-7", "raider", { pos: at(900, -480), vel: toward(at(900, -480), 40), age: 4, n: 3, composition: [{ kind: "raider", count: 3 }] }),
+    ghost("demo-8", "corvette", { own: true, pos: at(-700, -520), vel: { x: 20, y: -30 }, age: 2 }),
+    ghost("demo-9", "raider", { pirate: true, owner: pirate, pos: at(32000, 21000), vel: toward(at(32000, 21000), 52), age: 6, n: 4 }),
+    ghost("demo-10", "destroyer", { pos: at(140, -60), age: 3, n: 2, composition: [{ kind: "destroyer", count: 2 }] }),
+    ghost("demo-11", "transport", { pos: at(-120, 90), age: 3 }),
+    ghost("demo-12", "corvette", { own: true, pos: at(700, 520), age: 1, n: 2 }),
+    ghost("demo-13", "raider", { pirate: true, owner: pirate, pos: at(760, 560), age: 1, n: 3 }),
+    ghost("demo-14", "large_freighter", { own: true, pos: leaving, vel: { x: Math.cos(away) * 32, y: Math.sin(away) * 32 },
+      speed: 32, path: other ? [{ pos: other.pos }] : null, age: 2 }),
+    ghost("demo-15", "raider", { pos: at(-2400, -2600), vel: { x: -40, y: -44 }, age: 3, n: 2 }),
+  ];
+  const battle: BattleView = { id: "demo-system-battle", pos: at(730, 540), age: 1, started_at: now - 40, own: true, participants: ["demo-12", "demo-13"] };
+  const count = (kind: ShipKind, exact: number) => ({ kind, exact, class: "one" as CountClass });
+  const record = (id: string, pos: { x: number; y: number }, outcome: BattleRecordView["outcome"]): BattleRecordView => ({
+    id, pos, system: systemId, started_at: now - 200, raid: false, fidelity: "participant", own_side: 1,
+    sides: [
+      { corp: pirate, posture: null, platform_tiers: 0, initial: [count("raider", 3)] },
+      { corp: me, posture: "engage_any", platform_tiers: 3, initial: [count("corvette", 2)] },
+    ],
+    rounds: [{ tick: 1, counts: [[count("raider", 3)], [count("corvette", 2)]], kills: [[count("raider", 1)], []], dealt: [20, 30], notes: [] }],
+    light_frontier_tick: 1,
+    outcome,
+  });
+  const landing = {
+    id: "demo-landing", system: systemId, pos: star, started_at: now - 60, fidelity: "participant", attacker: rival, defender: me,
+    attacking: false, marines_landed: 60, defenders_initial: 40, garrison_tiers: 2, suppression_at_drop: 0.37,
+    rounds: [{ tick: 1, marines: 38, defenders: 21, marines_frac: 0.64, defenders_frac: 0.52, suppression: 0.37, marine_losses: 4, defender_losses: 3 }],
+    light_frontier_tick: 1, outcome: null,
+  } as GroundRecordView;
+  const picture = deriveSystemPicture({
+    system, dynamic: report, galaxy: state.galaxy, ghosts, battles: [battle],
+    battleRecords: [record(battle.id, battle.pos, null), record("demo-wreck", at(-900, 380), "target_destroyed")],
+    groundRecords: [landing], battleDismissed: new Set(), commandCenter: state.commandCenter, playerId: me,
+    simTime: now, selectedShipId: "demo-4", selectedShipIds: new Set(["demo-4"]), selectedBattleId: null,
+    places: [...state.galaxy.systems.map((entry) => ({ name: entry.name, pos: entry.pos })), { name: "Market Hub", pos: state.galaxy.hub }],
+  });
+  return { picture, report };
 }

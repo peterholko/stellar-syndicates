@@ -4,6 +4,7 @@ import {
   guardCapable,
   shipKindLabel,
   sumOwnComposition,
+  surveyCapable,
 } from "../../core/derive/fleet";
 import {
   arrivalLocal,
@@ -260,7 +261,7 @@ export class DeckStrategicRoutes {
     const survey = o.kind.kind === "survey_expedition";
     const recovery = o.kind.kind === "rescue_salvage" || o.kind.kind === "prize_recovery";
     const own = this.ctx.state.ghosts.filter(g => g.own);
-    const fleets = own.filter(g => survey ? (g.composition?.some(c => c.kind === "scout" && c.count > 0) ?? g.kind === "scout")
+    const fleets = own.filter(g => survey ? surveyCapable(g)
       : combat ? guardCapable(g) : fleetReadiness(g).cargoCapacity > 0);
     const chosen = this.operationFleets.get(o.id) ?? o.assigned_fleet ?? "";
     const fleet = fleets.find(g => g.id === chosen);
@@ -600,6 +601,7 @@ function losses(rows: CompCount[]): string {
 
 function survivorIcon(kind: ShipKind): IconKey {
   if (kind === "freighter") return "authorityFreighter";
+  if (kind === "survey_probe") return "scout";
   return kind;
 }
 

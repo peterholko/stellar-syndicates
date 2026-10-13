@@ -22,11 +22,27 @@ const fleets = load("core/derive/fleet.ts", { "../../state": clock, "../../proto
 const icons = { label: slug => eq.MODULES.find(m => m.kind === slug)?.name ?? slug, icon: () => "" };
 const market = load("core/derive/market.ts", { "../../state": clock, "../../protocol": protocol, "./fleet": fleets, "./equipment": eq, "../../icons": icons });
 
-assert.equal(eq.MODULES.length, 13);
-for (const m of eq.MODULES) assert.equal(m.fit, ["torpedo_rack", "whipple_armor", "prismatic_lance"].includes(m.kind) ? 3 : 2);
+assert.equal(eq.MODULES.length, 17);
+for (const m of eq.MODULES) assert.equal(m.fit, ["torpedo_rack", "whipple_armor", "prismatic_lance", "interdiction_field"].includes(m.kind) ? 3 : 2);
+// Rules v11 control modules: webs and stabilizers fit any warship; the
+// interdiction field only a destroyer, once.
+for (const kind of ["raider", "corvette", "destroyer", "cruiser", "titan"]) {
+  assert.equal(market.fitLegal(kind, ["stasis_web"]), true, kind);
+  assert.equal(market.fitLegal(kind, ["warp_stabilizer"]), true, kind);
+  assert.equal(market.fitLegal(kind, ["interdiction_field"]), kind === "destroyer", kind);
+}
+assert.equal(market.fitLegal("destroyer", ["interdiction_field", "mass_driver", "mass_driver"]), true);
+assert.equal(market.fitLegal("titan", ["interdiction_field"]), false);
+assert.equal(market.fitLegal("destroyer", ["interdiction_field", "interdiction_field"]), false, "one field generator a hull");
+assert.equal(market.fitLegal("raider", ["torpedo_rack", "stasis_web"]), false, "a torpedo interceptor can't also web (5 > 4 points)");
 for (const kind of ["scout", "raider", "corvette", "convoy"]) assert.equal(market.fitLegal(kind, ["extended_tanks"]), true);
 for (const kind of ["freighter", "builder", "colony", "cruiser", "titan"]) assert.equal(market.fitLegal(kind, ["extended_tanks"]), false);
-for (const m of eq.MODULES) assert.equal(market.fitLegal("convoy", [m.kind]), ["extended_tanks", "cargo_pods", "fuel_transfer_rig"].includes(m.kind));
+// A freighter's one berth: a utility, or a Warp Stabilizer for running blockades.
+for (const m of eq.MODULES) assert.equal(market.fitLegal("convoy", [m.kind]), ["extended_tanks", "cargo_pods", "fuel_transfer_rig", "warp_stabilizer", "jump_drive"].includes(m.kind));
+// §fuel-overhaul: a Jump Drive fits any hull without built-in drives, bar the ships of the line.
+for (const kind of ["convoy", "corvette", "destroyer", "cruiser"]) assert.equal(market.fitLegal(kind, ["jump_drive"]), true, kind);
+for (const kind of ["raider", "scout", "battleship", "dreadnought", "titan"]) assert.equal(market.fitLegal(kind, ["jump_drive"]), false, kind);
+assert.equal(market.fitLegal("convoy", ["warp_stabilizer", "cargo_pods"]), false, "one berth: the stabilizer or the pods");
 assert.equal(market.fitLegal("raider", ["recon_suite", "extended_tanks"]), true);
 assert.equal(market.fitLegal("raider", ["extended_tanks", "extended_tanks"]), false);
 assert.equal(market.fitLegal("scout", ["recon_suite", "extended_tanks"]), false);

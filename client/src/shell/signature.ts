@@ -2,8 +2,10 @@ const LIVE_NUMBER_FIELDS = new Set([
   "age",
   "current",
   "eta_secs",
+  "antimatter",
   "fuel",
   "fuel_total",
+  "helium3",
   "inbound_migrants",
   "left",
   "population",
@@ -17,6 +19,7 @@ const LIVE_NUMBER_FIELDS = new Set([
   "storage_used",
   "suppression",
   "units",
+  "uranium",
   "valuation",
 ]);
 

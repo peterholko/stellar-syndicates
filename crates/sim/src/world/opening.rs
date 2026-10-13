@@ -1,8 +1,6 @@
 //! The local opening uses real hulls, finite cargo and ordinary report light.
 //! Never run its bootstrap during save repair or a reconnect.
 use super::*;
-use crate::module::ModuleKind as M;
-use crate::sites::{ExpeditionTask, SiteKind};
 use crate::{Commodity as C, StructureKind as K, founding::FoundingStage as S};
 
 impl World {
@@ -71,71 +69,127 @@ impl World {
         }
     }
 
+    /// Whether an owned combatant is escorting `fleet`: on a Guard order, or on
+    /// a defensive sortie that will resume guarding it.
+    pub(super) fn founding_escorted(&self, owner: PlayerId, fleet: EntityId) -> bool {
+        self.fleets.values().any(|g| {
+            g.owner == owner
+                && g.is_combatant()
+                && (matches!(g.order, FleetOrder::Guard { target } if target == fleet)
+                    || g.defense.as_ref().is_some_and(|d| d.guard == Some(fleet)))
+        })
+    }
+
+    /// §founding R3: the Authority insures the starter hull ONCE. A founder
+    /// whose Freighter is destroyed before the first export departs, leaving
+    /// none (and none under construction), gets a replacement at home. The
+    /// scripted Privateer is withdrawn so the lesson can replay on the next
+    /// guarded trip.
+    pub(super) fn insure_founding_freighter(
+        &mut self,
+        owner: PlayerId,
+        events: &[Event],
+        out: &mut Vec<Event>,
+    ) {
+        let lost = events.iter().any(|e| {
+            matches!(e.payload, EventPayload::ShipDestroyed { owner: o, kind, .. }
+                if o == owner && kind.is_player_freighter())
+        });
+        let Some(corp) = self.players.get(&owner) else {
+            return;
+        };
+        let f = &corp.founding;
+        if !lost
+            || !f.enabled
+            || !f.local_opening
+            || f.freighter_replaced
+            || f.export_dispatched_at.is_some()
+            || !matches!(f.stage, S::BuildMine | S::LocalRecovery | S::PrepareExport)
+            || self.fleets.values().any(|g| g.owner == owner && g.has_freighter())
+            || self.build_queue.iter().any(|j| {
+                j.owner == owner
+                    && matches!(j.what, crate::build::BuildKind::Ship { ship } if ship.is_player_freighter())
+            })
+        {
+            return;
+        }
+        let Some(system) = corp.home_system else {
+            return;
+        };
+        let home = corp.home;
+        let privateer = f.privateer.filter(|_| f.privateer_report_at.is_none());
+        let id = self.alloc_entity_id();
+        self.fleets.insert(
+            id,
+            Fleet::single(id, owner, ShipKind::TinyFreighter, home, FleetOrder::Idle, None),
+        );
+        if let Some(p) = privateer
+            && self.fleets.get(&p).is_some_and(|g| g.founding_privateer)
+            && !self
+                .engagements
+                .values()
+                .any(|e| e.attackers.contains(&p) || e.defenders.contains(&p))
+        {
+            self.fleets.remove(&p);
+        }
+        let founding = &mut self.players.get_mut(&owner).unwrap().founding;
+        founding.freighter_replaced = true;
+        founding.convoy = Some(id);
+        if privateer.is_some() {
+            founding.privateer = None;
+        }
+        out.push(Event::new(
+            self.time,
+            EventPayload::ShipSpawned {
+                id,
+                owner,
+                kind: ShipKind::TinyFreighter,
+            },
+        ));
+        out.push(Event::new(
+            self.time,
+            EventPayload::FounderFreighterReplaced {
+                owner,
+                fleet: id,
+                system,
+            },
+        ));
+    }
+
+    /// §charter v3: a founder starts with a Tiny Freighter and an Interceptor;
+    /// no Scout and no recovery beacon. The survey step charts the local stop
+    /// that keeps a belt with ore (`seed_exploration_stars`), so the barge
+    /// lesson always has a nearby target.
     pub(super) fn start_local_opening(
         &mut self,
         owner: PlayerId,
         home: Vec2,
-        events: &mut Vec<Event>,
+        _events: &mut Vec<Event>,
     ) {
-        let scout = self.alloc_entity_id();
-        self.fleets.insert(
-            scout,
-            Fleet::single(scout, owner, ShipKind::Scout, home, FleetOrder::Idle, None),
-        );
-        events.push(Event::new(
-            self.time,
-            EventPayload::ShipSpawned {
-                id: scout,
-                owner,
-                kind: ShipKind::Scout,
-            },
-        ));
-        let mut rng = crate::rng::Rng::keyed_id(self.config.seed, "founding-recovery-v2", scout.0);
-        let pos = (0..24).find_map(|i| {
-            self.clear_exploration_position(
-                home + Vec2::from_polar(i as f64 * TAU / 24.0, 16_000.0),
-                3_000.0,
-                &mut rng,
-            )
-        });
-        let site = pos.map(|pos| {
-            let id = self.create_exploration_site(pos, SiteKind::Derelict, 3);
-            let cache = self.exploration.sites.get_mut(&id).unwrap();
-            cache.founding_owner = Some(owner);
-            cache.details.name = "Founders’ recovery beacon".into();
-            cache.details.cargo = [(C::Alloys, 20), (C::Machinery, 4)].into();
-            cache.details.modules = [(M::ReconSuite, 1)].into();
-            cache.details.research_fraction = 0.0;
-            id
-        });
-        // Extremely crowded legacy worlds keep their original, completable arc.
-        let mut nearby: Vec<_> = self
-            .systems
-            .iter()
-            .filter(|s| {
-                self.exploration_systems.contains(&s.id) && s.pos.distance(home) <= 34_000.0
-            })
-            .map(|s| (s.pos.distance(home), s.id))
-            .collect();
-        nearby.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        let lesson_stop = self.founding_lesson_stop(home);
         let corp = self.players.get_mut(&owner).unwrap();
-        corp.founding.local_opening = site.is_some();
-        corp.founding.recovery_site = site;
-        corp.founding.scout = Some(scout);
-        if nearby.len() >= 2 {
-            corp.founding.survey_candidates =
-                nearby.into_iter().take(2).map(|(_, id)| id).collect();
-        }
-        if let Some(site) = site {
-            self.queue_site_report(site, owner, home);
-        }
+        corp.founding.local_opening = true;
+        corp.founding.survey_candidates = match lesson_stop {
+            Some(stop) => vec![stop],
+            // A home without local stops keeps one authored prospect, the
+            // mineral one when it has two.
+            None => corp.founding.survey_candidates.last().copied().into_iter().collect(),
+        };
     }
 
-    pub(super) fn advance_local_opening(&mut self, owner: PlayerId, events: &[Event]) -> bool {
+    /// The Landfall chapter: bring the mine online, send the first escorted
+    /// shipment, and win the fight with the Rogue Privateer it draws. Returns
+    /// false once the programme is past Landfall.
+    pub(super) fn advance_local_opening(
+        &mut self,
+        owner: PlayerId,
+        events: &[Event],
+        out: &mut Vec<Event>,
+    ) -> bool {
         let founding = self.players[&owner].founding.clone();
         if !matches!(
             founding.stage,
-            S::BuildMine | S::LocalRecovery | S::PrepareExport
+            S::BuildMine | S::LocalRecovery | S::PrepareExport | S::DefeatPrivateer
         ) {
             return false;
         }
@@ -176,43 +230,49 @@ impl World {
             let corp = self.players.get_mut(&owner).unwrap();
             corp.credits += crate::founding::PRIVATEER_CREDIT_BOUNTY;
             corp.founding.reward_granted = true;
+            // §founding R6: the bounty is a reward moment, not a silent credit.
+            out.push(Event::new(
+                self.time,
+                EventPayload::CharterStipend {
+                    owner,
+                    title: "Rogue Privateer destroyed · bounty".into(),
+                    credits: crate::founding::PRIVATEER_CREDIT_BOUNTY,
+                },
+            ));
         }
-        // Only a deliberate trip to this local cache triggers the lesson. An
-        // unrelated movement or the long Hub departure must never summon it.
-        if founding.privateer.is_none()
-            && let Some(site) = founding.recovery_site
-            && let Some(cache) = self.exploration.sites.get(&site)
-            && cache.known.get(&owner).is_some_and(|r| r.details.is_some())
-        {
-            let dest = cache.pos;
+        // §founding R3: only a GUARDED departure summons the lesson, so the
+        // scripted Privateer never hunts a lone civilian hull: the first
+        // escorted Freighter to leave its gravity well, normally the first
+        // shipment. Short docking moves inside the well never do.
+        if founding.privateer.is_none() && !founding.reward_granted {
             let convoy = self
                 .fleets
                 .values()
-                .filter(|f| f.owner == owner && f.has_freighter())
-                .filter(|f| match f.order {
-                    FleetOrder::Expedition {
-                        site: target,
-                        task: ExpeditionTask::Recover,
-                        ..
-                    } => target == site,
-                    FleetOrder::MoveTo { dest: target } => {
-                        target.distance(dest) <= crate::sites::SITE_RANGE
+                .filter(|f| f.owner == owner && f.has_freighter() && self.founding_escorted(owner, f.id))
+                .filter_map(|f| match f.order {
+                    FleetOrder::MoveTo { dest } if f.pos.distance(dest) > crate::transit::HYPERLIMIT => {
+                        Some((f.id, f.pos, dest))
                     }
-                    _ => false,
+                    _ => None,
                 })
-                .min_by_key(|f| f.id)
-                .map(|f| (f.id, f.pos));
-            if let Some((id, pos)) = convoy {
+                .min_by_key(|(id, _, _)| *id);
+            if let Some((id, pos, dest)) = convoy {
                 let pirate = self.spawn_founding_privateer(id, pos, dest);
-                // Within ordinary sensors, but with real warning/approach time.
+                // Inside ordinary sensors so the approach is visible, and close
+                // enough that the escort meets it before the Freighter arrives.
                 let direction = (dest - pos).normalized();
+                let ahead = (pos.distance(dest) * 0.6)
+                    .clamp(4_000.0, crate::founding::LOCAL_PRIVATEER_AHEAD_SU);
                 let p = self.fleets.get_mut(&pirate).unwrap();
-                p.pos = pos + direction * 7_000.0 + Vec2::new(-direction.y, direction.x) * 4_000.0;
+                p.pos = pos
+                    + direction * ahead
+                    + Vec2::new(-direction.y, direction.x) * crate::founding::LOCAL_PRIVATEER_OFFSET_SU;
                 let f = &mut self.players.get_mut(&owner).unwrap().founding;
                 f.privateer = Some(pirate);
                 f.convoy = Some(id);
             }
         }
+        self.insure_founding_freighter(owner, events, out);
         let mine = home_id
             .and_then(|id| self.information.site(id, cc, self.config.c, self.time))
             .filter(|r| r.system.owner == Some(owner))
@@ -222,52 +282,17 @@ impl World {
                     b.tier(K::MiningComplex) > 0 && s.staffing_factor(b.id, K::MiningComplex) > 0.0
                 })
             });
-        if founding.stage == S::BuildMine && mine {
-            self.players
-                .get_mut(&owner)
-                .unwrap()
-                .founding
-                .set_stage(S::LocalRecovery, self.time);
-        }
-        let fitted = self
-            .fleets
-            .values()
-            .find(|f| f.owner == owner && f.has_recon_on(ShipKind::Scout))
-            .map(|f| f.pos);
-        let recovered = founding
-            .recovery_report_at
-            .is_some_and(|at| at <= self.time);
-        if mine
-            && recovered
-            && arrived
-            && founding.local_ready_report_at.is_none()
-            && let Some(pos) = fitted
-        {
-            self.players
-                .get_mut(&owner)
-                .unwrap()
-                .founding
-                .local_ready_report_at =
-                Some(self.time + crate::transit::delay(pos, cc, self.config.c));
-        }
-        if founding
-            .local_ready_report_at
-            .is_some_and(|at| at <= self.time)
-            && matches!(
-                self.players[&owner].founding.stage,
-                S::BuildMine | S::LocalRecovery
-            )
-        {
+        // The retired beacon step hands straight on to the shipment.
+        if (founding.stage == S::BuildMine && mine) || founding.stage == S::LocalRecovery {
             self.players
                 .get_mut(&owner)
                 .unwrap()
                 .founding
                 .set_stage(S::PrepareExport, self.time);
         }
-        // Guide handoff follows departure's light, not a later sale. The actual
-        // executed sale remains separately recorded by the transaction ledger.
-        // Remember an early guarded dispatch too: optional tasks can be done
-        // out of order without requiring another shipment just for the guide.
+        // The shipment counts on its departure's light, not a later sale; the
+        // executed sale stays in the transaction ledger. An early escorted
+        // dispatch is remembered too.
         if founding.export_dispatched_at.is_none() {
             let departure = self.fleets.values().find(|f| f.owner == owner && f.has_freighter()
                     && f.cargo_amount(C::MetallicOre) > 0
@@ -284,18 +309,20 @@ impl World {
                     Some(self.time + crate::transit::delay(pos, cc, self.config.c));
             }
         }
-        if self.players[&owner].founding.stage == S::PrepareExport {
-            if self.players[&owner]
-                .founding
-                .export_dispatched_at
-                .is_some_and(|at| at <= self.time)
-            {
-                self.players
-                    .get_mut(&owner)
-                    .unwrap()
-                    .founding
-                    .set_stage(S::GrowBusiness, self.time);
+        let f = &self.players[&owner].founding;
+        let next = match f.stage {
+            S::PrepareExport if f.export_dispatched_at.is_some_and(|at| at <= self.time) => {
+                Some(S::DefeatPrivateer)
             }
+            S::DefeatPrivateer if f.reward_granted => Some(S::BuildShipyard),
+            _ => None,
+        };
+        if let Some(next) = next {
+            self.players
+                .get_mut(&owner)
+                .unwrap()
+                .founding
+                .set_stage(next, self.time);
         }
         true
     }
@@ -304,6 +331,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::module::ModuleKind as M;
     fn scene() -> (World, PlayerId, EntityId) {
         let mut w = World::new(SimConfig::for_players(12648430, 4));
         let owner = PlayerId(88101);
@@ -316,83 +344,112 @@ mod tests {
         (w, owner, home)
     }
 
+    /// The service-berth mechanics outlived the starting Scout; build one.
+    fn add_scout(w: &mut World, owner: PlayerId) -> EntityId {
+        let id = w.alloc_entity_id();
+        let home = w.players[&owner].home;
+        w.fleets.insert(id, Fleet::single(id, owner, ShipKind::Scout, home, FleetOrder::Idle, None));
+        id
+    }
+
     #[test]
-    fn opening_assets_are_finite_and_reconnect_does_not_regrant_them() {
-        let (mut w, owner, _) = scene();
+    fn a_founder_starts_with_a_freighter_and_an_escort_and_reconnecting_grants_nothing() {
+        let (w, owner, _) = scene();
         let f = w.players[&owner].founding.clone();
         assert!(f.local_opening);
-        assert_eq!(w.fleets.values().filter(|g| g.owner == owner).count(), 3);
-        assert!(w.fleets[&f.scout.unwrap()].contains(ShipKind::Scout));
-        let site = f.recovery_site.unwrap();
-        assert_eq!(
-            w.exploration.sites[&site].details.cargo,
-            [(C::Alloys, 20), (C::Machinery, 4)].into()
-        );
-        assert_eq!(
-            w.exploration.sites[&site]
-                .details
-                .modules
-                .get(&M::ReconSuite),
-            Some(&1)
-        );
-        assert!(
-            w.exploration.sites[&site].known.is_empty(),
-            "beacon light is still travelling"
-        );
-        w.exploration
-            .sites
-            .get_mut(&site)
-            .unwrap()
-            .details
-            .cargo
-            .clear();
+        let own: Vec<_> = w.fleets.values().filter(|g| g.owner == owner).collect();
+        assert_eq!(own.len(), 2, "a Tiny Freighter and an Interceptor");
+        assert!(own.iter().any(|g| g.contains(ShipKind::TinyFreighter)));
+        assert!(own.iter().any(|g| g.contains(ShipKind::Raider)));
+        assert!(!own.iter().any(|g| g.contains(ShipKind::Scout)), "§charter v3: no starting Scout");
+        assert!(f.recovery_site.is_none() && f.scout.is_none(), "and no recovery beacon");
+        // The survey step charts the local stop that keeps a belt with ore.
+        assert_eq!(f.survey_candidates.len(), 1);
+        let stop = w.systems.iter().find(|s| s.id == f.survey_candidates[0]).unwrap();
+        assert!(w.exploration_systems.contains(&stop.id));
+        assert!(stop.bodies.iter().any(|b| b.is_belt() && !b.deposits.is_empty()));
         let mut loaded: World = serde_json::from_slice(&serde_json::to_vec(&w).unwrap()).unwrap();
         loaded.fixup_after_load();
         loaded.step(&[Command::AddPlayer {
             id: owner,
             name: "Reconnect".into(),
         }]);
-        assert_eq!(loaded.players[&owner].founding.recovery_site, Some(site));
-        assert!(loaded.exploration.sites[&site].details.cargo.is_empty());
-        assert_eq!(
-            loaded.fleets.values().filter(|g| g.owner == owner).count(),
-            3
-        );
-        let mut legacy = serde_json::to_value(&f).unwrap();
-        legacy.as_object_mut().unwrap().remove("local_opening");
-        let legacy: crate::founding::FoundingProgram = serde_json::from_value(legacy).unwrap();
-        assert!(!legacy.local_opening, "old saves keep the old arc");
+        assert_eq!(loaded.fleets.values().filter(|g| g.owner == owner).count(), 2);
+        assert_eq!(loaded.players[&owner].founding.survey_candidates, f.survey_candidates);
     }
 
     #[test]
-    fn opening_hub_departure_does_not_spawn_a_tutorial_ambush() {
+    fn only_an_escorted_departure_draws_the_privateer() {
         let (mut w, owner, _) = scene();
         let freight = w.players[&owner].founding.convoy.unwrap();
         w.fleets.get_mut(&freight).unwrap().order = FleetOrder::MoveTo { dest: w.hub };
         w.advance_founding_programs(&[]);
-        assert!(w.players[&owner].founding.privateer.is_none());
-        let site = w.players[&owner].founding.recovery_site.unwrap();
-        let pos = w.exploration.sites[&site].pos;
-        w.exploration
-            .sites
-            .get_mut(&site)
-            .unwrap()
-            .surveyed
-            .insert(owner);
-        w.queue_site_report(site, owner, pos);
-        w.time += 100.0;
-        w.deliver_site_reports();
-        w.fleets.get_mut(&freight).unwrap().order = FleetOrder::Expedition {
-            site,
-            task: ExpeditionTask::Recover,
-            station: pos,
-            dwell_since: None,
-        };
+        assert!(
+            w.players[&owner].founding.privateer.is_none(),
+            "an unescorted Freighter is never hunted by the scripted Privateer"
+        );
+        let guard = w.players[&owner].founding.interceptor
+            .or_else(|| w.fleets.values().find(|f| f.owner == owner && f.is_combatant()).map(|f| f.id))
+            .unwrap();
+        w.fleets.get_mut(&guard).unwrap().order = FleetOrder::Guard { target: freight };
         w.advance_founding_programs(&[]);
         assert!(w.players[&owner].founding.privateer.is_some());
         let assigned = w.players[&owner].founding.privateer;
+        let p = &w.fleets[&assigned.unwrap()];
+        let from = w.fleets[&freight].pos;
+        assert!((4_000.0..12_000.0).contains(&p.pos.distance(from)), "visible, but not on top of the Freighter");
         w.advance_founding_programs(&[]);
         assert_eq!(w.players[&owner].founding.privateer, assigned);
+    }
+
+    #[test]
+    fn a_lost_starter_freighter_is_replaced_once_and_the_lesson_resets() {
+        let (mut w, owner, home) = scene();
+        let freight = w.players[&owner].founding.convoy.unwrap();
+        let guard = w.fleets.values().find(|f| f.owner == owner && f.is_combatant()).unwrap().id;
+        let pos = w.fleets[&freight].pos;
+        w.fleets.get_mut(&guard).unwrap().order = FleetOrder::Guard { target: freight };
+        w.fleets.get_mut(&freight).unwrap().order = FleetOrder::MoveTo { dest: w.hub };
+        w.advance_founding_programs(&[]);
+        let privateer = w.players[&owner].founding.privateer.unwrap();
+        let at = w.time;
+        let destroyed = |ship| [Event::new(at, EventPayload::ShipDestroyed {
+            ship, owner, kind: ShipKind::TinyFreighter, pos,
+        })];
+        let lost = destroyed(freight);
+        w.fleets.remove(&freight);
+        assert!(w.advance_founding_programs(&[]).is_empty(), "a hull missing without a loss is not insured");
+        let notices = w.advance_founding_programs(&lost);
+        let replacement = w.players[&owner].founding.convoy.unwrap();
+        assert_ne!(replacement, freight);
+        assert!(w.fleets[&replacement].has_freighter() && w.fleets[&replacement].owner == owner);
+        assert_eq!(w.fleets[&replacement].pos, w.players[&owner].home);
+        assert!(!w.fleets.contains_key(&privateer), "the Authority chases the Privateer off");
+        assert!(w.players[&owner].founding.privateer.is_none(), "the lesson can replay");
+        assert!(notices.iter().any(|e| matches!(e.payload,
+            EventPayload::FounderFreighterReplaced { owner: o, fleet, system } if o == owner && fleet == replacement && system == home)));
+        let lost_again = destroyed(replacement);
+        w.fleets.remove(&replacement);
+        w.advance_founding_programs(&lost_again);
+        assert!(!w.fleets.values().any(|f| f.owner == owner && f.has_freighter()), "insurance pays once");
+    }
+
+    #[test]
+    fn charter_stipends_pay_once_when_a_milestone_is_first_reached() {
+        let (mut w, owner, _home) = scene();
+        let before = w.players[&owner].credits;
+        w.players.get_mut(&owner).unwrap().founding.set_stage(S::PrepareExport, w.time);
+        let notices = w.advance_founding_programs(&[]);
+        assert_eq!(w.players[&owner].credits, before + 300.0);
+        assert!(notices.iter().any(|e| matches!(&e.payload,
+            EventPayload::CharterStipend { owner: o, credits, .. } if *o == owner && *credits == 300.0)));
+        w.time += 1.0;
+        assert!(w.advance_founding_programs(&[]).iter().all(|e| !matches!(e.payload, EventPayload::CharterStipend { .. })));
+        assert_eq!(w.players[&owner].credits, before + 300.0, "paid once");
+        // A milestone stamped in the past (an old save) never pays retroactively.
+        w.players.get_mut(&owner).unwrap().founding.milestones.insert(S::DefeatPrivateer, 0.0);
+        w.advance_founding_programs(&[]);
+        assert_eq!(w.players[&owner].credits, before + 300.0);
     }
 
     #[test]
@@ -417,14 +474,14 @@ mod tests {
         assert_eq!(w.players[&owner].founding.stage, S::PrepareExport);
         w.time = at;
         w.advance_founding_programs(&[]);
-        assert_eq!(w.players[&owner].founding.stage, S::GrowBusiness);
+        assert_eq!(w.players[&owner].founding.stage, S::DefeatPrivateer, "the shipment counts on its departure");
         assert!(w.players[&owner].founding.opening_export_reports.is_empty());
     }
 
     #[test]
     fn opening_service_berth_uses_no_slot_and_restores_borrowed_mining_crew() {
         let (mut w, owner, home) = scene();
-        let scout = w.players[&owner].founding.scout.unwrap();
+        let scout = add_scout(&mut w, owner);
         let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
         let b = s
             .bodies
@@ -552,57 +609,6 @@ mod tests {
     }
 
     #[test]
-    fn opening_recovery_is_physical_finite_private_and_report_delayed() {
-        let (mut w, owner, home) = scene();
-        let f = w.players[&owner].founding.clone();
-        let site = f.recovery_site.unwrap();
-        let carrier = f.convoy.unwrap();
-        let pos = w.exploration.sites[&site].pos;
-        w.finish_expedition(
-            f.scout.unwrap(),
-            owner,
-            site,
-            ExpeditionTask::Investigate,
-            &mut vec![],
-        );
-        let before = w
-            .systems
-            .iter()
-            .find(|s| s.id == home)
-            .unwrap()
-            .stockpile
-            .clone();
-        w.fleets.get_mut(&carrier).unwrap().pos = pos;
-        w.finish_expedition(carrier, owner, site, ExpeditionTask::Recover, &mut vec![]);
-        assert_eq!(w.fleets[&carrier].cargo_amount(C::Alloys), 20);
-        assert_eq!(w.fleets[&carrier].cargo_amount(C::Machinery), 4);
-        assert_eq!(w.fleets[&carrier].modules.get(&M::ReconSuite), Some(&1));
-        assert!(w.exploration.sites[&site].details.cargo.is_empty());
-        assert_eq!(
-            w.systems.iter().find(|s| s.id == home).unwrap().stockpile,
-            before
-        );
-        assert!(w.players[&owner].founding.recovery_report_at.unwrap() > w.time);
-        w.finish_expedition(carrier, owner, site, ExpeditionTask::Recover, &mut vec![]);
-        assert_eq!(w.fleets[&carrier].cargo_amount(C::Alloys), 20);
-        let stranger = PlayerId(99992);
-        w.step(&[Command::AddPlayer {
-            id: stranger,
-            name: "Other founder".into(),
-        }]);
-        w.queue_site_report(site, stranger, pos);
-        assert!(
-            !w.exploration
-                .pending
-                .iter()
-                .any(|p| p.recipient == stranger && p.snapshot.id == site)
-        );
-        let other = w.players[&stranger].founding.convoy.unwrap();
-        w.issue_expedition(stranger, other, site, ExpeditionTask::Recover, &mut vec![]);
-        assert!(matches!(w.fleets[&other].order, FleetOrder::Idle));
-    }
-
-    #[test]
     fn opening_refining_policy_waits_for_light_and_only_uses_surplus() {
         let (mut w, owner, home) = scene();
         let cc = w.players[&owner].command_center;
@@ -617,7 +623,7 @@ mod tests {
             .insert(K::Smelter, crate::production::Assignment::crew(1));
         s.stockpile = [
             (C::MetallicOre, 52.0),
-            (C::Fuel, 22.0),
+            (C::Deuterium, 22.0),
             (C::Provisions, 100.0),
         ]
         .into();
@@ -651,7 +657,7 @@ mod tests {
         let s = w.systems.iter().find(|s| s.id == home).unwrap();
         assert!(s.stockpile[&C::Alloys] > 0.0);
         assert!(
-            s.stockpile[&C::MetallicOre] >= 50.0 - 1e-9 && s.stockpile[&C::Fuel] >= 20.0 - 1e-9
+            s.stockpile[&C::MetallicOre] >= 50.0 - 1e-9 && s.stockpile[&C::Deuterium] >= 20.0 - 1e-9
         );
         assert!(
             s.free_stock(C::MetallicOre) >= 50.0 - 1e-9,
@@ -672,7 +678,7 @@ mod tests {
                 .find(|s| s.id == home)
                 .unwrap()
                 .industry
-                .refining_reserve[&C::Fuel],
+                .refining_reserve[&C::Deuterium],
             20
         );
     }
@@ -680,7 +686,7 @@ mod tests {
     #[test]
     fn opening_service_cancellation_returns_crew_and_crate_without_free_fitting() {
         let (mut w, owner, home) = scene();
-        let scout = w.players[&owner].founding.scout.unwrap();
+        let scout = add_scout(&mut w, owner);
         let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
         let body = s
             .bodies
@@ -727,42 +733,57 @@ mod tests {
     }
 
     #[test]
-    fn opening_ready_progress_requires_arrived_recovery_battle_and_fit() {
+    fn landfall_advances_on_the_mine_report_the_shipment_and_the_privateer_report() {
         let (mut w, owner, home) = scene();
-        let scout = w.players[&owner].founding.scout.unwrap();
+        assert_eq!(w.players[&owner].founding.stage, S::BuildMine);
         let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
-        let b = &mut s.bodies[0];
-        b.structures.insert(K::MiningComplex, 1);
-        b.assignments
-            .insert(K::MiningComplex, crate::production::Assignment::crew(1));
-        w.record_information();
-        w.time += 1.0;
-        let ready = w.time + 20.0;
-        let founding = &mut w.players.get_mut(&owner).unwrap().founding;
-        founding.recovery_report_at = Some(ready);
-        founding.privateer_report_at = Some(ready);
+        let body = s.bodies.iter().find(|b| b.deposits.iter().any(|d| d.resource == C::MetallicOre)).unwrap().id;
+        s.bodies.iter_mut().find(|b| b.id == body).unwrap().structures.insert(K::MiningComplex, 1);
+        s.bodies.iter_mut().find(|b| b.id == body).unwrap()
+            .assignments.insert(K::MiningComplex, crate::production::Assignment::crew(1));
+        // The step reads home's arrived report, refreshed as the world ticks.
+        for _ in 0..50 {
+            if w.players[&owner].founding.stage != S::BuildMine {
+                break;
+            }
+            w.step(&[]);
+        }
+        assert_eq!(w.players[&owner].founding.stage, S::PrepareExport, "the mine report hands on to the shipment");
+
+        // The first escorted shipment leaves: it draws the privateer, and its
+        // departure light hands on to the fight.
+        let freight = w.players[&owner].founding.convoy.unwrap();
+        let guard = w.fleets.values().find(|f| f.owner == owner && f.is_combatant()).unwrap().id;
+        w.fleets.get_mut(&guard).unwrap().order = FleetOrder::Guard { target: freight };
+        let f = w.fleets.get_mut(&freight).unwrap();
+        f.add_cargo(C::MetallicOre, 40);
+        f.order = FleetOrder::MoveTo { dest: w.hub };
         w.advance_founding_programs(&[]);
-        assert_eq!(w.players[&owner].founding.stage, S::LocalRecovery);
-        w.time = ready;
+        let privateer = w.players[&owner].founding.privateer.expect("the escorted shipment draws the privateer");
+        w.time = w.players[&owner].founding.export_dispatched_at.unwrap();
         w.advance_founding_programs(&[]);
-        assert_eq!(
-            w.players[&owner].founding.stage,
-            S::LocalRecovery,
-            "recovery is not a fitted ship"
-        );
-        let pos = w.players[&owner].command_center + Vec2::new(20_000.0, 0.0);
-        let fleet = w.fleets.get_mut(&scout).unwrap();
-        fleet.pos = pos;
-        fleet.ships[0].loadout = crate::module::Loadout::new(vec![M::ReconSuite]);
-        fleet.rebuild_cache();
+        assert_eq!(w.players[&owner].founding.stage, S::DefeatPrivateer);
+
+        // Its destruction pays the bounty once the report lands, and opens the
+        // Industry chapter.
+        let before = w.players[&owner].credits;
+        let at = w.time;
+        let pos = w.fleets[&privateer].pos;
+        let kill = Event::new(at, EventPayload::RaidResolved {
+            battle_id: None, aftermath: None,
+            attacker: owner, defender: PlayerId::PIRATE, attacker_ship: guard, target_ship: privateer,
+            attacker_kind: ShipKind::Raider, target_kind: ShipKind::Raider,
+            outcome: crate::event::RaidOutcome::TargetDestroyed, pos,
+            attacker_losses: Default::default(), target_losses: Default::default(),
+        });
+        w.advance_founding_programs(&[kill]);
+        let report = w.players[&owner].founding.privateer_report_at.unwrap();
+        assert!(report > at, "the fight's report travels home");
+        assert_eq!(w.players[&owner].founding.stage, S::DefeatPrivateer);
+        w.time = report;
         w.advance_founding_programs(&[]);
-        let at = w.players[&owner].founding.local_ready_report_at.unwrap();
-        assert!(at > w.time);
-        w.time = at - 0.01;
+        assert!(w.players[&owner].credits >= before + crate::founding::PRIVATEER_CREDIT_BOUNTY);
         w.advance_founding_programs(&[]);
-        assert_eq!(w.players[&owner].founding.stage, S::LocalRecovery);
-        w.time = at;
-        w.advance_founding_programs(&[]);
-        assert_eq!(w.players[&owner].founding.stage, S::PrepareExport);
+        assert_eq!(w.players[&owner].founding.stage, S::BuildShipyard);
     }
 }

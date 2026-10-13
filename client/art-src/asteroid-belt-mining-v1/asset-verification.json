@@ -1,0 +1,169 @@
+{
+  "requestedImages": 16,
+  "genuineRGBAImages": 14,
+  "fiveViewSheets": 2,
+  "allFilesExist": true,
+  "allHashesMatch": true,
+  "assets": [
+    {
+      "id": "olivine_ore",
+      "file": "client/art-src/ores-2026-09-16/olivine_ore.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "hashMatches": true
+    },
+    {
+      "id": "bornite_ore",
+      "file": "client/art-src/ores-2026-09-16/bornite_ore.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "hashMatches": true
+    },
+    {
+      "id": "ilmenite_ore",
+      "file": "client/art-src/ores-2026-09-16/ilmenite_ore.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "hashMatches": true
+    },
+    {
+      "id": "iridium_ore",
+      "file": "client/art-src/ores-2026-09-16/iridium_ore.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "hashMatches": true
+    },
+    {
+      "id": "helium3_ice",
+      "file": "client/art-src/ores-2026-09-16/helium3_ice.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "hashMatches": true
+    },
+    {
+      "id": "void_crystal",
+      "file": "client/art-src/ores-2026-09-16/void_crystal.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "hashMatches": true
+    },
+    {
+      "id": "iridium",
+      "file": "client/art-src/ores-2026-09-16/iridium.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "hashMatches": true
+    },
+    {
+      "id": "helium3",
+      "file": "client/art-src/ores-2026-09-16/helium3.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "hashMatches": true
+    },
+    {
+      "id": "exotic_matter",
+      "file": "client/art-src/ores-2026-09-16/exotic_matter.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "hashMatches": true
+    },
+    {
+      "id": "belt-metallic",
+      "file": "client/art-src/belt-chunks-v1/metallic.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "hashMatches": true
+    },
+    {
+      "id": "belt-icy",
+      "file": "client/art-src/belt-chunks-v1/icy.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "hashMatches": true
+    },
+    {
+      "id": "belt-shattered",
+      "file": "client/art-src/belt-chunks-v1/shattered.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "hashMatches": true
+    },
+    {
+      "id": "mining-barge-reference",
+      "file": "client/art-src/mining-barge-reference-v1/mining-barge-reference.png",
+      "size": [
+        1774,
+        887
+      ],
+      "mode": "RGB",
+      "hashMatches": true
+    },
+    {
+      "id": "mining-belt-station",
+      "file": "client/art-src/mining-belt-station-reference-v1/mining-belt-station.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "hashMatches": true
+    },
+    {
+      "id": "mining-belt-station-reference",
+      "file": "client/art-src/mining-belt-station-reference-v1/mining-belt-station-reference.png",
+      "size": [
+        1774,
+        887
+      ],
+      "mode": "RGB",
+      "hashMatches": true
+    },
+    {
+      "id": "mining-barge",
+      "file": "client/art-src/mining-barge-reference-v1/mining-barge.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "hashMatches": true
+    }
+  ]
+}

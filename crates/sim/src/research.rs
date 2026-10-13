@@ -171,6 +171,7 @@ impl Metric {
         match self {
             Metric::TotalPopulation => "total population (M)",
             Metric::WellSuppliedSystems => "WellSupplied systems",
+            Metric::FusionPlants => "tier V fusion plants",
         }
     }
 }
@@ -211,6 +212,9 @@ pub enum Verb {
 pub enum Metric {
     TotalPopulation,
     WellSuppliedSystems,
+    /// §fuel-overhaul: planets running a fusion plant at tier V or higher (the
+    /// Antimatter Synthesis gate).
+    FusionPlants,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -285,6 +289,12 @@ pub enum ModKey {
     /// Smelter recovery, independent of ProcessingYield's historical speed bonus.
     /// Appended to preserve serialized modifier identities.
     OreRecovery,
+    /// §fuel-overhaul: Fusion Freight's cut to a player freighter hull's fusion
+    /// burn per distance (read by `ship::FuelResearch`).
+    FreighterFusionBurn,
+    /// Torch Regime's extra cruise burn on warship hulls only (read by
+    /// `ship::FuelResearch`; freighters and jumps never pay it).
+    WarshipBurn,
 }
 
 impl ModKey {
@@ -335,6 +345,7 @@ pub enum Cap {
     FirstStrike,
     // Hulls
     FortressDoctrine,
+    BlockadeRunners,
     // Talent / population
     ExpertTraining,
     FoundersInstitutes,
@@ -556,6 +567,11 @@ pub fn tier_gate(field: Field, school: Option<School>, tier: u8) -> Gate {
     if let (Field::Life, Some(School::Growth), 5) = (field, school, tier) {
         return Gate::Sustained(Metric::WellSuppliedSystems, 5.0, 7 * 24 * 3600);
     }
+    // §fuel-overhaul: Antimatter Synthesis turns a fusion world's output into
+    // antimatter, so it waits for one.
+    if let (Field::Materials, Some(School::Foundry), 6) = (field, school, tier) {
+        return Gate::State(Metric::FusionPlants, 1.0);
+    }
     match tier {
         1 => Gate::None,
         2 => field_gate(field),
@@ -644,9 +660,15 @@ pub fn basket(field: Field, tier: u8) -> Vec<(Commodity, f64)> {
     if tier >= 2 {
         b.push((Commodity::Machinery, 0.004 * (tier - 1) as f64));
     }
-    // Rare Elements enter at Tier III, heavy at IV–V.
+    // Rare Elements enter at Tier III, heavy at IV–V. §rare-materials: from
+    // Tier V, Exotic Matter replaces part of them at equal base value
+    // (0.0012 Rare Elements = 0.001 Exotic Matter = 0.12 credits a tier).
     if tier >= 3 {
-        b.push((Commodity::RareElements, 0.003 * (tier - 2) as f64));
+        let exotic = tier.saturating_sub(4) as f64;
+        b.push((Commodity::RareElements, 0.003 * (tier - 2) as f64 - 0.0012 * exotic));
+        if exotic > 0.0 {
+            b.push((Commodity::ExoticMatter, 0.001 * exotic));
+        }
     }
     // Field flavor.
     match field {
@@ -766,14 +788,17 @@ pub const CATALOG: &[Programme] = &[
         hidden: false,
     },
     // ⑂ LINE HAUL (gate: 30 convoy deliveries)
+    // §fuel-overhaul: the mid-game freight milestone, in Logistics Doctrine's
+    // old slot (its flag was never read). Before it, Deuterium freight costs ten
+    // times Uranium freight; after it, the same at twice the speed.
     Programme {
-        id: "prop_line_logistics_doctrine",
+        id: "prop_line_fusion_freight",
         field: Field::Propulsion,
         school: Some(School::LineHaul),
         tier: 3,
-        name: "Logistics Doctrine",
-        blurb: "Standing-order triggers: thresholds, conditionals.",
-        effects: &[Effect::Flag(Cap::StandingTriggers)],
+        name: "Fusion Freight",
+        blurb: "Freighters burn a tenth of the Deuterium: full speed for the cost of slow.",
+        effects: &[Effect::Mods(&[(ModKey::FreighterFusionBurn, crate::fuel::FUSION_FREIGHT_MULT)])],
         hidden: false,
     },
     Programme {
@@ -847,10 +872,10 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Expedition),
         tier: 3,
         name: "Torch Regime",
-        blurb: "+30% warship speed, +40% burn — loud and thirsty.",
+        blurb: "+30% warship speed, +40% warship cruise burn — loud and thirsty.",
         effects: &[Effect::Mods(&[
             (ModKey::SpeedWarship, 1.30),
-            (ModKey::FuelConsumption, 1.40),
+            (ModKey::WarshipBurn, 1.40),
         ])],
         hidden: false,
     },
@@ -860,7 +885,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Expedition),
         tier: 4,
         name: "Fleet Tenders",
-        blurb: "Build Fuel Transfer Rigs: Freighters refuel owned fleets from carried Fuel, outside combat.",
+        blurb: "Build Fuel Transfer Rigs: Freighters refuel owned fleets from carried Uranium, Deuterium, Helium-3 or Antimatter, outside combat.",
         effects: &[Effect::Flag(Cap::FleetTenders), Effect::UnlockModule(crate::module::ModuleKind::FuelTransferRig)],
         hidden: false,
     },
@@ -880,7 +905,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Expedition),
         tier: 5,
         name: "Ramscoop Skimming",
-        blurb: "Order gas-giant skimming to refill tanks; Freighters collect excess Fuel as cargo for expedition support.",
+        blurb: "Order gas-giant skimming for Helium-3: it tops up fusion tanks after Fusion Reactors, and Freighters collect the rest as cargo.",
         effects: &[Effect::Flag(Cap::Ramscoop)],
         hidden: false,
     },
@@ -947,9 +972,10 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 2,
         name: "Prefab Construction",
-        blurb: "−25% structure build time.",
+        blurb: "−25% structure build time. Unlocks Syndicate Headquarters (Command Center III).",
         effects: &[
             Effect::Mods(&[(ModKey::StructureBuildTime, 0.75)]),
+            Effect::UnlockStructureTier(StructureKind::CommandCenter, 3),
             Effect::UnlockStructureTier(StructureKind::CompositeWorks, 1),
             Effect::UnlockStructureTier(StructureKind::HullFabricator, 1),
         ],
@@ -961,13 +987,24 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 2,
         name: "Autoforges",
-        blurb: "Machinery recipe −20% inputs.",
+        blurb: "Machinery recipe −20% inputs. Unlocks Orbital Shipyards for large freighters and warships.",
         effects: &[
             Effect::Mods(&[(ModKey::MachineryInputs, 0.80)]),
             Effect::UnlockStructureTier(StructureKind::MachineWorks, 1),
             Effect::UnlockStructureTier(StructureKind::PrecisionWorks, 1),
-            Effect::UnlockStructureTier(StructureKind::DriveWorks, 1),
+            Effect::UnlockStructureTier(StructureKind::NavalDrydock, 1),
         ],
+        hidden: false,
+    },
+    // §belts: the Mining Belt Station, phase 4 of the belt plan.
+    Programme {
+        id: "mat_belt_stations",
+        field: Field::Materials,
+        school: None,
+        tier: 2,
+        name: "Belt Stations",
+        blurb: "Unlocks the Mining Belt Station, an ore depot that anchors at a belt for your barges.",
+        effects: &[Effect::UnlockHull(ShipKind::MiningBeltStation)],
         hidden: false,
     },
     // ⑂ DEEP CRUST (gate: 15,000 raw units extracted)
@@ -987,7 +1024,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::DeepCrust),
         tier: 3,
         name: "Strip Rigs",
-        blurb: "+25% extraction on moons.",
+        blurb: "+25% extraction on moons and asteroid belts.",
         effects: &[Effect::Mods(&[(ModKey::ExtractionMoons, 1.25)])],
         hidden: false,
     },
@@ -1058,8 +1095,9 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Foundry),
         tier: 4,
         name: "Orbital Yards",
-        blurb: "Shipyard tiers V–VI and Orbital Warehouses.",
+        blurb: "Ground and Orbital Shipyards reach tiers V–VI. Unlocks Orbital Warehouses.",
         effects: &[Effect::UnlockStructureTier(StructureKind::Shipyard, 4),
+            Effect::UnlockStructureTier(StructureKind::NavalDrydock, 4),
             Effect::UnlockStructureTier(StructureKind::OrbitalWarehouse, 1)],
         hidden: false,
     },
@@ -1072,6 +1110,24 @@ pub const CATALOG: &[Programme] = &[
         blurb: "Habitat and Warehouse tiers V–VI.",
         effects: &[Effect::UnlockStructureTier(StructureKind::Habitat, 4),
             Effect::UnlockStructureTier(StructureKind::Warehouse, 4)],
+        hidden: false,
+    },
+    // §power: the plant's tier V–VI unlock. The sim also reads it directly
+    // (`power::FUSION_RESEARCH`): fusion tanks then take Helium-3.
+    // §fuel-overhaul: the corporation's independence from the Authority's
+    // cores: the Drive Works (moved here from Autoforges) makes Warp and
+    // Fusion Cores.
+    Programme {
+        id: "mat_foundry_iv_fusion_reactors",
+        field: Field::Materials,
+        school: Some(School::Foundry),
+        tier: 4,
+        name: "Fusion Reactors",
+        blurb: "Fusion Plant V–VI and ships burn Helium-3. Drive Works: your own Warp and Fusion Cores.",
+        effects: &[
+            Effect::UnlockStructureTier(StructureKind::PowerPlant, 4),
+            Effect::UnlockStructureTier(StructureKind::DriveWorks, 1),
+        ],
         hidden: false,
     },
     Programme {
@@ -1092,6 +1148,21 @@ pub const CATALOG: &[Programme] = &[
         name: "Crown Project",
         blurb: "One designated body gains +1 slot in every pool.",
         effects: &[Effect::Flag(Cap::CrownProject)],
+        hidden: false,
+    },
+    // §fuel-overhaul: the last tech. Antimatter is always a net energy loss to
+    // make, which is why it waits for a fusion world's output.
+    Programme {
+        id: "mat_foundry_vi_antimatter_synthesis",
+        field: Field::Materials,
+        school: Some(School::Foundry),
+        tier: 6,
+        name: "Antimatter Synthesis",
+        blurb: "Antimatter Plant: Deuterium and power into Antimatter. Jump Drive module for any hull but ships of the line.",
+        effects: &[
+            Effect::UnlockStructureTier(StructureKind::AntimatterPlant, 1),
+            Effect::UnlockModule(ModuleKind::JumpDrive),
+        ],
         hidden: false,
     },
     // ═══════════════════ 3 · COMPUTATION & SENSORS ═══════════════════
@@ -1293,10 +1364,10 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 1,
         name: "Fire Control",
-        blurb: "+10% beam damage.",
+        blurb: "+10% beam damage. Build a Defense Platform: an orbital battery that guards the system.",
         effects: &[
             Effect::Mods(&[(ModKey::BeamDmg, 1.10)]),
-            Effect::UnlockStructureTier(StructureKind::DefensePlatform, 1),
+            Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 1),
             Effect::UnlockStructureTier(StructureKind::Garrison, 1),
         ],
         hidden: false,
@@ -1322,6 +1393,16 @@ pub const CATALOG: &[Programme] = &[
         hidden: false,
     },
     // Shared II (gate: 5 battles fought)
+    Programme {
+        id: "weap_orbital_batteries",
+        field: Field::Weapons,
+        school: None,
+        tier: 2,
+        name: "Orbital Batteries",
+        blurb: "Raise a Defense Platform to an Orbital Battery: two hardpoints, each fitted with its own battery.",
+        effects: &[Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 2)],
+        hidden: false,
+    },
     Programme {
         id: "weap_hardened_magazines",
         field: Field::Weapons,
@@ -1372,7 +1453,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Strike),
         tier: 3,
         name: "Breaching Ordnance",
-        blurb: "+25% damage to Defense Platforms.",
+        blurb: "+25% damage to orbital stations and Defense Platforms.",
         effects: &[Effect::Mods(&[(ModKey::DmgVsPlatforms, 1.25)])],
         hidden: false,
     },
@@ -1382,7 +1463,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Strike),
         tier: 4,
         name: "Platform Lances",
-        blurb: "Defense Platforms mount Lance-profile beam fire.",
+        blurb: "Station hardpoints can mount a Prismatic Lance, no crate needed.",
         effects: &[Effect::Flag(Cap::PlatformLances)],
         hidden: false,
     },
@@ -1438,12 +1519,22 @@ pub const CATALOG: &[Programme] = &[
         hidden: false,
     },
     Programme {
+        id: "weap_cm_iii_defense_stations",
+        field: Field::Weapons,
+        school: Some(School::Countermeasures),
+        tier: 3,
+        name: "Defense Stations",
+        blurb: "Raise an Orbital Battery to a Defense Station: three hardpoints. Needs an Ordnance Foundry in the system.",
+        effects: &[Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 3)],
+        hidden: false,
+    },
+    Programme {
         id: "weap_cm_iv_platform_netfire",
         field: Field::Weapons,
         school: Some(School::Countermeasures),
         tier: 4,
         name: "Platform Netfire",
-        blurb: "Defense Platforms project PD interception over the defending side.",
+        blurb: "Your station hardpoints' point defense reaches 700 su, up from 400, covering the fleet beside them.",
         effects: &[Effect::Flag(Cap::PlatformNetfire)],
         hidden: false,
     },
@@ -1463,8 +1554,18 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Countermeasures),
         tier: 5,
         name: "Grand Batteries",
-        blurb: "Defense Platform V; defended side gains an opening-round alpha.",
-        effects: &[Effect::Flag(Cap::GrandBatteries)],
+        blurb: "Raise a Defense Station to a Citadel (needs an Orbital Shipyard), and your side opens with +25% damage in battles your stations fight.",
+        effects: &[Effect::Flag(Cap::GrandBatteries), Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 4)],
+        hidden: false,
+    },
+    Programme {
+        id: "weap_cm_v_star_fortress",
+        field: Field::Weapons,
+        school: Some(School::Countermeasures),
+        tier: 5,
+        name: "Star Fortress",
+        blurb: "Raise a Citadel to a Star Fortress: six heavy batteries, more than a Titan can take alone. One per corporation; needs a Capital Slipway in the system.",
+        effects: &[Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 5)],
         hidden: false,
     },
     Programme {
@@ -1551,7 +1652,7 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 2,
         name: "Modular Berths",
-        blurb: "Refits −50% time.",
+        blurb: "Refits −50% time. Also unlocks Orbital Shipyards through military research.",
         effects: &[
             Effect::Mods(&[(ModKey::RefitTime, 0.50)]),
             Effect::UnlockStructureTier(StructureKind::NavalDrydock, 1),
@@ -1615,7 +1716,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Line),
         tier: 5,
         name: "Fortress Doctrine",
-        blurb: "Friendly fleets disengage without exposure at your defended systems.",
+        blurb: "Your fleets can't be tackled in battles your own stations fight.",
         effects: &[Effect::Flag(Cap::FortressDoctrine)],
         hidden: false,
     },
@@ -1699,9 +1800,9 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Corsair),
         tier: 4,
         name: "Blockade Runners",
-        blurb: "Freighter refit variant: +30% speed, −20% cargo (arrives with the refit pass).",
-        effects: PENDING,
-        hidden: true,
+        blurb: "Your freighters slip blockades: half the usual chance of being caught running one.",
+        effects: &[Effect::Flag(Cap::BlockadeRunners)],
+        hidden: false,
     },
     Programme {
         id: "hull_corsair_v_salvage_rigs",
@@ -1917,7 +2018,7 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 1,
         name: "Ore Recovery",
-        blurb: "+15% Smelter recovery from the same ore and Fuel, including byproducts. Enrichment unlocks the Smelter.",
+        blurb: "+15% Smelter recovery from the same ore, including byproducts. Enrichment unlocks the Smelter.",
         effects: &[Effect::Mods(&[(ModKey::OreRecovery, 1.15)])],
         hidden: false,
     },
@@ -2072,7 +2173,8 @@ pub fn has_module(state: &ResearchState, kind: ModuleKind) -> bool {
 /// structures keep operating; saves with paid jobs from before a new gate was
 /// introduced still finish under the ordinary queue/ownership rules.
 pub fn unlocked_structure_tier(state: &ResearchState, kind: StructureKind) -> u32 {
-    if kind.research_prerequisite().is_some_and(|id| !state.has(id)) {
+    if kind.research_prerequisite().is_some_and(|id| !state.has(id))
+        && !kind.research_alternatives().iter().any(|id| state.has(id)) {
         return 0;
     }
     completed_effects(state)
@@ -2098,14 +2200,14 @@ mod tests {
         let mut seen = BTreeSet::new();
         for p in CATALOG {
             assert!(seen.insert(p.id), "duplicate catalog id {}", p.id);
-            // §ladder B2: tiers VI–VIII exist for exactly ONE school — Line
-            // (the documented capital-ladder exception); every other node
-            // stays inside the five-tier board shape.
+            // §ladder B2: tiers VI–VIII exist for the Line capital ladder; the
+            // one other exception is §fuel-overhaul's last tech, Antimatter
+            // Synthesis (Foundry VI). Every other node stays inside five tiers.
             if p.tier > 5 {
-                assert_eq!(
-                    p.school,
-                    Some(School::Line),
-                    "{} — only Line runs past Tier V",
+                let capstone = p.school == Some(School::Foundry) && p.tier == 6;
+                assert!(
+                    p.school == Some(School::Line) || capstone,
+                    "{} — only Line (and Foundry VI) runs past Tier V",
                     p.id
                 );
                 assert!(
@@ -2145,11 +2247,14 @@ mod tests {
     #[test]
     fn catalog_is_the_full_six_board_tree() {
         // 6 fields × (3 shared-I + 3 shared-II + two schools × (2+2+2)) = 108,
-        // + the Line capital ladder (VI/VII/VIII), Cargo Pods, Ore Recovery = 113.
+        // + the Line capital ladder (VI/VII/VIII), Cargo Pods, Ore Recovery,
+        // + three station levels (Orbital Batteries, Defense Stations, Star
+        // Fortress) + Belt Stations (§belts) + Fusion Reactors (§power)
+        // + Antimatter Synthesis (§fuel-overhaul) = 119.
         assert_eq!(
             CATALOG.len(),
-            113,
-            "the v6 tree (108) + the 3 Line capital tiers + Cargo Pods + Ore Recovery"
+            119,
+            "the v6 tree (108) + the 3 Line capital tiers + Cargo Pods + Ore Recovery + 3 station levels + Belt Stations + Fusion Reactors + Antimatter Synthesis"
         );
         for field in [
             Field::Propulsion,
@@ -2160,7 +2265,9 @@ mod tests {
             Field::Life,
         ] {
             let of_field: Vec<&Programme> = CATALOG.iter().filter(|p| p.field == field).collect();
-            let expect = if field == Field::Hulls { 22 } else if field == Field::Materials { 19 } else { 18 };
+            // Weapons also carries the three station levels (§orbital-defense).
+            let expect = if field == Field::Hulls { 22 } else if field == Field::Materials { 22 }
+                else if field == Field::Weapons { 21 } else { 18 };
             assert_eq!(of_field.len(), expect, "{field:?} programme count");
             // Exactly two schools, each a III/IV/V ladder of 2+2+2.
             let schools: BTreeSet<School> = of_field.iter().filter_map(|p| p.school).collect();
@@ -2172,7 +2279,9 @@ mod tests {
                         .filter(|p| p.school == Some(s) && p.tier == t)
                         .count();
                     let promoted = (matches!(s, School::Expedition | School::Line) && t == 3) || (s == School::Shadow && t == 4);
-                    assert_eq!(n, if promoted { 1 } else { 2 }, "{s:?} tier {t}");
+                    let station = s == School::Countermeasures && (t == 3 || t == 5);
+                    let fusion = s == School::Foundry && t == 4;
+                    assert_eq!(n, if promoted { 1 } else if station || fusion { 3 } else { 2 }, "{s:?} tier {t}");
                 }
             }
             // Three shared programmes per tier, plus equipment and recovery picks.
@@ -2182,13 +2291,16 @@ mod tests {
                     .filter(|p| p.school.is_none() && p.tier == t)
                     .count();
                 let utility = t == 1 && matches!(field, Field::Propulsion | Field::Computation | Field::Hulls | Field::Materials);
-                assert_eq!(n, if t == 1 && field == Field::Hulls { 5 } else if utility { 4 } else { 3 }, "{field:?} shared tier {t}");
+                // Weapons: the station levels; Materials: Belt Stations.
+                let station = t == 2 && matches!(field, Field::Weapons | Field::Materials);
+                assert_eq!(n, if t == 1 && field == Field::Hulls { 5 } else if utility || station { 4 } else { 3 }, "{field:?} shared tier {t}");
             }
         }
         // §ladder B2: the capital tiers are SINGLE-PICK — exactly one Line
-        // programme per tier VI–VIII, and no other school has any.
+        // programme per tier VI–VIII; Foundry VI is the one other tier VI.
         for t in 6..=8u8 {
-            let of_tier: Vec<&Programme> = CATALOG.iter().filter(|p| p.tier == t).collect();
+            let of_tier: Vec<&Programme> = CATALOG.iter()
+                .filter(|p| p.tier == t && p.school != Some(School::Foundry)).collect();
             assert_eq!(of_tier.len(), 1, "capital tier {t} is single-pick");
             assert_eq!(
                 of_tier[0].school,
@@ -2196,12 +2308,16 @@ mod tests {
                 "capital tier {t} belongs to Line"
             );
         }
-        // Deferred capabilities plus the seven not-yet-functional designs.
+        // Deferred capabilities plus the six not-yet-functional designs.
         let hidden: Vec<&str> = CATALOG.iter().filter(|p| p.hidden).map(|p| p.id).collect();
-        assert_eq!(hidden.len(), 9);
+        assert_eq!(hidden.len(), 8);
         assert!(CATALOG.iter().filter(|p| p.effects == PENDING).all(|p| p.hidden));
         // Every catalog id resolves and every non-hidden one is visible.
-        assert_eq!(visible_ids().count(), 104);
+        assert_eq!(visible_ids().count(), 111);
+        let capstone = programme("mat_foundry_vi_antimatter_synthesis").unwrap();
+        assert_eq!((capstone.tier, capstone.school), (6, Some(School::Foundry)));
+        assert_eq!(tier_gate(Field::Materials, Some(School::Foundry), 6),
+            Gate::State(Metric::FusionPlants, 1.0), "the last tech waits for a fusion world");
     }
 
     #[test]
@@ -2408,6 +2524,8 @@ mod tests {
         st.completed.insert("mat_foundry_iv_orbital_yards".into()); // Shipyard IV unlock
         st.completed.insert("prop_line_autonomous_freight".into()); // a capability flag
         assert_eq!(unlocked_structure_tier(&st, StructureKind::Shipyard), 4);
+        assert_eq!(unlocked_structure_tier(&st, StructureKind::NavalDrydock), 0,
+            "advanced upgrades still need an initial yard unlock");
         assert!(has_flag(&st, Cap::AutonomousFreight));
         assert!(
             !has_flag(&st, Cap::SalvageRigs),
@@ -2415,5 +2533,27 @@ mod tests {
         );
         // The UnlockHull lookup compiles + is identity-empty until R4b adds hulls.
         assert!(!has_hull(&st, ShipKind::Corvette));
+    }
+
+    #[test]
+    fn orbital_shipyard_has_a_civilian_route_and_preserves_the_military_route() {
+        let mut civilian = ResearchState::default();
+        civilian.completed.insert("mat_enrichment".into());
+        civilian.add_verb(Verb::UnitsThroughIndustry, 10_000.0);
+        assert!(is_available("mat_autoforges", &civilian, &|_| 0.0, 0.0),
+            "ordinary industrial experience, no warships or battles required");
+        civilian.completed.insert("mat_autoforges".into());
+        assert_eq!(unlocked_structure_tier(&civilian, StructureKind::NavalDrydock), 1);
+        assert!(!has_hull(&civilian, ShipKind::Destroyer), "yard unlock never grants military hull designs");
+        let mut legacy = ResearchState::default();
+        legacy.completed.insert("hull_modular_berths".into());
+        assert_eq!(unlocked_structure_tier(&legacy, StructureKind::NavalDrydock), 1);
+        assert_eq!(crate::build::max_buildable_tier(StructureKind::NavalDrydock,
+            unlocked_structure_tier(&legacy, StructureKind::NavalDrydock)), 4);
+        for state in [&mut civilian, &mut legacy] {
+            state.completed.insert("mat_foundry_iv_orbital_yards".into());
+            assert_eq!(crate::build::max_buildable_tier(StructureKind::NavalDrydock,
+                unlocked_structure_tier(state, StructureKind::NavalDrydock)), 6);
+        }
     }
 }

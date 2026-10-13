@@ -58,6 +58,8 @@ pub enum OrderKind {
     /// Assign a captain or an operation to a fleet.
     Assign,
     Refuel,
+    /// Raise an interdiction field.
+    Interdict,
 }
 
 impl OrderKind {
@@ -85,6 +87,7 @@ impl OrderKind {
             OrderKind::Reorganize => "reorganize",
             OrderKind::Assign => "assign",
             OrderKind::Refuel => "refuel",
+            OrderKind::Interdict => "interdict",
         }
     }
 }
@@ -236,6 +239,24 @@ pub enum EventPayload {
         pos: crate::math::Vec2,
     },
 
+    /// A fleet raised an interdiction field where it stands.
+    InterdictionRaised {
+        owner: PlayerId,
+        fleet: EntityId,
+        field: EntityId,
+        pos: crate::math::Vec2,
+        radius: f64,
+        expires_at: f64,
+    },
+    /// An interdiction field collapsed (ran out, or its destroyer left or was lost).
+    InterdictionCollapsed {
+        owner: PlayerId,
+        fleet: EntityId,
+        field: EntityId,
+        pos: crate::math::Vec2,
+        end: crate::interdiction::FieldEnd,
+    },
+
     /// §ladder B4: a syndicate's TITAN — its one flagship — was destroyed.
     /// `name` is its christened name (None if unnamed; cleared on this event).
     /// HEADLINE news: broadcast to every corp, light-delayed from the wreck
@@ -283,6 +304,14 @@ pub enum EventPayload {
     },
     /// A delayed local project instruction failed; private site-origin news.
     IndustryRejected { owner: PlayerId, system: EntityId, reason: String },
+    /// §construction: a waiting structure order was cancelled at its world and
+    /// its goods returned to the system stockpile. Private site-origin news.
+    BuildCancelled {
+        owner: PlayerId,
+        system: EntityId,
+        what: crate::build::BuildKind,
+        refunded: Vec<(crate::cargo::Commodity, f64)>,
+    },
     /// A COLONY SHIP arrived at a system that was ALREADY claimed (§ships
     /// part 3 — you lost the race, or it flipped en route). SOFT: the ship
     /// holds position, fully intact and redirectable; nothing is destroyed.
@@ -508,6 +537,21 @@ pub enum EventPayload {
         system: EntityId,
         structure: crate::build::StructureKind,
     },
+    /// §power: a planet's grid fell short; its powered structures run at
+    /// `power`. Latched, OWNER-ONLY, own clock. `no_fuel`: the plant ran dry.
+    Brownout {
+        owner: PlayerId,
+        system: EntityId,
+        body: u32,
+        power: f64,
+        no_fuel: bool,
+    },
+    /// §power: the planet's grid covers its demand again.
+    PowerRestored {
+        owner: PlayerId,
+        system: EntityId,
+        body: u32,
+    },
     /// §economy Part 2: a colony's FOOD STATE moved on the 4-rung ladder
     /// (replaces the old binary HabitatSupplyChanged). OWNER-ONLY news, on the
     /// owner's own clock (own-economy precedent). Down-rungs are warnings
@@ -517,6 +561,20 @@ pub enum EventPayload {
         owner: PlayerId,
         system: EntityId,
         state: crate::colony::FoodState,
+    },
+    /// §founding R3: the Authority replaced a founder's lost starter Freighter
+    /// (once per programme) and sent the scripted Privateer away. Owner-only.
+    FounderFreighterReplaced {
+        owner: PlayerId,
+        fleet: EntityId,
+        system: EntityId,
+    },
+    /// §founding R6/R10: the Authority paid a charter stipend for a founding
+    /// milestone or a charter-ledger goal. Owner-only, stamped when earned.
+    CharterStipend {
+        owner: PlayerId,
+        title: String,
+        credits: f64,
     },
     /// §pirates: a player DESTROYED a pirate enclave's base (ground its defense to
     /// 0). `owner` = the victor (they seize the plunder into their inventory);
@@ -609,6 +667,41 @@ pub enum EventPayload {
         system: EntityId,
         pos: crate::math::Vec2,
     },
+    /// §pockets: a prospecting pass completed at a belt. Fired AT THE FLEET'S
+    /// POSITION; the finds (possibly none) travel home at c, and the owner's
+    /// notice is light-delayed from this same `pos`. Owner-only news.
+    ProspectCompleted {
+        owner: PlayerId,
+        system: EntityId,
+        body: u32,
+        found: Vec<crate::Commodity>,
+        pos: crate::math::Vec2,
+    },
+    /// §belts: a Mining Belt Station finished anchoring at a belt.
+    StationAnchored { owner: PlayerId, fleet: EntityId, system: EntityId, body: u32, pos: crate::math::Vec2 },
+    /// §belts: a station came free of its belt.
+    StationUnanchored { owner: PlayerId, fleet: EntityId, system: EntityId, body: u32, pos: crate::math::Vec2 },
+    /// §belts: the station's belt became its owner's colony: it unloaded
+    /// `units` into the new stockpile and came free.
+    StationReleased { owner: PlayerId, fleet: EntityId, system: EntityId, units: u32, pos: crate::math::Vec2 },
+    /// §belts: a freighter loaded from a station by hand.
+    StationLoaded {
+        owner: PlayerId,
+        station: EntityId,
+        fleet: EntityId,
+        commodity: crate::Commodity,
+        units: u32,
+        pos: crate::math::Vec2,
+    },
+    /// §pockets: a barge struck a hidden pocket while mining. Like a
+    /// prospecting find: owner-only, light-delayed from `pos`.
+    PocketStruck {
+        owner: PlayerId,
+        system: EntityId,
+        body: u32,
+        ore: crate::Commodity,
+        pos: crate::math::Vec2,
+    },
     /// §explore Part 3: a system's economic trait reported to its (new) owner —
     /// fired at claim AND at capture (the knowledge also transfers as spoils).
     /// A prior survey may already have revealed it through the View. OWNER-ONLY,
@@ -647,20 +740,52 @@ pub enum EventPayload {
         /// Platform tiers lost in the engagement (damage; slots free up).
         tiers_lost: u32,
     },
-    /// A dispatch was LIMITED because no owned system could cover its fuel cost
-    /// (§step1 part 2). The ship/order/goods are never lost — the op simply held.
-    /// Owner-only; `kind` labels what was held ("move"/"raid"/"shipment").
+    /// §orbital-defense: a station hardpoint took a new fit at the system
+    /// (owner-only, light-delayed from it).
+    StationRefitted {
+        owner: PlayerId,
+        system: EntityId,
+        mount: u8,
+        fit: String,
+    },
+    /// §orbital-defense: a station FOUGHT (owner-only, light-delayed from the
+    /// battle): how many of its hardpoints were knocked out, and how many
+    /// still stand.
+    StationEngaged {
+        owner: PlayerId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+        level: u32,
+        knocked_out: u32,
+        standing: u32,
+        /// The enemy side was destroyed.
+        enemy_destroyed: bool,
+        /// The enemy broke off and left alive.
+        driven_off: bool,
+    },
+    /// A fleet's stores could not cover a move, raid or jump, so it held (never
+    /// lost). Owner-only; `kind` labels what was held ("move"/"raid"/"jump").
     FuelShortfall {
         owner: PlayerId,
         needed: f64,
         kind: crate::fuel::ShortfallKind,
     },
+    /// §fuel-overhaul: a fleet ran its regime's store dry under way and switched
+    /// to its other store (`to`: Slow on Uranium, or Full on Deuterium).
+    /// Owner-only.
+    FuelSwitched {
+        owner: PlayerId,
+        fleet: EntityId,
+        to: crate::ship::TransitMode,
+    },
 
     /// Actual automatic Market Hub bunker purchase. Separate from warehouse
-    /// Bought: this fuel goes into a fleet's tank, not its cargo or warehouse.
+    /// Bought: this fuel goes into a fleet's stores, not its cargo or warehouse.
     HubFuelPurchased {
         owner: PlayerId,
         fleet: EntityId,
+        /// §fuel-overhaul: Deuterium, Uranium or Antimatter.
+        commodity: crate::cargo::Commodity,
         units: u32,
         unit_price: f64,
         penalty: f64,
@@ -698,12 +823,24 @@ pub enum EventPayload {
         reason: crate::tca::RescueRejectReason,
     },
 
-    /// A rival BLOCKADE was ESTABLISHED at one of `owner`'s systems (§contestable-
-    /// territory Part 1): a hostile fleet took station and interdiction began.
-    /// Light-delayed from the system to the OWNER (they learn a rival arrived
-    /// only when that light reaches their command center); the besieger `by`
-    /// knows via their own on-station fleet. Nothing is destroyed — outbound
-    /// convoys hold at origin, inbound hold at standoff, production still accrues.
+    /// A rival fleet took station at one of `owner`'s DEFENDED systems, or the
+    /// defense came back under a held blockade (§contestable-territory): the
+    /// blockade is CONTESTED. It is only a battle — logistics run — until the
+    /// defense falls. Light-delayed to the owner; the besieger `by` knows via
+    /// its own fleet.
+    BlockadeContested {
+        by: PlayerId,
+        owner: PlayerId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+    },
+    /// A rival BLOCKADE took HOLD at one of `owner`'s systems (§contestable-
+    /// territory Part 1): hostile fleets on station and the defense beaten (or
+    /// absent), so interdiction began. Light-delayed from the system to the
+    /// OWNER (they learn of it only when that light reaches their command
+    /// center); the besieger `by` knows via their own on-station fleet. Nothing
+    /// is destroyed: outbound convoys hold at origin, inbound hold at standoff,
+    /// production still accrues, and the stockpile is stripped (§plunder).
     BlockadeEstablished {
         by: PlayerId,
         owner: PlayerId,
@@ -712,11 +849,35 @@ pub enum EventPayload {
     },
     /// A blockade at one of `owner`'s systems LIFTED (§contestable-territory) —
     /// the last on-station blockader was destroyed, driven off, or withdrew.
-    /// Logistics resume. Light-delayed to the owner from the system.
+    /// `held`: it had cut the system's logistics, which now resume (otherwise
+    /// the defense beat off a contest). Light-delayed to the owner.
     BlockadeLifted {
         owner: PlayerId,
         system: EntityId,
         pos: crate::math::Vec2,
+        #[serde(default = "crate::event::default_true")]
+        held: bool,
+        /// The besieger, who hears it ended on its own clock.
+        #[serde(default)]
+        by: Option<PlayerId>,
+    },
+
+    /// One of `owner`'s freighter fleets crossed the run zone of a HELD blockade
+    /// `by` holds (§blockade-running): one roll against the blockade's catch
+    /// chance. `caught`: `by`'s ships on station ran it down and a raid opened
+    /// (its own battle report follows); otherwise it slipped through. Light-
+    /// delayed from `pos` to both corporations.
+    BlockadeRun {
+        owner: PlayerId,
+        by: PlayerId,
+        fleet: EntityId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+        caught: bool,
+        /// The chance it faced (0..1), after its stabilizers and its owner's
+        /// research.
+        #[serde(default)]
+        chance: f64,
     },
 
     /// §TCA Phase 2: a CITATION issued by the Terran Charter Authority. This is a
@@ -1106,6 +1267,12 @@ pub enum BuildRejectReason {
     /// §ladder B4: the syndicate already FIELDS (or is building) its one Titan
     /// — the singleton flagship. Rebuild is allowed only after it is lost.
     TitanFielded,
+    /// §orbital-defense: the system's one station stands (or is building) on
+    /// another body.
+    OneStationPerSystem,
+    /// §orbital-defense: the corporation already holds (or is raising) its
+    /// one Star Fortress.
+    StarFortressLimit,
 }
 
 /// Why an Exchange order (§9) or a freight booking (§TCA) was SOFT-REJECTED.
@@ -1201,6 +1368,24 @@ pub enum OrderRejectReason {
     DeliveryConditionsChanged,
     /// Local safety cancelled site work; the refusal itself still rides light.
     ExplorationThreat,
+    /// No live destroyer in the fleet carries an Interdiction Field.
+    NoInterdictor,
+    /// Fields can't be raised inside a gravity well or another field.
+    InterdictorInGravityWell,
+    /// The fleet's field generator is still recharging.
+    InterdictorRecharging,
+    /// The fleet's tanks can't spare the fuel a field burns.
+    InterdictorLowFuel,
+    /// A blockade needs an interceptor in the fleet to run down what slips
+    /// past it.
+    NeedsInterceptor,
+    /// Only a system another corporation owns can be blockaded.
+    NotRivalTerritory,
+    /// A standing blockade was called off: the war or right of reprisal that
+    /// allowed it has ended (a treaty, a capture, an expired window).
+    HostilitiesEnded,
+    /// §belts: an anchored Mining Belt Station can't move until it unanchors.
+    StationAnchored,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1210,6 +1395,10 @@ pub enum JumpFailReason {
     OriginInGravityWell,
     TargetInGravityWell,
     OutOfRange,
+}
+
+pub(crate) fn default_true() -> bool {
+    true
 }
 
 impl Event {
@@ -1237,19 +1426,26 @@ impl Event {
             | PirateRaidInbound { pos, .. } | PirateRaidWithdrawn { pos, .. }
             | NodeAwakened { pos, .. } | NodeCaptured { pos, .. }
             | SurveyCompleted { pos, .. } | TraitRevealed { pos, .. }
-            | PlatformEngaged { pos, .. } | FuelRescueCompleted { pos, .. }
+            | ProspectCompleted { pos, .. } | PocketStruck { pos, .. }
+            | StationAnchored { pos, .. } | StationUnanchored { pos, .. }
+            | StationReleased { pos, .. } | StationLoaded { pos, .. }
+            | PlatformEngaged { pos, .. } | StationEngaged { pos, .. } | FuelRescueCompleted { pos, .. }
             | FuelRescueFailed { pos, .. } | BlockadeEstablished { pos, .. }
-            | BlockadeLifted { pos, .. } | SystemCaptured { pos, .. }
+            | BlockadeContested { pos, .. } | BlockadeLifted { pos, .. } | BlockadeRun { pos, .. }
+            | SystemCaptured { pos, .. }
             | Citation { pos, .. } | EnforcementDispatched { pos, .. }
-            | EnforcementWithdrawn { pos, .. } | JumpFailed { pos, .. } => Some(*pos),
-            BuildStarted { system, .. } | SystemUpgraded { system, .. }
+            | EnforcementWithdrawn { pos, .. } | JumpFailed { pos, .. }
+            | InterdictionRaised { pos, .. } | InterdictionCollapsed { pos, .. } => Some(*pos),
+            BuildStarted { system, .. } | SystemUpgraded { system, .. } | StationRefitted { system, .. }
             | SettlementDeveloped { system, .. }
-            | BuildRejected { system, .. } | IndustryRejected { system, .. } | SpecialistTrained { system, .. }
+            | BuildRejected { system, .. } | IndustryRejected { system, .. } | BuildCancelled { system, .. }
+            | SpecialistTrained { system, .. }
             | ModuleBuilt { system, .. } | ShipsRefitted { system, .. }
             | GarrisonSupplyStateChanged { system, .. } | FleetRepaired { system, .. }
             | ModulesDelivered { system, .. } | SpecialistsDelivered { system, .. }
             | AssignmentSet { system, .. } | ProductionSuspended { system, .. }
             | ProductionResumed { system, .. } | FoodStateChanged { system, .. }
+            | Brownout { system, .. } | PowerRestored { system, .. }
             | NodeSupplyChanged { system, .. } | GarrisonSupplyChanged { host: system, .. }
                 => world.systems.iter().find(|s| s.id == *system).map(|s| s.pos),
             ShipSpawned { id: fleet, .. } | FleetSupplyChanged { fleet, .. }

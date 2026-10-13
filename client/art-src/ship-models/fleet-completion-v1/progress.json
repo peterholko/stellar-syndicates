@@ -1,0 +1,32 @@
+{
+  "task": "Nine five-view reference sheets, textured 3D models and low-triangle viewer integration",
+  "noBlender": true,
+  "ships": [
+    "destroyer",
+    "battleship",
+    "dreadnought",
+    "scout",
+    "colony-ship",
+    "troop-transport",
+    "construction-ship",
+    "medium-freighter",
+    "authority-freighter"
+  ],
+  "baselineAssets": 55,
+  "stage": "complete",
+  "completedShips": [
+    "destroyer",
+    "battleship",
+    "dreadnought",
+    "scout",
+    "colony-ship",
+    "troop-transport",
+    "construction-ship",
+    "medium-freighter",
+    "authority-freighter"
+  ],
+  "viewerShips": 18,
+  "lineupChecks": 119,
+  "sourceModelsValidated": 9,
+  "optimizedModelsValidated": 54
+}

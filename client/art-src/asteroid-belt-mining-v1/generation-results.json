@@ -1,0 +1,405 @@
+{
+  "mode": "built-in image_gen",
+  "assets": [
+    {
+      "id": "olivine_ore",
+      "file": "client/art-src/ores-2026-09-16/olivine_ore.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-dd3d46ff-d9ed-4225-ba8d-2bd8794ead3b.png",
+      "mode": "RGBA",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sha256": "391d9ebddc4ea7f38864c141d03098805e2015364283540ce4f90ba521f85247",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "transparentPixelFraction": 0.5170128634621206,
+      "opaquePixelFraction": 0.0003713793691129375,
+      "subjectBounds": [
+        163,
+        89,
+        1177,
+        1201
+      ],
+      "borderFullyTransparent": false,
+      "borderMaxAlpha": 1
+    },
+    {
+      "id": "bornite_ore",
+      "file": "client/art-src/ores-2026-09-16/bornite_ore.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-9d4b0f51-51ca-4682-b12b-f2f960880bc5.png",
+      "mode": "RGBA",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sha256": "5d0328bf30d34d8f8d8d9734f8d3512d496f3911f7f31f3e40f151050dcbbe14",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "transparentPixelFraction": 0.4482523548250065,
+      "opaquePixelFraction": 0.0005055592439123036,
+      "subjectBounds": [
+        69,
+        41,
+        1204,
+        1215
+      ],
+      "borderFullyTransparent": false,
+      "borderMaxAlpha": 1
+    },
+    {
+      "id": "ilmenite_ore",
+      "file": "client/art-src/ores-2026-09-16/ilmenite_ore.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-a8e91b4c-5df3-4b01-a221-291fc908b206.png",
+      "mode": "RGBA",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sha256": "eacbe13de2d65c9279e74e35adacc85e87d11ecabcd3f6402c0188d0e0e0d236",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "transparentPixelFraction": 0.43236253240030625,
+      "opaquePixelFraction": 0.0006295643414756988,
+      "subjectBounds": [
+        74,
+        115,
+        1181,
+        1180
+      ],
+      "borderFullyTransparent": false,
+      "borderMaxAlpha": 1
+    },
+    {
+      "id": "iridium_ore",
+      "file": "client/art-src/ores-2026-09-16/iridium_ore.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-5406b610-2b67-4593-834d-2eeb920394e2.png",
+      "mode": "RGBA",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sha256": "548fdfb0cb2484c4ffa1cb289eca54dddab08934c0d169a5f8b2e4423588e57f",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "transparentPixelFraction": 0.49575075865682766,
+      "opaquePixelFraction": 0.0002855296861844331,
+      "subjectBounds": [
+        102,
+        105,
+        1159,
+        1154
+      ],
+      "borderFullyTransparent": false,
+      "borderMaxAlpha": 1
+    },
+    {
+      "id": "helium3_ice",
+      "file": "client/art-src/ores-2026-09-16/helium3_ice.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-df9f091b-0f89-4ea6-bea9-9d316633bd3d.png",
+      "mode": "RGBA",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sha256": "5f4d6b7efe40d0bf1b5ac0bbe05f4116237cd8601bc872fd8022c523f0adb138",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "transparentPixelFraction": 0.4478898783859751,
+      "opaquePixelFraction": 0.00032686471870556485,
+      "subjectBounds": [
+        84,
+        51,
+        1193,
+        1208
+      ],
+      "borderFullyTransparent": false,
+      "borderMaxAlpha": 1
+    },
+    {
+      "id": "void_crystal",
+      "file": "client/art-src/ores-2026-09-16/void_crystal.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-b43d2c6d-96e7-4581-96b1-1f461a3c9042.png",
+      "mode": "RGBA",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sha256": "0669e64d8ca60e9ba643f6eb16c9d2a020633a6fea96d25c599140fac15e29d2",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "transparentPixelFraction": 0.6016447527401947,
+      "opaquePixelFraction": 0.000281714144720944,
+      "subjectBounds": [
+        193,
+        29,
+        1065,
+        1221
+      ],
+      "borderFullyTransparent": false,
+      "borderMaxAlpha": 1
+    },
+    {
+      "id": "iridium",
+      "file": "client/art-src/ores-2026-09-16/iridium.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-4a86dcb2-8d42-4610-801e-d3aeadd18298.png",
+      "mode": "RGBA",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sha256": "3c331643006f0149950c138299c9be8d70761c0a3d7ee0a8fcac0b623be4f914",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "transparentPixelFraction": 0.49931320253657197,
+      "opaquePixelFraction": 0.0003230491772420758,
+      "subjectBounds": [
+        39,
+        98,
+        1224,
+        1145
+      ],
+      "borderFullyTransparent": true,
+      "borderMaxAlpha": 0
+    },
+    {
+      "id": "helium3",
+      "file": "client/art-src/ores-2026-09-16/helium3.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-e79de6b3-bf87-4631-b5a5-fc2575f5a028.png",
+      "mode": "RGBA",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sha256": "9eaf4d124827d11feb6dd8f46e8b0bcfe11c8892fed4e1404f7597364bcf4ce3",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "transparentPixelFraction": 0.4816695028858212,
+      "opaquePixelFraction": 0.000563428289441888,
+      "subjectBounds": [
+        130,
+        47,
+        1123,
+        1213
+      ],
+      "borderFullyTransparent": false,
+      "borderMaxAlpha": 1
+    },
+    {
+      "id": "exotic_matter",
+      "file": "client/art-src/ores-2026-09-16/exotic_matter.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-0ccb0258-e6f3-4e81-b31d-81af8a55cb33.png",
+      "mode": "RGBA",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sha256": "76d0e7e0c91ddc929c92251227baffa168525e006f428898b62ccaa164fd74ac",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "transparentPixelFraction": 0.591944374492851,
+      "opaquePixelFraction": 0.0003389472666732803,
+      "subjectBounds": [
+        194,
+        45,
+        1126,
+        1205
+      ],
+      "borderFullyTransparent": true,
+      "borderMaxAlpha": 0
+    },
+    {
+      "id": "belt-metallic",
+      "file": "client/art-src/belt-chunks-v1/metallic.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-c820036e-91df-42dc-aad1-91acb955f6eb.png",
+      "mode": "RGBA",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sha256": "101e8edc30a562b4963cff98765f72ee0eff389b21cf3958855057a78ca130b8",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "transparentPixelFraction": 0.8664032671209705,
+      "opaquePixelFraction": 0.00011764586179091341,
+      "subjectBounds": [
+        364,
+        341,
+        922,
+        898
+      ],
+      "borderFullyTransparent": true,
+      "borderMaxAlpha": 0
+    },
+    {
+      "id": "belt-icy",
+      "file": "client/art-src/belt-chunks-v1/icy.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-06573344-6d84-4fe5-97ca-84e9277f4e65.png",
+      "mode": "RGBA",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sha256": "b967d9145ff95cbb17de6be99f21d7dc550a81803d3d82a81b16e5ace436e94c",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "transparentPixelFraction": 0.8720146567666084,
+      "opaquePixelFraction": 3.1796178862409033e-05,
+      "subjectBounds": [
+        366,
+        374,
+        911,
+        908
+      ],
+      "borderFullyTransparent": false,
+      "borderMaxAlpha": 1
+    },
+    {
+      "id": "belt-shattered",
+      "file": "client/art-src/belt-chunks-v1/shattered.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-daf715d0-649b-4552-9c2f-54d5291e92c5.png",
+      "mode": "RGBA",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sha256": "3460d6816fd77e63507771d168186a4041ca06f5d8a87e3fa05ee538f115e775",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "transparentPixelFraction": 0.8738842720837181,
+      "opaquePixelFraction": 0.00013863133984010339,
+      "subjectBounds": [
+        358,
+        352,
+        922,
+        915
+      ],
+      "borderFullyTransparent": true,
+      "borderMaxAlpha": 0
+    },
+    {
+      "id": "mining-barge-reference",
+      "file": "client/art-src/mining-barge-reference-v1/mining-barge-reference.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-d8ad4bc6-180e-492a-8e9e-c74cfc163ba7.png",
+      "mode": "RGB",
+      "dimensions": [
+        1774,
+        887
+      ],
+      "sha256": "899616ca2fb45653e5428a88084cf4e1d35903e2a636ba84200ba28516e2ab66",
+      "alphaRange": [
+        255,
+        255
+      ],
+      "transparentPixelFraction": 0.0,
+      "opaquePixelFraction": 1.0,
+      "subjectBounds": [
+        0,
+        0,
+        1774,
+        887
+      ],
+      "borderFullyTransparent": false,
+      "borderMaxAlpha": 255
+    },
+    {
+      "id": "mining-belt-station",
+      "file": "client/art-src/mining-belt-station-reference-v1/mining-belt-station.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-45b050c6-96ed-4d94-a443-9582d38c3201.png",
+      "mode": "RGBA",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sha256": "7430e90b51f0232782a1253d15e90ee5789f81160a9b7619c6abcc4f68c8873c",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "transparentPixelFraction": 0.756265119083049,
+      "opaquePixelFraction": 0.00043497172683775554,
+      "subjectBounds": [
+        142,
+        179,
+        1113,
+        998
+      ],
+      "borderFullyTransparent": false,
+      "borderMaxAlpha": 1
+    },
+    {
+      "id": "mining-belt-station-reference",
+      "file": "client/art-src/mining-belt-station-reference-v1/mining-belt-station-reference.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-626ba8ab-7c86-49b5-8086-771f1faff7b2.png",
+      "mode": "RGB",
+      "dimensions": [
+        1774,
+        887
+      ],
+      "sha256": "8a4667bc0612ebcbfe31fe81a9be6b16c38fd2854ba1a11847b06ca509172e03",
+      "alphaRange": [
+        255,
+        255
+      ],
+      "transparentPixelFraction": 0.0,
+      "opaquePixelFraction": 1.0,
+      "subjectBounds": [
+        0,
+        0,
+        1774,
+        887
+      ],
+      "borderFullyTransparent": false,
+      "borderMaxAlpha": 255
+    },
+    {
+      "id": "mining-barge",
+      "file": "client/art-src/mining-barge-reference-v1/mining-barge.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-80ab10be-a2a4-4798-b7e5-b9fb00712dab.png",
+      "mode": "RGBA",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "sha256": "a771eb6d0474993f12a6749e6b8a4d1d51e74f22582d0a1eb6565612e358d572",
+      "alphaRange": [
+        0,
+        255
+      ],
+      "transparentPixelFraction": 0.7474232376649904,
+      "opaquePixelFraction": 0.0002397431886225641,
+      "subjectBounds": [
+        302,
+        188,
+        951,
+        1077
+      ],
+      "borderFullyTransparent": false,
+      "borderMaxAlpha": 1
+    }
+  ]
+}

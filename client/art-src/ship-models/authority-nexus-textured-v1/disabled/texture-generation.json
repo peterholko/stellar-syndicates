@@ -1,0 +1,36 @@
+{
+  "purpose": "Attack-disabled Authority Nexus material variants",
+  "textures": [
+    {
+      "id": "ivory",
+      "source": "textures/authority-nexus-ivory-panels.png",
+      "output": "disabled/textures/authority-nexus-ivory-panels.png",
+      "tool": "image_gen.imagegen",
+      "mode": "Built-in tool, referenced-image edit",
+      "prompt": "Use case: precise-object-edit.\nAsset type: square UV albedo material texture for a damaged but repairable Authority Nexus space station.\nEdit the attached flat ivory armor material into its AFTER-ATTACK condition. Keep the same edge-to-edge flat texture, panel layout, all seams, original straight-on orientation, square aspect ratio and pale ivory/brass identity. Add several irregular diagonal patches of deep charcoal impact scorching, soot caught around rivets, chipped ceramic paint exposing dark titanium, fine fracture lines, pitted edges and a few small shallow bullet/fragment impact dents. About two-thirds of the pale ivory should still be recognizable: localized damage, not a uniformly black surface. No new panel arrangement.\nSame precise hard-surface science-fiction game texture, evenly lit diffuse material scan, shallow surface relief only. No perspective, cast shadows, bloom, flames, smoke clouds, objects, stars, text, numerals, border or watermark. Do not render a station or a scene. Deliver only the modified flat material."
+    },
+    {
+      "id": "brass",
+      "source": "textures/authority-nexus-brass-ring.png",
+      "output": "disabled/textures/authority-nexus-brass-ring.png",
+      "tool": "image_gen.imagegen",
+      "mode": "Built-in tool, referenced-image edit",
+      "prompt": "Use case: precise-object-edit.\nAsset type: 3:1 landscape UV albedo texture for battle-damaged brass containment rings.\nEdit the attached brass panel material into an after-attack version. Preserve the two broad horizontal rows, exact rectangular panel arrangement and fine seam/fastener locations. Retain the warm muted golden brass identity, but add localized charcoal scorching, heat-discolored bronze, scuffed edges, dark pitting and a few hairline fractures. The metal is damaged and unpowered but mostly intact. Roughly half the brass remains clean enough to read clearly as gold. Keep left/right edges suitable for horizontal wrapping.\nPerfectly flat orthographic material, even illumination, no broad highlight gradient, no perspective. No flames, smoke, glowing areas, objects, text, logos, background or watermark. Entire wide image must be the material texture."
+    },
+    {
+      "id": "power",
+      "source": "textures/authority-nexus-power-cells.png",
+      "output": "disabled/textures/authority-nexus-power-cells.png",
+      "tool": "image_gen.imagegen",
+      "mode": "Built-in tool, referenced-image edit",
+      "prompt": "Use case: precise-object-edit.\nAsset type: 1:3 portrait UV albedo texture for disabled reactor cylinders.\nEdit the attached BLUE POWER CELL material into its battle-damaged POWER-OFF state. Preserve its exact four vertical columns, stacked cell layout, thin internal filaments and bordering machinery. All electric blue/cyan illumination is OFF: the glass is dark desaturated blue-gray, with the formerly luminous filaments now unlit silver-gray traces. Add several visible hairline cracks through glass, a few small shattered/scuffed sections, charcoal scorch stains at the joints and slight heat damage. Keep the mechanical detail readable in even neutral illumination rather than turning the image pitch black. No active glow or luminous blue highlights anywhere.\nKeep the same portrait 1:3 composition, flat straight-on scan and edge-to-edge material; left and right edges still wrap seamlessly. No flames, smoke, scene, objects, text, numerals, border or watermark. Deliver only the disabled material texture."
+    },
+    {
+      "id": "impact",
+      "output": "disabled/textures/authority-nexus-impact.png",
+      "tool": "image_gen.imagegen",
+      "mode": "Built-in tool, new-image generation",
+      "prompt": "Use case: stylized-concept.\nAsset type: square albedo texture for a small battle-impact crater in ivory titanium space-station armor.\nA perfectly flat, straight-on material scan, filled edge to edge with scorched pale ivory industrial armor. At the center is one irregular blast gouge: jagged torn paint and titanium, a blackened recessed interior with a few bent dark metal ribs and severed cables, chipped brass fittings, tiny fragments caught in the opening. Broad uneven charcoal soot and gray heat discoloration spread into the surrounding ivory. The gouge should be roughly centered and irregular, NOT a neat circle, symmetric emblem, hatch, grille or vent. Maintain subtle hard-surface game texture detail with chipped paint, fine metal grain, scratches and fasteners. The perimeter is mostly stained ivory armor; the deepest center is dark but its machinery is readable. No visible scene beyond the damaged surface. Even neutral light with shallow local relief shading, no cast shadows, perspective or broad illumination gradient.\nNo glow, lights, flames, smoke clouds, stars, text, letters, numbers, logos, border, watermark, background or separate floating objects. Deliver only the full-frame flat material texture."
+    }
+  ]
+}

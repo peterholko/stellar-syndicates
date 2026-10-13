@@ -1,0 +1,31 @@
+{
+  "asset": "marginal-surface-v1.png",
+  "use_case": "precise-object-edit",
+  "generated_with": "built-in imagegen",
+  "transparent_background": false,
+  "source_image": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-27c7f3d9-5e7c-4451-9467-e09a2e2acd29.png",
+  "inputs": [
+    {
+      "image": 1,
+      "path": "terrestrial-surface-v1.png",
+      "role": "Edit target; authoritative camera, crop, horizon, lighting and rendering style"
+    },
+    {
+      "image": 2,
+      "path": "../../planets-2026-10-08/marginal.png",
+      "role": "Biome and palette reference only"
+    }
+  ],
+  "prompt": "Use case: precise-object-edit.\nAsset type: empty planet-surface background for the space strategy game Stellar Syndicates.\n\nINPUT ROLES:\nImage 1 is the EDIT TARGET and approved composition template: the existing terrestrial surface painting, 1672 × 941.\nImage 2 is ONLY a biome and color-family reference for the marginal world. Never borrow Image 2's full-globe framing, circular silhouette or transparent background.\n\nPRIMARY EDIT:\nTransform all of Image 1's terrain into the marginal-world biome below while keeping Image 1's camera, crop, planetary curvature, horizon placement, lighting direction and cinematic visual format exactly. Produce a single opaque full-frame 1672 × 941 landscape image.\n\nCOMPOSITION INVARIANTS:\nKeep the same high oblique three-quarter aerial camera looking down over a broad convex planetary cap, same elevation and lens. The planet extends beyond the entire bottom and both side edges. Preserve the strong curved planetary arc: horizon at about one-fifth of image height at the middle, falling lower toward both sides. Keep the quiet near-black sparse starfield above it and the same warm sun glare at the extreme top-left corner. Preserve upper-left raking sunlight and realistic detailed cinematic game-environment rendering. Do not zoom out to a small globe, turn it into a floating island, flatten the horizon, or lower the viewpoint to a ground-level landscape.\n\nWORLD-SPECIFIC TERRAIN:\nA marginal world: almost Earth-like, but cold, dry and thin-aired. Broad smooth continuous level plains of dun and cool khaki soil dominate the foreground and middle ground, with restrained patches of low dusty sage-green lichen and moss, leaving ample open natural ground for later game-building sprites. These are open natural plains, with no predefined locations or plots.\nWide pale salt flats and gently stepped ancient shoreline terraces cross the middle ground. Exactly one small dark slate-teal lake sits well away from the main open foreground, inside the ancient shoreline basin.\nLow eroded grey-brown hills toward the sides, with distant frost-capped ridges near the horizon. Thin frost persists in shadowed hollows. Sparse life: muted lichen and moss only. Remove all trees, forests, lush meadows and the terrestrial river network.\nThe atmosphere is thin: a very faint pale dusty-blue rim closely follows the same curved horizon, clearly thinner, paler and less saturated than the temperate atmosphere in Image 1. Remove all clouds over the land, including the cloud banks at the distant horizon.\nPalette: dun, cool khaki, cool grey-brown, dusty sage, salt white and dark slate-teal. Muted, quiet, cold and thin-aired, but not dead. Keep foreground and midground textures readable, natural and detailed without cluttering the broad open ground.\n\nEMPTY BACKGROUND:\nPristine natural terrain. No structures, foundations, pavement, roads, paths, sockets, building plots, vehicles, spaceships, lights, ruins, bones or tracks. No trees, forests, grass meadows, flowers or oases. No fixed number of locations baked into the terrain.\n\nOUTPUT:\nExactly one seamless full-frame landscape background at 1672 × 941, matching Image 1's framing. Opaque image with the black sky intact. Only this one biome. No collage, split view, comparison, contact sheet, border, UI, text, labels, numbers, logos or watermark. No extra planets in the sky, no gas giant.",
+  "verification": {
+    "path": "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/surfaces/marginal-surface-v1.png",
+    "size": [
+      1672,
+      941
+    ],
+    "mode": "RGB",
+    "opaque": true,
+    "bytes": 3036510,
+    "sha256": "726789a51c5594a0918951a4a240f9a3d88ea56933b6c436ed5d14e6d30ef354"
+  }
+}

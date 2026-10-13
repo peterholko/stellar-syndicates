@@ -1,0 +1,212 @@
+{
+  "triangles": 20700,
+  "renderSections": 23,
+  "zeroAreaGeometry": 0,
+  "zeroAreaTexturedUVs": 0,
+  "nonFiniteValues": 0,
+  "bottomComponents": {
+    "hull | continuous armored pressure body": {
+      "triangles": 78,
+      "textured": 78,
+      "bottomViewUVs": 78
+    },
+    "armor.port | closed forward shoulder": {
+      "triangles": 28,
+      "textured": 28,
+      "bottomViewUVs": 28
+    },
+    "armor.port | leading shoulder plate": {
+      "triangles": 19,
+      "textured": 19,
+      "bottomViewUVs": 19
+    },
+    "armor.port | aft shoulder plate": {
+      "triangles": 19,
+      "textured": 19,
+      "bottomViewUVs": 19
+    },
+    "keel.port | shoulder service plating": {
+      "triangles": 19,
+      "textured": 19,
+      "bottomViewUVs": 19
+    },
+    "armor.starboard | closed forward shoulder": {
+      "triangles": 28,
+      "textured": 28,
+      "bottomViewUVs": 28
+    },
+    "armor.starboard | leading shoulder plate": {
+      "triangles": 19,
+      "textured": 19,
+      "bottomViewUVs": 19
+    },
+    "armor.starboard | aft shoulder plate": {
+      "triangles": 19,
+      "textured": 19,
+      "bottomViewUVs": 19
+    },
+    "keel.starboard | shoulder service plating": {
+      "triangles": 19,
+      "textured": 19,
+      "bottomViewUVs": 19
+    },
+    "deck | forward armored spine": {
+      "triangles": 28,
+      "textured": 28,
+      "bottomViewUVs": 28
+    },
+    "deck | port vent surround": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "deck | starboard vent surround": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "spine | tapered aft armor": {
+      "triangles": 24,
+      "textured": 24,
+      "bottomViewUVs": 24
+    },
+    "keel | continuous ventral service spine": {
+      "triangles": 48,
+      "textured": 48,
+      "bottomViewUVs": 48
+    },
+    "keel.panel.1 | ventral maintenance armor": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "keel.panel.2 | ventral maintenance armor": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "keel.panel.3 | ventral maintenance armor": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "keel.panel.4 | ventral maintenance armor": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "keel.panel.5 | ventral maintenance armor": {
+      "triangles": 22,
+      "textured": 22,
+      "bottomViewUVs": 22
+    },
+    "armor.port | aft service cheek": {
+      "triangles": 13,
+      "textured": 13,
+      "bottomViewUVs": 13
+    },
+    "armor.port | swept engine root": {
+      "triangles": 13,
+      "textured": 13,
+      "bottomViewUVs": 13
+    },
+    "armor.port | actuator support frame": {
+      "triangles": 10,
+      "textured": 10,
+      "bottomViewUVs": 10
+    },
+    "armor.starboard | aft service cheek": {
+      "triangles": 13,
+      "textured": 13,
+      "bottomViewUVs": 13
+    },
+    "armor.starboard | swept engine root": {
+      "triangles": 13,
+      "textured": 13,
+      "bottomViewUVs": 13
+    },
+    "armor.starboard | actuator support frame": {
+      "triangles": 10,
+      "textured": 10,
+      "bottomViewUVs": 10
+    },
+    "stern | central service fairing": {
+      "triangles": 12,
+      "textured": 12,
+      "bottomViewUVs": 12
+    },
+    "bridge | low command blister": {
+      "triangles": 18,
+      "textured": 18,
+      "bottomViewUVs": 18
+    },
+    "enginecase.port | closed pressure housing": {
+      "triangles": 120,
+      "textured": 120,
+      "bottomViewUVs": 120
+    },
+    "enginecase.port | upper armor cowl": {
+      "triangles": 28,
+      "textured": 28,
+      "bottomViewUVs": 28
+    },
+    "enginecase.port | lower service cowl": {
+      "triangles": 28,
+      "textured": 28,
+      "bottomViewUVs": 28
+    },
+    "enginecase.starboard | closed pressure housing": {
+      "triangles": 120,
+      "textured": 120,
+      "bottomViewUVs": 120
+    },
+    "enginecase.starboard | upper armor cowl": {
+      "triangles": 28,
+      "textured": 28,
+      "bottomViewUVs": 28
+    },
+    "enginecase.starboard | lower service cowl": {
+      "triangles": 28,
+      "textured": 28,
+      "bottomViewUVs": 28
+    }
+  },
+  "embeddedImagesMatch": true,
+  "missingUndersideComponents": [],
+  "fullyTexturedUnderside": true,
+  "closedHullAndEngineBlocks": {
+    "hull | continuous armored pressure body": {
+      "closedManifold": true,
+      "signedVolume": 46.81380081176758
+    },
+    "armor.port | closed forward shoulder": {
+      "closedManifold": true,
+      "signedVolume": 19.577878952026367
+    },
+    "armor.starboard | closed forward shoulder": {
+      "closedManifold": true,
+      "signedVolume": 18.908803939819336
+    },
+    "enginecase.port | closed pressure housing": {
+      "closedManifold": true,
+      "signedVolume": 7.841739654541016
+    },
+    "enginecase.starboard | closed pressure housing": {
+      "closedManifold": true,
+      "signedVolume": 7.841740131378174
+    }
+  },
+  "fiveSolidPrimaryBodies": true,
+  "twoAlignedSternEngines": true,
+  "twoCircularRecessedApertures": true,
+  "assemblies": {
+    "hull": 7,
+    "turret.port.1": 4,
+    "turret.port.2": 4,
+    "turret.starboard.1": 4,
+    "turret.starboard.2": 4
+  },
+  "fourIndependentTurretAssemblies": true,
+  "eightWeaponSockets": true,
+  "passed": true
+}

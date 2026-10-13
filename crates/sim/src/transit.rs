@@ -32,13 +32,13 @@ pub const PURSUIT_REPLAN_S: f64 = 30.0;
 /// steerable. Tunable.
 pub const PURSUIT_TERMINAL_GUIDANCE_SU: f64 = 15_000.0;
 
-/// Jump-drive playtest tunables.
+/// Jump-drive tunables.
 pub const JUMP_SPOOL_S: f64 = 10.0;
 pub const JUMP_RANGE: f64 = 50_000.0;
-/// Infinite during jump-drive playtesting: the existing cost/check/debit path
-/// remains intact, but every jump prices to zero. Restore `WARP_FACTOR` when
-/// jump fuel is ready to become part of the balance again.
-pub const JUMP_FUEL_FACTOR: f64 = f64::INFINITY;
+/// §fuel-overhaul: a jump burns Antimatter equal to the warp-fuel formula
+/// divided by this: mass × distance × 1e-7. An Interceptor's 50k su jump burns
+/// one unit (120 Cr at the Hub); a Scout's, 0.4. Tunable.
+pub const JUMP_FUEL_FACTOR: f64 = 10.0;
 
 /// Radius of a gravity well. Warp and jump drives cannot operate inside it.
 pub const HYPERLIMIT: f64 = 900.0;

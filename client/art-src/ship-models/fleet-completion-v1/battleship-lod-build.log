@@ -1,0 +1,103 @@
+[
+  {
+    "level": "lod0",
+    "triangles": 33772,
+    "vertices": 32044,
+    "drawCalls": 35,
+    "bytes": 3136836
+  },
+  {
+    "level": "lod1",
+    "triangles": 17104,
+    "vertices": 18220,
+    "drawCalls": 35,
+    "bytes": 2594428
+  },
+  {
+    "level": "lod2",
+    "triangles": 11270,
+    "vertices": 13156,
+    "drawCalls": 35,
+    "bytes": 2397320
+  }
+]
+
+{
+  "sourceUnchanged": true,
+  "levels": {
+    "lod0": {
+      "triangles": 33772,
+      "boundsMaxDeviation": 0.0,
+      "boundsTolerance": 0,
+      "checks": {
+        "finiteAttributes": true,
+        "texturesByteIdentical": true,
+        "materialDefinitionsIdentical": true,
+        "socketNodesUnchanged": true,
+        "boundsWithinTolerance": true,
+        "protectedTrianglesUnchanged": true,
+        "expectedRenderSections": true,
+        "meshWorldTransformsUnchangedAtRest": true,
+        "unitNormals": true,
+        "everyTrianglePositionNormalUVAndMaterialUnchanged": true,
+        "protectedTrianglesFound": true,
+        "onlyOriginalVertexAttributesUsed": true,
+        "noCollapsedGeometryOrTexturedUVs": true,
+        "dedicatedBottomProjectionPreserved": true,
+        "independentTurretPivots": true,
+        "hullStaysStillWhenTurretsRotate": true,
+        "turretMeshesMoveAroundPivots": true,
+        "weaponSocketsFollowTurrets": true
+      }
+    },
+    "lod1": {
+      "triangles": 17104,
+      "boundsMaxDeviation": 0.0,
+      "boundsTolerance": 0.018700000762939453,
+      "checks": {
+        "finiteAttributes": true,
+        "texturesByteIdentical": true,
+        "materialDefinitionsIdentical": true,
+        "socketNodesUnchanged": true,
+        "boundsWithinTolerance": true,
+        "protectedTrianglesUnchanged": true,
+        "expectedRenderSections": true,
+        "meshWorldTransformsUnchangedAtRest": true,
+        "unitNormals": true,
+        "protectedTrianglesFound": true,
+        "onlyOriginalVertexAttributesUsed": true,
+        "noCollapsedGeometryOrTexturedUVs": true,
+        "dedicatedBottomProjectionPreserved": true,
+        "independentTurretPivots": true,
+        "hullStaysStillWhenTurretsRotate": true,
+        "turretMeshesMoveAroundPivots": true,
+        "weaponSocketsFollowTurrets": true
+      }
+    },
+    "lod2": {
+      "triangles": 11270,
+      "boundsMaxDeviation": 0.0,
+      "boundsTolerance": 0.018700000762939453,
+      "checks": {
+        "finiteAttributes": true,
+        "texturesByteIdentical": true,
+        "materialDefinitionsIdentical": true,
+        "socketNodesUnchanged": true,
+        "boundsWithinTolerance": true,
+        "protectedTrianglesUnchanged": true,
+        "expectedRenderSections": true,
+        "meshWorldTransformsUnchangedAtRest": true,
+        "unitNormals": true,
+        "protectedTrianglesFound": true,
+        "onlyOriginalVertexAttributesUsed": true,
+        "noCollapsedGeometryOrTexturedUVs": true,
+        "dedicatedBottomProjectionPreserved": true,
+        "independentTurretPivots": true,
+        "hullStaysStillWhenTurretsRotate": true,
+        "turretMeshesMoveAroundPivots": true,
+        "weaponSocketsFollowTurrets": true
+      }
+    }
+  },
+  "passed": true
+}

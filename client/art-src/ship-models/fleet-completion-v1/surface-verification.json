@@ -1,0 +1,146 @@
+[
+  {
+    "ship": "destroyer",
+    "triangles": 14532,
+    "texturedTriangles": 2240,
+    "ventralTriangles": 660,
+    "checks": {
+      "allSurfacesAndTexturedUVsHaveArea": true,
+      "ventralProjectionPresent": true,
+      "engineCount": true,
+      "turretCount": true,
+      "threeEmbeddedTextures": true,
+      "gltfValidatorClean": true
+    },
+    "problems": [],
+    "passed": true
+  },
+  {
+    "ship": "battleship",
+    "triangles": 33772,
+    "texturedTriangles": 3622,
+    "ventralTriangles": 1000,
+    "checks": {
+      "allSurfacesAndTexturedUVsHaveArea": true,
+      "ventralProjectionPresent": true,
+      "engineCount": true,
+      "turretCount": true,
+      "threeEmbeddedTextures": true,
+      "gltfValidatorClean": true
+    },
+    "problems": [],
+    "passed": true
+  },
+  {
+    "ship": "dreadnought",
+    "triangles": 51176,
+    "texturedTriangles": 4178,
+    "ventralTriangles": 1164,
+    "checks": {
+      "allSurfacesAndTexturedUVsHaveArea": true,
+      "ventralProjectionPresent": true,
+      "engineCount": true,
+      "turretCount": true,
+      "threeEmbeddedTextures": true,
+      "gltfValidatorClean": true
+    },
+    "problems": [],
+    "passed": true
+  },
+  {
+    "ship": "scout",
+    "triangles": 8896,
+    "texturedTriangles": 1906,
+    "ventralTriangles": 508,
+    "checks": {
+      "allSurfacesAndTexturedUVsHaveArea": true,
+      "ventralProjectionPresent": true,
+      "engineCount": true,
+      "turretCount": true,
+      "threeEmbeddedTextures": true,
+      "gltfValidatorClean": true
+    },
+    "problems": [],
+    "passed": true
+  },
+  {
+    "ship": "colony-ship",
+    "triangles": 27896,
+    "texturedTriangles": 16820,
+    "ventralTriangles": 8108,
+    "checks": {
+      "allSurfacesAndTexturedUVsHaveArea": true,
+      "ventralProjectionPresent": true,
+      "engineCount": true,
+      "turretCount": true,
+      "threeEmbeddedTextures": true,
+      "gltfValidatorClean": true
+    },
+    "problems": [],
+    "passed": true
+  },
+  {
+    "ship": "troop-transport",
+    "triangles": 11072,
+    "texturedTriangles": 2144,
+    "ventralTriangles": 692,
+    "checks": {
+      "allSurfacesAndTexturedUVsHaveArea": true,
+      "ventralProjectionPresent": true,
+      "engineCount": true,
+      "turretCount": true,
+      "threeEmbeddedTextures": true,
+      "gltfValidatorClean": true
+    },
+    "problems": [],
+    "passed": true
+  },
+  {
+    "ship": "construction-ship",
+    "triangles": 10340,
+    "texturedTriangles": 2308,
+    "ventralTriangles": 748,
+    "checks": {
+      "allSurfacesAndTexturedUVsHaveArea": true,
+      "ventralProjectionPresent": true,
+      "engineCount": true,
+      "turretCount": true,
+      "threeEmbeddedTextures": true,
+      "gltfValidatorClean": true
+    },
+    "problems": [],
+    "passed": true
+  },
+  {
+    "ship": "medium-freighter",
+    "triangles": 17056,
+    "texturedTriangles": 3652,
+    "ventralTriangles": 1154,
+    "checks": {
+      "allSurfacesAndTexturedUVsHaveArea": true,
+      "ventralProjectionPresent": true,
+      "engineCount": true,
+      "turretCount": true,
+      "threeEmbeddedTextures": true,
+      "gltfValidatorClean": true
+    },
+    "problems": [],
+    "passed": true
+  },
+  {
+    "ship": "authority-freighter",
+    "triangles": 20144,
+    "texturedTriangles": 5784,
+    "ventralTriangles": 1940,
+    "checks": {
+      "allSurfacesAndTexturedUVsHaveArea": true,
+      "ventralProjectionPresent": true,
+      "engineCount": true,
+      "turretCount": true,
+      "threeEmbeddedTextures": true,
+      "gltfValidatorClean": true
+    },
+    "problems": [],
+    "passed": true
+  }
+]

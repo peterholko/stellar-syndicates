@@ -1,0 +1,18 @@
+Use case: precise-object-edit.
+Edit this CORVETTE five-view concept reference sheet. Preserve TOP, BOTTOM, BACK, all six labels, the white background, materials and armor identity. Make ONLY these final consistency corrections in FRONT and SIDE.
+
+1. FRONT (upper right): each of the two visible gun housings currently has an incorrect stack of four circular muzzle holes. Each actual turret is TWIN-BARREL. Replace each four-hole stack with exactly TWO small circular muzzle holes side by side at one height, one horizontal pair per housing, FOUR visible muzzles total. The aft pair of turrets is directly occluded by the forward pair. Do not add barrels or housings elsewhere.
+The nose should be a compact closed faceted armored end face in the center. Replace the large vertical black central grille below the cyan bridge with solid silver/gunmetal frontal plating and a narrow horizontal seam. Keep the silhouette shallow. Do not expose long dorsal fuselage length in this level front view.
+
+2. SIDE (lower right): the current bridge and guns sit too far aft, and the shoulder panel projects from the rear of the ship instead of the front. REPOSITION these parts to agree with TOP. Treat the visible profile's nose at LEFT as 0% and nozzle at RIGHT as 100%:
+- Tiny low command bridge center: 21% of the nose-to-tail length.
+- FIRST low gun turret center: 25% of the length, immediately behind the bridge.
+- SECOND low gun turret center: 40% of the length. Two low twin-barrel turrets in profile, both barrels pointing LEFT.
+- The broad thick shoulder SIDE ARMOR lies below these guns, from 18% to 49% of the length. This is the widest part of the actual Corvette. Put the large chamfered armor panel and its grille at the FRONT HALF of the profile, under both guns.
+- Behind the shoulder, 49% to 77%, show the narrow central service spine as a LOW straight plated side wall, with small dark vents, subtle brass hardware and cyan service lamps. Do not use a bulky cruiser-like rear shoulder in this area.
+- The cylindrical aft engine remains at 77% to 100%, lying along the horizontal thrust axis with an edge-on vertical nozzle rim at the right.
+- The armored lower hull is deeper beneath the FRONT shoulder and transitions smoothly into the rear spine and engine mount.
+Keep nose-left and stern-right. This must be an exact FLAT SIDE ELEVATION. Remove the broad horizontal roof planes above the shoulder and rear spine; horizontal surfaces disappear when viewed edge-on. Draw only the side armor face, upper contour, belly contour, two gun silhouettes and the low bridge. No isometric angle, second far wing, extra turret, stacked engine, end-on circular exhaust disc or tall tail.
+Keep the same fine panel textures, silver titanium, dark gray structure, brass and cyan. The new side profile is a stout escort with forward shoulders and two compact rear pods as shown in the plan, not a long cruiser with mid-aft shoulders.
+
+Everything else stays unchanged, especially the top view's FOUR twin-barrel mounts and the detailed distinct BOTTOM. Exactly five views. No extra text.

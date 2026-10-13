@@ -19,11 +19,23 @@ use sim::{
     TradeEvent, TransitMode, Vec2,
 };
 
+/// v49: §fuel-overhaul — Uranium/Deuterium/Antimatter fleet stores
+/// (`GhostView.uranium`, `helium3`, `antimatter` and capacities), the Slow
+/// transit mode, solar plants (`PowerView.fuel` optional), SetDepotRule and
+/// the corp's served depot rules, new goods and structures.
+/// v48: §power — per-planet grids (`BodyView.power`), the Power Plant, and
+/// Power in the factor chains (`AssignmentView.power`, `AcademyRow.power`).
+/// v47: §rare-materials — each research catalog entry carries its goods
+/// basket (`supplies`).
+/// v46: §belts phase 4 — the Mining Belt Station: AnchorStation,
+/// UnanchorStation, StationLoad, station freight stops and a fleet's anchor.
+/// v45: §pockets — ProspectBelt, MineBelt `pocket`, belt pocket rows and the
+/// six pocket commodities.
 /// v34: advanced industry goods and static factory recipes/research prerequisites.
 /// Binary MessagePack transport: bump the WebSocket subprotocol and the
 /// client's wire version together; old text clients must refresh, not silently
 /// misinterpret binary data. Welcome retains the version for the UI contract.
-pub const PROTOCOL_VERSION: u32 = 40;
+pub const PROTOCOL_VERSION: u32 = 49;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +48,19 @@ pub enum ClientMsg {
     DeployOutpost { fleet_id: EntityId, system_id: EntityId, body_id: u32,
         outpost: sim::industry::OutpostKind, commodity: Commodity },
     SkimFuel { fleet_id: EntityId, system_id: EntityId },
+    /// §belts: send a fleet's Mining Barges to work one ore of a charted belt.
+    MineBelt { fleet_id: EntityId, system_id: EntityId, body_id: u32, ore: Commodity,
+        /// §pockets: work the found pocket of `ore`, not the belt's own ore.
+        #[serde(default)]
+        pocket: bool },
+    /// §pockets: prospect a charted belt with a Scout or Mining Barge.
+    ProspectBelt { fleet_id: EntityId, system_id: EntityId, body_id: u32 },
+    /// §belts: anchor a lone Mining Belt Station at a charted belt.
+    AnchorStation { fleet_id: EntityId, system_id: EntityId, body_id: u32 },
+    /// §belts: free an anchored station, or stop one on its way.
+    UnanchorStation { fleet_id: EntityId },
+    /// §belts: load an idle freighter beside your station from its hold.
+    StationLoad { fleet_id: EntityId, station_id: EntityId, commodity: Commodity, units: u32 },
     ReserveProject { system_id: EntityId, target: sim::industry::ProjectTarget, reserve: bool },
     StartColonyProject { system_id: EntityId, body_id: u32,
         project: sim::industry::ColonyProjectKind, commodity: Commodity },
@@ -101,6 +126,10 @@ pub enum ClientMsg {
         fleet_id: EntityId,
         target_id: EntityId,
     },
+    /// Raise an interdiction field where the fleet is when the order arrives.
+    DeployInterdiction {
+        fleet_id: EntityId,
+    },
     DefendSystem {
         fleet_id: EntityId,
         system_id: EntityId,
@@ -164,6 +193,9 @@ pub enum ClientMsg {
         system: EntityId,
     },
     /// Dispatch an Authority Astral Assistance tender to a fuel-stalled fleet.
+    /// §fuel-overhaul: keep `target` units of a fuel at one of your systems,
+    /// shipped by the Authority (0 clears the rule).
+    SetDepotRule { system_id: EntityId, commodity: Commodity, target: u32 },
     RequestFuelRescue {
         fleet_id: EntityId,
     },
@@ -177,6 +209,14 @@ pub enum ClientMsg {
     /// §TCA: toggle whether one of the player's BLOCKADING fleets also engages
     /// Authority freight arriving at the strangled system. Instant local policy.
     SetEngageFreight {
+        fleet_id: EntityId,
+        on: bool,
+    },
+
+    /// §blockade-running: set whether one of the player's freighter fleets runs
+    /// a held blockade at its destination instead of waiting outside it.
+    /// Light-delayed to the fleet like any configuration.
+    SetRunBlockades {
         fleet_id: EntityId,
         on: bool,
     },
@@ -266,6 +306,15 @@ pub enum ClientMsg {
         loadout: sim::Loadout,
     },
 
+    /// §orbital-defense: refit one hardpoint of the system's station (needs an
+    /// Ordnance Foundry there; crates come from the system's module ledger).
+    FitStation {
+        system_id: EntityId,
+        mount: u8,
+        #[serde(default)]
+        fit: sim::Loadout,
+    },
+
     /// Develop one of the player's owned systems (§step1 structure sink), e.g. an
     /// Extractor tier that raises its output — costs a recipe, completes over time.
     DevelopSystem {
@@ -274,6 +323,14 @@ pub enum ClientMsg {
         /// §bodies: the body to build on; omitted (old clients) auto-sites.
         #[serde(default)]
         body_id: Option<u32>,
+    },
+
+    /// §construction: cancel a structure still waiting for its world's work
+    /// slot (`job_id` from that system's served build list). Light-delayed;
+    /// the goods return to the system stockpile on arrival.
+    CancelBuild {
+        system_id: EntityId,
+        job_id: u64,
     },
 
     /// §economy Part 3: post workforce crews (and §Part 4: specialists from the
@@ -671,6 +728,51 @@ pub struct FoundingView {
     /// ids are objectives, not survey results: composition/geology still arrive
     /// only through the ordinary served system picture.
     pub survey_candidates: Vec<EntityId>,
+    /// §founding R3: the Authority already replaced the starter Freighter.
+    pub freighter_replaced: bool,
+    /// §founding R6: charter stipends paid so far, in milestone order.
+    pub stipends: Vec<StipendView>,
+    /// §founding R7: a hull that turned back from the recovery site because of
+    /// a threat, once that report has reached command.
+    pub turned_back: Option<EntityId>,
+    /// §belts: the charted belt the barge lesson points at. It is always in
+    /// a system the corporation surveyed or owns.
+    pub belt_target: Option<BeltTargetView>,
+}
+
+/// §belts: a belt by its system and its body id within that system.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct BeltTargetView {
+    pub system: EntityId,
+    pub body: u32,
+}
+
+/// §founding R6: one paid charter milestone stipend.
+#[derive(Debug, Clone, Serialize)]
+pub struct StipendView {
+    pub stage: sim::FoundingStage,
+    pub title: &'static str,
+    pub credits: f64,
+}
+
+/// §founding R10: the charter ledger — the next goals after founding.
+#[derive(Debug, Clone, Serialize)]
+pub struct CharterLedgerView {
+    pub done: u32,
+    pub total: u32,
+    /// The next unfinished goals, in ledger order (at most three).
+    pub goals: Vec<LedgerGoalView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LedgerGoalView {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub detail: &'static str,
+    pub metric: sim::charter::LedgerMetric,
+    pub progress: f64,
+    pub target: f64,
+    pub reward: f64,
 }
 
 /// §TCA: one entry of an Authority freighter's MANIFEST, as a viewer may read it.
@@ -863,6 +965,9 @@ pub struct EngagementEstimate {
     pub defenses_age: Option<f64>,
     /// Scouted platform tiers folded into the target, if a snapshot covered it.
     pub platform_tiers: Option<u32>,
+    /// §orbital-defense: the scouted station level folded in, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub station_level: Option<u32>,
     /// §tactical T4: the Monte Carlo readout — attacker-favorable fraction over
     /// `runs` rollouts of the REAL engine on derived seeds ("68% favorable").
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1040,10 +1145,62 @@ pub struct BuildOptionView {
     pub build_secs: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub research_prerequisite: Option<&'static str>,
+    /// Other programmes whose completed effects unlock the same structure.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub research_alternatives: Vec<&'static str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tiers: Vec<StructureTierView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consumes_slot: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_population: Option<u32>,
+    /// §gaia: the environment a world must have (Living Terraces: "gaia").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requires_environment: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversion: Option<ConversionRecipeView>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub refining_recipes: Vec<ConversionRecipeView>,
+}
+
+/// Explicit level-specific structure recipe and benefit, sent with Welcome.
+#[derive(Debug, Clone, Serialize)]
+pub struct StructureTierView {
+    pub tier: u32,
+    pub label: String,
+    pub costs: Vec<StockSlot>,
+    pub build_secs: f64,
+    pub research_prerequisite: Option<&'static str>,
+    pub description: String,
+    /// A yard the system must already hold for this level (§orbital-defense).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requires: Option<YardNeedView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct YardNeedView {
+    pub yard: &'static str,
+    pub tier: u32,
+}
+
+/// §orbital-defense: a station as its owner knows it.
+#[derive(Debug, Clone, Serialize)]
+pub struct StationView {
+    pub level: u32,
+    pub name: &'static str,
+    /// The body it orbits.
+    pub body_id: u32,
+    /// One per hardpoint: its fit (empty = the stock beam battery) and its
+    /// hull fraction (0 = knocked out).
+    pub mounts: Vec<MountView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MountView {
+    pub modules: Vec<sim::ModuleKind>,
+    pub health: f64,
+    /// Knocked out: silent until repaired to a quarter of its hull.
+    pub offline: bool,
 }
 
 /// Static factory recipe, sent once with Welcome. Fractional inputs are per
@@ -1066,17 +1223,38 @@ pub struct StockSlot {
 /// The BLOCKADE at a system as a participant learns it (§contestable-territory).
 /// Only ever populated for the besieger and the owner (fog-safe — see the
 /// `SystemStateView.blockade` doc). `by` names the blockading corp; `since` is
-/// when the unbroken blockade began; `by_me` marks the viewer as the besieger.
-#[derive(Debug, Clone, Copy, Serialize)]
+/// when hostile fleets first took station; `by_me` marks the viewer as the
+/// besieger. Stages: CONTESTED while `held_since` is null (the defense still
+/// fights: only a battle), HELD once it is set (defense beaten: logistics cut,
+/// stores stripped), a SIEGE while `siege_since` is set.
+#[derive(Debug, Clone, Serialize)]
 pub struct BlockadeStateView {
     pub by: PlayerId,
     pub since: f64,
     pub by_me: bool,
-    /// §Part 2 SIEGE: sim-time the (defense-suppressed) siege clock started, or
-    /// null if the siege can't progress yet (defenses up, a garrison present, or
-    /// a home system). The client shows progress = (now − siege_since) /
-    /// `GalaxyInfo.siege_secs`; capture becomes possible at full progress.
+    /// Sim-time the blockade took hold, or null while contested.
+    pub held_since: Option<f64>,
+    /// §Part 2 SIEGE: sim-time the capture clock started, or null if it isn't
+    /// running (contested, or a home, which is never captured). Progress =
+    /// (now − siege_since) / `siege_secs`; capture becomes possible at full.
     pub siege_since: Option<f64>,
+    /// The capture clock this system needs: the base stretched by its garrison
+    /// and shortened by a battleship-class besieger on station, as reported.
+    /// Null only where the game loop hasn't filled it (use
+    /// `GalaxyInfo.siege_secs`).
+    pub siege_secs: Option<f64>,
+    /// False at a corporation's home system, which can be blockaded but never
+    /// captured.
+    pub capturable: bool,
+    /// The besieger's name as the players know it ("Pirates", "the Authority"
+    /// for the sentinels).
+    pub by_name: String,
+    /// While held: the chance the blockade catches a freighter running it, as
+    /// reported. For the owner it includes their Blockade Runners research;
+    /// the besieger sees it against an unmodified freighter.
+    pub catch: f64,
+    /// The same, with a Warp Stabilizer on every hull of the runner.
+    pub catch_stabilized: f64,
 }
 
 /// §ground: the GROUND situation at a system — what a landing would have to
@@ -1128,7 +1306,12 @@ pub struct LandingOddsView {
 /// latest earned-work segment so pauses cannot stretch/restart the progress bar.
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildStateView {
+    /// §construction: the sim's job id, so a waiting structure can be cancelled.
+    pub id: u64,
     pub key: String,
+    /// Ship's original yard from the same delayed report (including legacy jobs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub yard: Option<String>,
     /// Absent for waiting structures or legacy jobs with no recorded start.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_time: Option<f64>,
@@ -1264,16 +1447,21 @@ pub struct SystemStateView {
     pub refining_sites: Vec<RefiningSiteView>,
     /// Number of Fuel Refinery tiers here (§buildings step 3b) — owner-only.
     pub refinery_tier: u32,
-    /// BLOCKADE state (§contestable-territory Part 1), if this system is under
-    /// blockade. Populated for the two PARTICIPANTS only, each light-honestly:
-    /// the BESIEGER (`by`) sees it via their on-station fleet (no delay); the
-    /// OWNER sees it once the onset light reaches their command center. Third
-    /// parties get `None` here — they observe the fight via `battles`, and the
-    /// eventual capture via the light-delayed ownership change.
+    /// BLOCKADE state (§contestable-territory Part 1), if hostile fleets hold
+    /// station here. Populated for the two PARTICIPANTS only, each from the
+    /// light-delayed report of the system that has reached them (the besieger's
+    /// own timeline lines arrive at once; the readout rides the light like
+    /// everything else). Third parties get `None` here — they observe the fight
+    /// via `battles`, and the eventual capture via the light-delayed ownership
+    /// change.
     pub blockade: Option<BlockadeStateView>,
     /// §ground: what a landing here would face — owner + besieger only (see
     /// `GroundStateView`); null for everyone else.
     pub ground: Option<GroundStateView>,
+    /// §orbital-defense: the system's station, OWNER-ONLY, from the same
+    /// arrived site report as the stockpile. Absent without one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub station: Option<StationView>,
     /// Development slots USED at this system (built tiers + in-progress upgrade
     /// jobs) — owner-only, like `stockpile`; rivals always see 0 (§buildings step 1).
     pub slots_used: u32,
@@ -1505,6 +1693,8 @@ pub struct AcademyRow {
     pub staffing: f64,
     pub skill: f64,
     pub food: f64,
+    /// §power: the planet's grid.
+    pub power: f64,
     pub rate: f64,
     /// False → the lab can't cover its drip this tick (amber in the UI).
     pub supplied: bool,
@@ -1525,6 +1715,9 @@ pub struct ProgrammeInfo {
     pub blurb: String,
     /// Cost in throughput-seconds (the ETA denominator context).
     pub cost: f64,
+    /// §rare-materials: the goods each Academy draws per rate-second while
+    /// funding it (`sim::research::basket`).
+    pub supplies: Vec<(sim::Commodity, f64)>,
 }
 
 /// §research R6 / §perf Part B: one programme node's DYNAMIC slice — the
@@ -1562,9 +1755,12 @@ pub struct BodyView {
     pub population_capacity: Option<f64>,
     pub id: u32,
     pub name: String,
-    /// Kind slug: rocky | terrestrial | ocean | ice | gas_giant.
+    /// Kind slug: rocky | terrestrial | ocean | ice | gas_giant | asteroid_belt.
     pub kind: String,
     pub parent: Option<u32>,
+    /// §belts: an asteroid belt's type and picture. Belts are withheld until
+    /// the viewer has charted (surveyed) the system.
+    pub belt: Option<BeltView>,
     pub habitable: bool,
     pub size: String,
     pub environment: String,
@@ -1578,6 +1774,8 @@ pub struct BodyView {
     pub population_growth_mult: f64,
     pub provisions_mult: f64,
     pub construction_time_mult: f64,
+    /// Owner-only estimate from the arrived administration/research report.
+    pub structure_build_time_mult: Option<f64>,
     /// Survey-gated mineral multiplier (the grade before resource-specific specials).
     pub mineral_extraction_mult: Option<f64>,
     /// Owner-only live per-body pools; None cannot leak rival population tiers.
@@ -1588,6 +1786,13 @@ pub struct BodyView {
     pub ship_build_time_mult: Option<f64>,
     /// This body's deposits — survey-gated like the system list.
     pub deposits: Option<Vec<DepositView>>,
+    /// §pockets: the hidden pockets of this belt that the VIEWER's corporation
+    /// has found (its report reached command). Never another corporation's.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pockets: Vec<DepositView>,
+    /// §pockets: prospecting passes the viewer has had reported here.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub prospected: u32,
     /// OWNER-ONLY: structures on this body (slug → tier); empty for rivals.
     pub structures: BTreeMap<String, u32>,
     /// OWNER-ONLY: population on this body (millions); 0 for rivals.
@@ -1596,6 +1801,36 @@ pub struct BodyView {
     pub migration_policy: sim::MigrationPolicy,
     /// OWNER-ONLY people already aboard liners bound here; 0 for rivals.
     pub inbound_migrants: u32,
+    /// §power: OWNER-ONLY, this planet's grid as reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub power: Option<PowerView>,
+}
+
+/// §power: one planet's grid — MW drawn against MW available, the factor on
+/// every powered structure here, and its plant's burn.
+#[derive(Debug, Clone, Serialize)]
+pub struct PowerView {
+    pub demand: f64,
+    pub supply: f64,
+    pub power: f64,
+    /// Units of `fuel` per second.
+    pub burn: f64,
+    /// §fuel-overhaul: what the plant burns — none on a Solar Array.
+    pub fuel: Option<Commodity>,
+    pub no_fuel: bool,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+/// §belts: a charted belt's type (stony | metallic | icy | shattered) and its
+/// place in the System View picture (orbit radius and band width, normalised).
+#[derive(Debug, Clone, Serialize)]
+pub struct BeltView {
+    pub kind: String,
+    pub radius: f64,
+    pub width: f64,
 }
 
 /// §economy Part 6: a colony's workforce numbers — owner-only.
@@ -1629,6 +1864,8 @@ pub struct AssignmentView {
     pub staffing: f64,
     pub skill: f64,
     pub food: f64,
+    /// §power: the planet's grid (1 for structures that draw none).
+    pub power: f64,
     /// Planetary geology/special factor. Age/crew thresholds never enter it.
     pub site: f64,
     pub recovery: f64,
@@ -2054,6 +2291,20 @@ pub struct SignalHopView {
     pub frac: f64,
 }
 
+/// An interdiction field in open space, as its arrived light reports it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterdictionFieldView {
+    pub id: EntityId,
+    pub pos: Vec2,
+    pub radius: f64,
+    /// Raised by one of your fleets.
+    pub own: bool,
+    pub fleet: EntityId,
+    /// When it lapses at the latest (it collapses sooner if its destroyer
+    /// leaves or is lost).
+    pub expires_at: f64,
+}
+
 /// §emplacements: one structure standing in open space.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmplacementView {
@@ -2176,10 +2427,24 @@ pub struct GhostView {
     #[serde(default)]
     pub speed: f64,
     /// Owner-only bunker telemetry from this same retarded sighting.
+    /// §fuel-overhaul: `fuel` is the fusion tank in Deuterium of energy
+    /// (including `helium3` units, six each); `fuel_capacity` its space.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fuel: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fuel_capacity: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub helium3: Option<f64>,
+    /// §fuel-overhaul: the fission store (Uranium, Slow warp).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uranium: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uranium_capacity: Option<f64>,
+    /// §fuel-overhaul: the antimatter bottle (jumps); absent capacity 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub antimatter: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub antimatter_capacity: Option<f64>,
     /// Owner-only: this sighting found the fleet held for lack of carried fuel.
     #[serde(default)]
     pub stalled: bool,
@@ -2267,6 +2532,9 @@ pub struct GhostView {
     pub mission_profile: Option<sim::doctrine::MissionProfile>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub industry: Option<sim::industry::FleetIndustry>,
+    /// §belts: OWNER-ONLY — a Mining Belt Station's anchor at a belt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<sim::industry::Anchor>,
     #[serde(default)]
     pub pirate_faction: Option<sim::pirate::PirateFaction>,
     /// §explore Part 2: SURVEY DWELL progress (0..1) — OWNER-ONLY (your own
@@ -2275,6 +2543,10 @@ pub struct GhostView {
     /// when not dwelling.
     #[serde(default)]
     pub survey_progress: Option<f64>,
+    /// OWN fleets only: when its interdiction field generator can raise
+    /// another field (absent: ready, or it carries none), as of this picture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interdiction_ready: Option<f64>,
     /// Arrived owner-only site assignment; never synthesized from a pending order.
     #[serde(default)]
     pub expedition: Option<sim::sites::ExpeditionAssignment>,
@@ -2324,6 +2596,14 @@ pub struct GhostView {
     /// Authority freight. `None` on anyone else's ghost, like `posture`.
     #[serde(default)]
     pub engage_freight: Option<bool>,
+    /// §blockade-running: OWNER-ONLY, on a freighter fleet — whether it runs a
+    /// held blockade at its destination rather than waiting outside.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_blockades: Option<bool>,
+    /// OWNER-ONLY: the system whose held blockade this delivery is waiting
+    /// outside (on the standoff ring, its delivery still open).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_outside: Option<EntityId>,
     /// §light-delayed controls: owner-only served transit setting. Unlike a
     /// local button latch, this can reconcile a pending request after the
     /// fleet's own report returns.
@@ -2400,6 +2680,10 @@ pub enum ServerMsg {
         /// cross the same light gate even for the structure's owner.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         emplacements: Vec<EmplacementView>,
+        /// Interdiction fields whose light has arrived. Public: everyone sees
+        /// a field, wherever it is.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        interdiction_fields: Vec<InterdictionFieldView>,
         /// The hub ticker, light-delayed (§9).
         market: MarketView,
         /// Arrived Market Hub account report, or explicit report_pending.
@@ -2410,6 +2694,10 @@ pub enum ServerMsg {
         charter: CharterView,
         /// The viewer's server-authoritative opening arc and founder safety.
         founding: FoundingView,
+        /// §founding R10: the charter ledger, once it opens (the first
+        /// guarded export). Owner-only.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        charter_ledger: Option<CharterLedgerView>,
         /// §TCA: the Market Hub freight desk — timetable, terms per owned
         /// destination, and the player's OWN shipment queue. Owner-only, fresh
         /// (it is the player's own administration, like the wallet).
@@ -2466,6 +2754,9 @@ pub enum ServerMsg {
         exploration_journal: Option<Vec<sim::sites::JournalEntry>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         standing_orders: Option<Vec<StandingOrder>>,
+        /// §fuel-overhaul: the corp's fuel depot rules (sent with standing orders).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        depot_rules: Option<Vec<sim::industry::DepotRule>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         battle_reports: Option<Vec<BattleReportView>>,
         #[serde(skip_serializing_if = "Option::is_none")]

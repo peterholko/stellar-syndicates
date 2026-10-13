@@ -4,3 +4,9 @@
 .system-defense small { display: block; opacity: .75; overflow-wrap: anywhere; }
 .system-defense-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-block: var(--space-2); }
 .system-defense-actions button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.system-station { display: flex; align-items: center; gap: var(--space-3); padding-block: var(--space-2); border-bottom: 1px solid var(--border); }
+.system-station img { width: 72px; height: 72px; object-fit: contain; flex: none; }
+.system-station > div { display: grid; gap: var(--space-1); min-width: 0; }
+.system-station-mount.is-editing { background: color-mix(in srgb, var(--accent) 6%, transparent); padding-inline: var(--space-2); }
+.system-station-next { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding-block: var(--space-2); border-bottom: 1px solid var(--border); }
+.system-station-next small { flex: 1 1 16rem; }

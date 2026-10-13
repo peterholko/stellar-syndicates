@@ -2,7 +2,7 @@ import type { CoreContext } from "./types";
 import type { ExpeditionTask, ExplorationSiteView, ExplorationJournalEntry } from "../protocol";
 import type { ViewState } from "../state";
 import { label } from "../icons";
-import { shipKindLabel } from "../core/derive/fleet";
+import { guardCapable, shipKindLabel } from "../core/derive/fleet";
 import { deepExpeditionReason, expeditionCapable, explorationOrder, siteArt, siteStatus, siteTitle } from "../core/derive/exploration";
 import { MODULES, isBlueprintOnly } from "../core/derive/equipment";
 import "../styles/exploration.css";
@@ -92,7 +92,7 @@ function siteDetail(st: ViewState, site: ExplorationSiteView): string {
       `${({ investigate: "Investigating", recover: "Recovering", restore: "Restoring", study: "Studying", extract: "Extracting" })[assignment.task]} · ${Math.round(f.survey_progress * 100)}%`);
     return `<div class="exploration-fleet"><b>${esc(shipKindLabel(f.kind))} · ${esc(f.id)}</b><div>
       ${activity ? `<span>${activity}</span>` : ""}
-      ${!d || hasCargo ? `<button type="button" ${attrs(task, site.id, f.id)} ${assignment?.task === task ? "disabled" : ""}>Travel here</button>` : ""}
+      ${!d || hasCargo ? `<button type="button" ${attrs(task, site.id, f.id)} data-coach="travel-here" ${assignment?.task === task ? "disabled" : ""}>Travel here</button>` : ""}
       ${d?.kind === "station" && !d.restored_by ? `<button type="button" ${attrs("restore", site.id, f.id)} ${canRestore && assignment?.task !== "restore" ? "" : "disabled"}>Restore · 60s</button>` : ""}
       </div>${d?.kind === "station" && !d.restored_by && !canRestore ? `<small>Carry 12 Machinery + 8 Electronics to restore.</small>` : ""}</div>`;
   }).join("");
@@ -106,10 +106,26 @@ function siteDetail(st: ViewState, site: ExplorationSiteView): string {
     ${d?.restored_by ? `<p>${d.restored_by === st.playerId ? "Your sensor outpost" : "Restored by another corporation"}.</p>` : ""}
     ${d?.lead ? `<section class="exploration-lead"><h4>Recovered coordinates</h4><p>${esc(d.lead.clue)}</p><button type="button" ${attrs("open", d.lead.site)}>Follow lead →</button></section>` : ""}
     ${deepHtml(st, site)}
+    ${d && hasCargo ? guardedHtml(st, site) : ""}
     ${!d || hasCargo || (d.kind === "station" && !d.restored_by) ? `<section><h4>${d ? "Dispatch Freighter" : "Dispatch Scout"}</h4>
       <div class="exploration-fleets">${buttons || `<p>${d ? "A Freighter" : "A Scout"} is required.</p>`}</div>
       </section>` : ""}
     ${noteHtml(st, site.id, "site")}</section>`;
+}
+
+/** §founding R3: one order for an escorted recovery (Freighter + guard). */
+function guardedPair(st: ViewState, site: ExplorationSiteView) {
+  const freighter = st.ghosts.find(g => g.own && expeditionCapable(g, "recover") && g.expedition?.site !== site.id);
+  const escort = st.ghosts.find(g => guardCapable(g) && g.id !== freighter?.id);
+  return { freighter, escort };
+}
+function guardedHtml(st: ViewState, site: ExplorationSiteView): string {
+  const { freighter, escort } = guardedPair(st, site);
+  const reason = !freighter ? "A Freighter is required." : !escort ? "An Interceptor or other warship is required as escort." : "";
+  return `<section class="exploration-guarded"><h4>Guarded recovery</h4>
+    <p>Send a Freighter with an escort in one order. Escorted hulls keep working through a privateer; the escort engages it.</p>
+    <button type="button" class="is-primary" ${attrs("guarded", site.id)} data-coach="guarded-recovery" ${reason ? "disabled" : ""}>Dispatch guarded recovery</button>
+    ${reason ? `<small>${esc(reason)}</small>` : ""}</section>`;
 }
 
 function deepHtml(st: ViewState, site: ExplorationSiteView): string {
@@ -187,6 +203,14 @@ export function handleExplorationAction(button: HTMLElement, ctx: CoreContext): 
     ctx.state.selectedExplorationSiteId = site.id;
     if (action === "center") ctx.renderer.centerOnWorld(site.pos);
     ctx.renderer.stateVersion++;
+    return true;
+  }
+  if (action === "guarded") {
+    const { freighter, escort } = guardedPair(ctx.state, site);
+    const move = freighter && explorationOrder(ctx.state, site, freighter, "recover");
+    if (!move || !escort || !freighter) return true;
+    const guarded = ctx.state.ghosts.some(g => g.own && g.guard_target === freighter.id);
+    ctx.intent.beginFleetCommand(guarded ? move : [move, { type: "GuardFleet", interceptor_id: escort.id, target_id: freighter.id }]);
     return true;
   }
   if (!["investigate", "recover", "restore", "study", "extract"].includes(action)) return true;

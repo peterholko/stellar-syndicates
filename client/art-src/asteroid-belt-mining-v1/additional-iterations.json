@@ -1,0 +1,23 @@
+{
+  "mode": "built-in image_gen",
+  "additionalIterations": [
+    {
+      "id": "mining-barge-framing",
+      "prompt": "Use case: precise-object-edit. Image 1 is the final Mining Barge sprite. Change ONLY framing: pull the orthographic camera back slightly so the ship is SMALLER and centered on the square transparent canvas. On a 1254 by 1254 canvas the complete ship must fit inside y=110 through y=1144, approximately 82% of the height, with at least 110 pixels of completely clear transparent padding above both cutter tips and below both engines. Preserve the EXACT existing design and all details: two bow cutters, central crusher, broad front-heavy silhouette, ONE large ribbed covered hopper, one port-side bridge, two aft engines, all original hull plating and colors. Do not stretch the ship or alter its proportions. The nose points exactly UP. Real RGBA transparency around it and between components. No text, no labels, no background color, no additional objects, no cast shadows, no glow haze.",
+      "source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-80ab10be-a2a4-4798-b7e5-b9fb00712dab.png",
+      "file": "client/art-src/mining-barge-reference-v1/mining-barge.png",
+      "purpose": "Transparent clearance around the existing hull design; no design change intended."
+    },
+    {
+      "id": "supporting-material-strip",
+      "prompt": "Use case: stylized-concept. Asset type: flat base-color MATERIAL TEXTURE STRIP for reconstructing the two referenced industrial ships/stations in 3D. Images 1 and 2 are material/style references only. Produce a 3:1 landscape strip, 1776 by 592 requested, containing exactly THREE equal square flat seamless material swatches edge-to-edge in a single horizontal row, NO gaps, NO borders, NO labels. All swatches are flat orthographic surface textures, not depicted objects: no perspective, no bevel shading, no cast shadows, no lights or glowing pixels. LEFT THIRD: pale cool silver titanium industrial armor, broad rectangular plate divisions, extremely fine dark recessed seams, small restrained scuff marks, occasional tiny rivets. Most pixels are pale silver, not dark cavities. MIDDLE THIRD: charcoal gunmetal mechanical plating, slightly irregular broad panel divisions, fine subtle straight grooves, restrained wear, no bright color. RIGHT THIRD: muted industrial warm brass and ochre alloy, fine straight brushed metal grain, subtle etched seams and bolt details, no black hazard stripes. Match the refined machined materials and scale of detail of the provided Stellar Syndicates reference ships. Continuous material fills EVERY pixel of each third. No objects, no hull silhouettes, no text, no icons, no branding, no checkerboard, no white background, no gradients, no illumination highlights. These are PBR albedo swatches to cover narrow mesh edges and fittings that are hidden in the five-view drawings.",
+      "source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-dbecfdc1-8e8e-47be-8277-15364711ec61.png",
+      "file": "client/art-src/ship-models/mining-fleet-v1/material-strip.png",
+      "references": [
+        "client/art-src/mining-barge-reference-v1/mining-barge-reference.png",
+        "client/art-src/mining-belt-station-reference-v1/mining-belt-station-reference.png"
+      ],
+      "purpose": "Reference-matched material swatches for reconstructed walls and narrow mesh edges; supplementary model texture source."
+    }
+  ]
+}

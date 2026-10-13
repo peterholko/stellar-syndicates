@@ -1,0 +1,33 @@
+Use case: stylized-concept.
+Asset type: five-view 2D spaceship reference sheet for building a fully textured 3D game model.
+Primary request: Create ONE polished reference image of the existing LARGE FREIGHTER from Stellar Syndicates, with exactly FRONT, BACK, TOP, BOTTOM and SIDE views.
+
+REFERENCE ROLES
+Image 1 is the authoritative LARGE FREIGHTER design: preserve its plan silhouette, component counts, placement, industrial textures and colors.
+Image 2 is the SMALL FREIGHTER reference sheet, a presentation and rendering-style guide ONLY. Borrow its white page, label style and clear view arrangement. Do not borrow its central spine, four cargo sections, two engines or small hull.
+
+LARGE FREIGHTER IDENTITY
+A heavy unarmed commercial CATAMARAN carrier. Two long, thick, parallel cargo keels, with THREE consecutive rectangular cargo sections along EACH keel — SIX cargo sections total. A distinctive long OPEN rectangular channel runs down the center. This middle channel is genuinely empty: no longitudinal center spine, cargo stack or deck filling it.
+The keels connect only at a transverse forward bridge/crossbeam near the forward quarter, and at a transverse rear machinery yoke. The forward crossbeam has visible graphite X-braced structures. A narrow, elongated, faceted command cabin projects FORWARD on the centerline from that forward beam, with a small cyan windshield, silver tapered nose and short axial sensor probe.
+Ahead of the first cargo section on each keel is a short tapered armored keel bow/cap, as in Image 1.
+The aft crossbeam carries a central squat rectangular reactor/service housing with a gold-bordered access panel. The engines are exactly FOUR industrial thrusters, organized as TWO CLOSELY SPACED PAIRS: two at the end of the left keel and two at the end of the right keel. All four share one horizontal thrust-axis height. Preserve the wide gap between the port pair and starboard pair. No fifth central engine, no two-engine substitution.
+Keep the two broad longitudinal graphite retaining straps, gold cargo clamps, silver segmented container plates, dark structural recesses and cyan edge markers. The actual source image controls proportions and shapes; retain its elongated profile.
+
+MATERIALS AND RENDERING
+Match Image 1: off-white and silver painted titanium panels, graphite frame and recessed machinery, restrained warm amber/gold clamps and industrial fittings, small cyan glass and lights. Crisp seams, access panels, vents, bolts and light edge wear, broad readable shapes. Clean colored hard-surface technical concept art, soft neutral shading, sharp outlines and consistent detail across all views. No dramatic lighting, scenery or floor.
+
+PAGE LAYOUT
+Wide landscape white sheet, approximately 2:1. Title "LARGE FREIGHTER" at upper left.
+Two large tall plan views on the left: TOP and BOTTOM, side by side, identical silhouette and scale, noses pointing UP.
+Right-hand column: FRONT at top, BACK in middle, SIDE at bottom. SIDE points LEFT. FRONT and BACK may be enlarged together for readable surface detail, but must have identical scale and coherent width/height. Keep all five ships complete, clearly separated, with ample margins. Labels beneath each view.
+
+PROJECTION RULES — THESE ARE TRUE ORTHOGRAPHIC VIEWS
+TOP: camera directly overhead, zero tilt. Six cargo sections, two tapered keel bows, narrow forward cabin, two transverse crossbeams, a long empty central channel and four engine housings in two rear pairs. Rear nozzle openings are edge-on from above.
+BOTTOM: camera directly below, nose UP, same outline and attachment stations as TOP. A genuinely distinct fully textured ventral design: silver belly armor on both keels and all SIX container undersides, dark support rails, recessed cargo/service access hatches, flush landing-gear doors, cooling grilles, seams, fasteners and restrained cyan service lights. Finish the command cabin underside, both crossbeam undersides, central aft machinery and all four engine undersides. Keep the central channel EMPTY and white through the opening. No cockpit glazing on the belly, no pasted dorsal roof, no blank gray surface.
+FRONT: camera LEVEL and exactly on the nose axis, zero elevation. The long fore-aft dimension completely collapses: no long vertical pointed cabin, no upright axial probe and no overhead cargo lids. Show the small broad faceted nose end and shallow cyan windshield in the center, on the crossbeam, with the two substantial armored keel-bow END FACES outboard. The later cargo sections are hidden behind their corresponding forward keel caps. The axial probe points straight at the camera and appears only as a small circular end. A low, broad industrial silhouette, with a slightly raised central cabin. All vertical surfaces are true frontal faces; only thin bevel edges may reveal top surfaces. NO rear-facing exhaust circles or cyan engine discs in FRONT.
+BACK: true LEVEL stern-on elevation with zero elevation, matching FRONT width and height. Exactly FOUR circular cyan exhaust apertures, arranged left pair / central solid service housing / right pair. Dark layered nozzle rims, gold fittings, squat center reactor cap and outboard cargo end faces. Four engines in a single horizontal row, no vertical stack. The forward cabin is mostly occluded, with at most its small solid rear roofline visible. No windshield on the back, no probe sticking upward, no overhead tail planform.
+SIDE: strict level port-side profile, nose LEFT and exhaust RIGHT, camera zero yaw and zero elevation. Short horizontal sensor probe, modest raised command cabin at the forward end; tapered near keel bow; THREE consecutive deep boxy cargo sections, with panel seams and strap returns; rear drive module with a horizontal cylindrical engine profile ending in a vertical nozzle rim. Far-side keel and engines overlap correctly. The two adjacent engines in the near pair also overlap in this exact profile — no vertically stacked engines or front-facing exhaust circles. Show side walls and narrow bevels, never broad overhead roof panels. Cabin, cargo and engine heights must agree with the front/back elevations.
+
+All views describe one ship with matching component counts, length stations, thickness and material placement. Infer hidden surfaces conservatively from Image 1.
+Text exactly: "LARGE FREIGHTER", "TOP", "BOTTOM", "FRONT", "BACK", "SIDE".
+Avoid: extra views, perspective beauty shot, isometric angle, extra cargo rows, filled central gap, central longitudinal spine, wings, weapons, turrets, missiles, other ships, people, labels beyond those specified, dimensions, invented specifications, grid, starfield, floor, cast shadows, long exhaust trails, checkerboard, logos, watermark.

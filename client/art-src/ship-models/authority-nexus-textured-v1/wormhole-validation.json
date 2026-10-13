@@ -1,0 +1,16 @@
+{
+  "method": "Native offscreen OpenGL compilation and rendering of the actual GLSL with Three.js tone/color chunks, exported portal triangles and sRGB reference atlas; browser UI not exercised",
+  "renderer": "Apple M2 / OpenGL 4.1 Metal - 90.5",
+  "shaderCompiledAndLinked": true,
+  "framesSeconds": [
+    0,
+    2,
+    4,
+    6
+  ],
+  "meanRgbChangeAtTwoSeconds": 22.7393,
+  "longLoopMaxRgbDifference": 1,
+  "zeroPowerIsBlack": true,
+  "runtimeTests": "Pause/resume, close/restore, reduced-motion initialization, time wrapping, geometry/material isolation, shared-texture cleanup passed",
+  "effectSha256": "88d44b64f39c52df2c69576c6d1cf39ac58a1cd747111723e16e611d61d51ed4"
+}

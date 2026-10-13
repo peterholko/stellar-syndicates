@@ -1,0 +1,62 @@
+[
+  {
+    "name": "mixed",
+    "title": "Mixed fleets",
+    "file": "mixed.json",
+    "rounds": 94
+  },
+  {
+    "name": "swarm",
+    "title": "Interceptor swarm vs capitals",
+    "file": "swarm.json",
+    "rounds": 109
+  },
+  {
+    "name": "torpedo",
+    "title": "Torpedo strike vs a screen",
+    "file": "torpedo.json",
+    "rounds": 160
+  },
+  {
+    "name": "titan",
+    "title": "A titan's last stand",
+    "file": "titan.json",
+    "rounds": 206
+  },
+  {
+    "name": "collision",
+    "title": "Collisions in a wreck field",
+    "file": "collision.json",
+    "rounds": 85
+  },
+  {
+    "name": "formations",
+    "title": "A battle line against an escort ring",
+    "file": "formations.json",
+    "rounds": 89
+  },
+  {
+    "name": "lockdown",
+    "title": "Interceptors hold a retreating battle line",
+    "file": "lockdown.json",
+    "rounds": 78
+  },
+  {
+    "name": "escorts",
+    "title": "Destroyer escorts against an interceptor swarm",
+    "file": "escorts.json",
+    "rounds": 59
+  },
+  {
+    "name": "home",
+    "title": "Relief strikes a blockade at the world",
+    "file": "home.json",
+    "rounds": 85
+  },
+  {
+    "name": "citadel",
+    "title": "A battle line besieges a Citadel",
+    "file": "citadel.json",
+    "rounds": 135
+  }
+]

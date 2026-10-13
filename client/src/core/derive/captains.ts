@@ -9,7 +9,7 @@ import { shipKindLabel } from "./fleet";
 // served exact composition explains why rank limits both hull type and count.
 const CAPTAIN_COMMAND_WEIGHT: Record<ShipKind, number> = {
   tiny_freighter: 1, small_freighter: 1, large_freighter: 2, heavy_freighter: 4, bulk_freighter: 8,
-  scout: 1,
+  scout: 1, survey_probe: 1, mining_barge: 1, mining_belt_station: 4,
   convoy: 1,
   builder: 1,
   freighter: 1,

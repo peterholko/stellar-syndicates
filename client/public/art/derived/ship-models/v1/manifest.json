@@ -1,0 +1,205 @@
+{
+  "recipe": "approved-lod2-byte-identical-v1",
+  "ships": {
+    "raider": {
+      "id": "interceptor",
+      "title": "Interceptor",
+      "triangles": 1664,
+      "url": "/art/derived/ship-models/v1/interceptor-lod2.glb?v=7870f44e505c",
+      "poster": "/art/derived/ships/models-v1/previews/raider-768.webp",
+      "bytes": 987548,
+      "sha256": "7870f44e505c28c83d60fcb92b5caacfa89febd5b3bd18bbd1034447325dbb4b",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/interceptor-lod2.glb"
+    },
+    "corvette": {
+      "id": "corvette",
+      "title": "Corvette",
+      "triangles": 7020,
+      "url": "/art/derived/ship-models/v1/corvette-lod2.glb?v=50643f38d71e",
+      "poster": "/art/derived/ships/models-v1/previews/corvette-768.webp",
+      "bytes": 1983528,
+      "sha256": "50643f38d71e6f21aa71e4540d623cf61da991d00ad63f7e27cc08ee8cc6362a",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/corvette-lod2.glb"
+    },
+    "destroyer": {
+      "id": "destroyer",
+      "title": "Destroyer",
+      "triangles": 4780,
+      "url": "/art/derived/ship-models/v1/destroyer-lod2.glb?v=54d85abce516",
+      "poster": "/art/derived/ships/models-v1/previews/destroyer-768.webp",
+      "bytes": 1764824,
+      "sha256": "54d85abce51663b2d86e1ab4be581a7ccb82e4b9c2cff6870e3bb0f87e3bfb0c",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/destroyer-lod2.glb"
+    },
+    "cruiser": {
+      "id": "cruiser",
+      "title": "Cruiser",
+      "triangles": 5374,
+      "url": "/art/derived/ship-models/v1/cruiser-lod2.glb?v=af03c35126bd",
+      "poster": "/art/derived/ships/models-v1/previews/cruiser-768.webp",
+      "bytes": 1773208,
+      "sha256": "af03c35126bdd92501889e77c738d5c18123dfaf8a7b0817b2b808de2e308e38",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/cruiser-lod2.glb"
+    },
+    "battleship": {
+      "id": "battleship",
+      "title": "Battleship",
+      "triangles": 11270,
+      "url": "/art/derived/ship-models/v1/battleship-lod2.glb?v=c810b3d3d942",
+      "poster": "/art/derived/ships/models-v1/previews/battleship-768.webp",
+      "bytes": 2397320,
+      "sha256": "c810b3d3d942c1c8da8b02846dcd77a7786a8c55bf1444cf7f8b531de7ddc7e7",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/battleship-lod2.glb"
+    },
+    "dreadnought": {
+      "id": "dreadnought",
+      "title": "Dreadnought",
+      "triangles": 16036,
+      "url": "/art/derived/ship-models/v1/dreadnought-lod2.glb?v=62aef8f980c9",
+      "poster": "/art/derived/ships/models-v1/previews/dreadnought-768.webp",
+      "bytes": 2902840,
+      "sha256": "62aef8f980c95de619d170edb14e3506f377608a7d8542162f509ee1381473f5",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/dreadnought-lod2.glb"
+    },
+    "titan": {
+      "id": "titan",
+      "title": "Titan",
+      "triangles": 7946,
+      "url": "/art/derived/ship-models/v1/titan-lod2.glb?v=2d189d512ce6",
+      "poster": "/art/derived/ships/models-v1/previews/titan-768.webp",
+      "bytes": 2402896,
+      "sha256": "2d189d512ce6d9b98b6b71515d2a812aac3daa066ecdb2c1de52caf5d350e8d7",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/titan-lod2.glb"
+    },
+    "scout": {
+      "id": "scout",
+      "title": "Scout",
+      "triangles": 3330,
+      "url": "/art/derived/ship-models/v1/scout-lod2.glb?v=387074756c2b",
+      "poster": "/art/derived/ships/models-v1/previews/scout-768.webp",
+      "bytes": 1331680,
+      "sha256": "387074756c2bc4aa5e507f761fd28b553874c5eb6e3fcdffbf37fc378d1a747f",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/scout-lod2.glb"
+    },
+    "colony": {
+      "id": "colony-ship",
+      "title": "Colony Ship",
+      "triangles": 6186,
+      "url": "/art/derived/ship-models/v1/colony-ship-lod2.glb?v=0b7fa06b173a",
+      "poster": "/art/derived/ships/models-v1/previews/colony-768.webp",
+      "bytes": 2402612,
+      "sha256": "0b7fa06b173a9ce4455a6f01f0a2e5b96da4cd6ea81fdf020f5d0fa446d4bcaf",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/colony-ship-lod2.glb"
+    },
+    "transport": {
+      "id": "troop-transport",
+      "title": "Troop Transport",
+      "triangles": 6378,
+      "url": "/art/derived/ship-models/v1/troop-transport-lod2.glb?v=322574af0c2d",
+      "poster": "/art/derived/ships/models-v1/previews/transport-768.webp",
+      "bytes": 2124344,
+      "sha256": "322574af0c2dbc4fdefd7bf3f02a663562ad9e8ed41633537d5780fdebec6a89",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/troop-transport-lod2.glb"
+    },
+    "builder": {
+      "id": "construction-ship",
+      "title": "Construction Ship",
+      "triangles": 4688,
+      "url": "/art/derived/ship-models/v1/construction-ship-lod2.glb?v=f6fe90749531",
+      "poster": "/art/derived/ships/models-v1/previews/builder-768.webp",
+      "bytes": 2284552,
+      "sha256": "f6fe90749531f4418d73f18cf7efc418d5662ff9d07f48c8bae19800ebcbbbfe",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/construction-ship-lod2.glb"
+    },
+    "mining_barge": {
+      "id": "mining-barge",
+      "title": "Mining Barge",
+      "triangles": 4970,
+      "url": "/art/derived/ship-models/v1/mining-barge-lod2.glb?v=60db092d5a95",
+      "poster": "/art/derived/ships/models-v1/previews/mining_barge-768.webp",
+      "bytes": 4913664,
+      "sha256": "60db092d5a953a4fdb15949f56b7eee845da4e30c344ec3fc2d6a4659147b54b",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/mining-barge-lod2.glb"
+    },
+    "mining_belt_station": {
+      "id": "mining-belt-station",
+      "title": "Mining Belt Station",
+      "triangles": 8420,
+      "url": "/art/derived/ship-models/v1/mining-belt-station-lod2.glb?v=5b0ff427be51",
+      "poster": "/art/derived/ships/models-v1/previews/mining_belt_station-768.webp",
+      "bytes": 4669436,
+      "sha256": "5b0ff427be5116c768d12d9a8a13ead14413f9dcdf20969481fc9bb765c3d9ab",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/mining-belt-station-lod2.glb"
+    },
+    "tiny_freighter": {
+      "id": "tiny-freighter",
+      "title": "Tiny Freighter",
+      "triangles": 3624,
+      "url": "/art/derived/ship-models/v1/tiny-freighter-lod2.glb?v=167b0775b5c3",
+      "poster": "/art/derived/ships/models-v1/previews/tiny_freighter-768.webp",
+      "bytes": 1633140,
+      "sha256": "167b0775b5c3da34aa6eaea5cf071f4d83e70d56323251cb0af0f1b139d1821e",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/tiny-freighter-lod2.glb"
+    },
+    "small_freighter": {
+      "id": "small-freighter",
+      "title": "Small Freighter",
+      "triangles": 5506,
+      "url": "/art/derived/ship-models/v1/small-freighter-lod2.glb?v=21c051ba926e",
+      "poster": "/art/derived/ships/models-v1/previews/small_freighter-768.webp",
+      "bytes": 1876280,
+      "sha256": "21c051ba926e8daca3b68b9e1f1b11aa74c868dd3e980f11d21ad928a2609d25",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/small-freighter-lod2.glb"
+    },
+    "convoy": {
+      "id": "medium-freighter",
+      "title": "Medium Freighter",
+      "triangles": 8234,
+      "url": "/art/derived/ship-models/v1/medium-freighter-lod2.glb?v=1e8f612e3a95",
+      "poster": "/art/derived/ships/models-v1/previews/convoy-768.webp",
+      "bytes": 2149528,
+      "sha256": "1e8f612e3a95282769baa78c452100ff63b174c38dbfc1cb29e7b8a95be78c72",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/medium-freighter-lod2.glb"
+    },
+    "large_freighter": {
+      "id": "large-freighter",
+      "title": "Large Freighter",
+      "triangles": 7984,
+      "url": "/art/derived/ship-models/v1/large-freighter-lod2.glb?v=5c5cb24f1da6",
+      "poster": "/art/derived/ships/models-v1/previews/large_freighter-768.webp",
+      "bytes": 2215196,
+      "sha256": "5c5cb24f1da6938edcde756cc5f0332a8e5f6bbc4c9e26870ef2ac1a77d30adf",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/large-freighter-lod2.glb"
+    },
+    "heavy_freighter": {
+      "id": "heavy-freighter",
+      "title": "Heavy Freighter",
+      "triangles": 9192,
+      "url": "/art/derived/ship-models/v1/heavy-freighter-lod2.glb?v=7c86106824b2",
+      "poster": "/art/derived/ships/models-v1/previews/heavy_freighter-768.webp",
+      "bytes": 2327592,
+      "sha256": "7c86106824b26414aeb51018d45a73fc1d08eee7cac1c4caf10fb03091a65bab",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/heavy-freighter-lod2.glb"
+    },
+    "bulk_freighter": {
+      "id": "bulk-freighter",
+      "title": "Bulk Freighter",
+      "triangles": 21442,
+      "url": "/art/derived/ship-models/v1/bulk-freighter-lod2.glb?v=5f9ac9343518",
+      "poster": "/art/derived/ships/models-v1/previews/bulk_freighter-768.webp",
+      "bytes": 2970748,
+      "sha256": "5f9ac9343518ed2eed3fbc39fb2bfebbac8d45c4e282fd1528d6ce1c0e0093ab",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/bulk-freighter-lod2.glb"
+    },
+    "freighter": {
+      "id": "authority-freighter",
+      "title": "Authority Freighter",
+      "triangles": 11368,
+      "url": "/art/derived/ship-models/v1/authority-freighter-lod2.glb?v=9a4038f31e54",
+      "poster": "/art/derived/ships/models-v1/previews/freighter-768.webp",
+      "bytes": 2929848,
+      "sha256": "9a4038f31e548579ca7ad8d1753d0e604da921659852816b8db97d24187468e5",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/authority-freighter-lod2.glb"
+    }
+  }
+}

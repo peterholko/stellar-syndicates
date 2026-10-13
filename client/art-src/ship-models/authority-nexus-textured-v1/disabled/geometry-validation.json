@@ -1,0 +1,14 @@
+{
+  "triangles": 9856,
+  "closedSolidComponents": 368,
+  "portalAbsent": true,
+  "containmentFieldAbsent": true,
+  "reactorEmissionZero": true,
+  "emergencyMarkers": 7,
+  "fracturedStabilizer": 2,
+  "impactCraters": 2,
+  "finiteAttributes": true,
+  "consistentWinding": true,
+  "centralOpeningClear": true,
+  "noReopeningAnimation": true
+}

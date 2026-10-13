@@ -1,0 +1,33 @@
+{
+  "asset": "bulk-freighter-reference.png",
+  "generatedOn": "2026-09-29",
+  "method": "built-in image_gen, reference-guided generation followed by front/side projection and side cargo corrections",
+  "resolution": [
+    1774,
+    887
+  ],
+  "mode": "RGB",
+  "bytes": 1940527,
+  "sha256": "ec4a8cf87c2bfb13436f20ad2a560c8519a745de3df359b2a19b1da74d627c25",
+  "views": [
+    "front",
+    "back",
+    "top",
+    "bottom",
+    "side"
+  ],
+  "referenceInputs": [
+    "../freighters-2026-09-16/bulk-freighter-alpha.png",
+    "../heavy-freighter-reference-v1/heavy-freighter-reference.png"
+  ],
+  "prompts": [
+    "prompt.txt",
+    "projection-correction-prompt.txt",
+    "side-cargo-correction-prompt.txt"
+  ],
+  "generationOutputs": [
+    "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-2dfcb72b-23d6-471f-8cb1-ef907b1cc401.png",
+    "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-79c443e2-9f72-4d05-a964-210b3110fa4a.png",
+    "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-555c1e2f-c8a8-4d01-af5b-aac11b402d1c.png"
+  ]
+}

@@ -189,8 +189,8 @@ export class MobileMapInteraction {
       const distance = this.pinchDistance();
       const midpoint = this.pinchMidpoint();
       const previousMidpoint = this.lastPinchMidpoint;
-      if (previousMidpoint && this.ctx.renderer.viewMode.type === "galaxy" && !this.ctx.renderer.isSystemScrubbing()) {
-        this.ctx.renderer.panBy(midpoint.x - previousMidpoint.x, midpoint.y - previousMidpoint.y);
+      if (previousMidpoint && !this.ctx.renderer.isSystemScrubbing()) {
+        this.pan(midpoint.x - previousMidpoint.x, midpoint.y - previousMidpoint.y);
       }
       if (distance > 0 && this.lastPinchDistance > 0) {
         const factor = distance / this.lastPinchDistance;
@@ -208,9 +208,16 @@ export class MobileMapInteraction {
       this.suppressTap = true;
       this.cancelLongPress();
     }
-    if (this.panning && this.ctx.renderer.viewMode.type === "galaxy" && !this.ctx.renderer.isSystemScrubbing()) {
-      this.ctx.renderer.panBy(point.x - previousX, point.y - previousY);
+    if (this.panning && !this.ctx.renderer.isSystemScrubbing()) {
+      this.pan(point.x - previousX, point.y - previousY);
     }
+  }
+
+  /// A drag moves the galaxy map, or the orrery inside the System View.
+  private pan(dx: number, dy: number): void {
+    const renderer = this.ctx.renderer;
+    if (renderer.viewMode.type === "galaxy") renderer.panBy(dx, dy);
+    else if (renderer.viewMode.type === "system") renderer.systemPanBy(dx, dy);
   }
 
   private pointerUp(event: PointerEvent): void {
@@ -335,7 +342,8 @@ export class MobileMapInteraction {
       }
     }
 
-    if (factor > 1 && renderer.atMaxZoom()) {
+    if (factor > 1 && renderer.atSystemZoomThreshold()
+      && !renderer.fleetUnderPoint(midpoint.x, midpoint.y)) {
       const system = this.systemUnderPoint(midpoint.x, midpoint.y);
       const bodies = system ? this.ctx.state.systems.find((entry) => entry.id === system.id)?.bodies ?? [] : [];
       if (system && renderer.beginSystemScrubIn(system, bodies)) {
@@ -412,6 +420,10 @@ export class MobileMapInteraction {
         this.ctx.state.selectedExplorationSiteId = target.id;
         this.hooks.openSheet({ id: "operations" });
         break;
+      case "operation":
+        this.clearSelection();
+        this.hooks.openSheet({ id: "operations" });
+        break;
       case "ongoingBattle":
         this.hooks.openSheet({ id: "battle", props: { id: target.id } });
         break;
@@ -431,6 +443,9 @@ export class MobileMapInteraction {
             detail: target.detail,
           },
         });
+        break;
+      case "landing":
+        this.hooks.openSheet({ id: "ground", props: { id: target.id } });
         break;
       case "clearSystemBody":
       case "anchor":

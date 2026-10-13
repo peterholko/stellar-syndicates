@@ -5,6 +5,7 @@ import { bindFleetNet, guardCapable as guardCapableForKey, jumpCapable as jumpCa
 import { bindMarketDerive, reservedMarketCredits, spendableMarketCredits } from "../../core/derive/market";
 import type { CoreEvent } from "../../core/events";
 import { formatId } from "../../protocol";
+import { battleNotice, reportNotice } from "../../core/derive/battlenotice";
 import { installPressGuard } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext, Rect, Shell } from "../types";
@@ -12,7 +13,7 @@ import { installDeckDebug } from "./debug";
 import { DeckEmpireRoutes } from "./empire";
 import { type SelectTarget } from "../../core/mapclick";
 import { DeckMapInteraction } from "./map";
-import { mountDeckMarkup } from "./markup";
+import { fitDeckNav, mountDeckMarkup, syncNavMoreBadge } from "./markup";
 import { DECK_ROUTES, DeckRouter, type DeckCrumb, type DeckRoute, type DeckRouteName } from "./router";
 import { DeckCommandStrip } from "./strip";
 import { DeckCommandRoutes } from "./command";
@@ -21,13 +22,18 @@ import { DeckPolicyRoutes } from "./policy";
 import { DeckFleetRoutes } from "./fleet";
 import { DeckLogRoutes } from "./log";
 import { bindResearchNet } from "../../core/derive/research";
-import { gameClock, informationDelay } from "../../core/derive/format";
+import { fmtBuildDur, gameClock, informationDelay } from "../../core/derive/format";
+import { isProjectKey, isStructureJob, needsWorkforce, romanTier, worldSlots } from "../../core/derive/worldbuild";
+import { icon, label } from "../../icons";
+import { liveSimTime } from "../../state";
+import { setHtml } from "../dom";
 import { DeckBottomBand } from "./bottom-band";
 import { DeckRosterRoutes } from "./roster";
 import { DeckStrategicRoutes } from "./strategic";
 import { DeckTheaters } from "./theaters";
 import { DeckToasts } from "./toasts";
 import { DeckWorkspace } from "./workspace";
+import { DeckWelcome } from "./welcome";
 
 const byId = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -42,6 +48,7 @@ class DeckShell implements Shell {
   private strip: DeckCommandStrip | null = null;
   private empire: DeckEmpireRoutes | null = null;
   private command: DeckCommandRoutes | null = null;
+  private welcome: DeckWelcome | null = null;
   private market: DeckMarketRoutes | null = null;
   private policy: DeckPolicyRoutes | null = null;
   private fleet: DeckFleetRoutes | null = null;
@@ -52,6 +59,8 @@ class DeckShell implements Shell {
   private bottomBand: DeckBottomBand | null = null;
   private removeDebug: (() => void) | null = null;
   private chromeSignature = "";
+  /** §construction: the top bar's every-world construction menu is open. */
+  private constructionMenu = false;
   private zoomSignature = "";
   private activeCrumbs: readonly DeckCrumb[] = [];
 
@@ -68,6 +77,11 @@ class DeckShell implements Shell {
     this.map = new DeckMapInteraction(ctx, {
       enteredSystem: (system) => this.router?.go({ name: "system", params: { id: system.id, systemLabel: system.name } }),
       enteredBattle: (id) => this.theaters?.enterBattle(id),
+      watchSystemBattle: (id, systemId) => {
+        const running = this.ctx?.state.battles.some((battle) => battle.id === id) ?? false;
+        this.router?.go({ name: "battle", params: { id, label: running ? "Ongoing battle" : "Battle replay", systemId } });
+        this.theaters?.openBattle(id);
+      },
       returnedToGalaxy: () => {
         if (this.router?.current?.name === "system" || this.router?.current?.name === "world" || this.router?.current?.name === "build") {
           this.router.back();
@@ -77,7 +91,10 @@ class DeckShell implements Shell {
       notice: (html) => this.setStatus(html),
       clearNotice: () => this.strip?.clearStatus(),
     }, signal);
-    this.toasts = new DeckToasts(byId("deck-toast-lane"), (route) => this.router?.go(route), signal);
+    // A world route climbs the zoom ladder like the map does, so Back lands on its system.
+    this.toasts = new DeckToasts(byId("deck-toast-lane"), (route) => route.name === "world"
+      ? this.openWorldPanel(route.params?.systemId ?? "", Number(route.params?.bodyId), route.query)
+      : this.router?.go(route), signal);
     this.strip = new DeckCommandStrip(byId("deck-command-strip"), ctx, {
       notice: (html) => this.setStatus(html),
     }, signal);
@@ -93,6 +110,7 @@ class DeckShell implements Shell {
       go: (route) => this.router?.go(route),
       replace: (route) => this.router?.replace(route),
       openGroundViewer: (id) => this.theaters?.openGround(id),
+      openWorldBuild: (systemId, bodyId, query) => this.openWorldBuild(systemId, bodyId, query),
       notice: (html) => this.setStatus(html),
       toast: (title, message, tone, destination) => this.toasts?.push({ title, message, tone, destination }),
     });
@@ -102,10 +120,18 @@ class DeckShell implements Shell {
       focusFleet: (id) => this.focusInboxFleet(id),
       runFounding: () => this.command?.runFoundingPrimary(),
     });
+    this.welcome = new DeckWelcome(byId("deck-welcome"), ctx, {
+      runFounding: () => this.command?.runFoundingPrimary(),
+      openLog: () => this.router?.go({ name: "log" }),
+    }, signal);
     this.command = new DeckCommandRoutes(byId("deck-workspace-body"), byId("deck-founding"), ctx, {
       go: (route) => this.router?.go(route),
-      openWorld: (systemId, bodyId) => this.openWorldPanel(systemId, bodyId),
+      openWorld: (systemId, bodyId, structure) => {
+        if (structure) this.empire?.focusWorldStructure(structure);
+        this.openWorldPanel(systemId, bodyId);
+      },
       focusFleet: (id) => this.map?.focusFleet(id),
+      openFleetDetails: (id) => this.fleet?.openDetails(id),
       notice: (html) => this.setStatus(html),
       inbox: () => this.log?.items() ?? [],
       runInboxPrimary: (key) => this.log?.runPrimary(key),
@@ -115,12 +141,13 @@ class DeckShell implements Shell {
       notice: (html) => this.setStatus(html),
     });
     this.policy = new DeckPolicyRoutes(byId("deck-workspace-body"), ctx, {
+      go: (route) => this.router?.go(route),
       notice: (html) => this.setStatus(html),
     });
     this.fleet = new DeckFleetRoutes(byId("deck-workspace-body"), ctx, {
       go: (route) => this.router?.go(route),
       notice: (html) => this.setStatus(html),
-    });
+    }, byId("deck-fleet-workbench-body"));
     this.roster = new DeckRosterRoutes(byId("deck-workspace-body"), ctx, {
       go: (route) => this.router?.go(route),
       openWorld: (systemId, bodyId) => this.openWorldPanel(systemId, bodyId),
@@ -180,12 +207,30 @@ class DeckShell implements Shell {
       this.setNavOverflow(false);
       this.openRoute(route);
     }, { signal });
+    byId("deck-construction-chip").addEventListener("click", (event) => {
+      if ((event.target as Element).closest("[data-deck-act=construction-chip]")) this.setConstructionMenu(!this.constructionMenu);
+    }, { signal });
+    byId("deck-construction-menu").addEventListener("click", (event) => {
+      const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act=construction-open]");
+      if (!button) return;
+      this.setConstructionMenu(false);
+      const systemId = button.dataset.system ?? "", bodyId = Number(button.dataset.body);
+      if (button.dataset.build) this.openWorldBuild(systemId, bodyId, {});
+      else this.openWorldPanel(systemId, bodyId);
+    }, { signal });
     window.addEventListener("pointerdown", (event) => {
       const target = event.target;
-      if (!(target instanceof Node) || byId("deck-nav").contains(target) || byId("deck-nav-overflow").contains(target)) return;
+      if (!(target instanceof Node)) return;
+      if (!byId("deck-construction-chip").contains(target) && !byId("deck-construction-menu").contains(target)) this.setConstructionMenu(false);
+      if (byId("deck-nav").contains(target) || byId("deck-nav-overflow").contains(target)) return;
       this.setNavOverflow(false);
     }, { signal });
     window.addEventListener("resize", () => this.setNavOverflow(false), { signal });
+    // The top bar refits whenever its row or a neighbour (credits, the
+    // construction chip) changes size.
+    const navFit = new ResizeObserver(() => fitDeckNav());
+    for (const id of ["deck-topbar", "deck-identity", "deck-stats", "deck-construction-chip", "deck-profile-open"]) navFit.observe(byId(id));
+    signal.addEventListener("abort", () => navFit.disconnect());
     byId("deck-workspace").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
       if (!button) return;
@@ -221,6 +266,25 @@ class DeckShell implements Shell {
     };
     byId("deck-workspace").addEventListener("input", workspaceInput, { signal });
     byId("deck-workspace").addEventListener("change", workspaceInput, { signal });
+    // The fleet details workbench carries the same fleet controls (refits,
+    // posture, tending), so it routes through the same handlers.
+    byId("deck-fleet-workbench").addEventListener("input", workspaceInput, { signal });
+    byId("deck-fleet-workbench").addEventListener("change", workspaceInput, { signal });
+    byId("deck-fleet-workbench").addEventListener("click", (event) => {
+      const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
+      if (button) this.fleet?.handleAction(button, this.router?.current ?? null);
+    }, { signal });
+    byId("deck-fleet-workbench").addEventListener("keydown", (event) => {
+      const input = event.target;
+      if (event.key !== "Enter" || !(input instanceof HTMLInputElement)) return;
+      const action = input.dataset.deckEnter;
+      if (!action) return;
+      const scope = input.closest<HTMLElement>(".deck-inline-confirm, .deck-inline-form") ?? byId("deck-fleet-workbench");
+      const submit = scope.querySelector<HTMLButtonElement>(`[data-deck-act="${action}"]`);
+      if (!submit || submit.disabled) return;
+      event.preventDefault();
+      submit.click();
+    }, { signal });
     byId("deck-workspace").addEventListener("keydown", (event) => {
       const input = event.target;
       if (event.key !== "Enter" || !(input instanceof HTMLInputElement)) return;
@@ -328,6 +392,7 @@ class DeckShell implements Shell {
     this.renderZoom();
     this.empire?.render(this.router?.current ?? null);
     this.command?.render(this.router?.current ?? null);
+    this.welcome?.render();
     this.market?.render(this.router?.current ?? null);
     this.policy?.render(this.router?.current ?? null);
     this.fleet?.render(this.router?.current ?? null);
@@ -363,6 +428,7 @@ class DeckShell implements Shell {
     this.strip?.clear();
     this.empire?.teardown();
     this.command?.teardown();
+    this.welcome?.teardown();
     this.market?.invalidate();
     this.policy?.invalidate();
     this.fleet?.invalidate();
@@ -378,6 +444,7 @@ class DeckShell implements Shell {
     this.strip = null;
     this.empire = null;
     this.command = null;
+    this.welcome = null;
     this.market = null;
     this.policy = null;
     this.fleet = null;
@@ -427,7 +494,7 @@ class DeckShell implements Shell {
     if (overlayOpen) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const routeKeys: Partial<Record<string, DeckRouteName>> = {
-      m: "market", v: "fleets", r: "research", p: "officers",
+      m: "market", v: "fleets", t: "logistics", r: "research", p: "officers",
       u: "operations", y: "syndicate", c: "faction", k: "rankings", l: "log",
     };
     const route = routeKeys[key.toLowerCase()];
@@ -512,10 +579,14 @@ class DeckShell implements Shell {
       this.ctx.intent.clearJumpAiming();
     } else if (this.ctx.intent.intentAiming.guard) {
       this.ctx.intent.clearGuardAiming();
+    } else if (this.constructionMenu) {
+      this.setConstructionMenu(false);
     } else if (!byId("deck-nav-overflow").hidden) {
       this.setNavOverflow(false);
     } else if (this.empire?.closeBuildWorkbench(this.router?.current ?? null)) {
       // The central construction workbench is the topmost non-modal layer.
+    } else if (this.fleet?.closeDetails()) {
+      // So is the fleet details workbench, which shares its place.
     } else if (this.ctx.renderer.isSystemScrubbing()) {
       this.ctx.renderer.cancelSystemScrub();
     } else if (this.theaters?.closeTop()) {
@@ -570,12 +641,19 @@ class DeckShell implements Shell {
   private openMapTarget(target: SelectTarget): void {
     if (!this.ctx || !this.router) return;
     const state = this.ctx.state;
+    // A target picked inside the System View keeps the orrery beneath its
+    // workspace: the route remembers which star it was opened from.
+    const mode = this.ctx.renderer.viewMode;
+    const fromSystem: Record<string, string> = mode.type === "system" ? { systemId: mode.systemId } : {};
     switch (target.type) {
       case "fleet": {
         const fleet = state.ghosts.find((entry) => entry.id === target.id);
-        this.router.go({ name: "fleet", params: { id: target.id, fleetLabel: fleet ? shipKindLabel(fleet.kind) : "Fleet" } });
+        this.router.go({ name: "fleet", params: { id: target.id, fleetLabel: fleet ? shipKindLabel(fleet.kind) : "Fleet", ...fromSystem } });
         break;
       }
+      case "landing":
+        this.theaters?.openGround(target.id);
+        break;
       case "system": {
         const system = state.galaxy?.systems.find((entry) => entry.id === target.id);
         this.router.go({ name: "system", params: { id: target.id, systemLabel: system?.name ?? "System" } });
@@ -589,10 +667,13 @@ class DeckShell implements Shell {
         this.ctx.renderer.stateVersion++;
         this.router.go({ name: "operations", query: { site: target.id } });
         break;
+      case "operation":
+        this.router.go({ name: "operations", query: { contract: target.id } });
+        break;
       case "ongoingBattle": {
         // One marker family: the id is a running engagement OR a concluded record.
         const running = state.battles.some((battle) => battle.id === target.id);
-        this.router.go({ name: "battle", params: { id: target.id, label: running ? "Ongoing battle" : "Battle replay" } });
+        this.router.go({ name: "battle", params: { id: target.id, label: running ? "Ongoing battle" : "Battle replay", ...fromSystem } });
         break;
       }
       case "aftermath":
@@ -622,7 +703,7 @@ class DeckShell implements Shell {
     }
   }
 
-  private openWorldPanel(systemId: string, bodyId: number): void {
+  private openWorldPanel(systemId: string, bodyId: number, query?: Record<string, string>): void {
     if (!this.ctx || !this.router || !systemId || !Number.isFinite(bodyId)) return;
     const system = this.ctx.state.galaxy?.systems.find((entry) => entry.id === systemId);
     const body = this.ctx.state.systems.find((entry) => entry.id === systemId)?.bodies.find((entry) => entry.id === bodyId);
@@ -633,7 +714,67 @@ class DeckShell implements Shell {
     const sameSystem = (current?.name === "system" || current?.name === "build" || current?.name === "world")
       && (current.params?.systemId ?? current.params?.id) === systemId;
     if (!sameSystem) this.router.go({ name: "system", params: { id: system.id, systemLabel: system.name } });
-    this.router.go({ name: "world", params: { systemId: system.id, systemLabel: system.name, bodyId: String(body.id), worldLabel: body.name } });
+    this.router.go({ name: "world", params: { systemId: system.id, systemLabel: system.name, bodyId: String(body.id), worldLabel: body.name },
+      ...(query ? { query } : {}) });
+  }
+
+  /** §construction: every developed world's one work slot, from the top bar:
+   * how many build now and how many sit idle, and a way to each. */
+  private renderConstructionChip(): void {
+    if (!this.ctx) return;
+    const state = this.ctx.state;
+    const chip = byId("deck-construction-chip");
+    const menu = byId("deck-construction-menu");
+    const slots = worldSlots(state.systems, state.playerId, state.galaxy?.build_options ?? [], liveSimTime());
+    chip.hidden = !slots.length;
+    if (!slots.length) this.constructionMenu = false;
+    const building = slots.filter((slot) => slot.job).length;
+    const idle = slots.length - building;
+    setHtml(chip, `<button type="button" class="deck-construction-chip__button" data-deck-act="construction-chip" aria-expanded="${this.constructionMenu}" aria-haspopup="menu" aria-controls="deck-construction-menu" title="Construction across your worlds">${icon("queue", "sm")}<span><b>${building}</b> building · <b class="${idle ? "is-idle" : ""}">${idle}</b> idle</span></button>`);
+    menu.hidden = !this.constructionMenu;
+    if (!this.constructionMenu) return;
+    const rows = slots.map((slot) => {
+      const system = state.galaxy?.systems.find((entry) => entry.id === slot.systemId);
+      const job = slot.job;
+      const title = job ? job.project ? label(job.key) : `${label(job.key)} ${romanTier(job.tier)}` : "";
+      const line = job ? `${title} · ${job.readyIn === null ? "—" : fmtBuildDur(job.readyIn)}${slot.waiting ? ` · +${slot.waiting} queued` : ""}` : "Build slot idle";
+      return `<div class="deck-construction-menu__row${job ? "" : " is-idle"}"><span><b>${escapeHtml(slot.body.name)}</b><small>${escapeHtml(system?.name ?? "")} · ${escapeHtml(line)}</small></span><button type="button" role="menuitem" data-deck-act="construction-open" data-system="${escapeHtml(slot.systemId)}" data-body="${slot.body.id}" data-build="${job ? "" : "1"}">${job ? "Open" : "Build"}</button></div>`;
+    }).join("");
+    setHtml(menu, `<p>One structure builds at a time on each world.</p>${rows}`);
+    const anchor = chip.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(anchor.left, window.innerWidth - menu.offsetWidth - 8))}px`;
+  }
+
+  private setConstructionMenu(open: boolean): void {
+    if (this.constructionMenu === open) return;
+    this.constructionMenu = open;
+    this.renderConstructionChip();
+  }
+
+  /// §planet-build: a structure builder opened from anywhere (the tutorial, a
+  /// handoff, a link, the system's Build tab) lands on its world with the
+  /// builder over the planet, exactly as if the player had gone there and
+  /// pressed Build. A `build` route asking for it becomes its system, so Back
+  /// climbs world → system like any other world.
+  private openWorldBuild(systemId: string, bodyId: number, query: Record<string, string>): void {
+    if (!this.ctx || !this.router) return;
+    const system = this.ctx.state.galaxy?.systems.find((entry) => entry.id === systemId);
+    const body = this.ctx.state.systems.find((entry) => entry.id === systemId)?.bodies.find((entry) => entry.id === bodyId);
+    if (!system || !body) return;
+    const systemRoute: DeckRoute = { name: "system", params: { id: system.id, systemLabel: system.name } };
+    const current = this.router.current;
+    const sameSystem = (current?.name === "system" || current?.name === "world")
+      && (current.params?.systemId ?? current.params?.id) === systemId;
+    const world: DeckRoute = { name: "world", params: { systemId: system.id, systemLabel: system.name, bodyId: String(body.id), worldLabel: body.name },
+      query: { ...query, build: "structures" } };
+    // Already on this world: open its builder in place rather than stacking a twin.
+    if (current?.name === "world" && sameSystem && current.params?.bodyId === String(body.id)) {
+      this.router.replace(world);
+      return;
+    }
+    if (current?.name === "build") this.router.replace(systemRoute);
+    else if (!sameSystem) this.router.go(systemRoute);
+    this.router.go(world);
   }
 
   private routeChanged(route: DeckRoute | null, stack: readonly DeckRoute[]): void {
@@ -642,7 +783,11 @@ class DeckShell implements Shell {
       this.ctx.state.selectedExplorationSiteId = null;
       this.ctx.renderer.stateVersion++;
     }
-    const semanticRoute = route?.name === "system" || route?.name === "world" || route?.name === "build";
+    const viewMode = this.ctx?.renderer.viewMode;
+    // A fleet or battle opened from inside the orrery keeps it beneath.
+    const fromThisSystem = (route?.name === "fleet" || route?.name === "battle")
+      && viewMode?.type === "system" && route.params?.systemId === viewMode.systemId;
+    const semanticRoute = route?.name === "system" || route?.name === "world" || route?.name === "build" || fromThisSystem;
     if (!semanticRoute && this.ctx?.renderer.viewMode.type === "system" && !this.ctx.renderer.isSystemScrubbing()) {
       this.ctx.renderer.exitSystemView();
       this.ctx.renderer.setSystemDynamic([], [], true);
@@ -655,7 +800,7 @@ class DeckShell implements Shell {
       this.renderActiveNav(null);
       return;
     }
-    if (semanticRoute && this.ctx) {
+    if (semanticRoute && this.ctx && !fromThisSystem) {
       const systemId = route.params?.systemId ?? route.params?.id;
       const dynamic = this.ctx.state.systems.find((entry) => entry.id === systemId);
       if (systemId) {
@@ -677,6 +822,9 @@ class DeckShell implements Shell {
           this.ctx.renderer.exitSystemView();
         }
         if (route.params?.bodyId) this.ctx.renderer.pulseSystemBody(route.params.bodyId);
+      } else if (route.name === "system") {
+        // Back from a world (or a zoomed look): the orrery eases out to its fit.
+        this.ctx.renderer.systemResetZoom();
       }
     }
     this.activeCrumbs = this.router.breadcrumbs(route);
@@ -801,11 +949,20 @@ class DeckShell implements Shell {
       });
     } else if (event.kind === "BuildCompleted") {
       const system = this.ctx?.state.galaxy?.systems.find((entry) => entry.id === event.systemId);
+      const report = this.ctx?.state.systems.find((entry) => entry.id === event.systemId);
+      const body = event.bodyId === undefined ? undefined : report?.bodies.find((entry) => entry.id === event.bodyId);
+      // §construction: a finished building opens on its world, selected; one
+      // that still needs a crew says so and points at its workforce.
+      const structure = !!(system && body && isStructureJob(event.buildKey) && !isProjectKey(event.buildKey));
+      const staff = structure && !!report && needsWorkforce(report, body!.id, event.buildKey);
       this.toasts.push({
         title: "Construction complete",
-        message: `${humanize(event.buildKey)} · ${system?.name ?? "colony"}`,
+        message: `${humanize(event.buildKey)} · ${body?.name ?? system?.name ?? "colony"}${staff ? " · assign workforce to start it" : ""}`,
         tone: "good",
-        destination: { name: "system", params: { id: event.systemId, systemLabel: system?.name ?? "System" }, query: { tab: "build" } },
+        destination: structure
+          ? { name: "world", params: { systemId: system!.id, systemLabel: system!.name, bodyId: String(body!.id), worldLabel: body!.name },
+            query: { structure: event.buildKey, ...(staff ? { staff: "1" } : {}) } }
+          : { name: "system", params: { id: event.systemId, systemLabel: system?.name ?? "System" }, query: { tab: "build" } },
       });
     } else if (event.kind === "StructureStaffed") {
       const system = this.ctx?.state.galaxy?.systems.find((entry) => entry.id === event.systemId);
@@ -828,18 +985,30 @@ class DeckShell implements Shell {
       this.toasts.push({ title: "Pirates inbound", message: event.message, tone: "bad",
         destination: { name: "log" }, durationMs: 20_000 });
     } else if (event.kind === "ReportArrived") {
+      // §founding R7: a win and a loss never share a title or a tone.
+      const notice = reportNotice(event.report, this.ctx?.state.galaxy?.pirate_id, this.ctx?.state.founding?.privateer ?? this.ctx?.state.lastFoundingPrivateer);
       this.toasts.push({
-        title: "Combat report arrived",
-        message: `${humanize(event.report.outcome)} · ${informationDelay(event.report.age)}`,
-        tone: event.report.outcome === "target_destroyed" && event.report.you === "attacker" ? "good" : "warn",
+        title: notice.title,
+        message: `${notice.text} · ${informationDelay(event.report.age)}`,
+        tone: notice.tone,
         destination: { name: "log" },
       });
     } else if (event.kind === "BattleConcluded") {
+      const record = this.ctx?.state.battleRecords.find((candidate) => candidate.id === event.recordId);
+      const notice = battleNotice(event.outcome, record);
       this.toasts.push({
-        title: "Battle concluded",
-        message: humanize(event.outcome),
-        tone: event.outcome === "target_destroyed" ? "good" : "warn",
+        title: notice.title,
+        message: notice.text,
+        tone: notice.tone,
         destination: { name: "battle", params: { id: event.recordId } },
+      });
+    } else if (event.kind === "CharterMilestone") {
+      this.toasts.push({
+        title: event.title,
+        message: event.message,
+        tone: "good",
+        destination: { name: "command" },
+        durationMs: 16_000,
       });
     } else if (event.kind === "EstimateReady") {
       const win = event.estimate.win_pct == null ? "Projection ready" : `${Math.round(event.estimate.win_pct)}% projected win chance`;
@@ -879,6 +1048,7 @@ class DeckShell implements Shell {
     ]);
     if (!force && signature === this.chromeSignature) return;
     this.chromeSignature = signature;
+    this.renderConstructionChip();
     byId("deck-corp").textContent = state.name || "—";
     byId("deck-corp-id").textContent = state.playerId !== null ? formatId(state.playerId) : "—";
     byId("deck-credits").textContent = state.wallet ? `${reserved > 0 ? "~" : ""}${Math.round(spendableMarketCredits()).toLocaleString()}` : "—";
@@ -894,7 +1064,9 @@ class DeckShell implements Shell {
       badge.textContent = count > 99 ? "99+" : String(count);
       badge.hidden = count <= 0;
     }
+    syncNavMoreBadge();
   }
+
 
   private navBadgeCounts(): Record<string, number> {
     const state = this.ctx!.state;

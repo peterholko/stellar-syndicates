@@ -39,7 +39,12 @@ use tokio::sync::{Mutex as AsyncMutex, Semaphore, watch};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+use crate::activity::ClientInfo;
+
 const SESSION_SECONDS: i64 = 24 * 60 * 60;
+// Browsers cap cookie lifetimes near 400 days; the device id is refreshed on
+// every sign-in, so an active browser keeps the same one indefinitely.
+const DEVICE_COOKIE_SECONDS: i64 = 400 * 24 * 60 * 60;
 // Give a guest time to return in this browser and register. Clearing the cookie
 // or letting it expire loses access, not the durable corporation itself.
 const GUEST_SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
@@ -171,22 +176,50 @@ impl AuthConfig {
     }
 
     fn token(&self, headers: &HeaderMap) -> Result<[u8; 32], AuthError> {
-        let mut tokens = headers
-            .get_all(header::COOKIE)
-            .iter()
-            .filter_map(|h| h.to_str().ok())
-            .flat_map(|h| h.split(';'))
-            .filter_map(|piece| piece.trim().split_once('='))
-            .filter(|(name, _)| *name == self.cookie_name());
-        let (_, token) = tokens.next().ok_or(AuthError::Unauthorized)?;
-        if tokens.next().is_some()
-            || token.len() != 64
-            || !token.bytes().all(|b| b.is_ascii_hexdigit())
-        {
+        let token = single_cookie(headers, self.cookie_name()).ok_or(AuthError::Unauthorized)?;
+        if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(AuthError::Unauthorized);
         }
         Ok(Sha256::digest(token.as_bytes()).into())
     }
+
+    fn device_cookie_name(&self) -> &'static str {
+        if self.secure {
+            "__Host-ss_device"
+        } else {
+            "ss_device"
+        }
+    }
+
+    /// The browser's random device id, for the operator's audit trail only. It
+    /// authorizes nothing; a missing or malformed one is simply replaced.
+    pub fn device(&self, headers: &HeaderMap) -> Option<String> {
+        single_cookie(headers, self.device_cookie_name())
+            .filter(|id| id.len() == 32 && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+            .map(str::to_owned)
+    }
+
+    fn device_cookie(&self, id: &str) -> HeaderValue {
+        HeaderValue::from_str(&format!(
+            "{}={id}; Path=/; HttpOnly; SameSite=Strict; Max-Age={DEVICE_COOKIE_SECONDS}{}",
+            self.device_cookie_name(),
+            if self.secure { "; Secure" } else { "" }
+        ))
+        .expect("only generated hex ids enter cookies")
+    }
+}
+
+/// The one value of a cookie, or `None` when it is absent or sent twice.
+fn single_cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    let mut values = headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|h| h.to_str().ok())
+        .flat_map(|h| h.split(';'))
+        .filter_map(|piece| piece.trim().split_once('='))
+        .filter(|(cookie, _)| *cookie == name);
+    let (_, value) = values.next()?;
+    values.next().is_none().then_some(value)
 }
 
 #[derive(Clone, Serialize, sqlx::FromRow)]
@@ -311,6 +344,11 @@ impl AuthStore {
         Self::new(pool, config).await
     }
 
+    #[cfg(test)]
+    pub(crate) async fn new_for_test(pool: PgPool, origin: &str) -> Self {
+        Self::new(pool, AuthConfig::for_origin(origin).unwrap()).await.unwrap()
+    }
+
     async fn new(pool: PgPool, config: AuthConfig) -> anyhow::Result<Self> {
         // Unknown logins pay the same verifier cost as known ones. This random
         // dummy credential is never a usable account or a default password.
@@ -330,6 +368,22 @@ impl AuthStore {
 
     pub fn check_origin(&self, headers: &HeaderMap) -> Result<(), AuthError> {
         self.0.config.check_origin(headers)
+    }
+
+    /// The account database, shared with the audit trail and the admin API.
+    pub fn pool(&self) -> PgPool {
+        self.0.pool.clone()
+    }
+
+    /// This browser's device id, if it already has one.
+    pub fn device(&self, headers: &HeaderMap) -> Option<String> {
+        self.0.config.device(headers)
+    }
+
+    /// Who is signing in, with a device id issued now if the browser has none.
+    fn client(&self, peer: SocketAddr, headers: &HeaderMap) -> ClientInfo {
+        let device = self.device(headers).unwrap_or_else(random_device_id);
+        ClientInfo::new(peer.ip(), headers, Some(device))
     }
 
     fn throttle(&self, ip: IpAddr, login: &str) -> Result<(), AuthError> {
@@ -374,7 +428,12 @@ impl AuthStore {
         .map_err(|_| AuthError::Unavailable)
     }
 
-    async fn register(&self, input: Register, ip: IpAddr) -> Result<(Account, String), AuthError> {
+    async fn register(
+        &self,
+        input: Register,
+        ip: IpAddr,
+        client: &ClientInfo,
+    ) -> Result<(Account, String), AuthError> {
         let login = normalize_login(&input.login)?;
         self.throttle(ip, &login)?;
         password::validate(&input.password)?;
@@ -401,12 +460,13 @@ impl AuthStore {
         }
         let token = random_token();
         write_session(&mut tx, account.id, &token, SESSION_SECONDS).await?;
+        record_login(&mut tx, account.id, "register", client).await?;
         tx.commit().await?;
         revoke(&mut live, account.id);
         Ok((account, token))
     }
 
-    async fn guest(&self, ip: IpAddr) -> Result<(Account, String), AuthError> {
+    async fn guest(&self, ip: IpAddr, client: &ClientInfo) -> Result<(Account, String), AuthError> {
         {
             let mut limits = self.0.limits.lock().map_err(|_| AuthError::Unavailable)?;
             let now = Instant::now();
@@ -434,6 +494,7 @@ impl AuthStore {
             }
             let token = random_token();
             write_session(&mut tx, id, &token, GUEST_SESSION_SECONDS).await?;
+            record_login(&mut tx, id, "guest", client).await?;
             tx.commit().await?;
             return Ok((account, token));
         }
@@ -445,6 +506,7 @@ impl AuthStore {
         headers: &HeaderMap,
         input: CompleteRegistration,
         ip: IpAddr,
+        client: &ClientInfo,
     ) -> Result<(Account, String), AuthError> {
         // Only possession of this guest's current cookie can register it. No
         // account/player ID or corporation name from the request selects a row.
@@ -475,6 +537,7 @@ impl AuthStore {
         account.is_guest = false;
         let token = random_token();
         write_session(&mut tx, account.id, &token, SESSION_SECONDS).await?;
+        record_login(&mut tx, account.id, "upgrade", client).await?;
         tx.commit().await?;
         // Credential creation rotates the session and revokes old sockets. The
         // client rejoins with the SAME player ID; no World data is recreated.
@@ -482,7 +545,12 @@ impl AuthStore {
         Ok((account, token))
     }
 
-    async fn login(&self, input: Login, ip: IpAddr) -> Result<(Account, String), AuthError> {
+    async fn login(
+        &self,
+        input: Login,
+        ip: IpAddr,
+        client: &ClientInfo,
+    ) -> Result<(Account, String), AuthError> {
         let login = normalize_login(&input.login)?;
         self.throttle(ip, &login)?;
         // Reject oversized input before Argon2, but never normalize a password.
@@ -511,6 +579,7 @@ impl AuthStore {
             .bind(credential.id).bind(hash).fetch_optional(&mut *tx).await?.ok_or(AuthError::Unauthorized)?;
         let token = random_token();
         write_session(&mut tx, account.id, &token, SESSION_SECONDS).await?;
+        record_login(&mut tx, account.id, "login", client).await?;
         tx.commit().await?;
         revoke(&mut live, account.id);
         Ok((account, token))
@@ -561,7 +630,7 @@ impl AuthStore {
         Ok(())
     }
 
-    fn signed_in(&self, account: Account, token: String) -> Response {
+    fn signed_in(&self, account: Account, token: String, client: &ClientInfo) -> Response {
         let lifetime = if account.is_guest {
             GUEST_SESSION_SECONDS
         } else {
@@ -571,11 +640,29 @@ impl AuthStore {
         response
             .headers_mut()
             .insert(header::SET_COOKIE, self.0.config.cookie(&token, lifetime));
+        if let Some(device) = &client.device_id {
+            response
+                .headers_mut()
+                .append(header::SET_COOKIE, self.0.config.device_cookie(device));
+        }
         response
             .headers_mut()
             .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
         response
     }
+}
+
+async fn record_login(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account: Uuid,
+    kind: &str,
+    client: &ClientInfo,
+) -> Result<(), AuthError> {
+    sqlx::query("INSERT INTO account_logins (account_id,kind,ip,user_agent,language,device_id) VALUES ($1,$2,$3,$4,$5,$6)")
+        .bind(account).bind(kind).bind(client.ip.to_string())
+        .bind(&client.user_agent).bind(&client.language).bind(&client.device_id)
+        .execute(&mut **tx).await?;
+    Ok(())
 }
 
 fn revoke(live: &mut HashMap<Uuid, LiveSession>, id: Uuid) {
@@ -598,6 +685,12 @@ async fn write_session(
 
 fn random_token() -> String {
     let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn random_device_id() -> String {
+    let mut bytes = [0u8; 16];
     OsRng.fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -658,8 +751,9 @@ async fn guest(
         Err(AuthError::Unauthorized) => {}
         Err(error) => return Err(error),
     }
-    let (account, token) = auth.guest(peer.ip()).await?;
-    Ok(auth.signed_in(account, token))
+    let client = auth.client(peer, &headers);
+    let (account, token) = auth.guest(peer.ip(), &client).await?;
+    Ok(auth.signed_in(account, token, &client))
 }
 
 async fn complete_registration(
@@ -669,10 +763,11 @@ async fn complete_registration(
     Json(input): Json<CompleteRegistration>,
 ) -> Result<Response, AuthError> {
     auth.check_origin(&headers)?;
+    let client = auth.client(peer, &headers);
     let (account, token) = auth
-        .complete_registration(&headers, input, peer.ip())
+        .complete_registration(&headers, input, peer.ip(), &client)
         .await?;
-    Ok(auth.signed_in(account, token))
+    Ok(auth.signed_in(account, token, &client))
 }
 
 async fn register(
@@ -682,8 +777,9 @@ async fn register(
     Json(input): Json<Register>,
 ) -> Result<Response, AuthError> {
     auth.check_origin(&headers)?;
-    let (account, token) = auth.register(input, peer.ip()).await?;
-    Ok(auth.signed_in(account, token))
+    let client = auth.client(peer, &headers);
+    let (account, token) = auth.register(input, peer.ip(), &client).await?;
+    Ok(auth.signed_in(account, token, &client))
 }
 async fn login(
     State(auth): State<AuthStore>,
@@ -692,8 +788,9 @@ async fn login(
     Json(input): Json<Login>,
 ) -> Result<Response, AuthError> {
     auth.check_origin(&headers)?;
-    let (account, token) = auth.login(input, peer.ip()).await?;
-    Ok(auth.signed_in(account, token))
+    let client = auth.client(peer, &headers);
+    let (account, token) = auth.login(input, peer.ip(), &client).await?;
+    Ok(auth.signed_in(account, token, &client))
 }
 async fn session(State(auth): State<AuthStore>, headers: HeaderMap) -> Result<Response, AuthError> {
     // Fetch sends an explicit Origin-equivalent header for same-origin GETs,
@@ -707,7 +804,17 @@ async fn session(State(auth): State<AuthStore>, headers: HeaderMap) -> Result<Re
         return Err(AuthError::Forbidden);
     }
     let session = auth.authenticate(&headers).await?;
-    Ok(([(header::CACHE_CONTROL, "no-store")], Json(session.account)).into_response())
+    let mut response =
+        ([(header::CACHE_CONTROL, "no-store")], Json(session.account)).into_response();
+    // A browser signed in before device ids existed gets one on its next visit,
+    // before it opens the game socket.
+    if auth.device(&headers).is_none() {
+        response.headers_mut().append(
+            header::SET_COOKIE,
+            auth.0.config.device_cookie(&random_device_id()),
+        );
+    }
+    Ok(response)
 }
 async fn logout(State(auth): State<AuthStore>, headers: HeaderMap) -> Result<Response, AuthError> {
     auth.check_origin(&headers)?;

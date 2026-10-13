@@ -1,0 +1,34 @@
+{
+  "model": "titan.glb",
+  "sha256": "aad22175d154318084bc4a292d86b9b1b5cdfc646f1adccda97a7715b69c4e29",
+  "modelBytes": 2801932,
+  "reference": "../../titan-reference-v4/titan-reference.png",
+  "referenceSha256": "90f0d5d1bf7b1764e84f8886577ce954f58c6eecaf36c4b71b5ef21e0e8ec243",
+  "viewerEmbedsIdenticalGLB": true,
+  "previewViews": [
+    "perspective",
+    "top",
+    "bottom",
+    "front",
+    "back",
+    "side",
+    "front-quarter",
+    "bottom-quarter"
+  ],
+  "previewResolution": [
+    1600,
+    1200
+  ],
+  "glTFValidation": {
+    "errors": 0,
+    "warnings": 0
+  },
+  "surfaceVerificationPassed": true,
+  "checkedUndersideComponents": 29,
+  "solidHullAndEngineBlocks": true,
+  "fourTallRecessedApertures": true,
+  "separateTurretAssemblies": 4,
+  "weaponSockets": 8,
+  "browserConsoleWarningsAndErrors": [],
+  "observedDrawCalls": 23
+}

@@ -3,6 +3,20 @@ use crate::{Commodity, build::Recipe};
 use serde::{Deserialize, Serialize};
 const HZ: u64 = crate::config::TICK_HZ as u64;
 
+/// Seconds of colony demand a camp keeps in Provisions + Biomass before its
+/// Bioharvesters pause. The 250-unit camp warehouse used to fill with food in
+/// about two minutes, which starved the mine and blocked the recovered cache.
+pub const CAMP_FOOD_RESERVE_S: f64 = 600.0;
+/// Floor for the reserve, so a tiny population still keeps a real buffer.
+pub const CAMP_FOOD_RESERVE_MIN: f64 = 40.0;
+/// A held food line resumes once the reserve falls below this fraction.
+pub const CAMP_FOOD_RESUME_FRAC: f64 = 0.75;
+
+/// The food a camp keeps on hand for `demand_per_s` Provisions of upkeep.
+pub fn camp_food_reserve(demand_per_s: f64) -> f64 {
+    (demand_per_s * CAMP_FOOD_RESERVE_S).max(CAMP_FOOD_RESERVE_MIN)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FoundingProfile {

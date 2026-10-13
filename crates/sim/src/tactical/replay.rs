@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use super::v1::{RosterDelta, SideMods, TacticalState};
 use crate::combat::{KEYFRAME_DEATH_CAP, Keyframe};
 
-pub const RULES_VERSION: u32 = 6;
+pub const RULES_VERSION: u32 = 16;
 /// A cold seek does at most this many extra tactical steps before its slice.
 pub const CHECKPOINT_STEPS: usize = 64;
 
@@ -133,6 +133,9 @@ pub fn state_checksum(state: &TacticalState) -> u64 {
                 LargeFreighter => 15,
                 HeavyFreighter => 16,
                 BulkFreighter => 17,
+                SurveyProbe => 18,
+                MiningBarge => 19,
+                MiningBeltStation => 20,
             });
         }
     }
@@ -140,14 +143,18 @@ pub fn state_checksum(state: &TacticalState) -> u64 {
     // Preserve historical v1/v2 fingerprints. New archives also cover the
     // private maneuver seed: changing future steering must invalidate a checkpoint.
     if state.rules_version() > 1 { h.u(u64::from(state.rules_version())); }
-    if let super::Rules::V3 { maneuver_seed } | super::Rules::V4 { maneuver_seed } | super::Rules::V5 { maneuver_seed } | super::Rules::V6 { maneuver_seed } = state.rules { h.u(maneuver_seed); }
-    if matches!(state.rules, super::Rules::V4 { .. } | super::Rules::V5 { .. } | super::Rules::V6 { .. }) {
+    if let super::Rules::V3 { maneuver_seed } | super::Rules::V4 { maneuver_seed } | super::Rules::V5 { maneuver_seed }
+        | super::Rules::V6 { maneuver_seed } | super::Rules::V7 { maneuver_seed } | super::Rules::V8 { maneuver_seed } | super::Rules::V9 { maneuver_seed } | super::Rules::V10 { maneuver_seed } | super::Rules::V11 { maneuver_seed } | super::Rules::V12 { maneuver_seed } | super::Rules::V13 { maneuver_seed } | super::Rules::V14 { maneuver_seed } | super::Rules::V15 { maneuver_seed } | super::Rules::V16 { maneuver_seed } = state.rules { h.u(maneuver_seed); }
+    if matches!(state.rules, super::Rules::V4 { .. } | super::Rules::V5 { .. } | super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
         h.u(state.escorts.len() as u64);
         for (escort, charge) in &state.escorts { h.u(escort.0); h.u(charge.0); }
     }
-    if matches!(state.rules, super::Rules::V6 { .. }) {
+    if matches!(state.rules, super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
         h.u(state.missions.len() as u64);
-        for (id, m) in &state.missions { h.u(id.0); h.u(m.priority as u64); h.u(m.screening as u64); h.u(m.withdrawal as u64); }
+        for (id, m) in &state.missions {
+            h.u(id.0); h.u(m.priority as u64); h.u(m.screening as u64); h.u(m.withdrawal as u64);
+            if matches!(state.rules, super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) { h.u(m.formation as u64); }
+        }
         h.u(state.mission_retreats.len() as u64);
         for id in &state.mission_retreats { h.u(id.0); }
     }
@@ -174,6 +181,13 @@ pub fn state_checksum(state: &TacticalState) -> u64 {
             h.u(fleet.0);
             h.u(u64::from(ship));
         }
+        // v15 hardpoints only; older states never carry one.
+        if let Some(m) = c.mount {
+            h.u(u64::from(m.index));
+            h.f(m.aw);
+            h.f(m.reach);
+            h.u(u64::from(m.level));
+        }
     }
     h.u(state.torpedoes.len() as u64);
     for t in &state.torpedoes {
@@ -198,6 +212,37 @@ pub fn state_checksum(state: &TacticalState) -> u64 {
     h.pos(state.bearing);
     for withdrawing in state.withdrawing {
         h.u(u64::from(withdrawing));
+    }
+    if matches!(state.rules, super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
+        h.u(state.wrecks.len() as u64);
+        for w in &state.wrecks {
+            h.u(u64::from(w.hull));
+            h.u(u64::from(w.piece));
+            h.u(u64::from(w.side));
+            h.pos(w.pos);
+            h.pos(w.vel);
+            h.f(w.radius);
+            h.f(w.mass);
+            h.u(w.breach);
+            h.pos(w.sep);
+        }
+    }
+    if matches!(state.rules, super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
+        h.u(state.formations.len() as u64);
+        for (fleet, f) in &state.formations {
+            h.u(fleet.0);
+            h.u(f.auto as u64);
+            h.pos(f.centre);
+            h.pos(f.vel);
+            h.f(f.facing);
+            h.f(f.phase);
+            h.f(f.sign);
+        }
+    }
+    if let Some(w) = state.world {
+        h.pos(w.pos);
+        h.f(w.radius);
+        h.u(u64::from(w.side));
     }
     h.0
 }
@@ -310,13 +355,13 @@ impl BattleReplay {
                 state.order_withdraw(*side);
             }
             Input::Escorts(guards) => {
-                if !matches!(state.rules, super::Rules::V4 { .. } | super::Rules::V5 { .. } | super::Rules::V6 { .. }) {
+                if !matches!(state.rules, super::Rules::V4 { .. } | super::Rules::V5 { .. } | super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
                     return Err(ReplayError::InvalidArchive);
                 }
                 state.set_escorts(guards.clone());
             }
             Input::Missions(missions) => {
-                if !matches!(state.rules, super::Rules::V6 { .. }) { return Err(ReplayError::InvalidArchive); }
+                if !matches!(state.rules, super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) { return Err(ReplayError::InvalidArchive); }
                 state.set_missions(missions.clone());
             }
         }
@@ -423,6 +468,7 @@ impl BattleReplay {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
     use crate::ship::Ship;
     use crate::{BattleRecord, EntityId, Loadout, PlayerId, ShipKind, SideRecord, Vec2};
 
@@ -488,7 +534,7 @@ mod tests {
                 d.extend(fleet(5, ShipKind::Titan, "point_defense_screen", 1));
             }
             assert_eq!(
-                record.sync_tactical(tick - 3, &mut live, [&a, &d]),
+                record.sync_tactical(tick - 3, &mut live, [&a, &d], &BTreeMap::new()),
                 direct.sync([&a, &d])
             );
             let mods = [
@@ -496,11 +542,13 @@ mod tests {
                     opening_bonus: true,
                     flak_mult: 1.3,
                     damage_mult: if i < 43 { 1.08 } else { 1.16 },
+                    ..Default::default()
                 },
                 SideMods {
                     opening_bonus: false,
                     flak_mult: if i < 55 { 1.0 } else { 1.25 },
                     damage_mult: 1.04,
+                    ..Default::default()
                 },
             ];
             let outcome = record.step_tactical(tick, &mut live, i >= 120, mods);
@@ -655,11 +703,11 @@ mod tests {
         let d = fleet(2, ShipKind::Corvette, "point_defense_screen", 2);
         let mut live = TacticalState::open(718, 9, &a, &d, 0, 0.0, Vec2::new(1.0, 0.0));
         let mut record = BattleRecord::open(EntityId(9), Vec2::ZERO, None, false, 0, sides());
-        record.sync_tactical(1, &mut live, [&a, &d]);
+        record.sync_tactical(1, &mut live, [&a, &d], &BTreeMap::new());
         assert_eq!(live.waves[0].len(), 7);
         record.withdraw_tactical(2, &mut live, 0);
         a.extend(fleet(3, ShipKind::Raider, "torpedo_rack", 3));
-        record.sync_tactical(3, &mut live, [&a, &d]);
+        record.sync_tactical(3, &mut live, [&a, &d], &BTreeMap::new());
         record.withdraw_tactical(4, &mut live, 0);
         let out = record.step_tactical(15, &mut live, false, [SideMods::default(); 2]);
         record.flush_step(15, live.step_keyframe(out), Default::default());
@@ -713,7 +761,7 @@ mod tests {
         let mut record = BattleRecord::open(EntityId(77), Vec2::ZERO, None, false, 0, sides());
         for i in 0..96 {
             let tick = (i + 1) * 15;
-            record.sync_tactical(tick - 3, &mut live, [&a, &d]);
+            record.sync_tactical(tick - 3, &mut live, [&a, &d], &BTreeMap::new());
             let profiles = std::collections::BTreeMap::from([
                 (EntityId(1), MissionProfile { priority: if i < 20 { TargetPriority::Balanced } else { TargetPriority::Transports },
                     withdrawal: DamageWithdrawal::Hull70, ..Default::default() }),
@@ -733,12 +781,81 @@ mod tests {
                 record = serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
             }
         }
-        assert_eq!(live.rules_version(), 6);
+        assert_eq!(live.rules_version(), 16);
         let replay = record.tactical_replay().unwrap();
         assert!(!replay.checkpoints.is_empty());
         let mut changed = replay.clone();
         changed.initial.missions.insert(EntityId(1), MissionProfile { priority: TargetPriority::Installations, ..Default::default() });
         assert!(changed.reconstruct().is_err(), "mission policies are checkpoint-integrity inputs");
+    }
+
+    #[test]
+    fn wreckage_replays_exactly_across_checkpoints() {
+        // Torpedo interceptors: since v11 interceptor guns barely scratch capitals.
+        let mut a = fleet(1, ShipKind::Raider, "torpedo_rack", 14);
+        let mut d = fleet(2, ShipKind::Battleship, "", 2);
+        d.extend(fleet(3, ShipKind::Dreadnought, "", 1));
+        for (_, ship) in &mut d { ship.hp *= 0.15; }
+        let mut live = TacticalState::open_current(23, 78, &a, &d, 0, 0.0, Vec2::new(1.0, 0.0));
+        let mut record = BattleRecord::open(EntityId(78), Vec2::ZERO, None, false, 0, sides());
+        let mut saw_wreckage = false;
+        for i in 0..90 {
+            let tick = (i + 1) * 15;
+            record.sync_tactical(tick - 1, &mut live, [&a, &d], &BTreeMap::new());
+            let out = record.step_tactical(tick, &mut live, false, [SideMods::default(); 2]);
+            record.accumulate(out.dealt[0], out.dealt[1], &out.losses[0], &out.losses[1]);
+            record.flush_step(tick, live.step_keyframe(out), Default::default());
+            writeback(&live, &mut a); writeback(&live, &mut d);
+            saw_wreckage |= !live.wrecks.is_empty();
+            assert_eq!(record.tactical_replay().unwrap().reconstruct().unwrap(), live);
+            if i == 45 {
+                live = serde_json::from_slice(&serde_json::to_vec(&live).unwrap()).unwrap();
+                record = serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+            }
+        }
+        assert!(saw_wreckage, "capitals died and left wreckage");
+        assert_eq!(live.rules_version(), 16);
+        let frames = record.tactical_replay().unwrap().frames_range(0, record.rounds.len()).unwrap();
+        assert!(frames.iter().any(|(_, f)| f.wrecks.as_ref().is_some_and(|w| !w.is_empty())), "rebuilt frames carry the wreckage");
+    }
+
+    /// §orbital-defense: a station's hardpoints are part of the opening state
+    /// the archive keeps, and the station research rides the recorded
+    /// controls, so a siege replays exactly across a save.
+    #[test]
+    fn a_station_fight_replays_exactly_across_checkpoints() {
+        let mut a = fleet(1, ShipKind::Battleship, "mass_driver+mass_driver+mass_driver+mass_driver", 2);
+        a.extend(fleet(3, ShipKind::Raider, "stasis_web", 4));
+        let mut d = fleet(2, ShipKind::Destroyer, "torpedo_rack", 2);
+        let mut live = TacticalState::open_current(41, 79, &a, &d, 0, 0.0, Vec2::new(-1.0, 0.0));
+        let fits = ["mass_driver+mass_driver+whipple_armor", "torpedo_rack+mass_driver+reflective_plating", "stasis_web", ""];
+        let mounts: Vec<crate::station::Mount> =
+            fits.iter().map(|fit| crate::station::Mount { fit: fit.to_string(), ..Default::default() }).collect();
+        live.add_station(1, &crate::station::mount_specs(4, &mounts));
+        live.place_world(1);
+        let mut record = BattleRecord::open(EntityId(79), Vec2::ZERO, None, false, 0, sides());
+        let mods = [
+            SideMods { vs_defenses: 1.25, ..Default::default() },
+            SideMods { opening_bonus: true, netfire: true, fortress: true, ..Default::default() },
+        ];
+        for i in 0..90 {
+            let tick = (i + 1) * 15;
+            record.sync_tactical(tick - 1, &mut live, [&a, &d], &BTreeMap::new());
+            let out = record.step_tactical(tick, &mut live, false, mods);
+            record.accumulate(out.dealt[0], out.dealt[1], &out.losses[0], &out.losses[1]);
+            record.flush_step(tick, live.step_keyframe(out), Default::default());
+            writeback(&live, &mut a);
+            writeback(&live, &mut d);
+            assert_eq!(record.tactical_replay().unwrap().reconstruct().unwrap(), live, "step {i}");
+            if i == 45 {
+                live = serde_json::from_slice(&serde_json::to_vec(&live).unwrap()).unwrap();
+                record = serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+            }
+        }
+        assert!(live.station_health(1).iter().any(|&(_, hull)| hull < 1.0), "the station took fire");
+        let frames = record.tactical_replay().unwrap().frames_range(0, record.rounds.len()).unwrap();
+        assert!(frames.iter().all(|(_, f)| f.ships.iter().filter(|s| s.station == Some(4)).count() <= 4));
+        assert_eq!(frames[0].1.ships.iter().filter(|s| s.station == Some(4)).count(), 4, "rebuilt frames carry the hardpoints");
     }
 
     fn datalink_replay_roundtrip(discovery: bool) {
@@ -754,7 +871,7 @@ mod tests {
             let tick = (i + 1) * 15;
             if i == 17 { d.extend(fleet(5, ShipKind::Corvette, "point_defense_screen+escort_datalink", 2)); }
             if i == 60 { d.retain(|(id, _)| *id != EntityId(3)); }
-            record.sync_tactical(tick - 3, &mut live, [&a, &d]);
+            record.sync_tactical(tick - 3, &mut live, [&a, &d], &BTreeMap::new());
             let mut guards = std::collections::BTreeMap::new();
             if i < 70 {
                 guards.insert(EntityId(2), EntityId(if i < 40 { 3 } else { 4 }));
@@ -801,7 +918,7 @@ mod tests {
         for i in 0..80 {
             let tick = (i + 1) * 15;
             if i == 17 { d.extend(fleet(3, ShipKind::Raider, "", 8)); }
-            record.sync_tactical(tick - 1, &mut live, [&a, &d]);
+            record.sync_tactical(tick - 1, &mut live, [&a, &d], &BTreeMap::new());
             if i == 42 { record.withdraw_tactical(tick - 1, &mut live, 1); }
             let out = record.step_tactical(tick, &mut live, false, [SideMods::default(); 2]);
             record.accumulate(out.dealt[0], out.dealt[1], &out.losses[0], &out.losses[1]);

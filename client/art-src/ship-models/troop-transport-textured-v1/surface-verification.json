@@ -1,0 +1,16 @@
+{
+  "ship": "troop-transport",
+  "triangles": 11072,
+  "texturedTriangles": 2144,
+  "ventralTriangles": 692,
+  "checks": {
+    "allSurfacesAndTexturedUVsHaveArea": true,
+    "ventralProjectionPresent": true,
+    "engineCount": true,
+    "turretCount": true,
+    "threeEmbeddedTextures": true,
+    "gltfValidatorClean": true
+  },
+  "problems": [],
+  "passed": true
+}

@@ -295,5 +295,79 @@ export const PLANET_ART = {
         "url": "/art/derived/planets/2026-09-08/moon-1254.png?v=60e2b12db959"
       }
     ]
+  },
+  "marginal": {
+    "anchor": [
+      0.4996012759170654,
+      0.5011961722488039
+    ],
+    "visualRatio": 0.9338118022328549,
+    "levels": [
+      {
+        "size": 32,
+        "url": "/art/derived/planets/2026-09-08/marginal-32.png?v=8367a2251ccd"
+      },
+      {
+        "size": 64,
+        "url": "/art/derived/planets/2026-09-08/marginal-64.png?v=cca06e2ca30d"
+      },
+      {
+        "size": 128,
+        "url": "/art/derived/planets/2026-09-08/marginal-128.png?v=0b6cfec96c0b"
+      },
+      {
+        "size": 256,
+        "url": "/art/derived/planets/2026-09-08/marginal-256.png?v=b8afde049d1e"
+      },
+      {
+        "size": 512,
+        "url": "/art/derived/planets/2026-09-08/marginal-512.png?v=595dbf26b946"
+      },
+      {
+        "size": 1024,
+        "url": "/art/derived/planets/2026-09-08/marginal-1024.png?v=39717f38f2d9"
+      },
+      {
+        "size": 1254,
+        "url": "/art/derived/planets/2026-09-08/marginal-1254.png?v=0f0dce6eafde"
+      }
+    ]
+  },
+  "marginal_ocean": {
+    "anchor": [
+      0.5007974481658692,
+      0.4996012759170654
+    ],
+    "visualRatio": 0.9441786283891547,
+    "levels": [
+      {
+        "size": 32,
+        "url": "/art/derived/planets/2026-09-08/marginal_ocean-32.png?v=529523ad6a41"
+      },
+      {
+        "size": 64,
+        "url": "/art/derived/planets/2026-09-08/marginal_ocean-64.png?v=921a7cfcb3d6"
+      },
+      {
+        "size": 128,
+        "url": "/art/derived/planets/2026-09-08/marginal_ocean-128.png?v=41d8d0016bc5"
+      },
+      {
+        "size": 256,
+        "url": "/art/derived/planets/2026-09-08/marginal_ocean-256.png?v=678d9223ff18"
+      },
+      {
+        "size": 512,
+        "url": "/art/derived/planets/2026-09-08/marginal_ocean-512.png?v=5fea98adc982"
+      },
+      {
+        "size": 1024,
+        "url": "/art/derived/planets/2026-09-08/marginal_ocean-1024.png?v=5dd7ba36fd01"
+      },
+      {
+        "size": 1254,
+        "url": "/art/derived/planets/2026-09-08/marginal_ocean-1254.png?v=d291755cad04"
+      }
+    ]
   }
 } as const;

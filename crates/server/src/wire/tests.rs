@@ -24,7 +24,7 @@ fn orders() -> Vec<Value> {
         json!({"type":"MarketBuy", "commodity":"alloys", "units":50, "max_unit_price":19.875}),
         json!({"type":"MarketSell", "commodity":"metallic_ore", "units":7}),
         json!({"type":"GuardFleet", "interceptor_id":"42", "target_id":"43"}),
-        json!({"type":"SetFleetTransit", "fleet_id":"43", "mode":"economy"}),
+        json!({"type":"SetFleetTransit", "fleet_id":"43", "mode":"slow"}),
         json!({"type":"SetAssignment", "system_id":"2", "structure":"extractor", "workers":12, "specialists":{}, "body_id":1}),
         json!({"type":"SetAssignment", "system_id":"2", "structure":"smelter", "workers":1, "body_id":1, "refining_ore":"cuprite_ore"}),
         json!({"type":"MarketBuy", "commodity":"titanium", "units":50}),
@@ -35,12 +35,12 @@ fn orders() -> Vec<Value> {
         json!({"type":"ExploreSite", "fleet_id":"43", "site_id":"81", "task":"extract"}),
         json!({"type":"AnnotateExploration", "entry":{"id":"80", "kind":"site", "pinned":true, "note":"星 · return with escorts"}}),
         json!({"type":"BuildModule", "system_id":"2", "module":"survey_drive"}),
-        json!({"type":"SetFreightRoute","fleet_id":"43","route":{"name":"Ore & Fuel","fuel_reserve":12.5,"escort":"42","repeat":true,"transit":"economy","stops":[
+        json!({"type":"SetFreightRoute","fleet_id":"43","route":{"name":"Ore & Fuel","fuel_reserve":12.5,"escort":"42","repeat":true,"transit":"slow","stops":[
             {"port":{"kind":"system","id":"2"},"load":{"metallic_ore":25,"biomass":10},"unload":{"fuel":10},"sell":false},
             {"port":{"kind":"hub"},"load":{"fuel":10},"unload":{"metallic_ore":25,"biomass":10},"sell":true}]}}),
         json!({"type":"SetFreightRoute","fleet_id":"43","route":null}),
         json!({"type":"SetRefiningReserve","system_id":"29","ore":50,"fuel":20}),
-        json!({"type":"SetFreightRoute","fleet_id":"43","route":{"name":"Opening return","fuel_reserve":2,"escort":"42","repeat":false,"transit":"economy","shopping_budget":3000,"stops":[
+        json!({"type":"SetFreightRoute","fleet_id":"43","route":{"name":"Opening return","fuel_reserve":2,"escort":"42","repeat":false,"transit":"slow","shopping_budget":3000,"stops":[
             {"port":{"kind":"system","id":"29"},"load":{"metallic_ore":50},"unload":{},"sell":false},
             {"port":{"kind":"hub"},"load":{"alloys":20,"fuel":10},"unload":{"metallic_ore":50},"sell":true},
             {"port":{"kind":"system","id":"29"},"load":{},"unload":{"alloys":20,"fuel":10},"sell":false}]}}),
@@ -49,6 +49,16 @@ fn orders() -> Vec<Value> {
         json!({"type":"SetColonyProjectActive","system_id":"2","project":"deep_extraction","active":false}),
         json!({"type":"DeployOutpost","fleet_id":"43","system_id":"2","body_id":0,"outpost":"extraction","commodity":"rare_elements"}),
         json!({"type":"SkimFuel","fleet_id":"43","system_id":"2"}),
+        json!({"type":"MineBelt","fleet_id":"43","system_id":"2","body_id":4,"ore":"cuprite_ore"}),
+        json!({"type":"MineBelt","fleet_id":"43","system_id":"2","body_id":4,"ore":"titanium_ore","pocket":true}),
+        json!({"type":"ProspectBelt","fleet_id":"43","system_id":"2","body_id":4}),
+        json!({"type":"AnchorStation","fleet_id":"44","system_id":"2","body_id":4}),
+        json!({"type":"UnanchorStation","fleet_id":"44"}),
+        json!({"type":"StationLoad","fleet_id":"43","station_id":"44","commodity":"cuprite_ore","units":120}),
+        json!({"type":"SetFreightRoute","fleet_id":"43","route":{"name":"Belt run","fuel_reserve":2,"escort":null,"repeat":true,"transit":"full","shopping_budget":null,"stops":[
+            {"port":{"kind":"station","id":"44"},"load":{"cuprite_ore":300},"unload":{},"sell":false},
+            {"port":{"kind":"system","id":"29"},"load":{},"unload":{"cuprite_ore":300},"sell":false}]}}),
+        json!({"type":"DeployInterdiction","fleet_id":"43"}),
     ]
 }
 

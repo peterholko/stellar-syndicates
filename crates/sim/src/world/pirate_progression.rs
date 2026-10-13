@@ -14,6 +14,7 @@ impl World {
             let radius = self.config.galaxy_radius;
             let candidate = self.systems.iter().filter(|s| s.owner.is_none()
                 && !self.enclaves.contains_key(&s.id)
+                && !self.home_neighbours.contains(&s.id)
                 && (radius * 0.30..=radius * 0.80).contains(&s.pos.length())
                 && s.bodies.iter().all(|b| b.structures.values().all(|n| *n == 0))
                 && self.home_slots.iter().all(|h| h.pos.distance(s.pos) >= 30_000.0)
@@ -283,9 +284,12 @@ mod tests {
         }).collect();
         assert_eq!(keys.len(), 3, "three genuinely different patrol fittings");
         for (variant, counter) in [WhippleArmor, PointDefenseScreen, ReflectivePlating].into_iter().enumerate() {
+            // 200 seeds: point defense's edge over a stock Interceptor against
+            // the torpedo patrol is slim (it trades beam power for screening),
+            // and 20 seeds are too few to measure it either way.
             let mut stock_wins = 0;
             let mut fitted_wins = 0;
-            for seed in 0..20 {
+            for seed in 0..200 {
                 let mut setup = ProjSetup { a: ships(vec![(ShipKind::Raider, Loadout::default(), 1)], 1),
                     d: ships(vec![(ShipKind::Raider, pirate::patrol_fitting(variant as u8), 1)], 2),
                     ..Default::default() };
@@ -293,7 +297,7 @@ mod tests {
                 setup.a = ships(vec![(ShipKind::Raider, Loadout::new(vec![counter]), 1)], 1);
                 fitted_wins += u32::from(crate::tactical::simulate_engagement(&setup, seed).a_won);
             }
-            eprintln!("patrol {variant}: stock wins {stock_wins}/20, counter-fitted wins {fitted_wins}/20");
+            eprintln!("patrol {variant}: stock wins {stock_wins}/200, counter-fitted wins {fitted_wins}/200");
             assert!(fitted_wins > stock_wins, "the published counter must improve the actual fight");
         }
     }

@@ -1,0 +1,13 @@
+{
+  "recipe": "nexus-jpeg-1024-v1",
+  "source": "art-src/ship-models/authority-nexus-textured-v1/authority-nexus.glb",
+  "sourceSha256": "0565ddbbe96bed7b2a8432e49253b5f60d6c46a68ee17aa713b18e3658c723ce",
+  "sourceBytes": 17092524,
+  "glbBytes": 1965324,
+  "glbSha256": "929e2e68996776d12d7486dd74b4c4667f15321c3a2129371f43ad2fb0ffdae6",
+  "title": "Authority Nexus",
+  "triangles": 11440,
+  "url": "/art/derived/hub-model/v1/authority-nexus.glb?v=929e2e689967",
+  "sprite": "/art/derived/hub-model/v1/authority-nexus-top-1254.webp?v=27f19936bcc5",
+  "hero": "/art/derived/hub-model/v1/authority-nexus-hero-512.webp?v=62fb30da730e"
+}

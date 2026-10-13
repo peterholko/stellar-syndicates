@@ -1,0 +1,22 @@
+{
+  "meshes": 5,
+  "renderSections": 5,
+  "sourceComponents": 39,
+  "triangles": 2928,
+  "exportedVertices": 3757,
+  "dimensionsXYZ": [
+    12.35,
+    1.67,
+    19.825
+  ],
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "embeddedTextures": 3,
+  "axes": "Y up, -Z forward",
+  "source": "../../pirate-corsair-reference-v1/pirate-corsair-reference.png",
+  "detailLevel": "low-poly authored mesh",
+  "generator": "Python/NumPy, no Blender",
+  "optimization": "Static parts combined by material; independent turret assemblies retained; exact vertex deduplication; 16-bit indices where possible"
+}

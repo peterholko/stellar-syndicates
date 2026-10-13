@@ -140,20 +140,26 @@ pub struct StarSystem {
     #[serde(default, rename = "refinery_tier")]
     pub legacy_refinery_tier: u32,
     /// BLOCKADE state (§contestable-territory Part 1): `Some` while ≥1 hostile
-    /// fleet holds station here. Recomputed every tick by `resolve_blockades`
+    /// fleet holds station here, contesting the system's defense or holding it
+    /// (`Blockade::held_since`). Recomputed every tick by `resolve_blockades`
     /// from on-station fleet presence — persisted so a mid-blockade snapshot
-    /// keeps the (unbroken) `since` / siege clock. `default` None (no blockade).
+    /// keeps the (unbroken) clocks. `default` None (no blockade).
     #[serde(default)]
     pub blockade: Option<Blockade>,
-    /// §TCA: the PREVIOUS blockade window `(since, lifted_at)` — a two-state
-    /// history so a DISTANT observer can answer "was this system blockaded at
-    /// retarded time T?" across the light-delay window. The Market Hub uses it
-    /// to decide whether to accept freight bookings on its own (light-delayed)
-    /// knowledge: it keeps refusing until the LIFT's light reaches the hub, and
-    /// keeps accepting until the ONSET's light does. Mirrors the two-state
-    /// `Corporation::syndicate_prev` pattern. `default` None (never blockaded).
+    /// §TCA: the PREVIOUS HELD window `(held_since, released_at)` — the last
+    /// span in which a blockade cut this system's logistics — so a DISTANT
+    /// observer can answer "was this system blockaded at retarded time T?"
+    /// across the light-delay window. The Market Hub uses it to decide whether
+    /// to accept freight bookings on its own (light-delayed) knowledge: it keeps
+    /// refusing until the RELEASE's light reaches the hub, and keeps accepting
+    /// until the HOLD's light does. Mirrors the two-state
+    /// `Corporation::syndicate_prev` pattern. `default` None (never held).
     #[serde(default)]
     pub blockade_prev: Option<(f64, f64)>,
+    /// §orbital-defense: the station's hardpoints, one per hardpoint of its
+    /// level (see [`crate::station`]). Empty without a station.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mounts: Vec<crate::station::Mount>,
     /// §explore Part 3: the system's surveyable economic trait. Effects are
     /// always-on ground truth. Seeded at generation
     /// (`TRAIT_FRACTION` of systems, an isolated stream). `default` None — a
@@ -200,19 +206,39 @@ pub struct StarSystem {
 
 /// The live BLOCKADE at a system (§contestable-territory). Recomputed each tick
 /// from fleet presence; persisted so an unbroken blockade's clocks survive a
-/// snapshot. `siege_since` is populated in Part 2 (siege→capture).
+/// snapshot. It has three stages: CONTESTED while the system's defense (its
+/// platform tiers, its owner's warships in platform cover, stationed allies)
+/// still fights, which is only a battle; HELD once that defense is beaten,
+/// when the system's logistics are cut and its stockpile stripped; and a SIEGE
+/// when a held blockade's capture clock runs (any system but a home).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Blockade {
-    /// The blockading corporation (the badge / capture attribution; there may be
-    /// several on-station fleets — this is the earliest-arrived owner).
+    /// The blockading corporation: the badge, the plunder and the capture
+    /// attribution. Passes to another corporation still on station if this one
+    /// leaves; the capture clock then starts over.
     pub by: PlayerId,
-    /// Sim-time the current UNBROKEN blockade began (any full lift resets it).
+    /// Sim-time hostile fleets first took station (any full lift resets it).
     pub since: f64,
-    /// Sim-time the SIEGE conditions (defenses suppressed + no garrison, under an
-    /// unbroken blockade) first held — the capture clock's start. `None` until
-    /// the siege can progress; reset whenever a condition breaks (§Part 2).
+    /// Sim-time the blockade took HOLD: the defense was beaten, so logistics
+    /// are cut. `None` while the defense still fights (contested); cleared if
+    /// the defense returns.
+    #[serde(default)]
+    pub held_since: Option<f64>,
+    /// Sim-time the capture clock started: the blockade is held and this is
+    /// not the owner's home. `None` otherwise; reset whenever that breaks.
     #[serde(default)]
     pub siege_since: Option<f64>,
+    /// `by` has a battleship-class hull on station, which runs the capture
+    /// clock faster (`crate::ship::SIEGE_ANCHOR_MULT`).
+    #[serde(default)]
+    pub anchored: bool,
+    /// While held: the chance `by`'s ships on station catch a freighter running
+    /// the blockade, before the runner's own research. 0 while contested.
+    #[serde(default)]
+    pub catch: f64,
+    /// The same with a Warp Stabilizer on every hull of the runner.
+    #[serde(default)]
+    pub catch_stabilized: f64,
 }
 
 impl StarSystem {
@@ -221,6 +247,14 @@ impl StarSystem {
     /// hostile plunder still access physical stock, rather than this budget.
     pub fn free_stock(&self, c: Commodity) -> f64 {
         self.project_stock(c, None)
+    }
+    /// §fuel-overhaul: what this system's Fusion Plants will burn of `c` over
+    /// `secs` at their current load — the stock a docking fleet leaves alone.
+    pub fn power_reserve(&self, c: Commodity, secs: f64) -> f64 {
+        self.bodies.iter()
+            .filter(|b| crate::power::plant_fuel(b.tier(crate::build::StructureKind::PowerPlant)) == Some(c))
+            .map(|b| b.grid.burn * secs)
+            .sum()
     }
     pub fn project_stock(&self, c: Commodity, target: Option<crate::industry::ProjectTarget>) -> f64 {
         (self.stockpile.get(&c).copied().unwrap_or(0.0) - self.industry.reserved(c, target)).max(0.0)
@@ -290,6 +324,31 @@ impl StarSystem {
         }
     }
 
+    /// Remove `n` tiers of a kind, one at a time from whichever world holds the
+    /// most (ties to the lowest body id): what a battle destroys comes off the
+    /// worlds actually holding it, never collapsing the rest onto one.
+    pub fn lose_tiers(&mut self, kind: crate::build::StructureKind, n: u32) {
+        for _ in 0..n {
+            if self.bodies.is_empty() {
+                let t = self.legacy_structures.get(&kind).copied().unwrap_or(0);
+                self.set_tier(kind, t.saturating_sub(1));
+                continue;
+            }
+            let Some(target) = self
+                .bodies
+                .iter()
+                .filter(|b| b.tier(kind) > 0)
+                .max_by(|a, b| a.tier(kind).cmp(&b.tier(kind)).then(b.id.cmp(&a.id)))
+                .map(|b| b.id)
+            else {
+                return;
+            };
+            if let Some(b) = self.bodies.iter_mut().find(|b| b.id == target) {
+                b.set_tier(kind, b.tier(kind) - 1);
+            }
+        }
+    }
+
     /// §bodies: the natural SITE for a structure kind — the Part-5 siting
     /// rules, shared by migration, the home bootstrap, and system-scoped
     /// writers. Returns a body id (None only for an empty roster).
@@ -298,8 +357,10 @@ impl StarSystem {
         if self.bodies.is_empty() {
             return None;
         }
+        // §belts: a belt hosts mines and nothing else, so only the extraction
+        // pick below may land on one.
         let planets: Vec<&crate::body::Body> =
-            self.bodies.iter().filter(|b| b.parent.is_none()).collect();
+            self.bodies.iter().filter(|b| b.is_planet()).collect();
         let primary = planets.first().map(|b| b.id).or(Some(self.bodies[0].id));
         let richest_matching = |k: K| {
             self.bodies
@@ -313,7 +374,7 @@ impl StarSystem {
             .bodies
             .iter()
             .find(|b| {
-                b.deposits
+                !b.is_belt() && b.deposits
                     .iter()
                     .any(|d| d.resource == crate::cargo::Commodity::Volatiles)
             })
@@ -367,6 +428,19 @@ impl StarSystem {
             // populated world, not a bare rock.
             K::Habitat | K::Agroplex | K::Academy | K::Garrison => habitable_body,
             K::ServiceBerth => self.bodies.iter().find(|b| b.tier(K::Warehouse) > 0).map(|b| b.id),
+            // §gaia: only a Gaia world grows terraces (the build check refuses others).
+            K::LivingTerraces => self.bodies.iter()
+                .filter(|b| b.profile.environment == crate::body::Environment::Gaia)
+                .max_by_key(|b| b.tier(K::LivingTerraces)).map(|b| b.id),
+            K::CommandCenter => self.bodies.iter()
+                .filter(|b| b.kind != crate::body::BodyKind::GasGiant && !b.is_belt()
+                    && b.population >= crate::build::COMMAND_CENTER_MIN_POPULATION)
+                .max_by_key(|b| b.tier(K::CommandCenter)).map(|b| b.id),
+            // §power: the planet whose grid is shortest of its demand.
+            K::PowerPlant => self.bodies.iter()
+                .max_by(|a, b| (a.grid.demand - a.grid.supply).total_cmp(&(b.grid.demand - b.grid.supply))
+                    .then(b.id.cmp(&a.id)))
+                .map(|b| b.id),
             K::Warehouse => {
                 if let Some(b) = self.bodies.iter().filter(|b| b.tier(K::Warehouse) > 0)
                     .max_by_key(|b| b.tier(K::Warehouse)) {
@@ -376,7 +450,7 @@ impl StarSystem {
                 // founding food world's Infrastructure pool. Existing full
                 // colonies may be grandfathered during the one-time migration.
                 let ground: Vec<_> = self.bodies.iter().filter(|b|
-                    b.kind != crate::body::BodyKind::GasGiant).collect();
+                    b.kind != crate::body::BodyKind::GasGiant && !b.is_belt()).collect();
                 ground.iter().find(|b| b.pool_slots_built(crate::build::SlotPool::Infrastructure)
                     < b.pool_slots(crate::build::SlotPool::Infrastructure))
                     .or_else(|| ground.first()).map(|b| b.id).or(primary)
@@ -388,7 +462,9 @@ impl StarSystem {
             | K::CompositeWorks
             | K::HullFabricator
             | K::PrecisionWorks
-            | K::DriveWorks => {
+            | K::DriveWorks
+            | K::UraniumMill
+            | K::AntimatterPlant => {
                 industrial_body
             }
             // §yards: the whole yard family auto-sites with the Shipyard, on the
@@ -400,6 +476,14 @@ impl StarSystem {
             | K::OrdnanceFoundry
             | K::OrbitalWarehouse
             | K::DefensePlatform => primary,
+            // §orbital-defense: one station per system; an unspecified level-up
+            // stays where it stands. A new one goes up where it costs the
+            // colony nothing: a barren moon's slot, else the primary.
+            K::OrbitalDefense => self.bodies.iter().find(|b| b.tier(K::OrbitalDefense) > 0).map(|b| b.id)
+                .or_else(|| self.bodies.iter().find(|b| !b.habitable
+                    && b.pool_slots_built(crate::build::SlotPool::Infrastructure) < b.pool_slots(crate::build::SlotPool::Infrastructure))
+                    .map(|b| b.id))
+                .or(primary),
             K::SensorArray => outermost,
         }
     }
@@ -607,12 +691,16 @@ impl StarSystem {
     /// they rolled, so the same onboarding guarantee does not prescribe the same
     /// production chain in every opening.
     pub fn guarantee_garden_world(&mut self) {
-        let Some(body) = self
-            .bodies
-            .iter_mut()
-            .filter(|b| b.parent.is_none() && b.kind != crate::body::BodyKind::GasGiant)
-            .max_by_key(|b| b.profile.size)
-        else {
+        // Upgrade the world colonists already rate best, so the guarantee never
+        // adds a second habitable world (§rare-gardens); else the largest.
+        let target = self.best_habitable_body().or_else(|| {
+            self.bodies
+                .iter()
+                .filter(|b| b.is_planet() && b.kind != crate::body::BodyKind::GasGiant)
+                .max_by_key(|b| b.profile.size)
+                .map(|b| b.id)
+        });
+        let Some(body) = target.and_then(|id| self.bodies.iter_mut().find(|b| b.id == id)) else {
             return;
         };
         let has_biomass = body
@@ -649,6 +737,63 @@ impl StarSystem {
         body.habitable = true;
     }
 
+    /// Leave no world here that colonists can settle, keeping its geology:
+    /// Gaia and Terran worlds read Marginal (thin air, no colony), and a Fertile
+    /// Biosphere, which needs a habitable world, is dropped.
+    pub fn clear_habitability(&mut self) {
+        self.clear_habitability_except(None);
+    }
+
+    /// The same, sparing one body (by id) that stays as it is.
+    pub fn clear_habitability_except(&mut self, keep: Option<u32>) {
+        for body in self.bodies.iter_mut().filter(|b| {
+            Some(b.id) != keep && (b.habitable || b.profile.environment.naturally_habitable())
+        }) {
+            body.profile.environment = crate::body::Environment::Marginal;
+            if body.profile.special == Some(crate::body::BodySpecial::FertileBiosphere) {
+                body.profile.special = None;
+            }
+            body.habitable = false;
+        }
+    }
+
+    /// The habitable world colonists would rate highest here (the survey's
+    /// population score), lowest id on a tie.
+    pub fn best_habitable_body(&self) -> Option<u32> {
+        self.bodies
+            .iter()
+            .filter(|b| b.habitable)
+            .max_by(|a, b| {
+                crate::explore::population_score(a)
+                    .total_cmp(&crate::explore::population_score(b))
+                    .then_with(|| b.id.cmp(&a.id))
+            })
+            .map(|b| b.id)
+    }
+
+    /// Give this system a world colonists can settle if it has none: its
+    /// largest terrestrial or ocean planet turns Terran. `false` when it has no
+    /// such planet to turn.
+    pub fn ensure_habitable(&mut self) -> bool {
+        if self.bodies.iter().any(|b| b.habitable) {
+            return true;
+        }
+        let Some(body) = self
+            .bodies
+            .iter_mut()
+            .filter(|b| {
+                b.parent.is_none()
+                    && matches!(b.kind, crate::body::BodyKind::Terrestrial | crate::body::BodyKind::Ocean)
+            })
+            .max_by_key(|b| b.profile.size)
+        else {
+            return false;
+        };
+        body.profile.environment = crate::body::Environment::Terran;
+        body.habitable = true;
+        true
+    }
+
     /// Seed the contrasting nearby opportunity: a hostile, Ultra Rich mineral
     /// body. It still needs the system's actual mineral deposit, construction,
     /// population and supply chain — this guarantees a reason to expand, not a
@@ -660,11 +805,11 @@ impl StarSystem {
         let target = self
             .bodies
             .iter()
-            .position(|b| b.deposits.iter().filter(mineral).next().is_some())
+            .position(|b| !b.is_belt() && b.deposits.iter().filter(mineral).next().is_some())
             .or_else(|| {
                 self.bodies
                     .iter()
-                    .position(|b| b.kind != crate::body::BodyKind::GasGiant)
+                    .position(|b| b.kind != crate::body::BodyKind::GasGiant && !b.is_belt())
             });
         let Some(body) = target.and_then(|i| self.bodies.get_mut(i)) else {
             return;
@@ -755,6 +900,11 @@ impl StarSystem {
 
     /// §economy Part 3: the STAFFING factor of one BODY's line —
     /// `(crew/tier) · share` (crew = workers + posted specialists).
+    /// §power: the grid factor on `body_id`'s powered structures (1 off-grid).
+    pub fn body_power(&self, body_id: u32) -> f64 {
+        self.bodies.iter().find(|b| b.id == body_id).map_or(1.0, |b| b.grid.power)
+    }
+
     pub fn staffing_factor(&self, body_id: u32, kind: crate::build::StructureKind) -> f64 {
         let Some(b) = self.bodies.iter().find(|b| b.id == body_id) else {
             return 0.0;
@@ -804,6 +954,41 @@ impl StarSystem {
             .sum()
     }
 
+    /// A blockade HOLDS this system: hostile fleets on station and its defense
+    /// beaten, so its logistics are cut (a contested blockade is only a battle).
+    pub fn blockade_held(&self) -> bool {
+        self.blockade.is_some_and(|b| b.held_since.is_some())
+    }
+
+    /// §orbital-defense: the station's level (0 = no station).
+    pub fn station_level(&self) -> u32 {
+        self.tier_sum(crate::build::StructureKind::OrbitalDefense).min(crate::station::MAX_LEVEL)
+    }
+
+    /// The station's hardpoints still firing.
+    pub fn live_mounts(&self) -> u32 {
+        let Some(level) = crate::station::level(self.station_level()) else { return 0 };
+        self.mounts.iter().take(level.hardpoints as usize).filter(|m| m.standing()).count() as u32
+    }
+
+    /// Whether the system still has a fixed defense firing: legacy platform
+    /// tiers, or a station hardpoint.
+    pub fn defenses_standing(&self) -> bool {
+        self.tier_sum(crate::build::StructureKind::DefensePlatform) > 0 || self.live_mounts() > 0
+    }
+
+    /// Match the hardpoints to the station's level: new ones arrive whole and
+    /// stock-fitted; a level lost takes its hardpoints with it.
+    pub fn sync_mounts(&mut self) {
+        let n = crate::station::level(self.station_level()).map_or(0, |l| l.hardpoints as usize);
+        self.mounts.resize_with(n, crate::station::Mount::default);
+    }
+
+    /// The station's battle roster: its standing hardpoints.
+    pub fn mount_specs(&self) -> Vec<crate::station::MountSpec> {
+        crate::station::mount_specs(self.station_level(), &self.mounts)
+    }
+
     /// §ground: the garrison strength actually standing right now — its tier,
     /// zeroed if unfed, and reduced by whatever bombardment has pinned down.
     /// THE one derivation: the siege clock and any landing both read this, so a
@@ -839,6 +1024,22 @@ impl StarSystem {
     pub(crate) fn seed_warehouse(&mut self) {
         if self.tier(crate::build::StructureKind::Warehouse) == 0 {
             self.set_tier(crate::build::StructureKind::Warehouse, 1);
+        }
+    }
+
+    /// Founding / one-time migration only. Never rebuild lost administration on
+    /// a tick or a reconnect, and never seed an uninhabited industrial outpost.
+    /// §power: a new landing command comes with its planet's first Power Plant.
+    pub(crate) fn seed_command_centers(&mut self) {
+        for body in &mut self.bodies {
+            if body.kind != crate::body::BodyKind::GasGiant && !body.is_belt()
+                && body.population >= crate::build::COMMAND_CENTER_MIN_POPULATION
+                && body.tier(crate::StructureKind::CommandCenter) == 0 {
+                body.set_tier(crate::StructureKind::CommandCenter, 1);
+                if body.tier(crate::StructureKind::PowerPlant) == 0 {
+                    body.set_tier(crate::StructureKind::PowerPlant, 1);
+                }
+            }
         }
     }
 
@@ -969,6 +1170,8 @@ pub const SCARCE_VEIN_MULT: f64 = 1.20;
 pub fn vein_mult(resource: Commodity) -> f64 {
     match resource {
         Commodity::TitaniumOre | Commodity::RareMetalOre => SCARCE_VEIN_MULT,
+        // §pockets: the rare pocket ores are scarce in the same way.
+        Commodity::IridiumOre | Commodity::Helium3Ice | Commodity::VoidCrystal => SCARCE_VEIN_MULT,
         _ => 1.0,
     }
 }
@@ -1069,6 +1272,7 @@ pub(crate) fn unowned_system(
         garrison_fed: true,
         garrison_suppression: 0.0,
         blockade_prev: None,
+        mounts: Vec::new(),
         trait_: None,
         cache_claimed: false,
         legacy_structures: BTreeMap::new(),
@@ -1083,7 +1287,7 @@ pub(crate) fn unowned_system(
 /// the scarce ores only open toward the rim, and carry FINITE reserves. Two
 /// draws per deposit, as the tier ladder took, so a seed's star chart is
 /// unchanged by the table: only what lies under each star moved.
-fn generate_deposits(rng: &mut Rng, frontier: f64) -> Vec<Deposit> {
+pub(crate) fn generate_deposits(rng: &mut Rng, frontier: f64) -> Vec<Deposit> {
     // 1 deposit near the hub, up to 3 at the rim.
     let n = (1.0 + frontier * 2.0 + rng.range(0.0, 0.9))
         .floor()
@@ -1124,6 +1328,21 @@ pub fn claim_cost_for(deposits: &[Deposit]) -> f64 {
     let value_rate: f64 = deposits.iter().map(deposit_value_rate).sum();
     CLAIM_BASE + CLAIM_VALUE_K * value_rate
 }
+
+/// Full star systems seeded around each pre-generated home, inside its command
+/// center's sensor bubble, and how many of them keep a habitable world: a
+/// third, so the doorstep is mostly prospects rather than ready colonies.
+pub const HOME_NEIGHBOURS: usize = 6;
+/// The share of habitable systems (homes aside) that keep two or more
+/// habitable worlds — about one in twelve, and at least one per galaxy —
+/// drawn from those whose stars rolled several. Everywhere else only the best
+/// world stays habitable (§rare-gardens).
+pub const MULTI_HABITABLE_SHARE: f64 = 0.08;
+pub const HOME_NEIGHBOURS_HABITABLE: usize = 2;
+/// The neighbourhood ring around a home: outside the local survey stops
+/// (18–33k su) and inside the 80,000 su command-center sensor bubble.
+pub const NEIGHBOURHOOD_INNER_SU: f64 = 28_000.0;
+pub const NEIGHBOURHOOD_OUTER_SU: f64 = 70_000.0;
 
 /// Generate `count` home-anchor slots evenly spaced around a ring at
 /// `ring_frac · radius`, with small seeded jitter so they aren't perfectly
@@ -1189,11 +1408,17 @@ fn generate_home_deposits(rng: &mut Rng) -> Vec<Deposit> {
 
 /// Starting construction supplies, shared by fresh generation and first join
 /// into an unused home slot from an older galaxy. Fuel is added on join.
+/// §charter v3: the retired recovery cache's 20 Alloys and 4 Machinery are
+/// here, so the mine, the Service Berth and all four settlement projects fit
+/// the kit in any order, and no project can price the mine out of reach.
+/// §fuel-overhaul: plus the Uranium Mill's 20 Alloys and 8 Machinery, and one
+/// Warp Core for the charter's Mining Barge.
 pub(crate) fn home_starting_stockpile() -> BTreeMap<Commodity, f64> {
     [
         (Commodity::Provisions, crate::colony::HOME_PROVISIONS_SEED),
-        (Commodity::Machinery, 15.0),
-        (Commodity::Alloys, 30.0),
+        (Commodity::Machinery, 27.0),
+        (Commodity::Alloys, 70.0),
+        (Commodity::WarpCore, 1.0),
     ].into_iter().collect()
 }
 
@@ -1220,6 +1445,7 @@ pub fn generate_home_system(
     // Homes are deliberately reliable rather than jackpot rolls. Their garden
     // body is a roomy Terran baseline; their starter ore is Average. The nearby
     // expansion pair supplies the exciting contrast.
+    let mut garden = None;
     if let Some(b) = bodies
         .iter_mut()
         .find(|b| b.deposits.iter().any(|d| d.resource == Commodity::Biomass))
@@ -1229,6 +1455,7 @@ pub fn generate_home_system(
         b.profile.geology = crate::body::Geology::Average;
         b.profile.special = None;
         b.habitable = true;
+        garden = Some(b.id);
     }
     if let Some(b) = bodies.iter_mut().find(|b| {
         b.deposits
@@ -1265,6 +1492,7 @@ pub fn generate_home_system(
         garrison_fed: true,
         garrison_suppression: 0.0,
         blockade_prev: None,
+        mounts: Vec::new(),
         trait_: None,
         cache_claimed: false,
         legacy_structures: BTreeMap::new(),
@@ -1272,6 +1500,11 @@ pub fn generate_home_system(
         legacy_assignments: BTreeMap::new(),
         specialists: BTreeMap::new(),
     };
+    // §rare-gardens: the garden is the home's ONLY habitable world. More people
+    // need another system; a system with two such worlds should feel special.
+    if garden.is_some() {
+        sys.clear_habitability_except(garden);
+    }
     // HOME BOOTSTRAP (§buildings step 3 → §economy Part 3 → §bodies): a home
     // begins as a small food-secure settlement. The ore mine starts the export
     // loop; the Shipyard is a later reinvestment, not pre-granted infrastructure.
@@ -1288,6 +1521,7 @@ pub fn generate_home_system(
         }
     }
     sys.seed_population(crate::colony::HOME_FOUNDING_POP);
+    sys.seed_command_centers();
     // Both starting cohorts staff the food chain. Posting a mining job shares
     // that workforce under the normal staffing rule and attracts Managed migrants;
     // it does not require a third, silently granted cohort.
@@ -1767,7 +2001,9 @@ mod deposit_tests {
         assert!(s(Commodity::RareMetalOre) < 0.08, "rare metal {:.3}", s(Commodity::RareMetalOre));
         assert!(s(Commodity::CrystallineOre) > 0.10, "crystalline {:.3}", s(Commodity::CrystallineOre));
         assert!(s(Commodity::MetallicOre) > 0.22, "ferrite {:.3}", s(Commodity::MetallicOre));
-        for c in Commodity::RAW {
+        // §belts: planets keep their own ore table; the belt-only ores
+        // (Olivine, Bornite, Ilmenite) never roll here.
+        for &(c, ..) in &RAW_DEPOSIT_TABLE {
             assert!(s(c) > 0.03, "{c:?} must still occur: {:.3}", s(c));
         }
     }

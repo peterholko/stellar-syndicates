@@ -1,0 +1,102 @@
+{
+  "id": "mining-barge",
+  "name": "Mining Barge",
+  "center": [
+    270,
+    444
+  ],
+  "pixelsPerUnit": [
+    31,
+    40
+  ],
+  "reference": "mining-barge-reference-v1/mining-barge-reference.png",
+  "sprite": "mining-barge-reference-v1/mining-barge.png",
+  "triangleBudget": [
+    5000,
+    8000
+  ],
+  "counts": {
+    "miningArms": 2,
+    "cutterEmitters": 2,
+    "coveredHoppers": 1,
+    "bridges": 1,
+    "mainEngines": 2,
+    "guns": 0
+  },
+  "regions": {
+    "top": [
+      44,
+      59,
+      496,
+      827
+    ],
+    "bottom": [
+      550,
+      59,
+      991,
+      827
+    ],
+    "front": [
+      1055,
+      102,
+      1695,
+      281
+    ],
+    "back": [
+      1058,
+      336,
+      1695,
+      560
+    ],
+    "side": [
+      975,
+      599,
+      1733,
+      820
+    ]
+  },
+  "patches": {
+    "silver": [
+      8,
+      1032,
+      674,
+      1698
+    ],
+    "dark": [
+      692,
+      1032,
+      1355,
+      1698
+    ],
+    "brass": [
+      1374,
+      1032,
+      2038,
+      1698
+    ],
+    "hazard": [
+      78,
+      210,
+      112,
+      255
+    ],
+    "cyan": [
+      111,
+      123,
+      117,
+      138
+    ],
+    "glass": [
+      110,
+      422,
+      141,
+      447
+    ],
+    "enginewall": [
+      692,
+      1032,
+      1355,
+      1698
+    ]
+  }
+}

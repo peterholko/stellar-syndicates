@@ -33,6 +33,63 @@ pub enum BodyKind {
     Ocean,
     Ice,
     GasGiant,
+    /// §belts: an asteroid belt. A body for the economy (deposits, mines,
+    /// staffing, survey), never a world: no people, no ground, Resource slots
+    /// only. It sits at the star like every body; its orbit is a picture.
+    AsteroidBelt,
+}
+
+/// §belts: what a belt's rocks are made of. Each type has its own ore table
+/// (`crate::belts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BeltKind {
+    Stony,
+    Metallic,
+    Icy,
+    Shattered,
+}
+
+impl BeltKind {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Stony => "stony",
+            Self::Metallic => "metallic",
+            Self::Icy => "icy",
+            Self::Shattered => "shattered",
+        }
+    }
+}
+
+/// §belts: a belt's type and its place in the System View picture: orbit
+/// radius and band width in the view's normalised units. Rolled with the
+/// galaxy, public once the system is charted.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BeltShape {
+    pub kind: BeltKind,
+    pub radius: f64,
+    pub width: f64,
+}
+
+/// §pockets: a hidden pocket inside an asteroid belt — a small, finite, rich
+/// deposit. Nobody sees or mines it until their prospectors find it; each
+/// corporation that has (its report reached command) is in `found_by`.
+/// Pockets live beside the belt's ordinary deposits, never among them, so
+/// nothing that reads deposits (claim costs, survey bands, bots) can leak one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Pocket {
+    pub deposit: crate::galaxy::Deposit,
+    #[serde(default)]
+    pub found_by: std::collections::BTreeSet<crate::ids::PlayerId>,
+}
+
+/// §pockets: one corporation's prospecting at one belt. `passes` counts the
+/// completed passes (the find roll's key); `reported` counts the reports that
+/// have reached command, which is what the player sees.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Prospecting {
+    pub passes: u32,
+    pub reported: u32,
 }
 
 /// A world's physical scale. Size is independent of environment and geology:
@@ -278,6 +335,7 @@ impl BodyKind {
             BodyKind::Ocean => "ocean",
             BodyKind::Ice => "ice",
             BodyKind::GasGiant => "gas_giant",
+            BodyKind::AsteroidBelt => "asteroid_belt",
         }
     }
 }
@@ -297,6 +355,9 @@ pub struct Body {
     /// Moons point at their planet.
     #[serde(default)]
     pub parent: Option<u32>,
+    /// §belts: present on asteroid belts only — type and picture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub belt: Option<BeltShape>,
     pub habitable: bool,
     /// Size / environment are public astronomy; geology + the special ride the
     /// survey ladder. Kept together so old snapshots need one neutral default.
@@ -306,6 +367,12 @@ pub struct Body {
     /// matching one (real now, not a visual association).
     #[serde(default)]
     pub deposits: Vec<Deposit>,
+    /// §pockets: an asteroid belt's hidden pockets. Empty on planets and moons.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pockets: Vec<Pocket>,
+    /// §pockets: who has prospected this belt, and how often.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub prospected: BTreeMap<crate::ids::PlayerId, Prospecting>,
     /// Structures built ON this body (kind → tier). The same kind may exist
     /// on several bodies of one system now.
     #[serde(default)]
@@ -326,15 +393,31 @@ pub struct Body {
     /// SHARED system workforce pool (labor commutes inside the well).
     #[serde(default)]
     pub assignments: BTreeMap<crate::build::StructureKind, crate::production::Assignment>,
+    /// §power: this planet's grid, recomputed every tick before production.
+    #[serde(default)]
+    pub grid: crate::power::Grid,
 }
 
 impl Body {
+    /// §belts: an asteroid belt rather than a planet or moon.
+    pub fn is_belt(&self) -> bool {
+        self.kind == BodyKind::AsteroidBelt
+    }
+
+    /// A planet proper: not a moon and not a belt.
+    pub fn is_planet(&self) -> bool {
+        self.parent.is_none() && !self.is_belt()
+    }
+
     pub fn population_capacity(&self) -> f64 {
+        // §gaia: Living Terraces house people beside any Habitat.
+        let terraces = crate::colony::TERRACE_POP_PER_TIER
+            * self.tier(crate::StructureKind::LivingTerraces) as f64 * self.habitat_capacity_mult();
         let tier = self.tier(crate::StructureKind::Habitat);
         if tier == 1 && let Some(camp) = &self.founding_camp {
-            return if camp.done(crate::settlement::SettlementProject::Quarters) { 0.006 } else { 0.003 };
+            return terraces + if camp.done(crate::settlement::SettlementProject::Quarters) { 0.006 } else { 0.003 };
         }
-        crate::colony::POP_CAP_PER_HABITAT_TIER * tier as f64 * self.habitat_capacity_mult()
+        crate::colony::POP_CAP_PER_HABITAT_TIER * tier as f64 * self.habitat_capacity_mult() + terraces
     }
 
     pub fn warehouse_capacity(&self) -> f64 {
@@ -353,6 +436,22 @@ impl Body {
         } else {
             self.structures.insert(kind, tier);
         }
+    }
+
+    /// §pockets: the pocket of `ore` that `owner` has found here.
+    pub fn found_pocket(&self, ore: Commodity, owner: crate::ids::PlayerId) -> Option<&Pocket> {
+        self.pockets.iter().find(|p| p.deposit.resource == ore && p.found_by.contains(&owner))
+    }
+
+    /// Every deposit `owner`'s extraction works here: the ordinary deposits,
+    /// then the pockets that corporation has found.
+    pub fn worked_deposits(&self, owner: Option<crate::ids::PlayerId>) -> impl Iterator<Item = &Deposit> {
+        self.deposits.iter().chain(
+            self.pockets
+                .iter()
+                .filter(move |p| owner.is_some_and(|o| p.found_by.contains(&o)))
+                .map(|p| &p.deposit),
+        )
     }
 
     /// Does this body carry a deposit the given EXTRACTION structure works?
@@ -440,7 +539,7 @@ impl Body {
                     Environment::Uninhabitable
                 }
             }
-            BodyKind::GasGiant => Environment::Uninhabitable,
+            BodyKind::GasGiant | BodyKind::AsteroidBelt => Environment::Uninhabitable,
         };
 
         // An intentionally independent roll: atmosphere never constrains ore.
@@ -461,7 +560,10 @@ impl Body {
             Geology::UltraRich
         };
 
-        let special = if rng.next() < 0.20 {
+        // §belts: a belt's identity is its type; specials are planetary.
+        let special = if self.is_belt() {
+            None
+        } else if rng.next() < 0.20 {
             let mut eligible = Vec::new();
             // Low-density Large/Huge worlds are rare but valuable because they
             // combine the ship-time bonus with enough industrial room to form a
@@ -527,6 +629,10 @@ impl Body {
         self.profile.environment.construction_time_mult()
     }
 
+    pub fn command_construction_mult(&self) -> f64 {
+        crate::build::command_construction_mult(self.tier(crate::StructureKind::CommandCenter))
+    }
+
     pub fn extraction_mult(&self, resource: Commodity) -> f64 {
         let mineral = resource.is_mineable_mineral();
         let geology = if mineral {
@@ -557,7 +663,7 @@ impl Body {
         match (self.profile.special, kind) {
             (Some(BodySpecial::VolcanicMantle), K::Smelter) => 1.20,
             (Some(BodySpecial::HydrocarbonSeas), K::FuelRefinery | K::ChemicalWorks) => 1.20,
-            (Some(BodySpecial::FertileBiosphere), K::Agroplex) => 1.20,
+            (Some(BodySpecial::FertileBiosphere), K::Agroplex | K::LivingTerraces) => 1.20,
             (Some(BodySpecial::PrecursorRuins), K::ElectronicsFabricator) => 1.25,
             _ => 1.0,
         }
@@ -606,16 +712,21 @@ impl Body {
     }
 
     pub fn base_industrial_slots(&self) -> u32 {
-        if self.kind == BodyKind::GasGiant {
+        if matches!(self.kind, BodyKind::GasGiant | BodyKind::AsteroidBelt) {
             0
         } else {
             self.profile.size.industrial_base()
         }
     }
 
-    /// INFRASTRUCTURE slots: 1, +1 if habitable, +1 once developed.
+    /// INFRASTRUCTURE slots: 1, +1 if habitable, +1 once developed. A belt has
+    /// none: it hosts mines (Resource slots) and nothing else.
     pub fn infrastructure_slots(&self) -> u32 {
+        if self.is_belt() {
+            return 0;
+        }
         1 + self.habitable as u32 + (body_pop_tier(self.population) >= 1) as u32
+            + crate::build::command_infrastructure_bonus(self.tier(crate::StructureKind::CommandCenter))
             + self.founding_camp.as_ref().is_some_and(|c|
                 c.profile == crate::settlement::FoundingProfile::CoastalPlains
                     && c.done(crate::settlement::SettlementProject::Prospect)) as u32
@@ -634,7 +745,7 @@ impl Body {
     pub fn pool_slots_built(&self, pool: crate::build::SlotPool) -> u32 {
         self.structures
             .iter()
-            .filter(|(k, t)| **k != crate::build::StructureKind::ServiceBerth && k.slot_pool() == pool && **t >= 1)
+            .filter(|(k, t)| k.uses_slot() && k.slot_pool() == pool && **t >= 1)
             .count() as u32
     }
 }
@@ -702,8 +813,16 @@ fn dep_kinds(c: Commodity) -> &'static [VisualKind] {
         Commodity::MetallicOre => &[V::Barren, V::Desert, V::Terrestrial],
         Commodity::CupriteOre => &[V::Barren, V::Desert],
         Commodity::TitaniumOre | Commodity::RareMetalOre => &[V::Lava, V::Barren],
-        Commodity::CrystallineOre => &[V::Desert, V::Barren],
+        Commodity::CrystallineOre | Commodity::OlivineOre => &[V::Desert, V::Barren],
+        Commodity::BorniteOre => &[V::Barren, V::Desert],
+        Commodity::IlmeniteOre => &[V::Lava, V::Barren],
+        // §pockets: pocket-only ores never roll on planets; listed for totality.
+        Commodity::IridiumOre | Commodity::VoidCrystal => &[V::Lava, V::Barren],
+        Commodity::Helium3Ice => &[V::Ice],
         Commodity::ConductiveMetals | Commodity::Titanium => &[V::Barren],
+        Commodity::Iridium | Commodity::Helium3 | Commodity::ExoticMatter => &[V::Barren],
+        // §fuel-overhaul: manufactured goods never roll as deposits.
+        Commodity::Uranium | Commodity::Antimatter | Commodity::FusionCore => &[V::Barren],
         Commodity::RareElements => &[V::Lava, V::Barren],
         Commodity::Silicates => &[V::Desert, V::Barren],
         Commodity::Volatiles => &[V::Ice],
@@ -711,14 +830,14 @@ fn dep_kinds(c: Commodity) -> &'static [VisualKind] {
         Commodity::Alloys => &[V::Barren, V::Desert],
         Commodity::Electronics => &[V::Barren],
         Commodity::Polymers => &[V::Barren],
-        Commodity::Fuel => &[V::GasGiant],
+        Commodity::Deuterium => &[V::GasGiant],
         Commodity::Provisions => &[V::Ocean, V::Terrestrial],
         Commodity::Machinery => &[V::Barren],
         Commodity::Armaments
         | Commodity::Composites
         | Commodity::HullSections
         | Commodity::PrecisionComponents
-        | Commodity::DriveAssemblies => &[V::Barren],
+        | Commodity::WarpCore => &[V::Barren],
     }
 }
 
@@ -868,14 +987,18 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
             name,
             kind: p.kind.collapse(),
             parent: None,
+            belt: None,
             habitable: p.habitable,
             profile: PlanetaryProfile::default(),
             deposits: std::mem::take(&mut p.deposits),
+            pockets: Vec::new(),
+            prospected: Default::default(),
             structures: BTreeMap::new(),
             population: 0.0,
             migration_policy: Default::default(),
             inbound_migrants: 0,
             assignments: BTreeMap::new(),
+            grid: Default::default(),
         });
         for (k, m) in p.moons.iter_mut().enumerate() {
             moon_queue.push((id, k, std::mem::take(&mut m.deposits)));
@@ -891,14 +1014,18 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
             name: format!("{}-{}", pname, (b'a' + (k as u8 % 26)) as char),
             kind: BodyKind::Ice, // the walk forced moons to ice — kept
             parent: Some(parent),
+            belt: None,
             habitable: false,
             profile: PlanetaryProfile::default(),
             deposits: deps,
+            pockets: Vec::new(),
+            prospected: Default::default(),
             structures: BTreeMap::new(),
             population: 0.0,
             migration_policy: Default::default(),
             inbound_migrants: 0,
             assignments: BTreeMap::new(),
+            grid: Default::default(),
         });
         next_id += 1;
     }
@@ -1000,14 +1127,18 @@ mod tests {
             name: "X I".into(),
             kind: BodyKind::Rocky,
             parent: None,
+            belt: None,
             habitable: false,
             profile: PlanetaryProfile::default(),
             deposits: vec![dep(Commodity::MetallicOre, 0.4)],
+            pockets: Vec::new(),
+            prospected: Default::default(),
             structures: BTreeMap::new(),
             population: 0.0,
             migration_policy: Default::default(),
             inbound_migrants: 0,
             assignments: BTreeMap::new(),
+            grid: Default::default(),
         };
         assert_eq!(b.resource_slots(), 1);
         assert_eq!(
@@ -1040,14 +1171,18 @@ mod tests {
             founding_camp: None,
             kind: BodyKind::Terrestrial,
             parent: None,
+            belt: None,
             habitable: true,
             profile: PlanetaryProfile::default(),
             deposits: vec![],
+            pockets: Vec::new(),
+            prospected: Default::default(),
             structures: BTreeMap::new(),
             population: 0.0,
             migration_policy: Default::default(),
             inbound_migrants: 0,
             assignments: BTreeMap::new(),
+            grid: Default::default(),
         };
         assert_eq!(
             b.industrial_slots(),
@@ -1082,14 +1217,18 @@ mod tests {
             name: "Test I".into(),
             kind: BodyKind::Rocky,
             parent: None,
+            belt: None,
             habitable: false,
             profile: PlanetaryProfile::default(),
             deposits: vec![dep(Commodity::MetallicOre, 0.4)],
+            pockets: Vec::new(),
+            prospected: Default::default(),
             structures: BTreeMap::new(),
             population: 0.0,
             migration_policy: Default::default(),
             inbound_migrants: 0,
             assignments: BTreeMap::new(),
+            grid: Default::default(),
         };
         let mut found = None;
         for id in 0..2_000 {
@@ -1129,6 +1268,7 @@ mod tests {
             name: "Forge I".into(),
             kind: BodyKind::Rocky,
             parent: None,
+            belt: None,
             habitable: true,
             profile: PlanetaryProfile {
                 version: 1,
@@ -1138,11 +1278,14 @@ mod tests {
                 special: Some(BodySpecial::VolcanicMantle),
             },
             deposits: vec![dep(Commodity::MetallicOre, 0.4)],
+            pockets: Vec::new(),
+            prospected: Default::default(),
             structures: BTreeMap::new(),
             population: 0.0,
             migration_policy: Default::default(),
             inbound_migrants: 0,
             assignments: BTreeMap::new(),
+            grid: Default::default(),
         };
         assert!((b.habitat_capacity_mult() - 2.25).abs() < 1e-9);
         assert!((b.population_growth_mult() - 1.50).abs() < 1e-9);

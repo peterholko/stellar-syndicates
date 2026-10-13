@@ -16,6 +16,9 @@ use crate::math::Vec2;
 
 pub const OPERATION_REFRESH_S: f64 = 30.0;
 pub const PRIVATE_OFFER_LIFETIME_S: f64 = 15.0 * 60.0;
+/// §founding R8: a follow-up offered while the founding programme still runs
+/// stays open long enough to be seen by a player who logs in once a day.
+pub const ONBOARDING_OFFER_LIFETIME_S: f64 = 24.0 * 60.0 * 60.0;
 pub const ACTIVE_CONTRACT_LIFETIME_S: f64 = 30.0 * 60.0;
 pub const SALVAGE_LIFETIME_S: f64 = 10.0 * 60.0;
 pub const SALVAGE_RECOVERY_RADIUS: f64 = 300.0;

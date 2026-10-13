@@ -1,0 +1,16 @@
+{
+  "ship": "battleship",
+  "triangles": 33772,
+  "texturedTriangles": 3622,
+  "ventralTriangles": 1000,
+  "checks": {
+    "allSurfacesAndTexturedUVsHaveArea": true,
+    "ventralProjectionPresent": true,
+    "engineCount": true,
+    "turretCount": true,
+    "threeEmbeddedTextures": true,
+    "gltfValidatorClean": true
+  },
+  "problems": [],
+  "passed": true
+}

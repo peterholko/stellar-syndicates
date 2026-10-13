@@ -1,0 +1,31 @@
+{
+  "id": "power_plant/orbital-fusion",
+  "mode": "built-in image_gen",
+  "prompt": "Use case: stylized-concept.\nAsset type: a single standalone orbital power-station sprite for a space strategy game's planetary view, with genuine transparent alpha. Square canvas, approximately 1024 x 1024.\nInput image 1 is a MATERIAL/RENDERING reference only, the approved Orbital Shipyard. Do NOT copy its rails, gantries or berth. Input image 2 is the FAMILY reference: the same plant on the ground. Keep its identity and materials, but rebuild it as a free-floating station: no ground, feet, shadow on terrain, roads or landscape.\nCreate one FREE-FLOATING SPACE STRUCTURE, compact and readable at small size: a toroidal fusion reactor ringed by field-coil housings around a shielded core block, with frosted cryogenic tanks clustered at its hub and wide pale radiator wings. A short docking arm with cyan docking lights serves the supply tenders. Near-future frontier engineering, matte slate graphite steel and pale grey panels, restrained amber work lights, large readable forms, realistic restrained detail, soft semi-realistic environmental 3D rendering, no ink outlines or cel shading. No glow haze or energy beams.\nCamera: elevated three-quarter front-left, about 30 degrees, matching the orbital yards. Soft upper-left light with neutral fill. The structure about 90% of the canvas wide, centred, never cropped.\nNo planet, sky, stars, horizon, text, logos, people or spacecraft.\nOutput exactly one structure, genuine transparent PNG.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-shipyards-v1/naval_drydock/tier-1.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/power_plant/tier-6.png"
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-55ce41b2-adbc-4edd-8626-c8e2496b4d21.png",
+  "file": "buildings/power_plant/orbital-fusion.png",
+  "source_brief": "docs/power-plant-art-prompt.md",
+  "verification": {
+    "size": [
+      1254,
+      1254
+    ],
+    "mode": "RGBA",
+    "fullyTransparentPixels": 909945,
+    "partiallyTransparentPixels": 662091,
+    "solidBounds": [
+      66,
+      135,
+      1218,
+      1177
+    ],
+    "solidWidthFraction": 0.9187,
+    "lowestSolidFraction": 0.9386,
+    "sha256": "940d7d9b4b1f4dced0455b4e3bdd58a88b50a17ae00f675c67fa8cca4c336a66"
+  }
+}

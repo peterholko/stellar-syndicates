@@ -302,6 +302,7 @@ async fn postgres_accounts_survive_restart_and_authenticate_every_socket() {
             game: GameHandle::new(tx),
             status: status_rx,
             auth: restarted.clone(),
+            activity: crate::activity::Activity::start(pool.clone()).await.unwrap(),
         })
         .merge(routes(restarted.clone()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

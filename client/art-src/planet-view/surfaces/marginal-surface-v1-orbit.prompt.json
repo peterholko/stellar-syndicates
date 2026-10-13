@@ -1,0 +1,46 @@
+{
+  "asset": "marginal-surface-v1-orbit.png",
+  "use_case": "precise-object-edit",
+  "generated_with": "built-in imagegen for new sky; Sharp for exact canvas assembly and seam matching in new pixels only",
+  "edit_target": "marginal-surface-v1.png",
+  "generated_candidate": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-a2806326-dcbd-46a4-b06f-1aa65c657609.png",
+  "prompt": "Use case: precise-object-edit.\nTask: UPWARD OUTPAINT ONLY of the attached marginal-world planet-surface painting.\n\nCanvas: exactly 1672 pixels wide ×1181 pixels tall. The attached source is exactly1672 ×941. Place it at x=0,y=240 in the output, without any scale, crop, translation within that rectangle, repainting or other change. Output rows240 through1180 must be the original image completely unchanged. Only the TOP240 ROWS are new. The bottom-left and bottom-right corners of the source remain the bottom corners of the output.\n\nGenerate only the new space above the original top edge. Continue its near-black deep-space sky upward seamlessly, with the same very small, sparse white stars, same tiny star sizes and sparse density, same quiet colors and soft cinematic painterly rendering. The old top edge becomes an invisible seam at y=240. Match the sky colors and gradients exactly at that junction.\n\nIn particular, the existing soft warm golden-white glare entering from the extreme LEFT edge near the source's old top-left corner must continue naturally upward into the new strip, fading smoothly with distance. The light source remains OUTSIDE the left frame: this is a soft, diffuse off-screen sunlight wash, not a visible sun or a new bright circular object. Do not introduce a sun disc or rays, flare artifacts or a distinct new point light. The rest of the strip is mostly quiet near-black space with sparse tiny white stars. Any faint atmosphere glow must fade naturally upward and must not become a new horizontal band.\n\nPreserve everything within the existing941 rows: the entire planet, terrain, lake, salt flats, hills, mountains, atmosphere, horizon, original stars, colors, lighting, camera angle and painterly style. Do not move the horizon relative to the unchanged source pixels. Do not zoom out, expand sideways, straighten the horizon, rescale the source, reframe the planet, crop the original or repaint its details.\n\nNo new objects: no moons, planets, suns or sun discs, stations, ships, satellites, asteroids, nebulae, galaxies, auroras, lens flares, text, borders, interface or watermarks. No visible seam. ONE full-frame opaque1672 ×1181 PNG.",
+  "assembly": {
+    "generated_candidate_dimensions": [
+      1492,
+      1054
+    ],
+    "target_dimensions": [
+      1672,
+      1181
+    ],
+    "new_sky_bounds": {
+      "x": 0,
+      "y": 0,
+      "width": 1672,
+      "height": 240
+    },
+    "original_bounds": {
+      "x": 0,
+      "y": 240,
+      "width": 1672,
+      "height": 941
+    },
+    "method": "Normalize generated candidate to target canvas and retain only its top240 rows; composite original1672×941 source pixels at(0,240) without resampling or modification.",
+    "seam": "Color-match generated sky to original top edge with a smooth80-pixel correction inside the added sky only; fine edge residual matched in the last4 new rows. Original rows untouched."
+  },
+  "verification": {
+    "path": "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/surfaces/marginal-surface-v1-orbit.png",
+    "size": [
+      1672,
+      1181
+    ],
+    "addedRows": 240,
+    "originalRowsPreserved": 941,
+    "modifiedOriginalPixels": 0,
+    "originalPixelSha256": "64d1451d2afcea7542748fcb95f26cf03682ef50125ef8f5ca8bec44d66db647",
+    "preservedPixelSha256": "64d1451d2afcea7542748fcb95f26cf03682ef50125ef8f5ca8bec44d66db647",
+    "fileSha256": "2585ebff2d06b17855ed99506b49e05ea9a687f76c27bd4cc3331aff6aefce89",
+    "bytes": 3967773
+  }
+}

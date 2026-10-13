@@ -324,6 +324,11 @@ pub const KEYFRAME_DEATH_CAP: usize = 40;
 /// Representative gunfire per side per round. Bound the wire, not the combat:
 /// small fights show every actual shot; large fights show a stable subset.
 pub const KEYFRAME_GUNFIRE_CAP_PER_SIDE: usize = 32;
+/// Torpedoes in flight (oldest first) and torpedo ends kept per side per
+/// round. Same principle as gunfire: bound the wire, never the combat.
+pub const KEYFRAME_TORPEDO_CAP_PER_SIDE: usize = 32;
+/// Tackle and web links kept per round (v11 onward).
+pub const KEYFRAME_LINK_CAP: usize = 48;
 
 /// A recorded round's slice of battle TRUTH: where (a sample of) the ships
 /// actually were, what torpedo salvos were in flight, and exactly where ships
@@ -340,6 +345,124 @@ pub struct Keyframe {
     /// inputs/checkpoints. This shares the frame's participant + arrival gate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gunfire: Option<Vec<KfGunfire>>,
+    /// Every torpedo in flight (oldest first, capped per side), so the viewer
+    /// flies each one along its real path. `None` is a frame recorded before
+    /// torpedoes were tracked one by one (`torpedoes` summaries only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub torps: Option<Vec<KfTorpedo>>,
+    /// How each torpedo that ended this step ended. Resolved evidence like
+    /// `gunfire`: observed, never re-rolled, never part of the replay inputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub torp_ends: Option<Vec<KfTorpedoEnd>>,
+    /// v9 onward: every large-hull wreck section on the field (physical
+    /// wreckage hulls steer around, torpedoes strike and hulls can ram).
+    /// `None` is a frame from rules without physical wreckage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrecks: Option<Vec<KfWreck>>,
+    /// v9 onward: hulls that rammed wreckage this step, and the damage taken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rams: Option<Vec<KfRam>>,
+    /// v11 onward: interceptors holding a hull that is trying to leave (each
+    /// tackler in range of a held hull). Presentation evidence like `gunfire`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tackles: Option<Vec<KfLink>>,
+    /// v11 onward: Stasis Webs slowing their targets this step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webs: Option<Vec<KfLink>>,
+    /// v14 onward: the defended world the battle is fought at (arena units),
+    /// for the viewer to draw where hulls round it and torpedoes burst on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world: Option<KfWorld>,
+}
+
+/// The defended world in a battle's arena (battle-local units).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct KfWorld {
+    pub x: f32,
+    pub y: f32,
+    pub r: f32,
+    /// The side holding it (0 attacker, 1 defender).
+    pub side: u8,
+}
+
+/// One hull acting on another (battle-local combatant ids).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KfLink {
+    pub from: u32,
+    pub to: u32,
+}
+
+/// One section of a dead large hull's wreck.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KfWreck {
+    /// Battle-local id of the hull it came from.
+    pub hull: u32,
+    /// Section index from the bow.
+    pub piece: u8,
+    pub x: f32,
+    pub y: f32,
+    /// Collision radius (arena units).
+    pub r: f32,
+}
+
+/// A hull that ran into wreckage: where, which section, and the hull damage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KfRam {
+    pub cid: u32,
+    pub hull: u32,
+    pub piece: u8,
+    pub x: f32,
+    pub y: f32,
+    pub damage: f32,
+}
+
+/// One torpedo in flight.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KfTorpedo {
+    /// Stable for the torpedo's whole flight (battle-local, presentation only).
+    pub id: u32,
+    pub side: u8,
+    /// Battle-local combatant id of its target.
+    pub to: u32,
+    pub x: f32,
+    pub y: f32,
+}
+
+/// How a torpedo's flight ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TorpedoEnd {
+    /// Reached its target and struck.
+    Hit,
+    /// Reached its target and missed.
+    Miss,
+    /// Shot down by point defense (`by`).
+    Intercepted,
+    /// Its target was already gone; it ran dry.
+    Dry,
+    /// It ran into wreckage and detonated on it (v9 onward).
+    Wreck,
+}
+
+/// A torpedo that ended this step: where, how, and (on a hit) for how much.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KfTorpedoEnd {
+    pub id: u32,
+    pub side: u8,
+    pub to: u32,
+    pub x: f32,
+    pub y: f32,
+    pub end: TorpedoEnd,
+    /// The point-defense hull that shot it down (battle-local id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<u32>,
+    /// Actual hull damage dealt (hits only).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub damage: f32,
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -368,6 +491,10 @@ pub struct KfShip {
     /// A Defense Platform tier (drawn as an emplacement, not a hull).
     #[serde(default)]
     pub plat: bool,
+    /// §orbital-defense: a station hardpoint, with its station's level (the
+    /// theater draws the station once, around its hardpoints).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub station: Option<u8>,
 }
 
 /// A live torpedo SALVO summary: `n` fish around a centroid, per firing side.
@@ -388,6 +515,9 @@ pub struct KfDeath {
     pub kind: ShipKind,
     pub x: f32,
     pub y: f32,
+    /// Battle-local id of the hull that died (absent in older records).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cid: Option<u32>,
 }
 
 /// The resolved outcome: who won (as a [`RaidOutcome`]) + each side's total
@@ -591,14 +721,16 @@ impl BattleRecord {
     /// Capture at the kernel boundary, where all effects of strategic inputs
     /// are known. The recorder never performs a second resolution or consumes
     /// random draws. A resumed legacy battle stays legacy until it ends.
+    /// `arrivals`: per fleet, the direction it came from (v14 reinforcements
+    /// enter on that side; recorded with the roster change).
     pub fn sync_tactical(
         &mut self, tick: u64, state: &mut crate::tactical::TacticalState,
-        desired: [&[(EntityId, crate::ship::Ship)]; 2],
+        desired: [&[(EntityId, crate::ship::Ship)]; 2], arrivals: &BTreeMap<EntityId, crate::Vec2>,
     ) -> [u32; 2] {
         if self.replay.is_none() && self.rounds.is_empty() {
             self.replay = Some(crate::tactical::replay::BattleReplay::new(state));
         }
-        let (scouts, changes) = state.sync_recorded(desired);
+        let (scouts, changes) = state.sync_recorded(desired, arrivals);
         if let Some(replay) = &mut self.replay { replay.roster(tick, changes); }
         scouts
     }

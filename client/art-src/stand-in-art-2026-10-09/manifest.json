@@ -1,0 +1,640 @@
+{
+  "date": "2026-10-09",
+  "brief": "docs/stand-in-art-prompts.md",
+  "imageGenerationMode": "builtin-imagegen",
+  "primaryImageCount": 13,
+  "images": [
+    {
+      "file": "survey-probe-reference-v1/survey-probe.png",
+      "width": 1193,
+      "height": 1193,
+      "alpha": true,
+      "bytes": 780651,
+      "sha256": "95890a0ca0dfc6c0992cf8ff937f52599fcfdcc3b0415e5774dae0283e3d11a5",
+      "prompt": "survey-probe-reference-v1/survey-probe.prompt.json",
+      "zeroAlphaPixels": 1174436
+    },
+    {
+      "file": "survey-probe-reference-v1/survey-probe-reference.png",
+      "width": 1774,
+      "height": 887,
+      "alpha": false,
+      "bytes": 1982506,
+      "sha256": "5ce6e8b5d4c4eaab40952aba466bf50fed1e0e803cad46fc665d88298fe15249",
+      "prompt": "survey-probe-reference-v1/survey-probe-reference.prompt.json"
+    },
+    {
+      "file": "planets-2026-10-08/marginal-ocean-v1.png",
+      "width": 1254,
+      "height": 1254,
+      "alpha": true,
+      "bytes": 2206972,
+      "sha256": "238281f1a8db080d30ccfe419de64bdb43fe94db00c95f5ed7e42ce5b14c9ddb",
+      "prompt": "planets-2026-10-08/marginal-ocean-v1.prompt.json",
+      "zeroAlphaPixels": 554436
+    },
+    {
+      "file": "planet-view/surfaces/marginal-ocean-surface-v1.png",
+      "width": 1672,
+      "height": 941,
+      "alpha": false,
+      "bytes": 2685321,
+      "sha256": "1aa175635da8e6eeb6e645de0730fa3e86a748d89c08290181e3e3ebc6d35052",
+      "prompt": "planet-view/surfaces/marginal-ocean-surface-v1.prompt.json"
+    },
+    {
+      "file": "planet-view/surfaces/marginal-ocean-surface-v1-orbit.png",
+      "width": 1672,
+      "height": 1181,
+      "alpha": false,
+      "bytes": 3753560,
+      "sha256": "fef0f618ae206d3c1d0465fec2220b83ff26967864e25ce280612871fc55e891",
+      "prompt": "planet-view/surfaces/marginal-ocean-surface-v1-orbit.prompt.json",
+      "sourcePainting": "planet-view/surfaces/marginal-ocean-surface-v1.png",
+      "originalRowsUnchanged": true,
+      "changedOriginalPixels": 0,
+      "preservedPixelSHA256": "43aa62e856fc6cf1e0bf0efa5f3a627ce754cfa2d685ede92cabc058aafb30e2"
+    },
+    {
+      "file": "planet-view/habitable-v1/boreal-world-v2.png",
+      "width": 1672,
+      "height": 941,
+      "alpha": false,
+      "bytes": 2645308,
+      "sha256": "7548b5ddf35e8c4ef23c0914d34e3cef9c85ffd1a014c32c745d7f1e56ff7b66",
+      "prompt": "planet-view/habitable-v1/boreal-world-v2.prompt.json"
+    },
+    {
+      "file": "planet-view/habitable-v1/boreal-world-v2-orbit.png",
+      "width": 1672,
+      "height": 1181,
+      "alpha": false,
+      "bytes": 4016614,
+      "sha256": "a33264105bcfd29dbf10511eb2d7e08b81719eacd09afc7a7d26c1eb67cecbcb",
+      "prompt": "planet-view/habitable-v1/boreal-world-v2-orbit.prompt.json",
+      "sourcePainting": "planet-view/habitable-v1/boreal-world-v2.png",
+      "originalRowsUnchanged": true,
+      "changedOriginalPixels": 0,
+      "preservedPixelSHA256": "a8d8e832a949f9638dab201bb75ee054a0fdae29163c056802286c4ad9e62b8a"
+    },
+    {
+      "file": "planet-view/habitable-v1/volcanic-highlands-v2.png",
+      "width": 1672,
+      "height": 941,
+      "alpha": false,
+      "bytes": 2727837,
+      "sha256": "ebbfeb2a5c19820ae218ffed36978a8808f9f774f63868049b23a25163dd76fc",
+      "prompt": "planet-view/habitable-v1/volcanic-highlands-v2.prompt.json"
+    },
+    {
+      "file": "planet-view/habitable-v1/volcanic-highlands-v2-orbit.png",
+      "width": 1672,
+      "height": 1181,
+      "alpha": false,
+      "bytes": 4059849,
+      "sha256": "6e0504f40d47d9cd1a70a752b288e1808e862a827bf343e6160a04258fd2b752",
+      "prompt": "planet-view/habitable-v1/volcanic-highlands-v2-orbit.prompt.json",
+      "sourcePainting": "planet-view/habitable-v1/volcanic-highlands-v2.png",
+      "originalRowsUnchanged": true,
+      "changedOriginalPixels": 0,
+      "preservedPixelSHA256": "cff157771bb05ba88f52fb247ee35948b729316a32e910a8273c7c0484da1b85"
+    },
+    {
+      "file": "planet-view/habitable-v1/archipelago-world-v2.png",
+      "width": 1672,
+      "height": 941,
+      "alpha": false,
+      "bytes": 2612470,
+      "sha256": "1e1f92e4d62414691f5fb5ea7d6036e590f2a222483f7f54c5a033e3b7d546c0",
+      "prompt": "planet-view/habitable-v1/archipelago-world-v2.prompt.json"
+    },
+    {
+      "file": "planet-view/habitable-v1/archipelago-world-v2-orbit.png",
+      "width": 1672,
+      "height": 1181,
+      "alpha": false,
+      "bytes": 3963486,
+      "sha256": "7cadabe1f04cf87304526a95ea765ba66db78ba04059fc7b38d81d6eb678a053",
+      "prompt": "planet-view/habitable-v1/archipelago-world-v2-orbit.prompt.json",
+      "sourcePainting": "planet-view/habitable-v1/archipelago-world-v2.png",
+      "originalRowsUnchanged": true,
+      "changedOriginalPixels": 0,
+      "preservedPixelSHA256": "02254fae9545cba73501aa2cdae9d7e1c7cdec2f7c79fe5179e86eeca3e50809"
+    },
+    {
+      "file": "planet-view/surfaces/ocean-surface-v1-v2.png",
+      "width": 1672,
+      "height": 941,
+      "alpha": false,
+      "bytes": 2609475,
+      "sha256": "e347156285b0cd20073d2a76dd1b54eca71cd4098e8425c0fec0954d16c9c3c2",
+      "prompt": "planet-view/surfaces/ocean-surface-v1-v2.prompt.json"
+    },
+    {
+      "file": "planet-view/surfaces/ocean-surface-v1-v2-orbit.png",
+      "width": 1672,
+      "height": 1181,
+      "alpha": false,
+      "bytes": 3657381,
+      "sha256": "4bd9d6080cbe3a74dcd987f5809ffc560b6d4a877b799aaf99a8daa31ffcbd05",
+      "prompt": "planet-view/surfaces/ocean-surface-v1-v2-orbit.prompt.json",
+      "sourcePainting": "planet-view/surfaces/ocean-surface-v1-v2.png",
+      "originalRowsUnchanged": true,
+      "changedOriginalPixels": 0,
+      "preservedPixelSHA256": "5d3b76b0db96f89e079c3aa49561fcde2e09553578cc806ebabcc42b1e1e2bc3"
+    }
+  ],
+  "model": {
+    "file": "ship-models/survey-probe-textured-v1/survey-probe.glb",
+    "bytes": 4252736,
+    "sha256": "d3492c959c10ead070341496999a4070f007bc6f14b910185641f7569045ecea",
+    "triangles": 2448,
+    "renderSections": 2,
+    "closedComponents": 50,
+    "allPhysicalTrianglesTextured": true,
+    "texturedDownwardTriangles": 505,
+    "gltfErrors": 0,
+    "gltfWarnings": 0,
+    "threeRevision": "180",
+    "engineSocket": {
+      "name": "socket.engine.main",
+      "translation": [
+        0,
+        -0.015,
+        2.828333333333333
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0,
+          0,
+          1
+        ]
+      }
+    },
+    "generator": "Python/NumPy reconstruction, Mining Fleet pipeline, no Blender"
+  },
+  "placementChecks": [
+    {
+      "id": "boreal-world",
+      "source": "habitable-v1/boreal-world-v2.png",
+      "cleanSites": 24,
+      "generatedAddresses": 24,
+      "spacing": 0.06,
+      "cleanCoordinates": [
+        [
+          32.3,
+          58.1
+        ],
+        [
+          37.1,
+          57.7
+        ],
+        [
+          41.9,
+          58.1
+        ],
+        [
+          35.6,
+          66.6
+        ],
+        [
+          41.6,
+          50.9
+        ],
+        [
+          46.9,
+          67.4
+        ],
+        [
+          51.4,
+          58.5
+        ],
+        [
+          41.4,
+          66.6
+        ],
+        [
+          52.4,
+          68.7
+        ],
+        [
+          56.2,
+          58.9
+        ],
+        [
+          57.9,
+          68.3
+        ],
+        [
+          61,
+          58.1
+        ],
+        [
+          63.6,
+          69.1
+        ],
+        [
+          66,
+          60.2
+        ],
+        [
+          27.3,
+          61.9
+        ],
+        [
+          71.1,
+          61.9
+        ],
+        [
+          70.1,
+          76
+        ],
+        [
+          76.3,
+          64.5
+        ],
+        [
+          46.7,
+          58.5
+        ],
+        [
+          21.8,
+          58.1
+        ],
+        [
+          77,
+          79.4
+        ],
+        [
+          17,
+          57.2
+        ],
+        [
+          12,
+          57.7
+        ],
+        [
+          94.3,
+          73.4
+        ]
+      ],
+      "assessment": "Existing terrain classifier, original thresholds and footprint scale; art QA only, not game integration.",
+      "regionConstraint": null
+    },
+    {
+      "id": "volcanic-highlands",
+      "source": "habitable-v1/volcanic-highlands-v2.png",
+      "cleanSites": 24,
+      "generatedAddresses": 24,
+      "spacing": 0.12,
+      "cleanCoordinates": [
+        [
+          44,
+          58.1
+        ],
+        [
+          49,
+          56.8
+        ],
+        [
+          44.3,
+          50
+        ],
+        [
+          48.8,
+          49.1
+        ],
+        [
+          38.8,
+          53.8
+        ],
+        [
+          45.5,
+          67
+        ],
+        [
+          59.6,
+          57.2
+        ],
+        [
+          53.8,
+          51.7
+        ],
+        [
+          53.3,
+          69.1
+        ],
+        [
+          59.8,
+          66.2
+        ],
+        [
+          64.6,
+          57.2
+        ],
+        [
+          65.8,
+          66.6
+        ],
+        [
+          59.8,
+          76.8
+        ],
+        [
+          69.9,
+          56.8
+        ],
+        [
+          66.7,
+          76.8
+        ],
+        [
+          75.1,
+          54.3
+        ],
+        [
+          73.2,
+          72.1
+        ],
+        [
+          80.1,
+          57.7
+        ],
+        [
+          54.3,
+          59.8
+        ],
+        [
+          79.7,
+          75.1
+        ],
+        [
+          85.9,
+          58.5
+        ],
+        [
+          33,
+          48.7
+        ],
+        [
+          91.1,
+          60.6
+        ],
+        [
+          38.3,
+          66.2
+        ]
+      ],
+      "assessment": "Existing terrain classifier, original thresholds and footprint scale; art QA only, not game integration.",
+      "regionConstraint": null
+    },
+    {
+      "id": "archipelago-world",
+      "source": "habitable-v1/archipelago-world-v2.png",
+      "cleanSites": 17,
+      "generatedAddresses": 24,
+      "spacing": 0.06,
+      "cleanCoordinates": [
+        [
+          48.1,
+          58.1
+        ],
+        [
+          53.1,
+          56.8
+        ],
+        [
+          48.3,
+          50.9
+        ],
+        [
+          53.1,
+          49.6
+        ],
+        [
+          58.1,
+          58.9
+        ],
+        [
+          62.4,
+          50.9
+        ],
+        [
+          63.2,
+          58.9
+        ],
+        [
+          44,
+          50.9
+        ],
+        [
+          42.6,
+          59.8
+        ],
+        [
+          66.7,
+          50.9
+        ],
+        [
+          68.2,
+          58.9
+        ],
+        [
+          71.1,
+          49.6
+        ],
+        [
+          73.2,
+          59.8
+        ],
+        [
+          40,
+          47.4
+        ],
+        [
+          35.6,
+          48.7
+        ],
+        [
+          24.6,
+          48.3
+        ],
+        [
+          57.7,
+          51.3
+        ]
+      ],
+      "assessment": "Existing terrain classifier, original thresholds and footprint scale; art QA only, not game integration.",
+      "regionConstraint": null
+    },
+    {
+      "id": "ocean",
+      "source": "surfaces/ocean-surface-v1-v2.png",
+      "cleanSites": 19,
+      "generatedAddresses": 24,
+      "spacing": 0.06,
+      "cleanCoordinates": [
+        [
+          35.9,
+          58.1
+        ],
+        [
+          30.9,
+          57.7
+        ],
+        [
+          25.8,
+          57.7
+        ],
+        [
+          21.1,
+          59.8
+        ],
+        [
+          42.6,
+          66.2
+        ],
+        [
+          45.9,
+          56
+        ],
+        [
+          48.6,
+          65.3
+        ],
+        [
+          36.1,
+          66.6
+        ],
+        [
+          50.7,
+          56.8
+        ],
+        [
+          53.8,
+          64.9
+        ],
+        [
+          56.2,
+          56.4
+        ],
+        [
+          61,
+          58.1
+        ],
+        [
+          63.6,
+          50.9
+        ],
+        [
+          66,
+          60.2
+        ],
+        [
+          71.1,
+          61.9
+        ],
+        [
+          76.1,
+          61.9
+        ],
+        [
+          81.1,
+          61.9
+        ],
+        [
+          86.1,
+          61.1
+        ],
+        [
+          40.9,
+          57.7
+        ]
+      ],
+      "assessment": "Existing terrain classifier, original thresholds and footprint scale; art QA only, not game integration.",
+      "regionConstraint": "Main island band only: x=17–94%, y=47–75%; excludes specular sea and floating-ice false positives."
+    },
+    {
+      "id": "marginal-ocean",
+      "source": "surfaces/marginal-ocean-surface-v1.png",
+      "cleanSites": 17,
+      "generatedAddresses": 24,
+      "spacing": 0.06,
+      "cleanCoordinates": [
+        [
+          36.4,
+          58.1
+        ],
+        [
+          31.6,
+          58.5
+        ],
+        [
+          26.6,
+          58.9
+        ],
+        [
+          21.8,
+          58.1
+        ],
+        [
+          40.4,
+          50.4
+        ],
+        [
+          45.9,
+          58.5
+        ],
+        [
+          50.7,
+          56.8
+        ],
+        [
+          37.8,
+          66.6
+        ],
+        [
+          51.4,
+          66.2
+        ],
+        [
+          55.7,
+          57.7
+        ],
+        [
+          61,
+          58.1
+        ],
+        [
+          66,
+          60.2
+        ],
+        [
+          65.6,
+          52.6
+        ],
+        [
+          71.1,
+          61.9
+        ],
+        [
+          76.1,
+          61.9
+        ],
+        [
+          81.1,
+          61.9
+        ],
+        [
+          41.1,
+          58.1
+        ]
+      ],
+      "assessment": "Existing terrain classifier, original thresholds and footprint scale; art QA only, not game integration.",
+      "regionConstraint": "Main island band only: x=17–94%, y=47–75%; excludes specular sea and floating-ice false positives."
+    }
+  ],
+  "verification": "Decoded image dimensions/alpha, SHA-256, exact lower-region RGB comparisons, exported GLB geometry/UV checks, Khronos validator and Node Three.js loader. Ocean placement reviews exclude reflective water and floating ice.",
+  "integrationStatus": "Art-only handoff; catalog, runtime sprites, model scaling and placement table wiring remain a separate task."
+}

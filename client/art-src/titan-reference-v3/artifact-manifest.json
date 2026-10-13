@@ -1,0 +1,19 @@
+{
+  "file": "titan-reference.png",
+  "width": 1774,
+  "height": 887,
+  "mode": "RGB",
+  "sha256": "5108a5086f4cd0415ee1bfb12a87004e5c6091683a52d614878735630b9b09b8",
+  "views": [
+    "front",
+    "back",
+    "top",
+    "bottom",
+    "side"
+  ],
+  "tool": "built-in image_gen",
+  "promptHistory": "prompts.json",
+  "status": "design proposal",
+  "design": "Connected anvil-bow flagship with a stepped hull, offset command citadel, and recessed hangars",
+  "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-636382c0-0bb6-4ce7-92af-0d501734742f.png"
+}

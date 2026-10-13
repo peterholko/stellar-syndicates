@@ -1,0 +1,97 @@
+{
+  "id": "survey-probe",
+  "name": "Survey Probe",
+  "center": [
+    288,
+    418
+  ],
+  "pixelsPerUnit": [
+    112,
+    120
+  ],
+  "reference": "survey-probe-reference-v1/survey-probe-reference.png",
+  "sprite": "survey-probe-reference-v1/survey-probe.png",
+  "triangleBudget": [
+    1500,
+    3000
+  ],
+  "counts": {
+    "sensorDishes": 1,
+    "antennaBooms": 4,
+    "radiatorFins": 2,
+    "mainEngines": 1,
+    "guns": 0,
+    "cockpits": 0,
+    "crewModules": 0
+  },
+  "regions": {
+    "top": [
+      38,
+      61,
+      536,
+      772
+    ],
+    "bottom": [
+      587,
+      61,
+      1085,
+      772
+    ],
+    "front": [
+      1173,
+      64,
+      1726,
+      289
+    ],
+    "back": [
+      1173,
+      339,
+      1726,
+      592
+    ],
+    "side": [
+      1178,
+      620,
+      1730,
+      812
+    ]
+  },
+  "patches": {
+    "silver": [
+      8,
+      1032,
+      674,
+      1698
+    ],
+    "dark": [
+      692,
+      1032,
+      1355,
+      1698
+    ],
+    "brass": [
+      256,
+      658,
+      318,
+      667
+    ],
+    "cyan": [
+      1448,
+      158,
+      1457,
+      168
+    ],
+    "radiator": [
+      1284,
+      184,
+      1320,
+      224
+    ],
+    "enginewall": [
+      692,
+      1032,
+      1355,
+      1698
+    ]
+  }
+}

@@ -4,7 +4,7 @@ import path from "node:path";
 import sharp from "sharp";
 
 const clientRoot = fileURLToPath(new URL("..", import.meta.url));
-export const FOUNDING_STORY_ART = ["wormhole-opening-selected", "stellar-charter", "first-landing"];
+export const FOUNDING_STORY_ART = ["wormhole-opening-selected", "stellar-charter", "first-landing", "stay-vigilant-firing"];
 export const FOUNDING_STORY_WIDTHS = [768, 1280, 1672];
 
 export async function buildFoundingStoryArt() {

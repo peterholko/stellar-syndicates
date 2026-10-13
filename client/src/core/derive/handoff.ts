@@ -1,10 +1,10 @@
 import { state } from "../../state";
-import type { BodyView, OperationView, SystemStateView } from "../../protocol";
+import type { BodyView, OperationView } from "../../protocol";
 import { constructionStock } from "./fleet";
 import { foundingHomeSystemId } from "./geo";
 import { SHIP_YARD } from "./market";
 
-export type HandoffGoalId = "explore" | "upgrade";
+export type HandoffGoalId = "colony" | "upgrade";
 export type HandoffAction =
   | { kind: "build"; system: string; body: number; mode: "ships" | "structures"; select: string }
   | { kind: "fleet"; id: string }
@@ -34,31 +34,16 @@ export interface HandoffGoal {
  * unreported battle outcome can graduate a player or reveal a prospect here. */
 export function postVictoryHandoff(): HandoffGoal[] {
   const founding = state.founding;
-  if (!founding?.bounty_received) return [];
-  // Finish the first reinvestment before promoting Academy/Scout/Corvette goals.
-  // A bounty alone no longer means the player has a yard or spare freight hull.
-  if (["build_mine", "build_convoy", "export_production", "defeat_privateer",
-    "complete_export", "build_shipyard", "build_second_freighter", "grow_business"].includes(founding.stage)) return [];
+  // §charter v3: the charter itself teaches the Shipyard, research, surveys and
+  // belt mining. Its handover is the first colony and a stronger escort.
+  if (founding?.stage !== "complete") return [];
   const homeId = foundingHomeSystemId();
   const home = state.systems.find(s => s.id === homeId);
   if (!home) return [];
   const own = state.ghosts.filter(g => g.own);
   const fleet = (kind: string) => own.find(g => g.composition?.some(c => c.kind === kind && (c.count ?? 0) > 0));
-  const scout = fleet("scout");
   const upgraded = own.find(g => g.composition?.some(c =>
     ["corvette", "destroyer", "cruiser", "battleship", "dreadnought", "titan"].includes(c.kind) && (c.count ?? 0) > 0));
-  const candidates = founding.survey_candidates.map(id => state.systems.find(s => s.id === id)).filter((s): s is SystemStateView => !!s);
-  const surveyed = (s: SystemStateView) => s.bodies.some(b => b.geology != null);
-  const reports = candidates.filter(surveyed);
-  const needed = Math.min(2, founding.survey_candidates.length) || 2;
-  // expansion_unlocked is the server's arrived milestone, including the fallback
-  // two-survey path for old saves without assigned prospects.
-  const explorationDone = founding.expansion_unlocked;
-  const researched = explorationDone || state.research?.programmes.some(p => p.tier === 1 && p.state === "completed")
-    || ["build_scout", "survey_candidates", "build_colony", "establish_colony", "complete"].includes(founding.stage);
-  const academy = home.bodies.find(b => (b.structures.academy ?? 0) > 0);
-  const academyStaffed = academy && home.assignments.some(a => a.body_id === academy.id && a.structure === "academy"
-    && (a.workers > 0 || Object.values(a.specialists).some(n => n > 0)));
   const shipyard = [...home.bodies].sort((a, b) => (b.structures.shipyard ?? 0) - (a.structures.shipyard ?? 0))[0];
   const build = (select: string, mode: "ships" | "structures" = "ships", body?: BodyView): HandoffAction | null => {
     const site = body ?? shipyard;
@@ -74,30 +59,27 @@ export function postVictoryHandoff(): HandoffGoal[] {
   };
   const yardReady = (kind: string) => (home.structures?.shipyard ?? 0) >= SHIP_YARD[kind].tier;
   const building = (kind: string) => home.builds.some(j => j.key === kind);
-  const missingId = founding.survey_candidates.find(id => !reports.some(s => s.id === id));
-  // Exploration completes onboarding; it no longer promises a kit or turns
-  // tutorial completion into a claim that a second colony has been founded.
-  const explorationAction: HandoffAction | null = explorationDone ? { kind: "system", id: home.id }
-    : !researched ? !academy ? build("academy", "structures", [...home.bodies].sort((a, b) =>
-      (b.infrastructure_slots ?? 0) - (a.infrastructure_slots ?? 0))[0])
-      : !academyStaffed ? { kind: "world", system: home.id, body: academy.id } : { kind: "research" }
-    : scout ? { kind: "fleet", id: scout.id } : build("scout");
-  const explore: HandoffGoal = {
-    id: "explore", title: "Explore nearby systems", done: explorationDone,
-    status: explorationDone ? "Surveys received" : `${Math.min(reports.length, needed)}/${needed} reports`,
-    summary: "Compare a population world with an industrial prospect.",
+  // A habitable world the corporation has charted and nobody holds.
+  const garden = state.systems.find(s => s.owner == null && s.bodies.some(b => b.habitable));
+  const colonyShip = fleet("colony");
+  const settled = state.systems.filter(s => s.owner === state.playerId).length >= 2;
+  const colony: HandoffGoal = {
+    id: "colony", title: "Found your first colony", done: settled,
+    status: settled ? "Second system held" : colonyShip ? "Colony Ship ready" : garden ? "Habitable world charted" : "Next goal",
+    summary: "Chart a habitable world, then send a Colony Ship to claim it.",
     requirements: [
-      { text: "Staff Academy I · finish first research", met: researched },
-      { text: `Scout · Shipyard I${building("scout") && !scout ? " · building" : ""}`, met: !!scout || explorationDone },
-      { text: `${explorationDone ? needed : Math.min(reports.length, needed)}/${needed} survey reports received`, met: explorationDone },
+      { text: "Chart a habitable world (a probe survey reveals one)", met: !!garden || settled },
+      { text: `Colony Ship · Shipyard I${building("colony") && !colonyShip ? " · building" : ""}`, met: !!colonyShip || settled },
+      { text: "Claim the system", met: settled },
     ],
-    costs: !scout && !explorationDone ? costs("scout") : [],
-    payoff: "Two resource surveys · tutorial complete",
-    action: explorationAction,
-    actionLabel: explorationDone ? "Develop home" : !researched ? !academy ? "Build Academy" : !academyStaffed ? "Staff Academy" : "Choose research"
-      : scout ? "Select Scout" : building("scout") ? "View Scout build" : "Build Scout",
+    costs: !colonyShip && !settled ? costs("colony") : [],
+    payoff: "A second system: more people, more slots, more supply",
+    action: settled ? { kind: "system", id: home.id } : !garden ? build("survey_probe")
+      : colonyShip ? { kind: "fleet", id: colonyShip.id } : build("colony"),
+    actionLabel: settled ? "Develop home" : !garden ? "Build Survey Probe"
+      : colonyShip ? "Select Colony Ship" : building("colony") ? "View Colony Ship build" : "Build Colony Ship",
     funding: funding("salvage"),
-    prospect: missingId ?? reports[0]?.id ?? null,
+    prospect: garden?.id ?? null,
   };
   const upgrade: HandoffGoal = {
     id: "upgrade", title: "Reinforce your fleet", done: !!upgraded,
@@ -114,5 +96,5 @@ export function postVictoryHandoff(): HandoffGoal[] {
     funding: funding("escort"),
     prospect: null,
   };
-  return [explore, upgrade];
+  return [colony, upgrade];
 }

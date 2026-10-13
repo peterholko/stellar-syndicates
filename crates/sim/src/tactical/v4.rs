@@ -32,7 +32,7 @@ impl TacticalState {
     }
 
     pub(crate) fn set_escorts(&mut self, guards: BTreeMap<EntityId, EntityId>) -> bool {
-        if !matches!(self.rules, Rules::V4 { .. } | Rules::V5 { .. } | Rules::V6 { .. }) || self.escorts == guards { return false; }
+        if !matches!(self.rules, Rules::V4 { .. } | Rules::V5 { .. } | Rules::V6 { .. } | Rules::V7 { .. } | Rules::V8 { .. } | Rules::V9 { .. } | Rules::V10 { .. } | Rules::V11 { .. } | Rules::V12 { .. } | Rules::V13 { .. } | Rules::V14 { .. } | Rules::V15 { .. } | Rules::V16 { .. }) || self.escorts == guards { return false; }
         self.escorts = guards;
         true
     }
@@ -42,6 +42,11 @@ fn linked(c: &Combatant) -> bool {
     let fit = Loadout::from_key(&c.stack);
     c.kind == ShipKind::Corvette && !c.platform && c.hp > 0.0
         && c.role == Role::Screen && fit.has_pd() && fit.has_datalink()
+}
+
+/// A datalinked escort with a charge to guard holds its own station.
+pub(super) fn guarding(state: &TacticalState, c: &Combatant) -> bool {
+    linked(c) && charge(state, c).is_some()
 }
 
 fn charge<'a>(state: &'a TacticalState, escort: &Combatant) -> Option<&'a Combatant> {
@@ -92,7 +97,7 @@ fn priority_target(state: &TacticalState, escort: &Combatant) -> Option<usize> {
         .map(|entry| entry.0)
 }
 
-pub(super) fn intercept_linked(state: &mut TacticalState, mods: [SideMods; 2]) {
+pub(super) fn intercept_linked(state: &mut TacticalState, mods: [SideMods; 2], out: &mut v1::StepOutcome) {
     // Stable cid order. Recompute after each successful shot so two escorts
     // never waste their priority volley on an already-intercepted torpedo.
     let escorts: Vec<_> = state.combatants.iter().filter(|c| linked(c)).map(|c| c.cid).collect();
@@ -101,7 +106,10 @@ pub(super) fn intercept_linked(state: &mut TacticalState, mods: [SideMods; 2]) {
         let Some(target) = priority_target(state, escort) else { continue; };
         let chance = (v1::PD_ROLL_BASE * hull_affinity(escort.kind, Family::Interception)
             * mods[escort.side as usize].flak()).min(0.95);
-        if state.rng.next_f64() < chance { state.torpedoes.remove(target); }
+        if state.rng.next_f64() < chance {
+            let fish = state.torpedoes.remove(target);
+            out.torp_ends.push(fish.end(crate::combat::TorpedoEnd::Intercepted, Some(cid), 0.0));
+        }
     }
 }
 
@@ -176,7 +184,7 @@ mod tests {
         assert!(escort.pos.distance(Vec2::new(160.0, 0.0)) > v1::PD_RADIUS);
         let seed = (0..100).find(|seed| Rng::new(*seed).next_f64() < 0.95).unwrap();
         state.rng = Rng::new(seed);
-        intercept_linked(&mut state, [SideMods { flak_mult: 100.0, ..Default::default() }; 2]);
+        intercept_linked(&mut state, [SideMods { flak_mult: 100.0, ..Default::default() }; 2], &mut v1::StepOutcome::default());
         assert_eq!(state.torpedoes.len(), 2, "only one priority attempt per fitted hull/step");
         assert_eq!(state.torpedoes[0].pos, Vec2::new(250.0, 70.0));
         assert_eq!(state.torpedoes[1].pos, Vec2::new(330.0, 0.0));
@@ -197,7 +205,7 @@ mod tests {
                 _ => { let j = index(&state, 3); state.combatants[j].hp = 0.0; },
             }
             let before = state.clone();
-            intercept_linked(&mut state, [SideMods::default(); 2]);
+            intercept_linked(&mut state, [SideMods::default(); 2], &mut v1::StepOutcome::default());
             assert_eq!(state, before, "case {case}: no effect and not even an RNG draw");
         }
     }
@@ -212,8 +220,8 @@ mod tests {
             let mut plain = state.clone();
             let i = index(&plain, 2);
             plain.combatants[i].stack = "point_defense_screen".into();
-            intercept_linked(&mut plain, [SideMods::default(); 2]);
-            intercept_linked(&mut state, [SideMods::default(); 2]);
+            intercept_linked(&mut plain, [SideMods::default(); 2], &mut v1::StepOutcome::default());
+            intercept_linked(&mut state, [SideMods::default(); 2], &mut v1::StepOutcome::default());
             assert_eq!(plain.torpedoes.len(), 1, "ordinary PD has no long-range volley");
             stopped += usize::from(state.torpedoes.is_empty());
         }

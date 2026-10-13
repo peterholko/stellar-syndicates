@@ -1,0 +1,31 @@
+python3 prepare_textures.py
+Packed native reference artwork into three 2048px PBR maps, with a dedicated underside projection.
+
+python3 build_model.py
+{
+  "meshes": 7,
+  "renderSections": 7,
+  "sourceComponents": 196,
+  "triangles": 20144,
+  "exportedVertices": 25440,
+  "dimensionsXYZ": [
+    11.725,
+    3.13,
+    17.85
+  ],
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "embeddedTextures": 3,
+  "axes": "Y up, -Z forward",
+  "source": "../../authority-freighter-reference-v1/authority-freighter-reference.png",
+  "generator": "Python/NumPy, no Blender",
+  "optimization": "Static parts combined by material; independent turret assemblies retained; exact vertex deduplication; 16-bit indices where possible"
+}
+
+node validate.mjs
+0 errors; 0 warnings; 12 informational notes.
+
+node build_preview.mjs
+Built standalone viewer.html with embedded GLB and renderer.

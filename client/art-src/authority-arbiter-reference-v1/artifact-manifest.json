@@ -1,0 +1,27 @@
+{
+  "assets": [
+    {
+      "file": "authority-arbiter.png",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "9e4aa2997aee45145433ef0f93ee62b500de18b89da1b0a4212899bc494ea078",
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "file": "authority-arbiter-reference.png",
+      "dimensions": [
+        1774,
+        887
+      ],
+      "mode": "RGB",
+      "sha256": "e647d2b934822a42cd57917895e19c95efae42605b75406b8ea8d0e300f4c1b2"
+    }
+  ],
+  "generationMode": "built-in image_gen"
+}

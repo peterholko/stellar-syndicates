@@ -1,0 +1,16 @@
+{
+  "ship": "authority-freighter",
+  "triangles": 20144,
+  "texturedTriangles": 5784,
+  "ventralTriangles": 1940,
+  "checks": {
+    "allSurfacesAndTexturedUVsHaveArea": true,
+    "ventralProjectionPresent": true,
+    "engineCount": true,
+    "turretCount": true,
+    "threeEmbeddedTextures": true,
+    "gltfValidatorClean": true
+  },
+  "problems": [],
+  "passed": true
+}

@@ -1,0 +1,29 @@
+{
+  "ships": [
+    {
+      "id": "interceptor",
+      "file": "traffic-models/interceptor-lod2.glb",
+      "source": "client/public/art/derived/ship-models/v1/interceptor-lod2.glb",
+      "sha256": "7870f44e505c28c83d60fcb92b5caacfa89febd5b3bd18bbd1034447325dbb4b"
+    },
+    {
+      "id": "tiny-freighter",
+      "file": "traffic-models/tiny-freighter-lod2.glb",
+      "source": "client/public/art/derived/ship-models/v1/tiny-freighter-lod2.glb",
+      "sha256": "167b0775b5c3da34aa6eaea5cf071f4d83e70d56323251cb0af0f1b139d1821e"
+    },
+    {
+      "id": "small-freighter",
+      "file": "traffic-models/small-freighter-lod2.glb",
+      "source": "client/public/art/derived/ship-models/v1/small-freighter-lod2.glb",
+      "sha256": "21c051ba926e8daca3b68b9e1f1b11aa74c868dd3e980f11d21ad928a2609d25"
+    },
+    {
+      "id": "medium-freighter",
+      "file": "traffic-models/medium-freighter-lod2.glb",
+      "source": "client/public/art/derived/ship-models/v1/medium-freighter-lod2.glb",
+      "sha256": "1e8f612e3a95282769baa78c452100ff63b174c38dbfc1cb29e7b8a95be78c72"
+    }
+  ],
+  "purpose": "Small decorative wormhole traffic; unchanged approved LOD2 models"
+}

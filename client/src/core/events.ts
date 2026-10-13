@@ -24,11 +24,13 @@ export type CoreEvent =
   | { kind: "OrderConfirmed"; orderId: number; shipId: EntityId; orderKind: OrderKind }
   | { kind: "FleetDocked"; fleetId: EntityId; berth: EntityId }
   | { kind: "FleetArrived"; fleetId: EntityId }
-  | { kind: "BuildCompleted"; systemId: EntityId; buildKey: string }
+  | { kind: "BuildCompleted"; systemId: EntityId; buildKey: string; bodyId?: number }
   | { kind: "StructureStaffed"; systemId: EntityId; title: string }
   | { kind: "ResearchCompleted"; programmeId: string; programmeName: string }
   | { kind: "CommandRejected"; message: string }
   | { kind: "PirateRaidWarning"; message: string }
+  /** §founding R6: an Authority stipend, bounty, or replacement hull arrived. */
+  | { kind: "CharterMilestone"; title: string; message: string }
   | { kind: "ReportArrived"; report: RaidReport }
   | { kind: "BattleConcluded"; recordId: EntityId; outcome: RaidOutcome }
   | { kind: "EstimateReady"; estimate: EngagementEstimate }

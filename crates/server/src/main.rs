@@ -19,8 +19,13 @@
 //! * `ACCOUNTS_DATABASE_URL` — account DB (falls back to DATABASE_URL); required.
 //! * `APP_ORIGIN` — public HTTPS origin; defaults to localhost for development.
 //! * `GALAXY_DATA_DIR` — disk checkpoints (default saves/galaxy-PORT).
+//! * `ADMIN_LOGINS` — comma-separated account logins that may open the operator
+//!   dashboard at /admin.html (sign-ins, play sessions, commands, holdings).
+//!   Unset turns the dashboard off; the audit trail is recorded either way.
 //! Full saves every 15 wall minutes + shutdown; `--reset-galaxy` archives them.
 
+mod activity;
+mod admin;
 mod auth;
 mod estimate;
 mod game_loop;
@@ -30,9 +35,12 @@ mod reports;
 mod session;
 mod timeline;
 mod transactions;
+mod tutorial;
 mod view;
 mod ws;
 mod wire;
+#[cfg(test)]
+mod battle_fixtures;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -57,10 +65,15 @@ struct AppState {
     game: GameHandle,
     status: watch::Receiver<ServerStatus>,
     auth: auth::AuthStore,
+    activity: activity::Activity,
 }
 
 impl FromRef<AppState> for auth::AuthStore {
     fn from_ref(s: &AppState) -> Self { s.auth.clone() }
+}
+
+impl FromRef<AppState> for activity::Activity {
+    fn from_ref(s: &AppState) -> Self { s.activity.clone() }
 }
 
 impl FromRef<AppState> for GameHandle {
@@ -131,6 +144,7 @@ async fn main() -> anyhow::Result<()> {
     // Authentication and galaxy storage are both mandatory and fail-closed.
     // Do this before starting the world, not after opening a name-only socket.
     let auth = auth::AuthStore::from_env(port).await?;
+    let activity = activity::Activity::start(auth.pool()).await?;
 
     let mut config = SimConfig::for_players(seed, max_players);
     // Keep playtest maps reproducible across home-spacing revisions. The normal
@@ -210,10 +224,21 @@ async fn main() -> anyhow::Result<()> {
         result = &mut game_task => return result?,
     }
 
+    let tutorial = tutorial::TutorialRecorder::new(auth.pool());
+    tutorial.spawn_poller(handle.clone());
+    let admin = admin::AdminState::new(
+        auth.clone(),
+        activity.clone(),
+        handle.clone(),
+        status_rx.clone(),
+        tutorial,
+        admin::operators_from(&std::env::var("ADMIN_LOGINS").unwrap_or_default()),
+    );
     let state = AppState {
         game: handle,
         status: status_rx,
         auth: auth.clone(),
+        activity: activity.clone(),
     };
 
     // HTTP / WebSocket surface.
@@ -223,6 +248,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/ws", get(ws::ws_handler))
         .with_state(state)
         .merge(auth::routes(auth))
+        .merge(admin::routes(admin))
         // Serve a production client build if present (one-command run); during
         // development the client is served by Vite on its own port instead.
         .fallback_service(ServeDir::new("client/dist"))
@@ -257,6 +283,8 @@ async fn main() -> anyhow::Result<()> {
             result?;
         }
     }
+    // Sockets are closed; write their last commands and close their sessions.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), activity.shutdown()).await;
 
     Ok(())
 }

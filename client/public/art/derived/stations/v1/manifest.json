@@ -1,0 +1,116 @@
+{
+  "version": "v1",
+  "recipe": "transparent-station-contain-padding-v1",
+  "sizes": [
+    128,
+    256,
+    512
+  ],
+  "stations": {
+    "1": {
+      "source": "art-src/orbital-defense-v1/level-1.png",
+      "sourceSha256": "8744ea85b07bdd4387b2d3514b193dc2f0abe48201bffb71b455feafebac4dcb",
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7750,
+          "url": "/art/derived/stations/v1/level-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 16802,
+          "url": "/art/derived/stations/v1/level-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 37288,
+          "url": "/art/derived/stations/v1/level-1-512.webp"
+        }
+      ]
+    },
+    "2": {
+      "source": "art-src/orbital-defense-v1/level-2.png",
+      "sourceSha256": "1cce7635e7dfce3230a91d541808ba0e51db994030c19f9940c2f444c8b7cfd6",
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8124,
+          "url": "/art/derived/stations/v1/level-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 18376,
+          "url": "/art/derived/stations/v1/level-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 42894,
+          "url": "/art/derived/stations/v1/level-2-512.webp"
+        }
+      ]
+    },
+    "3": {
+      "source": "art-src/orbital-defense-v1/level-3.png",
+      "sourceSha256": "093ebed103d73608a95dfc3f244027ea37d4d8d4408fac63f1a7447fea8af266",
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7622,
+          "url": "/art/derived/stations/v1/level-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 21640,
+          "url": "/art/derived/stations/v1/level-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 50224,
+          "url": "/art/derived/stations/v1/level-3-512.webp"
+        }
+      ]
+    },
+    "4": {
+      "source": "art-src/orbital-defense-v1/level-4.png",
+      "sourceSha256": "640b1877de005837fc2f0ada610736b0ffec735077e69062585b4fce91883fd4",
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8608,
+          "url": "/art/derived/stations/v1/level-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 25118,
+          "url": "/art/derived/stations/v1/level-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 62178,
+          "url": "/art/derived/stations/v1/level-4-512.webp"
+        }
+      ]
+    },
+    "5": {
+      "source": "art-src/orbital-defense-v1/level-5.png",
+      "sourceSha256": "9f0168ed3e713dee8e4872dec94eecbfeea094eb69c2fc2b22da8195b0ce1f2b",
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9006,
+          "url": "/art/derived/stations/v1/level-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24866,
+          "url": "/art/derived/stations/v1/level-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 73144,
+          "url": "/art/derived/stations/v1/level-5-512.webp"
+        }
+      ]
+    }
+  }
+}

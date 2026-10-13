@@ -1,0 +1,562 @@
+{
+  "recipe": "generated-alpha-native-aspect-v1",
+  "sizes": [
+    128,
+    256,
+    512
+  ],
+  "assets": {
+    "shipyard/1": {
+      "source": "art-src/planet-shipyards-v1/shipyard/tier-1.png",
+      "sourceSha256": "4db06d38ca79100ccdaa346871c780a75342d786bafcd542b048ab5458572eee",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8160,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23066,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 70396,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-1-512.webp"
+        }
+      ]
+    },
+    "shipyard/2": {
+      "source": "art-src/planet-shipyards-v1/shipyard/tier-2.png",
+      "sourceSha256": "f368c756b0c71063dc012879c9284bd92e12a5d278a292f1427891bf82993cd6",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8922,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24630,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 74908,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-2-512.webp"
+        }
+      ]
+    },
+    "shipyard/3": {
+      "source": "art-src/planet-shipyards-v1/shipyard/tier-3.png",
+      "sourceSha256": "fa8b511c7a26a188490126315436a3d5819329b78ddcdc39bebc4dc3557c5f7e",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8760,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24270,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 75168,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-3-512.webp"
+        }
+      ]
+    },
+    "shipyard/4": {
+      "source": "art-src/planet-shipyards-v1/shipyard/tier-4.png",
+      "sourceSha256": "7a7d2bfce12893820087da25d1ed64154db8d2834612803908576d8126ce685c",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8822,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24038,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 72614,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-4-512.webp"
+        }
+      ]
+    },
+    "shipyard/5": {
+      "source": "art-src/planet-shipyards-v1/shipyard/tier-5.png",
+      "sourceSha256": "55625d5bf050680212a575a23ddc56f638585a023bd1f47831efe56b6b242cff",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9736,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 27302,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 85106,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-5-512.webp"
+        }
+      ]
+    },
+    "shipyard/6": {
+      "source": "art-src/planet-shipyards-v1/shipyard/tier-6.png",
+      "sourceSha256": "68502e84b088593ae74273aa7f9c670d6c6f8665e65539b35d3d86afaf11ad43",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 9038,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 25428,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 75932,
+          "url": "/art/derived/planet-shipyards/v1/shipyard/tier-6-512.webp"
+        }
+      ]
+    },
+    "naval_drydock/1": {
+      "source": "art-src/planet-shipyards-v1/naval_drydock/tier-1.png",
+      "sourceSha256": "b83469d562b0f8f954594789a95372034859c5dd211e59ae1487b474a7933417",
+      "width": 1672,
+      "height": 941,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 6076,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 16096,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 44592,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-1-512.webp"
+        }
+      ]
+    },
+    "naval_drydock/2": {
+      "source": "art-src/planet-shipyards-v1/naval_drydock/tier-2.png",
+      "sourceSha256": "b9c8c6141fc2706a6a3c936526773adf2c21538e05a79f75bb8f5826a82cbd42",
+      "width": 2027,
+      "height": 776,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 4768,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 12524,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 34054,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-2-512.webp"
+        }
+      ]
+    },
+    "naval_drydock/3": {
+      "source": "art-src/planet-shipyards-v1/naval_drydock/tier-3.png",
+      "sourceSha256": "c113127309f4a1717e8221f78187afa322f087fddd2263fda1f76b28573f3d3d",
+      "width": 1981,
+      "height": 793,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 5182,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 14394,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 41136,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-3-512.webp"
+        }
+      ]
+    },
+    "naval_drydock/4": {
+      "source": "art-src/planet-shipyards-v1/naval_drydock/tier-4.png",
+      "sourceSha256": "9188990ff34ee7136b665e75bc13bbd981f5362b6797d3a1d7262b58426dcd3a",
+      "width": 1672,
+      "height": 941,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7066,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 19584,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 55758,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-4-512.webp"
+        }
+      ]
+    },
+    "naval_drydock/5": {
+      "source": "art-src/planet-shipyards-v1/naval_drydock/tier-5.png",
+      "sourceSha256": "676ef58e93dd0989c8569346a4848e007c94b123771108d2e2efd30e6432992e",
+      "width": 2048,
+      "height": 768,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 5202,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 14102,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 38384,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-5-512.webp"
+        }
+      ]
+    },
+    "naval_drydock/6": {
+      "source": "art-src/planet-shipyards-v1/naval_drydock/tier-6.png",
+      "sourceSha256": "7019240b40a417e5587ba677472bc7cc4e17572a7a1c9da8f8046b358064544c",
+      "width": 1672,
+      "height": 941,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 6560,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 18192,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 52672,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-6-512.webp"
+        }
+      ]
+    },
+    "capital_slipway/1": {
+      "source": "art-src/planet-shipyards-v1/capital_slipway/tier-1.png",
+      "sourceSha256": "7db07f3e59598cacadf924a2f6e68c2eac83ad2c3782c9e45c004b644ca320a8",
+      "width": 1774,
+      "height": 887,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 6514,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 18280,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 51878,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-1-512.webp"
+        }
+      ]
+    },
+    "capital_slipway/2": {
+      "source": "art-src/planet-shipyards-v1/capital_slipway/tier-2.png",
+      "sourceSha256": "0a852e17451b627f36c46b02ad626f3748133d718839256c6ea34c4964c187bd",
+      "width": 1942,
+      "height": 809,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 5952,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 16152,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 45982,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-2-512.webp"
+        }
+      ]
+    },
+    "capital_slipway/3": {
+      "source": "art-src/planet-shipyards-v1/capital_slipway/tier-3.png",
+      "sourceSha256": "3793792139e69f56aada31fb9ebe4cc8cd846bb5fc776b4cb0d70687e497c043",
+      "width": 2048,
+      "height": 768,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 5478,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 15208,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 42460,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-3-512.webp"
+        }
+      ]
+    },
+    "capital_slipway/4": {
+      "source": "art-src/planet-shipyards-v1/capital_slipway/tier-4.png",
+      "sourceSha256": "4567ce2b43ef859654b9975fbb6f7dbc071cf0d04b3dad9f07b1f766fd7b3e49",
+      "width": 1774,
+      "height": 887,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 6692,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-4-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 19040,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-4-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 56516,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-4-512.webp"
+        }
+      ]
+    },
+    "capital_slipway/5": {
+      "source": "art-src/planet-shipyards-v1/capital_slipway/tier-5.png",
+      "sourceSha256": "bfe8898bfe0fcca761f3eca85952cff409d05112d871c9f3f3d6e0d3c7c2bf1f",
+      "width": 2056,
+      "height": 765,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 5700,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-5-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 16478,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-5-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 45704,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-5-512.webp"
+        }
+      ]
+    },
+    "capital_slipway/6": {
+      "source": "art-src/planet-shipyards-v1/capital_slipway/tier-6.png",
+      "sourceSha256": "70895ff36a3ed2317165d8e455ed177dad24b7269be5a1b04288fd0228a8e616",
+      "width": 1930,
+      "height": 815,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 6332,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-6-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 18144,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-6-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 51872,
+          "url": "/art/derived/planet-shipyards/v1/capital_slipway/tier-6-512.webp"
+        }
+      ]
+    },
+    "naval_drydock/1-occupied": {
+      "source": "art-src/planet-shipyards-v1/naval_drydock/tier-1-occupied.png",
+      "sourceSha256": "41ed33c7e6737be0d999be1631c0f4745528bd0cbe5bbe07e485eb8c408b1adc",
+      "width": 1672,
+      "height": 941,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 5694,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-1-occupied-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 15202,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-1-occupied-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 45152,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-1-occupied-512.webp"
+        }
+      ]
+    },
+    "naval_drydock/2-occupied": {
+      "source": "art-src/planet-shipyards-v1/naval_drydock/tier-2-occupied.png",
+      "sourceSha256": "966e1eddf52c044e712dd0151a0222e2ef1eb757005b51420da48bd823559021",
+      "width": 2027,
+      "height": 776,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 4828,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-2-occupied-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 12680,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-2-occupied-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 35470,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-2-occupied-512.webp"
+        }
+      ]
+    },
+    "naval_drydock/3-occupied": {
+      "source": "art-src/planet-shipyards-v1/naval_drydock/tier-3-occupied.png",
+      "sourceSha256": "79c7526a2f27b30c7a1421bad9a1d407b6fe0b57e86ae692ef5b3ce74bb45da7",
+      "width": 1981,
+      "height": 794,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 5114,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-3-occupied-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 13750,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-3-occupied-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 38628,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-3-occupied-512.webp"
+        }
+      ]
+    },
+    "naval_drydock/4-occupied": {
+      "source": "art-src/planet-shipyards-v1/naval_drydock/tier-4-occupied.png",
+      "sourceSha256": "7fb89630042847fee83ec113ced65cc80ebf21e8491ffa0ed7cb4493dfbb1f86",
+      "width": 1672,
+      "height": 941,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 6848,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-4-occupied-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 18700,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-4-occupied-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 54688,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-4-occupied-512.webp"
+        }
+      ]
+    },
+    "naval_drydock/5-occupied": {
+      "source": "art-src/planet-shipyards-v1/naval_drydock/tier-5-occupied.png",
+      "sourceSha256": "404ecb45e192c06d19371d03f018bc7bccd16a72f793d78ce2602711313006bc",
+      "width": 2048,
+      "height": 768,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 5180,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-5-occupied-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 14160,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-5-occupied-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 39000,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-5-occupied-512.webp"
+        }
+      ]
+    },
+    "naval_drydock/6-occupied": {
+      "source": "art-src/planet-shipyards-v1/naval_drydock/tier-6-occupied.png",
+      "sourceSha256": "e50af825b59ff5e23a803f44c141b511dabfcefa143b016edf13d78fe337692d",
+      "width": 1672,
+      "height": 941,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 6510,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-6-occupied-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 17650,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-6-occupied-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 51820,
+          "url": "/art/derived/planet-shipyards/v1/naval_drydock/tier-6-occupied-512.webp"
+        }
+      ]
+    }
+  }
+}

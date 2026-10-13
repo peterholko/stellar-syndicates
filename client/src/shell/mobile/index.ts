@@ -1,12 +1,16 @@
 import "../../styles/mobile.css";
 import { bindAccountForm } from "../account";
 
-import { shipKindLabel } from "../../core/derive/fleet";
 import { intentReadinessWarnings } from "../../core/derive/readiness";
 import { intentSummary } from "../../core/derive/orders";
 import { reservedMarketCredits, spendableMarketCredits } from "../../core/derive/market";
 import { label } from "../../icons";
-import { formatId, type BattleRecordView, type RaidOutcome, type RaidReport } from "../../protocol";
+import { formatId } from "../../protocol";
+import { battleNotice, reportNotice } from "../../core/derive/battlenotice";
+import { fmtHours } from "../../core/derive/founding";
+import { foundingHomeSystemId } from "../../core/derive/geo";
+import { requestTransactions } from "../../core/derive/transactions";
+import { WELCOME_MIN_AWAY_S, welcomeReport } from "../../core/derive/welcome";
 import type { CoreEvent } from "../../core/events";
 import { installPressGuard } from "../dom";
 import type { CoreContext, Rect, Shell } from "../types";
@@ -14,7 +18,7 @@ import { MobileBattleTheater } from "./battle";
 import { MobileGroundTheater } from "./ground";
 import { MobileMapInteraction } from "./map";
 import { mountMobileMarkup } from "./markup";
-import { MobileNoticeStack, type MobileNoticeTone } from "./notices";
+import { MobileNoticeStack } from "./notices";
 import { MobileParitySurfaces } from "./parity";
 import { activateSheetStack, pushSheet, replaceSheet, SheetStack, type SheetEntry, type SheetView } from "./sheets";
 import { MobileSurfaces } from "./surfaces";
@@ -25,62 +29,6 @@ const escapeHtml = (value: string): string => value.replace(
   (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '\"': "&quot;" })[character]!,
 );
 
-function reportNotice(report: RaidReport, pirateId?: string): { text: string; tone: MobileNoticeTone } {
-  const mine = report.you === "attacker" ? report.attacker_kind : report.target_kind;
-  const theirs = report.you === "attacker" ? report.target_kind : report.attacker_kind;
-  const yourShipDied = report.outcome === "both_destroyed"
-    || (report.you === "attacker" && report.outcome === "attacker_destroyed")
-    || (report.you === "defender" && report.outcome === "target_destroyed");
-  let text: string;
-  let tone: MobileNoticeTone = "good";
-  switch (report.outcome) {
-    case "both_destroyed":
-      text = `Your ${shipKindLabel(mine)} and a rival ${shipKindLabel(theirs)} destroyed each other.`;
-      tone = "bad";
-      break;
-    case "both_survive":
-      text = report.you === "attacker"
-        ? `Your raid on a rival ${shipKindLabel(theirs)} was driven off — both survived.`
-        : `A raider attacked your ${shipKindLabel(mine)} but was driven off.`;
-      break;
-    case "escaped":
-      text = report.you === "attacker"
-        ? `Your target ${shipKindLabel(theirs)} reached the hub — raid failed.`
-        : `Your ${shipKindLabel(mine)} reached the hub safely.`;
-      break;
-    default:
-      if (yourShipDied) {
-        text = `Your ${shipKindLabel(mine)} was destroyed by a rival ${shipKindLabel(theirs)}.`;
-        tone = "bad";
-      } else {
-        text = `Your ${shipKindLabel(mine)} destroyed a rival ${shipKindLabel(theirs)}.`;
-      }
-  }
-  if (pirateId && (report.attacker === pirateId || report.defender === pirateId)) text = text.replaceAll("rival", "pirate");
-  return { text, tone };
-}
-
-function battleNotice(outcome: RaidOutcome, record?: BattleRecordView): { text: string; tone: MobileNoticeTone } {
-  const ownSide = record?.own_side;
-  switch (outcome) {
-    case "both_destroyed": return { text: "Both fleets destroyed each other.", tone: "bad" };
-    case "both_survive": return { text: "Both fleets survived.", tone: "quiet" };
-    case "escaped": return { text: "The target escaped.", tone: ownSide === 1 ? "good" : "quiet" };
-    case "attacker_destroyed":
-      return ownSide === 0
-        ? { text: "Your attacking fleet was destroyed.", tone: "bad" }
-        : ownSide === 1
-          ? { text: "Your fleet destroyed the attacker.", tone: "good" }
-          : { text: "The attacking fleet was destroyed.", tone: "quiet" };
-    case "target_destroyed":
-      return ownSide === 1
-        ? { text: "Your defending fleet was destroyed.", tone: "bad" }
-        : ownSide === 0
-          ? { text: "Your fleet destroyed the defender.", tone: "good" }
-          : { text: "The defending fleet was destroyed.", tone: "quiet" };
-  }
-}
-
 class MobileShell implements Shell {
   private root: HTMLElement | null = null;
   private ctx: CoreContext | null = null;
@@ -88,6 +36,8 @@ class MobileShell implements Shell {
   private sheets: SheetStack | null = null;
   private map: MobileMapInteraction | null = null;
   private notices: MobileNoticeStack | null = null;
+  private welcomePhase: "waiting" | "loading" | "done" = "waiting";
+  private welcomeSince = 0;
   private battle: MobileBattleTheater | null = null;
   private ground: MobileGroundTheater | null = null;
   private surfaces: MobileSurfaces | null = null;
@@ -219,8 +169,12 @@ class MobileShell implements Shell {
         this.unreadReports++;
         this.notices?.push({ html: `<b>${escapeHtml(event.message)}</b>`, tone: "bad",
           destination: { id: "log" }, durationMs: 20_000 });
+      } else if (event.kind === "CharterMilestone") {
+        this.unreadReports++;
+        this.notices?.push({ html: `<b>${escapeHtml(event.title)}</b> — ${escapeHtml(event.message)}`, tone: "good",
+          destination: { id: "log" }, durationMs: 16_000 });
       } else if (event.kind === "ReportArrived") {
-        const report = reportNotice(event.report, this.ctx?.state.galaxy?.pirate_id);
+        const report = reportNotice(event.report, this.ctx?.state.galaxy?.pirate_id, this.ctx?.state.founding?.privateer ?? this.ctx?.state.lastFoundingPrivateer);
         this.unreadReports++;
         this.surfaces?.recordReport(report.text, report.tone === "bad" ? "bad" : "good");
         if (this.sheets?.current?.id === "log") refreshSheet = true;
@@ -236,7 +190,7 @@ class MobileShell implements Shell {
         this.surfaces?.recordReport(`Battle concluded — ${outcome.text}`, outcome.tone === "bad" ? "bad" : outcome.tone === "good" ? "good" : "warn");
         if (this.sheets?.current?.id === "log") refreshSheet = true;
         this.notices?.push({
-          html: `<b>Battle concluded</b> — ${escapeHtml(outcome.text)}`,
+          html: `<b>${escapeHtml(outcome.title)}</b> — ${escapeHtml(outcome.text)}`,
           tone: outcome.tone,
           destination: { id: "battle", props: { id: event.recordId } },
         });
@@ -276,6 +230,37 @@ class MobileShell implements Shell {
     if (refreshSheet) this.surfaces?.refreshFounding();
     if (refreshSheet) this.sheets?.refresh();
     this.syncLogBadge();
+    this.maybeWelcome();
+  }
+
+  /** §founding R11: the charter report on return, once per session. Receipts
+   * are fetched on demand; a lost reply does not hold the report back. */
+  private maybeWelcome(): void {
+    const ctx = this.ctx;
+    if (!ctx || this.welcomePhase === "done") return;
+    const st = ctx.state;
+    if (!st.awaySet || st.playerId === null || !st.systems.length) return;
+    if (st.awaySince <= 0 || st.simTime - st.awaySince < WELCOME_MIN_AWAY_S) {
+      this.welcomePhase = "done";
+      return;
+    }
+    if (this.welcomePhase === "waiting") {
+      requestTransactions(ctx, "initial");
+      this.welcomePhase = "loading";
+      this.welcomeSince = Date.now();
+    }
+    if (!st.transactions.loaded && Date.now() - this.welcomeSince < 4_000) return;
+    this.welcomePhase = "done";
+    const homeId = foundingHomeSystemId();
+    const report = welcomeReport(st, st.systems.find((system) => system.id === homeId));
+    if (!report) return;
+    const lines = [...report.happened, ...report.underway].slice(0, 4).map(escapeHtml).join(" · ");
+    this.notices?.push({
+      html: `<b>Welcome back · away ${escapeHtml(fmtHours(report.away))}</b>${lines ? ` — ${lines}` : ""}${report.next ? ` <span class="m-muted">· Next: ${escapeHtml(report.next.title)}</span>` : ""}`,
+      tone: "info",
+      destination: { id: "log" },
+      durationMs: 30_000,
+    });
   }
 
   onViewTick(): void {
@@ -477,7 +462,7 @@ class MobileShell implements Shell {
           `<small>Destination</small><b>${destination}</b></div>`) +
         intentReadinessWarnings(this.ctx!.state, intent).map(w => `<div class="m-warning">${escapeHtml(w)}</div>`).join("") +
         `<div class="m-sheet-actions"><button type="button" data-mobile-act="cancel-intent">Cancel</button>` +
-        `<button type="button" class="is-primary" data-mobile-act="confirm-intent">Confirm order</button></div></div>`,
+        `<button type="button" class="is-primary" data-mobile-act="confirm-intent" data-coach="confirm-order">Confirm order</button></div></div>`,
     };
   }
 

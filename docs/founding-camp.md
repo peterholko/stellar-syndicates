@@ -2,12 +2,13 @@
 
 ## Entry flow
 
-New human corporations get a shared desktop/mobile, three-scene illustrated
+New human corporations get a shared desktop/mobile, four-scene illustrated
 prologue before the existing world-profile choice and settlement confirmation:
 
 1. **Beyond the Milky Way:** humanity opens a wormhole to another galaxy.
 2. **Your stellar charter:** a corporation receives the right to settle a planet.
 3. **A world to call home:** two thousand settlers begin a small frontier colony.
+4. **Stay vigilant:** pirates and privateers from other charters threaten frontier trade; protect your ships and your new home.
 
 Each scene has a new original illustration, responsive 768/1280/1672px WebP
 variants, separate readable captions and descriptive alternative text. Native
@@ -32,14 +33,35 @@ not an optimistic timer.
 These are alternative profiles for the allocated home world, not three free
 colonies. Whole-system ownership and galaxy geography are unchanged. No extra
 habitable planets are generated. All profiles retain the same starter package:
-2,000 people, 2,000 credits, Tiny Freighter, Interceptor and Scout, plus 30 Alloys,
-15 Machinery, 15 Provisions and 60 Fuel.
+2,000 people, 2,000 credits, Tiny Freighter and Interceptor, plus 70 Alloys,
+27 Machinery, 15 Provisions, 20 Uranium, 10 Deuterium and 1 Warp Core (charter
+v3 folded the retired recovery cache's 20 Alloys and 4 Machinery into the kit;
+the fuel overhaul added the Uranium Mill's goods and the barge's Warp Core).
 
 The four existing starting structures are gathered on the settled world:
 Habitat, Warehouse, Bioharvester and Agroplex. Ferrite extraction is available
 there, but the player must still build and staff the Mining Complex. No
 Shipyard is granted. Camp accommodation initially holds 3,000 people and its
 Warehouse holds 250 goods.
+
+The first settlement is always a habitable world: the home's garden, the
+habitable world with a Biomass deposit for the Bioharvester, so every camp can
+feed itself. Every generated home has one. The home's Ferrite deposits move to
+the camp world, and its free resource slot stays open for the Mining Complex. A
+seven-seed, six-join test covers this for every starting slot, including one
+that previously starved. Galaxies from before this change are not supported;
+regenerate them with `--reset-galaxy`.
+
+### Food reserve
+
+While the founding programme runs, and afterwards until the storehouse is
+expanded, a camp keeps a food reserve instead of filling its 250-unit Warehouse
+with food: the larger of ten minutes of demand and 40 units of Provisions and
+Biomass together. At the reserve the Bioharvester pauses (and an Agroplex with
+nothing to process pauses with it); harvesting resumes below 75% of the
+reserve. The pause is quiet, with no timeline entry, and the planet panel shows
+it as **Food reserve full · paused**. The camp stays well supplied, and the
+freed space is left for ore and returning cargo.
 
 Completing the free prospecting project reveals the chosen opportunity:
 
@@ -84,8 +106,7 @@ changes follow the normal command/report light delays. Research-gated structure
 tiers remain gated; these projects do not grant Tier II structures.
 
 All four projects plus the mine and Service Berth fit within the initial kit
-and the finite recovered cache (50 Alloys and 19 Machinery combined). The cache
-still has to be physically recovered. Project costs do not create an early
+(50 Alloys and 19 Machinery), in any order. Project costs do not create an early
 requirement to import materials before the opening can be completed.
 
 Storage does not increase loading speed. Housing does not grant people or

@@ -1,13 +1,15 @@
 import { traitLine } from "../../core/derive/captains";
 import { reportMarkKey } from "../../battlehistory";
 import { agoLabel, arrivalLocal, fmtDur, informationDelay, rejectText } from "../../core/derive/format";
-import { commandDelayTo, freshSurveyReports, locName, REPORT_RECENT_S, systemName } from "../../core/derive/geo";
-import { nextDecisionLabel, siegeProgress } from "../../core/derive/orders";
+import { commandDelayTo, foundingHomeSystemId, freshSurveyReports, locName, REPORT_RECENT_S, systemName } from "../../core/derive/geo";
+import { foundingPlan } from "../../core/derive/founding";
+import { nextDecisionLabel } from "../../core/derive/orders";
+import { blockadeBrief, blockadeStage, siegeClock } from "../../core/derive/blockade";
 import { nodeBonusDesc } from "../../core/derive/research";
 import type { CoreEvent } from "../../core/events";
 import { icon, label, type IconKey } from "../../icons";
-import { countClassLabel, fleetCargoUnits, type FoundingStage, type TimelineEntry, type Vec2 } from "../../protocol";
-import { shipKindLabel } from "../../core/derive/fleet";
+import { countClassLabel, fleetCargoUnits, type FoundingStage, type TimelineEntry, type Vec2, type GhostView } from "../../protocol";
+import { regimeStore, shipKindLabel } from "../../core/derive/fleet";
 import { pirateSite } from "../../core/derive/pirates";
 import { liveSimTime } from "../../state";
 import { renderDeferred, setHtml } from "../dom";
@@ -19,8 +21,8 @@ import type { DeckRoute } from "./router";
 // It is presentation over the served View only: no item consults sim truth.
 export const INBOX_W = {
   founding: 120,
-  siege: 100, battle: 92, hostile: 85, captureLost: 82, blockade: 80,
-  garrisonUnfed: 70, nodeUnfed: 68, enclave: 58, storageFull: 55, unfedHabitat: 50,
+  siege: 100, siegeRipe: 96, battle: 92, hostile: 85, captureLost: 82, blockade: 80, contested: 76, contesting: 60,
+  garrisonUnfed: 70, nodeUnfed: 68, enclave: 58, brownout: 57, storageFull: 55, unfedHabitat: 50,
   strandedFleet: 78, unsuppliedFleet: 72, lowFuel: 66, overdueResponse: 64, loadedFleet: 52,
   brokenOrder: 46, surveyReport: 45, nodeAwakening: 44, dryRefinery: 42, nodeOpportunity: 41, myGarrisonUnfed: 40,
   operationOffer: 39, syndicateInvite: 38, idleFleet: 32,
@@ -29,23 +31,31 @@ export const INBOX_W = {
 };
 
 const HOSTILE_CONCERN_MULT = 1.6;
+/** §founding R8: until the first guarded export leaves, these decisions fold
+ * into one "Also happening" line so the guide and real threats stay on top. */
+const FOCUS_FOLD = ["nodeopen:", "nodes:", "operations:", "surveyops", "surveyrep:", "enclave:", "idle:", "queue:",
+  "invites:", "idlefleet:", "loaded:", "storage:", "refinery:", "noauto"];
+const FOCUS_KEY = "focus:also";
 const IDLE_UNITS = 30;
 const MAX_HOSTILE_ITEMS = 4;
 const FOUNDING_DIRECTIVE: Record<FoundingStage, string> = {
-  local_recovery: "Recover nearby supplies",
-  prepare_export: "Dispatch the guarded Hub shipment",
-  build_shipyard: "Build Shipyard I",
-  build_mine: "Build and staff Mining Complex I",
-  build_convoy: "Prepare a Freighter",
-  build_second_freighter: "Build a second Tiny Freighter",
-  grow_business: "Expand exports or start refining",
-  export_production: "Dispatch the opening export",
-  defeat_privateer: "Guard the Freighter",
-  complete_export: "Complete the guarded export",
-  build_academy: "Build and staff Academy I",
-  first_research: "Choose your first programme",
-  build_scout: "Build a Scout",
-  survey_candidates: "Survey two nearby systems",
+  build_mine: "Build and staff the Mining Complex",
+  local_recovery: "Send your first shipment",
+  prepare_export: "Send your first shipment",
+  export_production: "Send your first shipment",
+  build_convoy: "Replace your Freighter, then ship your ore",
+  defeat_privateer: "Protect the shipment from the Rogue Privateer",
+  build_shipyard: "Build and staff a Shipyard",
+  complete_export: "Build and staff a Shipyard",
+  grow_business: "Build and staff a Shipyard",
+  build_second_freighter: "Build and staff a Shipyard",
+  build_academy: "Start research at an Academy",
+  first_research: "Start research at an Academy",
+  build_scout: "Chart a nearby system with a Survey Probe",
+  survey_candidates: "Chart a nearby system with a Survey Probe",
+  build_barge: "Build a Mining Barge",
+  mine_belt: "Send the Mining Barge to the charted belt",
+  haul_ore: "Bring the barge's ore home",
   build_colony: "Founding complete",
   establish_colony: "Founding complete",
   complete: "Founding complete",
@@ -97,6 +107,7 @@ export class DeckLogRoutes {
   private readonly readDecisionKeys = new Set<string>();
   private readonly arrivedReports: ArrivedReport[] = [];
   private currentInbox: DeckInboxItem[] = [];
+  private focusOpen = false;
   private signature = "";
   private unreadReports = 0;
   private nextReport = 1;
@@ -214,33 +225,47 @@ export class DeckLogRoutes {
     };
     const sysPos = (id: string): Vec2 | null => galaxy.systems.find((system) => system.id === id)?.pos ?? null;
 
+    // §founding R4: the directive is the guide's own next step: same title,
+    // same reason, and the same action as the floating card's button.
+    const homeId = foundingHomeSystemId();
+    const plan = state.founding && state.founding.stage !== "complete"
+      ? foundingPlan(state, state.systems.find((system) => system.id === homeId)) : null;
+    const focus = plan?.chapter.name === "Landfall" && !state.founding?.export_dispatched && !this.focusOpen;
     if (state.founding && state.founding.stage !== "complete") {
+      const step = plan?.primary;
+      const chapter = plan && plan.chapter.name !== "Founding" ? `${plan.chapter.name} ${plan.chapter.done}/${plan.chapter.total}` : "Founding directive";
       push({
-        key: `founding:${state.founding.stage}`,
+        key: `founding:${state.founding.stage}:${step?.action ?? ""}`,
         weight: INBOX_W.founding,
-        tone: "info",
+        tone: plan?.blocked ? "warn" : "info",
         icon: "build",
-        headline: `Founding directive · ${FOUNDING_DIRECTIVE[state.founding.stage]}`,
-        stakes: "This is the corporation's current guided objective. The same action appears in the Founding guide.",
-        actions: [{ label: "Continue", primary: true, run: () => this.hooks.runFounding() }],
+        headline: `${chapter} · ${step?.title ?? FOUNDING_DIRECTIVE[state.founding.stage]}`,
+        stakes: step ? [step.reason, step.copy].filter(Boolean).join(" ") : "This is the corporation's current guided objective. The same action appears in the Founding guide.",
+        actions: [{ label: step?.alternatives?.length ? "Choose in the guide" : step?.label ?? "Continue", primary: true, run: () => this.hooks.runFounding() }],
       });
     }
 
-    for (const system of owned) {
-      if (!system.blockade) continue;
-      const siege = siegeProgress(system);
-      if (siege) {
-        const key = `siege:${system.id}`;
-        push({ key, weight: INBOX_W.siege, tone: "negative", icon: "siege",
-          headline: `${systemName(system.id)} — siege in progress`,
-          stakes: siege.ripe ? "Rival marines can now take the system." : `Falls in ${fmtDur(siege.left)} unless you break the blockade or rebuild a Defense Platform.`,
-          age: system.blockade.since, actions: [focusSystem(system.id), dismiss(key)] });
-      } else {
-        const key = `blockade:${system.id}`;
-        push({ key, weight: INBOX_W.blockade, tone: "negative", icon: "blockade",
-          headline: `${systemName(system.id)} — under blockade`,
-          stakes: "Freighters held in & out; production idles. Break it with relief, or build a Defense Platform tier.",
-          age: system.blockade.since, actions: [focusSystem(system.id), dismiss(key)] });
+    // Blockades, by stage (core/derive/blockade.ts): the owner hears every
+    // stage with what to do; the besieger hears the fight and the ripe siege.
+    for (const system of state.systems) {
+      const blockade = system.blockade;
+      if (!blockade) continue;
+      const stage = blockadeStage(blockade);
+      const brief = blockadeBrief(blockade, now, galaxy.siege_secs, system.ground?.marines_needed);
+      const name = systemName(system.id);
+      if (system.owner === state.playerId) {
+        const key = `blockade-${stage}:${system.id}`;
+        push({ key, weight: stage === "siege" ? INBOX_W.siege : stage === "held" ? INBOX_W.blockade : INBOX_W.contested,
+          tone: stage === "contested" ? "warn" : "negative", icon: stage === "siege" ? "siege" : "blockade",
+          headline: `${name} — ${brief.title}`, stakes: brief.detail, age: blockade.since,
+          actions: [{ label: "Send defenders", primary: true, run: () => this.hooks.focusSystem(system.id) }, dismiss(key)] });
+      } else if (blockade.by_me) {
+        const ripe = siegeClock(blockade, now, galaxy.siege_secs)?.ripe ?? false;
+        if (stage !== "contested" && !ripe) continue;
+        const key = ripe ? `siege-ripe:${system.id}` : `blockade-contesting:${system.id}`;
+        push({ key, weight: ripe ? INBOX_W.siegeRipe : INBOX_W.contesting, tone: ripe ? "info" : "warn",
+          icon: ripe ? "siege" : "blockade", headline: `${name} — ${brief.title}`, stakes: brief.detail,
+          age: blockade.since, actions: [focusSystem(system.id), dismiss(key)] });
       }
     }
 
@@ -259,6 +284,7 @@ export class DeckLogRoutes {
 
     const threatRadius = galaxy.sensor_range * HOSTILE_CONCERN_MULT;
     const hostiles: DeckInboxItem[] = [];
+    const holding = new Set<string>();
     for (const fleet of state.ghosts) {
       if (fleet.own || fleet.ally || fleet.kind !== "raider") continue;
       let near: { id: string; distance: number; pos: Vec2 } | null = null;
@@ -274,6 +300,7 @@ export class DeckLogRoutes {
       const size = fleet.composition ? `${fleet.composition.reduce((sum, stack) => sum + stack.count, 0)}-ship` : `~${countClassLabel(fleet.count_class)}`;
       const foe = fleet.pirate ? "Pirate" : "Hostile";
       const key = `hostile:${fleet.id}:${near.id}`;
+      if (!closing) holding.add(key);
       hostiles.push({ key, weight: INBOX_W.hostile + (fleet.pirate ? 3 : 0), tone: "warn", icon: "warning",
         headline: `${foe} ${size} Interceptor near ${systemName(near.id)}`,
         stakes: closing ? `Closing on ${systemName(near.id)} — ~${fmtDur(near.distance / speed)} out at its shown speed (a delayed sighting).` : `${Math.round(near.distance)} su out, holding — watch it (delayed sighting).`,
@@ -339,11 +366,13 @@ export class DeckLogRoutes {
           headline: `${name} is out of Provisions`,
           stakes: "It keeps its current course and weapons, but cannot accept a new movement or offensive order until supplied.",
           age: fleet.age, actions: [fleetAction, dismiss(key)] });
-      } else if (fleet.fuel != null && fleet.fuel_capacity && fleet.fuel / fleet.fuel_capacity < 0.2) {
+      } else if (lowStore(fleet)) {
+        // §fuel-overhaul: the store the fleet's throttle burns (Uranium on Slow).
+        const store = regimeStore(fleet), have = (store.fuel === "uranium" ? fleet.uranium : fleet.fuel) ?? 0;
         const key = `fuel:${fleet.id}`;
-        push({ key, weight: INBOX_W.lowFuel, tone: "warn", icon: "fuel",
-          headline: `${name} has low fuel`,
-          stakes: `${Math.round(fleet.fuel)} of ${Math.round(fleet.fuel_capacity)} Fuel remains in the served report.`,
+        push({ key, weight: INBOX_W.lowFuel, tone: "warn", icon: store.fuel === "uranium" ? "uranium" : "deuterium",
+          headline: `${name} has low ${label(store.fuel)}`,
+          stakes: `${Math.round(have)} of ${Math.round(store.capacity)} ${label(store.fuel)} remains in the served report.`,
           age: fleet.age, actions: [fleetAction, dismiss(key)] });
       }
 
@@ -409,6 +438,26 @@ export class DeckLogRoutes {
             { label: "Automate export", icon: "doctrine", run: () => openLogistics(system.id, "hub") }, focusSystem(system.id), dismiss(key),
           ] });
       }
+      // §power: each browning-out planet, with its fix.
+      for (const body of system.bodies ?? []) {
+        const grid = body.power;
+        if (!grid || grid.power >= 0.999) continue;
+        const key = `brownout:${system.id}:${body.id}`;
+        const fuel = grid.fuel ? label(grid.fuel) : "fuel";
+        const plant = (body.structures.power_plant ?? 0) > 0;
+        const world = (): void => {
+          const info = galaxy.systems.find((entry) => entry.id === system.id);
+          this.hooks.go({ name: "world", params: { systemId: system.id, systemLabel: info?.name ?? "System", bodyId: String(body.id), worldLabel: body.name } });
+        };
+        push({ key, weight: INBOX_W.brownout, tone: "warn", icon: "refinery",
+          headline: `${body.name} — Power ${Math.round(grid.power * 100)}%`,
+          stakes: grid.no_fuel ? `Plant out of ${fuel}. Its mines, factories, yards and Academy slow down.`
+            : `${plant ? "Raise its Power Plant" : "Build a Power Plant"}. Its mines, factories, yards and Academy slow down.`,
+          actions: [grid.no_fuel
+            ? { label: "Set supply route", icon: "doctrine", primary: true, run: () => openLogistics(undefined, system.id, grid.fuel ?? undefined) }
+            : { label: plant ? "Open world" : "Build plant", icon: "build", primary: true, run: world },
+          focusSystem(system.id), dismiss(key)] });
+      }
       if (system.population > 0 && !system.habitat_fed) {
         const key = `habitat:${system.id}`;
         push({ key, weight: INBOX_W.unfedHabitat, tone: "warn", icon: "habitat",
@@ -427,7 +476,7 @@ export class DeckLogRoutes {
       if (system.refinery_tier >= 1 && volatiles === 0) {
         const key = `refinery:${system.id}`;
         push({ key, weight: INBOX_W.dryRefinery, tone: "info", icon: "refinery",
-          headline: `${systemName(system.id)} — Refinery idle`, stakes: "No Volatiles — Fuel production stopped. Haul some in or automate it.",
+          headline: `${systemName(system.id)} — Refinery idle`, stakes: "No Volatiles — Deuterium production stopped. Haul some in or automate it.",
           actions: [{ label: "Set supply route", icon: "doctrine", primary: true, run: () => openLogistics(undefined, system.id, "volatiles") }, focusSystem(system.id), dismiss(key)] });
       }
       const total = (system.stockpile ?? []).reduce((sum, stack) => sum + stack.units, 0);
@@ -533,6 +582,20 @@ export class DeckLogRoutes {
         actions: [{ label: "Open logistics", primary: true, run: openLogistics }] });
     }
 
+    if (focus) {
+      const folded = out.filter((item) => holding.has(item.key) || FOCUS_FOLD.some((prefix) => item.key.startsWith(prefix)));
+      if (folded.length) {
+        const kept = out.filter((item) => !folded.includes(item));
+        out.length = 0;
+        out.push(...kept);
+        const shown = folded.slice(0, 3).map((item) => item.headline).join(" · ");
+        push({ key: FOCUS_KEY, weight: 10, tone: "neutral", icon: "intel",
+          headline: `Also happening · ${folded.length} update${folded.length === 1 ? "" : "s"}`,
+          stakes: `Held back until your first guarded export leaves, so the guide stays on top: ${shown}${folded.length > 3 ? ` · and ${folded.length - 3} more` : ""}.`,
+          actions: [{ label: "Show all", primary: true, run: () => { this.focusOpen = true; this.invalidate(); } }, dismiss(FOCUS_KEY)] });
+      }
+    }
+
     out.sort((a, b) => b.weight - a.weight || a.key.localeCompare(b.key));
     return out;
   }
@@ -583,6 +646,13 @@ export class DeckLogRoutes {
     if (event.kind === "ServerError") return { tone: "bad", text: `Command refused — ${event.message}` };
     return null;
   }
+}
+
+/** Below a fifth of the store the fleet's throttle burns. */
+function lowStore(fleet: GhostView): boolean {
+  const store = regimeStore(fleet);
+  const have = store.fuel === "uranium" ? fleet.uranium : fleet.fuel;
+  return have != null && store.capacity > 0 && have / store.capacity < 0.2;
 }
 
 function statusIcon(tone: ArrivedReport["tone"] | TimelineEntry["severity"]): string {

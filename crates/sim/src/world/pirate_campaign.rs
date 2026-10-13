@@ -79,7 +79,7 @@ impl World {
             && t.pos.distance(anchor) <= radius
             && crate::detection::detected(t.signature() * self.veil_factor_held(&held, t.owner, t.pos)
                 * self.nebula_signature_factor(t.pos)
-                * if t.surveying() { crate::explore::SURVEY_SIGNATURE_FACTOR } else { 1.0 },
+                * if t.loud_work() { crate::explore::SURVEY_SIGNATURE_FACTOR } else { 1.0 },
                 &[(p, self.config.sensor_range * self.nebula_sensor_factor(p))], t.pos)
             && !self.in_sovereign_zone(t.pos)
             && self.players.get(&t.owner).is_none_or(|c| !c.founding.protected(self.time)
@@ -201,6 +201,8 @@ impl World {
         for owner in players {
             let c = &self.players[&owner];
             if c.founding.enabled && !c.founding.reward_granted { continue; }
+            // §founding R8: no rescue contracts until the first export leaves.
+            if c.founding.landfall_focus() { continue; }
             let home = c.home;
             // The Authority's fixed rescue sites are advertised contract terms,
             // not generated from an unseen player movement or unseen casualty.
@@ -514,6 +516,26 @@ mod tests {
         assert_eq!(w.operations[&id].state, OperationState::Completed);
         assert!(w.fleets.contains_key(&pirate), "kills are not the win condition");
         assert!(w.operations.values().any(|o| matches!(o.kind, OperationKind::RescueSalvage { units: 40, .. })));
+    }
+
+    #[test]
+    fn rescue_contracts_wait_until_the_first_export_leaves() {
+        let mut w = World::new(SimConfig::for_players(991, 4));
+        let p = PlayerId(91001);
+        w.step(&[Command::AddPlayer { id: p, name: "Landfall".into() }]);
+        let rescue = |w: &World| w.operations.values().filter(|o| matches!(o.scope,
+            OperationScope::Private { player } if player == p)
+            && matches!(o.kind, OperationKind::CombatObjective { .. })).count();
+        {
+            let founding = &mut w.players.get_mut(&p).unwrap().founding;
+            assert!(founding.local_opening);
+            founding.reward_granted = true;
+        }
+        w.offer_campaign_contracts(&mut vec![]);
+        assert_eq!(rescue(&w), 0, "§founding R8: Landfall keeps the board to one patient follow-up");
+        w.players.get_mut(&p).unwrap().founding.export_dispatched_at = Some(w.time);
+        w.offer_campaign_contracts(&mut vec![]);
+        assert!(rescue(&w) > 0, "the rescue contracts open once the export has left");
     }
 
     #[test]

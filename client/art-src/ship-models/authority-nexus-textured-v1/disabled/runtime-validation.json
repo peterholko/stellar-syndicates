@@ -1,0 +1,13 @@
+{
+  "variantSwitchCycles": 3,
+  "damagePowerLock": true,
+  "portalAbsentFromDisabledExport": true,
+  "emergencyLightsPreserved": true,
+  "restoredOperationalPower": true,
+  "initialDisabledHolding": true,
+  "reducedMotionInitialization": true,
+  "stationClearanceSamples": 5200,
+  "minimumPhysicalClearance": 0.9691,
+  "matchingStationBounds": true,
+  "method": "Real Three.js models, animation mixer, runtime state controller and traffic geometry. Browser interaction not exercised."
+}

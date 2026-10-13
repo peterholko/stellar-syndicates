@@ -1,0 +1,29 @@
+{
+  "steadyVisibleAtOnce": 7,
+  "visibleAfterRestore": 10,
+  "ships": 10,
+  "shipCounts": {
+    "tiny-freighter": 3,
+    "interceptor": 3,
+    "small-freighter": 2,
+    "medium-freighter": 2
+  },
+  "shipLengths": [
+    0.17,
+    0.25,
+    0.3,
+    0.36
+  ],
+  "stationDiameter": 19.8,
+  "arrivalIntervalSeconds": 3.6,
+  "renderSections": 29,
+  "maximumTriangles": 44034,
+  "recurringArrivalsVerified": 50,
+  "clearanceSamples": 3695,
+  "minimumPhysicalClearance": 0.6513,
+  "separationSamples": 125202,
+  "minimumHullGap": 0.4309,
+  "closingDiversionAndHold": true,
+  "restoreAndPause": true,
+  "validation": "Real GLTFLoader geometry/material parsing with image-decoding placeholders; real Three.js instancing, route simulation and ray intersections against exported station solids. Browser interaction not exercised."
+}

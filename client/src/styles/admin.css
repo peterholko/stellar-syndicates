@@ -1,0 +1,218 @@
+/* Operator dashboard (/admin.html). Shares the game's tokens; unlike the game
+   shell, this page scrolls like a document. */
+html, body.admin { height: auto; min-height: 100%; overflow: visible; }
+html { overflow-y: auto; }
+body.admin { font-size: var(--fs-body); line-height: 1.4; }
+body.admin.has-drawer { overflow: hidden; }
+.admin [hidden] { display: none !important; }
+.admin h1, .admin h2, .admin h3 { margin: 0; font-weight: 600; }
+.admin small { color: var(--dim); }
+.admin-muted { color: var(--dim); }
+
+.admin-top {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-6);
+  padding: var(--space-3) var(--space-4);
+  background: rgba(5, 7, 13, 0.92); backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--border);
+}
+.admin-title small { display: block; font-size: var(--fs-fine); letter-spacing: 0.08em; text-transform: uppercase; }
+.admin-title h1 { font-size: var(--fs-page); color: var(--accent); }
+.admin-server { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); color: var(--dim); }
+.admin-server b { color: var(--ink); font-weight: 500; }
+.admin-refresh { display: flex; align-items: center; gap: var(--space-3); margin-left: auto; }
+.admin-toggle { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--dim); cursor: pointer; }
+
+.admin-button, .admin-filters button, .admin-th-button {
+  font: inherit; color: var(--ink); background: var(--btn-bg);
+  border: 1px solid var(--field-bd); border-radius: var(--deck-radius);
+  min-height: var(--deck-control-height); padding: 0 var(--space-3); cursor: pointer; text-decoration: none;
+  display: inline-flex; align-items: center;
+}
+.admin-button:hover, .admin-filters button:hover { background: var(--btn-bg-hover); }
+.admin button:focus-visible, .admin a:focus-visible, .admin input:focus-visible, .admin tr:focus-visible {
+  outline: var(--deck-focus-ring) solid var(--accent); outline-offset: 1px;
+}
+
+.admin-main { max-width: 1480px; margin: 0 auto; padding: var(--space-4); display: grid; gap: var(--space-6); }
+#admin-content { display: grid; gap: var(--space-6); }
+.admin-message {
+  max-width: 520px; margin: 10vh auto 0; padding: var(--space-6);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  display: grid; gap: var(--space-3); justify-items: start;
+}
+.admin-message b { font-size: var(--fs-title); color: var(--warn); }
+.admin-message p { margin: 0; color: var(--ink); }
+.admin-note { margin: 0; color: var(--warn); }
+
+.admin-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-2); }
+.admin-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--deck-radius);
+  padding: var(--space-3); display: grid; gap: 2px; align-content: start;
+}
+.admin-card span { color: var(--dim); font-size: var(--fs-fine); }
+.admin-card b { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.admin-players { display: grid; gap: var(--space-3); }
+.admin-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.admin-toolbar h2 { font-size: var(--fs-title); margin-right: auto; }
+.admin-toolbar h2 small { font-weight: 400; font-size: var(--fs-body); }
+.admin-filters { display: inline-flex; }
+.admin-filters button { border-radius: 0; margin-left: -1px; }
+.admin-filters button:first-child { border-radius: var(--deck-radius) 0 0 var(--deck-radius); margin-left: 0; }
+.admin-filters button:last-child { border-radius: 0 var(--deck-radius) var(--deck-radius) 0; }
+.admin-filters button[aria-pressed="true"] { background: #16304a; border-color: var(--accent); color: #fff; position: relative; }
+.admin-toolbar input[type="search"] {
+  font: inherit; color: var(--ink); background: var(--field-bg); border: 1px solid var(--field-bd);
+  border-radius: var(--deck-radius); min-height: var(--deck-control-height); padding: 0 var(--space-3);
+  width: min(320px, 100%);
+}
+
+.admin-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel); }
+.admin-table { width: 100%; border-collapse: collapse; }
+.admin-table th {
+  text-align: left; font-weight: 500; font-size: var(--fs-fine); color: var(--dim);
+  padding: var(--space-2); white-space: nowrap; background: #0a1020; border-bottom: 1px solid var(--border);
+}
+.admin-table th button {
+  font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap;
+}
+.admin-table th[aria-sort] { color: var(--ink); }
+.admin-table th.sortable button:hover { color: var(--accent); }
+.admin-table td { padding: var(--space-2); border-top: 1px solid var(--border); white-space: nowrap; vertical-align: top; }
+.admin-table tbody tr:first-child td { border-top: 0; }
+.admin-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.admin-table td small { display: block; font-size: var(--fs-fine); }
+.admin-table tbody tr[tabindex] { cursor: pointer; }
+.admin-table tbody tr[tabindex]:hover, .admin-table tbody tr.is-open { background: #111a2e; }
+.admin-table tbody tr.is-open td:first-child { box-shadow: inset 2px 0 var(--accent); }
+.admin-table.is-compact td, .admin-table.is-compact th { padding: 5px var(--space-2); }
+.admin-table code { color: var(--dim); font-size: var(--fs-fine); overflow-wrap: anywhere; }
+.admin-table td:has(> code) { white-space: normal; min-width: 220px; }
+.admin-name b { font-weight: 600; }
+
+.admin-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--fg-stale); margin-right: var(--space-2); vertical-align: 1px;
+}
+.admin-dot.is-on { background: var(--positive); box-shadow: 0 0 6px var(--positive); }
+tr.is-online td:first-child { color: var(--positive); }
+
+.admin-badge {
+  display: inline-block; font-size: 11px; line-height: 16px; padding: 0 5px; margin-right: 4px;
+  border: 1px solid currentColor; border-radius: 4px; color: var(--dim); vertical-align: 1px; white-space: nowrap;
+}
+.admin-badge.is-guest { color: var(--accent-2); }
+.admin-badge.is-disabled { color: var(--negative); }
+.admin-badge.is-shared { color: var(--warn); }
+.admin-badge.is-bot { color: var(--info); }
+
+.admin-scrim { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, 0.45); }
+.admin-drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 50; width: min(780px, 100vw);
+  background: #0a0f1c; border-left: 1px solid var(--border); box-shadow: var(--panel-shadow);
+  overflow-y: auto; overscroll-behavior: contain;
+  transform: translateX(100%); visibility: hidden; transition: transform 0.18s ease, visibility 0s linear 0.18s;
+}
+.admin-drawer.is-open { transform: none; visibility: visible; transition: transform 0.18s ease; }
+#admin-drawer-body { padding: var(--space-4); display: grid; gap: var(--space-6); }
+.admin-drawer-head { display: flex; align-items: flex-start; gap: var(--space-3); }
+.admin-drawer-head > div { flex: 1; min-width: 0; }
+.admin-drawer-head h2 { font-size: var(--fs-page); overflow-wrap: anywhere; }
+.admin-drawer-head p { margin: var(--space-1) 0 0; color: var(--dim); overflow-wrap: anywhere; }
+.admin-close {
+  font: inherit; font-size: 22px; line-height: 1; color: var(--dim); background: none;
+  border: 1px solid var(--border); border-radius: var(--deck-radius); width: 36px; height: 36px; cursor: pointer;
+}
+.admin-close:hover { color: var(--ink); background: var(--btn-bg); }
+.admin-section { display: grid; gap: var(--space-3); }
+.admin-section h3 { font-size: var(--fs-em); color: var(--accent); }
+.admin-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-3) var(--space-4); }
+.admin-fact span { display: block; color: var(--dim); font-size: var(--fs-fine); }
+.admin-fact b { font-weight: 500; overflow-wrap: anywhere; }
+
+.admin-days-wrap { display: grid; gap: var(--space-1); }
+.admin-days { display: flex; align-items: flex-end; gap: 2px; height: 84px; border-bottom: 1px solid var(--border); }
+.admin-days i {
+  flex: 1; height: 100%; position: relative;
+  background: linear-gradient(to top, var(--accent) var(--active), rgba(79, 195, 255, 0.35) var(--active) var(--online), transparent var(--online));
+}
+.admin-days i:hover { outline: 1px solid var(--ink); }
+.admin-days-axis { display: flex; justify-content: space-between; gap: var(--space-3); color: var(--dim); font-size: var(--fs-fine); }
+.admin-days-legend { display: inline-flex; gap: var(--space-3); }
+.admin-days-legend i { display: inline-block; width: 8px; height: 8px; margin-right: 4px; vertical-align: 0; background: var(--accent); }
+.admin-days-legend i.is-online { background: rgba(79, 195, 255, 0.35); }
+
+.admin-bars { display: grid; gap: 3px; }
+.admin-bar { display: grid; grid-template-columns: minmax(120px, 34%) 1fr auto; align-items: center; gap: var(--space-3); }
+.admin-bar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-bar i { height: 10px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--share), rgba(79, 195, 255, 0.08) var(--share)); }
+.admin-bar b { font-weight: 500; font-variant-numeric: tabular-nums; min-width: 4ch; text-align: right; }
+
+.admin-shared { margin: 0; padding-left: 1.2em; display: grid; gap: var(--space-1); color: var(--warn); }
+.admin-link { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
+
+.admin-badge.is-operator { color: var(--accent); }
+
+/* Tutorial funnel: where new players stop. */
+.admin-funnel-scope { margin: 0; flex-basis: 100%; }
+.admin-funnel th[scope="row"] { font-weight: 500; color: var(--ink); text-align: left; font-size: var(--fs-body); background: none; border: 0; padding: var(--space-2); white-space: nowrap; }
+.admin-funnel tbody tr { border-top: 1px solid var(--border); }
+.admin-funnel tbody td, .admin-funnel tbody th { border-top: 1px solid var(--border); vertical-align: middle; }
+.admin-funnel-chapter th {
+  text-align: left; font-size: var(--fs-fine); letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--accent); background: #0a1020; padding: var(--space-1) var(--space-2);
+}
+.admin-funnel-reached { display: grid; grid-template-columns: minmax(120px, 1fr) 4ch 5ch; align-items: center; gap: var(--space-2); min-width: 260px; }
+.admin-funnel-reached i {
+  height: 12px; border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) var(--share), rgba(79, 195, 255, 0.08) var(--share));
+}
+.admin-funnel-reached b { font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
+.admin-funnel-reached small { color: var(--dim); text-align: right; }
+.admin-funnel tr.is-worst { background: rgba(255, 180, 84, 0.08); }
+.admin-funnel tr.is-worst th[scope="row"] { color: var(--warn); }
+.admin-waiting { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); }
+.admin-chip {
+  font: inherit; font-size: var(--fs-fine); line-height: 20px; padding: 0 var(--space-2);
+  border: 1px solid currentColor; border-radius: 999px; background: none; cursor: pointer; white-space: nowrap;
+}
+.admin-chip.is-playing { color: var(--positive); }
+.admin-chip.is-quiet { color: var(--warn); }
+.admin-chip:hover { background: rgba(255, 255, 255, 0.06); }
+.admin-chip.is-filter { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--accent); cursor: default; }
+.admin-chip.is-filter button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; font-size: 14px; line-height: 1; }
+
+/* Tutorial column and the drawer's timeline. */
+.admin-table td.admin-tutorial { min-width: 170px; max-width: 220px; white-space: normal; }
+.admin-steps {
+  display: block; height: 4px; width: 100%; margin: 2px 0 4px; border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) var(--done), var(--border) var(--done));
+}
+.admin-tutorial.is-done { color: var(--positive); }
+.admin-tutorial.is-done .admin-steps { background: var(--positive); }
+.admin-tutorial.is-quiet { color: var(--warn); }
+.admin-tutorial.is-quiet .admin-steps { background: linear-gradient(to right, var(--warn) var(--done), var(--border) var(--done)); }
+.admin-timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.admin-timeline li { display: grid; grid-template-columns: 14px 1fr auto 6ch; align-items: center; gap: var(--space-2); padding: 3px 0; }
+.admin-timeline li.admin-timeline-chapter {
+  display: block; margin-top: var(--space-2); font-size: var(--fs-fine); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent);
+}
+.admin-timeline li:first-child { margin-top: 0; }
+.admin-timeline i { width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--fg-stale); justify-self: center; }
+.admin-timeline .is-done i { background: var(--positive); border-color: var(--positive); }
+.admin-timeline .is-current i { border-color: var(--warn); box-shadow: 0 0 0 3px rgba(255, 180, 84, 0.2); }
+.admin-timeline .is-current span, .admin-timeline .is-current time { color: var(--warn); }
+.admin-timeline .is-todo { color: var(--fg-stale); }
+.admin-timeline time { color: var(--dim); font-size: var(--fs-fine); white-space: nowrap; }
+.admin-timeline small { text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 720px) {
+  /* A sticky header would hide a third of a phone screen. */
+  .admin-top { position: static; padding: var(--space-2) var(--space-4); }
+  .admin-refresh { margin-left: 0; width: 100%; justify-content: space-between; }
+  .admin-main { padding: var(--space-3) var(--space-4); }
+  .admin-card b { font-size: 20px; }
+  .admin-toolbar input[type="search"] { width: 100%; }
+  #admin-drawer-body { padding: var(--space-3) var(--space-4); }
+}

@@ -13,8 +13,9 @@ import { renderer } from "../../render";
 import { liveSimTime, state, type PendingIntent } from "../../state";
 import { emplacementLabel, systemName } from "./geo";
 import { projectedBand } from "./research";
-import { estimatedFuelForLeg, fleetBaseSpeed, shipKindLabel, transitLabel, transitSpeedMultiplier, WARP_FACTOR } from "./fleet";
+import { estimatedFuelForLeg, fleetBaseSpeed, jumpAntimatter, regimeStore, shipKindLabel, transitLabel, transitSpeedMultiplier, WARP_FACTOR } from "./fleet";
 import { doneAtLocal, fmt, fmtDur } from "./format";
+import { siegeClock } from "./blockade";
 import { fleetCommandSummary } from "../fleetorders";
 
 export const TCA_INCIDENT_LOSS_UI = 10;
@@ -31,6 +32,7 @@ export const jumpDepartureSelection: { key: string | null } = { key: null };
 // the armed-selection legality preview.
 export const SHIP_STATS: Record<string, { role: string; speed: number; hull: number; atk: number; def: number; slots: number; cap: string }> = {
   scout: { role: "Discovers sites and surveys worlds. Fit a Recon Suite for mobile sensors.", speed: 115, hull: 80, atk: 0, def: 0, slots: 1, cap: "No cargo · 1 equipment slot" },
+  survey_probe: { role: "Crewless one-way drone: flies to a system, charts its worlds and belts, and is spent.", speed: 120, hull: 40, atk: 0, def: 0, slots: 0, cap: "One survey · no crew, no cargo" },
   corvette: { role: "Armored escort/garrison — built to be shot at; too slow to chase raiders.", speed: 65, hull: 800, atk: 1, def: 4, slots: 2, cap: "No cargo · screens freighters" },
   raider: { role: "Fast corporate interceptor — patrols, responds to threats, and can seize hostile cargo.", speed: 100, hull: 200, atk: 3, def: 2, slots: 2, cap: "No cargo · jump capable" },
   tiny_freighter: { role: "Low-cost hauler for small shipments and backup routes.", speed: 40, hull: 1500, atk: 0, def: 1, slots: 1, cap: "50 cargo · 1 utility slot" },
@@ -43,7 +45,7 @@ export const SHIP_STATS: Record<string, { role: string; speed: number; hull: num
   destroyer: { role: "The first ship of the line — heavy beam broadsides (beam ×1.20).", speed: 55, hull: 2000, atk: 2.4, def: 2.6, slots: 3, cap: "Line IV research · 8 fit pts" },
   cruiser: { role: "The season's prestige warship — armored core (protection ×1.20); the efficiency peak.", speed: 45, hull: 4000, atk: 4.5, def: 5.5, slots: 4, cap: "Line V research · 12 fit pts" },
   battleship: { role: "The siege anchor — driver broadsides (driver ×1.20); accelerates a siege clock on station.", speed: 36, hull: 8000, atk: 8, def: 12, slots: 4, cap: "Line VI research · 18 fit pts" },
-  dreadnought: { role: "The fleet screen — a PD fit screens the whole side at platform grade (interception ×1.30).", speed: 29, hull: 16000, atk: 12, def: 26, slots: 5, cap: "Line VII research · 28 fit pts" },
+  dreadnought: { role: "The fleet screen — a PD fit screens the whole side at platform grade (interception ×1.30).", speed: 29, hull: 16000, atk: 15, def: 26, slots: 5, cap: "Line VII research · 28 fit pts" },
   titan: { role: "The flagship — broadly good at every weapon (×1.10), best at nothing; one per syndicate.", speed: 23, hull: 32000, atk: 24, def: 44, slots: 6, cap: "Line VIII research · 45 fit pts · singleton" },
 };
 
@@ -106,9 +108,11 @@ export function intentSummary(intent: PendingIntent): string {
     const flight = distance / Math.max(1, fleetBaseSpeed(ship) * WARP_FACTOR * transitSpeedMultiplier(ship));
     const eta = ship.age + flight;
     const fuel = estimatedFuelForLeg(ship, intent.dest!);
-    const tank = ship.fuel == null ? "" : ` / ${fmt(ship.fuel)} aboard`;
-    const warning = ship.fuel != null && fuel > ship.fuel + 1e-6 ? " · FUEL SHORT" : "";
-    return `${fmt(distance)} su · ETA ~${fmtDur(eta)} (signal ${fmtDur(ship.age)} + flight ${fmtDur(flight)}) · fuel ~${fmt(fuel)}${tank}${warning}`;
+    // §fuel-overhaul: the store this fleet's mode burns (Uranium on Slow).
+    const store = regimeStore(ship), aboard = store.fuel === "uranium" ? ship.uranium : ship.fuel;
+    const tank = aboard == null ? "" : ` / ${fmt(aboard)} aboard`;
+    const warning = aboard != null && fuel > aboard + 1e-6 ? " · FUEL SHORT" : "";
+    return `${fmt(distance)} su · ETA ~${fmtDur(eta)} (signal ${fmtDur(ship.age)} + flight ${fmtDur(flight)}) · ${label(store.fuel)} ~${fmt(fuel)}${tank}${warning}`;
   })() : "";
   let summary = "";
   switch (intent.verb) {
@@ -116,7 +120,11 @@ export function intentSummary(intent: PendingIntent): string {
     case "jump": {
       const spool = state.galaxy?.jump_spool_s ?? 10;
       const point = intent.dest ? orderPoint(intent.dest) : "destination";
-      summary = `Jump ${shipName} → ${point} — ~${spool.toFixed(0)} s spool, then instant relocation · signal ~${signal}`;
+      // §fuel-overhaul: the fold burns Antimatter; a short bottle cancels it.
+      const antimatter = ship && intent.dest ? jumpAntimatter(ship, Math.hypot(intent.dest.x - ship.pos.x, intent.dest.y - ship.pos.y)) : null;
+      const bottle = antimatter == null ? "" : ` · Antimatter ~${antimatter.toFixed(1)}${ship?.antimatter == null ? "" : ` / ${ship.antimatter.toFixed(1)} aboard`}`
+        + (ship?.antimatter != null && antimatter > ship.antimatter + 1e-6 ? " · SHORT" : "");
+      summary = `Jump ${shipName} → ${point} — ~${spool.toFixed(0)} s spool, then instant relocation${bottle} · signal ~${signal}`;
       break;
     }
     case "raid": summary = `RAID ${target} — intercept and steal cargo · signal ~${signal}`; break;
@@ -215,6 +223,7 @@ export function orderObject(p: PendingOrderView): string {
     case "refit": return "Refit formation";
     case "reorganize": return p.target_id ? "Merge formations" : "Split formation";
     case "assign": return "Assign fleet duty";
+    case "interdict": return "Raise interdiction field";
   }
 }
 
@@ -258,11 +267,11 @@ export function latestGroundRecordFor(system: string): GroundRecordView | undefi
 }
 
 
+/** The running capture clock at a system (its own duration: garrison and
+ * battleship included), or null if none is running. */
 export function siegeProgress(dyn: SystemStateView | undefined): { pct: number; left: number; ripe: boolean } | null {
-  if (!dyn?.blockade || dyn.blockade.siege_since == null || !state.galaxy) return null;
-  const total = state.galaxy.siege_secs || 1;
-  const elapsed = Math.max(0, liveSimTime() - dyn.blockade.siege_since);
-  return { pct: Math.min(100, (elapsed / total) * 100), left: Math.max(0, total - elapsed), ripe: elapsed >= total };
+  if (!state.galaxy) return null;
+  return siegeClock(dyn?.blockade, liveSimTime(), state.galaxy.siege_secs);
 }
 
 
@@ -275,7 +284,8 @@ export function nextDecisionLabel(): string {
   const owned = state.systems.filter((s) => s.owner === state.playerId);
   for (const s of owned) {
     for (const b of s.builds ?? []) if (b.complete_time != null) consider(b.complete_time, `a build completes at ${systemName(s.id)}`);
-    if (s.blockade?.siege_since != null && state.galaxy) consider(s.blockade.siege_since + state.galaxy.siege_secs, `the siege at ${systemName(s.id)} completes`);
+    const clock = state.galaxy ? siegeClock(s.blockade, now, state.galaxy.siege_secs) : null;
+    if (clock) consider(clock.eta, `the siege at ${systemName(s.id)} completes`);
   }
   for (const queue of state.pendingOrders.values()) {
     for (const p of queue) if (!p.lost) consider(p.response_at, "an order response is expected");

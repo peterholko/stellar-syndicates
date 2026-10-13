@@ -2,21 +2,20 @@
 //! long staffed or paused builds do not defeat site-report change compression.
 
 use super::*;
-use crate::build::{BuildKind, BuildWork};
+use crate::build::BuildWork;
+#[cfg(test)]
+use crate::build::BuildKind;
 
 impl World {
     pub(super) fn update_ship_build_work(&mut self) {
         for job in &mut self.build_queue {
-            let yard = match job.what {
-                BuildKind::Ship { ship } => crate::build::yard_for(ship).0,
-                BuildKind::Module { module } if module.is_utility() => module.workshop(),
-                _ => continue,
-            };
+            let Some(yard) = job.work_yard() else { continue; };
             // The actual construction body and gating yard matter. Staffing a
             // Shipyard elsewhere cannot operate this Drydock or Capital Slipway.
+            // §power: a yard works at its planet's grid.
             let rate = self.systems.iter().find(|s| s.id == job.system).map_or(0.0, |s|
                 crate::production::shipyard_work_rate(s.staffing_factor(job.body_id, yard),
-                    s.skill_factor(job.body_id, yard)));
+                    s.skill_factor(job.body_id, yard)) * s.body_power(job.body_id));
             let work = job.ship_work.get_or_insert_with(|| {
                 // Old saves only knew a deadline. Preserve the earned fraction
                 // and (if staffed) its remaining ETA, without guessing old site,
@@ -139,6 +138,7 @@ mod tests {
         for (ship, gate) in [(ShipKind::Destroyer, K::NavalDrydock), (ShipKind::Titan, K::CapitalSlipway)] {
             // Isolate yard-rate selection from the unrelated hull-unlock gates.
             w.build_queue[0].what = BuildKind::Ship { ship };
+            w.build_queue[0].construction_yard = Some(gate);
             w.update_ship_build_work();
             assert_eq!(w.build_queue[0].ship_work.as_ref().unwrap().rate, 0.0);
             let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
@@ -152,6 +152,45 @@ mod tests {
             b.assignments.insert(gate, Assignment::crew(1));
             w.update_ship_build_work();
             assert_eq!(w.build_queue[0].ship_work.as_ref().unwrap().rate, 1.25);
+        }
+    }
+
+    #[test]
+    fn legacy_freighters_finish_at_the_paid_yard_without_occupying_orbital_slips() {
+        for ship in [ShipKind::LargeFreighter, ShipKind::HeavyFreighter, ShipKind::BulkFreighter] {
+            let (mut w, owner, home, body) = yard();
+            assign(&mut w, owner, home, body, 1);
+            build(&mut w, owner, home);
+            let mut saved = serde_json::to_value(&w.build_queue[0]).unwrap();
+            saved.as_object_mut().unwrap().remove("construction_yard");
+            saved["what"] = serde_json::to_value(BuildKind::Ship { ship }).unwrap();
+            w.build_queue[0] = serde_json::from_value(saved).unwrap();
+            let legacy = w.build_queue[0].clone();
+            assert_eq!(legacy.work_yard(), Some(K::Shipyard));
+            assert_eq!(serde_json::from_str::<crate::build::BuildJob>(&serde_json::to_string(&legacy).unwrap()).unwrap(), legacy);
+            w.update_ship_build_work();
+            assert_eq!(w.build_queue[0].ship_work.as_ref().unwrap().rate, 1.25);
+            // The old job still occupies its ground slip, not the new orbital one.
+            let mut events = Vec::new();
+            w.apply_build(owner, home, None, BuildKind::Ship { ship: ShipKind::TinyFreighter }, None, Default::default(), &mut events);
+            assert!(events.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected {
+                reason: crate::event::BuildRejectReason::NoSlip { .. }, .. })));
+            w.players.get_mut(&owner).unwrap().research.completed.insert("prop_line_express_charters".into());
+            let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            s.bodies.iter_mut().find(|b| b.id == body).unwrap().structures.insert(K::NavalDrydock, 1);
+            for (good, _) in crate::build::recipe_for(BuildKind::Ship { ship: ShipKind::LargeFreighter }).costs {
+                s.stockpile.insert(*good, 10_000.0);
+            }
+            w.apply_build(owner, home, None, BuildKind::Ship { ship: ShipKind::LargeFreighter }, None, Default::default(), &mut events);
+            assert_eq!(w.build_queue.len(), 2);
+            assert_eq!(w.build_queue[1].construction_yard, Some(K::NavalDrydock));
+            assert_eq!(w.build_queue[1].complete_tick, u64::MAX, "ground workforce cannot build the new orbital job");
+            // Resolve the paid legacy work once, without inventing an orbital yard assignment.
+            w.tick = legacy.complete_tick;
+            w.resolve_builds(&mut events);
+            assert_eq!(events.iter().filter(|e| matches!(e.payload, EventPayload::ShipSpawned { kind, .. } if kind == ship)).count(), 1);
+            assert_eq!(w.build_queue.len(), 1);
+            assert_eq!(w.build_queue[0].construction_yard, Some(K::NavalDrydock));
         }
     }
 

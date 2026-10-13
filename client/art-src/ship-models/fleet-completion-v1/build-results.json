@@ -1,0 +1,47 @@
+[
+  {
+    "ship": "destroyer",
+    "triangles": 14532,
+    "sections": 15
+  },
+  {
+    "ship": "battleship",
+    "triangles": 33772,
+    "sections": 35
+  },
+  {
+    "ship": "dreadnought",
+    "triangles": 51176,
+    "sections": 75
+  },
+  {
+    "ship": "scout",
+    "triangles": 8896,
+    "sections": 7
+  },
+  {
+    "ship": "colony-ship",
+    "triangles": 27896,
+    "sections": 7
+  },
+  {
+    "ship": "troop-transport",
+    "triangles": 11072,
+    "sections": 7
+  },
+  {
+    "ship": "construction-ship",
+    "triangles": 10340,
+    "sections": 7
+  },
+  {
+    "ship": "medium-freighter",
+    "triangles": 17056,
+    "sections": 7
+  },
+  {
+    "ship": "authority-freighter",
+    "triangles": 20144,
+    "sections": 7
+  }
+]

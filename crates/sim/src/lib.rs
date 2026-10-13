@@ -11,17 +11,21 @@
 //! the per-player lightspeed view filter's delivery scheduling, rendering —
 //! lives in the `server` crate and the client, never here.
 
+pub mod belts;
 pub mod body;
 pub mod build;
 pub mod cargo;
 pub mod captain;
+pub mod charter;
 pub mod colony;
 pub mod combat;
+pub mod combat_balance;
 pub mod command;
 pub mod config;
 pub mod detection;
 pub mod doctrine;
 pub mod diplomacy;
+pub mod dmath;
 pub mod emplace;
 pub use emplace::{Emplacement, EmplacementKind};
 pub mod event;
@@ -34,6 +38,7 @@ pub mod ground;
 pub mod ids;
 pub mod information;
 pub mod industry;
+pub mod interdiction;
 pub mod market;
 pub mod math;
 pub mod migration;
@@ -44,6 +49,7 @@ pub mod sites;
 pub mod node;
 pub mod operation;
 pub mod pirate;
+pub mod power;
 pub mod production;
 pub mod rankings;
 pub mod research;
@@ -51,13 +57,14 @@ pub mod rng;
 pub mod ship;
 pub mod specialist;
 pub mod standing;
+pub mod station;
 pub mod syndicate;
 pub mod tactical;
 pub mod tca;
 pub mod transit;
 pub mod world;
 
-pub use body::{Body, BodyKind, BodySize, BodySpecial, Environment, Geology, PlanetaryProfile};
+pub use body::{BeltKind, BeltShape, Body, BodyKind, BodySize, BodySpecial, Environment, Geology, PlanetaryProfile, Pocket, Prospecting};
 pub use build::{BuildJob, BuildKind, SlotPool, StructureKind};
 pub use cargo::{Cargo, Commodity};
 pub use captain::{

@@ -19,7 +19,7 @@ fn fixture() -> (World, PlayerId, EntityId) {
 }
 
 #[test]
-fn economy_freighters_take_four_times_as_long_and_burn_a_tenth_per_journey() {
+fn slow_freighters_take_twice_as_long_on_uranium_and_burn_a_quarter_of_the_energy() {
     use crate::ship::{DriveState, TransitMode};
     let (mut w, owner, _) = fixture();
     // Isolate propulsion from refuelling, commands, wells and captain bonuses.
@@ -29,14 +29,14 @@ fn economy_freighters_take_four_times_as_long_and_burn_a_tenth_per_journey() {
     let dest = start + Vec2::new(1_000.0, 0.0);
     for kind in PLAYER_FREIGHTERS {
         let mut results = Vec::new();
-        for mode in [TransitMode::Full, TransitMode::Economy, TransitMode::Stealth] {
+        for mode in [TransitMode::Full, TransitMode::Slow, TransitMode::Stealth] {
             let id = w.alloc_entity_id();
             let mut f = Fleet::single(id, owner, kind, start, FleetOrder::MoveTo { dest }, None);
             f.add_cargo(C::MetallicOre, kind.cargo_units());
             f.transit = mode;
             f.drive_state = DriveState::Cruising(crate::transit::Regime::Warp);
             f.vel = Vec2::new(f.transit_speed() * crate::transit::WARP_FACTOR, 0.0);
-            let initial = f.fuel;
+            let (fuel0, uranium0) = (f.fuel, f.uranium);
             let range = f.range_at(crate::transit::WARP_FACTOR);
             w.fleets.insert(id, f);
             let mut ticks = 0;
@@ -46,28 +46,26 @@ fn economy_freighters_take_four_times_as_long_and_burn_a_tenth_per_journey() {
                 ticks += 1;
             }
             assert!(ticks < 1_000, "{kind:?} {mode:?} must reach the destination");
-            results.push((ticks, initial - w.fleets[&id].fuel, range));
+            let f = &w.fleets[&id];
+            results.push((ticks, fuel0 - f.fuel, uranium0 - f.uranium, range));
             w.fleets.remove(&id);
         }
-        let (full, economy, stealth) = (results[0], results[1], results[2]);
-        // Whole-tick arrival rounding can amplify by up to four ticks when
-        // comparing the quarter-speed trip against four times the Full trip.
-        assert!((economy.0 as i32 - 4 * full.0 as i32).abs() <= 4, "{kind:?}: {results:?}");
-        assert!((economy.1 / full.1 - 0.1).abs() < 0.001, "{kind:?}: {results:?}");
-        assert!((economy.2 / full.2 - 10.0).abs() < 1e-9);
+        let (full, slow, stealth) = (results[0], results[1], results[2]);
+        assert!((slow.0 as i32 - 2 * full.0 as i32).abs() <= 2, "{kind:?}: {results:?}");
+        assert!(full.2.abs() < 1e-12 && slow.1.abs() < 1e-12, "{kind:?}: each regime burns its own store");
+        assert!((slow.2 / full.1 - 0.25).abs() < 0.001, "{kind:?}: {results:?}");
+        assert!((slow.3 / full.3 - 4.0).abs() < 1e-9, "the same-size store goes four times as far");
         assert!((stealth.1 / full.1 - 1.0).abs() < 0.01, "Stealth's trip cost is unchanged");
-        eprintln!("{kind:?}: Full {} ticks / {:.4} Fuel; Economy {} ticks / {:.4} Fuel",
-            full.0, full.1, economy.0, economy.1);
     }
 }
 
 #[test]
-fn economy_escorts_match_the_charge_without_getting_freight_engine_savings() {
+fn escorts_fly_their_charges_uranium_regime() {
     use crate::ship::{DriveState, TransitMode};
     let (mut w, owner, _) = fixture();
     w.fleets.clear();
     let mut results = Vec::new();
-    for mode in [TransitMode::Full, TransitMode::Economy] {
+    for mode in [TransitMode::Full, TransitMode::Slow] {
         let start = Vec2::new(5_000_000.0, 0.0);
         let id = w.alloc_entity_id();
         let guard_id = w.alloc_entity_id();
@@ -81,39 +79,44 @@ fn economy_escorts_match_the_charge_without_getting_freight_engine_savings() {
             FleetOrder::Guard { target: id }, None);
         guard.vel = f.vel;
         guard.drive_state = f.drive_state;
-        let before = guard.fuel;
+        let before = (guard.fuel, guard.uranium);
         w.fleets.insert(id, f);
         w.fleets.insert(guard_id, guard);
-        let ticks = if mode == TransitMode::Full { 120 } else { 480 };
+        let ticks = if mode == TransitMode::Full { 120 } else { 240 };
         for _ in 0..ticks { w.time += DT; w.integrate_movement(&mut vec![]); }
         assert!((w.fleets[&guard_id].vel.length() - w.fleets[&id].vel.length()).abs() < 1e-6);
-        results.push((w.fleets[&id].pos.distance(start), before - w.fleets[&guard_id].fuel));
+        let g = &w.fleets[&guard_id];
+        results.push((w.fleets[&id].pos.distance(start), before.0 - g.fuel, before.1 - g.uranium));
         w.fleets.clear();
     }
-    assert!((results[0].0 - results[1].0).abs() < 0.1);
-    assert!((results[0].1 - results[1].1).abs() < 1e-6, "escort burns the same fuel over the same distance");
+    assert!((results[0].0 - results[1].0).abs() < 0.1, "{results:?}");
+    assert!(results[0].2.abs() < 1e-12 && results[1].1.abs() < 1e-12, "{results:?}");
+    assert!((results[1].2 / results[0].1 - 0.25).abs() < 1e-6,
+        "the escort burns its charge's Uranium regime over the same distance: {results:?}");
 }
 
 #[test]
-fn economy_commands_are_delayed_and_cannot_discount_combat_hulls() {
+fn slow_commands_are_delayed_and_ships_of_the_line_cannot_fly_slow() {
     use crate::ship::TransitMode;
     let (mut w, owner, _) = fixture();
     w.fleets.clear();
     let id = w.alloc_entity_id();
     let pos = w.players[&owner].command_center + Vec2::new(10_000.0, 0.0);
     w.fleets.insert(id, Fleet::single(id, owner, ShipKind::TinyFreighter, pos, FleetOrder::Idle, None));
-    w.step(&[Command::SetFleetTransit { player_id: owner, fleet_id: id, mode: TransitMode::Economy }]);
+    w.step(&[Command::SetFleetTransit { player_id: owner, fleet_id: id, mode: TransitMode::Slow }]);
     assert_eq!(w.fleets[&id].transit, TransitMode::Full, "setting cannot beat its order signal");
     for _ in 0..((crate::transit::delay(pos, w.players[&owner].command_center, w.config.c) + 1.0) / DT) as u32 {
         w.step(&[]);
     }
-    assert_eq!(w.fleets[&id].transit, TransitMode::Economy);
+    assert_eq!(w.fleets[&id].transit, TransitMode::Slow);
     let restored: World = serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
-    assert_eq!(restored.fleets[&id].transit, TransitMode::Economy);
+    assert_eq!(restored.fleets[&id].transit, TransitMode::Slow);
     let f = w.fleets.get_mut(&id).unwrap();
     f.composition.insert(ShipKind::Raider, 1);
-    assert!(!f.can_economy_cruise());
-    assert_eq!(f.cruise_fuel_mult(), 1.0, "merging a warship cannot borrow freight engines");
+    assert!(f.can_slow(), "an escort warship flies Slow with its charge");
+    f.composition.insert(ShipKind::Battleship, 1);
+    assert!(!f.can_slow(), "a ship of the line carries no fission store");
+    assert_eq!(f.cruise_fuel_mult(), 1.0);
     assert_eq!(f.transit_speed(), f.max_speed());
 }
 
@@ -122,13 +125,13 @@ fn freight_construction_starts_with_importable_basics_then_adds_industry() {
     // These are construction manifests, not a credit purchase or an automatic
     // hull replacement. Every unit must reach a yard through normal logistics.
     let manifests: [&[(C, f64)]; 6] = [
-        &[(C::Alloys, 20.0), (C::Machinery, 8.0), (C::Polymers, 8.0)],
-        &[(C::Alloys, 45.0), (C::Machinery, 16.0), (C::Polymers, 16.0)],
-        &[(C::Alloys, 90.0), (C::Machinery, 28.0), (C::Polymers, 20.0), (C::Electronics, 10.0)],
-        &[(C::Alloys, 180.0), (C::Machinery, 45.0), (C::Electronics, 25.0), (C::HullSections, 12.0)],
-        &[(C::Alloys, 320.0), (C::Machinery, 70.0), (C::HullSections, 30.0), (C::PrecisionComponents, 15.0)],
+        &[(C::Alloys, 20.0), (C::Machinery, 8.0), (C::Polymers, 8.0), (C::WarpCore, 1.0)],
+        &[(C::Alloys, 45.0), (C::Machinery, 16.0), (C::Polymers, 16.0), (C::WarpCore, 1.0)],
+        &[(C::Alloys, 90.0), (C::Machinery, 28.0), (C::Polymers, 20.0), (C::Electronics, 10.0), (C::WarpCore, 2.0)],
+        &[(C::Alloys, 180.0), (C::Machinery, 45.0), (C::Electronics, 25.0), (C::HullSections, 12.0), (C::WarpCore, 3.0)],
+        &[(C::Alloys, 320.0), (C::Machinery, 70.0), (C::HullSections, 30.0), (C::PrecisionComponents, 15.0), (C::WarpCore, 5.0)],
         &[(C::Alloys, 520.0), (C::Machinery, 100.0), (C::HullSections, 60.0),
-            (C::PrecisionComponents, 25.0), (C::DriveAssemblies, 16.0)],
+            (C::PrecisionComponents, 25.0), (C::WarpCore, 16.0)],
     ];
     for (kind, expected) in PLAYER_FREIGHTERS.into_iter().zip(manifests) {
         let recipe = crate::build::recipe_for(BuildKind::Ship { ship: kind });
@@ -144,7 +147,7 @@ fn medium_freight_introduces_electronics_before_heavy_components() {
     let costs = crate::build::CONVOY_RECIPE.costs;
     assert!(costs.contains(&(C::Electronics, 10.0)));
     assert!(!costs.iter().any(|(c, _)| matches!(c,
-        C::HullSections | C::PrecisionComponents | C::DriveAssemblies)));
+        C::HullSections | C::PrecisionComponents)));
 }
 
 #[test]
@@ -225,12 +228,14 @@ fn each_freighter_loads_mixed_cargo_up_to_its_own_capacity() {
 
 #[test]
 fn freight_unlocks_and_yard_tiers_are_enforced_at_receipt() {
-    for ((kind, programme), tier) in PLAYER_FREIGHTERS.into_iter().zip(PROGRAMMES).zip([1, 1, 2, 3, 4, 5]) {
+    let yards = [(K::Shipyard, 1), (K::Shipyard, 1), (K::Shipyard, 2),
+        (K::NavalDrydock, 1), (K::NavalDrydock, 2), (K::NavalDrydock, 3)];
+    for ((kind, programme), (yard, tier)) in PLAYER_FREIGHTERS.into_iter().zip(PROGRAMMES).zip(yards) {
         let (mut w, owner, home) = fixture();
-        assert_eq!(crate::build::yard_for(kind), (K::Shipyard, tier));
+        assert_eq!(crate::build::yard_for(kind), (yard, tier));
         let what = BuildKind::Ship { ship: kind };
         let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
-        sys.set_tier(K::Shipyard, tier);
+        sys.set_tier(yard, tier);
         for (good, _) in crate::build::recipe_for(what).costs { sys.stockpile.insert(*good, 10_000.0); }
         let stock = sys.stockpile.clone();
         if let Some(programme) = programme {
@@ -242,18 +247,19 @@ fn freight_unlocks_and_yard_tiers_are_enforced_at_receipt() {
             assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().stockpile, stock);
             w.players.get_mut(&owner).unwrap().research.completed.insert(programme.into());
         }
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(K::Shipyard, tier - 1);
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(yard, tier - 1);
         let mut events = Vec::new();
         w.apply_build(owner, home, None, what, None, Loadout::default(), &mut events);
         assert!(w.build_queue.is_empty(), "{kind:?}: research cannot bypass the yard");
         assert!(events.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected {
-            reason: crate::event::BuildRejectReason::NeedsYard { yard: K::Shipyard, required }, ..
-        } if required == tier)));
+            reason: crate::event::BuildRejectReason::NeedsYard { yard: needed, required }, ..
+        } if required == tier && needed == yard)));
         assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().stockpile, stock);
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(K::Shipyard, tier);
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(yard, tier);
         w.apply_build(owner, home, None, what, None, Loadout::default(), &mut vec![]);
         assert_eq!(w.build_queue.len(), 1, "{kind:?}: unlocked hull queues without a syndicate");
         assert_eq!(w.build_queue[0].what, what);
+        assert_eq!(w.build_queue[0].construction_yard, Some(yard));
         let paid = &w.systems.iter().find(|s| s.id == home).unwrap().stockpile;
         for (good, units) in crate::build::recipe_for(what).costs {
             assert_eq!(paid[good], stock[good] - units, "{kind:?}: pays the actual recipe once");
@@ -268,7 +274,11 @@ fn tiny_freighter_advances_the_founding_export() {
     let id = w.players[&owner].founding.convoy.unwrap();
     w.step(&[]);
     assert_eq!(w.players[&owner].founding.convoy, Some(id));
-    assert_eq!(w.players[&owner].founding.stage, crate::founding::FoundingStage::ExportProduction);
+    // §charter v3: a founder with a Freighter goes on to the first shipment,
+    // and an escorted departure draws the privateer lesson.
+    assert_eq!(w.players[&owner].founding.stage, crate::founding::FoundingStage::PrepareExport);
+    let guard = w.fleets.values().find(|f| f.owner == owner && f.is_combatant()).unwrap().id;
+    w.fleets.get_mut(&guard).unwrap().order = FleetOrder::Guard { target: id };
     w.fleets.get_mut(&id).unwrap().order = FleetOrder::MoveTo { dest: w.hub };
     w.step(&[]);
     assert!(w.players[&owner].founding.privateer.is_some());

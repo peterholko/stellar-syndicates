@@ -71,6 +71,7 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       st.simTime = msg.sim_time;
       st.galaxy = msg.galaxy;
       st.charterLadder = msg.charter_ladder;
+      st.lastFoundingPrivateer = null;
       st.researchCatalog = msg.research_catalog;
       st.battleRecords = st.battleRecords.filter((record) => record.id === "demo-battle");
       st.standingOrders = [];
@@ -124,6 +125,7 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
         (departure) => msg.sim_time - departure.learned_at < JUMP_DEPARTURE_TTL_S,
       );
       st.emplacements = msg.emplacements ?? [];
+      st.interdictionFields = msg.interdiction_fields ?? [];
       st.market = msg.market;
       // A legacy-save warm-up is unknown, not an empty bank account. Every
       // shell keeps its ordinary unavailable-report treatment until light arrives.
@@ -131,6 +133,8 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       st.freight = msg.freight;
       st.charter = msg.charter;
       st.founding = msg.founding;
+      st.charterLedger = msg.charter_ledger ?? null;
+      if (msg.founding?.privateer) st.lastFoundingPrivateer = msg.founding.privateer;
       st.doctrine = msg.doctrine;
       st.battles = msg.battles;
       st.syndicate = msg.syndicate ?? null;
@@ -173,7 +177,7 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
             const remaining = remainingBuilds.get(key) ?? 0;
             if (remaining > 0) remainingBuilds.set(key, remaining - 1);
             else if (build.complete_time != null && build.complete_time <= msg.sim_time + 1) {
-              derived.push({ kind: "BuildCompleted", systemId: system.id, buildKey: build.key });
+              derived.push({ kind: "BuildCompleted", systemId: system.id, buildKey: build.key, bodyId: build.body_id });
             }
           }
           const previousAssignments = new Map(
@@ -276,6 +280,7 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
     case "Sections":
       if (msg.exploration_journal) st.explorationJournal = msg.exploration_journal;
       if (msg.standing_orders) st.standingOrders = msg.standing_orders;
+      if (msg.depot_rules) st.depotRules = msg.depot_rules;
       if (msg.battle_reports) st.battleReports = msg.battle_reports;
       if (msg.capture_reports) st.captureReports = msg.capture_reports;
       if (msg.rankings) st.rankings = msg.rankings;
@@ -344,7 +349,20 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
         .filter((entry) => !previous.has(`${entry.at_time}:${entry.severity}:${entry.text}`)
           && entry.text.startsWith("Pirate raid incoming:"))
         .map((entry): CoreEvent => ({ kind: "PirateRaidWarning", message: entry.text })) : [];
-      return [{ kind: "TimelineApplied" }, ...rejected, ...raids];
+      // §founding R6: charter rewards are moments, never silent credits. The
+      // server stamps them on the founder's own clock; only new lines toast.
+      const milestones = hadTimeline ? msg.entries
+        .filter((entry) => !previous.has(`${entry.at_time}:${entry.severity}:${entry.text}`))
+        .map((entry): CoreEvent | null => {
+          const reward = /^Charter milestone · (.+) · the Authority paid ([\d,.]+) Cr\.$/.exec(entry.text);
+          if (reward) return { kind: "CharterMilestone", title: "Charter milestone", message: `${reward[1]} · +${Number(reward[2].replace(/,/g, "")).toLocaleString()} Cr` };
+          if (entry.text.startsWith("The Terran Charter Authority chartered a replacement")) {
+            return { kind: "CharterMilestone", title: "Replacement Freighter", message: entry.text };
+          }
+          return null;
+        })
+        .filter((event): event is CoreEvent => event !== null) : [];
+      return [{ kind: "TimelineApplied" }, ...rejected, ...raids, ...milestones];
     }
 
     case "Transactions":

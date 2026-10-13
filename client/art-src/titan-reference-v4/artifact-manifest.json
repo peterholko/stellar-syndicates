@@ -1,0 +1,23 @@
+{
+  "file": "titan-reference.png",
+  "width": 1774,
+  "height": 887,
+  "mode": "RGB",
+  "sha256": "90f0d5d1bf7b1764e84f8886577ce954f58c6eecaf36c4b71b5ef21e0e8ec243",
+  "views": [
+    "front",
+    "back",
+    "top",
+    "bottom",
+    "side"
+  ],
+  "tool": "built-in image_gen",
+  "promptHistory": "prompts.json",
+  "status": "design proposal",
+  "design": "Low layered angular hull with a blunt prow and two integrated engine blocks, four vertical oval exhaust apertures",
+  "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-791bc35f-f0d7-43b8-b4e7-460bbdd106af.png",
+  "references": [
+    "references/user-shape-reference-1.jpg",
+    "references/user-shape-reference-2.jpg"
+  ]
+}

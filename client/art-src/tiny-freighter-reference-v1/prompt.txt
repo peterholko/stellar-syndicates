@@ -1,0 +1,23 @@
+Use case: stylized-concept.
+Asset type: a polished 2D orthographic spaceship reference sheet for 3D modeling, showing exactly four views of the TINY FREIGHTER from Stellar Syndicates.
+
+REFERENCE ROLES:
+Image 1 is the authoritative Tiny Freighter design. Preserve its recognizable silhouette, proportions, component layout, surface textures, panel shapes, and colors.
+Image 2 is the Cruiser reference sheet and is ONLY a guide to the clean presentation, material rendering, white background, readable typography, and orthographic-view layout. Do not use the Cruiser's hull, engines, bridge, weapons, or other design elements.
+
+SHIP IDENTITY:
+A compact unarmed civilian cargo shuttle. A narrow elongated wedge-shaped command cabin projects forward on a short neck from a much broader, rounded rectangular freight body. Preserve the source's two consecutive rectangular cargo sections in one broad cargo body, two longitudinal dark retaining rails, six amber-gold cargo clamps in three pairs, chamfered corners, cyan flank marker strips, and exactly TWO stubby cylindrical rear engine nacelles, one at each rear corner. A small central aft machinery wedge sits between the engines. The bridge has the source's faceted cyan windshield and silver prow. No wings, guns, turrets, missiles, extra engines, extra cargo rows, or additional ships.
+
+MATERIALS AND TEXTURES:
+Match the reference's off-white and silver industrial armor plates, dark graphite structural edges and recessed mechanisms, muted gold/amber clamps and hardware, cyan glass and small lights. Clear panel seams, inset ventilation grilles, restrained scratches and edge wear, bolts and latch details, painted metal roughness, coherent hard-surface construction. Preserve broad readable shapes; avoid excessive greeble noise. Consistent material placement and surface detail across all four views.
+
+LAYOUT:
+Wide landscape sheet, approximately 2:1 aspect ratio, solid clean white background, ample margins. Small title "TINY FREIGHTER" at upper left. Two large, equal-scale tall views occupying the left half to three-fifths: TOP with nose up and BOTTOM with nose up. On the right, a long horizontal SIDE profile with nose facing left, and below it a centered FRONT elevation looking straight at the nose. Every view fully visible and clearly separated. Put the exact readable labels "TOP", "BOTTOM", "SIDE", and "FRONT" beneath their views. Exactly four views, no back view, no perspective beauty shot, no UI or other text.
+
+ORTHOGRAPHIC ACCURACY:
+All four drawings depict the SAME ship with matching overall proportions, freight-body dimensions, cabin, engine positions, and height relationships. Parallel orthographic projections, zero perspective distortion or three-quarter angles. The SIDE view must show the actual boxy cargo depth, raised forward cockpit roof, two successive cargo sections, and rear engine profile. The FRONT view must show the nose-facing windshield and broad cargo shoulders behind it; rear-facing cyan engine exhaust openings must not appear on the front elevation.
+
+FULL UNDERSIDE:
+The BOTTOM is a specifically designed, fully textured ventral surface, not a flipped copy of the top. Match the top silhouette and attachment locations exactly. Give it silver belly armor panels, dark structural rails, recessed cargo access/service hatches, flush landing-gear doors, cooling vents, maintenance seams, and a few cyan utility lights consistent with the original materials. NO windshield or duplicated cockpit window on the belly. No blank untextured regions. Cabin underside, neck underside, cargo-module undersides, engine undersides, and central aft machinery must all be resolved.
+
+Rendering: precise high-quality 2D concept-art reference with softly shaded hard-surface forms, crisp contours, neutral studio lighting, no dramatic shadows, no floor, no gradients, no checkerboard background, no watermark. Make it practical for reconstructing the same fully textured 3D ship.

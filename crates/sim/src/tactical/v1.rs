@@ -121,9 +121,9 @@ fn family_idx(ty: DamageType) -> usize {
 /// The chance one shot of `family` connects with a target of `mass` moving at
 /// `speed` (its CURRENT arena velocity — a withdrawing burner is harder to hit
 /// than a station-keeper, an anchored capital is a barn).
-pub fn to_hit(family: DamageType, target_mass: f64, target_speed: f64) -> f64 {
+pub fn to_hit(family: DamageType, target_mass: f64, target_speed: f64, math: super::Math) -> f64 {
     let i = family_idx(family);
-    let m = (target_mass / 1_000.0).max(0.01).powf(HIT_MASS_EXP[i]);
+    let m = math.powf((target_mass / 1_000.0).max(0.01), HIT_MASS_EXP[i]);
     let v = (target_speed / 100.0) * HIT_SPEED_SENS[i];
     (HIT_BASE[i] * m / (1.0 + v)).clamp(HIT_CLAMP.0, HIT_CLAMP.1)
 }
@@ -132,7 +132,7 @@ pub fn to_hit(family: DamageType, target_mass: f64, target_speed: f64) -> f64 {
 /// `near`, radius preserved) to the nearest inside-arena arc, stepping in the
 /// orbit direction `sign` (±1). Deterministic; falls back to a radial clamp
 /// when the whole ring lies outside (a far-out runner being pursued).
-pub(super) fn inside_ring_point(near: Vec2, dir0: Vec2, ring: f64, sign: f64) -> Vec2 {
+pub(super) fn inside_ring_point(near: Vec2, dir0: Vec2, ring: f64, sign: f64, math: super::Math) -> Vec2 {
     let cap = ARENA_RADIUS * 0.95;
     let mut dir = dir0;
     for _ in 0..24 {
@@ -142,7 +142,10 @@ pub(super) fn inside_ring_point(near: Vec2, dir0: Vec2, ring: f64, sign: f64) ->
         }
         // Fine steps: a coarse slide makes orbit points jump in lumps and
         // the duration distribution goes bimodal; 0.15 rad keeps it smooth.
-        let (s, c) = ((0.15 * sign).sin(), (0.15 * sign).cos());
+        let (s, c) = match math {
+            super::Math::Platform => ((0.15 * sign).sin(), (0.15 * sign).cos()),
+            super::Math::Soft => crate::dmath::sin_cos(0.15 * sign),
+        };
         dir = Vec2::new(dir.x * c - dir.y * s, dir.x * s + dir.y * c);
     }
     let p = near + dir0 * ring;
@@ -244,6 +247,10 @@ pub struct Combatant {
     /// which sync to their system's `defense_pool` instead.
     #[serde(default)]
     pub origin: Option<(EntityId, u32)>,
+    /// v15: the station hardpoint this platform is (its write-back slot and
+    /// its level's weight and reach). `None` for ships and legacy tiers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mount: Option<super::v15::Mount>,
 }
 
 impl Combatant {
@@ -279,6 +286,27 @@ pub struct Torpedo {
     pub dmg: f64,
 }
 
+impl Torpedo {
+    /// A stable identity for the viewer, derived from the torpedo's own launch
+    /// damage roll (unique in practice), so no state field, checksum or random
+    /// draw changes and saved battles reconstruct the same ids.
+    pub fn presentation_id(&self) -> u32 {
+        let mut h = self.dmg.to_bits() ^ (u64::from(self.target) << 40) ^ (u64::from(self.side) << 63);
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        h ^= h >> 33;
+        (h >> 32) as u32
+    }
+
+    /// Presentation evidence: how and where this torpedo ended.
+    pub(super) fn end(&self, end: crate::combat::TorpedoEnd, by: Option<u32>, damage: f64) -> crate::combat::KfTorpedoEnd {
+        crate::combat::KfTorpedoEnd {
+            id: self.presentation_id(), side: self.side, to: self.target,
+            x: self.pos.x as f32, y: self.pos.y as f32, end, by, damage: damage as f32,
+        }
+    }
+}
+
 /// §roster: ONE HULL held past the per-side cap, waiting for a slot. Identified
 /// like any other combatant, so a hull that never reaches the line takes no
 /// damage at all — the pooled model used to spread the side's deficit over it.
@@ -295,6 +323,10 @@ pub struct RosterDelta {
     pub side: u8,
     pub departed: Vec<(EntityId, u32)>,
     pub arrived: Vec<(EntityId, Ship)>,
+    /// v14: the direction each arriving fleet came from (a unit vector from
+    /// the battle), so it enters the arena on that side.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub from: Vec<(EntityId, Vec2)>,
 }
 
 /// What one tactical step did — the world applies it through the SAME channels
@@ -311,6 +343,15 @@ pub struct StepOutcome {
     /// Presentation evidence only: observing a resolved roll must not consume
     /// RNG or enter TacticalState/checksums, including for frozen v1 archives.
     pub gunfire: Vec<crate::combat::KfGunfire>,
+    /// Presentation evidence only, like `gunfire`: each torpedo that ended
+    /// this step, where, how and (on a hit) for how much.
+    pub torp_ends: Vec<crate::combat::KfTorpedoEnd>,
+    /// v9: hulls that rammed wreckage this step (the damage is already applied).
+    pub rams: Vec<crate::combat::KfRam>,
+    /// v11: interceptors holding leaving hulls, and webs slowing their
+    /// targets (presentation evidence only).
+    pub tackles: Vec<crate::combat::KfLink>,
+    pub webs: Vec<crate::combat::KfLink>,
 }
 
 /// Per-side research flags fed into a step (owner-level lookups happen in the
@@ -322,6 +363,17 @@ pub struct SideMods {
     /// Captain Command bonus. Small and capped in `captain.rs`; multiplies
     /// damage, never accuracy, range, targeting, or survivability.
     pub damage_mult: f64,
+    /// v15 Breaching Ordnance: this side's hits on stations and platforms
+    /// (0 = none, read as 1).
+    #[serde(default)]
+    pub vs_defenses: f64,
+    /// v15 Platform Netfire: this side's hardpoints screen out to 700 su.
+    #[serde(default)]
+    pub netfire: bool,
+    /// v15 Fortress Doctrine: this side's hulls can't be tackled (set only
+    /// while its own station fights).
+    #[serde(default)]
+    pub fortress: bool,
 }
 
 impl SideMods {
@@ -339,6 +391,10 @@ impl SideMods {
         } else {
             self.damage_mult
         }
+    }
+
+    pub fn vs_defenses(&self) -> f64 {
+        if self.vs_defenses <= 0.0 { 1.0 } else { self.vs_defenses }
     }
 }
 
@@ -377,6 +433,15 @@ pub struct TacticalState {
     pub(super) missions: BTreeMap<EntityId, crate::doctrine::MissionProfile>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub(super) mission_retreats: std::collections::BTreeSet<EntityId>,
+    /// v9 onward: large-hull wreckage on the field (physical obstacles).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) wrecks: Vec<super::v9::Wreck>,
+    /// v10 onward: each fleet's formation in battle.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) formations: BTreeMap<EntityId, super::v10::FormationFrame>,
+    /// v14 onward: the defended world, when the battle is fought at one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world: Option<super::v14::WorldBody>,
 }
 
 /// Derive the battle's own RNG stream from `(world_seed, battle_id)` — never
@@ -456,6 +521,9 @@ impl TacticalState {
             escorts: BTreeMap::new(),
             missions: BTreeMap::new(),
             mission_retreats: std::collections::BTreeSet::new(),
+            wrecks: Vec::new(),
+            formations: BTreeMap::new(),
+            world: None,
         };
         st.deploy_side(0, a);
         st.deploy_side(1, d);
@@ -478,6 +546,7 @@ impl TacticalState {
                     role: Role::Anchor,
                     platform: true,
                     origin: None, // tiers sync to the system, not to a fleet
+                    mount: None,
                 });
             }
         }
@@ -508,12 +577,14 @@ impl TacticalState {
             if ship.kind == ShipKind::Scout {
                 continue; // scouts die at the boundary — never unpacked
             }
-            self.spawn(side, *fleet, ship);
+            self.spawn(side, *fleet, ship, None);
         }
     }
 
-    /// Spawn one combatant (or hold it in a wave past the cap).
-    fn spawn(&mut self, side: u8, fleet: EntityId, ship: &Ship) {
+    /// Spawn one combatant (or hold it in a wave past the cap). `from`: the
+    /// direction its fleet arrived from (v14 reinforcements), else the side's
+    /// usual deployment.
+    fn spawn(&mut self, side: u8, fleet: EntityId, ship: &Ship, from: Option<Vec2>) {
         let (kind, stack) = (ship.kind, ship.stack_key());
         let alive = self
             .combatants
@@ -535,7 +606,9 @@ impl TacticalState {
         // along the approach bearing; a deterministic lateral fan spreads the line.
         let lateral = Vec2::new(-self.bearing.y, self.bearing.x);
         let spread = (idx % 21.0 - 10.0) * 35.0 + (idx / 21.0).floor() * 12.0;
-        let pos = if side == 0 {
+        let pos = if let Some(dir) = from {
+            super::v14::arrival_point(dir, idx)
+        } else if side == 0 {
             self.bearing * SPAWN_DIST + lateral * spread
         } else {
             lateral * spread * 0.6 - self.bearing * (idx / 21.0).floor() * 30.0
@@ -555,6 +628,7 @@ impl TacticalState {
             role,
             platform: false,
             origin: Some((fleet, ship.id)),
+            mount: None,
         });
     }
 
@@ -565,10 +639,14 @@ impl TacticalState {
     /// exact, where the old count-matching had to guess which hull was which.
     /// Returns scout counts that must die at the boundary per side.
     pub fn sync(&mut self, desired: [&[(EntityId, Ship)]; 2]) -> [u32; 2] {
-        self.sync_recorded(desired).0
+        self.sync_recorded(desired, &BTreeMap::new()).0
     }
 
-    pub(crate) fn sync_recorded(&mut self, desired: [&[(EntityId, Ship)]; 2]) -> ([u32; 2], Vec<RosterDelta>) {
+    /// `arrivals`: per fleet, the direction it came from (a unit vector from
+    /// the battle); v14 battles bring joining hulls in on that side.
+    pub(crate) fn sync_recorded(&mut self, desired: [&[(EntityId, Ship)]; 2], arrivals: &BTreeMap<EntityId, Vec2>)
+        -> ([u32; 2], Vec<RosterDelta>) {
+        let v14 = matches!(self.rules, super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. });
         let mut scouts = [0u32; 2];
         let mut changes = Vec::new();
         for side in 0..2u8 {
@@ -610,11 +688,16 @@ impl TacticalState {
                 .filter(|(f, sh)| sh.kind != ShipKind::Scout && !have.contains(&(*f, sh.id)))
                 .cloned()
                 .collect();
+            let mut from: Vec<(EntityId, Vec2)> = Vec::new();
             for (fleet, ship) in &joining {
-                self.spawn(side, *fleet, ship);
+                let dir = arrivals.get(fleet).copied().filter(|_| v14);
+                if let Some(d) = dir && !from.iter().any(|(f, _)| f == fleet) {
+                    from.push((*fleet, d));
+                }
+                self.spawn(side, *fleet, ship, dir);
             }
             if !departed.is_empty() || !joining.is_empty() {
-                changes.push(RosterDelta { side, departed, arrived: joining });
+                changes.push(RosterDelta { side, departed, arrived: joining, from });
             }
         }
         (scouts, changes)
@@ -626,7 +709,8 @@ impl TacticalState {
                 || c.origin.is_none_or(|id| !change.departed.contains(&id)));
             self.waves[change.side as usize].retain(|w| !change.departed.contains(&(w.fleet, w.ship.id)));
             for (fleet, ship) in &change.arrived {
-                self.spawn(change.side, *fleet, ship);
+                let dir = change.from.iter().find(|(f, _)| f == fleet).map(|(_, d)| *d);
+                self.spawn(change.side, *fleet, ship, dir);
             }
         }
     }
@@ -681,7 +765,7 @@ impl TacticalState {
                     break;
                 };
                 let e = self.waves[side as usize].remove(best);
-                self.spawn(side, e.fleet, &e.ship);
+                self.spawn(side, e.fleet, &e.ship, None);
             }
         }
     }
@@ -715,7 +799,7 @@ impl TacticalState {
                 .combatants
                 .iter()
                 .filter(|c| c.side == side && !c.platform)
-                .all(|c| c.pos.length() >= WITHDRAW_EXIT_RADIUS)
+                .all(|c| c.pos.length() >= self.exit_radius())
     }
 
     /// Order a side to withdraw (doctrine retreat / raid cap / safety valve).
@@ -756,21 +840,72 @@ impl TacticalState {
         let mut out = StepOutcome::default();
 
         // 1. MOVEMENT: seek/arrive toward each role's desired point.
+        let bodies = matches!(self.rules, super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. });
+        let slots = if let super::Rules::V10 { maneuver_seed } | super::Rules::V11 { maneuver_seed } | super::Rules::V12 { maneuver_seed } | super::Rules::V13 { maneuver_seed } | super::Rules::V14 { maneuver_seed } | super::Rules::V15 { maneuver_seed } | super::Rules::V16 { maneuver_seed } = self.rules {
+            super::v10::update_formations(self, maneuver_seed)
+        } else { Vec::new() };
+        let avoid = if bodies { super::v9::avoidance(self) } else { Vec::new() };
+        // v11: webs slow their targets this step; interceptors close on hulls
+        // trying to leave.
+        let v11 = matches!(self.rules, super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. });
+        // v12: one shot per weapon; heavier dreadnoughts and armour.
+        let v12 = matches!(self.rules, super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. });
+        // v15: station hardpoints, the siege class and the station research.
+        let v15 = matches!(self.rules, super::Rules::V15 { .. } | super::Rules::V16 { .. });
+        // v16: sin, cos, atan2 and powf in software.
+        let math = self.math();
+        // v13: capitals track small hulls poorly; each side's fortune scales
+        // every hit it deals for the whole battle.
+        let (tracking, fortunes) = match self.rules {
+            super::Rules::V13 { maneuver_seed } | super::Rules::V14 { maneuver_seed } | super::Rules::V15 { maneuver_seed } | super::Rules::V16 { maneuver_seed } =>
+                (super::v13::tracking(), [super::v13::fortune(maneuver_seed, 0), super::v13::fortune(maneuver_seed, 1)]),
+            _ => ((1.0, 1.0), [1.0; 2]),
+        };
+        // v13: the interceptors holding a hull this step (capitals can't
+        // track them).
+        let mut tackling = Vec::new();
+        let web_links = if v11 { super::v11::webs(self) } else { Vec::new() };
+        let mut webbed = vec![false; self.combatants.len()];
+        for &(_, target) in &web_links { webbed[target] = true; }
+        let tackle = if v11 { super::v11::tackle_points(self) } else { Vec::new() };
+        let before: Vec<Vec2> = if v11 { self.combatants.iter().map(|c| c.pos).collect() } else { Vec::new() };
         let desired: Vec<Vec2> = (0..self.combatants.len())
             .map(|i| match self.rules {
                 super::Rules::V1 => self.desired_point(i),
                 super::Rules::V2 => super::v2::desired_point(self, i),
                 super::Rules::V3 { maneuver_seed } => super::v3::desired_point(self, i, maneuver_seed),
                 super::Rules::V4 { maneuver_seed } | super::Rules::V5 { maneuver_seed } => super::v4::desired_point(self, i, maneuver_seed),
-                super::Rules::V6 { maneuver_seed } => super::v6::desired_point(self, i, maneuver_seed),
+                // v7 steers exactly as v6; its shorter or longer bands come
+                // from preferred_band. v8 keeps line and capital hulls weaving.
+                super::Rules::V6 { maneuver_seed } | super::Rules::V7 { maneuver_seed } => super::v6::desired_point(self, i, maneuver_seed),
+                super::Rules::V8 { maneuver_seed } => super::v8::desired_point(self, i, maneuver_seed),
+                // v9 adds steering clear of other hulls and of wreckage.
+                super::Rules::V9 { maneuver_seed } => super::v9::clear_of_wreckage(self, i,
+                    super::v8::desired_point(self, i, maneuver_seed) + avoid[i]),
+                // v10: a hull in a formation steers to its slot.
+                super::Rules::V10 { maneuver_seed } => super::v9::clear_of_wreckage(self, i,
+                    slots[i].unwrap_or_else(|| super::v8::desired_point(self, i, maneuver_seed)) + avoid[i]),
+                // v11: an interceptor holding a leaving hull steers to it, and
+                // a leaving hull heads straight out.
+                super::Rules::V11 { maneuver_seed } | super::Rules::V12 { maneuver_seed } | super::Rules::V13 { maneuver_seed } | super::Rules::V14 { maneuver_seed } | super::Rules::V15 { maneuver_seed } | super::Rules::V16 { maneuver_seed } => super::v9::clear_of_wreckage(self, i,
+                    tackle[i].or_else(|| super::v11::exit_point(self, &self.combatants[i])).or(slots[i])
+                        .unwrap_or_else(|| super::v8::desired_point(self, i, maneuver_seed)) + avoid[i]),
             })
             .collect();
+        // v14: a hull never aims into the world; it goes around.
+        let desired: Vec<Vec2> = if self.world.is_some() {
+            desired.into_iter().enumerate().map(|(i, p)| super::v14::clear_of_world(self, i, p)).collect()
+        } else {
+            desired
+        };
+        let slow_turns = bodies;
         for (i, want) in desired.iter().enumerate() {
             let c = &mut self.combatants[i];
             if c.platform {
                 continue;
             }
-            let max_speed = max_speed(c.kind) * ARENA_SCALE;
+            let before = c.vel;
+            let max_speed = max_speed(c.kind) * ARENA_SCALE * if v11 && webbed[i] { super::v11::WEB_SPEED } else { 1.0 };
             let accel = ACCEL_CAL / c.max_hp.sqrt();
             let to = *want - c.pos;
             let dist = to.length();
@@ -787,13 +922,33 @@ impl TacticalState {
             } else {
                 c.vel + dv.normalized() * accel
             };
+            if slow_turns {
+                c.vel = super::v9::turn_capped(c.kind, before, c.vel, math);
+            }
             c.pos = c.pos + c.vel;
+        }
+        if bodies {
+            super::v9::after_move(self, &mut out);
+        }
+        // v14: nothing passes through the world.
+        super::v14::keep_out_of_world(self);
+        if v11 {
+            let mut holds = super::v11::holds(self, &before);
+            // v15 Fortress Doctrine: nothing holds a side whose station fights.
+            if v15 {
+                holds.retain(|&(_, i)| !mods[self.combatants[i].side as usize].fortress);
+            }
+            super::v11::hold_at_edge(self, &holds);
+            tackling = vec![false; self.combatants.len()];
+            for &(t, _) in &holds { tackling[t] = true; }
+            out.tackles = super::v11::links(self, &holds);
+            out.webs = super::v11::links(self, &web_links);
         }
 
         // V4's one prioritized long-range volley precedes ordinary PD. The
         // version guard leaves archived v1–v3 dice, geometry and order intact.
-        if matches!(self.rules, super::Rules::V4 { .. } | super::Rules::V5 { .. } | super::Rules::V6 { .. }) {
-            super::v4::intercept_linked(self, mods);
+        if matches!(self.rules, super::Rules::V4 { .. } | super::Rules::V5 { .. } | super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
+            super::v4::intercept_linked(self, mods, &mut out);
         }
         // 2. TORPEDOES: fly, cross PD bubbles (intercept rolls), strike.
         let mut torps = std::mem::take(&mut self.torpedoes);
@@ -801,8 +956,10 @@ impl TacticalState {
         for (ti, t) in torps.iter_mut().enumerate() {
             let Some(target) = self.combatants.iter().find(|c| c.cid == t.target) else {
                 dead_torps.push(ti); // target already gone — the fish runs dry
+                out.torp_ends.push(t.end(crate::combat::TorpedoEnd::Dry, None, 0.0));
                 continue;
             };
+            let from = t.pos;
             let to = target.pos - t.pos;
             let dist = to.length();
             let travel = TORP_SPEED.min(dist);
@@ -812,10 +969,30 @@ impl TacticalState {
                 } else {
                     Vec2::new(0.0, 0.0)
                 };
+            // v9: wreckage in its path stops it (it detonates on the wreck).
+            if matches!(self.rules, super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. })
+                && let Some(at) = super::v9::torpedo_blocked(&self.wrecks, from, t.pos) {
+                t.pos = at;
+                dead_torps.push(ti);
+                out.torp_ends.push(t.end(crate::combat::TorpedoEnd::Wreck, None, 0.0));
+                continue;
+            }
+            // v14: so does the world (it bursts on the surface).
+            if let Some(at) = super::v14::torpedo_blocked(self, from, t.pos) {
+                t.pos = at;
+                dead_torps.push(ti);
+                out.torp_ends.push(t.end(crate::combat::TorpedoEnd::Wreck, None, 0.0));
+                continue;
+            }
             // PD: every enemy screen the torpedo is INSIDE this step rolls once.
             let mut intercepted = false;
+            let mut shot_down_by = None;
             for pd in self.combatants.iter().filter(|c| c.side != t.side) {
-                let r = pd.pd_radius();
+                let r = if v15 && pd.platform && mods[pd.side as usize].netfire {
+                    super::v15::NETFIRE_RADIUS
+                } else {
+                    pd.pd_radius()
+                };
                 if r > 0.0 && (t.pos - pd.pos).length() <= r {
                     let aff = if pd.platform {
                         1.0
@@ -826,21 +1003,26 @@ impl TacticalState {
                         (PD_ROLL_BASE * aff * mods[(1 - t.side) as usize].flak()).min(0.95);
                     if self.rng.next_f64() < chance {
                         intercepted = true;
+                        shot_down_by = Some(pd.cid);
                         break;
                     }
                 }
             }
             if intercepted {
                 dead_torps.push(ti);
+                out.torp_ends.push(t.end(crate::combat::TorpedoEnd::Intercepted, shot_down_by, 0.0));
                 continue;
             }
             // Terminal: to-hit vs the (possibly darting) target.
             if (t.pos - target.pos).length() <= TORP_HIT_DIST {
-                let hit = to_hit(DamageType::Torpedo, target.max_hp, target.speed());
+                let hit = to_hit(DamageType::Torpedo, target.max_hp, target.speed(), math);
                 if self.rng.next_f64() < hit {
                     let tid = target.cid;
                     let dmg = t.dmg; // armor ignores torpedoes — no mitigation
-                    self.apply_damage(tid, dmg, &mut out, t.side);
+                    let dealt = self.apply_damage(tid, dmg, &mut out, t.side);
+                    out.torp_ends.push(t.end(crate::combat::TorpedoEnd::Hit, None, dealt));
+                } else {
+                    out.torp_ends.push(t.end(crate::combat::TorpedoEnd::Miss, None, 0.0));
                 }
                 dead_torps.push(ti);
             }
@@ -852,7 +1034,7 @@ impl TacticalState {
 
         // 3. FIRE: index order (deterministic); dead targets drop out as they die.
         for i in 0..self.combatants.len() {
-            let (side, pos, kind, stack, plat, cds, alive) = {
+            let (side, pos, kind, stack, plat, cds, alive, mount) = {
                 let c = &self.combatants[i];
                 (
                     c.side,
@@ -862,18 +1044,21 @@ impl TacticalState {
                     c.platform,
                     c.cooldowns,
                     c.hp > 0.0,
+                    if v15 { c.mount } else { None },
                 )
             };
             if !alive {
                 continue;
             }
             let lo = Loadout::from_key(&stack);
-            let (family, mult) = if plat {
+            // A legacy platform tier is a beam battery; a v15 hardpoint fires
+            // whatever it is fitted with.
+            let (family, mult) = if plat && mount.is_none() {
                 (DamageType::Beam, 1.0)
             } else {
                 // Only new battles know discovery weapons. Saved kernels must
                 // never consult the mutable live equipment balance catalog.
-                if matches!(self.rules, super::Rules::V5 { .. } | super::Rules::V6 { .. }) { super::v5::offense(&lo) }
+                if matches!(self.rules, super::Rules::V5 { .. } | super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) { super::v5::offense(&lo) }
                 else { offense(&lo) }
             };
             let cd = match family {
@@ -888,17 +1073,22 @@ impl TacticalState {
                 c.cooldowns.torpedo = c.cooldowns.torpedo.saturating_sub(1);
                 continue;
             }
-            let aw = if plat {
+            let aw = if let Some(m) = mount {
+                m.aw
+            } else if plat {
                 PLATFORM_TIER_AW
+            } else if v12 {
+                super::v12::attack_weight(kind)
             } else {
                 attack_weight(kind)
             };
             if aw <= 0.0 {
                 continue; // civilians carry no guns
             }
+            let reach = mount.map_or_else(|| self.reach_of(kind, plat), |m| m.reach);
             let band = match family {
-                DamageType::Beam => BEAM_RANGE,
-                DamageType::Driver => BEAM_RANGE, // falloff shots allowed out to long
+                DamageType::Beam => BEAM_RANGE * reach,
+                DamageType::Driver => BEAM_RANGE * reach, // falloff shots allowed out to long
                 DamageType::Torpedo => TORP_LAUNCH_RANGE,
             };
             // Seeded targeting among in-range enemies only. V1–V5 retain mass
@@ -911,13 +1101,40 @@ impl TacticalState {
             {
                 let d = (e.pos - pos).length();
                 if d <= band {
-                    let weight = if matches!(self.rules, super::Rules::V6 { .. }) {
+                    let weight = if matches!(self.rules, super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
                         super::v6::target_weight(self, &self.combatants[i], e)
                     } else { e.max_hp.max(1.0) };
                     cands.push((e.cid, weight, d, e.speed(), e.platform));
                 }
             }
             if cands.is_empty() {
+                continue;
+            }
+            // v11: a destroyer's beams are light batteries (several shots).
+            if v11 && !plat && super::v11::fires_batteries(kind, &lo, family) {
+                let opening = if self.step <= OPENING_STEPS && mods[side as usize].opening_bonus { OPENING_BONUS } else { 1.0 };
+                let base = mult * aw * HIT_DMG_CAL * hull_affinity(kind, crate::module::Family::Beam) * opening
+                    * if raid { RAID_DMG_MULT } else { 1.0 } * mods[side as usize].damage();
+                let reflect = if v12 { super::v12::REFLECT_BLUNT } else { super::rules_v1::REFLECT_BLUNT };
+                super::v11::battery_volley(self, i, &cands, base * fortunes[side as usize], reflect, &mut out);
+                self.combatants[i].cooldowns.beam = BEAM_COOLDOWN;
+                continue;
+            }
+            // v12: every weapon carried fires its own shot.
+            if v12 {
+                let (shots, per_gun) = if plat && mount.is_none() { (1, mult) } else { super::v12::guns(&lo) };
+                let volley = super::v12::Volley {
+                    family, shots, per_gun, aw,
+                    aff: if plat { 1.0 } else { hull_affinity(kind, crate::module::weapon_family(family)) },
+                    opening: if self.step <= OPENING_STEPS && mods[side as usize].opening_bonus { OPENING_BONUS } else { 1.0 },
+                    raid: if raid { RAID_DMG_MULT } else { 1.0 },
+                    research: mods[side as usize].damage(),
+                    reach, platform: plat, tracking, tackling: &tackling, fortune: fortunes[side as usize],
+                    siege: if v15 && super::v15::siege_class(kind) { super::v15::SIEGE_BONUS } else { 1.0 },
+                    vs_defenses: if v15 { mods[side as usize].vs_defenses() } else { 1.0 },
+                    mount_armour: v15,
+                };
+                super::v12::volley(self, i, &cands, &volley, &mut out);
                 continue;
             }
             let total: f64 = cands.iter().map(|c| c.1).sum();
@@ -950,6 +1167,10 @@ impl TacticalState {
                 1.0
             };
             let raid_mult = if raid { RAID_DMG_MULT } else { 1.0 };
+            // v11: interceptor guns are light against armed hulls.
+            let aw = if v11 && !plat {
+                super::v11::gun_weight(kind, family, (tplat || attack_weight(tkind) > 0.0).then_some((tmax, tplat)), aw, math)
+            } else { aw };
             let base = mult
                 * aw
                 * HIT_DMG_CAL
@@ -969,8 +1190,8 @@ impl TacticalState {
                     self.combatants[i].cooldowns.torpedo = TORP_COOLDOWN;
                 }
                 DamageType::Beam | DamageType::Driver => {
-                    let mut hit = to_hit(family, tmax, tspeed);
-                    if family == DamageType::Driver && tdist > DRIVER_RANGE {
+                    let mut hit = to_hit(family, tmax, tspeed, math);
+                    if family == DamageType::Driver && tdist > DRIVER_RANGE * reach {
                         hit *= DRIVER_FALLOFF; // beyond the band — falloff
                     }
                     let connects = self.rng.next_f64() < hit;
@@ -984,10 +1205,10 @@ impl TacticalState {
                         let tlo = Loadout::from_key(&tstack);
                         let prot = hull_affinity(tkind, crate::module::Family::Protection);
                         if family == DamageType::Beam && tlo.reflects() {
-                            dmg *= 1.0 - (0.35 * prot).min(0.95);
+                            dmg *= 1.0 - (super::rules_v1::REFLECT_BLUNT * prot).min(0.95);
                         }
                         if family == DamageType::Driver && tlo.whipples() {
-                            dmg *= 1.0 - (0.45 * prot).min(0.95);
+                            dmg *= 1.0 - (super::rules_v1::WHIPPLE_BLUNT * prot).min(0.95);
                         }
                     }
                     let actual_damage = if connects {
@@ -1024,7 +1245,11 @@ impl TacticalState {
                 kind: c.kind,
                 x: c.pos.x as f32,
                 y: c.pos.y as f32,
+                cid: Some(c.cid),
             });
+            if let super::Rules::V9 { maneuver_seed } | super::Rules::V10 { maneuver_seed } | super::Rules::V11 { maneuver_seed } | super::Rules::V12 { maneuver_seed } | super::Rules::V13 { maneuver_seed } | super::Rules::V14 { maneuver_seed } | super::Rules::V15 { maneuver_seed } | super::Rules::V16 { maneuver_seed } = self.rules {
+                super::v9::spawn_wreck(self, &c, maneuver_seed);
+            }
             if c.platform {
                 out.platform_tiers_lost += 1;
             } else {
@@ -1051,6 +1276,7 @@ impl TacticalState {
                     y: c.pos.y as f32,
                     hp: (c.hp / c.max_hp) as f32,
                     plat: c.platform,
+                    station: c.mount.map(|m| m.level),
                 });
             }
         }
@@ -1067,6 +1293,7 @@ impl TacticalState {
                     y: c.pos.y as f32,
                     hp: (c.hp / c.max_hp) as f32,
                     plat: false,
+                    station: None,
                 });
             }
         }
@@ -1086,11 +1313,31 @@ impl TacticalState {
                 n,
             });
         }
+        let mut shown = [0usize; 2];
+        let torps = self.torpedoes.iter()
+            .filter(|t| {
+                let n = &mut shown[usize::from(t.side.min(1))];
+                *n += 1;
+                *n <= crate::combat::KEYFRAME_TORPEDO_CAP_PER_SIDE
+            })
+            .map(|t| crate::combat::KfTorpedo {
+                id: t.presentation_id(), side: t.side, to: t.target, x: t.pos.x as f32, y: t.pos.y as f32,
+            })
+            .collect();
         crate::combat::Keyframe {
             ships,
             torpedoes,
             deaths,
             gunfire: None,
+            torps: Some(torps),
+            torp_ends: None,
+            wrecks: matches!(self.rules, super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }).then(|| self.wrecks.iter().map(|w| crate::combat::KfWreck {
+                hull: w.hull, piece: w.piece, x: w.pos.x as f32, y: w.pos.y as f32, r: w.radius as f32,
+            }).collect()),
+            rams: None,
+            tackles: None,
+            webs: None,
+            world: self.world.map(|w| crate::combat::KfWorld { x: w.pos.x as f32, y: w.pos.y as f32, r: w.radius as f32, side: w.side }),
         }
     }
 
@@ -1104,6 +1351,17 @@ impl TacticalState {
             *count += 1;
             *count <= crate::combat::KEYFRAME_GUNFIRE_CAP_PER_SIDE
         }).collect());
+        let mut ends = [0usize; 2];
+        frame.torp_ends = Some(outcome.torp_ends.into_iter().filter(|end| {
+            let count = &mut ends[usize::from(end.side.min(1))];
+            *count += 1;
+            *count <= crate::combat::KEYFRAME_TORPEDO_CAP_PER_SIDE
+        }).collect());
+        if matches!(self.rules, super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) { frame.rams = Some(outcome.rams); }
+        if matches!(self.rules, super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
+            frame.tackles = Some(outcome.tackles.into_iter().take(crate::combat::KEYFRAME_LINK_CAP).collect());
+            frame.webs = Some(outcome.webs.into_iter().take(crate::combat::KEYFRAME_LINK_CAP).collect());
+        }
         frame
     }
 
@@ -1111,7 +1369,7 @@ impl TacticalState {
     /// beam, Whipple vs driver — torpedo callers skip this by passing the raw
     /// value; see call sites). Unarmed hulls take [`CIVILIAN_SOFT`] × the hit.
     /// Credits `dealt` to the firing side.
-    fn apply_damage(&mut self, cid: u32, dmg: f64, out: &mut StepOutcome, by_side: u8) -> f64 {
+    pub(super) fn apply_damage(&mut self, cid: u32, dmg: f64, out: &mut StepOutcome, by_side: u8) -> f64 {
         if let Some(c) = self.combatants.iter_mut().find(|c| c.cid == cid) {
             let soft = if !c.platform && attack_weight(c.kind) <= 0.0 {
                 CIVILIAN_SOFT
@@ -1187,7 +1445,7 @@ impl TacticalState {
                 } else {
                     self.bearing
                 };
-                inside_ring_point(near, dir, band, 1.0)
+                inside_ring_point(near, dir, band, 1.0, self.math())
             }
             Role::Screen => {
                 // Interpose between our heaviest hull and the dominant torpedo
@@ -1230,24 +1488,37 @@ impl TacticalState {
                 };
                 // Rotate ~0.5 rad ahead around the target (cid parity picks the
                 // orbit direction, so a squadron doesn't conga in one file).
-                let (s, co) = if c.cid.is_multiple_of(2) {
-                    (0.48f64.sin(), 0.48f64.cos())
-                } else {
-                    (-(0.48f64.sin()), 0.48f64.cos())
+                let (s, co) = match self.math() {
+                    super::Math::Platform => if c.cid.is_multiple_of(2) {
+                        (0.48f64.sin(), 0.48f64.cos())
+                    } else {
+                        (-(0.48f64.sin()), 0.48f64.cos())
+                    },
+                    super::Math::Soft => {
+                        let (s, co) = crate::dmath::sin_cos(0.48);
+                        (if c.cid.is_multiple_of(2) { s } else { -s }, co)
+                    }
                 };
                 let ahead = Vec2::new(dir.x * co - dir.y * s, dir.x * s + dir.y * co);
                 let sign = if c.cid.is_multiple_of(2) { 1.0 } else { -1.0 };
-                inside_ring_point(near, ahead, band * 0.95, sign)
+                inside_ring_point(near, ahead, band * 0.95, sign, self.math())
             }
         }
     }
 
     pub(super) fn preferred_band(&self, c: &Combatant) -> f64 {
+        let reach = self.reach_of(c.kind, c.platform);
         match offense(&Loadout::from_key(&c.stack)).0 {
-            DamageType::Beam => BEAM_RANGE * 0.85,
-            DamageType::Driver => DRIVER_RANGE * 0.85,
+            DamageType::Beam => BEAM_RANGE * 0.85 * reach,
+            DamageType::Driver => DRIVER_RANGE * 0.85 * reach,
             DamageType::Torpedo => TORP_LAUNCH_RANGE * 0.9,
         }
+    }
+
+    /// A hull's beam/driver reach as a multiple of the stock ranges: v7 sizes
+    /// it by hull class; platforms and every older rule set use exactly 1.
+    pub(super) fn reach_of(&self, kind: ShipKind, platform: bool) -> f64 {
+        if !platform && matches!(self.rules, super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) { super::v7::reach(kind) } else { 1.0 }
     }
 
     pub(super) fn nearest_enemy(&self, i: usize) -> Option<Vec2> {
@@ -1264,7 +1535,7 @@ impl TacticalState {
             .map(|e| e.pos)
     }
 
-    fn centroid(&self, side: u8) -> Option<Vec2> {
+    pub(super) fn centroid(&self, side: u8) -> Option<Vec2> {
         let pts: Vec<Vec2> = self
             .combatants
             .iter()
@@ -1355,6 +1626,13 @@ pub(super) fn simulate_engagement_with_rules(setup: &ProjSetup, seed: u64, rules
 
 pub(super) fn simulate_engagement_with_missions(setup: &ProjSetup, seed: u64, rules: super::Rules,
     missions: &BTreeMap<EntityId, crate::doctrine::MissionProfile>) -> SimOutcome {
+    simulate_engagement_full(setup, seed, rules, missions, None, &[Vec::new(), Vec::new()])
+}
+
+/// The rollout, optionally fought at a world held by side `world` (v14).
+pub(super) fn simulate_engagement_full(setup: &ProjSetup, seed: u64, rules: super::Rules,
+    missions: &BTreeMap<EntityId, crate::doctrine::MissionProfile>, world: Option<u8>,
+    stations: &[Vec<crate::station::MountSpec>; 2]) -> SimOutcome {
     let mut st = TacticalState::open(
         seed,
         PROJECTION_BATTLE_ID,
@@ -1365,6 +1643,11 @@ pub(super) fn simulate_engagement_with_missions(setup: &ProjSetup, seed: u64, ru
         Vec2::new(1.0, 0.0),
     );
     st.rules = rules;
+    st.add_station(1, &stations[1]);
+    st.add_station(0, &stations[0]);
+    if let Some(home) = world {
+        st.place_world(home);
+    }
     st.set_missions(missions.clone());
     let scouts = st.sync([&setup.a, &setup.d]);
     let mut out = SimOutcome::default();
@@ -1784,7 +2067,7 @@ mod tests {
         // Reflective cuts beam EV by ~REFLECT_BLUNT and leaves driver alone.
         let beam_cut = ev("", refl, 8) / beam_bare;
         assert!(
-            (beam_cut - (1.0 - crate::module::REFLECT_BLUNT)).abs() < 0.05,
+            (beam_cut - (1.0 - crate::tactical::rules_v1::REFLECT_BLUNT)).abs() < 0.05,
             "reflective cuts beam EV by ~REFLECT_BLUNT (ratio {beam_cut:.3})"
         );
         assert!(
@@ -1794,7 +2077,7 @@ mod tests {
         // Whipple mirrors for driver; beams pass it untouched.
         let driver_cut = ev("mass_driver", whip, 8) / driver_bare;
         assert!(
-            (driver_cut - (1.0 - crate::module::WHIPPLE_BLUNT)).abs() < 0.05,
+            (driver_cut - (1.0 - crate::tactical::rules_v1::WHIPPLE_BLUNT)).abs() < 0.05,
             "whipple cuts driver EV by ~WHIPPLE_BLUNT (ratio {driver_cut:.3})"
         );
         assert!(
@@ -1859,11 +2142,13 @@ mod tests {
             DamageType::Torpedo,
             ShipKind::Titan.hull_mass(),
             ShipKind::Titan.max_speed(),
+            crate::tactical::Math::Soft,
         );
         let t_corv = to_hit(
             DamageType::Torpedo,
             ShipKind::Corvette.hull_mass(),
             ShipKind::Corvette.max_speed(),
+            crate::tactical::Math::Soft,
         );
         assert!(
             t_titan >= 0.90,
@@ -1878,11 +2163,13 @@ mod tests {
             DamageType::Driver,
             ShipKind::Titan.hull_mass(),
             ShipKind::Titan.max_speed(),
+            crate::tactical::Math::Soft,
         );
         let d_corv = to_hit(
             DamageType::Driver,
             ShipKind::Corvette.hull_mass(),
             ShipKind::Corvette.max_speed(),
+            crate::tactical::Math::Soft,
         );
         assert!(
             d_titan > 3.0 * d_corv,
@@ -1893,11 +2180,13 @@ mod tests {
             DamageType::Beam,
             ShipKind::Titan.hull_mass(),
             ShipKind::Titan.max_speed(),
+            crate::tactical::Math::Soft,
         );
         let b_corv = to_hit(
             DamageType::Beam,
             ShipKind::Corvette.hull_mass(),
             ShipKind::Corvette.max_speed(),
+            crate::tactical::Math::Soft,
         );
         assert!(
             b_titan / b_corv < t_titan / t_corv,
@@ -1908,16 +2197,16 @@ mod tests {
         // the corvette — a Titan's driver solution is already at the 0.95
         // clamp whether it moves or not, which is itself the point.)
         assert!(
-            to_hit(DamageType::Driver, ShipKind::Corvette.hull_mass(), 0.0)
+            to_hit(DamageType::Driver, ShipKind::Corvette.hull_mass(), 0.0, crate::tactical::Math::Soft)
                 > to_hit(
                     DamageType::Driver,
                     ShipKind::Corvette.hull_mass(),
                     ShipKind::Corvette.max_speed()
-                ),
+                , crate::tactical::Math::Soft),
             "a stalled ship is easier to hit than a darting one"
         );
         assert_eq!(
-            to_hit(DamageType::Driver, ShipKind::Titan.hull_mass(), 0.0),
+            to_hit(DamageType::Driver, ShipKind::Titan.hull_mass(), 0.0, crate::tactical::Math::Soft),
             HIT_CLAMP.1,
             "an anchored Titan is a barn — the solution sits at the clamp"
         );

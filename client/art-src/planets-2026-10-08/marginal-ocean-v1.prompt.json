@@ -1,0 +1,37 @@
+{
+  "source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-44dea3c6-1fd3-4099-b5df-54ad07d98485.png",
+  "output": "/Users/peter/projects/stellar-syndicates/client/art-src/planets-2026-10-08/marginal-ocean-v1.png",
+  "prompt": "Use case: precise-object-edit. Edit this marginal-ocean planet sprite only. Keep the same round globe, centering, upper-left warm-white illumination, dark but readable lower-right shading, cold slate-teal ocean, tiny dun/khaki islands, and two broad white polar sea-ice caps. Keep genuine RGBA transparency and a square high-resolution 1254 x 1254 canvas.\n\nMake the atmosphere and surface quieter and thinner-aired. REMOVE the dense cloudy streaks and hurricane swirls from the entire globe. Leave exactly two small, very faint, thin high-cloud wisps near the upper left and lower left only. The rest of the ocean must be broad calm smooth slate-teal and grey-blue water without white speckled foam or micro-wave detail. No storm systems, spirals or cloud belts. Smooth the polar sea ice into larger coherent shelves with gently organic soft edges and only a few floes; do not add fine coastline clutter. Keep the tiny rocky islands and muted dusty sage patches. Broad softly shaded cinematic game illustration, not oversharpened satellite texture or noise.\n\nReduce the electric-blue atmospheric rim to an extremely thin pale dusty-blue edge, noticeably fainter than the source. The solid circular planetary disk should span about 91% of canvas width and height, with even 4.5% clear transparent padding on all sides. Clean antialiasing; fully transparent empty space beyond the very thin atmosphere, no detached wisps or particles outside the globe. No bright blue emission, halo, new terrain, new objects, text, stars, rings, borders, shadows or checkerboard.",
+  "originalPrompt": "Use case: precise-object-edit.\nAsset type: one transparent planet sprite for Stellar Syndicates, a premium space strategy game.\nImage 1 is the EDIT TARGET: the existing ocean-world sprite. Keep its square canvas, circular silhouette, size, centring, upper-left lighting and soft cinematic illustration style.\nImage 2 is ONLY a palette and mood reference for a marginal world (cold, dry, thin-aired). Do not copy its continents.\nPrimary edit: turn Image 1 into a MARGINAL OCEAN world, almost Earth-like but cold and thin-aired. A cold slate-teal and grey-blue ocean covers most of the face, with a few small low islands of dun and cool khaki rock and dusty sage-lichen patches. Broad pale sea-ice shelves and salt-white shoals reach out from two generous white polar caps. One or two faint thin cloud wisps. The water is darker and less saturated than a living ocean: no tropical turquoise, no reefs, no green forests.\nFraming: the SOLID PLANETARY DISK, excluding the faint atmosphere, occupies 90–92% of the canvas width and height, aim 91%: at 1254 × 1254 the disk spans about x=56 to 1198 and y=56 to 1198, an even ~4.5% clear margin on all four sides. A true circle, no clipping.\nAtmosphere: a very thin, pale dusty-blue rim tight to the disk edge, fainter than a living ocean's, with clean anti-aliasing and fully transparent space beyond. No halo or bright emission.\nLighting: warm-white upper-left light, about 80% of the face lit; the lower-right night side stays coloured and legible. Broad smooth tones; no added noise, speckle or fine coastline clutter.\nOutput: exactly ONE high-resolution square RGBA PNG with a genuine transparent background: a single complete centred planet. No text, stars, other objects, shadows, rings, frames or baked checkerboard.\n",
+  "referenced_image_paths": [
+    "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-46cfa53d-0edc-40f9-b359-b79fb0fed181.png"
+  ],
+  "originalReferences": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planets-2026-09-08/ocean.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planets-2026-10-08/marginal-soft-edges-v1.png"
+  ],
+  "processing": "planet",
+  "assembly": {
+    "method": "Uniformly downsample generated globe to 91% solid diameter; center on 1254 square transparent canvas; clear alpha-one noise only",
+    "scale": 0.9778406169665811,
+    "left": 13,
+    "top": 16
+  },
+  "verification": {
+    "width": 1254,
+    "height": 1254,
+    "channels": 4,
+    "hasAlpha": true,
+    "fileSHA256": "238281f1a8db080d30ccfe419de64bdb43fe94db00c95f5ed7e42ce5b14c9ddb",
+    "transparentPixels": 554436,
+    "partiallyTransparentPixels": 1017441,
+    "solidBounds": [
+      56,
+      61,
+      1196,
+      1191
+    ]
+  },
+  "mode": "builtin-imagegen",
+  "created": "2026-10-09"
+}

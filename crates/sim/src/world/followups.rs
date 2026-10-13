@@ -13,6 +13,9 @@ impl World {
         // reward_granted is the ARRIVED privateer result, not the true kill.
         // Old saves with disabled founding already graduated from that chapter.
         if corp.founding.enabled && !corp.founding.reward_granted { return; }
+        // §founding R8: until the first guarded export leaves home, one gentle
+        // contract at a time, and it stays open a day instead of fifteen minutes.
+        let onboarding = corp.founding.landfall_focus();
         let Some(home_id) = corp.home_system else { return; };
         let known = self.information.systems_for(self, player);
         let Some(home) = known.iter().find(|s| s.id == home_id && s.owner == Some(player)) else { return; };
@@ -29,13 +32,25 @@ impl World {
             .map(|(good, _)| good).unwrap_or(Commodity::MetallicOre);
         let (product, chain) = match feedstock {
             Commodity::Biomass => (Commodity::Provisions, "Biomass → Agroplex → Provisions"),
-            Commodity::Volatiles => (Commodity::Fuel, "Volatiles → Fuel Refinery → Fuel"),
+            Commodity::Volatiles => (Commodity::Deuterium, "Volatiles → Fuel Refinery → Fuel"),
             Commodity::RareElements | Commodity::Silicates => (Commodity::Electronics,
                 "Rare Elements + Silicates → Electronics Fabricator → Electronics"),
             _ => (Commodity::Alloys, "Ferrite Ore + Fuel → Smelter → Alloys"),
         };
-        for chapter in [FollowUpKind::Patrol, FollowUpKind::Escort, FollowUpKind::Salvage, FollowUpKind::Production,
-            FollowUpKind::DangerousFreight, FollowUpKind::GuardedSalvage] {
+        let chapters = if onboarding {
+            [FollowUpKind::Salvage, FollowUpKind::Escort, FollowUpKind::Production, FollowUpKind::Patrol,
+                FollowUpKind::DangerousFreight, FollowUpKind::GuardedSalvage]
+        } else {
+            [FollowUpKind::Patrol, FollowUpKind::Escort, FollowUpKind::Salvage, FollowUpKind::Production,
+                FollowUpKind::DangerousFreight, FollowUpKind::GuardedSalvage]
+        };
+        for chapter in chapters {
+            if onboarding && self.operations.values().any(|o|
+                matches!(o.scope, OperationScope::Private { player: p } if p == player)
+                && o.briefing.as_ref().is_some_and(|b| chapters.contains(&b.follow_up))
+                && !o.state.terminal()) {
+                break; // one open follow-up at a time during founding
+            }
             let prerequisite = match chapter {
                 FollowUpKind::DangerousFreight => Some(FollowUpKind::Escort),
                 FollowUpKind::GuardedSalvage => Some(FollowUpKind::Salvage), _ => None,
@@ -105,8 +120,13 @@ impl World {
                 | FollowUpKind::CounterRaidAssault | FollowUpKind::CounterRaidRecovery | FollowUpKind::SiteRecovery | FollowUpKind::CombatPreparation =>
                     unreachable!("discovered-site offers are separate"),
             };
+            let lifetime = if onboarding {
+                crate::operation::ONBOARDING_OFFER_LIFETIME_S
+            } else {
+                crate::operation::PRIVATE_OFFER_LIFETIME_S
+            };
             let id = self.insert_operation(issuer, OperationScope::Private { player }, kind, goal,
-                reward, self.hub, crate::operation::PRIVATE_OFFER_LIFETIME_S, events);
+                reward, self.hub, lifetime, events);
             let operation = self.operations.get_mut(&id).unwrap();
             operation.briefing = Some(OperationBriefing { follow_up: chapter, title: title.into(),
                 difficulty: difficulty.into(), suitable_fleets: suitable.into(), summary, variant });
@@ -250,10 +270,39 @@ mod tests {
     use super::*;
 
     fn setup() -> (World, PlayerId) {
+        let (mut world, player) = landfall();
+        // Past Landfall: the first guarded export has left, so the whole board opens.
+        world.players.get_mut(&player).unwrap().founding.export_dispatched_at = Some(0.0);
+        (world, player)
+    }
+
+    fn landfall() -> (World, PlayerId) {
         let mut world = World::new(SimConfig::for_players(123, 4));
         let player = PlayerId(91_001);
         world.step(&[Command::AddPlayer { id: player, name: "Follow-ups".into() }]);
         (world, player)
+    }
+
+    #[test]
+    fn landfall_offers_one_patient_followup_at_a_time() {
+        let (mut w, p) = landfall();
+        assert!(w.players[&p].founding.local_opening);
+        w.players.get_mut(&p).unwrap().founding.reward_granted = true;
+        w.refresh_followup_operations(p, &mut Vec::new());
+        let offered: Vec<_> = w.operations.values().filter(|o| o.briefing.is_some()).collect();
+        assert_eq!(offered.len(), 1, "focus mode: one contract while the first export is prepared");
+        let first = offered[0];
+        assert_eq!(first.briefing.as_ref().unwrap().follow_up, FollowUpKind::Salvage,
+            "the gentlest job leads");
+        assert!(first.expires_at - w.time >= crate::operation::ONBOARDING_OFFER_LIFETIME_S - 1.0,
+            "an onboarding offer waits a day for its founder");
+        w.refresh_followup_operations(p, &mut Vec::new());
+        assert_eq!(w.operations.values().filter(|o| o.briefing.is_some()).count(), 1,
+            "no second offer while the first is open");
+        w.players.get_mut(&p).unwrap().founding.export_dispatched_at = Some(w.time);
+        w.refresh_followup_operations(p, &mut Vec::new());
+        assert_eq!(w.operations.values().filter(|o| o.briefing.is_some()).count(), 4,
+            "after the export leaves, the ordinary board opens");
     }
 
     fn unlock(world: &mut World, player: PlayerId) {

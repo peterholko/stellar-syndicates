@@ -1,0 +1,73 @@
+{
+  "recipe": "generated-alpha-contain-padding-v1",
+  "sizes": [
+    128,
+    256,
+    512
+  ],
+  "tiers": {
+    "1": {
+      "source": "art-src/planet-surface-structures-v1/command-center/tier-1.png",
+      "sourceSha256": "6832728747cd02772b3f2d61e0384e40d5e0bff2e1d14d24ab306355afd0ada4",
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7448,
+          "url": "/art/derived/command-center/v1/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 22264,
+          "url": "/art/derived/command-center/v1/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 63902,
+          "url": "/art/derived/command-center/v1/tier-1-512.webp"
+        }
+      ]
+    },
+    "2": {
+      "source": "art-src/planet-surface-structures-v1/command-center/tier-2.png",
+      "sourceSha256": "935bf7e4cc402d175f3e4ba26eaef4fcffefd3ef010a09c2f889b091615e0e72",
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 7706,
+          "url": "/art/derived/command-center/v1/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 23108,
+          "url": "/art/derived/command-center/v1/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 69602,
+          "url": "/art/derived/command-center/v1/tier-2-512.webp"
+        }
+      ]
+    },
+    "3": {
+      "source": "art-src/planet-surface-structures-v1/command-center/tier-3.png",
+      "sourceSha256": "ec498985209414248a068550b1ac5c2efcbbf2d9983fd6c8bea3f58b7f89e5d8",
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 8116,
+          "url": "/art/derived/command-center/v1/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 24118,
+          "url": "/art/derived/command-center/v1/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 70668,
+          "url": "/art/derived/command-center/v1/tier-3-512.webp"
+        }
+      ]
+    }
+  }
+}

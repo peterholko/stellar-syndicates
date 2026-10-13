@@ -23,7 +23,7 @@ export function fuelTransferHtml(g: GhostView, st: ViewState, selected = "", mob
     ? `<br>${report.delivered.toFixed(1)} Fuel delivered · ${report.spent}/${report.requested} cargo used` : ""}</p>${meter}` : "";
   const disabled = waiting || !available || !chosen || !tenderCapable(g);
   return `<section class="${mobile ? "m-section" : "deck-section"}" data-fuel-transfer><header><h3>Fleet tender</h3></header>
-    <p title="Only Fuel in the hold can be transferred. Your propulsion tank stays separate. Final-can residue is purged (less than 1 Fuel).">Fuel cargo: ${available}</p>${progress}
+    <p title="Uranium, Deuterium, Helium-3 and Antimatter in the hold transfer; propulsion stores stay separate. Final-can residue is purged (less than 1 unit).">Fuel cargo: ${available}</p>${progress}
     <div class="${mobile ? "m-form-row" : "deck-inline-form"}"><select id="tender-target-${esc(g.id)}" data-tender-target aria-label="Fleet to refuel" ${waiting ? "disabled" : ""}>
     ${targets.map(t => `<option value="${esc(t.id)}" ${t.id === chosen ? "selected" : ""}>${esc(targetName(t.id))} · ${tenderDemand(t) === null ? "fuel unknown" : `~${tenderDemand(t)} Fuel needed`}</option>`).join("") || '<option value="">No other owned fleets</option>'}</select>
     <button type="button" ${mobile ? 'data-mobile-act="fleet-refuel"' : 'data-deck-act="fleet-refuel"'} data-id="${esc(g.id)}" ${disabled ? "disabled" : ""}>${waiting ? "Refuel order in flight" : "Refuel fleet"}</button></div>

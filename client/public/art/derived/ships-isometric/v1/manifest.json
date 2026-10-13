@@ -1,0 +1,132 @@
+{
+  "version": "v1",
+  "orientation": "nose upper right; stern lower left",
+  "ships": {
+    "raider": {
+      "name": "interceptor",
+      "source": "art-src/ships-isometric-v1/interceptor.png",
+      "sourceSha256": "146f68154e0326aa3ba6aa000ca054c5d95e3b1f09376c6cd05558200172cb08",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 256,
+          "url": "/art/derived/ships-isometric/v1/interceptor-256.webp?v=a386540b0a27"
+        },
+        {
+          "size": 512,
+          "url": "/art/derived/ships-isometric/v1/interceptor-512.webp?v=57ffbf0812b5"
+        },
+        {
+          "size": 1024,
+          "url": "/art/derived/ships-isometric/v1/interceptor-1024.webp?v=24b3ae9de7d9"
+        }
+      ]
+    },
+    "cruiser": {
+      "name": "cruiser",
+      "source": "art-src/ships-isometric-v1/cruiser.png",
+      "sourceSha256": "7e4b1cbd0b7f48f63b87e2d25bbb572eac4b721125a165e6bfcb4f59c541be63",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 256,
+          "url": "/art/derived/ships-isometric/v1/cruiser-256.webp?v=71939d53ee53"
+        },
+        {
+          "size": 512,
+          "url": "/art/derived/ships-isometric/v1/cruiser-512.webp?v=4dffac0737ad"
+        },
+        {
+          "size": 1024,
+          "url": "/art/derived/ships-isometric/v1/cruiser-1024.webp?v=3f1706bfc631"
+        }
+      ]
+    },
+    "titan": {
+      "name": "titan",
+      "source": "art-src/ships-isometric-v1/titan.png",
+      "sourceSha256": "bade7134d09853773b15478622ef890ede991eef41e7d227e4dc5421698fc3c4",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 256,
+          "url": "/art/derived/ships-isometric/v1/titan-256.webp?v=2d7e9912c8a6"
+        },
+        {
+          "size": 512,
+          "url": "/art/derived/ships-isometric/v1/titan-512.webp?v=1accff3659e8"
+        },
+        {
+          "size": 1024,
+          "url": "/art/derived/ships-isometric/v1/titan-1024.webp?v=ba28c8698bb9"
+        }
+      ]
+    },
+    "convoy": {
+      "name": "freighter",
+      "source": "art-src/ships-isometric-v1/freighter.png",
+      "sourceSha256": "e30e8682a665ff70859222c7d7e0094a7d633d40a332405d3350ea95c5460b23",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 256,
+          "url": "/art/derived/ships-isometric/v1/freighter-256.webp?v=25cc8ead6aae"
+        },
+        {
+          "size": 512,
+          "url": "/art/derived/ships-isometric/v1/freighter-512.webp?v=4f01074a6ae0"
+        },
+        {
+          "size": 1024,
+          "url": "/art/derived/ships-isometric/v1/freighter-1024.webp?v=b484673550b7"
+        }
+      ]
+    },
+    "colony": {
+      "name": "colony",
+      "source": "art-src/ships-isometric-v1/colony.png",
+      "sourceSha256": "f0d46d01b47a90b8f74de902de3514fc35ab37ddf6e8801649fa5869606ad2ca",
+      "width": 1374,
+      "height": 1145,
+      "levels": [
+        {
+          "size": 256,
+          "url": "/art/derived/ships-isometric/v1/colony-256.webp?v=d8f06e966ce0"
+        },
+        {
+          "size": 512,
+          "url": "/art/derived/ships-isometric/v1/colony-512.webp?v=bd309143cd4d"
+        },
+        {
+          "size": 1024,
+          "url": "/art/derived/ships-isometric/v1/colony-1024.webp?v=f422ebffc48b"
+        }
+      ]
+    },
+    "builder": {
+      "name": "construction",
+      "source": "art-src/ships-isometric-v1/construction.png",
+      "sourceSha256": "8f08aa6f1a266e5218190d96ab5a8746720f17bc31b2dea3cf36f0ae0256987a",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 256,
+          "url": "/art/derived/ships-isometric/v1/construction-256.webp?v=072bc58b8b1a"
+        },
+        {
+          "size": 512,
+          "url": "/art/derived/ships-isometric/v1/construction-512.webp?v=37983d439c0c"
+        },
+        {
+          "size": 1024,
+          "url": "/art/derived/ships-isometric/v1/construction-1024.webp?v=717c112d8f7c"
+        }
+      ]
+    }
+  }
+}

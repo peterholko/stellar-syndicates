@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Battle models · Stellar Syndicates</title>
+<style>
+  *{box-sizing:border-box}body{margin:0;background:#070d17;color:#d6e4f1;font:14px system-ui}main{max-width:1320px;margin:24px auto;padding:0 16px}
+  h1{font-size:23px;margin:0 0 6px}p{color:#92a8bc}nav{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:18px 0}
+  button,select{background:#152437;color:inherit;border:1px solid #3d536b;padding:9px 12px;border-radius:5px;font:inherit}
+  button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #7edcff;outline-offset:3px}
+  #stage{width:100%;height:min(68vh,760px);min-height:360px;border:1px solid #34485c;border-radius:8px;overflow:hidden}
+  #stage.phone{width:min(390px,100%);height:600px;margin:auto}.bv-theater-holder{position:relative;width:100%;height:100%}
+  .bv-theater-holder canvas{display:block;width:100%;height:100%;touch-action:none}
+  .bv-theater-tip{position:absolute;padding:7px;background:#091221ed;border:1px solid #54718b;border-radius:5px;max-width:220px;font-size:11px;pointer-events:none}
+  .bv-theater-hint{position:absolute;right:12px;bottom:9px;color:#92a8bc;font-size:11px;pointer-events:none}
+  .bv-theater-banner{position:absolute;top:15px;left:50%;transform:translateX(-50%);color:#ffce86;letter-spacing:.15em;font-weight:700;pointer-events:none;white-space:nowrap}
+  .bv-theater-view{position:absolute;top:10px;right:10px;padding:5px 10px;font-size:12px}.bv-theater-view[aria-pressed="true"]{border-color:#7edcff;color:#7edcff}
+  #time{flex:1;min-width:150px}output{min-width:90px}pre{color:#8cabc4;white-space:pre-wrap;font-size:12px}a{color:#92daed}
+</style></head><body><main>
+<h1>Battle model preview</h1><p>Sample encounters and real engine fights · the real battle viewer · no connection to the game or orders</p>
+<nav><label>Encounter <select id="scene"><option value="combat">Mixed combat fleet</option><option value="all">All 18 ship types</option><option value="stress">80-ship fleet</option><option value="single">Inspect one ship type</option></select></label>
+<label>Ship <select id="kind"></select></label><button id="phone">Phone layout</button><button id="zoom">Zoom in</button><button id="reset">Reset camera</button><button id="close">Close viewer</button></nav>
+<div id="stage"></div><nav><button id="play">Pause</button><label for="time">Replay</label><input id="time" type="range" min="0" max="3.999" step=".001" value="0"><output id="clock">0.00</output><button id="death">Destruction</button></nav>
+<p>Scroll or pinch to inspect the ships. Drag to pan. Scrub to compare the same explosion at the same moment.</p><pre id="stats" aria-live="off"></pre>
+<a href="./ship-model-fixture.html">Galaxy map and shipyard preview</a>
+</main><script type="module" src="./battle-model-fixture.ts"></script></body></html>

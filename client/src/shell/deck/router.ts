@@ -42,7 +42,7 @@ export const DECK_ROUTES: Record<DeckRouteName, DeckRouteMeta> = {
   build: { title: "Build", width: "standard" },
   fleet: { title: "Fleet", width: "standard" },
   fleets: { title: "Fleets", width: "standard" },
-  logistics: { title: "Logistics", width: "standard" },
+  logistics: { title: "Logistics", width: "wide" },
   doctrine: { title: "Doctrine", width: "standard" },
   market: { title: "Market Hub", width: "wide" },
   research: { title: "Research", width: "wide" },

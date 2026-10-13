@@ -1,0 +1,16 @@
+{
+  "ship": "dreadnought",
+  "triangles": 51176,
+  "texturedTriangles": 4178,
+  "ventralTriangles": 1164,
+  "checks": {
+    "allSurfacesAndTexturedUVsHaveArea": true,
+    "ventralProjectionPresent": true,
+    "engineCount": true,
+    "turretCount": true,
+    "threeEmbeddedTextures": true,
+    "gltfValidatorClean": true
+  },
+  "problems": [],
+  "passed": true
+}

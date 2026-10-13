@@ -498,6 +498,128 @@
           "url": "/art/derived/planets/2026-09-08/moon-1254.png?v=60e2b12db959"
         }
       ]
+    },
+    {
+      "slug": "marginal",
+      "source": "art-src/planets-2026-10-08/marginal-soft-edges-v1.png",
+      "sourceSha256": "0f0dce6eafdeabc45dc1e602116abc7632e31aaaf6a5990cdb5da5bfc6e8e2aa",
+      "anchor": [
+        0.4996012759170654,
+        0.5011961722488039
+      ],
+      "visualRatio": 0.9338118022328549,
+      "levels": [
+        {
+          "size": 32,
+          "file": "marginal-32.png",
+          "bytes": 2919,
+          "sha256": "8367a2251ccdd478827500e782cabacd09d3c0f24665d587bbb5c20587267ede",
+          "url": "/art/derived/planets/2026-09-08/marginal-32.png?v=8367a2251ccd"
+        },
+        {
+          "size": 64,
+          "file": "marginal-64.png",
+          "bytes": 9855,
+          "sha256": "cca06e2ca30d5d2ab7d06f49e815b0bb1c7f98765c6042d3786e9ffd762a7f48",
+          "url": "/art/derived/planets/2026-09-08/marginal-64.png?v=cca06e2ca30d"
+        },
+        {
+          "size": 128,
+          "file": "marginal-128.png",
+          "bytes": 35119,
+          "sha256": "0b6cfec96c0bf29474f9cd0b4e616454bbbab836f8dd2c64a519bbeb33ae1a7f",
+          "url": "/art/derived/planets/2026-09-08/marginal-128.png?v=0b6cfec96c0b"
+        },
+        {
+          "size": 256,
+          "file": "marginal-256.png",
+          "bytes": 125442,
+          "sha256": "b8afde049d1e18ba184f5ae7b913dd068855ac05de4adf49fb4228c7f78ba035",
+          "url": "/art/derived/planets/2026-09-08/marginal-256.png?v=b8afde049d1e"
+        },
+        {
+          "size": 512,
+          "file": "marginal-512.png",
+          "bytes": 449560,
+          "sha256": "595dbf26b9468df8ed03806b0d4bb70788871d82093dd0d4c205d0161d67d195",
+          "url": "/art/derived/planets/2026-09-08/marginal-512.png?v=595dbf26b946"
+        },
+        {
+          "size": 1024,
+          "file": "marginal-1024.png",
+          "bytes": 1660312,
+          "sha256": "39717f38f2d9631f36ad801f1b8bce35ed2c36a3a0dbba9738bd06ec505b93f4",
+          "url": "/art/derived/planets/2026-09-08/marginal-1024.png?v=39717f38f2d9"
+        },
+        {
+          "size": 1254,
+          "file": "marginal-1254.png",
+          "bytes": 2480160,
+          "sha256": "0f0dce6eafdeabc45dc1e602116abc7632e31aaaf6a5990cdb5da5bfc6e8e2aa",
+          "url": "/art/derived/planets/2026-09-08/marginal-1254.png?v=0f0dce6eafde"
+        }
+      ]
+    },
+    {
+      "slug": "marginal_ocean",
+      "source": "art-src/planets-2026-09-08/ice.png",
+      "sourceSha256": "d291755cad0463771d4d9fe107e2c8b6a445ed5c47889358b0e04a0e0924addb",
+      "anchor": [
+        0.5007974481658692,
+        0.4996012759170654
+      ],
+      "visualRatio": 0.9441786283891547,
+      "levels": [
+        {
+          "size": 32,
+          "file": "marginal_ocean-32.png",
+          "bytes": 3092,
+          "sha256": "529523ad6a41edbef53fa1d9333e759be45955b1d28768d4468dd7b2c6ba8044",
+          "url": "/art/derived/planets/2026-09-08/marginal_ocean-32.png?v=529523ad6a41"
+        },
+        {
+          "size": 64,
+          "file": "marginal_ocean-64.png",
+          "bytes": 10830,
+          "sha256": "921a7cfcb3d6890099b4a9e073229541cafb8387d664387aa236c4b65476adda",
+          "url": "/art/derived/planets/2026-09-08/marginal_ocean-64.png?v=921a7cfcb3d6"
+        },
+        {
+          "size": 128,
+          "file": "marginal_ocean-128.png",
+          "bytes": 39352,
+          "sha256": "41d8d0016bc5faa85d88b7d30c5c114d7bd7b14871dc513167da0c34d0f7da37",
+          "url": "/art/derived/planets/2026-09-08/marginal_ocean-128.png?v=41d8d0016bc5"
+        },
+        {
+          "size": 256,
+          "file": "marginal_ocean-256.png",
+          "bytes": 145187,
+          "sha256": "678d9223ff1858106fa45508e2cb738f98e4edd30e4bf90330729758124545f9",
+          "url": "/art/derived/planets/2026-09-08/marginal_ocean-256.png?v=678d9223ff18"
+        },
+        {
+          "size": 512,
+          "file": "marginal_ocean-512.png",
+          "bytes": 551954,
+          "sha256": "5fea98adc98240490609c8a09f328a95883b69538ce8f70be317bb4c39325b9f",
+          "url": "/art/derived/planets/2026-09-08/marginal_ocean-512.png?v=5fea98adc982"
+        },
+        {
+          "size": 1024,
+          "file": "marginal_ocean-1024.png",
+          "bytes": 2176653,
+          "sha256": "5dd7ba36fd012ad455733b0a8fe704d91a64f23aa464d9aa21dba437f3352c62",
+          "url": "/art/derived/planets/2026-09-08/marginal_ocean-1024.png?v=5dd7ba36fd01"
+        },
+        {
+          "size": 1254,
+          "file": "marginal_ocean-1254.png",
+          "bytes": 2367439,
+          "sha256": "d291755cad0463771d4d9fe107e2c8b6a445ed5c47889358b0e04a0e0924addb",
+          "url": "/art/derived/planets/2026-09-08/marginal_ocean-1254.png?v=d291755cad04"
+        }
+      ]
     }
   ]
 }

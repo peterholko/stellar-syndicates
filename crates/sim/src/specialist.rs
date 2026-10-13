@@ -63,16 +63,17 @@ impl SpecialistKind {
         use StructureKind as K;
         matches!(
             (self, structure),
-            (SpecialistKind::Geologist, K::MiningComplex)
+            (SpecialistKind::Geologist, K::MiningComplex | K::UraniumMill)
                 | (
                     SpecialistKind::PetrochemicalEngineer,
                     K::VolatileHarvester | K::FuelRefinery | K::ChemicalWorks
                 )
-                | (SpecialistKind::Xenobiologist, K::Bioharvester | K::Agroplex)
+                | (SpecialistKind::Xenobiologist, K::Bioharvester | K::Agroplex | K::LivingTerraces)
                 | (
                     SpecialistKind::IndustrialEngineer,
                     K::Smelter | K::ElectronicsFabricator | K::MachineWorks | K::ArmamentsComplex
                     | K::CompositeWorks | K::HullFabricator | K::PrecisionWorks | K::DriveWorks
+                    | K::AntimatterPlant
                 )
                 | (
                     SpecialistKind::NavalArchitect,
@@ -122,6 +123,9 @@ pub fn passenger_capacity(kind: ShipKind) -> u32 {
         ShipKind::Transport // marines are not passengers — they ride their own berths
         | ShipKind::Freighter
         | ShipKind::Scout
+        | ShipKind::SurveyProbe
+        | ShipKind::MiningBarge // its crew works the cutters, not passenger berths
+        | ShipKind::MiningBeltStation // a depot crew, not passenger berths
         | ShipKind::Raider
         | ShipKind::Corvette
         | ShipKind::Destroyer

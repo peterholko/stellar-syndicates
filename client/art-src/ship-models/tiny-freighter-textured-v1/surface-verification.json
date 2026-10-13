@@ -1,0 +1,143 @@
+{
+  "triangles": 6804,
+  "renderSections": 7,
+  "zeroAreaGeometry": 0,
+  "zeroAreaTexturedUVs": 0,
+  "nonFiniteValues": 0,
+  "bottomComponents": {
+    "hull | continuous structural keel": {
+      "triangles": 48,
+      "textured": 48,
+      "validUVArea": 48,
+      "bottomViewUVs": 48
+    },
+    "cargo.1 | beveled pressure container": {
+      "triangles": 34,
+      "textured": 34,
+      "validUVArea": 34,
+      "bottomViewUVs": 34
+    },
+    "cargo.1 | inset dorsal loading panel": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.1 | ventral access hatch": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.2 | beveled pressure container": {
+      "triangles": 34,
+      "textured": 34,
+      "validUVArea": 34,
+      "bottomViewUVs": 34
+    },
+    "cargo.2 | inset dorsal loading panel": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "cargo.2 | ventral access hatch": {
+      "triangles": 22,
+      "textured": 22,
+      "validUVArea": 22,
+      "bottomViewUVs": 22
+    },
+    "bridge | faceted forward pressure cabin": {
+      "triangles": 48,
+      "textured": 48,
+      "validUVArea": 48,
+      "bottomViewUVs": 48
+    },
+    "bridge.port | sensor and maneuvering fairing": {
+      "triangles": 19,
+      "textured": 19,
+      "validUVArea": 19,
+      "bottomViewUVs": 19
+    },
+    "bridge.starboard | sensor and maneuvering fairing": {
+      "triangles": 19,
+      "textured": 19,
+      "validUVArea": 19,
+      "bottomViewUVs": 19
+    },
+    "stern | central drive-service fairing": {
+      "triangles": 18,
+      "textured": 18,
+      "validUVArea": 18,
+      "bottomViewUVs": 18
+    },
+    "engine.port | stepped armored engine casing": {
+      "triangles": 116,
+      "textured": 116,
+      "validUVArea": 116,
+      "bottomViewUVs": 116
+    },
+    "engine.starboard | stepped armored engine casing": {
+      "triangles": 116,
+      "textured": 116,
+      "validUVArea": 116,
+      "bottomViewUVs": 116
+    },
+    "cargo.1.port | flush running-light surround": {
+      "triangles": 6,
+      "textured": 0,
+      "validUVArea": 0,
+      "bottomViewUVs": 0
+    },
+    "cargo.1.starboard | flush running-light surround": {
+      "triangles": 6,
+      "textured": 0,
+      "validUVArea": 0,
+      "bottomViewUVs": 0
+    },
+    "cargo.2.port | flush running-light surround": {
+      "triangles": 6,
+      "textured": 0,
+      "validUVArea": 0,
+      "bottomViewUVs": 0
+    },
+    "cargo.2.starboard | flush running-light surround": {
+      "triangles": 6,
+      "textured": 0,
+      "validUVArea": 0,
+      "bottomViewUVs": 0
+    },
+    "cargo.1.port | cyan running strip": {
+      "triangles": 2,
+      "textured": 0,
+      "validUVArea": 0,
+      "bottomViewUVs": 0
+    },
+    "cargo.1.starboard | cyan running strip": {
+      "triangles": 2,
+      "textured": 0,
+      "validUVArea": 0,
+      "bottomViewUVs": 0
+    },
+    "cargo.2.port | cyan running strip": {
+      "triangles": 2,
+      "textured": 0,
+      "validUVArea": 0,
+      "bottomViewUVs": 0
+    },
+    "cargo.2.starboard | cyan running strip": {
+      "triangles": 2,
+      "textured": 0,
+      "validUVArea": 0,
+      "bottomViewUVs": 0
+    }
+  },
+  "engineSockets": [
+    "socket.engine.port",
+    "socket.engine.starboard"
+  ],
+  "embeddedImagesMatch": true,
+  "missingUndersideComponents": [],
+  "fullyTexturedUnderside": true,
+  "passed": true
+}

@@ -64,7 +64,7 @@ pub const VEIL_SIGNATURE_MULT: f64 = 0.5;
 /// affordable or the node goes UNFED and its bonus suspends. A modest mix of the
 /// two refined staples — enough that a node is a commitment, not free real estate.
 pub const NODE_UPKEEP_PER_SEC: &[(Commodity, f64)] =
-    &[(Commodity::Provisions, 4.0), (Commodity::Fuel, 2.0)];
+    &[(Commodity::Provisions, 4.0), (Commodity::Deuterium, 2.0)];
 
 // ── The exotic → bonus mapping (client-parity constants) ────────────────────────
 

@@ -3,7 +3,7 @@ import type { GhostView, Vec2 } from "../protocol";
 import { renderer } from "../render";
 import { state, type PendingIntent } from "../state";
 import { emplacementLabel, knownDeposits } from "./derive/geo";
-import { guardCapable, jumpCapable, shipKindLabel } from "./derive/fleet";
+import { guardCapable, jumpCapable, shipKindLabel, surveySpendsProbe } from "./derive/fleet";
 import { jumpRangeAt, nebulaAt } from "./derive/nebula";
 import { intentTargetLabel, SURVEY_SECS_UI } from "./derive/orders";
 import type { CoreEvent } from "./events";
@@ -66,7 +66,7 @@ export function armGuardAiming(ship: GhostView): void {
   intentAiming.guard = ship.id;
   emitIntentChanged({
     refreshShip: true,
-    readout: `<b>Choose a fleet to guard.</b> Click another one of your fleet markers. ` +
+    readout: `<b>Choose a fleet to guard.</b> Pick it in the command strip or click its marker. ` +
       `<span class="dim">The fleet will form up, engage local threats, then resume its station.</span>`,
   });
 }
@@ -139,7 +139,9 @@ function previewReadout(intent: PendingIntent): string {
       return `Guard preview: form up with <b>${esc(target)}</b>. ` +
         `<span class="dim">The Interceptor reacts from its own sensors, breaks off to meet a threat, then resumes formation without another command-center round trip.</span>`;
     case "blockade":
-      return `Blockade preview: take station at <b>${esc(target)}</b> and strangle its logistics; standing defense will contest it.`;
+      return `Blockade preview: take station at <b>${esc(target)}</b>. Its platforms and warships fight first; ` +
+        `beat them and its shipping is cut and its stores stripped. ` +
+        `<span class="dim">Retreat and the blockade is off. A colony (not a home) can then be besieged and taken with marines.</span>`;
     case "demolish":
       return `Demolition preview: tear down <b>${esc(target)}</b>. ` +
         `<span class="dim">The fleet must hold station there to finish the job; driven off, the work resets.</span>`;
@@ -298,9 +300,9 @@ export function confirmPendingIntent(): void {
       net.send({ type: "BlockadeSystem", fleet_id: ship.id, system_id: intent.targetId });
       delete state.orders[ship.id];
       readoutHtml =
-        `Blockade ordered: your <b>raider fleet</b> → <b>${esc(system?.name ?? "target system")}</b>. ` +
-        `It sets off at light speed to take station and strangle the system's logistics; ` +
-        `standing defense will contest it. <span class="dim">Recall (R) to break off.</span>`;
+        `Blockade ordered: your fleet → <b>${esc(system?.name ?? "target system")}</b>. ` +
+        `The order travels at light speed; on station it fights the system's defenses, then cuts its logistics. ` +
+        `<span class="dim">Lift blockade (fleet panel) brings it home.</span>`;
       break;
     }
     case "demolish": {
@@ -318,10 +320,11 @@ export function confirmPendingIntent(): void {
       const system = state.galaxy?.systems.find((candidate) => candidate.id === intent.targetId);
       net.send({ type: "SurveySystem", fleet_id: ship.id, system_id: intent.targetId });
       delete state.orders[ship.id];
+      const probe = surveySpendsProbe(ship);
       readoutHtml =
-        `Survey ordered: your <b>scout fleet</b> → <b>${esc(system?.name ?? "target system")}</b>${system ? ` (${esc(system.band.toUpperCase())} band)` : ""}. ` +
-        `It flies on-site and dwells ~${SURVEY_SECS_UI}s — active sensing is LOUD (detectable farther). ` +
-        `<span class="dim">The exact geology travels home at light speed; allies receive a relayed copy.</span>`;
+        `Survey ordered: your <b>${probe ? "survey probe" : "scout fleet"}</b> → <b>${esc(system?.name ?? "target system")}</b>${system ? ` (${esc(system.band.toUpperCase())} band)` : ""}. ` +
+        `It flies on-site and dwells ~${SURVEY_SECS_UI}s${probe ? ", then the probe is spent" : ""} — active sensing is LOUD (detectable farther). ` +
+        `<span class="dim">Its worlds, belts and geology travel home at light speed; allies receive a relayed copy.</span>`;
       break;
     }
   }

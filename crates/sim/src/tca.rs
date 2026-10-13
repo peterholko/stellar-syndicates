@@ -426,6 +426,9 @@ pub struct FuelRescueRun {
     pub fuel: f64,
     pub cost: f64,
     pub leg: RescueLeg,
+    /// §fuel-overhaul: Uranium for a fleet flying Slow, else Deuterium.
+    #[serde(default)]
+    pub uranium: bool,
 }
 
 /// Why an AAA callout was not accepted. Typed so the owner receives an exact,

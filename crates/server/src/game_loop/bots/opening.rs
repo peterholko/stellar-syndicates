@@ -12,6 +12,47 @@ impl Observation {
 }
 
 impl Bot {
+    /// §belts: the charter's last lesson, as a founder plays it: send the
+    /// Mining Barge to the charted belt the programme points at.
+    pub(super) fn belt_lesson(&mut self, p: &Observation) -> Option<Command> {
+        let (system_id, body_id, ore, pos) = p.belt_lesson?;
+        let barge = p.own().find(|g| g.kind == H::MiningBarge)?;
+        if !self.ready(&format!("fleet:{}", barge.id), p.now) || p.fighting.contains(&barge.id) {
+            return None;
+        }
+        let command = match p.founding_stage {
+            sim::FoundingStage::MineBelt => {
+                let working = matches!(&barge.industry,
+                    Some(sim::industry::FleetIndustry::Mine { system, .. }) if *system == system_id);
+                if working || p.threatened_within(pos, super::belts::BELT_THREAT_SU) {
+                    return None;
+                }
+                self.status = "founding charter: a Mining Barge to the charted belt".into();
+                Command::MineBelt { player_id: p.owner, fleet_id: barge.id, system_id, body_id, ore, pocket: false }
+            }
+            // §charter v3: the last step brings a load home and unloads it.
+            sim::FoundingStage::HaulOre => {
+                let home = &p.home.system;
+                let aboard: u32 = barge.cargo_manifest.iter().map(|c| c.units).sum();
+                let full = matches!(&barge.industry,
+                    Some(sim::industry::FleetIndustry::Mine { status, .. }) if status == "full");
+                let at_home = barge.docked.as_deref() == Some(home.id.to_string().as_str());
+                if at_home && aboard > 0 {
+                    self.status = "founding charter: unloading the barge's ore at home".into();
+                    Command::SystemUnload { player_id: p.owner, fleet_id: barge.id, system: home.id }
+                } else if !at_home && barge.industry.is_some() && (aboard >= 30 || full) {
+                    self.status = "founding charter: bringing the barge's ore home".into();
+                    Command::MoveShip { player_id: p.owner, ship_id: barge.id, dest: home.pos }
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
+        };
+        self.wait(format!("fleet:{}", barge.id), p, barge.pos);
+        Some(command)
+    }
+
     pub(super) fn local_opening(&mut self, p: &Observation) -> Option<Command> {
         if !p.opening_local_work() {
             return None;

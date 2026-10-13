@@ -1,0 +1,1056 @@
+{
+  "ships": [
+    "interceptor",
+    "corvette",
+    "cruiser",
+    "tiny-freighter",
+    "small-freighter",
+    "large-freighter",
+    "heavy-freighter",
+    "bulk-freighter",
+    "titan"
+  ],
+  "embeddedModelsVerified": 36,
+  "embeddedSpriteAtlasesVerified": 9,
+  "optimizedGLBsValidated": 27,
+  "glTFErrors": 0,
+  "glTFWarnings": 0,
+  "sourceAndPriorModelsUnchanged": true,
+  "priorAssetsHashChecked": 49,
+  "smallFreighterRenderChecks": {
+    "automaticLevelsCorrect": true,
+    "mergedCallsCorrect": true,
+    "allMeshCountsCorrect": true,
+    "spriteCostCorrect": true,
+    "hysteresisRetainsLevel": true
+  },
+  "shipSelectorRoundTripVerified": true,
+  "embeddedSpriteTransitionVerified": true,
+  "browserWarningsAndErrors": [],
+  "viewerBytes": 125585072,
+  "largeFreighterRenderChecks": {
+    "automaticLevelsCorrect": true,
+    "mergedCallsCorrect": true,
+    "allMeshCountsCorrect": true,
+    "spriteCostCorrect": true,
+    "hysteresisRetainsLevel": true
+  },
+  "largeFreighterSpriteTilesVerified": 40,
+  "heavyFreighterRenderChecks": {
+    "automaticLevelsCorrect": true,
+    "mergedCallsCorrect": true,
+    "allMeshCountsCorrect": true,
+    "spriteCostCorrect": true,
+    "hysteresisRetainsLevel": true
+  },
+  "heavyFreighterSpriteTilesVerified": 40,
+  "bulkFreighterRenderChecks": {
+    "automaticLevelsCorrect": true,
+    "mergedCallsCorrect": true,
+    "allMeshCountsCorrect": true,
+    "spriteCostCorrect": true,
+    "hysteresisRetainsLevel": true
+  },
+  "bulkFreighterSpriteTilesVerified": 40,
+  "lineupAvailable": true,
+  "lineupShips": 9,
+  "lineupScaleOptions": [
+    "game",
+    "native"
+  ],
+  "lineupDefaultScale": "game",
+  "lineupProjection": "orthographic",
+  "lineupRenderChecks": {
+    "oneOfEveryShip": true,
+    "orthographicComparison": true,
+    "independentTextures": true,
+    "game_original_renderCost": true,
+    "game_lod0_renderCost": true,
+    "game_lod1_renderCost": true,
+    "game_lod2_renderCost": true,
+    "game_sprite_renderCost": true,
+    "game_lengthsCorrect": true,
+    "game_labelsInView": true,
+    "native_original_renderCost": true,
+    "native_lod0_renderCost": true,
+    "native_lod1_renderCost": true,
+    "native_lod2_renderCost": true,
+    "native_sprite_renderCost": true,
+    "native_lengthsCorrect": true,
+    "native_labelsInView": true,
+    "independentAutomaticLevels": true,
+    "wireframeEveryShip": true,
+    "corvetteTurretsStillMove": true,
+    "cruiserTurretsStillMove": true,
+    "titanTurretsStillMove": true,
+    "interceptor_original_single": true,
+    "interceptor_lod0_single": true,
+    "interceptor_lod1_single": true,
+    "interceptor_lod2_single": true,
+    "interceptor_sprite_single": true,
+    "corvette_original_single": true,
+    "corvette_lod0_single": true,
+    "corvette_lod1_single": true,
+    "corvette_lod2_single": true,
+    "corvette_sprite_single": true,
+    "cruiser_original_single": true,
+    "cruiser_lod0_single": true,
+    "cruiser_lod1_single": true,
+    "cruiser_lod2_single": true,
+    "cruiser_sprite_single": true,
+    "tiny-freighter_original_single": true,
+    "tiny-freighter_lod0_single": true,
+    "tiny-freighter_lod1_single": true,
+    "tiny-freighter_lod2_single": true,
+    "tiny-freighter_sprite_single": true,
+    "small-freighter_original_single": true,
+    "small-freighter_lod0_single": true,
+    "small-freighter_lod1_single": true,
+    "small-freighter_lod2_single": true,
+    "small-freighter_sprite_single": true,
+    "large-freighter_original_single": true,
+    "large-freighter_lod0_single": true,
+    "large-freighter_lod1_single": true,
+    "large-freighter_lod2_single": true,
+    "large-freighter_sprite_single": true,
+    "heavy-freighter_original_single": true,
+    "heavy-freighter_lod0_single": true,
+    "heavy-freighter_lod1_single": true,
+    "heavy-freighter_lod2_single": true,
+    "heavy-freighter_sprite_single": true,
+    "bulk-freighter_original_single": true,
+    "bulk-freighter_lod0_single": true,
+    "bulk-freighter_lod1_single": true,
+    "bulk-freighter_lod2_single": true,
+    "bulk-freighter_sprite_single": true,
+    "titan_original_single": true,
+    "titan_lod0_single": true,
+    "titan_lod1_single": true,
+    "titan_lod2_single": true,
+    "titan_sprite_single": true,
+    "fleet12Preserved": true,
+    "fleet80Preserved": true,
+    "bottomViewAllShips": true,
+    "orbitViewAllShips": true
+  },
+  "lineupAssetsUnchanged": 40,
+  "lineupFormationControlRoundTripVerified": true,
+  "lineupBrowserWarningsAndErrors": [],
+  "priorAssetsUnchanged": {
+    "client/art-src/ship-models/bulk-freighter-textured-v1/bulk-freighter.glb": "bedda8fc0dd471af796aa0d4b439b05a7276bfe42ce153887881b48197efdc86",
+    "client/art-src/ship-models/cruiser-textured-v1/cruiser.glb": "de09e6eb84f6f6e425afafdf52c85bb171efcfa647cfa67895534ff8cc255a5d",
+    "client/art-src/ship-models/freighter-textured-v1/freighter.glb": "b72ff08d995b604bcc7a0b9ce24094e893c62a61739bf799768588490ecff545",
+    "client/art-src/ship-models/heavy-freighter-textured-v1/heavy-freighter.glb": "35560902e9c1b5b20030871d0aa3e884bf6ce2b936b2c310b1c4b9c34277d458",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/bulk-freighter-lod0.glb": "6a912d15c96728165d9fa2a9e2d475a19a7b696cbeb99eaf36a8cef6eedac2ca",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/bulk-freighter-lod1.glb": "2863160d958ca29cfbfca2d063e142bcd5d492f265fba1346246683d49e947b8",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/bulk-freighter-lod2.glb": "5f9ac9343518ed2eed3fbc39fb2bfebbac8d45c4e282fd1528d6ce1c0e0093ab",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/bulk-freighter-original.glb": "bedda8fc0dd471af796aa0d4b439b05a7276bfe42ce153887881b48197efdc86",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/cruiser-lod0.glb": "0fbe9a3b2a5fa5d435b8ceb80fb2cf85751b6d6e8bbc7d9cc84c4f41294e81d4",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/cruiser-lod1.glb": "856d1ac19a25b7d160af32ec679a00d96b274eea2dd8a89cbe40ae31d3ed4ece",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/cruiser-lod2.glb": "af03c35126bdd92501889e77c738d5c18123dfaf8a7b0817b2b808de2e308e38",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/cruiser-original.glb": "de09e6eb84f6f6e425afafdf52c85bb171efcfa647cfa67895534ff8cc255a5d",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/heavy-freighter-lod0.glb": "e3216e6ef43a497e56c63d255cc2affce0a85a76d015903471fe75b961d45a44",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/heavy-freighter-lod1.glb": "e4ccfa166756f25e53aa1c1daf8816c6c0212ad9ba97e10641c2243bbd4269bb",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/heavy-freighter-lod2.glb": "7c86106824b26414aeb51018d45a73fc1d08eee7cac1c4caf10fb03091a65bab",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/heavy-freighter-original.glb": "35560902e9c1b5b20030871d0aa3e884bf6ce2b936b2c310b1c4b9c34277d458",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/interceptor-lod0.glb": "3cfc5de6dbc08207a483688bce0b90bd0a001a23cbdba6de525c0ecb453c5478",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/interceptor-lod1.glb": "f42ce6aba5fbf465eb73f035e3e5527b3f732e3b9039ce1a634469ecc7537f39",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/interceptor-lod2.glb": "7870f44e505c28c83d60fcb92b5caacfa89febd5b3bd18bbd1034447325dbb4b",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/interceptor-original.glb": "23bafa6388b1ca1ab3c0db0f461352d12cde8498b380e35fc1371898d9ee8cde",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/large-freighter-lod0.glb": "b03b56ee66478d3372787cf62249f89d47fa5050c1336b3a23f7f7608836dc91",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/large-freighter-lod1.glb": "20e7978781dadd04e9a95e144ed34c485d340d2d7013815eefd2017d0fdcef0a",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/large-freighter-lod2.glb": "5c5cb24f1da6938edcde756cc5f0332a8e5f6bbc4c9e26870ef2ac1a77d30adf",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/large-freighter-original.glb": "c550e29175abca96cf911a92227e677935e2a4c7f5c108d0c84a5f23eb87b166",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/small-freighter-lod0.glb": "c4809132e799e9d110823ec6f73abbc71b6503f7784055b5d2c70a46f36126c7",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/small-freighter-lod1.glb": "aaa10734b6ed23709f9828204653feee1994956adfc055f9d0c73c38d2653969",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/small-freighter-lod2.glb": "21c051ba926e8daca3b68b9e1f1b11aa74c868dd3e980f11d21ad928a2609d25",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/small-freighter-original.glb": "94b2749e3489f8a8e385e8b4b0635892017ea2784af26b1ce4b5822c95858a9b",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/tiny-freighter-lod0.glb": "ea7b393aa8bd12207621997b40a2d5a503d64adcdcea169ab5f15ae1229cfc89",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/tiny-freighter-lod1.glb": "88f96501bcaea2249a19d2ccc88a8441f53aad0f3459b01eed6bd08c4283a487",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/tiny-freighter-lod2.glb": "167b0775b5c3da34aa6eaea5cf071f4d83e70d56323251cb0af0f1b139d1821e",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/tiny-freighter-original.glb": "02ffbc108f65bf089fa7368e88a3e32ebecf88b7864b947c0b1a2613d34fcca2",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/titan-lod0.glb": "4bbe003c1e891d82b2ebea78765c71b6b5bc6e3939d85a0f956814a7a8971db0",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/titan-lod1.glb": "2fa43026d5918ab9ec04337e4ce08b27dba26efaf3fb2d08f18cdd1d8f4d7ccf",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/titan-lod2.glb": "2d189d512ce6d9b98b6b71515d2a812aac3daa066ecdb2c1de52caf5d350e8d7",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/models/titan-original.glb": "aad22175d154318084bc4a292d86b9b1b5cdfc646f1adccda97a7715b69c4e29",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/sprites/bulk-freighter-views.png": "952e9ac965bc7dd9fc28390983a15693f929e156ae937756165beaa22ffc9c5f",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/sprites/cruiser-views.png": "39b5f4d7056d9f91189f51d618945b07ce4701dbb645b305533acf24ef74c26d",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/sprites/heavy-freighter-views.png": "b5764b200d8322526d2e721f5e0d0d2540ada47aba3a9a4c4ce981d5ea9da972",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/sprites/interceptor-views.png": "24d26afca5d1885979f95824816f36a426e8af3f6474d4f821cf047c3db54616",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/sprites/large-freighter-views.png": "92273326eb4821a89741d123bbe978589c34fbdf27d80ea2fa558178af16a9e5",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/sprites/small-freighter-views.png": "c4d8820002b33993d04a6c78fc0347cf539d02eeae4fea0629d2b90158ed5f68",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/sprites/tiny-freighter-views.png": "1dcbb7e74c33be5fba1b8e99c8e162acadb47c2945c8f5d21c7916faef4ad1a7",
+    "client/art-src/ship-models/interceptor-lod-experiment-v1/sprites/titan-views.png": "54e44dcd152eb3cb9e042571d1352940f8764d6447cec14755dd8f61dcbeafd4",
+    "client/art-src/ship-models/interceptor-textured-v1/interceptor.glb": "23bafa6388b1ca1ab3c0db0f461352d12cde8498b380e35fc1371898d9ee8cde",
+    "client/art-src/ship-models/large-freighter-textured-v1/large-freighter.glb": "c550e29175abca96cf911a92227e677935e2a4c7f5c108d0c84a5f23eb87b166",
+    "client/art-src/ship-models/small-freighter-textured-v1/small-freighter.glb": "94b2749e3489f8a8e385e8b4b0635892017ea2784af26b1ce4b5822c95858a9b",
+    "client/art-src/ship-models/tiny-freighter-textured-v1/tiny-freighter.glb": "02ffbc108f65bf089fa7368e88a3e32ebecf88b7864b947c0b1a2613d34fcca2",
+    "client/art-src/ship-models/titan-textured-v1/titan.glb": "aad22175d154318084bc4a292d86b9b1b5cdfc646f1adccda97a7715b69c4e29"
+  },
+  "titanRenderChecks": {
+    "automaticLevelsCorrect": true,
+    "mergedCallsCorrect": true,
+    "allMeshCountsCorrect": true,
+    "spriteCostCorrect": true,
+    "hysteresisRetainsLevel": true,
+    "independentTurretPivots": true,
+    "weaponSocketsFollowTurrets": true
+  },
+  "titanSpriteTilesVerified": 40,
+  "titanGeometryChecksPassed": true,
+  "titanSpriteTiles": [
+    {
+      "col": 0,
+      "row": 0,
+      "alphaBounds": [
+        70,
+        23,
+        186,
+        233
+      ]
+    },
+    {
+      "col": 1,
+      "row": 0,
+      "alphaBounds": [
+        21,
+        21,
+        211,
+        211
+      ]
+    },
+    {
+      "col": 2,
+      "row": 0,
+      "alphaBounds": [
+        23,
+        70,
+        233,
+        186
+      ]
+    },
+    {
+      "col": 3,
+      "row": 0,
+      "alphaBounds": [
+        21,
+        45,
+        211,
+        235
+      ]
+    },
+    {
+      "col": 4,
+      "row": 0,
+      "alphaBounds": [
+        70,
+        23,
+        186,
+        233
+      ]
+    },
+    {
+      "col": 5,
+      "row": 0,
+      "alphaBounds": [
+        45,
+        45,
+        235,
+        235
+      ]
+    },
+    {
+      "col": 6,
+      "row": 0,
+      "alphaBounds": [
+        23,
+        70,
+        233,
+        186
+      ]
+    },
+    {
+      "col": 7,
+      "row": 0,
+      "alphaBounds": [
+        45,
+        21,
+        235,
+        211
+      ]
+    },
+    {
+      "col": 0,
+      "row": 1,
+      "alphaBounds": [
+        70,
+        45,
+        186,
+        205
+      ]
+    },
+    {
+      "col": 1,
+      "row": 1,
+      "alphaBounds": [
+        21,
+        45,
+        211,
+        188
+      ]
+    },
+    {
+      "col": 2,
+      "row": 1,
+      "alphaBounds": [
+        23,
+        82,
+        233,
+        175
+      ]
+    },
+    {
+      "col": 3,
+      "row": 1,
+      "alphaBounds": [
+        21,
+        66,
+        211,
+        213
+      ]
+    },
+    {
+      "col": 4,
+      "row": 1,
+      "alphaBounds": [
+        70,
+        50,
+        186,
+        212
+      ]
+    },
+    {
+      "col": 5,
+      "row": 1,
+      "alphaBounds": [
+        45,
+        66,
+        235,
+        213
+      ]
+    },
+    {
+      "col": 6,
+      "row": 1,
+      "alphaBounds": [
+        23,
+        82,
+        233,
+        175
+      ]
+    },
+    {
+      "col": 7,
+      "row": 1,
+      "alphaBounds": [
+        45,
+        45,
+        235,
+        188
+      ]
+    },
+    {
+      "col": 0,
+      "row": 2,
+      "alphaBounds": [
+        70,
+        110,
+        186,
+        146
+      ]
+    },
+    {
+      "col": 1,
+      "row": 2,
+      "alphaBounds": [
+        21,
+        110,
+        211,
+        146
+      ]
+    },
+    {
+      "col": 2,
+      "row": 2,
+      "alphaBounds": [
+        23,
+        110,
+        233,
+        146
+      ]
+    },
+    {
+      "col": 3,
+      "row": 2,
+      "alphaBounds": [
+        21,
+        110,
+        211,
+        146
+      ]
+    },
+    {
+      "col": 4,
+      "row": 2,
+      "alphaBounds": [
+        70,
+        110,
+        186,
+        146
+      ]
+    },
+    {
+      "col": 5,
+      "row": 2,
+      "alphaBounds": [
+        45,
+        110,
+        235,
+        146
+      ]
+    },
+    {
+      "col": 6,
+      "row": 2,
+      "alphaBounds": [
+        23,
+        110,
+        233,
+        146
+      ]
+    },
+    {
+      "col": 7,
+      "row": 2,
+      "alphaBounds": [
+        45,
+        110,
+        235,
+        146
+      ]
+    },
+    {
+      "col": 0,
+      "row": 3,
+      "alphaBounds": [
+        70,
+        50,
+        186,
+        212
+      ]
+    },
+    {
+      "col": 1,
+      "row": 3,
+      "alphaBounds": [
+        21,
+        66,
+        211,
+        213
+      ]
+    },
+    {
+      "col": 2,
+      "row": 3,
+      "alphaBounds": [
+        23,
+        82,
+        233,
+        175
+      ]
+    },
+    {
+      "col": 3,
+      "row": 3,
+      "alphaBounds": [
+        21,
+        45,
+        211,
+        188
+      ]
+    },
+    {
+      "col": 4,
+      "row": 3,
+      "alphaBounds": [
+        70,
+        45,
+        186,
+        205
+      ]
+    },
+    {
+      "col": 5,
+      "row": 3,
+      "alphaBounds": [
+        45,
+        45,
+        235,
+        188
+      ]
+    },
+    {
+      "col": 6,
+      "row": 3,
+      "alphaBounds": [
+        23,
+        82,
+        233,
+        175
+      ]
+    },
+    {
+      "col": 7,
+      "row": 3,
+      "alphaBounds": [
+        45,
+        66,
+        235,
+        213
+      ]
+    },
+    {
+      "col": 0,
+      "row": 4,
+      "alphaBounds": [
+        70,
+        23,
+        186,
+        233
+      ]
+    },
+    {
+      "col": 1,
+      "row": 4,
+      "alphaBounds": [
+        21,
+        45,
+        211,
+        235
+      ]
+    },
+    {
+      "col": 2,
+      "row": 4,
+      "alphaBounds": [
+        23,
+        70,
+        233,
+        186
+      ]
+    },
+    {
+      "col": 3,
+      "row": 4,
+      "alphaBounds": [
+        21,
+        21,
+        211,
+        211
+      ]
+    },
+    {
+      "col": 4,
+      "row": 4,
+      "alphaBounds": [
+        70,
+        23,
+        186,
+        233
+      ]
+    },
+    {
+      "col": 5,
+      "row": 4,
+      "alphaBounds": [
+        45,
+        21,
+        235,
+        211
+      ]
+    },
+    {
+      "col": 6,
+      "row": 4,
+      "alphaBounds": [
+        23,
+        70,
+        233,
+        186
+      ]
+    },
+    {
+      "col": 7,
+      "row": 4,
+      "alphaBounds": [
+        45,
+        45,
+        235,
+        235
+      ]
+    }
+  ],
+  "corvetteRenderChecks": {
+    "automaticLevelsCorrect": true,
+    "mergedCallsCorrect": true,
+    "allMeshCountsCorrect": true,
+    "spriteCostCorrect": true,
+    "hysteresisRetainsLevel": true,
+    "independentTurretPivots": true,
+    "weaponSocketsFollowTurrets": true
+  },
+  "corvetteSpriteTilesVerified": 40,
+  "corvetteGeometryChecksPassed": true,
+  "corvetteSpriteTiles": [
+    {
+      "row": 0,
+      "column": 0,
+      "visiblePixels": 14367,
+      "bounds": [
+        60,
+        30,
+        195,
+        225
+      ]
+    },
+    {
+      "row": 0,
+      "column": 1,
+      "visiblePixels": 14377,
+      "bounds": [
+        29,
+        29,
+        205,
+        206
+      ]
+    },
+    {
+      "row": 0,
+      "column": 2,
+      "visiblePixels": 14367,
+      "bounds": [
+        30,
+        60,
+        225,
+        195
+      ]
+    },
+    {
+      "row": 0,
+      "column": 3,
+      "visiblePixels": 14377,
+      "bounds": [
+        29,
+        50,
+        206,
+        226
+      ]
+    },
+    {
+      "row": 0,
+      "column": 4,
+      "visiblePixels": 14367,
+      "bounds": [
+        60,
+        30,
+        195,
+        225
+      ]
+    },
+    {
+      "row": 0,
+      "column": 5,
+      "visiblePixels": 14376,
+      "bounds": [
+        50,
+        49,
+        226,
+        226
+      ]
+    },
+    {
+      "row": 0,
+      "column": 6,
+      "visiblePixels": 14367,
+      "bounds": [
+        30,
+        60,
+        225,
+        195
+      ]
+    },
+    {
+      "row": 0,
+      "column": 7,
+      "visiblePixels": 14376,
+      "bounds": [
+        49,
+        29,
+        226,
+        205
+      ]
+    },
+    {
+      "row": 1,
+      "column": 0,
+      "visiblePixels": 11593,
+      "bounds": [
+        60,
+        56,
+        195,
+        199
+      ]
+    },
+    {
+      "row": 1,
+      "column": 1,
+      "visiblePixels": 12074,
+      "bounds": [
+        29,
+        58,
+        206,
+        189
+      ]
+    },
+    {
+      "row": 1,
+      "column": 2,
+      "visiblePixels": 12507,
+      "bounds": [
+        30,
+        74,
+        225,
+        184
+      ]
+    },
+    {
+      "row": 1,
+      "column": 3,
+      "visiblePixels": 12641,
+      "bounds": [
+        29,
+        60,
+        206,
+        204
+      ]
+    },
+    {
+      "row": 1,
+      "column": 4,
+      "visiblePixels": 12379,
+      "bounds": [
+        60,
+        57,
+        195,
+        206
+      ]
+    },
+    {
+      "row": 1,
+      "column": 5,
+      "visiblePixels": 12647,
+      "bounds": [
+        49,
+        61,
+        226,
+        204
+      ]
+    },
+    {
+      "row": 1,
+      "column": 6,
+      "visiblePixels": 12492,
+      "bounds": [
+        30,
+        74,
+        225,
+        184
+      ]
+    },
+    {
+      "row": 1,
+      "column": 7,
+      "visiblePixels": 12064,
+      "bounds": [
+        49,
+        58,
+        226,
+        189
+      ]
+    },
+    {
+      "row": 2,
+      "column": 0,
+      "visiblePixels": 4192,
+      "bounds": [
+        60,
+        107,
+        195,
+        148
+      ]
+    },
+    {
+      "row": 2,
+      "column": 1,
+      "visiblePixels": 5355,
+      "bounds": [
+        29,
+        107,
+        206,
+        148
+      ]
+    },
+    {
+      "row": 2,
+      "column": 2,
+      "visiblePixels": 5527,
+      "bounds": [
+        30,
+        107,
+        225,
+        148
+      ]
+    },
+    {
+      "row": 2,
+      "column": 3,
+      "visiblePixels": 5360,
+      "bounds": [
+        29,
+        107,
+        206,
+        148
+      ]
+    },
+    {
+      "row": 2,
+      "column": 4,
+      "visiblePixels": 4189,
+      "bounds": [
+        60,
+        107,
+        195,
+        148
+      ]
+    },
+    {
+      "row": 2,
+      "column": 5,
+      "visiblePixels": 5355,
+      "bounds": [
+        49,
+        107,
+        226,
+        148
+      ]
+    },
+    {
+      "row": 2,
+      "column": 6,
+      "visiblePixels": 5522,
+      "bounds": [
+        30,
+        107,
+        225,
+        148
+      ]
+    },
+    {
+      "row": 2,
+      "column": 7,
+      "visiblePixels": 5359,
+      "bounds": [
+        49,
+        107,
+        226,
+        148
+      ]
+    },
+    {
+      "row": 3,
+      "column": 0,
+      "visiblePixels": 12377,
+      "bounds": [
+        60,
+        57,
+        195,
+        206
+      ]
+    },
+    {
+      "row": 3,
+      "column": 1,
+      "visiblePixels": 12639,
+      "bounds": [
+        29,
+        60,
+        206,
+        204
+      ]
+    },
+    {
+      "row": 3,
+      "column": 2,
+      "visiblePixels": 12504,
+      "bounds": [
+        30,
+        74,
+        225,
+        184
+      ]
+    },
+    {
+      "row": 3,
+      "column": 3,
+      "visiblePixels": 12074,
+      "bounds": [
+        29,
+        58,
+        206,
+        189
+      ]
+    },
+    {
+      "row": 3,
+      "column": 4,
+      "visiblePixels": 11592,
+      "bounds": [
+        60,
+        56,
+        195,
+        199
+      ]
+    },
+    {
+      "row": 3,
+      "column": 5,
+      "visiblePixels": 12061,
+      "bounds": [
+        49,
+        58,
+        226,
+        189
+      ]
+    },
+    {
+      "row": 3,
+      "column": 6,
+      "visiblePixels": 12494,
+      "bounds": [
+        30,
+        74,
+        225,
+        184
+      ]
+    },
+    {
+      "row": 3,
+      "column": 7,
+      "visiblePixels": 12649,
+      "bounds": [
+        49,
+        61,
+        226,
+        204
+      ]
+    },
+    {
+      "row": 4,
+      "column": 0,
+      "visiblePixels": 14367,
+      "bounds": [
+        60,
+        30,
+        195,
+        225
+      ]
+    },
+    {
+      "row": 4,
+      "column": 1,
+      "visiblePixels": 14377,
+      "bounds": [
+        29,
+        50,
+        206,
+        226
+      ]
+    },
+    {
+      "row": 4,
+      "column": 2,
+      "visiblePixels": 14367,
+      "bounds": [
+        30,
+        60,
+        225,
+        195
+      ]
+    },
+    {
+      "row": 4,
+      "column": 3,
+      "visiblePixels": 14377,
+      "bounds": [
+        29,
+        29,
+        205,
+        206
+      ]
+    },
+    {
+      "row": 4,
+      "column": 4,
+      "visiblePixels": 14367,
+      "bounds": [
+        60,
+        30,
+        195,
+        225
+      ]
+    },
+    {
+      "row": 4,
+      "column": 5,
+      "visiblePixels": 14376,
+      "bounds": [
+        49,
+        29,
+        226,
+        205
+      ]
+    },
+    {
+      "row": 4,
+      "column": 6,
+      "visiblePixels": 14367,
+      "bounds": [
+        30,
+        60,
+        225,
+        195
+      ]
+    },
+    {
+      "row": 4,
+      "column": 7,
+      "visiblePixels": 14376,
+      "bounds": [
+        50,
+        49,
+        226,
+        226
+      ]
+    }
+  ]
+}

@@ -39,6 +39,15 @@ pub const STEALTH_FRACTION: f64 = 0.5;
 /// How much LOUDER a fleet at full speed is than one at/below the stealth
 /// fraction — the full:stealth signature ratio. "Flank speed lights you up."
 pub const SPEED_SIG_MAX: f64 = 2.5;
+/// §fuel-overhaul: STEALTH runs dark on top of its slow speed — dampened drive
+/// and emissions. Slow (Uranium) is merely slow, so it gets the speed term
+/// only: Full 1.0 · Slow 0.4 · Stealth 0.24. Tunable.
+pub const STEALTH_QUIET: f64 = 0.6;
+
+/// The transit mode's own factor on a fleet's signature, beyond its speed.
+pub fn transit_quiet(mode: crate::ship::TransitMode) -> f64 {
+    if mode == crate::ship::TransitMode::Stealth { STEALTH_QUIET } else { 1.0 }
+}
 /// Research STUB (§Part 4): the observer's sensor-tech multiplier on capability.
 /// A real no-op at 1.0 today; the future sensor-upgrade hook.
 pub const SENSOR_TECH_MULT: f64 = 1.0;
@@ -50,6 +59,10 @@ pub fn sig_size(kind: ShipKind) -> f64 {
     match kind {
         ShipKind::Builder => 2.5, // a lit worksite — cranes, floods, welding arcs
         ShipKind::Scout => 0.5,
+        ShipKind::SurveyProbe => 0.3, // §charting: smaller than any crewed hull
+        ShipKind::MiningBarge => 3.0, // §belts: a Small Freighter's bulk
+        // §belts: a lit depot of silos and cradles — a big, still target.
+        ShipKind::MiningBeltStation => 8.0,
         ShipKind::Raider => 1.0, // the reference
         ShipKind::Corvette => 2.0,
         ShipKind::Convoy => 4.0,
@@ -61,7 +74,8 @@ pub fn sig_size(kind: ShipKind) -> f64 {
         ShipKind::Colony => 5.0,
         // §ladder: capitals light sensors from far off — the size proxy tracks
         // the mass ladder (a Titan is unmistakable long before it arrives).
-        // Mostly moot in practice: every capital BROADCASTS anyway.
+        // A corporation's capitals broadcast anyway; a pirate's run dark and
+        // are found by these sizes.
         ShipKind::Destroyer => 3.0,
         ShipKind::Cruiser => 4.5,
         ShipKind::Battleship => 6.5,

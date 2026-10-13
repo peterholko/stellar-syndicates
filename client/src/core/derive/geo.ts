@@ -23,7 +23,10 @@ export function gravityWellAt(pos: Vec2, st = state): string | null {
   const system = galaxy.systems.find((s) =>
     Math.hypot(pos.x - s.pos.x, pos.y - s.pos.y) < galaxy.hyperlimit,
   );
-  return system ? `${system.name}'s gravity well` : null;
+  if (system) return `${system.name}'s gravity well`;
+  // Interdiction fields are temporary wells (as far as their light shows).
+  return st.interdictionFields?.some(f => Math.hypot(pos.x - f.pos.x, pos.y - f.pos.y) <= f.radius)
+    ? "an interdiction field" : null;
 }
 
 

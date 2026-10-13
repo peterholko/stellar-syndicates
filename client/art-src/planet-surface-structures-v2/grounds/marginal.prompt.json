@@ -1,0 +1,59 @@
+{
+  "id": "ground/marginal",
+  "mode": "built-in image_gen",
+  "prompt": "Use case: stylized-concept.\nAsset type: ONE standalone biome GROUND layer, square transparent PNG, approximately 1024 x 1024, for use underneath a separate colony building sprite.\nPrimary request: a modest natural ground transition patch with an EMPTY flat center for a building, no building in this image. True fully transparent alpha outside the patch, irregular softly feathered edge. A thin surface texture, not a floating terrain island: no thickness, cutaway walls, curb, raised slab or platform.\nInput image 1: biome terrain/color/lighting reference ONLY. Do not copy the landscape, horizon, sky, water, distant hills or rock outcrops.\nLayout: high-oblique ground footprint, view about 55 degrees downward. Center at canvas x=50%, y=65%; softly irregular diamond-like patch occupying roughly x=9–91%, y=35–91%, transparent above. Quiet compacted natural earth/grit in the middle where the future building will sit, richer low biome texture near the fringe. Patch and feathering well inset; nothing touches any canvas edge. Matte diffuse soft upper-left light, no hard building shadow.\nNo structures, foundations, roads, paths, markings, text, people, vehicles, trees, tall vegetation, opaque sky/background or checkerboard. No smooth hard oval sticker rim.\nInput image 2: footprint alignment and soft alpha edge reference only. Match its empty flat patch layout and camera; replace all surface material with this biome.\nBiome: marginal. Cold, dry, thin-aired ground: compacted dun and cool khaki soil, patches of low dusty sage-green lichen, a few pale salt-crusted spots and small grey stones, faint frost in tiny hollows. No grass meadow, no sand dunes.\nKeep the center quietly empty and flat, with no rock outcrops or boulder border. The fringe is a gentle irregular natural texture transition fading into genuine alpha, not an outlined island. Output exactly ONE standalone transparent RGBA ground sprite, no contact sheet.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/surfaces/marginal-surface-v1.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/grounds/desert.png"
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-548ed73d-f030-4de9-8650-9a8bbcd92117.png",
+  "file": "grounds/marginal.png",
+  "postprocessing": "Sharp normalized the ground-layer footprint onto a transparent1024×1024 canvas with softly feathered bounds x9–91%,y35–91%. The outer alpha transition is gently feathered inward over18 pixels; terrain RGB is unchanged.",
+  "verification": {
+    "file": "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/grounds/marginal.png",
+    "size": [
+      1024,
+      1024
+    ],
+    "mode": "RGBA",
+    "zero_alpha_pixels": 757846,
+    "partial_alpha_pixels": 290730,
+    "opaque_pixels": 0,
+    "canvas_edge_max_alpha": 0,
+    "visible_bounds": {
+      "left": 96,
+      "top": 362,
+      "right": 923,
+      "bottom": 926,
+      "width": 827,
+      "height": 564
+    },
+    "solid_bounds": {
+      "left": 115,
+      "top": 375,
+      "right": 907,
+      "bottom": 914,
+      "width": 792,
+      "height": 539
+    },
+    "solid_width_fraction": 0.7734375,
+    "solid_bottom_fraction": 0.892578125,
+    "bytes": 1025832,
+    "sha256": "7e57110583739ae10e052ede860c630192a8431e53e08d1d596747c4b11c238d",
+    "normalization": {
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "scale_x": 0.6933773740710156,
+      "scale_y": 0.6591264367816092,
+      "canvas_offset": [
+        77,
+        149
+      ],
+      "kind": "ground"
+    },
+    "alpha_edge_feather_pixels": 18
+  }
+}

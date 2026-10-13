@@ -50,7 +50,14 @@ export class PlanetSites {
     const order = Object.keys(model.descriptions);
     const jobs = model.report.builds.filter(job => job.body_id === model.body.id && job.key !== "service_berth" && isSitePool(POOL_OF[job.key]));
     const known = new Set([...Object.keys(model.body.structures).filter(key => key !== "service_berth" && model.body.structures[key] > 0), ...jobs.map(job => job.key)]);
+    // Orbital yards still consume their real industrial capacity, but must not
+    // crowd out surface artwork. These virtual addresses are never persisted or
+    // offered as empty terrain sites; the scene uses their starfield anchors.
+    const orbital: PlanetSite[] = ["naval_drydock", "capital_slipway"].flatMap((key, index) =>
+      known.has(key) ? [{ key, pool: "industrial" as Pool, slot: 24 + index }] : []);
+    for (const site of orbital) known.delete(site.key!);
     const usage = bodyPoolUsage(model.body, model.report);
+    const surfaceCapacity = (pool: Pool) => Math.max(0, usage[pool].total - orbital.filter(site => site.pool === pool).length);
     const firstReport = layout.sites.length === 0;
     for (const site of layout.sites) if (site.key && !known.has(site.key)) delete site.key;
     const allocate = (pool: Pool, preferred?: number, occupied = false): PlanetSite | undefined => {
@@ -62,7 +69,7 @@ export class PlanetSites {
         // buildings take priority; capacity growth may reuse hidden surplus
         // from a contracted pool, but never steal another pool's active sites.
         const spare = layout.sites.find(s => !s.key && s.pool !== pool && (occupied
-          || layout.sites.filter(other => other.pool === s.pool).length > usage[s.pool].total));
+          || layout.sites.filter(other => other.pool === s.pool).length > surfaceCapacity(s.pool)));
         if (spare) spare.pool = pool;
         return spare;
       }
@@ -83,13 +90,14 @@ export class PlanetSites {
     for (const pool of SITE_POOLS) {
       // Growth reveals additional sites, never repositions old ones. Contraction
       // hides surplus empty sites without forgetting their addresses.
-      while (layout.sites.filter(s => s.pool === pool).length < usage[pool].total) {
+      // Slot-free kinds (Command Center, §power plant) keep their own footprint.
+      while (layout.sites.filter(s => s.pool === pool && s.key !== "command_center" && s.key !== "power_plant").length < surfaceCapacity(pool)) {
         if (!allocate(pool)) break;
       }
       free.push(...layout.sites.filter(s => s.pool === pool && !s.key).slice(0, Math.max(0, usage[pool].total - usage[pool].used)));
     }
     if (JSON.stringify(layout) !== before) this.save(model, layout);
-    return { occupied: layout.sites.filter(s => s.key && known.has(s.key)), free };
+    return { occupied: [...layout.sites.filter(s => s.key && known.has(s.key)), ...orbital], free };
   }
 
   /** Remember the clicked address, NOT an optimistic job. No outline or slot

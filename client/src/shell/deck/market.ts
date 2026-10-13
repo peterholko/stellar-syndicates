@@ -22,6 +22,7 @@ import { projectedBand } from "../../core/derive/research";
 import { requestTransactions } from "../../core/derive/transactions";
 import type { CoreEvent } from "../../core/events";
 import { commodityIcon, icon, label, type IconKey } from "../../icons";
+import { HUB_MODEL } from "../../hub-model.generated";
 import {
   countClassLabel,
   fleetCargoManifest,
@@ -75,13 +76,13 @@ import { MODULES, isBlueprintOnly } from "../../core/derive/equipment";
 export class DeckMarketRoutes {
   private tab: DeckMarketTab = "exchange";
   private side: Side = "buy";
-  private commodity: Commodity = "fuel";
+  private commodity: Commodity = "deuterium";
   private quantity = 50;
   private limitOn = false;
   private limitPrice = 0;
   private freightDirection: ShipmentDir = "outbound";
   private freightSystem = "";
-  private freightCommodity: Commodity = "fuel";
+  private freightCommodity: Commodity = "deuterium";
   private freightQuantity = 100;
   private freightSellOnArrival = false;
   private feedback = "";
@@ -326,7 +327,7 @@ export class DeckMarketRoutes {
       return `<article class="deck-berth"><button type="button" data-deck-act="market-hub-fleet" data-fleet="${esc(fleet.id)}">${icon("manifest", "md")}<span><b>${esc(shipKindLabel(fleet.kind))} fleet</b><small>${esc(count)} · ${esc(cargo)}</small></span><em>›</em></button>${manifest.length ? `<button type="button" data-deck-act="market-hub-unload" data-fleet="${esc(fleet.id)}" ${unloadQueued ? "disabled" : ""}>${icon("unload", "sm")} ${unloadQueued ? "Unload queued" : "Unload all"}</button>` : ""}</article>`;
     }).join("");
     const shipments = (this.ctx.state.freight?.shipments ?? []).map((shipment) => `<div class="deck-order-row"><span>${icon("authorityFreighter", "sm")}<span><b>${shipment.units} ${esc(label(shipment.commodity))} ${shipment.direction === "outbound" ? "→" : "←"} ${esc(systemName(shipment.system))}</b><small>${shipment.aboard ? "aboard" : "awaiting departure"}${shipment.direction === "inbound" && shipment.sell_on_arrival ? " · sells on arrival" : ""}</small></span></span></div>`).join("");
-    return `<section class="deck-section deck-market-hub"><img src="/art/wormhole_hub_concept.png" alt=""/><div><h3>Authority market station</h3><p>Your goods and docked fleets at the wormhole terminus.</p></div></section>` +
+    return `<section class="deck-section deck-market-hub"><img src="${HUB_MODEL.hero}" alt=""/><div><h3>Authority market station</h3><p>Your goods and docked fleets at the wormhole terminus.</p></div></section>` +
       `<div class="deck-market-warehouse"><div class="deck-market-column"><section class="deck-section"><header><h3>Market Warehouse</h3><b>${account ? holdings.reduce((sum, row) => sum + row.units, 0) : "—"}</b></header><div class="deck-ledger">${ledger || (account ? `<span><small>Warehouse</small><b>empty</b></span>` : `<span>Awaiting account report.</span>`)}</div></section>` +
       `<section class="deck-section"><header><h3>Shipments</h3><b>${this.ctx.state.freight?.shipments.length ?? 0}</b></header>${shipments || `<div class="deck-empty-inline">No freight booked.</div>`}</section></div>` +
       `<div class="deck-market-column"><section class="deck-section"><header><h3>Docked fleets</h3><b>${hubDockedFleets().length}</b></header><div class="deck-berth-list">${berths || `<div class="deck-empty-inline">No fleets reported docked.</div>`}</div></section>` +

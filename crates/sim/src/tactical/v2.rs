@@ -38,10 +38,10 @@ pub(super) fn desired_point(state: &TacticalState, i: usize) -> Vec2 {
         state.bearing
     };
     let sign = if c.cid.is_multiple_of(2) { 1.0 } else { -1.0 };
-    let (s, co) = (CLOSE_PASS_LEAD_RAD * sign).sin_cos();
+    let (s, co) = state.math().sin_cos(CLOSE_PASS_LEAD_RAD * sign);
     let ahead = Vec2::new(dir.x * co - dir.y * s, dir.x * s + dir.y * co);
     let band = state.preferred_band(c).min(INTERCEPTOR_GUN_STANDOFF);
-    v1::inside_ring_point(near, ahead, band * 0.95, sign)
+    v1::inside_ring_point(near, ahead, band * 0.95, sign, state.math())
 }
 
 #[cfg(test)]

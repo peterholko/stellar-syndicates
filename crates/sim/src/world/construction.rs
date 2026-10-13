@@ -56,6 +56,55 @@ impl World {
         // Work anchors change only on queue transitions. Stable active/waiting
         // jobs do not manufacture a full planetary report on every sim tick.
     }
+
+    /// §construction: cancel a structure order that is still waiting for its
+    /// world's work slot. Only the newest order for that structure on that world
+    /// may go, so no later order is left paid for a tier it no longer reaches.
+    /// The refund is that order's own recipe at its tier, with the same Unstable
+    /// Geology premium `apply_build` charged, back into the system stockpile.
+    pub(super) fn cancel_build(&mut self, owner: PlayerId, system: EntityId, job_id: u64, events: &mut Vec<Event>) {
+        let refuse = |time: f64, reason: &str| Event::new(time, EventPayload::IndustryRejected {
+            owner, system, reason: reason.into() });
+        let Some(index) = self.build_queue.iter().position(|j| j.id == job_id && j.owner == owner && j.system == system) else {
+            events.push(refuse(self.time, "that construction order has already finished or gone"));
+            return;
+        };
+        let job = &self.build_queue[index];
+        let BuildKind::Upgrade { upgrade } = job.what else {
+            events.push(refuse(self.time, "only a structure waiting for its turn can be cancelled"));
+            return;
+        };
+        if !job.is_queued_structure() {
+            events.push(refuse(self.time, "construction has already started, so it can no longer be cancelled"));
+            return;
+        }
+        let body_id = job.body_id;
+        let same = |j: &crate::build::BuildJob| j.system == system && j.body_id == body_id
+            && matches!(j.what, BuildKind::Upgrade { upgrade: u } if u == upgrade);
+        if self.build_queue.iter().any(|j| same(j) && j.id > job_id) {
+            events.push(refuse(self.time, "a later order for the same structure depends on it; cancel that one first"));
+            return;
+        }
+        let Some(sys) = self.systems.iter().find(|s| s.id == system && s.owner == Some(owner)) else {
+            events.push(refuse(self.time, "the system is no longer yours"));
+            return;
+        };
+        let ahead = self.build_queue.iter().filter(|j| same(j) && j.id < job_id).count() as u32;
+        let built = sys.bodies.iter().find(|b| b.id == body_id).map_or(0, |b| b.tier(upgrade));
+        let premium = if sys.trait_ == Some(crate::explore::SystemTrait::UnstableGeology) {
+            crate::explore::UNSTABLE_COST_MULT
+        } else {
+            1.0
+        };
+        let refunded: Vec<(crate::cargo::Commodity, f64)> = crate::build::recipe_for_tier(BuildKind::Upgrade { upgrade }, built + ahead + 1)
+            .costs.iter().map(|(c, units)| (*c, units * premium)).collect();
+        let job = self.build_queue.remove(index);
+        let sys = self.systems.iter_mut().find(|s| s.id == system).unwrap();
+        for (c, units) in &refunded {
+            *sys.stockpile.entry(*c).or_insert(0.0) += units;
+        }
+        events.push(Event::new(self.time, EventPayload::BuildCancelled { owner, system, what: job.what, refunded }));
+    }
 }
 
 #[cfg(test)]
@@ -140,6 +189,70 @@ mod tests {
         let planet = sys.bodies.iter().find(|b| b.id == body).unwrap();
         for kind in [K::Shipyard, K::MiningComplex, K::Warehouse] { assert_eq!(planet.tier(kind), 1); }
         assert_eq!(sys.stockpile[&Commodity::Alloys], paid_alloys, "activation never charges again");
+    }
+
+    fn cancel(w: &mut World, owner: PlayerId, home: EntityId, job_id: u64) -> Vec<Event> {
+        w.step(&[Command::CancelBuild { player_id: owner, system_id: home, job_id }])
+    }
+
+    fn refused(events: &[Event], why: &str) -> bool {
+        events.iter().any(|e| matches!(&e.payload, EventPayload::IndustryRejected { reason, .. } if reason.contains(why)))
+    }
+
+    #[test]
+    fn a_waiting_structure_cancels_with_its_goods_back_and_a_started_one_keeps_building() {
+        let (mut w, owner, home, body) = planet_queue();
+        let stock = |w: &World| { let s = w.systems.iter().find(|s| s.id == home).unwrap();
+            (s.stockpile[&Commodity::Alloys], s.stockpile[&Commodity::Machinery]) };
+        let yard = queue(&mut w, owner, home, body, K::Shipyard);
+        let before = stock(&w);
+        let mine = queue(&mut w, owner, home, body, K::MiningComplex);
+        assert_eq!(stock(&w), (before.0 - 25.0, before.1 - 12.0));
+        let events = cancel(&mut w, owner, home, mine);
+        assert!(!w.build_queue.iter().any(|j| j.id == mine));
+        assert_eq!(stock(&w), before, "the order's goods return to the stockpile");
+        assert!(events.iter().any(|e| matches!(&e.payload, EventPayload::BuildCancelled {
+            what: BuildKind::Upgrade { upgrade: K::MiningComplex }, refunded, .. } if refunded.len() == 2)));
+        // The active job is no longer waiting: it keeps its slot and its goods.
+        let events = cancel(&mut w, owner, home, yard);
+        assert!(w.build_queue.iter().any(|j| j.id == yard));
+        assert!(refused(&events, "already started"));
+        // Another corporation cannot cancel it; nor can a finished order come back.
+        let mut events = Vec::new();
+        w.cancel_build(PlayerId(1), home, yard, &mut events);
+        assert!(w.build_queue.iter().any(|j| j.id == yard) && refused(&events, "finished or gone"));
+        let events = cancel(&mut w, owner, home, mine);
+        assert!(refused(&events, "finished or gone"));
+        assert_eq!(stock(&w), before, "a repeated cancel refunds nothing");
+    }
+
+    #[test]
+    fn only_the_newest_order_for_a_structure_cancels() {
+        let (mut w, owner, home, body) = planet_queue();
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().bodies.iter_mut()
+            .find(|b| b.id == body).unwrap().set_tier(K::Warehouse, 1);
+        queue(&mut w, owner, home, body, K::Shipyard);
+        let first = queue(&mut w, owner, home, body, K::Warehouse);
+        let second = queue(&mut w, owner, home, body, K::Warehouse);
+        let events = cancel(&mut w, owner, home, first);
+        assert!(w.build_queue.iter().any(|j| j.id == first), "the tier-II order still builds on it");
+        assert!(refused(&events, "later order"));
+        cancel(&mut w, owner, home, second);
+        cancel(&mut w, owner, home, first);
+        assert!(!w.build_queue.iter().any(|j| j.id == first || j.id == second));
+    }
+
+    #[test]
+    fn a_cancelled_order_returns_the_unstable_geology_premium_it_paid() {
+        let (mut w, owner, home, body) = planet_queue();
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().trait_ = Some(crate::explore::SystemTrait::UnstableGeology);
+        let alloys = |w: &World| w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Alloys];
+        queue(&mut w, owner, home, body, K::Shipyard);
+        let before = alloys(&w);
+        let mine = queue(&mut w, owner, home, body, K::MiningComplex);
+        assert!((before - alloys(&w) - 25.0 * crate::explore::UNSTABLE_COST_MULT).abs() < 1e-9);
+        cancel(&mut w, owner, home, mine);
+        assert!((alloys(&w) - before).abs() < 1e-9);
     }
 
     #[test]

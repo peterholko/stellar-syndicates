@@ -1,0 +1,160 @@
+{
+  "name": "Mining Belt Station",
+  "triangles": 14536,
+  "renderSections": 2,
+  "sourceComponents": 182,
+  "materials": 2,
+  "embeddedTextures": 3,
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "dimensionsXYZ": [
+    15.6716,
+    3.08,
+    16.175
+  ],
+  "axes": "Y up, -Z forward",
+  "units": "Relative model units; gameplay scale is assigned at integration",
+  "sockets": [
+    {
+      "name": "socket.docking.barge.port",
+      "translation": [
+        -6.537313432835821,
+        0.65,
+        -0.0
+      ],
+      "extras": {
+        "role": "barge-berth",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ],
+        "clearance": {
+          "width": 1.52,
+          "length": 1.92,
+          "approach": "from above or laterally; art berth is not a full ship bounding box"
+        }
+      }
+    },
+    {
+      "name": "socket.docking.barge.starboard",
+      "translation": [
+        6.447761194029851,
+        0.65,
+        -0.0
+      ],
+      "extras": {
+        "role": "barge-berth",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "clearance": {
+          "width": 1.52,
+          "length": 1.92,
+          "approach": "from above or laterally; art berth is not a full ship bounding box"
+        }
+      }
+    },
+    {
+      "name": "socket.docking.hauler",
+      "translation": [
+        0.0,
+        0.2,
+        -9.2
+      ],
+      "extras": {
+        "role": "hauler-loading-berth",
+        "direction": [
+          0.0,
+          0.0,
+          -1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.anchor.1",
+      "translation": [
+        -5.701492537313433,
+        -1.13,
+        -4.925
+      ],
+      "extras": {
+        "role": "anchoring-boom",
+        "direction": [
+          0.0,
+          -1.0,
+          -0.0
+        ]
+      }
+    },
+    {
+      "name": "socket.anchor.2",
+      "translation": [
+        5.701492537313433,
+        -1.13,
+        -4.925
+      ],
+      "extras": {
+        "role": "anchoring-boom",
+        "direction": [
+          0.0,
+          -1.0,
+          -0.0
+        ]
+      }
+    },
+    {
+      "name": "socket.anchor.3",
+      "translation": [
+        -5.701492537313433,
+        -1.13,
+        5.125
+      ],
+      "extras": {
+        "role": "anchoring-boom",
+        "direction": [
+          0.0,
+          -1.0,
+          -0.0
+        ]
+      }
+    },
+    {
+      "name": "socket.anchor.4",
+      "translation": [
+        5.701492537313433,
+        -1.13,
+        5.125
+      ],
+      "extras": {
+        "role": "anchoring-boom",
+        "direction": [
+          0.0,
+          -1.0,
+          -0.0
+        ]
+      }
+    }
+  ],
+  "geometryCounts": {
+    "oreSilos": 6,
+    "bargeBerths": 2,
+    "haulerGantries": 1,
+    "anchoringBooms": 4,
+    "stationKeepingPods": 4,
+    "mainEngines": 0,
+    "guns": 0
+  },
+  "triangleBudget": [
+    10000,
+    16000
+  ],
+  "generator": "Python/NumPy, existing fleet reconstruction workflow; no Blender",
+  "textures": "Native five-view pixels; dedicated bottom projection; continuous cylinder walls; reference-matched ImageGen material swatches on hidden edges and fittings",
+  "optimization": "Static parts merged by material; exact vertex deduplication; 16-bit indices",
+  "note": "Concept reconstruction with standardized orthographic proportions. No gameplay or effects wiring."
+}

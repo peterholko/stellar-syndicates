@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Destroyer · 3D reference model</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0d141e;color:#e6eff7;font:13px system-ui,sans-serif;overflow:hidden}canvas{display:block;width:100vw;height:100vh}header{position:fixed;top:28px;left:32px;right:32px;display:flex;justify-content:space-between;align-items:start;gap:24px;pointer-events:none}header>*{pointer-events:auto}.eyebrow{font-size:10px;letter-spacing:.23em;color:#6f9baa}h1{font-weight:500;letter-spacing:.13em;font-size:24px;margin:8px 0}.sub{color:#8295a8;font-size:12px}nav{display:flex;gap:5px;background:#0b111bcf;border:1px solid #24303d;padding:5px;border-radius:9px;backdrop-filter:blur(12px)}button{border:0;border-radius:5px;background:transparent;color:#91a4b7;padding:9px 12px;cursor:pointer;font:inherit}button:hover{color:#e7f9ff;background:#223342}button.active{color:#b4f4ff;background:#163b48}.tools{position:fixed;bottom:28px;right:32px;display:flex;gap:4px;background:#0b111bdd;border:1px solid #24303d;padding:5px;border-radius:9px}.info{position:fixed;bottom:34px;left:32px;color:#8197aa;font-size:11px;line-height:1.9}.info b{font-weight:500;color:#c5d8e7}.dot{color:#52d9f7;margin:0 9px}#loading{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:20px 25px;background:#132132;border:1px solid #345;border-radius:8px}.capture header,.capture .tools,.capture .info{display:none}@media(max-width:700px){header{left:18px;right:18px;top:20px;flex-direction:column}h1{font-size:20px}nav button{padding:8px}.tools{left:18px;right:auto;bottom:18px}.tools button{padding:7px;font-size:11px}.info{left:18px;bottom:76px;font-size:10px}}
+</style>
+<canvas aria-label="Interactive textured 3D destroyer spaceship"></canvas>
+<header><div><div class="eyebrow">STELLAR SYNDICATES / SHIP STUDY</div><h1>DESTROYER</h1><div class="sub">Textured 3D model · five-view reference</div></div><nav aria-label="Camera views"><button data-view="perspective" class="active">Orbit</button><button data-view="top">Top</button><button data-view="bottom">Bottom</button><button data-view="front">Front</button><button data-view="back">Back</button><button data-view="side">Side</button></nav></header>
+<div class="info"><b>7,208 triangles</b><span class="dot">·</span><span id="render-count">Consolidated materials</span><span class="dot">·</span>Embedded textures<br>Drag to rotate · scroll to zoom · right-drag to pan</div>
+<div class="tools"><button id="spin">Rotate</button><button id="wire">Wireframe</button><button id="unlit">Texture view</button><button id="snapshot">Save PNG</button><button id="download">Download GLB</button></div>
+<div id="loading">Loading textured destroyer…</div>
+<script id="model-data" type="application/octet-stream">__GLB_BASE64__</script>
+<script type="module">__VIEWER_BUNDLE__</script>
+</html>

@@ -1,0 +1,165 @@
+{
+  "recipe": "lod2-ortho-pbr-v1",
+  "ships": {
+    "raider": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/interceptor-lod2.glb",
+      "sourceSha256": "7870f44e505c28c83d60fcb92b5caacfa89febd5b3bd18bbd1034447325dbb4b",
+      "triangles": 1664,
+      "topSha256": "69d084bdae7534ceaa28241c2d2cacec31c38acc60d2fef5c83c4cecca7653a9",
+      "perspectiveSha256": "451ea9c61775b979d66a4aa4eb91ba45074971626decf4c753298d505a47e444",
+      "bottomSha256": "f48dd2aec046e484e1da21747d954991b9ccdb67beb3fe1632547835cc96610e"
+    },
+    "corvette": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/corvette-lod2.glb",
+      "sourceSha256": "50643f38d71e6f21aa71e4540d623cf61da991d00ad63f7e27cc08ee8cc6362a",
+      "triangles": 7020,
+      "topSha256": "fde7b6cf65ace493ac63ff72ee6d2f0955e228d595ce2baaec0a06ea1cb3119f",
+      "perspectiveSha256": "94431370b87c1d662a8a34240c79d7ba6abe00d15e3106747f1d248db1488f06",
+      "bottomSha256": "ddd4677580e53675ab4215615cbe19187e28b57bbe984dbeaed23e54c0f64967"
+    },
+    "destroyer": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/destroyer-lod2.glb",
+      "sourceSha256": "54d85abce51663b2d86e1ab4be581a7ccb82e4b9c2cff6870e3bb0f87e3bfb0c",
+      "triangles": 4780,
+      "topSha256": "3d1db5e9e3d98834c3386aaa4e9641056cd9f3e15232330e9b79b91e355dacc7",
+      "perspectiveSha256": "f762bf9fa089a2d93f00c9a1c6eb28510d0ecf49f0651254e3cad52bef6676b3",
+      "bottomSha256": "fbabe998260101621e094b3d780e291eb3244572a5bf5c4e78fa358be97cd3ab"
+    },
+    "cruiser": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/cruiser-lod2.glb",
+      "sourceSha256": "af03c35126bdd92501889e77c738d5c18123dfaf8a7b0817b2b808de2e308e38",
+      "triangles": 5374,
+      "topSha256": "5475c698a9087de6dd93170590a2f5baf5ee29fcae3998da91a36be472783ab7",
+      "perspectiveSha256": "6da12faae42dfa8d5e64805cbe067cd53d0c89356e4743f4a45a80cec7ec411c",
+      "bottomSha256": "a2d91d6a76ce35bd0fb5761cc65d065056a84864b9f1f4385650565e02082e9e"
+    },
+    "battleship": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/battleship-lod2.glb",
+      "sourceSha256": "c810b3d3d942c1c8da8b02846dcd77a7786a8c55bf1444cf7f8b531de7ddc7e7",
+      "triangles": 11270,
+      "topSha256": "71c19a9ac8046b77bb6c9012350158da3079cd0d76486c6acc5182bd283a55c8",
+      "perspectiveSha256": "f668826db0669f073a8f098e12fcfb1a02e8bd7ce1f1a8a03d65a22a50330f66",
+      "bottomSha256": "fa42b3926ee83285d30564c4b845befdab78ac5ce9d4fae93fc7d3cf2b380274"
+    },
+    "dreadnought": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/dreadnought-lod2.glb",
+      "sourceSha256": "62aef8f980c95de619d170edb14e3506f377608a7d8542162f509ee1381473f5",
+      "triangles": 16036,
+      "topSha256": "bddda9b64c2aa59d031f9ac9945e7270f24fbae3c432394aff42707e3e9bdd9c",
+      "perspectiveSha256": "c4641e19c0230bb30fb2df3717d73f2c835c7e551076ba00870a36228d5db946",
+      "bottomSha256": "74f5f56a2e515a940a276d014db4ee8be1156e236c4b2b497fcb2fe3720432f0"
+    },
+    "titan": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/titan-lod2.glb",
+      "sourceSha256": "2d189d512ce6d9b98b6b71515d2a812aac3daa066ecdb2c1de52caf5d350e8d7",
+      "triangles": 7946,
+      "topSha256": "1daadb0d68cc80865900c5cae8611db3d9e56097b16495da3e8a2d59f4708d74",
+      "perspectiveSha256": "4f877e6a8c3a5935a335e0a5fbfb4d0af115683cd0254a2ab1441e0166e041bd",
+      "bottomSha256": "fd6d05fac97367c9525ade70b52fe67169f3b7837f44189278c4667060cfa3c0"
+    },
+    "scout": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/scout-lod2.glb",
+      "sourceSha256": "387074756c2bc4aa5e507f761fd28b553874c5eb6e3fcdffbf37fc378d1a747f",
+      "triangles": 3330,
+      "topSha256": "13a5706528a4c99a16bfd45420faf295274e7a200fa0b46b9f38aef279a345c1",
+      "perspectiveSha256": "65e47d65281a2611f6cff3d1e980db0c1b83eb775acd1e4eace6fdfd9e152349",
+      "bottomSha256": "e4bae3bcb460fdd5a65df5da85b9b1edcf67631f545cd930b41b55cbcf56f74c"
+    },
+    "colony": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/colony-ship-lod2.glb",
+      "sourceSha256": "0b7fa06b173a9ce4455a6f01f0a2e5b96da4cd6ea81fdf020f5d0fa446d4bcaf",
+      "triangles": 6186,
+      "topSha256": "b5ab6d931cb7da0bb33f66aa808a7cd549330dee2a4b74c9dbacab8f86fc26d9",
+      "perspectiveSha256": "5d721405e18ea9d79013aba494ce487f7eaa9ab4c488a5ec1955843e79ac930c",
+      "bottomSha256": "6d0efa1802dd3036b3a9ba273d9d7bceaa2658b1575e279efe1315eb317cef0f"
+    },
+    "transport": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/troop-transport-lod2.glb",
+      "sourceSha256": "322574af0c2dbc4fdefd7bf3f02a663562ad9e8ed41633537d5780fdebec6a89",
+      "triangles": 6378,
+      "topSha256": "29d60f67bea7fe1a5d1476479c685e76d384ca69dff88d33fd835bd9ee1929d3",
+      "perspectiveSha256": "963a80138e79df54af54d70197827ea6d9d4af6401be083b22ae57b4c8a6250b",
+      "bottomSha256": "b3f75f48e546645b396e9ff4a8792b48eb71242f1ec89fcf1501d97b9058b0d8"
+    },
+    "builder": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/construction-ship-lod2.glb",
+      "sourceSha256": "f6fe90749531f4418d73f18cf7efc418d5662ff9d07f48c8bae19800ebcbbbfe",
+      "triangles": 4688,
+      "topSha256": "e7ad2cb05d233716f0e197caaa5322c6e887e3986e99a73f9b72dc2c3f4452d7",
+      "perspectiveSha256": "fb51ca2771d9a34c94ffc09dd9ca8ddcbc72002c4f26aa1a3e91d34b71b48676",
+      "bottomSha256": "5d7c0d428b43de9e55c8b88c93c273de103cef5ca29e3ef1fc0561521348be52"
+    },
+    "mining_barge": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/mining-barge-lod2.glb",
+      "sourceSha256": "60db092d5a953a4fdb15949f56b7eee845da4e30c344ec3fc2d6a4659147b54b",
+      "triangles": 4970,
+      "topSha256": "13788967e6c60a6326c4c0d21c73cc09f5b968a77a9f59875b4dfbc5f7f4aea3",
+      "perspectiveSha256": "ee674e89193ebfb276c71975f53b88581a7b9e659b1351e709186a65a52086b7",
+      "bottomSha256": "3076ee75ed0e54411dd82ac08510a1175981638931eb9edf99223a727d34f85f"
+    },
+    "mining_belt_station": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/mining-belt-station-lod2.glb",
+      "sourceSha256": "5b0ff427be5116c768d12d9a8a13ead14413f9dcdf20969481fc9bb765c3d9ab",
+      "triangles": 8420,
+      "topSha256": "9e825fd1bd4f15c9b069bb8e86c2918ad94c51e66916813ee371e693a9930daf",
+      "perspectiveSha256": "10104558ee0b63e4c131fda2475178c2e532273df6ee68cde53afdfd121b74a0",
+      "bottomSha256": "bf4eec108173cc126a7e57a78b32b63880c01d6c19e6a7fc8840f85ba9f33a26"
+    },
+    "tiny_freighter": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/tiny-freighter-lod2.glb",
+      "sourceSha256": "167b0775b5c3da34aa6eaea5cf071f4d83e70d56323251cb0af0f1b139d1821e",
+      "triangles": 3624,
+      "topSha256": "74201aeb544f561b6d6372bf53b65e6f20330cf7d4e17201ebf64bfd1dde7e46",
+      "perspectiveSha256": "50bc251905c22ac8698ad60f169a6a00759033578e60770baefc59079c2f8d38",
+      "bottomSha256": "226894b0bc45a759b239593c4fe4dd309c4163885c300dbc621f0e1a83238513"
+    },
+    "small_freighter": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/small-freighter-lod2.glb",
+      "sourceSha256": "21c051ba926e8daca3b68b9e1f1b11aa74c868dd3e980f11d21ad928a2609d25",
+      "triangles": 5506,
+      "topSha256": "baec9a68b46261deafbd0f93dde878ee7204d3729bb5b4a8d096768086e0e9c1",
+      "perspectiveSha256": "608b112db434e3f34bab7a2f90f0034b716171c029fa03a66badd6b0c80360f9",
+      "bottomSha256": "37edfff173d4ff9b6b4a842721c7e116bb55521f5ae4ec72fba60b0e0b896e87"
+    },
+    "convoy": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/medium-freighter-lod2.glb",
+      "sourceSha256": "1e8f612e3a95282769baa78c452100ff63b174c38dbfc1cb29e7b8a95be78c72",
+      "triangles": 8234,
+      "topSha256": "f9443dc1e83b0560fed6301625ebe7ec08860e05848c185f1e5a2079e2ea8c01",
+      "perspectiveSha256": "e645043c49b7c798e793e051c146b7cc05986653245ff6b2b4f77c5b662c9281",
+      "bottomSha256": "2d4b6085a70980055c8a8e6669906b0e59e53fead58869cd0f61609408a73d1a"
+    },
+    "large_freighter": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/large-freighter-lod2.glb",
+      "sourceSha256": "5c5cb24f1da6938edcde756cc5f0332a8e5f6bbc4c9e26870ef2ac1a77d30adf",
+      "triangles": 7984,
+      "topSha256": "b55e59bf4b56393e3985c3a4cbeace91c546e167e56f385c90eb502e364e9530",
+      "perspectiveSha256": "d402c8cbce236b28548cf62e1ac463f4835e5297bfd769066fd166f55c05e549",
+      "bottomSha256": "5058bd16eaff0ec79acca64aa1f8f702a05882106c0af1df9427a637a0565ed5"
+    },
+    "heavy_freighter": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/heavy-freighter-lod2.glb",
+      "sourceSha256": "7c86106824b26414aeb51018d45a73fc1d08eee7cac1c4caf10fb03091a65bab",
+      "triangles": 9192,
+      "topSha256": "b9b0f533046c5efb3fe7176b2dc2c208e3fe0971906f1d6e7d6520f59fc0090f",
+      "perspectiveSha256": "bc06dfb71d7947154095e97d8f318d712babc0bca731837c48c1ebe8f3320b11",
+      "bottomSha256": "9c511d98febf8cf4e60784e752b4ee50159262f88740cdf22f5f5e15c5ecdfaf"
+    },
+    "bulk_freighter": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/bulk-freighter-lod2.glb",
+      "sourceSha256": "5f9ac9343518ed2eed3fbc39fb2bfebbac8d45c4e282fd1528d6ce1c0e0093ab",
+      "triangles": 21442,
+      "topSha256": "f5cfa3902e5a5a672339fdc97fde679894ecfe22f298b5af8cee5409c5913b56",
+      "perspectiveSha256": "a2fc0cb361be4921b5c4936bb922440ad1e5c05b15a018adf8dbc800a0cfcdcd",
+      "bottomSha256": "2395fb8e6a95d8b97efe804abe46505a028157e14d519310e8d063dd44e72fb7"
+    },
+    "freighter": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/authority-freighter-lod2.glb",
+      "sourceSha256": "9a4038f31e548579ca7ad8d1753d0e604da921659852816b8db97d24187468e5",
+      "triangles": 11368,
+      "topSha256": "043cf56f52b3e7c6f6736e88f3372a6c9cf968988080b8822ac5015305f11c39",
+      "perspectiveSha256": "61fd9e47172ef25e5b7a02047bbf8e4ef2c74a52a40ae9283ca9474b21647377",
+      "bottomSha256": "df314738f6ebca833c1396a1cc2d218ecf54ba14717ace9c4821c12ac9bf79a9"
+    }
+  }
+}

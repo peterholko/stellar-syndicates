@@ -1,0 +1,28 @@
+{
+  "model": "heavy-freighter.glb",
+  "sha256": "35560902e9c1b5b20030871d0aa3e884bf6ce2b936b2c310b1c4b9c34277d458",
+  "modelBytes": 2698772,
+  "viewerEmbedsIdenticalGLB": true,
+  "previewViews": [
+    "perspective",
+    "top",
+    "bottom",
+    "front",
+    "back",
+    "side",
+    "front-quarter",
+    "bottom-quarter"
+  ],
+  "previewResolution": [
+    1600,
+    1200
+  ],
+  "glTFValidation": {
+    "errors": 0,
+    "warnings": 0
+  },
+  "surfaceVerificationPassed": true,
+  "pressureHullClosedManifold": true,
+  "browserConsoleWarningsAndErrors": [],
+  "observedDrawCalls": 7
+}

@@ -1,4 +1,5 @@
 import {
+  THEATER_EPILOGUE_ROUNDS,
   theaterAttach,
   theaterAvailable,
   theaterClose,
@@ -17,6 +18,7 @@ import {
   type RoundRecordView,
   type ShipKind,
 } from "../../protocol";
+import { advanceLive, liveStart } from "../../core/derive/liveplay";
 import { liveSimTime } from "../../state";
 import type { CoreContext } from "../types";
 import type { SheetEntry, SheetView } from "./sheets";
@@ -56,11 +58,15 @@ export class MobileBattleTheater {
   private id: string | null = null;
   private round = 0;
   private fraction = 0;
+  /// Rounds of epilogue played past a concluded record's last round.
+  private epilogue = 0;
   private playing = false;
   private live = false;
-  private speed = 4;
+  private speed = 1;
   private lastTs = 0;
   private lastFrontier = -1;
+  /// When the newest round landed (performance.now ms): live playback trails it.
+  private lastArrivalMs = 0;
   private lastViewport = "";
   private readonly withdrawal = new BattleWithdrawPrompt();
 
@@ -117,6 +123,7 @@ export class MobileBattleTheater {
         this.live = false;
         this.playing = !this.playing;
         this.fraction = 0;
+        this.epilogue = 0;
         this.sheets.refresh();
         break;
       case "battle-speed":
@@ -125,6 +132,7 @@ export class MobileBattleTheater {
         this.live = false;
         this.playing = false;
         this.fraction = 0;
+        this.epilogue = 0;
         this.sheets.refresh();
         break;
       case "battle-round": {
@@ -135,6 +143,7 @@ export class MobileBattleTheater {
         this.live = false;
         this.playing = false;
         this.fraction = 0;
+        this.epilogue = 0;
         this.sheets.refresh();
         break;
       }
@@ -161,7 +170,13 @@ export class MobileBattleTheater {
     const height = Math.max(240, Math.floor(rect.height));
     this.lastViewport = `${width}x${height}`;
     theaterAttach(mount, record, this.ctx.state.galaxy?.pirate_id ?? null, { width, height, maxFps: 30 }, this.ctx.state);
-    theaterSetTime(this.round, this.fraction, this.live);
+    this.setTheaterTime();
+  }
+
+  /// Replay time for the theater: the round, its progress, and any epilogue.
+  private setTheaterTime(): void {
+    const t = this.round + Math.min(1, this.fraction) + this.epilogue;
+    theaterSetTime(Math.floor(t), t - Math.floor(t), this.live);
   }
 
   tick(now = performance.now()): void {
@@ -172,22 +187,27 @@ export class MobileBattleTheater {
     const dt = this.lastTs ? Math.min(0.25, (now - this.lastTs) / 1000) : 0;
     this.lastTs = now;
     let changed = false;
+    if (frontier !== this.lastFrontier) {
+      this.lastFrontier = frontier;
+      this.lastArrivalMs = now;
+      changed = true;
+    }
     if (this.live && frontier >= 0) {
       if (this.round < frontier) {
-        const hz = this.ctx.state.tickHz || 30;
-        const window = Math.max(0.2, (record.rounds[this.round + 1].tick - record.rounds[this.round].tick) / hz);
-        this.fraction += dt / window;
-        while (this.fraction >= 1 && this.round < frontier) {
-          this.round++;
-          this.fraction--;
-          changed = true;
-        }
-        if (this.round >= frontier) this.fraction = 0;
+        // At the battle's pace, trailing the newest arrival so a round that
+        // lands a beat late never stops the hulls (liveplay.ts).
+        const head = advanceLive({ round: this.round, frac: this.fraction }, record.rounds, this.ctx.state.tickHz || 30,
+          this.ctx.state.pacingScale, (now - this.lastArrivalMs) / 1000, dt, record.outcome !== null);
+        if (head.round !== this.round) changed = true;
+        this.round = head.round;
+        this.fraction = head.frac;
       } else if (record.outcome !== null) {
+        // The fight is over: play its epilogue (at live pace), then stop.
         this.live = false;
-        this.playing = false;
-        this.speed = 4;
+        this.playing = true;
+        this.speed = 1;
         this.fraction = 0;
+        this.epilogue = 0;
         changed = true;
       }
     } else if (this.playing && frontier >= 0) {
@@ -205,20 +225,24 @@ export class MobileBattleTheater {
       }
       if (this.round >= frontier) {
         this.fraction = 0;
-        this.playing = false;
-        changed = true;
+        // A concluded battle runs a short epilogue past its last record so the
+        // final deaths' breaches, wrecks and debris play out, then stops.
+        const hz = this.ctx.state.tickHz || 30;
+        const lastWindow = frontier > 0 ? Math.max(0.2, (record.rounds[frontier].tick - record.rounds[frontier - 1].tick) / hz) : 0.5;
+        if (record.outcome !== null && this.epilogue < THEATER_EPILOGUE_ROUNDS) {
+          this.epilogue = Math.min(THEATER_EPILOGUE_ROUNDS, this.epilogue + dt * this.speed / lastWindow);
+        } else {
+          this.playing = false;
+          changed = true;
+        }
       }
     }
-    theaterSetTime(this.round, Math.min(1, this.fraction), this.live);
+    this.setTheaterTime();
     const mount = document.getElementById("m-battle-theater");
     if (mount) {
       const rect = mount.getBoundingClientRect();
       const viewport = `${Math.max(240, Math.floor(rect.width))}x${Math.max(240, Math.floor(rect.height))}`;
       if (viewport !== this.lastViewport) this.sync({ id: "battle", props: { id: this.id } });
-    }
-    if (frontier !== this.lastFrontier) {
-      this.lastFrontier = frontier;
-      changed = true;
     }
     if (changed) this.sheets.refresh();
   }
@@ -240,10 +264,11 @@ export class MobileBattleTheater {
       if (record && this.lastFrontier < 0) {
         const frontier = record.rounds.length - 1;
         this.live = record.outcome === null;
-        this.speed = this.live ? 1 : 4;
-        this.round = this.live ? Math.max(0, frontier) : 0;
+        this.speed = 1;
+        this.openAt(record);
         this.playing = !this.live && frontier > 0;
         this.lastFrontier = frontier;
+        this.lastArrivalMs = performance.now();
       }
       if (record?.outcome === null) {
         this.live = true;
@@ -255,13 +280,22 @@ export class MobileBattleTheater {
     this.id = id;
     const frontier = (record?.rounds.length ?? 0) - 1;
     this.live = record?.outcome === null;
-    this.speed = this.live ? 1 : 4;
-    this.round = this.live ? Math.max(0, frontier) : 0;
-    this.fraction = 0;
+    this.speed = 1; // replays open at the battle's own pace
+    this.openAt(record);
     this.playing = !this.live && frontier > 0;
     this.lastTs = 0;
     this.lastFrontier = frontier;
+    this.lastArrivalMs = performance.now();
     this.lastViewport = "";
+  }
+
+  /// A live battle opens a round behind its newest arrival and a little more
+  /// (liveplay.ts); a concluded one at its start.
+  private openAt(record: BattleRecordView | undefined): void {
+    const start = this.live && record ? liveStart(record.rounds, this.ctx.state.tickHz || 30, this.ctx.state.pacingScale)
+      : { round: 0, frac: 0 };
+    this.round = start.round;
+    this.fraction = start.frac;
   }
 
   private record(): BattleRecordView | undefined {
@@ -371,7 +405,7 @@ export class MobileBattleTheater {
       ? `<i class="bv-tick${index < this.round ? " seen" : ""}${index === this.round ? " cur" : ""}"></i>`
       : `<button type="button" class="bv-tick${index < this.round ? " seen" : ""}${index === this.round ? " cur" : ""}" data-mobile-act="battle-round" data-round="${index}" aria-label="Show round ${index + 1}"></button>`).join("");
     if (running) return `<div class="bv-transport m-battle-transport"><div class="bv-scrub">${ticks}<span class="bv-hatch" aria-label="Later rounds have not reached you"></span></div><small>Following arrived light at real battle pace.</small></div>`;
-    const speeds = [1, 4, 16].map((speed) => `<button type="button" class="bv-btn${this.speed === speed ? " on" : ""}" data-mobile-act="battle-speed" data-speed="${speed}">${speed}×</button>`).join("");
+    const speeds = [1, 4].map((speed) => `<button type="button" class="bv-btn${this.speed === speed ? " on" : ""}" data-mobile-act="battle-speed" data-speed="${speed}">${speed}×</button>`).join("");
     return `<div class="bv-transport m-battle-transport"><div class="m-battle-playback"><button type="button" class="bv-btn" data-mobile-act="battle-play">${this.playing ? "❚❚ Pause" : "▶ Play"}</button><span class="bv-speeds">${speeds}</span></div><div class="bv-scrub">${ticks}</div><small>Round ${this.round + 1} of ${record.rounds.length}</small></div>`;
   }
 

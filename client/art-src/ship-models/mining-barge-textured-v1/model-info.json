@@ -1,0 +1,103 @@
+{
+  "name": "Mining Barge",
+  "triangles": 7816,
+  "renderSections": 2,
+  "sourceComponents": 112,
+  "materials": 2,
+  "embeddedTextures": 3,
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "dimensionsXYZ": [
+    13.1865,
+    3.97,
+    18.745
+  ],
+  "axes": "Y up, -Z forward",
+  "units": "Relative model units; gameplay scale is assigned at integration",
+  "sockets": [
+    {
+      "name": "socket.mining.port",
+      "translation": [
+        -4.774193548387097,
+        1.16,
+        -9.45
+      ],
+      "extras": {
+        "role": "mining-beam",
+        "direction": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "localForward": "-Z"
+      }
+    },
+    {
+      "name": "socket.engine.port",
+      "translation": [
+        -3.6129032258064515,
+        0.34,
+        9.325
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.mining.starboard",
+      "translation": [
+        4.774193548387097,
+        1.16,
+        -9.45
+      ],
+      "extras": {
+        "role": "mining-beam",
+        "direction": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "localForward": "-Z"
+      }
+    },
+    {
+      "name": "socket.engine.starboard",
+      "translation": [
+        3.6129032258064515,
+        0.34,
+        9.325
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "geometryCounts": {
+    "miningArms": 2,
+    "cutterEmitters": 2,
+    "coveredHoppers": 1,
+    "bridges": 1,
+    "mainEngines": 2,
+    "guns": 0
+  },
+  "triangleBudget": [
+    5000,
+    8000
+  ],
+  "generator": "Python/NumPy, existing fleet reconstruction workflow; no Blender",
+  "textures": "Native five-view pixels; dedicated bottom projection; continuous cylinder walls; reference-matched ImageGen material swatches on hidden edges and fittings",
+  "optimization": "Static parts merged by material; exact vertex deduplication; 16-bit indices",
+  "note": "Concept reconstruction with standardized orthographic proportions. No gameplay or effects wiring."
+}

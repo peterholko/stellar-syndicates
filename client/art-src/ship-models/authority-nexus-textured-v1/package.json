@@ -1,0 +1,15 @@
+{
+  "name": "stellar-authority-nexus-model",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:viewer": "node build_viewer.mjs",
+    "validate": "node validate.mjs",
+    "test": "node test_asset.mjs && node test_wormhole.mjs && node test_traffic.mjs && node test_disabled.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "gltf-validator": "2.0.0-dev.3.10",
+    "three": "0.180.0"
+  }
+}

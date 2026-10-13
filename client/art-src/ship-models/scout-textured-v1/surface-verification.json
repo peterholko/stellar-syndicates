@@ -1,0 +1,16 @@
+{
+  "ship": "scout",
+  "triangles": 8896,
+  "texturedTriangles": 1906,
+  "ventralTriangles": 508,
+  "checks": {
+    "allSurfacesAndTexturedUVsHaveArea": true,
+    "ventralProjectionPresent": true,
+    "engineCount": true,
+    "turretCount": true,
+    "threeEmbeddedTextures": true,
+    "gltfValidatorClean": true
+  },
+  "problems": [],
+  "passed": true
+}

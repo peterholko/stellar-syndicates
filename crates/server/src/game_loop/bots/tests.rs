@@ -17,7 +17,8 @@ fn advance(game: &mut GameLoop, seconds: f64) {
 fn eight_bots_join_an_eight_player_galaxy_with_normal_starts() {
     let g = game(8, 8);
     assert_eq!(g.world.config.max_players, 8);
-    assert_eq!(g.world.systems.len(), 104);
+    // 60 full + 8 homes + 52 sparse, plus each home's six-system neighbourhood.
+    assert_eq!(g.world.systems.len(), 104 + 8 * sim::galaxy::HOME_NEIGHBOURS);
     assert_eq!(g.world.players.len(), 8);
     assert_eq!(g.bots.len(), 8);
     assert_eq!(g.sessions.connection_count(), 0);
@@ -29,12 +30,13 @@ fn eight_bots_join_an_eight_player_galaxy_with_normal_starts() {
         assert!((home.population() - 0.002).abs() < 1e-6);
         assert_eq!(home.tier(K::MiningComplex), 0);
         assert_eq!(home.tier(K::Shipyard), 0);
+        assert_eq!(home.tier(K::CommandCenter), 1);
         assert_eq!(corp.research.completed.len(), 0);
         let own: Vec<_> = g.world.fleets.values().filter(|f| f.owner == owner).collect();
-        assert_eq!(own.len(), 3);
+        assert_eq!(own.len(), 2, "§charter v3: a Tiny Freighter and an Interceptor");
         assert_eq!(own.iter().map(|f| f.count(H::TinyFreighter)).sum::<u32>(), 1);
         assert_eq!(own.iter().map(|f| f.count(H::Raider)).sum::<u32>(), 1);
-        assert_eq!(own.iter().map(|f| f.count(H::Scout)).sum::<u32>(), 1);
+        assert_eq!(own.iter().map(|f| f.count(H::Scout)).sum::<u32>(), 0);
         assert_eq!(own.iter().map(|f| f.cargo_capacity()).sum::<u32>(), 50);
     }
 }
@@ -61,6 +63,25 @@ fn every_bot_starts_developing_without_a_socket() {
             "{owner}: a guard either remains assigned or reacts to a threat; status={}, fleets={:?}",
             bot.status, g.world.fleets.values().filter(|f| f.owner==owner).map(|f|(f.id,&f.order,f.fuel)).collect::<Vec<_>>());
     }
+}
+
+#[test]
+fn bots_price_command_upgrades_and_respect_headquarters_research() {
+    let g = game(2, 1);
+    let mut p = g.bot_observation(PlayerId(BOT_ID_BASE)).unwrap();
+    let project = p.structure(K::CommandCenter, 2).unwrap();
+    let costs = p.project_costs(project);
+    assert_eq!(costs[&C::Alloys], 40.0);
+    assert_eq!(costs[&C::Machinery], 12.0);
+    assert_eq!(costs[&C::Electronics], 8.0);
+    p.home.system.set_tier(K::CommandCenter, 2);
+    assert!(p.structure(K::CommandCenter, 3).is_none());
+    p.research.completed.insert("mat_prefab_construction".into());
+    let costs = p.project_costs(p.structure(K::CommandCenter, 3).unwrap());
+    assert_eq!(costs[&C::Alloys], 120.0);
+    assert_eq!(costs[&C::Polymers], 20.0);
+    p.home.system.set_tier(K::CommandCenter, 3);
+    assert!(p.structure(K::CommandCenter, 4).is_none());
 }
 
 #[test]
@@ -158,6 +179,8 @@ fn cargo_mass_limits_dispatch_and_low_fuel_cannot_send_a_one_unit_export() {
     let owner = PlayerId(BOT_ID_BASE);
     let mut p = g.bot_observation(owner).unwrap();
     let mut freighter = p.own().find(|f| f.kind == H::TinyFreighter).unwrap().clone();
+    // §fuel-overhaul: price the full-speed (Deuterium) regime.
+    freighter.transit = Some(sim::ship::TransitMode::Full);
     let dest = freighter.pos + Vec2::new(100_000.0, 0.0);
     freighter.fuel = Some(52.5);
     let limit = p.freight_limit(&freighter, dest);
@@ -241,12 +264,14 @@ fn strategic_hull(p: &Observation, id: u64, kind: H, count: u32) -> GhostView {
     f.composition = Some(vec![crate::protocol::CompCount { kind, count }]);
     f.pos = p.home.system.pos; f.vel = Vec2::ZERO; f.docked = Some(p.capital.to_string());
     f.fuel = Some(10_000.0); f.fuel_capacity = Some(10_000.0); f.damage = Some(0.0);
+    f.uranium = Some(10_000.0); f.uranium_capacity = Some(10_000.0);
     f.captain = None; f.guard_target = None; f.defend_system = None; f.industry = None;
     f.cargo_manifest.clear(); f.stalled = false; f.supplied = true; f.age = 0.0;
     f.mission_profile = Some(sim::doctrine::MissionProfile {
         priority: sim::doctrine::TargetPriority::Balanced,
         screening: sim::doctrine::ScreeningRole::ProtectTransports,
         withdrawal: sim::doctrine::DamageWithdrawal::Hull50,
+        formation: sim::doctrine::Formation::Automatic,
     });
     f
 }
@@ -254,11 +279,12 @@ fn strategic_hull(p: &Observation, id: u64, kind: H, count: u32) -> GhostView {
 fn strategic_ready() -> (Bot, Observation) {
     let (bot, mut p) = planning_picture();
     p.account.as_mut().unwrap().credits = 1_000_000.0;
-    p.home.system.stockpile.insert(C::Fuel, 100_000.0);
+    p.home.system.stockpile.insert(C::Deuterium, 100_000.0);
     p.home.system.stockpile.insert(C::Provisions, 200.0);
     p.home.system.set_tier(K::MiningComplex, 1);
     p.home.system.set_tier(K::Academy, 1);
     p.home.system.set_tier(K::Shipyard, 2);
+    p.home.system.set_tier(K::UraniumMill, 1);
     p.exported = true; p.expansion_unlocked = true;
     p.research.completed.extend(["prop_bunkerage".into(), "prop_drive_tuning".into()]);
     p.sites = vec![p.home.clone()];
@@ -337,7 +363,7 @@ fn midgame_construction_can_choose_a_tier_three_goal() {
         b.structures.insert(K::MiningComplex, 2);
     }
     p.home.system.stockpile.clear();
-    p.home.system.stockpile.insert(C::Fuel, 100_000.0);
+    p.home.system.stockpile.insert(C::Deuterium, 100_000.0);
     p.ghosts = sim::ship::ALL_SHIP_KINDS.into_iter().filter(|h| h.is_buildable())
         .enumerate().map(|(i, h)| strategic_hull(&p, 9200 + i as u64, h, 100)).collect();
     let escorts = p.own().filter(|f| f.kind.is_player_freighter()).count() + 2;
@@ -469,7 +495,7 @@ fn midgame_territorial_orders_require_reported_war_and_respect_treaties() {
     let owner = PlayerId(123);
     let pos = p.cc + Vec2::new(5_000.0, 0.0);
     p.military_sites.push(warfare::MilitarySite { id: EntityId(9422), pos, owner: Some(owner),
-        blockade: None, intel: sim::IntelSnapshot { defense_tier: 0, shipyard_tier: 0,
+        blockade: None, intel: sim::IntelSnapshot { station_level: 0, defense_tier: 0, shipyard_tier: 0,
             enclave_tier: 0, garrison_tier: 1, observed_at: p.now, pos } });
     p.relations.insert(owner, sim::diplomacy::RelationState::NonAggression);
     assert!(bot.military(&p).is_none());
@@ -528,8 +554,9 @@ fn midgame_a_remote_depot_does_not_budget_for_the_entire_home_navy() {
     assert!(p.uses_local_port(&p.ghosts[0]));
     let remote = p.at_site(&colony);
     assert!(!remote.uses_local_port(&p.ghosts[0]));
-    assert_eq!(remote.fuel_target(), 20.0);
-    assert!(p.fuel_target() > remote.fuel_target());
+    // §fuel-overhaul: a Titan burns Deuterium; the remote depot keeps none for it.
+    assert_eq!(remote.fuel_target_of(C::Deuterium), 0.0);
+    assert!(p.fuel_target_of(C::Deuterium) > remote.fuel_target_of(C::Deuterium));
 }
 
 #[test]
@@ -572,7 +599,7 @@ fn midgame_scouts_refresh_stale_intelligence_but_abort_a_threatened_approach() {
     p.ghosts = vec![scout.clone()];
     let pos = p.cc + Vec2::new(50_000.0, 0.0);
     p.military_sites.push(warfare::MilitarySite { id: EntityId(9531), pos, owner: None, blockade: None,
-        intel: sim::IntelSnapshot { defense_tier: 1, shipyard_tier: 0, enclave_tier: 1, garrison_tier: 0, observed_at: 0.0, pos } });
+        intel: sim::IntelSnapshot { station_level: 0, defense_tier: 1, shipyard_tier: 0, enclave_tier: 1, garrison_tier: 0, observed_at: 0.0, pos } });
     assert!(matches!(bot.scouts(&p), Some(Command::MoveShip { .. } | Command::JumpShip { .. })));
     let mission = bot.reconnaissance[&scout.id].clone();
     assert!(mission.point.distance(pos) < sim::ship::SCOUT_INTEL_RANGE);
@@ -608,11 +635,11 @@ fn midgame_troops_wait_for_reported_orbital_control_and_campaigns_end_at_peace()
     let id = EntityId(9552); let owner = PlayerId(123);
     let pos = p.cc + Vec2::new(5_000.0, 0.0);
     p.military_sites.push(warfare::MilitarySite { id, pos, owner: Some(owner), blockade: None,
-        intel: sim::IntelSnapshot { defense_tier: 0, shipyard_tier: 0, enclave_tier: 0, garrison_tier: 1, observed_at: p.now, pos } });
+        intel: sim::IntelSnapshot { station_level: 0, defense_tier: 0, shipyard_tier: 0, enclave_tier: 0, garrison_tier: 1, observed_at: p.now, pos } });
     p.relations.insert(owner, sim::diplomacy::RelationState::War);
     bot.campaign = Some(warfare::Campaign { target: warfare::Target::System(id), leader: leader.id, since: p.now, deadline: p.now + 50_000.0 });
     assert!(bot.military(&p).is_none(), "do not send marines because a blockade order was merely issued");
-    p.military_sites[0].blockade = Some(sim::galaxy::Blockade { by: p.owner, since: p.now, siege_since: Some(p.now) });
+    p.military_sites[0].blockade = Some(sim::galaxy::Blockade { by: p.owner, since: p.now, held_since: Some(p.now), siege_since: Some(p.now), anchored: false, catch: 0.0, catch_stabilized: 0.0 });
     assert!(matches!(bot.military(&p), Some(Command::MoveShip { ship_id, dest, .. }) if ship_id == troop.id && dest == pos));
     bot.waits.clear(); p.relations.insert(owner, sim::diplomacy::RelationState::Ceasefire);
     assert!(!matches!(bot.military(&p), Some(Command::BlockadeSystem { .. })));
@@ -663,12 +690,94 @@ fn spending_reservations_survive_saves_and_wait_for_account_light() {
     assert!(old.valid(p.owner, p.now));
 }
 
+/// The opening stall (Oct 2026): every market action holds the market for a
+/// light round trip, and the wanted list ran in commodity order, so an
+/// Agroplex's Biomass buffer took every slot while the Shipyard waited on
+/// Machinery. Project shortfalls go first; food lines import nothing.
+#[test]
+fn project_shortfalls_buy_before_buffer_top_ups_and_food_lines_import_nothing() {
+    let (mut bot, mut p) = planning_picture();
+    let body = p.home.system.bodies[0].id;
+    p.home.system.stockpile.insert(C::Machinery, 0.0);
+    p.home.system.stockpile.insert(C::Deuterium, 150.0);
+    p.home.system.stockpile.insert(C::Provisions, 150.0);
+    bot.development = Some(DevelopmentGoal { project: Project { what: BuildKind::Upgrade { upgrade: K::Shipyard }, body },
+        target: p.home.system.tier(K::Shipyard) + 1, since: p.now });
+    let wanted = BTreeMap::from([(C::Biomass, 245.0), (C::Machinery, 20.0)]);
+    let cmd = bot.market(&p, &wanted);
+    assert!(matches!(cmd, Some(Command::MarketBuy { commodity: C::Machinery, .. })), "{cmd:?}");
+
+    // A staffed Agroplex asks the buffers for nothing: food has its own target.
+    for b in &mut p.home.system.bodies {
+        b.structures.insert(K::Agroplex, 1);
+        b.assignments.insert(K::Agroplex, sim::production::Assignment { workers: 1, ..Default::default() });
+    }
+    let mut buffers = BTreeMap::new();
+    bot.industry_buffers(&p, None, &mut buffers);
+    assert!(buffers.get(&C::Biomass).is_none_or(|n| *n == 0.0), "{buffers:?}");
+}
+
+/// The charter's survey stop goes to a one-way Survey Probe, which a
+/// picket nearby doesn't hold back; one probe per stop until its report.
+#[test]
+fn the_charter_survey_stop_gets_a_probe_even_past_a_picket() {
+    let (mut bot, mut p) = strategic_ready();
+    p.founding_stage = sim::FoundingStage::SurveyCandidates;
+    let (stop, pos) = *p.chart.iter().find(|(id, _)| *id != p.home.system.id && !p.surveyed.contains(id)).unwrap();
+    p.survey_candidates = vec![stop];
+    let mut picket = strategic_hull(&p, 9950, H::Corvette, 1);
+    picket.own = false; picket.owner = PlayerId(77); picket.pos = pos + Vec2::new(8_000.0, 0.0);
+    p.ghosts.push(picket);
+    assert!(p.threatened(pos), "a Scout would hold back");
+    assert_eq!(bot.charter_probe_due(&p), Some(stop));
+    let probe = strategic_hull(&p, 9951, H::SurveyProbe, 1);
+    p.ghosts.push(probe.clone());
+    let cmd = bot.scouts(&p);
+    assert!(matches!(cmd, Some(Command::SurveySystem { fleet_id, system_id, .. }) if fleet_id == probe.id && system_id == stop), "{cmd:?}");
+    assert_eq!(bot.charter_probe_due(&p), None, "no second probe while the first one's report is due");
+}
+
+/// The first shipment counts only if an escorted Freighter carries Ferrite
+/// Ore: the ore goes first, ahead of dearer Provisions. Until it leaves,
+/// Authority doesn't take the ore, unless the colony's storage is full.
+#[test]
+fn the_first_shipment_carries_ferrite_ore_and_authority_leaves_it_alone() {
+    let (mut bot, mut p) = planning_picture();
+    p.founding_stage = sim::FoundingStage::PrepareExport;
+    p.exported = false;
+    p.home.system.stockpile.insert(C::MetallicOre, 120.0);
+    p.home.system.stockpile.insert(C::Provisions, 400.0);
+    p.home.system.stockpile.insert(C::Deuterium, 100.0);
+    let id = p.own().find(|g| g.kind.is_player_freighter()).unwrap().id;
+    for g in &mut p.ghosts {
+        g.fuel = g.fuel_capacity;
+        if g.kind == H::Raider { g.guard_target = Some(id); }
+    }
+    let cmd = bot.routes(&p, &BTreeMap::new());
+    let Some(Command::SetFreightRoute { route: Some(route), .. }) = cmd else { panic!("{cmd:?}") };
+    let home = &route.stops[0];
+    assert!(home.load.get(&C::MetallicOre).is_some_and(|n| *n > 0), "{:?}", home.load);
+
+    bot.waits.clear();
+    assert!(bot.export_surplus(&p, &BTreeMap::new(), false).is_none_or(|c|
+        !matches!(c, Command::BookFreightIn { commodity: C::MetallicOre, .. })), "ore waits for the Freighter");
+    bot.waits.clear();
+    let cmd = bot.export_surplus(&p, &BTreeMap::new(), true);
+    assert!(matches!(cmd, Some(Command::BookFreightIn { commodity: C::Provisions, .. })),
+        "the bigger pile clears first: {cmd:?}");
+    p.home.system.stockpile.insert(C::Provisions, 0.0);
+    bot.waits.clear();
+    let cmd = bot.export_surplus(&p, &BTreeMap::new(), true);
+    assert!(matches!(cmd, Some(Command::BookFreightIn { commodity: C::MetallicOre, units, .. }) if units > 0 && units <= 70),
+        "full storage still ships the ore, keeping one load: {cmd:?}");
+}
+
 #[test]
 fn critical_fuel_precedes_project_materials_and_rescue_preserves_runway() {
     let (mut bot, mut p) = planning_picture();
-    p.home.system.stockpile.insert(C::Fuel, 0.0);
-    let wanted = BTreeMap::from([(C::Fuel, 80.0), (C::Machinery, 100.0)]);
-    assert!(matches!(bot.market(&p, &wanted), Some(Command::MarketBuy { commodity: C::Fuel, .. })));
+    p.home.system.stockpile.insert(C::Deuterium, 0.0);
+    let wanted = BTreeMap::from([(C::Deuterium, 80.0), (C::Machinery, 100.0)]);
+    assert!(matches!(bot.market(&p, &wanted), Some(Command::MarketBuy { commodity: C::Deuterium, .. })));
     let ship = p.ghosts.iter_mut().find(|g| g.own).unwrap();
     ship.stalled = true; ship.docked = None; ship.fuel = Some(0.0);
     bot.waits.clear(); bot.commitments.clear();
@@ -682,18 +791,19 @@ fn critical_fuel_precedes_project_materials_and_rescue_preserves_runway() {
 }
 
 #[test]
-fn staffed_refining_reserves_its_fuel_delivery_lead_time() {
+fn a_staffed_deuterium_consumer_reserves_its_delivery_lead_time() {
+    // §fuel-overhaul: refining burns no fuel; the Antimatter Plant eats Deuterium.
     let (_, mut p) = planning_picture();
-    let before = p.fuel_target();
-    p.home.system.bodies[0].structures.insert(K::Smelter, 1);
-    p.home.system.bodies[0].assignments.insert(K::Smelter, sim::production::Assignment {
+    let before = p.fuel_target_of(C::Deuterium);
+    p.home.system.bodies[0].structures.insert(K::AntimatterPlant, 1);
+    p.home.system.bodies[0].assignments.insert(K::AntimatterPlant, sim::production::Assignment {
         workers: 1, ..Default::default()
     });
-    let refining = p.fuel_target();
-    assert!(refining > before * 1.5, "fuel reserve must cover industry as well as tanks: {before} -> {refining}");
-    assert!(refining <= p.home.system.storage_cap() * 0.6);
-    p.home.system.bodies[0].assignments.get_mut(&K::Smelter).unwrap().workers = 0;
-    assert_eq!(p.fuel_target(), before, "an idle line is not a fuel consumer");
+    let industry = p.fuel_target_of(C::Deuterium);
+    assert!(industry > before, "the fuel reserve covers industry as well as tanks: {before} -> {industry}");
+    assert!(industry <= p.home.system.storage_cap() * 0.3);
+    p.home.system.bodies[0].assignments.get_mut(&K::AntimatterPlant).unwrap().workers = 0;
+    assert_eq!(p.fuel_target_of(C::Deuterium), before, "an idle line is not a fuel consumer");
 }
 
 #[test]
@@ -702,14 +812,17 @@ fn a_tiny_ore_circuit_profit_depends_on_cruise_and_return_mass_counts() {
     let f = p.own().find(|g| g.kind.is_player_freighter()).unwrap();
     let guard = p.own().find(|g| g.kind == H::Raider).unwrap();
     let exports = BTreeMap::from([(C::MetallicOre, 50)]);
+    let mut full = f.clone();
+    full.transit = Some(sim::ship::TransitMode::Full);
+    let f = &full;
     let margin = p.route_margin(f, &exports, &BTreeMap::new(), Some(guard));
     assert!(margin < 0.0, "Full-speed basic ore is not worth a fuel-loss circuit: {margin}");
     assert!(p.leg(f, p.hub, p.home.system.pos, 50) > p.leg(f, p.hub, p.home.system.pos, 0));
-    let mut economy = f.clone();
-    economy.transit = Some(sim::ship::TransitMode::Economy);
-    let economy_margin = p.route_margin(&economy, &exports, &BTreeMap::new(), Some(guard));
-    assert!(economy_margin > 0.0, "10% trip fuel makes the starter guarded ore route viable: {economy_margin}");
-    eprintln!("50-unit Tiny ore circuit: Full margin {margin:.0} Cr; Economy {economy_margin:.0} Cr at base prices (conservative fuel + escort included)");
+    let mut slow = f.clone();
+    slow.transit = Some(sim::ship::TransitMode::Slow);
+    let slow_margin = p.route_margin(&slow, &exports, &BTreeMap::new(), Some(guard));
+    assert!(slow_margin > 0.0, "Slow on Uranium makes the starter guarded ore route viable: {slow_margin}");
+    eprintln!("50-unit Tiny ore circuit: Full margin {margin:.0} Cr; Slow {slow_margin:.0} Cr at base prices (conservative fuel + escort included)");
 }
 
 #[test]
@@ -729,8 +842,8 @@ fn thirteen_credits_can_recover_through_a_small_paid_export() {
 fn recovery_can_liquidate_optional_warehouse_goods_but_not_operating_fuel() {
     let (mut bot, mut p) = planning_picture();
     p.account.as_mut().unwrap().credits = 13.0;
-    p.account.as_mut().unwrap().warehouse = BTreeMap::from([(C::Fuel, 40), (C::Machinery, 10)]);
-    assert!(matches!(bot.market(&p, &BTreeMap::from([(C::Fuel, 40.0), (C::Machinery, 20.0)])),
+    p.account.as_mut().unwrap().warehouse = BTreeMap::from([(C::Deuterium, 40), (C::Machinery, 10)]);
+    assert!(matches!(bot.market(&p, &BTreeMap::from([(C::Deuterium, 40.0), (C::Machinery, 20.0)])),
         Some(Command::MarketSell { commodity: C::Machinery, units: 10, .. })));
 }
 
@@ -740,18 +853,18 @@ fn profitable_owned_routes_have_mixed_manifests_and_a_real_escort() {
     let (mut bot, mut p) = planning_picture();
     p.home.system.stockpile.insert(C::TitaniumOre, 50.0);
     p.home.system.stockpile.insert(C::MetallicOre, 50.0);
-    p.home.system.stockpile.insert(C::Fuel, 0.0);
-    p.account.as_mut().unwrap().warehouse = BTreeMap::from([(C::Fuel, 10), (C::Machinery, 5)]);
+    p.home.system.stockpile.insert(C::Deuterium, 0.0);
+    p.account.as_mut().unwrap().warehouse = BTreeMap::from([(C::Deuterium, 10), (C::Machinery, 5)]);
     p.home.system.stockpile.insert(C::Machinery, 0.0);
     let id = p.own().find(|g| g.kind.is_player_freighter()).unwrap().id;
     for g in &mut p.ghosts {
         g.fuel = g.fuel_capacity;
         if g.kind == H::Raider { g.guard_target = Some(id); }
     }
-    let wanted = BTreeMap::from([(C::Fuel, 10.0), (C::Machinery, 10.0)]);
+    let wanted = BTreeMap::from([(C::Deuterium, 10.0), (C::Machinery, 10.0)]);
     let cmd = bot.routes(&p, &wanted).expect("viable owned circuit");
     let Command::SetFreightRoute { route: Some(route), .. } = cmd else { panic!("expected route") };
-    assert_eq!(route.transit, sim::ship::TransitMode::Economy);
+    assert_eq!(route.transit, sim::ship::TransitMode::Slow, "freight flies Slow until Fusion Freight");
     assert!(!route.repeat && route.escort.is_some() && route.fuel_reserve > 0.0);
     assert_eq!(route.stops.len(), 2, "the starter must not require advanced multi-stop research");
     assert!(route.stops.last().unwrap().load.is_empty(), "finish selling before planning the return load");
@@ -761,7 +874,7 @@ fn profitable_owned_routes_have_mixed_manifests_and_a_real_escort() {
     f.docked = Some("hub".into()); f.pos = p.hub;
     bot.waits.clear();
     let Some(Command::SetFreightRoute { route: Some(back), .. }) = bot.routes(&p, &wanted) else { panic!("return leg") };
-    assert_eq!(back.stops[0].load.get(&C::Fuel), Some(&10));
+    assert_eq!(back.stops[0].load.get(&C::Deuterium), Some(&10));
     assert!(back.stops[0].load.contains_key(&C::Machinery));
     assert!(back.stops[1].load.is_empty());
     for leg in [&route, &back] {
@@ -785,20 +898,20 @@ fn profitable_owned_routes_have_mixed_manifests_and_a_real_escort() {
 fn a_dry_route_cannot_block_its_own_emergency_fuel_import() {
     use sim::industry::{FleetIndustry, FreightPort, FreightRoute, FreightRun, RoutePhase, RouteStop};
     let (mut bot, mut p) = planning_picture();
-    p.home.system.stockpile.insert(C::Fuel, 0.0);
-    p.account.as_mut().unwrap().warehouse.insert(C::Fuel, 50);
+    p.home.system.stockpile.insert(C::Deuterium, 0.0);
+    p.account.as_mut().unwrap().warehouse.insert(C::Deuterium, 50);
     let f = p.ghosts.iter_mut().find(|g| g.kind.is_player_freighter()).unwrap();
     f.fuel = Some(0.0);
     f.industry = Some(FleetIndustry::Route { run: FreightRun {
         shopping_spent: 0.0,
         route: FreightRoute { shopping_budget: None, name: "Fuel circuit".into(), transit: sim::ship::TransitMode::Full, stops: vec![RouteStop {
-            port: FreightPort::Hub, load: BTreeMap::from([(C::Fuel, 50)]), unload: BTreeMap::new(), sell: false,
+            port: FreightPort::Hub, load: BTreeMap::from([(C::Deuterium, 50)]), unload: BTreeMap::new(), sell: false,
         }], fuel_reserve: 1.0, escort: None, repeat: true },
         stop: 0, phase: RoutePhase::Fuel, remaining_load: BTreeMap::new(), remaining_unload: BTreeMap::new(),
         visits: 1, hold: Some("Waiting for fuel and arrival reserve".into()),
     } });
-    assert!(matches!(bot.market(&p, &BTreeMap::from([(C::Fuel, 50.0)])),
-        Some(Command::BookFreightOut { commodity: C::Fuel, units: 50, .. })));
+    assert!(matches!(bot.market(&p, &BTreeMap::from([(C::Deuterium, 50.0)])),
+        Some(Command::BookFreightOut { commodity: C::Deuterium, units: 50, .. })));
 }
 
 #[test]
@@ -810,7 +923,7 @@ fn an_old_route_completion_is_not_counted_again_while_its_replacement_travels() 
     f.docked = Some(p.home.system.id.to_string());
     f.industry = Some(FleetIndustry::Route { run: FreightRun {
         shopping_spent: 0.0,
-        route: FreightRoute { shopping_budget: None, name: "Home / Market".into(), transit: sim::ship::TransitMode::Economy,
+        route: FreightRoute { shopping_budget: None, name: "Home / Market".into(), transit: sim::ship::TransitMode::Slow,
             stops: vec![], fuel_reserve: 0.0, escort: None, repeat: false },
         stop: 1, phase: RoutePhase::Complete, remaining_load: BTreeMap::new(),
         remaining_unload: BTreeMap::new(), visits: 1, hold: None,
@@ -880,7 +993,7 @@ fn expansion_requires_stability_and_uses_only_reported_prospects() {
     p.research.completed.extend(["prop_bunkerage".into(), "prop_drive_tuning".into()]);
     p.home.system.set_tier(K::Academy, 1);
     p.home.system.set_tier(K::MiningComplex, 1);
-    p.home.system.stockpile.insert(C::Fuel, 500.0);
+    p.home.system.stockpile.insert(C::Deuterium, 500.0);
     p.home.system.stockpile.insert(C::Provisions, 50.0);
     let mut scout = p.own().next().unwrap().clone();
     scout.id = EntityId(9999); scout.kind = H::Scout;
@@ -957,6 +1070,206 @@ fn scouts_prioritize_the_founders_candidate_reports_without_ignoring_threats() {
 }
 
 #[test]
+fn bots_send_their_mining_barge_to_the_charters_belt() {
+    let (mut bot, mut p) = planning_picture();
+    let mut barge = p.own().next().unwrap().clone();
+    barge.kind = H::MiningBarge;
+    barge.composition = Some(vec![crate::protocol::CompCount { kind: H::MiningBarge, count: 1 }]);
+    barge.industry = None; barge.guard_target = None; barge.docked = None;
+    let (system, body, ore) = (EntityId(9811), 3, sim::Commodity::MetallicOre);
+    p.belt_lesson = Some((system, body, ore, p.home.system.pos + Vec2::new(20_000.0, 0.0)));
+    p.ghosts = vec![barge.clone()];
+    p.founding_stage = sim::FoundingStage::BuildBarge;
+    assert!(bot.belt_lesson(&p).is_none(), "the barge is built first");
+    p.founding_stage = sim::FoundingStage::MineBelt;
+    assert!(matches!(bot.belt_lesson(&p), Some(Command::MineBelt { fleet_id, system_id, body_id, ore: o, .. })
+        if fleet_id == barge.id && system_id == system && body_id == body && o == ore));
+    let mut working = barge;
+    working.industry = Some(sim::industry::FleetIndustry::Mine {
+        system, body, ore, pocket: false, to_station: false, mined: 1.0, fraction: 0.0, status: "mining".into() });
+    p.ghosts = vec![working.clone()];
+    assert!(planning_picture().0.belt_lesson(&p).is_none(), "a barge already at work is left alone");
+
+    // §charter v3: the last step brings a load home and unloads it.
+    p.founding_stage = sim::FoundingStage::HaulOre;
+    assert!(planning_picture().0.belt_lesson(&p).is_none(), "an empty hold keeps mining");
+    let mut loaded = working;
+    loaded.cargo_manifest = vec![crate::protocol::CargoView { commodity: ore, units: 40 }];
+    p.ghosts = vec![loaded.clone()];
+    let home = p.home.system.pos;
+    assert!(matches!(planning_picture().0.belt_lesson(&p), Some(Command::MoveShip { ship_id, dest, .. })
+        if ship_id == loaded.id && dest == home));
+    loaded.industry = None;
+    loaded.docked = Some(p.home.system.id.to_string());
+    p.ghosts = vec![loaded.clone()];
+    assert!(matches!(planning_picture().0.belt_lesson(&p), Some(Command::SystemUnload { fleet_id, system, .. })
+        if fleet_id == loaded.id && system == p.home.system.id));
+}
+
+/// §belts phase 6: a belt as an arrived report shows it.
+fn belt_site(system: EntityId, body: u32, pos: Vec2, owner: Option<PlayerId>, ores: Vec<(C, bool, f64, Option<f64>)>,
+    prospected: u32) -> belts::BeltSite {
+    belts::BeltSite { system, body, pos, owner, ores, prospected }
+}
+
+#[test]
+fn after_the_charter_bots_prospect_the_home_belt_then_keep_their_barges_mining() {
+    use sim::industry::FleetIndustry;
+    let (mut bot, mut p) = strategic_ready();
+    p.founding_stage = sim::FoundingStage::Complete;
+    let (home, home_pos) = (p.home.system.id, p.home.system.pos);
+    let barge = strategic_hull(&p, 9901, H::MiningBarge, 1);
+    p.ghosts = vec![barge.clone()];
+    p.belts = vec![belt_site(home, 7, home_pos, Some(p.owner), vec![(C::CrystallineOre, false, 0.25, None)], 0)];
+    assert!(matches!(bot.belt_work(&p), Some(Command::ProspectBelt { fleet_id, system_id, body_id: 7, .. })
+        if fleet_id == barge.id && system_id == home), "the home belt is prospected first");
+
+    // Prospected twice and a Cuprite pocket found: the pocket beats the belt's ore.
+    p.belts[0].prospected = 2;
+    p.belts[0].ores.push((C::CupriteOre, true, 0.30, Some(3_000.0)));
+    assert!(matches!(strategic_ready().0.belt_work(&p), Some(Command::MineBelt { fleet_id, system_id, ore: C::CupriteOre, pocket: true, .. })
+        if fleet_id == barge.id && system_id == home));
+
+    // A barge full at a remote belt comes home, and unloads once docked.
+    let mut full = barge.clone();
+    full.docked = None;
+    full.pos = home_pos + Vec2::new(20_000.0, 0.0);
+    full.industry = Some(FleetIndustry::Mine { system: EntityId(4242), body: 3, ore: C::MetallicOre, pocket: false,
+        to_station: false, mined: 150.0, fraction: 0.0, status: "full".into() });
+    full.cargo_manifest = vec![crate::protocol::CargoView { commodity: C::MetallicOre, units: 150 }];
+    p.ghosts = vec![full.clone()];
+    assert!(matches!(strategic_ready().0.belt_work(&p), Some(Command::MoveShip { ship_id, dest, .. })
+        if ship_id == full.id && dest == home_pos));
+    full.industry = None;
+    full.docked = Some(home.to_string());
+    full.pos = home_pos;
+    p.ghosts = vec![full.clone()];
+    assert!(matches!(strategic_ready().0.belt_work(&p), Some(Command::SystemUnload { fleet_id, system, .. })
+        if fleet_id == full.id && system == home));
+
+    // Nothing of this runs during the charter's own barge lesson.
+    p.founding_stage = sim::FoundingStage::MineBelt;
+    assert!(strategic_ready().0.belt_work(&p).is_none());
+}
+
+/// §power: a planet whose demand outruns its base and plant gets a plant
+/// (on that planet, before most other work), its burn joins the fuel
+/// buffers, and a planet past a tier IV plant sends research to fusion.
+#[test]
+fn bots_power_their_short_planets_and_fuel_the_plants() {
+    let (bot, mut p) = strategic_ready();
+    // Past the opening's necessities (it ends with a Scout).
+    let scout = strategic_hull(&p, 9911, H::Scout, 1);
+    p.ghosts.push(scout);
+    let busy = p.home.system.bodies[0].id;
+    for b in &mut p.home.system.bodies {
+        b.grid = sim::power::Grid { demand: if b.id == busy { 6.4 } else { 1.0 }, supply: 3.0, power: 0.0, ..Default::default() };
+        b.grid.power = (3.0 / b.grid.demand).min(1.0);
+    }
+    assert_eq!(p.power_shortfall().map(|(body, _)| body), Some(busy), "the short planet, not the one on its base");
+    let project = p.power_project().expect("a plant for the short planet");
+    assert_eq!((project.what, project.body), (BuildKind::Upgrade { upgrade: K::PowerPlant }, busy));
+    assert_eq!(bot.strategic_project(&p), Some(project), "power comes before other development");
+
+    // A dry plant is a fuel problem: no new building, and the burn is stocked.
+    // §fuel-overhaul: a Solar Array never runs dry; a Fusion Plant (III) does.
+    for b in &mut p.home.system.bodies {
+        if b.id == busy {
+            b.set_tier(K::PowerPlant, 3);
+            b.grid.no_fuel = true;
+            b.grid.burn = 0.02;
+        }
+    }
+    assert!(p.power_project().is_none());
+    let mut wanted = BTreeMap::new();
+    bot.industry_buffers(&p, None, &mut wanted);
+    assert!(wanted.get(&C::Deuterium).copied().unwrap_or(0.0) > 0.0, "plant fuel joins the buffers");
+
+    // Past a tier IV plant, research goes to fusion.
+    for b in &mut p.home.system.bodies {
+        if b.id == busy {
+            b.set_tier(K::PowerPlant, 4);
+            b.grid = sim::power::Grid { demand: 60.0, supply: 51.0, power: 0.85, ..Default::default() };
+        }
+    }
+    p.available_research = vec![sim::power::FUSION_RESEARCH.to_string()];
+    assert_eq!(bot.next_research(&p, &BTreeMap::new()), Some(sim::power::FUSION_RESEARCH));
+}
+
+/// The home belt always hides a pocket; a remote belt with richer ore
+/// usually hides nothing. Our own belt gets its passes first.
+#[test]
+fn barges_prospect_the_home_belt_before_richer_remote_ore() {
+    let (mut bot, mut p) = strategic_ready();
+    p.founding_stage = sim::FoundingStage::Complete;
+    let (home, home_pos) = (p.home.system.id, p.home.system.pos);
+    let barge = strategic_hull(&p, 9902, H::MiningBarge, 1);
+    p.ghosts = vec![barge];
+    p.belts = vec![
+        belt_site(EntityId(4242), 3, home_pos + Vec2::new(15_000.0, 0.0), None, vec![(C::CupriteOre, false, 0.5, None)], 1),
+        belt_site(home, 7, home_pos, Some(p.owner), vec![(C::CrystallineOre, false, 0.25, None)], 1),
+    ];
+    assert!(matches!(bot.belt_work(&p), Some(Command::ProspectBelt { system_id, body_id: 7, .. }) if system_id == home),
+        "one pass isn't enough at home");
+    // With its pocket found, the home belt's search is over.
+    p.belts[1].ores.push((C::CupriteOre, true, 0.30, Some(3_000.0)));
+    assert!(!matches!(strategic_ready().0.belt_work(&p), Some(Command::ProspectBelt { body_id: 7, .. })));
+
+    // Worked dry at home, the barge takes new work rather than idling.
+    p.belts[1].ores.last_mut().unwrap().3 = Some(0.0);
+    p.ghosts[0].industry = Some(sim::industry::FleetIndustry::Mine { system: home, body: 7, ore: C::CupriteOre, pocket: true,
+        to_station: false, mined: 3_000.0, fraction: 0.0, status: "depleted".into() });
+    assert!(matches!(strategic_ready().0.belt_work(&p), Some(Command::MineBelt { pocket: false, .. })),
+        "a depleted pocket at home leaves the barge free for the belt's ore");
+}
+
+#[test]
+fn bots_research_build_and_anchor_a_station_then_run_a_freighter_to_it() {
+    use sim::industry::{Anchor, AnchorPhase, FleetIndustry, FreightPort};
+    let (bot, mut p) = strategic_ready();
+    p.founding_stage = sim::FoundingStage::Complete;
+    let home = p.home.system.id;
+    let (belt, belt_pos) = (EntityId(4242), p.home.system.pos + Vec2::new(20_000.0, 0.0));
+    let barge = strategic_hull(&p, 9901, H::MiningBarge, 1);
+    p.ghosts = vec![barge.clone()];
+    p.belts = vec![belt_site(belt, 3, belt_pos, None, vec![(C::CupriteOre, false, 0.2, None)], 1)];
+    assert!(p.wants_station(), "barges at work and an unowned belt in reach");
+    p.available_research = vec!["mat_belt_stations".into()];
+    assert_eq!(bot.next_research(&p, &BTreeMap::new()), Some("mat_belt_stations"));
+    p.research.completed.insert("mat_belt_stations".into());
+    assert!(bot.fleet_needs(&p).iter().any(|(k, n, _)| *k == H::MiningBeltStation && *n == 1));
+
+    // A built station at home anchors at that belt.
+    let station = strategic_hull(&p, 9902, H::MiningBeltStation, 1);
+    p.ghosts = vec![barge.clone(), station.clone()];
+    assert!(matches!(strategic_ready().0.belt_work(&p), Some(Command::AnchorStation { fleet_id, system_id, body_id: 3, .. })
+        if fleet_id == station.id && system_id == belt));
+
+    // Anchored, with a barge cutting there: more barges, and a freighter's run.
+    let mut anchored = station.clone();
+    anchored.anchor = Some(Anchor { system: belt, body: 3, phase: AnchorPhase::Anchored, since: 0.0 });
+    anchored.docked = None;
+    anchored.pos = belt_pos;
+    let mut cutting = barge.clone();
+    cutting.docked = None;
+    cutting.pos = belt_pos;
+    cutting.industry = Some(FleetIndustry::Mine { system: belt, body: 3, ore: C::CupriteOre, pocket: false,
+        to_station: true, mined: 40.0, fraction: 0.0, status: "mining".into() });
+    let freighter = strategic_hull(&p, 9903, H::Convoy, 1);
+    p.ghosts = vec![cutting, anchored.clone(), freighter.clone()];
+    assert_eq!(p.barge_need(), 3);
+    let mut hauling = strategic_ready().0;
+    let command = hauling.belt_work(&p);
+    assert!(matches!(&command, Some(Command::SetFreightRoute { fleet_id, route: Some(r), .. })
+        if *fleet_id == freighter.id && r.repeat && r.stops[0].port == FreightPort::Station { id: anchored.id }
+            && r.stops[0].load.contains_key(&C::CupriteOre) && r.stops[1].port == FreightPort::System { id: home }),
+        "{command:?}");
+    assert_eq!(hauling.belt_haulers.get(&freighter.id), Some(&anchored.id));
+    assert!(hauling.routes(&p, &BTreeMap::new()).is_none_or(|c| !matches!(c,
+        Command::SetFreightRoute { fleet_id, .. } if fleet_id == freighter.id)), "the Hub trade leaves the hauler alone");
+}
+
+#[test]
 fn colony_goals_end_on_settlement_reports_or_a_closed_founding_gate() {
     let (mut bot, mut p) = planning_picture();
     let goal = DevelopmentGoal { project: Project { what: BuildKind::Ship { ship: H::Colony },
@@ -991,7 +1304,7 @@ fn pirate_held_colony_candidates_change_only_when_the_scout_report_arrives() {
     assert!(g.bot_observation(owner).unwrap().prospects.iter().any(|s| s.id == id));
     let delay = sim::transit::delay(pos, cc, g.world.config.c);
     let at = g.world.time;
-    g.world.players.get_mut(&owner).unwrap().intel.insert(id, sim::IntelSnapshot {
+    g.world.players.get_mut(&owner).unwrap().intel.insert(id, sim::IntelSnapshot { station_level: 0,
         defense_tier: 4, shipyard_tier: 0, enclave_tier: 2, garrison_tier: 0, observed_at: at, pos,
     });
     g.world.record_information();
@@ -1013,7 +1326,7 @@ fn pirate_held_colony_candidates_change_only_when_the_scout_report_arrives() {
 fn redirected_colony_hulls_refuel_instead_of_waiting_in_open_space() {
     let (mut bot, mut p) = planning_picture();
     p.expansion_unlocked = true;
-    p.home.system.stockpile.insert(C::Fuel, 500.0);
+    p.home.system.stockpile.insert(C::Deuterium, 500.0);
     let mut colony = p.own().next().unwrap().clone();
     colony.kind = H::Colony;
     colony.composition = Some(vec![crate::protocol::CompCount { kind: H::Colony, count: 1 }]);
@@ -1130,13 +1443,173 @@ fn full_storage_exports_surplus_before_buying_more_imports() {
         Some(Command::BookFreightIn { commodity: C::MetallicOre, sell_on_arrival: true, .. })));
 }
 
+/// §fuel-overhaul: Freight Frames, then Fusion Freight, ahead of the ordinary scoring.
+#[test]
+fn fuel_logistics_lead_the_research_order() {
+    let (bot, mut p) = planning_picture();
+    p.available_research = ["mat_enrichment", "prop_line_fusion_freight", "weap_fire_control", "prop_freight_frames"]
+        .map(String::from).to_vec();
+    for id in ["prop_freight_frames", "prop_line_fusion_freight"] {
+        assert_eq!(bot.next_research(&p, &BTreeMap::new()), Some(id));
+        p.research.completed.insert(id.into());
+        p.available_research.retain(|a| a != id);
+    }
+    assert!(matches!(bot.next_research(&p, &BTreeMap::new()), Some("mat_enrichment" | "weap_fire_control")),
+        "then the ordinary scoring");
+}
+
+/// §fuel: a refinery only pays beside home Volatiles, and a fuel shortage
+/// never holds the fuel line that would end it.
+#[test]
+fn a_fuel_line_is_built_through_a_fuel_shortage_but_only_beside_volatiles() {
+    let (bot, mut p) = strategic_ready();
+    for b in &mut p.home.system.bodies { b.deposits.retain(|d| d.resource != C::Volatiles && d.resource != C::Helium3Ice); }
+    p.home.system.bodies[0].deposits.push(sim::galaxy::Deposit {
+        resource: C::MetallicOre, richness: 1.0, reserves: None, accessibility: 1.0,
+    });
+    assert_ne!(bot.role(&p), strategy::Role::Fuel);
+    assert!(bot.structure_value(&p, K::FuelRefinery) <= 20.0, "imported Volatiles save no freight");
+    p.home.system.bodies[0].deposits.push(sim::galaxy::Deposit {
+        resource: C::Volatiles, richness: 0.5, reserves: None, accessibility: 1.0,
+    });
+    assert_eq!(bot.structure_value(&p, K::VolatileHarvester), 150.0);
+    assert!(bot.structure_value(&p, K::FuelRefinery) <= 20.0, "nothing to refine yet");
+    p.home.system.bodies[0].set_tier(K::VolatileHarvester, 1);
+    assert_eq!(bot.structure_value(&p, K::FuelRefinery), 150.0);
+
+    for (c, n) in [(C::Alloys, 500.0), (C::Machinery, 500.0), (C::Polymers, 500.0), (C::Electronics, 500.0)] {
+        p.home.system.stockpile.insert(c, n);
+    }
+    p.home.system.stockpile.insert(C::Deuterium, 0.0);
+    assert!(p.fuel_critical());
+    let refinery = p.structure(K::FuelRefinery, 1).expect("Bunkerage unlocks the refinery");
+    assert!(bot.may_build(&p, refinery), "the cure for a fuel shortage is never held by it");
+    let scout = p.ship(H::Scout, p.count(H::Scout) + 1).expect("a Scout fits the yard");
+    assert!(!bot.may_build(&p, scout), "optional work still waits for Fuel");
+}
+
+/// §fuel: a homebound freighter buys the Fuel its home lacks at the Hub and
+/// carries it home; a dry home sends an idle hull for it.
+#[test]
+fn freighters_bring_the_missing_fuel_home_from_the_hub() {
+    use sim::industry::{FleetIndustry, FreightPort, FreightRoute, FreightRun, RoutePhase, RouteStop};
+    let (mut bot, mut p) = planning_picture();
+    p.exported = true;
+    p.home.system.stockpile = BTreeMap::from([(C::Deuterium, 0.0)]);
+    let id = p.own().find(|g| g.kind.is_player_freighter()).unwrap().id;
+    for g in &mut p.ghosts {
+        g.fuel = g.fuel_capacity;
+        if g.kind == H::Raider { g.guard_target = Some(id); }
+    }
+    let wanted = BTreeMap::from([(C::Deuterium, 200.0)]);
+
+    // The charter's first shipment keeps its Freighter home.
+    p.exported = false;
+    assert!(bot.routes(&p, &wanted).is_none(), "no empty run before the first shipment");
+    p.exported = true;
+
+    // Nothing worth selling at home, yet the dry home sends its hull.
+    let Some(Command::SetFreightRoute { route: Some(out), .. }) = bot.routes(&p, &wanted) else { panic!("fuel run") };
+    assert_eq!(out.stops[1].port, FreightPort::Hub);
+    assert!(out.shopping_budget.is_none(), "the buying happens on the return leg");
+    assert!(!bot.ready("fuel-run", p.now), "one run per round trip");
+
+    // At the Hub, with an empty warehouse, the hold is filled by buying.
+    bot.waits.clear();
+    let f = p.ghosts.iter_mut().find(|f| f.id == id).unwrap();
+    f.docked = Some("hub".into()); f.pos = p.hub;
+    let Some(Command::SetFreightRoute { route: Some(back), .. }) = bot.routes(&p, &wanted) else { panic!("return leg") };
+    let fuel = back.stops[0].load.get(&C::Deuterium).copied().unwrap_or(0);
+    assert!(fuel > 0 && fuel <= 50, "a Tiny's hold of Fuel: {fuel}");
+    assert_eq!(back.stops[1].unload.get(&C::Deuterium), Some(&fuel));
+    assert!(back.shopping_budget.is_some_and(|b| b >= fuel as f64 * p.price(C::Deuterium)));
+    assert!(!bot.ready("market", p.now) && !bot.commitments.is_empty(), "the cash is held until the account report");
+    let mut g = game(2, 1);
+    g.bots.get_mut(&p.owner).unwrap().next_think = 1e9;
+    g.pending.push(Command::SetFreightRoute { player_id: p.owner, fleet_id: id, route: Some(back.clone()) });
+    advance(&mut g, 10.0);
+    assert!(matches!(&g.world.fleets[&id].industry, Some(FleetIndustry::Route { run }) if run.route == back),
+        "the shopping leg passes the simulation's route check");
+
+    // A hold already bound for the Hub covers a small lack: no second run.
+    let (mut bot, mut p) = planning_picture();
+    p.exported = true;
+    p.home.system.stockpile = BTreeMap::from([(C::Deuterium, 0.0)]);
+    let id = p.own().find(|g| g.kind.is_player_freighter()).unwrap().id;
+    for g in &mut p.ghosts {
+        g.fuel = g.fuel_capacity;
+        if g.kind == H::Raider { g.guard_target = Some(id); }
+    }
+    let mut bound = strategic_hull(&p, 9701, H::SmallFreighter, 1);
+    bound.docked = None; bound.pos = (p.home.system.pos + p.hub) * 0.5;
+    let stop = |port, sell| RouteStop { port, load: BTreeMap::new(), unload: BTreeMap::new(), sell };
+    bound.industry = Some(FleetIndustry::Route { run: FreightRun {
+        route: FreightRoute { shopping_budget: None, name: "Home / Market".into(), transit: sim::ship::TransitMode::Slow,
+            stops: vec![stop(FreightPort::System { id: p.home.system.id }, false), stop(FreightPort::Hub, true)],
+            fuel_reserve: 1.0, escort: None, repeat: false },
+        stop: 1, phase: RoutePhase::Travelling, remaining_load: BTreeMap::new(), remaining_unload: BTreeMap::new(),
+        visits: 0, hold: None, shopping_spent: 0.0,
+    } });
+    p.ghosts.push(bound);
+    assert_eq!(p.hub_bound_room(), 150);
+    assert!(bot.routes(&p, &BTreeMap::from([(C::Deuterium, 100.0)])).is_none(), "the bound Small Freighter brings it");
+    assert!(matches!(bot.routes(&p, &wanted), Some(Command::SetFreightRoute { fleet_id, .. }) if fleet_id == id),
+        "a bigger lack still sends the idle hull");
+}
+
+/// §fuel: the target is held whole and refilled at three quarters, well
+/// clear of the critical half.
+#[test]
+fn fuel_refills_well_above_the_critical_line() {
+    let (mut bot, mut p) = planning_picture();
+    p.home.system.stockpile.insert(C::Uranium, 40.0);
+    let target = p.fuel_target_of(C::Deuterium);
+    assert!(bot.desired_stock(&p, None)[&C::Deuterium] >= target, "the whole target, not the critical half");
+    let wanted = BTreeMap::from([(C::Deuterium, target)]);
+    p.home.system.stockpile.insert(C::Deuterium, (target * 0.7).floor());
+    assert!(!p.fuel_critical());
+    assert!(matches!(bot.market(&p, &wanted), Some(Command::MarketBuy { commodity: C::Deuterium, .. })),
+        "not critical, yet refilled");
+    bot.waits.clear(); bot.commitments.clear();
+    p.home.system.stockpile.insert(C::Deuterium, (target * 0.8).ceil());
+    assert!(!matches!(bot.market(&p, &wanted), Some(Command::MarketBuy { commodity: C::Deuterium, .. })));
+}
+
+/// §fuel: clearing full storage books the biggest pile, not the first ore lot.
+#[test]
+fn clearing_full_storage_ships_the_biggest_pile_first() {
+    let (mut bot, mut p) = planning_picture();
+    p.home.system.stockpile.clear();
+    let cap = p.home.system.storage_cap();
+    assert!(cap >= 500.0);
+    p.home.system.stockpile.insert(C::MetallicOre, 120.0);
+    p.home.system.stockpile.insert(C::Provisions, cap - 120.0);
+    assert!(matches!(bot.export_surplus(&p, &BTreeMap::new(), true),
+        Some(Command::BookFreightIn { commodity: C::Provisions, units, .. }) if units > 120));
+}
+
+/// §fuel: Freight Frames bring one bigger hold to a fleet of Tiny Freighters.
+#[test]
+fn freight_frames_bring_one_small_freighter_to_a_tiny_fleet() {
+    let (bot, mut p) = strategic_ready();
+    p.ghosts = vec![strategic_hull(&p, 9601, H::TinyFreighter, 1), strategic_hull(&p, 9602, H::TinyFreighter, 1)];
+    let small = |bot: &Bot, p: &Observation| bot.fleet_needs(p).iter()
+        .find(|(k, _, _)| *k == H::SmallFreighter).map(|(_, n, _)| *n);
+    assert_eq!(small(&bot, &p), None, "not researched");
+    p.research.completed.insert("prop_freight_frames".into());
+    assert_eq!(bot.preferred_freighter(&p), H::SmallFreighter);
+    assert_eq!(small(&bot, &p), Some(1));
+    p.ghosts.push(strategic_hull(&p, 9603, H::SmallFreighter, 1));
+    assert_eq!(small(&bot, &p), Some(1), "one is enough");
+}
+
 #[test]
 fn development_goal_survives_a_new_bottleneck_until_its_completion_report() {
     let (mut bot, mut p) = planning_picture();
     bot.refresh_development(&p);
     let goal = bot.development.clone().unwrap();
     assert_eq!(goal.project.what, BuildKind::Upgrade { upgrade: K::MiningComplex });
-    p.home.system.stockpile.insert(C::Fuel, 0.0);
+    p.home.system.stockpile.insert(C::Deuterium, 0.0);
     bot.refresh_development(&p);
     assert_eq!(bot.project(&p), Some(goal.project));
     let BuildKind::Upgrade { upgrade } = goal.project.what else { unreachable!() };
@@ -1204,6 +1677,12 @@ fn workforce_budget_keeps_science_staffed_without_diluting_it_into_idle_factorie
 #[test]
 #[ignore = "multi-seed normal-economy balance run; release recommended"]
 fn multi_seed_bot_balancing_report() {
+    // BOT_BALANCE_TRACE=<filter> (e.g. "server::game_loop::bots=debug") prints
+    // every bot command and decision change, for diagnosing a stuck opening.
+    if let Ok(filter) = std::env::var("BOT_BALANCE_TRACE") {
+        let _ = tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::new(filter))
+            .with_writer(std::io::stderr).with_ansi(false).try_init();
+    }
     let minutes: u32 = std::env::var("BOT_BALANCE_MINUTES").ok().and_then(|s| s.parse().ok()).unwrap_or(24 * 60);
     let report_every: u32 = std::env::var("BOT_BALANCE_REPORT_MINUTES").ok()
         .and_then(|s| s.parse().ok()).unwrap_or(60).max(1);
@@ -1256,6 +1735,11 @@ fn multi_seed_bot_balancing_report() {
                     *metrics.starved_minutes.entry(owner).or_default() += 1;
                 }
                 if p.sites.len() > 1 { metrics.first_colony.entry(owner).or_insert(minute); }
+                if g.world.systems.iter().filter(|s| s.owner == Some(owner))
+                    .any(|s| s.bodies.iter().any(|b| b.grid.power < 0.999)) {
+                    *metrics.brownout_minutes.entry(owner).or_default() += 1;
+                }
+                if p.fuel_critical() { *metrics.fuel_critical_minutes.entry(owner).or_default() += 1; }
             }
             metrics.minute = minute;
             metrics.elapsed_wall_s = previous_wall + started.elapsed().as_secs_f64();
@@ -1273,7 +1757,7 @@ fn multi_seed_bot_balancing_report() {
             for (&owner, bot) in &g.bots {
                 let p = g.bot_observation(owner).unwrap();
                 eprintln!("seed={seed} minute={minute} bot={} cash={:.0} fuel={:.1} hulls={} scouts={} surveys={} colonies={} routes={} stranded={} mine={} yard={} academy={} research={} commands={} status={}",
-                    bot.slot + 1, p.account.as_ref().map_or(0.0, |a| a.credits), p.stock(C::Fuel),
+                    bot.slot + 1, p.account.as_ref().map_or(0.0, |a| a.credits), p.stock(C::Deuterium),
                     p.own().count(), p.count(H::Scout), p.surveyed.len().saturating_sub(1), p.sites.len().saturating_sub(1),
                     p.own().filter(|g| matches!(g.industry, Some(sim::industry::FleetIndustry::Route { .. }))).count(),
                     p.own().filter(|g| g.stalled).count(), p.home.system.tier(K::MiningComplex), p.home.system.tier(K::Shipyard),
@@ -1317,6 +1801,61 @@ fn multi_seed_bot_balancing_report() {
                         serde_json::json!({ "id": b.id, "structures": b.structures, "assignments": b.assignments })).collect::<Vec<_>>()
                 })).collect::<Vec<_>>());
                 eprintln!("progress={progress}");
+                // §belts phase 6: what each kind of mining earned, at base
+                // prices, per sim hour so far; and how prospecting went.
+                let mining = &g.world.players[&owner].mining;
+                let hours = (minute as f64 / 60.0).max(1e-9);
+                let value = |book: &BTreeMap<C, f64>| book.iter().map(|(c, n)| n * sim::market::base_price(*c)).sum::<f64>();
+                let stations = g.world.fleets.values().filter(|f| f.owner == owner && f.contains(H::MiningBeltStation));
+                eprintln!("belts={}", serde_json::json!({
+                    "seed": seed, "minute": minute, "bot": bot.slot + 1,
+                    "barges": g.world.fleets.values().filter(|f| f.owner == owner).map(|f| f.count(H::MiningBarge)).sum::<u32>(),
+                    "stations": stations.clone().map(|f| serde_json::json!({
+                        "anchor": f.anchor.map(|a| a.phase), "hold": f.cargo_units() })).collect::<Vec<_>>(),
+                    "per_hour": {
+                        "barges": value(&mining.barge) / hours,
+                        "belt_colonies": value(&mining.belt_colony) / hours,
+                        "planet_colonies": value(&mining.planet_colony) / hours,
+                        "pockets": value(&mining.pocket) / hours,
+                    },
+                    "units": { "barges": &mining.barge, "pockets": &mining.pocket },
+                    "prospecting": { "passes": mining.prospect_passes, "found": mining.pockets_found,
+                        "strikes": mining.strikes,
+                        "find_rate": mining.pockets_found as f64 / mining.prospect_passes.max(1) as f64 },
+                    "station_hauled": mining.station_hauled,
+                }));
+                // §power: every planet with a grid, and what its plants burn.
+                let planets: Vec<_> = g.world.systems.iter().filter(|s| s.owner == Some(owner))
+                    .flat_map(|s| s.bodies.iter().filter(|b| b.grid.demand > 0.0 || b.tier(K::PowerPlant) > 0)
+                        .map(move |b| serde_json::json!({ "system": s.id, "body": b.name, "demand": b.grid.demand,
+                            "supply": b.grid.supply, "power": b.grid.power, "plant": b.tier(K::PowerPlant),
+                            "burn_per_h": b.grid.burn * 3600.0, "fuel": sim::power::plant_fuel(b.tier(K::PowerPlant)) })))
+                    .collect();
+                eprintln!("power={}", serde_json::json!({
+                    "seed": seed, "minute": minute, "bot": bot.slot + 1, "planets": planets,
+                    "brownout_minutes": metrics.brownout_minutes.get(&owner).copied().unwrap_or(0),
+                }));
+                // §fuel: the home's Fuel against its target, what is on the way,
+                // and the fuel line (research, home Volatiles, refinery, bigger holds).
+                let wanted = bot.desired_stock(&p, bot.project(&p));
+                let researched: Vec<_> = ["prop_freight_frames", "prop_line_fusion_freight", "prop_bunkerage"].into_iter()
+                    .filter(|id| p.research.has(id)).collect();
+                let per_fuel = |fuel: C| serde_json::json!({
+                    "stock": p.stock(fuel), "target": p.fuel_target_of(fuel),
+                    "inbound": p.inbound(fuel), "carried_home": p.carried_home(fuel),
+                    "lacking": bot.fuel_lacking(&p, &wanted, fuel),
+                });
+                eprintln!("fuel={}", serde_json::json!({
+                    "seed": seed, "minute": minute, "bot": bot.slot + 1,
+                    "uranium": per_fuel(C::Uranium), "deuterium": per_fuel(C::Deuterium),
+                    "critical": p.fuel_critical(),
+                    "critical_minutes": metrics.fuel_critical_minutes.get(&owner).copied().unwrap_or(0),
+                    "hub_bound_room": p.hub_bound_room(), "mill": p.home.system.tier(K::UraniumMill),
+                    "researched": researched,
+                    "home_volatiles": p.home.system.bodies.iter().any(|b| b.deposits.iter().any(|d| d.resource == C::Volatiles)),
+                    "harvester": p.home.system.tier(K::VolatileHarvester), "refinery": p.home.system.tier(K::FuelRefinery),
+                    "freighters": p.own().filter(|f| f.kind.is_player_freighter()).map(|f| f.kind).collect::<Vec<_>>(),
+                }));
                 if minute == minutes {
                     if detail {
                         let project = bot.project(&p);
@@ -1340,6 +1879,41 @@ fn multi_seed_bot_balancing_report() {
                                 "fuel": f.fuel, "guard": f.guard_target,
                             })).collect::<Vec<_>>(),
                         }));
+                    }
+                    // Why an idle freighter at home isn't sent: the route gates.
+                    let wanted = bot.desired_stock(&p, bot.project(&p));
+                    for fleet in p.own().filter(|g| g.kind.is_player_freighter()) {
+                        let limit = p.safe_load(fleet, p.home.system.pos, p.hub);
+                        let exports = p.exports(&wanted, limit);
+                        let escort = p.own().find(|g| g.guard_target == Some(fleet.id));
+                        let units: u32 = exports.values().sum();
+                        eprintln!("freighter={} bot={} dock={:?} limit={limit} exports={exports:?} margin={:.0} exported={} cycles={} \
+                            fuel={:?} leg={:.2} reserve={:.2} escort_fuel={:?} escort_leg={:.2} cash={:.0} operating_reserve={:.0}",
+                            fleet.id, bot.slot + 1, fleet.docked, p.route_margin(fleet, &exports, &BTreeMap::new(), escort),
+                            p.exported, bot.trade_cycles, fleet.fuel, p.leg(fleet, fleet.pos, p.hub, units), p.arrival_reserve(fleet),
+                            escort.and_then(|g| g.fuel), escort.map_or(0.0, |g| p.leg(g, fleet.pos, p.hub, 0) + p.arrival_reserve(g)),
+                            bot.cash(&p), p.operating_reserve());
+                    }
+                    // Why Authority bookings to home are refused.
+                    let truth = &g.world.players[&owner];
+                    eprintln!("freight_gate bot={} blockaded_believed={} blockade={:?} freight_suspended={} standing={:.1} \
+                        warehouse_truth={:?} warehouse_seen={:?} credits={:.0}",
+                        bot.slot + 1, g.world.believed_blockaded(p.home.system.id, g.world.hub, g.world.time),
+                        g.world.systems.iter().find(|s| s.id == p.home.system.id).map(|s| &s.blockade),
+                        sim::tca::charter_status(truth.tca_standing).freight_suspended(), truth.tca_standing,
+                        truth.warehouse, p.account.as_ref().map(|a| &a.warehouse), truth.credits);
+                    for entry in g.timeline.digest(owner).0.iter().rev().take(12) {
+                        eprintln!("timeline bot={} t={:.0} {}", bot.slot + 1, entry.at_time, entry.text);
+                    }
+                    // Why a charter survey candidate isn't being surveyed.
+                    for id in p.survey_candidates.iter().filter(|id| !p.surveyed.contains(id)) {
+                        let Some(&(_, pos)) = p.chart.iter().find(|(s, _)| s == id) else { continue; };
+                        let hostile = p.ghosts.iter().filter(|g| !g.own && !g.ally && !g.owner.is_tca() && g.kind.is_combatant())
+                            .min_by(|a, b| a.pos.distance(pos).total_cmp(&b.pos.distance(pos)))
+                            .map(|g| format!("{:?} owner={} at {:.0}", g.kind, g.owner, g.pos.distance(pos)));
+                        eprintln!("candidate={id} bot={} home_distance={:.0} threatened={} avoided={} surveys={:?} nearest_hostile={hostile:?}",
+                            bot.slot + 1, pos.distance(p.home.system.pos), p.threatened(pos), bot.avoided.contains_key(id),
+                            bot.surveys.values().collect::<Vec<_>>());
                     }
                     for scout in p.own().filter(|f| f.kind == H::Scout) {
                         eprintln!("scout={} bot={} fuel={:?}/{:?} home_distance={:.0} speed={:.0} dock={:?} progress={:?} goal={:?} returning={:?} avoided={} threatened={}",
@@ -1368,6 +1942,12 @@ struct BalanceMetrics {
     elapsed_wall_s: f64,
     starved_minutes: BTreeMap<PlayerId, u32>,
     first_colony: BTreeMap<PlayerId, u32>,
+    /// §power: minutes any of the corporation's planets spent browning out.
+    #[serde(default)]
+    brownout_minutes: BTreeMap<PlayerId, u32>,
+    /// §fuel: minutes the home spent fuel-critical (development held).
+    #[serde(default)]
+    fuel_critical_minutes: BTreeMap<PlayerId, u32>,
 }
 
 impl BalanceMetrics {

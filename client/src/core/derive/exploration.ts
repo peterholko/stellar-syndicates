@@ -3,7 +3,6 @@ import { isPlayerFreighter } from "../../protocol";
 import type { ViewState } from "../../state";
 import { fleetCargoCapacity } from "./fleet";
 
-export const EXPLORATION_MARKER_PX = 48;
 export function siteTitle(site: ExplorationSiteView): string { return site.details?.name ?? `Unknown contact ${site.id.replace(/^E/, "")}`; }
 export function siteArt(site: ExplorationSiteView): string | null {
   return site.details ? `/art/exploration/${site.details.kind}.png` : null;

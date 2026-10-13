@@ -1,0 +1,16 @@
+{
+  "ship": "medium-freighter",
+  "triangles": 17056,
+  "texturedTriangles": 3652,
+  "ventralTriangles": 1154,
+  "checks": {
+    "allSurfacesAndTexturedUVsHaveArea": true,
+    "ventralProjectionPresent": true,
+    "engineCount": true,
+    "turretCount": true,
+    "threeEmbeddedTextures": true,
+    "gltfValidatorClean": true
+  },
+  "problems": [],
+  "passed": true
+}

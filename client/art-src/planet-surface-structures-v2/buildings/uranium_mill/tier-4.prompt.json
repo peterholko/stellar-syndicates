@@ -1,0 +1,40 @@
+{
+  "id": "uranium_mill/tier-4",
+  "mode": "built-in image_gen",
+  "prompt": "Use case: stylized-concept.\nAsset type: ONE standalone planetary building-layer sprite, square transparent PNG, approximately 1024 x 1024.\nPurpose: reusable architecture above a SEPARATE biome ground layer. Produce BUILDING ONLY, not a diorama. Genuine zero-alpha transparency around the building; preserve translucent soft shadow. No baked soil, gravel apron, grass, rocks around the site, concrete base tile, raised platform, roads, path, border or landscape. Small integral ramps, steps, conveyors and support feet belonging to the structure are allowed.\nStyle: the approved new Boreal/Temperate structures, grounded near-future frontier engineering. Soft semi-realistic environmental 3D rendering, matte weathered steel, pale-stone and slate panels with dark grey trim, restrained amber service lights and a few warm windows. Large readable forms, no ink outlines, no cel shading, plastic gloss, extreme contrast, excessive greebles or neon. No text, logos, Authority branding, numerals, UI, people, vehicles or spacecraft. No radiation symbols, green glow or glowing effects.\nCamera and lighting: elevated front-left three-quarter view about 55 degrees above the ground plane; more roof than wall, mild perspective; front and right walls visible. Soft upper-left daylight, neutral/cool fill and semi-transparent soft lower-right cast/contact shadow attached to the feet.\nFraming/alignment: complete compact structure centered in a square. Building width about 94% of the canvas (x \u2248 4\u201398%), never cropped. Keep the ground footprint centred at approximately x=50%; its near/front foot reaches y\u224888%, and its far/rear foot y\u224845%. Keep a similar physical site footprint through upgrades; add height and process mass, not a sprawling campus.\nOutput exactly one structure, no tier lineup/contact sheet.\nInput image 1 is the house style for ore processing. Input image 2 is the house style for mining machinery. Create a NEW building family in that shared style; do not copy either building.\nSubject: URANIUM MILL \u2014 TIER 4 of 4.\nFamily identity: a mill that crushes Ferrite Ore and separates fissile grains from it. A covered ore hopper fed by an inclined conveyor, a crusher house, a row of tall slender separation columns, and a heavy shielded packing hall with a thick, windowless concrete-and-steel wall where the finished Uranium is sealed into small drums. Clearly different from the Smelter's furnace halls and the Fuel Refinery's distillation towers.\nThis tier specifically: a large mill: a tall crusher tower, a double row of separation columns and a long shielded packing hall with a loading bay.\nTier family progression for context (do NOT draw a lineup): 1: one hopper, a short conveyor, a small crusher house, two separation columns and a small shielded packing shed; 2: a larger crusher house, four separation columns and a longer packing hall; 3: twin hoppers, a tall crusher block, six columns and a heavier shielded hall with a drum store; 4: a large mill: a tall crusher tower, a double row of columns and a long shielded packing hall with a loading bay, on the same compact site.\nOutput: exactly the requested tier alone, genuine transparent PNG.\nInput image 3 is the immediately preceding tier of THIS family: preserve its camera, lighting, material finish and compact site footprint while applying the requested next-tier architecture above. Show only the new tier, not a comparison.\nFraming priority: the entire lowest solid front foot must sit at y=88% of the canvas, with the bottom 12% left transparent except a faint attached shadow. All solid geometry stays inside x=3%\u201397%; no clipped edge. Keep a compact site, grow the building upward, and keep every solar row inside that same site where applicable.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/smelter/tier-1.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/mining_complex/tier-1.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/uranium_mill/tier-3.png"
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-ad71302d-983b-4b03-b5e8-9c38bf146b07.png",
+  "file": "buildings/uranium_mill/tier-4.png",
+  "source_brief": "docs/fuel-overhaul-art-prompt.md",
+  "verification": {
+    "size": [
+      1254,
+      1254
+    ],
+    "mode": "RGBA",
+    "fullyTransparentPixels": 733720,
+    "partiallyTransparentPixels": 838032,
+    "solidBounds": [
+      42,
+      89,
+      1245,
+      1148
+    ],
+    "solidWidthFraction": 0.9593,
+    "lowestSolidFraction": 0.9155,
+    "sha256": "c8e4c2c11bd5e46221d8b6c7c750a7b1f2c598b5796e60e6b708205d861d246d"
+  },
+  "edits": [
+    {
+      "prompt": "Use case: precise-object-edit. Correct ONE feature of this Uranium Mill TIER IV transparent sprite. It needs a DOUBLE ROW of separation columns, rather than the current single line. Replace the six columns behind the crusher and packing hall with EIGHT tall slender separation columns arranged in TWO PARALLEL STAGGERED ROWS OF FOUR. The rear row is slightly taller; the front row is slightly lower, so all eight separate rounded caps and return-pipe elbows are clearly visible. Keep them in the same compact rear process area. Do not add a new wing or expand the ground footprint. Preserve the tall crusher tower, hopper, inclined conveyor, long thick-walled packing hall, loading bay, front-foot position, all materials, camera, lighting and transparent RGBA background. No new props, markings, text, terrain or base tile. One square image.",
+      "referenced_image_paths": [
+        "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-4ef63a54-bb11-48a0-b19e-1a707afb6a09.png"
+      ]
+    }
+  ]
+}

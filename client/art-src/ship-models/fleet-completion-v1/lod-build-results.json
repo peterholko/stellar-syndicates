@@ -1,0 +1,182 @@
+[
+  {
+    "ship": "destroyer",
+    "levels": [
+      {
+        "level": "lod0",
+        "triangles": 14532,
+        "drawCalls": 15
+      },
+      {
+        "level": "lod1",
+        "triangles": 7800,
+        "drawCalls": 15
+      },
+      {
+        "level": "lod2",
+        "triangles": 4780,
+        "drawCalls": 15
+      }
+    ]
+  },
+  {
+    "ship": "battleship",
+    "levels": [
+      {
+        "level": "lod0",
+        "triangles": 33772,
+        "drawCalls": 35
+      },
+      {
+        "level": "lod1",
+        "triangles": 17104,
+        "drawCalls": 35
+      },
+      {
+        "level": "lod2",
+        "triangles": 11270,
+        "drawCalls": 35
+      }
+    ]
+  },
+  {
+    "ship": "dreadnought",
+    "levels": [
+      {
+        "level": "lod0",
+        "triangles": 51176,
+        "drawCalls": 75
+      },
+      {
+        "level": "lod1",
+        "triangles": 26264,
+        "drawCalls": 75
+      },
+      {
+        "level": "lod2",
+        "triangles": 16036,
+        "drawCalls": 75
+      }
+    ]
+  },
+  {
+    "ship": "scout",
+    "levels": [
+      {
+        "level": "lod0",
+        "triangles": 8896,
+        "drawCalls": 7
+      },
+      {
+        "level": "lod1",
+        "triangles": 4908,
+        "drawCalls": 7
+      },
+      {
+        "level": "lod2",
+        "triangles": 3330,
+        "drawCalls": 7
+      }
+    ]
+  },
+  {
+    "ship": "colony-ship",
+    "levels": [
+      {
+        "level": "lod0",
+        "triangles": 27896,
+        "drawCalls": 7
+      },
+      {
+        "level": "lod1",
+        "triangles": 12182,
+        "drawCalls": 7
+      },
+      {
+        "level": "lod2",
+        "triangles": 6186,
+        "drawCalls": 7
+      }
+    ]
+  },
+  {
+    "ship": "troop-transport",
+    "levels": [
+      {
+        "level": "lod0",
+        "triangles": 11072,
+        "drawCalls": 7
+      },
+      {
+        "level": "lod1",
+        "triangles": 7832,
+        "drawCalls": 7
+      },
+      {
+        "level": "lod2",
+        "triangles": 6378,
+        "drawCalls": 7
+      }
+    ]
+  },
+  {
+    "ship": "construction-ship",
+    "levels": [
+      {
+        "level": "lod0",
+        "triangles": 10340,
+        "drawCalls": 7
+      },
+      {
+        "level": "lod1",
+        "triangles": 6370,
+        "drawCalls": 7
+      },
+      {
+        "level": "lod2",
+        "triangles": 4688,
+        "drawCalls": 7
+      }
+    ]
+  },
+  {
+    "ship": "medium-freighter",
+    "levels": [
+      {
+        "level": "lod0",
+        "triangles": 17056,
+        "drawCalls": 7
+      },
+      {
+        "level": "lod1",
+        "triangles": 11142,
+        "drawCalls": 7
+      },
+      {
+        "level": "lod2",
+        "triangles": 8234,
+        "drawCalls": 7
+      }
+    ]
+  },
+  {
+    "ship": "authority-freighter",
+    "levels": [
+      {
+        "level": "lod0",
+        "triangles": 20144,
+        "drawCalls": 7
+      },
+      {
+        "level": "lod1",
+        "triangles": 14012,
+        "drawCalls": 7
+      },
+      {
+        "level": "lod2",
+        "triangles": 11368,
+        "drawCalls": 7
+      }
+    ]
+  }
+]

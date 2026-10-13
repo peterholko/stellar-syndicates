@@ -1,0 +1,22 @@
+{
+  "meshes": 5,
+  "renderSections": 5,
+  "sourceComponents": 56,
+  "triangles": 3476,
+  "exportedVertices": 4431,
+  "dimensionsXYZ": [
+    12.25,
+    3.57,
+    19.875
+  ],
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "embeddedTextures": 3,
+  "axes": "Y up, -Z forward",
+  "source": "../../privateer-raider-reference-v1/privateer-raider-reference.png",
+  "detailLevel": "low-poly authored mesh",
+  "generator": "Python/NumPy, no Blender",
+  "optimization": "Static parts combined by material; independent turret assemblies retained; exact vertex deduplication; 16-bit indices where possible"
+}

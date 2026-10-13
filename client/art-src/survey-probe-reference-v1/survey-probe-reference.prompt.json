@@ -1,0 +1,19 @@
+{
+  "source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-add24364-e1d2-4c80-bba8-9ef7ad8da9bf.png",
+  "output": "/Users/peter/projects/stellar-syndicates/client/art-src/survey-probe-reference-v1/survey-probe-reference.png",
+  "prompt": "Use case: stylized-concept. Asset type: fully textured five-view 2D orthographic spacecraft reference sheet for accurate 3D reconstruction in the Stellar Syndicates fleet.\nImage 1 is the authoritative craft design. Expand it to exactly FIVE physically consistent views of that SAME craft. Image 2 is only the fleet's reference-sheet presentation and material style; do not copy its silhouette.\nDESIGN:\nSURVEY PROBE: a small crewless robotic drone, NOT a crewed ship: no cockpit, windows, crew modules, guns or cargo. A compact armored sensor core with exactly ONE large forward sensor dish whose cyan lens faces forward; exactly FOUR slim antenna booms splayed diagonally like an X from the core; two small folded solar/radiator fins at the sides; exactly ONE small cylindrical thruster at the tail. Titanium and gunmetal with a few mustard hazard markings, brass joints, modest cyan lights, plated underside with service hatches.\nLAYOUT: wide 2:1 landscape white sheet, high native detail. Exactly two large vertical plan drawings on the left 58% of the canvas, TOP in first column and BOTTOM in second column, noses UP. Their silhouettes use identical length, width and station positions. Right 42%: FRONT at the top, BACK in the middle, SIDE at the bottom with nose LEFT. Clean charcoal title at upper left and a small uppercase view label beneath each of five drawings. Generous clear separation. No sixth drawing. The entire craft fits inside the sheet.\nPROJECTION: true orthographic, parallel projection, ZERO camera pitch on FRONT/BACK/SIDE. FRONT/BACK are shallow cross-sections, not compressed overhead plans. SIDE shows a flat profile, never a visible broad roof or far flank. TOP/BOTTOM have no perspective. The thruster points backward; top/side show its cylindrical wall and edge-on nozzle rim, NOT an exhaust disc rotated toward the camera. Only BACK shows the end-on circular nozzle. Keep the dish, booms, fins and thruster counts consistent across every view; hidden far-side items naturally overlap in profile. Do not add unexplained extra engines, booms or guns.\nBOTTOM: fully detailed dedicated ventral plating with seams, hatches and cooling grilles, same outer shape and openings as TOP. No dorsal details printed on the bottom. True holes remain blank white. Front/back/side must also have coherent plating textures, not empty gray blocks.\nSTYLE: precise colored hard-surface 2D technical concept illustration, clean contours, fine panel lines, pale silver/titanium plates, charcoal gunmetal structure, muted brass hardware, small cyan lights. Mild wear, soft neutral illumination, no strong highlights or cast shadows. Match fleet reference style. No scenery, checkerboard, grid, dimensions, logos, beams, signals, plumes or watermark.\nText exactly once each: \"SURVEY PROBE\", \"TOP\", \"BOTTOM\", \"FRONT\", \"BACK\", \"SIDE\".\n",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/survey-probe-reference-v1/survey-probe.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/construction-ship-reference-v1/construction-ship-reference.png"
+  ],
+  "processing": "copy",
+  "verification": {
+    "width": 1774,
+    "height": 887,
+    "channels": 3,
+    "hasAlpha": false,
+    "fileSHA256": "5ce6e8b5d4c4eaab40952aba466bf50fed1e0e803cad46fc665d88298fe15249"
+  },
+  "mode": "builtin-imagegen",
+  "created": "2026-10-09"
+}

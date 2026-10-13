@@ -1,0 +1,18 @@
+{
+  "meshes": 130,
+  "triangles": 10952,
+  "exportedVertices": 20744,
+  "dimensionsXYZ": [
+    11.0971,
+    3.295,
+    16.6046
+  ],
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "embeddedTextures": 3,
+  "axes": "Y up, -Z forward",
+  "source": "../../ships-2026-09-08/freighter.png",
+  "generator": "Python/NumPy, no Blender"
+}

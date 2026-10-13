@@ -1,0 +1,103 @@
+{
+  "mode": "built-in image_gen",
+  "assets": [
+    {
+      "key": "uranium",
+      "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32\u201364 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. a short, sturdy sealed steel drum, tipped slightly, beside a small stack of dull olive-grey ceramic fuel pellets. Matte, heavy, industrial; no radiation symbol, no green glow.\nInput images are MATERIAL/RENDERING style references from the existing resource icon set only. Create the new resource described above; do not copy the reference objects.",
+      "referenced_image_paths": [
+        "/Users/peter/projects/stellar-syndicates/client/art-src/ores-2026-09-16/titanium.png",
+        "/Users/peter/projects/stellar-syndicates/client/art-src/ores-2026-09-16/helium3.png"
+      ],
+      "transparent_background": true,
+      "generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-d2204d59-0fa6-4660-aa3f-db0491da406c.png",
+      "file": "uranium.png",
+      "source_brief": "docs/fuel-overhaul-art-prompt.md",
+      "verification": {
+        "size": [
+          1254,
+          1254
+        ],
+        "mode": "RGBA",
+        "fullyTransparentPixels": 686116,
+        "partiallyTransparentPixels": 885687,
+        "solidBounds": [
+          79,
+          94,
+          1177,
+          1162
+        ],
+        "solidWidthFraction": 0.8756,
+        "lowestSolidFraction": 0.9266,
+        "sha256": "722216ca8cf1abcfb4574b4b68a91e8107b6fce3f43a9692e5017c603201987d"
+      }
+    },
+    {
+      "key": "fusion_core",
+      "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32\u201364 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. a dense cylindrical reactor core module: a polished graphite-and-steel cylinder banded by three field-coil rings, a ceramic heat-shield collar and an Authority-grey service plate. Reads as a precision component, heavier and more industrial than the Warp Core.\nInput images are MATERIAL/RENDERING style references from the existing resource icon set only. Create the new resource described above; do not copy the reference objects.",
+      "referenced_image_paths": [
+        "/Users/peter/projects/stellar-syndicates/client/art-src/ores-2026-09-16/titanium.png",
+        "/Users/peter/projects/stellar-syndicates/client/art-src/ores-2026-09-16/helium3.png"
+      ],
+      "transparent_background": true,
+      "generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-c7026ed3-b10d-4379-bde5-9f4b443e7453.png",
+      "file": "fusion_core.png",
+      "source_brief": "docs/fuel-overhaul-art-prompt.md",
+      "verification": {
+        "size": [
+          1254,
+          1254
+        ],
+        "mode": "RGBA",
+        "fullyTransparentPixels": 643304,
+        "partiallyTransparentPixels": 928635,
+        "solidBounds": [
+          167,
+          51,
+          1092,
+          1207
+        ],
+        "solidWidthFraction": 0.7376,
+        "lowestSolidFraction": 0.9625,
+        "sha256": "9aefbd1d5ffb717610c989746924d43f53fe0376a65c1c0233cb4dc9ce23b3eb"
+      }
+    },
+    {
+      "key": "antimatter",
+      "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32\u201364 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. a compact magnetic containment bottle: a clear cylindrical vessel held between two heavy ribbed coil end-caps, with a tiny suspended violet-white point at its centre. Precise, expensive, laboratory-clean; the point is small and crisp, not a glow.\nInput images are MATERIAL/RENDERING style references from the existing resource icon set only. Create the new resource described above; do not copy the reference objects.",
+      "referenced_image_paths": [
+        "/Users/peter/projects/stellar-syndicates/client/art-src/ores-2026-09-16/titanium.png",
+        "/Users/peter/projects/stellar-syndicates/client/art-src/ores-2026-09-16/helium3.png"
+      ],
+      "transparent_background": true,
+      "generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-28f73f7f-b038-469b-8e42-33e5b42fbdc4.png",
+      "file": "antimatter.png",
+      "source_brief": "docs/fuel-overhaul-art-prompt.md",
+      "verification": {
+        "size": [
+          1254,
+          1254
+        ],
+        "mode": "RGBA",
+        "fullyTransparentPixels": 954034,
+        "partiallyTransparentPixels": 617948,
+        "solidBounds": [
+          155,
+          51,
+          1126,
+          1186
+        ],
+        "solidWidthFraction": 0.7743,
+        "lowestSolidFraction": 0.9458,
+        "sha256": "40215cba859b31f0240ec6c0169b5b8c2aae4b03849be1c25f20b15a4be9c5ea"
+      },
+      "edits": [
+        {
+          "prompt": "Use case: precise-object-edit. Make ONE tiny local correction to this transparent antimatter resource icon. Replace the large violet glowing orb inside the glass cylinder with a single TINY crisp violet-white pinpoint suspended at exactly the same center, about 10 to 15 pixels wide on this 1254 square image. It must read as a small point, not a ball or orb; no bloom, halo, surrounding glow, sparks or haze. The chamber around the pinpoint remains clear transparent glass. Preserve the bottle's complete geometry, ribs, end caps, shape, size, diagonal angle, framing, upper-left studio light, metal reflections and alpha background exactly as in the source. Do not add other objects or text. One native-resolution square RGBA PNG, genuine zero-alpha background.",
+          "referenced_image_paths": [
+            "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-63f6f66b-6e5f-4abc-8dd9-6f606781e87a.png"
+          ]
+        }
+      ]
+    }
+  ]
+}

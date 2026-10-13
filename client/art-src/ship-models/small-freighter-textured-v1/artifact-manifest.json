@@ -1,0 +1,27 @@
+{
+  "model": "small-freighter.glb",
+  "sha256": "94b2749e3489f8a8e385e8b4b0635892017ea2784af26b1ce4b5822c95858a9b",
+  "modelBytes": 2020136,
+  "viewerEmbedsIdenticalGLB": true,
+  "previewViews": [
+    "perspective",
+    "top",
+    "bottom",
+    "front",
+    "back",
+    "side",
+    "front-quarter",
+    "bottom-quarter"
+  ],
+  "previewResolution": [
+    1600,
+    1200
+  ],
+  "glTFValidation": {
+    "errors": 0,
+    "warnings": 0
+  },
+  "surfaceVerificationPassed": true,
+  "browserConsoleWarningsAndErrors": [],
+  "observedDrawCalls": 7
+}

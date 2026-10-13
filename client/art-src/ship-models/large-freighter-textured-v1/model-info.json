@@ -1,0 +1,21 @@
+{
+  "meshes": 7,
+  "renderSections": 7,
+  "sourceComponents": 162,
+  "triangles": 14524,
+  "exportedVertices": 18328,
+  "dimensionsXYZ": [
+    9.406,
+    2.9,
+    15.75
+  ],
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "embeddedTextures": 3,
+  "axes": "Y up, -Z forward",
+  "source": "../../large-freighter-reference-v1/large-freighter-reference.png",
+  "generator": "Python/NumPy, no Blender",
+  "optimization": "Static parts combined by material; exact vertex deduplication; 16-bit indices where possible"
+}

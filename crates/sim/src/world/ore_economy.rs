@@ -17,7 +17,7 @@ fn rig(ore: C) -> (World, PlayerId, EntityId, u32) {
     }
     s.set_population(0.05);
     s.seed_warehouse();
-    s.stockpile = [(C::Provisions, 50.0), (C::Fuel, 20.0), (ore, 20.0)].into();
+    s.stockpile = [(C::Provisions, 50.0), (C::Deuterium, 20.0), (ore, 20.0)].into();
     s.set_tier(K::Smelter, 1);
     s.assign(K::Smelter, Assignment { refining_ore: Some(ore), ..Assignment::crew(1) });
     let body = s.bodies.iter().find(|b| b.tier(K::Smelter) > 0).unwrap().id;
@@ -35,7 +35,7 @@ fn ore_recovery_changes_yield_while_enrichment_changes_speed() {
         for id in programmes { w.players.get_mut(&owner).unwrap().research.completed.insert((*id).into()); }
         w.accrue_production(&mut Vec::new());
         [stock(&w,home,C::ConductiveMetals), stock(&w,home,C::Alloys),
-            20.0-stock(&w,home,C::CupriteOre), 20.0-stock(&w,home,C::Fuel)]
+            20.0-stock(&w,home,C::CupriteOre), 20.0-stock(&w,home,C::Deuterium)]
     };
     let plain = run(&[]);
     let recovered = run(&["mat_ore_recovery"]);
@@ -54,44 +54,29 @@ fn ore_recovery_changes_yield_while_enrichment_changes_speed() {
 }
 
 #[test]
-fn founding_refiner_can_grow_without_a_second_freighter() {
+fn the_first_research_grant_funds_the_programme_started_at_the_research_step() {
     use crate::founding::FoundingStage as S;
-    let (mut w, owner, home, body) = rig(C::MetallicOre);
+    let (mut w, owner, home, _) = rig(C::MetallicOre);
     let corp = w.players.get_mut(&owner).unwrap();
     corp.founding.enabled = true;
-    corp.founding.stage = S::GrowBusiness;
+    corp.founding.stage = S::FirstResearch;
     corp.research.active = Some("mat_enrichment".into());
     w.advance_founding_programs(&[]);
     assert!(w.players[&owner].founding.research_grant_applied);
     assert_eq!(w.players[&owner].research.progress,
         crate::research::cost_of("mat_enrichment") - crate::founding::FIRST_RESEARCH_REMAINING_S);
+    assert_eq!(w.players[&owner].founding.stage, S::FirstResearch, "research needs a staffed Academy");
     site_mut(&mut w,home).set_tier(K::Academy,1);
     site_mut(&mut w,home).assign(K::Academy,Assignment::crew(1));
-    let progress = w.players[&owner].research.progress;
-    w.step(&[]);
-    assert!(w.players[&owner].research.progress>progress,
-        "the refining route receives the same first-programme funding basket");
-    // The grant is one-time even if the player changes their intended route.
-    w.players.get_mut(&owner).unwrap().research.progress = 1.0;
     w.advance_founding_programs(&[]);
-    assert_eq!(w.players[&owner].research.progress,1.0);
-    assert_eq!(w.players[&owner].founding.stage,S::GrowBusiness,"a Smelter without Enrichment is not the goal");
-    w.players.get_mut(&owner).unwrap().research.completed.insert("mat_enrichment".into());
-    site_mut(&mut w,home).bodies.iter_mut().find(|b| b.id==body).unwrap()
-        .assignments.get_mut(&K::Smelter).unwrap().workers = 0;
-    w.accrue_production(&mut Vec::new()); w.advance_founding_programs(&[]);
-    assert_eq!(w.players[&owner].founding.stage,S::GrowBusiness);
-    site_mut(&mut w,home).bodies.iter_mut().find(|b| b.id==body).unwrap()
-        .assignments.get_mut(&K::Smelter).unwrap().workers = 1;
-    site_mut(&mut w,home).stockpile.remove(&C::Fuel);
-    w.accrue_production(&mut Vec::new()); w.advance_founding_programs(&[]);
-    assert_eq!(w.players[&owner].founding.stage,S::GrowBusiness,"a starved Smelter is not operating");
-    site_mut(&mut w,home).stockpile.insert(C::Fuel,20.0);
-    w.accrue_production(&mut Vec::new()); w.advance_founding_programs(&[]);
-    assert_eq!(w.players[&owner].founding.stage,S::BuildAcademy);
-    assert!(stock(&w,home,C::Alloys)>0.0);
-    assert_eq!(site(&w,home).tier(K::Shipyard),0,"refining does not require a yard");
-    assert!(w.fleets.values().filter(|f| f.owner==owner).map(Fleet::freighter_count).sum::<u32>() < 2);
+    assert_eq!(w.players[&owner].founding.stage, S::SurveyCandidates,
+        "a programme under way at a staffed Academy completes the step");
+    // The grant is one-time, whatever the player does next.
+    let corp = w.players.get_mut(&owner).unwrap();
+    corp.research.progress = 1.0;
+    corp.founding.stage = S::FirstResearch;
+    w.advance_founding_programs(&[]);
+    assert_eq!(w.players[&owner].research.progress, 1.0);
 }
 
 #[test]
@@ -99,7 +84,7 @@ fn growth_does_not_turn_the_first_research_grant_into_free_followup_research() {
     let (mut w, owner, home, _) = rig(C::MetallicOre);
     let corp = w.players.get_mut(&owner).unwrap();
     corp.founding.enabled = true;
-    corp.founding.stage = crate::founding::FoundingStage::GrowBusiness;
+    corp.founding.stage = crate::founding::FoundingStage::FirstResearch;
     corp.founding.research_grant_applied = true;
     corp.research.completed.insert("mat_enrichment".into());
     corp.research.active = Some("mat_ore_recovery".into());
@@ -110,7 +95,6 @@ fn growth_does_not_turn_the_first_research_grant_into_free_followup_research() {
     sys.stockpile = [(C::Provisions,50.0)].into();
     w.step(&[]);
     assert_eq!(w.players[&owner].research.progress,0.0);
-    assert_eq!(w.players[&owner].founding.stage,crate::founding::FoundingStage::GrowBusiness);
 }
 
 #[test]
@@ -137,7 +121,8 @@ fn each_ore_pays_one_input_basket_and_all_of_its_outputs() {
 }
 
 #[test]
-fn refining_requires_workers_and_fuel_and_restarts_without_new_orders() {
+fn refining_requires_workers_and_ore_and_restarts_without_new_orders() {
+    // §fuel-overhaul: refining burns no fuel; it needs crews, ore and power.
     let (mut w, _, home, body) = rig(C::CupriteOre);
     let b = site_mut(&mut w,home).bodies.iter_mut().find(|b| b.id == body).unwrap();
     b.assignments.get_mut(&K::Smelter).unwrap().workers = 0;
@@ -145,11 +130,11 @@ fn refining_requires_workers_and_fuel_and_restarts_without_new_orders() {
     assert_eq!(stock(&w,home,C::ConductiveMetals),0.0);
     site_mut(&mut w,home).bodies.iter_mut().find(|b| b.id == body).unwrap()
         .assignments.get_mut(&K::Smelter).unwrap().workers = 1;
-    site_mut(&mut w,home).stockpile.remove(&C::Fuel);
+    site_mut(&mut w,home).stockpile.remove(&C::CupriteOre);
     w.accrue_production(&mut Vec::new());
-    assert_eq!(stock(&w,home,C::CupriteOre),20.0);
+    assert_eq!(stock(&w,home,C::ConductiveMetals),0.0);
     assert_eq!(stock(&w,home,C::Alloys),0.0);
-    site_mut(&mut w,home).stockpile.insert(C::Fuel,20.0);
+    site_mut(&mut w,home).stockpile.insert(C::CupriteOre,20.0);
     w.accrue_production(&mut Vec::new());
     assert!(stock(&w,home,C::ConductiveMetals) > 0.0);
     assert!(stock(&w,home,C::Alloys) > 0.0);
@@ -189,19 +174,22 @@ fn recipe_is_a_delivered_standing_assignment_and_survives_unstaffing_and_save() 
     assert_eq!(crate::production::assigned_converter(K::Smelter,Some(&legacy)).unwrap().inputs[0].0,C::MetallicOre);
     loaded.apply_now(&Command::SetAssignment { player_id: owner, system_id: home,
         body_id: Some(body), structure: K::Smelter, workers: 1,
-        specialists: Default::default(), refining_ore: Some(C::Fuel) }, &mut Vec::new());
+        specialists: Default::default(), refining_ore: Some(C::Deuterium) }, &mut Vec::new());
     assert_eq!(site(&loaded,home).bodies.iter().find(|b| b.id == body).unwrap()
         .assignments[&K::Smelter].refining_ore,Some(C::TitaniumOre),"reject non-ore recipes");
 }
 
+/// §pockets: the rare pocket ores occur only in belts' hidden pockets, so the
+/// census counts pockets too.
 #[test]
-fn new_galaxies_contain_all_five_ore_families_without_free_refined_deposits() {
+fn new_galaxies_contain_every_ore_family_without_free_refined_deposits() {
     let mut found = std::collections::BTreeSet::new();
     for seed in [7,41,316,2026] {
         let w = World::new(SimConfig::for_players(seed,4));
-        for d in w.systems.iter().flat_map(|s| s.all_deposits()) {
+        let pockets = w.systems.iter().flat_map(|s| s.bodies.iter()).flat_map(|b| b.pockets.iter().map(|p| &p.deposit));
+        for d in w.systems.iter().flat_map(|s| s.all_deposits()).chain(pockets) {
             assert!(C::RAW.contains(&d.resource),"new geology mines raw feedstock");
-            if d.resource.is_ore() { found.insert(d.resource); }
+            if d.resource.is_smeltable() { found.insert(d.resource); }
         }
     }
     assert_eq!(found,ORE_REFINING.iter().map(|r| r.inputs[0].0).collect());

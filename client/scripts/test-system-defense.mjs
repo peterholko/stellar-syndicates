@@ -33,9 +33,11 @@ const fleets = load("core/derive/fleet.ts", { "../../state": clock, "../../proto
 const defense = load("core/derive/defense.ts", { "./fleet": fleets });
 const readiness = load("core/derive/readiness.ts", { "./fleet": fleets, "../../protocol": protocol });
 const aftermath = load("battleaftermath.ts");
+const station = load("core/derive/station.ts");
 const surface = load("shell/systemdefense.ts", { "../battleaftermath": aftermath,
   "../core/derive/defense": defense, "../core/derive/fleet": fleets,
-  "../core/derive/readiness": readiness, "../protocol": protocol });
+  "../core/derive/readiness": readiness, "../protocol": protocol,
+  "../core/derive/station": station, "../icons": icons });
 let model = defense.systemDefense(st, system, report);
 assert.deepEqual(plain(model.defenders.map(g => g.id)), ["assigned", "local"]);
 assert.deepEqual(plain(model.contacts.map(g => g.id)), ["rival"]);
@@ -50,7 +52,7 @@ assert.equal(defense.systemDefense(st, system, report).local.length, 1, "client 
 for (const theme of ["deck", "mobile"]) {
   const html = surface.systemDefenseHtml(st, system, report, 10_000, theme, true);
   assert.match(html, /2 platform tiers · 1 local fleet/);
-  assert.match(html, /80% hull · 50 fuel · report 10s old/);
+  assert.match(html, /80% hull · 50 Deuterium · report 10s old/);
   assert.match(html, /Assigned · under way/);
   assert.match(html, /Defense assignment sent · fleet candidate · awaiting report/);
   assert.match(html, /defense-assign[^>]*data-fleet="candidate" disabled/);
@@ -95,4 +97,64 @@ assert.equal(commands.fleetCommandsValid([{ ...bad, pursuit_radius: 10_000 }], s
 report.owner = "1";
 assert.equal(commands.fleetCommandsValid([{ ...bad, fleet_id: "rival", pursuit_radius: 10_000 }], st), false);
 
-console.log("System defense: served membership, report-only threats, compact desktop/mobile controls, readiness, pending separation, Confirm/Cancel and release pass.");
+// §orbital-defense: the station as the owner's report shows it.
+assert.equal(station.stationName(5), "Star Fortress");
+assert.equal(station.stationArtUrl(9, 512), "/art/derived/stations/v1/level-5-512.webp", "levels clamp to the ladder");
+assert.equal(station.mountFitError(["mass_driver", "mass_driver", "whipple_armor"], false), "");
+assert.match(station.mountFitError(["torpedo_rack", "torpedo_rack", "whipple_armor"], false), /needs 9 fitting points; a hardpoint has 8/);
+assert.match(station.mountFitError(["point_defense_screen"], false), /weapons, armour and webs only/);
+assert.match(station.mountFitError(["prismatic_lance"], false), /Platform Lances research/);
+assert.equal(station.mountFitError(["prismatic_lance"], true), "");
+assert.match(station.mountFitError(["mass_driver", "mass_driver", "mass_driver", "mass_driver"], false), /three slots/);
+assert.deepEqual(plain(station.refitCrates(["mass_driver"], ["mass_driver", "mass_driver", "prismatic_lance", "whipple_armor"])),
+  { mass_driver: 1, whipple_armor: 1 }, "only new crates are drawn; a lance comes with research");
+const citadel = { level: 4, name: "Citadel", body_id: "81", mounts: [
+  { modules: ["mass_driver", "mass_driver", "whipple_armor"], health: 1, offline: false },
+  { modules: [], health: .6, offline: false },
+  { modules: ["torpedo_rack"], health: .1, offline: true },
+  { modules: [], health: 1, offline: false }] };
+assert.equal(station.stationSummary(citadel), "Citadel · 3 of 4 hardpoints firing");
+assert.equal(station.stationSummary({ ...citadel, mounts: citadel.mounts.map(m => ({ ...m, offline: true })) }),
+  "Citadel · silenced: every hardpoint is out");
+st.galaxy.build_options = [{ key: "orbital_defense", tiers: [
+  { tier: 4, label: "Citadel", description: "Four hardpoints.", research_prerequisite: "weap_cm_v_grand_batteries", requires: { yard: "naval_drydock", tier: 1 } },
+  { tier: 5, label: "Star Fortress", description: "Six hardpoints; one per corporation.", research_prerequisite: "weap_cm_v_star_fortress", requires: { yard: "capital_slipway", tier: 1 } }] }];
+st.research = { programmes: [{ id: "weap_cm_v_star_fortress", name: "Star Fortress", state: "available" }] };
+const fortified = { ...report, station: citadel, structures: { naval_drydock: 1 }, modules: { mass_driver: 1 } };
+for (const theme of ["deck", "mobile"]) {
+  const html = surface.systemDefenseHtml(st, system, fortified, 10_000, theme);
+  assert.match(html, /<span>Citadel · 3 of 4 hardpoints firing · 1 local fleet<\/span>/);
+  assert.match(html, /level-4-256\.webp/);
+  assert.match(html, /Mass Driver ×2 · Whipple Armor · Firing/);
+  assert.match(html, /Beam battery \(stock\) · Firing · 60% hull/);
+  assert.match(html, /Knocked out · repairing, 10% \(back at 25%\)/);
+  assert.match(html, /defense-refit"[^>]*data-mount="0" disabled title="Refitting needs an Ordnance Foundry in the system"/);
+  assert.match(html, /Next: <b>Star Fortress<\/b>.*Needs Star Fortress research and Capital Slipway tier 1 in the system\./);
+  assert.match(html, /Raise to Star Fortress/);
+}
+fortified.structures.ordnance_foundry = 1;
+let draft = surface.stationDraftAction("defense-refit", { mount: "1" }, null, fortified).draft;
+assert.deepEqual(plain(draft), { mount: 1, fit: [] }, "a refit starts from the fitted battery");
+for (const module of ["mass_driver", "mass_driver", "whipple_armor", "stasis_web"]) {
+  draft = surface.stationDraftAction("defense-refit-add", { mount: "1", module }, draft, fortified).draft;
+}
+assert.deepEqual(plain(draft.fit), ["mass_driver", "mass_driver", "whipple_armor"], "three slots");
+let html = surface.systemDefenseHtml(st, system, fortified, 10_000, "deck", false, draft);
+assert.match(html, /Not enough crates here: 2× Mass Driver \(have 1\), 1× Whipple Armor \(have 0\)\./);
+assert.match(html, /defense-refit-confirm"[^>]*data-mount="1" disabled/);
+assert.doesNotMatch(html, /Prismatic Lance/, "no lance before Platform Lances");
+draft = surface.stationDraftAction("defense-refit-remove", { mount: "1", index: "1" }, draft, fortified).draft;
+draft = surface.stationDraftAction("defense-refit-remove", { mount: "1", index: "1" }, draft, fortified).draft;
+assert.deepEqual(plain(draft.fit), ["mass_driver"]);
+html = surface.systemDefenseHtml(st, system, fortified, 10_000, "deck", false, draft);
+assert.match(html, /defense-refit-confirm"[^>]*data-mount="1">Refit hardpoint 2/, "one driver crate on hand: refit allowed");
+const confirmed = surface.stationDraftAction("defense-refit-confirm", { mount: "1" }, draft, fortified);
+assert.equal(confirmed.draft, null);
+assert.deepEqual(plain(confirmed.send), { type: "FitStation", system_id: "8", mount: 1, fit: ["mass_driver"] });
+assert.equal(surface.stationDraftAction("defense-refit-cancel", { mount: "1" }, draft, fortified).draft, null);
+assert.equal(surface.stationDraftAction("defense-assign", {}, draft, fortified), undefined, "not a refit action");
+assert.match(surface.systemDefenseHtml(st, system, { ...fortified, station: { ...citadel, level: 5, name: "Star Fortress" } }, 10_000, "deck"),
+  /The Star Fortress is the top of the ladder\./);
+assert.match(surface.systemDefenseHtml(st, system, report, 10_000, "deck"), /2 platform tiers/, "legacy tiers still read as tiers");
+
+console.log("System defense: served membership, report-only threats, compact desktop/mobile controls, readiness, pending separation, Confirm/Cancel and release pass; the station ladder's summary, hardpoints, refit editor and next level pass.");

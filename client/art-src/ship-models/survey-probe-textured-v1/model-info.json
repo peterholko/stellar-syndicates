@@ -1,0 +1,54 @@
+{
+  "name": "Survey Probe",
+  "triangles": 2448,
+  "renderSections": 2,
+  "sourceComponents": 50,
+  "materials": 2,
+  "embeddedTextures": 3,
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "dimensionsXYZ": [
+    4.3106,
+    1.92,
+    5.7827
+  ],
+  "axes": "Y up, -Z forward",
+  "units": "Relative model units; gameplay scale is assigned at integration",
+  "sockets": [
+    {
+      "name": "socket.engine.main",
+      "translation": [
+        0.0,
+        -0.015,
+        2.828333333333333
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "geometryCounts": {
+    "sensorDishes": 1,
+    "antennaBooms": 4,
+    "radiatorFins": 2,
+    "mainEngines": 1,
+    "guns": 0,
+    "cockpits": 0,
+    "crewModules": 0
+  },
+  "triangleBudget": [
+    1500,
+    3000
+  ],
+  "generator": "Python/NumPy, existing fleet reconstruction workflow; no Blender",
+  "textures": "Native five-view pixels; dedicated bottom projection; continuous cylinder walls; reference-matched ImageGen material swatches on hidden edges and fittings",
+  "optimization": "Static parts merged by material; exact vertex deduplication; 16-bit indices",
+  "note": "Concept reconstruction with standardized orthographic proportions. No gameplay or effects wiring."
+}

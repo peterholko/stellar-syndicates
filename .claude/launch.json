@@ -19,6 +19,18 @@
       "port": 5173
     },
     {
+      "name": "planet-fixture-orbital",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "client/scripts/test-planet-panel.mjs",
+        "--serve",
+        "--orbital-yards",
+        "--port=4176"
+      ],
+      "port": 4176,
+      "url": "http://127.0.0.1:4176"
+    },
+    {
       "name": "planet-fixture",
       "runtimeExecutable": "node",
       "runtimeArgs": [
@@ -40,6 +52,100 @@
       ],
       "port": 4175,
       "url": "http://127.0.0.1:4175"
+    },
+    {
+      "name": "balance-report",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4180",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "docs/balance"
+      ],
+      "port": 4180,
+      "url": "http://127.0.0.1:4180"
+    },
+    {
+      "name": "admin-fixture",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "client/scripts/test-admin.mjs",
+        "--serve",
+        "--port=4177"
+      ],
+      "port": 4177,
+      "url": "http://127.0.0.1:4177"
+    },
+    {
+      "name": "fleet-fixture",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "client/scripts/test-fleet-panel.mjs",
+        "--serve",
+        "--port=4178"
+      ],
+      "port": 4178,
+      "url": "http://127.0.0.1:4178"
+    },
+    {
+      "name": "hub-bake",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "client/scripts/bake-hub-model-art.mjs"
+      ],
+      "port": 8783,
+      "url": "http://127.0.0.1:8783"
+    },
+    {
+      "name": "hub-fixture",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "client/scripts/test-hub-model.mjs",
+        "--serve",
+        "--port=4179"
+      ],
+      "port": 4179,
+      "url": "http://127.0.0.1:4179"
+    },
+    {
+      "name": "markers-fixture",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "client/scripts/test-map-markers.mjs",
+        "--serve",
+        "--port=4181"
+      ],
+      "port": 4181,
+      "url": "http://127.0.0.1:4181"
+    },
+    {
+      "name": "planet-fixture-belt",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "client/scripts/test-planet-panel.mjs",
+        "--serve",
+        "--belt",
+        "--port=4182"
+      ],
+      "port": 4182
+    },
+    {
+      "name": "arbiter-viewer",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4183",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "client/art-src/ship-models/authority-arbiter-textured-v1"
+      ],
+      "port": 4183,
+      "url": "http://127.0.0.1:4183"
     }
   ]
 }

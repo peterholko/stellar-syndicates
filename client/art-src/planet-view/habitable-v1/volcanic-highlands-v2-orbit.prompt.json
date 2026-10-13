@@ -1,0 +1,26 @@
+{
+  "source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-0600c963-9563-4921-8f2e-acbcc43cf1fb.png",
+  "output": "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/habitable-v1/volcanic-highlands-v2-orbit.png",
+  "original": "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/habitable-v1/volcanic-highlands-v2.png",
+  "prompt": "Extend this planet painting upward only, by adding more outer space above the planet. Output a 1672 × 1181 image: the attached painting is the bottom 941 rows, unchanged, and the top 240 rows are new space.\n\nDo not change anything in the attached painting. Keep the planet, terrain, water, clouds, atmosphere, horizon, stars, colours, lighting, camera angle and painterly style exactly as they are. Do not move, crop, rescale, zoom, straighten or repaint any part of it. The only change is the added space at the top.\n\nThe new space continues the painting's existing sky seamlessly: the same near-black deep space, the same small, sparse white stars at the same size and density, and the atmosphere's thin glow fading out above the horizon exactly as it already does. The seam between the old and new rows must be invisible.\n\nAdd no new objects: no moons, planets, suns, stations, ships, satellites, asteroids, nebulae, galaxies, auroras, lens flares, text, borders or interface.\n\nThe input's top edge moves to y=240 in the taller output; the horizon and all original details move down exactly 240 pixels with it. If the source already has warm upper-left glare, continue its natural falloff without adding any new light source or visible sun disc.",
+  "referenced_image_paths": [
+    "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-0a7985c6-abc0-41e9-bce2-02fcb9c2dec5.png"
+  ],
+  "processing": "orbit",
+  "assembly": {
+    "method": "Use generated top 240 rows, match seam within new sky only, place original unresampled at y=240",
+    "originalRowsUnchanged": true,
+    "changedOriginalPixels": 0,
+    "sourcePixelSHA256": "cff157771bb05ba88f52fb247ee35948b729316a32e910a8273c7c0484da1b85",
+    "outputOriginalRegionSHA256": "cff157771bb05ba88f52fb247ee35948b729316a32e910a8273c7c0484da1b85"
+  },
+  "verification": {
+    "width": 1672,
+    "height": 1181,
+    "channels": 3,
+    "hasAlpha": false,
+    "fileSHA256": "6e0504f40d47d9cd1a70a752b288e1808e862a827bf343e6160a04258fd2b752"
+  },
+  "mode": "builtin-imagegen",
+  "created": "2026-10-09"
+}

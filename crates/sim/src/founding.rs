@@ -12,8 +12,38 @@ use crate::{cargo::Commodity, ids::EntityId};
 
 /// Earliest point at which a corporation may deliberately end founder safety.
 pub const FOUNDER_PROTECTION_MIN_S: f64 = 30.0 * 60.0;
+/// Founder safety always lasts at least this long.
+pub const FOUNDER_PROTECTION_BASE_S: f64 = 24.0 * 60.0 * 60.0;
+/// Once the programme completes, safety continues this long (never shorter
+/// than the base window), so a founder who plays once a day is not exposed the
+/// moment they finish.
+pub const FOUNDER_PROTECTION_AFTER_COMPLETE_S: f64 = 24.0 * 60.0 * 60.0;
 /// Founder safety is never permanent, even if the programme is abandoned.
-pub const FOUNDER_PROTECTION_MAX_S: f64 = 24.0 * 60.0 * 60.0;
+pub const FOUNDER_PROTECTION_MAX_S: f64 = 48.0 * 60.0 * 60.0;
+
+/// §founding R3: the local-opening Privateer appears this far ahead along the
+/// guarded Freighter's route (at most 60% of the leg) and this far to its side:
+/// inside ordinary sensors, so the approach is visible and the escort meets it.
+pub const LOCAL_PRIVATEER_AHEAD_SU: f64 = 9_000.0;
+pub const LOCAL_PRIVATEER_OFFSET_SU: f64 = 6_000.0;
+
+/// §founding R6: the Authority's small charter stipend for first reaching a
+/// charter milestone, named for the step just finished. Credits are money,
+/// never conjured goods; the physical economy stays the game. The Rogue
+/// Privateer pays its own bounty instead.
+pub fn charter_stipend(stage: FoundingStage) -> Option<(&'static str, f64)> {
+    Some(match stage {
+        FoundingStage::PrepareExport => ("Mine online", 300.0),
+        FoundingStage::DefeatPrivateer => ("First shipment under way", 500.0),
+        FoundingStage::FirstResearch => ("Shipyard staffed", 400.0),
+        FoundingStage::SurveyCandidates => ("Research under way", 300.0),
+        FoundingStage::BuildBarge => ("Nearby system charted", 500.0),
+        FoundingStage::MineBelt => ("Mining Barge launched", 300.0),
+        FoundingStage::HaulOre => ("Belt mining under way", 300.0),
+        FoundingStage::Complete => ("Founding charter fulfilled", 800.0),
+        _ => return None,
+    })
+}
 
 /// The Academy does real work for the first programme, but the founding grant
 /// leaves only this much Tier-I throughput to fund. At the fast 4× playtest
@@ -52,11 +82,17 @@ pub const PRIVATEER_DAMAGE_MULT: f64 = 0.05;
 pub const RECOMMENDED_FIRST_RESEARCH: [&str; 3] =
     ["comp_shadow_iv_recon_suite", "prop_expedition_iii_extended_tanks", "mat_deep_bores"];
 
-/// The opening ends with two received surveys, not a compulsory second colony.
-/// Mine → guarded export → freight expansion OR refining → research → surveys.
-/// BuildConvoy remains the old-save/lost-starter recovery step. Keep enum order
-/// stable for saved identities; BuildSecondFreighter is appended, not inserted
-/// in play order. Retired colony stages advance directly to Complete.
+/// The founding charter (v3), nine steps in three chapters:
+/// - Landfall: BuildMine → PrepareExport (the first escorted shipment) →
+///   DefeatPrivateer (it ambushes that shipment).
+/// - Industry: BuildShipyard → FirstResearch (research started at a staffed
+///   Academy) → SurveyCandidates (chart the local stop with a probe).
+/// - Reach: BuildBarge → MineBelt → HaulOre (the barge's ore delivered).
+///
+/// BuildConvoy remains the lost-starter recovery step. Keep enum order stable
+/// for saved identities: later stages are appended, not inserted in play order.
+/// Retired stages (the Scout, the beacon, the investment choice, colonies)
+/// advance to their successors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FoundingStage {
@@ -87,6 +123,14 @@ pub enum FoundingStage {
     /// Version-two opening: a short, local recovery before the Hub voyage.
     LocalRecovery,
     PrepareExport,
+    /// §belts: build a Mining Barge, once the surveys have charted a belt.
+    BuildBarge,
+    /// §belts: send it to the charted belt; done when command hears that it
+    /// is cutting ore there.
+    MineBelt,
+    /// §charter v3: bring the barge's ore home and unload it, or sell it at
+    /// the Hub; done when command hears it was delivered.
+    HaulOre,
 }
 
 impl Default for FoundingStage {
@@ -176,6 +220,29 @@ pub struct FoundingProgram {
     pub milestones: BTreeMap<FoundingStage, f64>,
     #[serde(default)]
     pub protection_broken: bool,
+    /// §founding R3: the Authority's one replacement starter Freighter.
+    #[serde(default)]
+    pub freighter_replaced: bool,
+    /// §founding R6: charter stipends already paid, by milestone.
+    #[serde(default)]
+    pub stipends: BTreeMap<FoundingStage, f64>,
+    /// §founding R7: the latest hull that turned back from the recovery site
+    /// because of a threat, and when that report reaches command. Cleared
+    /// when a hull is sent to the site again.
+    #[serde(default)]
+    pub turned_back: Option<(EntityId, f64)>,
+    /// §belts: the charted belt (system, belt body) the barge lesson points
+    /// at, chosen when the surveys finish: a surveyed prospect's belt first.
+    #[serde(default)]
+    pub belt_target: Option<(EntityId, u32)>,
+    /// §belts: when the report that a barge is cutting ore at a belt away
+    /// from home reaches the command center.
+    #[serde(default)]
+    pub belt_report_at: Option<f64>,
+    /// §charter v3: when the report that a barge delivered its ore (to a
+    /// stockpile or the Market warehouse) reaches the command center.
+    #[serde(default)]
+    pub haul_report_at: Option<f64>,
 }
 
 impl Default for FoundingProgram {
@@ -208,6 +275,12 @@ impl Default for FoundingProgram {
             colony_kit_granted: false,
             milestones: BTreeMap::new(),
             protection_broken: false,
+            freighter_replaced: false,
+            stipends: BTreeMap::new(),
+            turned_back: None,
+            belt_target: None,
+            belt_report_at: None,
+            haul_report_at: None,
         }
     }
 }
@@ -250,15 +323,40 @@ impl FoundingProgram {
                 self.stage,
                 FoundingStage::BuildColony
                     | FoundingStage::EstablishColony
+                    | FoundingStage::BuildBarge
+                    | FoundingStage::MineBelt
+                    | FoundingStage::HaulOre
                     | FoundingStage::Complete
             )
     }
 
     /// Founder safety has a minimum clock and also cannot be voluntarily ended
     /// before the privateer outcome's light reaches the command center. It then
-    /// lasts until the player chooses aggression, with a hard 24-hour ceiling.
+    /// lasts until the player chooses aggression or [`Self::protection_until`].
     pub fn protected(&self, now: f64) -> bool {
-        self.enabled && !self.protection_broken && now < self.started_at + FOUNDER_PROTECTION_MAX_S
+        self.enabled && !self.protection_broken && now < self.protection_until()
+    }
+
+    /// When founder safety ends on its own: 24 hours after completing the
+    /// programme (never before the 24-hour base), and always by the 48-hour
+    /// ceiling. An unfinished programme keeps the full ceiling.
+    pub fn protection_until(&self) -> f64 {
+        let ceiling = self.started_at + FOUNDER_PROTECTION_MAX_S;
+        match self.milestones.get(&FoundingStage::Complete) {
+            Some(done) => (done + FOUNDER_PROTECTION_AFTER_COMPLETE_S)
+                .max(self.started_at + FOUNDER_PROTECTION_BASE_S)
+                .min(ceiling),
+            None => ceiling,
+        }
+    }
+
+    /// §founding R8: the Landfall chapter, from settling until the first
+    /// guarded export leaves home. Contract offers stay few and patient here.
+    pub fn landfall_focus(&self) -> bool {
+        self.enabled
+            && self.local_opening
+            && self.export_dispatched_at.is_none()
+            && self.stage != FoundingStage::Complete
     }
 
     pub fn may_break_protection(&self, now: f64) -> bool {
@@ -289,5 +387,18 @@ mod tests {
 
         programme.protection_broken = false;
         assert!(!programme.protected(programme.started_at + FOUNDER_PROTECTION_MAX_S));
+    }
+
+    #[test]
+    fn founder_safety_outlasts_the_programme_by_a_day_within_the_ceiling() {
+        let hour = 3600.0;
+        let mut programme = FoundingProgram::new(0.0, 0, 1, Vec::new());
+        assert_eq!(programme.protection_until(), 48.0 * hour, "unfinished: full ceiling");
+        programme.set_stage(FoundingStage::Complete, 2.0 * hour);
+        assert_eq!(programme.protection_until(), 26.0 * hour, "done early: a day after completion");
+        assert!(programme.protected(25.0 * hour) && !programme.protected(26.0 * hour));
+        let mut late = FoundingProgram::new(0.0, 0, 1, Vec::new());
+        late.set_stage(FoundingStage::Complete, 40.0 * hour);
+        assert_eq!(late.protection_until(), 48.0 * hour, "never past the ceiling");
     }
 }

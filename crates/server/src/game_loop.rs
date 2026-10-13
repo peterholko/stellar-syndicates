@@ -28,7 +28,7 @@ use crate::protocol::{
     StockSlot, SystemInfo, WalletView,
 };
 use crate::reports::ReportScheduler;
-use crate::session::{ConnId, ConnInfo, GameInput, ServerStatus, Sessions};
+use crate::session::{AdminSnapshot, ConnId, ConnInfo, CorporationStats, GameInput, ServerStatus, Sessions};
 use crate::timeline::Timeline;
 use crate::transactions::{PendingTransaction, TransactionDetails, TransactionHistory};
 use crate::view::{self, PositionHistory, PriceHistory};
@@ -148,6 +148,7 @@ fn dispatch_chevron_targets(msg: &ClientMsg) -> Vec<DispatchChevronTarget> {
         | ClientMsg::BookFreightOut { .. }
         | ClientMsg::BookFreightIn { .. }
         | ClientMsg::RequestFuelRescue { .. }
+        | ClientMsg::SetDepotRule { .. }
         | ClientMsg::PayReinstatement { .. }
         | ClientMsg::PlaceLimitOrder { .. }
         | ClientMsg::CancelLimitOrder { .. }
@@ -644,6 +645,45 @@ impl GameLoop {
         self.trade_reports = waiting;
     }
 
+    /// Every player corporation's holdings, for the operator dashboard only.
+    /// One pass over systems and fleets, run when the dashboard asks.
+    fn corporation_stats(&self) -> Vec<CorporationStats> {
+        let mut stats: BTreeMap<PlayerId, CorporationStats> = self.world.players.iter()
+            .filter(|(id, _)| !id.is_sentinel())
+            .map(|(id, corp)| (*id, CorporationStats {
+                player_id: *id,
+                name: corp.name.clone(),
+                bot: self.bots.contains_key(id),
+                home: corp.home_system
+                    .and_then(|home| self.world.systems.iter().find(|system| system.id == home))
+                    .map(|system| system.name.clone()),
+                systems: 0,
+                worlds: 0,
+                population: 0.0,
+                fleets: 0,
+                ships: 0,
+                credits: corp.credits,
+                valuation: corp.valuation,
+                tutorial: crate::tutorial::progress(&self.world, *id),
+            }))
+            .collect();
+        for system in &self.world.systems {
+            let Some(corp) = system.owner.and_then(|owner| stats.get_mut(&owner)) else { continue };
+            corp.systems += 1;
+            for body in system.bodies.iter().filter(|body| body.population > 0.0) {
+                corp.worlds += 1;
+                corp.population += body.population;
+            }
+        }
+        for fleet in self.world.fleets.values() {
+            if let Some(corp) = stats.get_mut(&fleet.owner) {
+                corp.fleets += 1;
+                corp.ships += fleet.total_count();
+            }
+        }
+        stats.into_values().collect()
+    }
+
     fn corporation_named(&self, name: &str) -> PlayerId {
         // Names remain public diplomacy addresses, not account identities.
         // Keep unknown-name refusals on the ordinary delayed sim path. Zero
@@ -785,6 +825,14 @@ impl GameLoop {
                     "player connected"
                 );
             }
+            GameInput::AdminStats { reply } => {
+                let _ = reply.send(AdminSnapshot {
+                    galaxy_id: self.galaxy_instance_id.clone(),
+                    sim_time: self.world.time,
+                    pacing: self.pacing_scale,
+                    corporations: self.corporation_stats(),
+                });
+            }
             GameInput::Disconnect { conn_id } => {
                 if let Some(player_id) = self.sessions.remove(conn_id) {
                     info!(
@@ -918,6 +966,11 @@ impl GameLoop {
                         self.pending.push(Command::RefuelFleet { player_id, fleet_id, target_id });
                     }
                 }
+                ClientMsg::DeployInterdiction { fleet_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::DeployInterdiction { player_id, fleet_id });
+                    }
+                }
                 ClientMsg::BlockadeSystem {
                     fleet_id,
                     system_id,
@@ -988,6 +1041,31 @@ impl GameLoop {
                 }
                 ClientMsg::SkimFuel { fleet_id, system_id } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) { self.pending.push(Command::SkimFuel { player_id, fleet_id, system_id }); }
+                }
+                ClientMsg::MineBelt { fleet_id, system_id, body_id, ore, pocket } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::MineBelt { player_id, fleet_id, system_id, body_id, ore, pocket });
+                    }
+                }
+                ClientMsg::ProspectBelt { fleet_id, system_id, body_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::ProspectBelt { player_id, fleet_id, system_id, body_id });
+                    }
+                }
+                ClientMsg::AnchorStation { fleet_id, system_id, body_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::AnchorStation { player_id, fleet_id, system_id, body_id });
+                    }
+                }
+                ClientMsg::UnanchorStation { fleet_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::UnanchorStation { player_id, fleet_id });
+                    }
+                }
+                ClientMsg::StationLoad { fleet_id, station_id, commodity, units } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::StationLoad { player_id, fleet_id, station_id, commodity, units });
+                    }
                 }
                 ClientMsg::ReserveProject { system_id, target, reserve } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) { self.pending.push(Command::ReserveProject { player_id, system_id, target, reserve }); }
@@ -1319,6 +1397,16 @@ impl GameLoop {
                         });
                     }
                 }
+                ClientMsg::SetDepotRule { system_id, commodity, target } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetDepotRule {
+                            player_id,
+                            system: system_id,
+                            commodity,
+                            target,
+                        });
+                    }
+                }
                 ClientMsg::PayReinstatement { points } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending
@@ -1332,6 +1420,11 @@ impl GameLoop {
                             fleet_id,
                             on,
                         });
+                    }
+                }
+                ClientMsg::SetRunBlockades { fleet_id, on } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetRunBlockades { player_id, fleet_id, on });
                     }
                 }
                 ClientMsg::BookFreightOut {
@@ -1535,6 +1628,11 @@ impl GameLoop {
                         });
                     }
                 }
+                ClientMsg::FitStation { system_id, mount, fit } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::FitStation { player_id, system_id, mount, fit });
+                    }
+                }
                 ClientMsg::DevelopSystem {
                     system_id,
                     upgrade,
@@ -1547,6 +1645,11 @@ impl GameLoop {
                             upgrade,
                             body_id,
                         });
+                    }
+                }
+                ClientMsg::CancelBuild { system_id, job_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::CancelBuild { player_id, system_id, job_id });
                     }
                 }
                 ClientMsg::SetAssignment {
@@ -1907,6 +2010,15 @@ impl GameLoop {
             let cc = corp.command_center;
             let known_systems = self.world.information.systems_for(&self.world, player_id);
             let known_emplacements = self.world.information.emplacements(cc, c, now);
+            // Interdiction fields are public: everyone sees one once its light arrives.
+            let interdiction_fields: Vec<crate::protocol::InterdictionFieldView> = self.world.information
+                .interdiction_fields(cc, c, now)
+                .into_iter()
+                .map(|f| crate::protocol::InterdictionFieldView {
+                    id: f.id, pos: f.pos, radius: f.radius, own: f.owner == player_id, fleet: f.fleet,
+                    expires_at: f.expires_at,
+                })
+                .collect();
             let known_syndicates = self.world.information.syndicates(cc, c, now);
             let known_ally = |owner| owner != player_id && known_syndicates.iter()
                 .any(|s| s.members.contains(&player_id) && s.members.contains(&owner));
@@ -2072,8 +2184,11 @@ impl GameLoop {
             // bumps every evaluation period per active rule, and hashing it
             // would re-send the "change-gated" list every few seconds forever
             // (the client renders none of it; its own list signature skips it too).
-            let standing_sig = sig_of(
-                &known_standing
+            // §fuel-overhaul: the corp's fuel depot rules ride the same section.
+            let depot_rules = self.world.players.get(&player_id)
+                .map(|corp| corp.depot_rules.clone()).unwrap_or_default();
+            let standing_sig = sig_of(&(
+                known_standing
                     .iter()
                     .map(|o| {
                         (
@@ -2088,11 +2203,13 @@ impl GameLoop {
                         )
                     })
                     .collect::<Vec<_>>(),
-            );
+                &depot_rules,
+            ));
             sections.insert(
                 player_id,
                 SectionData {
                     standing: known_standing,
+                    depot_rules,
                     standing_sig,
                     reports: battle_reports,
                     reports_sig,
@@ -2144,6 +2261,27 @@ impl GameLoop {
                 sv.ally = sv
                     .owner
                     .is_some_and(known_ally);
+                // The capture clock this blockade needs, from the arrived report
+                // of the system (garrison and battleship included), and whether
+                // it can be captured at all (a home never can).
+                if let Some(b) = sv.blockade.as_mut()
+                    && let Some(sys) = known_systems.iter().find(|s| s.id == sv.id)
+                {
+                    b.siege_secs = Some(self.world.siege_duration_of(sys));
+                    b.capturable = !self.world.players.values().any(|corp| corp.home_system == Some(sv.id));
+                    b.by_name = if b.by.is_pirate() {
+                        "Pirates".to_string()
+                    } else if b.by.is_tca() {
+                        "the Authority".to_string()
+                    } else {
+                        self.world.players.get(&b.by).map(|corp| corp.name.clone()).unwrap_or_else(|| "a rival".to_string())
+                    };
+                    // A runner's own research is its owner's to know.
+                    if !b.by_me {
+                        b.catch = self.world.blockade_run_chance(player_id, b.catch);
+                        b.catch_stabilized = self.world.blockade_run_chance(player_id, b.catch_stabilized);
+                    }
+                }
                 // §ground G4: the PRE-COMMIT LANDING ESTIMATE. Only for a
                 // besieger who actually has marines in orbit here — the person
                 // making the decision, and nobody else. It is sampled from the
@@ -2483,8 +2621,9 @@ impl GameLoop {
                 protected: corp.founding.protected(now),
                 protection_min_until: corp.founding.started_at
                     + sim::founding::FOUNDER_PROTECTION_MIN_S,
-                protection_max_until: corp.founding.started_at
-                    + sim::founding::FOUNDER_PROTECTION_MAX_S,
+                // When safety ends on its own (a day after completing the
+                // programme, within the ceiling), not merely the ceiling.
+                protection_max_until: corp.founding.protection_until(),
                 expansion_unlocked: corp.founding.expansion_unlocked(),
                 interceptor: corp.founding.interceptor,
                 privateer: (corp.founding.stage == sim::FoundingStage::DefeatPrivateer || corp.founding.local_opening && !corp.founding.reward_granted)
@@ -2498,7 +2637,51 @@ impl GameLoop {
                     .filter_map(|(&commodity, &report_at)| (report_at <= now).then_some(commodity))
                     .collect(),
                 survey_candidates: corp.founding.survey_candidates.clone(),
+                freighter_replaced: corp.founding.freighter_replaced,
+                stipends: corp
+                    .founding
+                    .stipends
+                    .iter()
+                    .filter_map(|(&stage, &credits)| {
+                        sim::founding::charter_stipend(stage).map(|(title, _)| {
+                            crate::protocol::StipendView { stage, title, credits }
+                        })
+                    })
+                    .collect(),
+                turned_back: corp
+                    .founding
+                    .turned_back
+                    .filter(|(_, at)| *at <= now)
+                    .map(|(fleet, _)| fleet),
+                belt_target: corp
+                    .founding
+                    .belt_target
+                    .map(|(system, body)| crate::protocol::BeltTargetView { system, body }),
             };
+            let charter_ledger = sim::charter::ledger_open(&corp.founding)
+                .then(|| corp.ledger.opened)
+                .filter(|opened| *opened)
+                .map(|_| {
+                    let snapshot = self.world.ledger_snapshot(player_id);
+                    crate::protocol::CharterLedgerView {
+                        done: corp.ledger.completed.len() as u32,
+                        total: sim::charter::LEDGER.len() as u32,
+                        goals: corp
+                            .ledger
+                            .next(sim::charter::LEDGER_VISIBLE)
+                            .into_iter()
+                            .map(|g| crate::protocol::LedgerGoalView {
+                                id: g.id,
+                                title: g.title,
+                                detail: g.detail,
+                                metric: g.metric,
+                                progress: snapshot.value(g.metric).min(g.target),
+                                target: g.target,
+                                reward: g.reward,
+                            })
+                            .collect(),
+                    }
+                });
 
             let wallet = WalletView {
                 report_pending: known_account.is_none(),
@@ -2532,7 +2715,7 @@ impl GameLoop {
                     .filter(|s| s.owner == Some(player_id))
                     .map(|s| {
                         s.stockpile
-                            .get(&sim::Commodity::Fuel)
+                            .get(&sim::Commodity::Deuterium)
                             .copied()
                             .unwrap_or(0.0)
                     })
@@ -2626,10 +2809,12 @@ impl GameLoop {
                     captain_capacity,
                     jump_departures,
                     emplacements: emplacements_view,
+                    interdiction_fields,
                     market,
                     wallet,
                     charter,
                     founding,
+                    charter_ledger,
                     freight,
                     // The player's own fleet doctrine (fresh private policy).
                     doctrine: corp.doctrine,
@@ -2774,6 +2959,7 @@ impl GameLoop {
 /// their content signatures (computed once per player, compared per connection).
 struct SectionData {
     standing: Vec<sim::StandingOrder>,
+    depot_rules: Vec<sim::industry::DepotRule>,
     standing_sig: u64,
     reports: Vec<crate::protocol::BattleReportView>,
     reports_sig: u64,
@@ -2814,6 +3000,7 @@ fn send_sections(
     }
     let msg = ServerMsg::Sections {
         standing_orders: send_standing.then(|| sec.standing.clone()),
+        depot_rules: send_standing.then(|| sec.depot_rules.clone()),
         battle_reports: send_reports.then(|| sec.reports.clone()),
         capture_reports: send_captures.then(|| sec.captures.clone()),
         rankings: send_ranks.then(|| rankings.to_vec()),
@@ -3078,6 +3265,30 @@ fn build_options() -> Vec<BuildOptionView> {
                 ship: ShipKind::Scout,
             },
         ),
+        // §charting: the one-way survey drone.
+        (
+            "survey_probe",
+            "Survey Probe",
+            BuildKind::Ship {
+                ship: ShipKind::SurveyProbe,
+            },
+        ),
+        // §belts: the belt miner.
+        (
+            "mining_barge",
+            "Mining Barge",
+            BuildKind::Ship {
+                ship: ShipKind::MiningBarge,
+            },
+        ),
+        // §belts: the barges' anchored ore depot (phase 4).
+        (
+            "mining_belt_station",
+            "Mining Belt Station",
+            BuildKind::Ship {
+                ship: ShipKind::MiningBeltStation,
+            },
+        ),
         (
             "corvette",
             "Corvette",
@@ -3154,7 +3365,9 @@ fn build_options() -> Vec<BuildOptionView> {
     ships
         .into_iter()
         .map(|(k, l, w)| (k.to_string(), l.to_string(), w))
-        .chain(StructureKind::ALL.into_iter().map(|k| {
+        // The legacy Defense Platform is no longer built (the station's level 1
+        // replaced it).
+        .chain(StructureKind::ALL.into_iter().filter(|k| k.offered()).map(|k| {
             (
                 k.slug().to_string(),
                 k.title().to_string(),
@@ -3176,9 +3389,66 @@ fn build_options() -> Vec<BuildOptionView> {
                     })
                     .collect(),
                 build_secs: r.build_ticks as f64 / TICK_HZ as f64,
+                tiers: if matches!(what, BuildKind::Upgrade { upgrade: StructureKind::CommandCenter }) {
+                    (1..=3).map(|tier| {
+                        let recipe = sim::build::recipe_for_tier(what, tier);
+                        crate::protocol::StructureTierView {
+                            tier, label: StructureKind::CommandCenter.tier_title(tier).into(),
+                            costs: recipe.costs.iter().map(|(c, n)| StockSlot { commodity: *c, units: *n as u32 }).collect(),
+                            build_secs: recipe.build_ticks as f64 / TICK_HZ as f64,
+                            research_prerequisite: (tier == 3).then_some("mat_prefab_construction"),
+                            requires: None,
+                            description: match tier {
+                                1 => "Your corporation's landing administration. Included free when a colony is settled, with a Solar Array I. No workforce or extra building slot.",
+                                2 => "Permanent local administration: +1 Infrastructure slot and 10% shorter structure construction on this world. No workforce or extra building slot.",
+                                _ => "Corporate headquarters: +2 Infrastructure slots and 20% shorter structure construction on this world (total bonuses, not cumulative). No workforce or extra building slot.",
+                            }.into(),
+                        }
+                    }).collect()
+                } else if matches!(what, BuildKind::Upgrade { upgrade: StructureKind::PowerPlant }) {
+                    // §fuel-overhaul: Solar I–II, Deuterium fusion III–IV,
+                    // Helium-3 fusion V–VI behind Fusion Reactors.
+                    (1..=sim::build::RESEARCHED_MAX_STRUCTURE_TIER).map(|tier| {
+                        let recipe = sim::build::recipe_for_tier(what, tier);
+                        let fusion = tier >= sim::power::FUSION_TIER;
+                        crate::protocol::StructureTierView {
+                            tier, label: StructureKind::PowerPlant.tier_title(tier).into(),
+                            costs: recipe.costs.iter().map(|(c, n)| StockSlot { commodity: *c, units: *n as u32 }).collect(),
+                            build_secs: recipe.build_ticks as f64 / TICK_HZ as f64,
+                            research_prerequisite: fusion.then_some(sim::power::FUSION_RESEARCH),
+                            requires: None,
+                            description: match sim::power::plant_fuel(tier) {
+                                None => format!("+{:.0} MW for this planet. Sunlight; burns nothing.", sim::power::plant_mw(tier)),
+                                // §fuel-overhaul: the solar fields stay, and stay free.
+                                Some(fuel) => format!("+{:.0} MW for this planet. Its solar {:.0} MW stay free; the reactor burns {} past that.",
+                                    sim::power::plant_mw(tier), sim::power::solar_mw(tier),
+                                    if fuel == sim::Commodity::Helium3 { "Helium-3" } else { "Deuterium" }),
+                            },
+                        }
+                    }).collect()
+                } else if matches!(what, BuildKind::Upgrade { upgrade: StructureKind::OrbitalDefense }) {
+                    sim::station::LEVELS.iter().map(|level| crate::protocol::StructureTierView {
+                        tier: level.level,
+                        label: level.name.into(),
+                        costs: level.recipe.costs.iter().map(|(c, n)| StockSlot { commodity: *c, units: *n as u32 }).collect(),
+                        build_secs: level.recipe.build_ticks as f64 / TICK_HZ as f64,
+                        research_prerequisite: Some(level.research),
+                        requires: level.yard.map(|(yard, tier)| crate::protocol::YardNeedView { yard: yard.slug(), tier }),
+                        description: level.description.into(),
+                    }).collect()
+                } else { Vec::new() },
+                consumes_slot: match what { BuildKind::Upgrade { upgrade } => Some(upgrade.uses_slot()), _ => None },
+                min_population: matches!(what, BuildKind::Upgrade { upgrade: StructureKind::CommandCenter })
+                    .then_some((sim::build::COMMAND_CENTER_MIN_POPULATION * 1_000_000.0) as u32),
+                requires_environment: matches!(what, BuildKind::Upgrade { upgrade: StructureKind::LivingTerraces })
+                    .then_some(sim::body::Environment::Gaia.slug()),
                 research_prerequisite: match what {
                     BuildKind::Upgrade { upgrade } => upgrade.research_prerequisite(),
                     _ => None,
+                },
+                research_alternatives: match what {
+                    BuildKind::Upgrade { upgrade } => upgrade.research_alternatives().to_vec(),
+                    _ => Vec::new(),
                 },
                 conversion: match what {
                     BuildKind::Upgrade { upgrade } => sim::production::CONVERTERS.iter()
@@ -3191,11 +3461,21 @@ fn build_options() -> Vec<BuildOptionView> {
                         }),
                     _ => None,
                 },
-                refining_recipes: if matches!(what, BuildKind::Upgrade { upgrade: sim::build::StructureKind::Smelter }) {
-                    sim::production::ORE_REFINING.iter().map(|r| crate::protocol::ConversionRecipeView {
-                        output: r.output, rate: r.rate, inputs: r.inputs.to_vec(), byproducts: r.byproducts().to_vec(),
-                    }).collect()
-                } else { Vec::new() },
+                refining_recipes: match what {
+                    BuildKind::Upgrade { upgrade: sim::build::StructureKind::Smelter } => sim::production::ORE_REFINING.iter()
+                        .map(|r| crate::protocol::ConversionRecipeView {
+                            output: r.output, rate: r.rate, inputs: r.inputs.to_vec(), byproducts: r.byproducts().to_vec(),
+                        }).collect(),
+                    // §fuel-overhaul: a Drive Works line makes Warp Cores or Fusion Cores,
+                    // picked by product with the same per-line field as the Smelter's ore.
+                    BuildKind::Upgrade { upgrade: sim::build::StructureKind::DriveWorks } => sim::production::CONVERTERS.iter()
+                        .filter(|c| c.structure == sim::build::StructureKind::DriveWorks)
+                        .chain(std::iter::once(&sim::production::FUSION_CORE_CONVERTER))
+                        .map(|r| crate::protocol::ConversionRecipeView {
+                            output: r.output, rate: r.rate, inputs: r.inputs.to_vec(), byproducts: r.byproducts().to_vec(),
+                        }).collect(),
+                    _ => Vec::new(),
+                },
             }
         })
         .collect()
@@ -3249,7 +3529,7 @@ fn research_catalog() -> Vec<crate::protocol::ProgrammeInfo> {
             // Derive the research reward copy from the same gate sent to the
             // builder. No second handwritten list of unlocks can drift from it.
             let structures = sim::build::StructureKind::ALL.into_iter()
-                .filter(|kind| kind.research_prerequisite() == Some(id))
+                .filter(|kind| kind.offered() && kind.research_prerequisite() == Some(id))
                 .map(|kind| kind.title())
                 .collect::<Vec<_>>();
             Some(crate::protocol::ProgrammeInfo {
@@ -3261,6 +3541,7 @@ fn research_catalog() -> Vec<crate::protocol::ProgrammeInfo> {
                 blurb: if structures.is_empty() { p.blurb.to_string() }
                     else { format!("Unlocks {}. {}", structures.join(", "), p.blurb) },
                 cost: sim::research::cost_of(id),
+                supplies: sim::research::basket(p.field, p.tier),
             })
         })
         .collect()
@@ -3289,6 +3570,7 @@ fn research_view(world: &sim::World, owner: sim::PlayerId) -> crate::protocol::R
             staffing: c.staffing,
             skill: c.skill,
             food: c.food,
+            power: c.power,
             rate: c.rate,
             supplied: c.supplied,
         })
@@ -3426,6 +3708,25 @@ mod tests {
     use sim::Vec2;
 
     #[test]
+    fn command_centers_publish_three_exact_level_recipes_and_no_slot_requirement() {
+        let options = build_options();
+        let option = options.iter().find(|o| o.key == "command_center").unwrap();
+        assert_eq!(option.consumes_slot, Some(false));
+        assert_eq!(option.min_population, Some(1000));
+        assert_eq!(option.tiers.len(), 3);
+        for level in &option.tiers {
+            let recipe = sim::build::recipe_for_tier(sim::build::BuildKind::Upgrade {
+                upgrade: sim::StructureKind::CommandCenter }, level.tier);
+            assert_eq!(level.costs.iter().map(|s| (s.commodity, s.units as f64)).collect::<Vec<_>>(), recipe.costs);
+            assert_eq!(level.build_secs, recipe.build_ticks as f64 / sim::config::TICK_HZ as f64);
+            assert_eq!(level.research_prerequisite, (level.tier == 3).then_some("mat_prefab_construction"));
+        }
+        assert_eq!(option.tiers[0].label, "Landing Command");
+        assert_eq!(option.tiers[1].label, "Colony Command Center");
+        assert_eq!(option.tiers[2].label, "Syndicate Headquarters");
+    }
+
+    #[test]
     fn every_freighter_quote_uses_its_authoritative_construction_manifest() {
         let options = build_options();
         for (kind, key) in sim::ship::PLAYER_FREIGHTERS.into_iter().zip([
@@ -3445,14 +3746,18 @@ mod tests {
     fn ore_recipes_are_served_from_the_sim_catalog_with_secondary_yields() {
         let options = build_options();
         let smelter = options.iter().find(|o| o.key == "smelter").unwrap();
-        assert_eq!(smelter.refining_recipes.len(), 5);
+        assert_eq!(smelter.refining_recipes.len(), sim::production::ORE_REFINING.len());
+        assert_eq!(smelter.refining_recipes.len(), 11, "five planet ores, three belt ores and three pocket ores");
         assert_eq!(smelter.research_prerequisite, Some("mat_enrichment"));
         for (served, recipe) in smelter.refining_recipes.iter().zip(sim::production::ORE_REFINING) {
             assert_eq!(served.inputs, recipe.inputs);
             assert_eq!(served.byproducts, recipe.byproducts());
             assert_eq!((served.output,served.rate),(recipe.output,recipe.rate));
         }
-        assert!(options.iter().filter(|o| o.key != "smelter").all(|o| o.refining_recipes.is_empty()));
+        let drive = options.iter().find(|o| o.key == "drive_works").unwrap();
+        assert_eq!(drive.refining_recipes.iter().map(|r| r.output).collect::<Vec<_>>(),
+            vec![sim::Commodity::WarpCore, sim::Commodity::FusionCore], "the Drive Works picks a core by product");
+        assert!(options.iter().filter(|o| o.key != "smelter" && o.key != "drive_works").all(|o| o.refining_recipes.is_empty()));
     }
 
     #[test]
@@ -3462,7 +3767,7 @@ mod tests {
         let (replace_tx, _) = watch::channel(false);
         let mut conn = ConnInfo { player_id: PlayerId(80), name: "Journal".into(), outbound: tx,
             view_tx, replace_tx, view_divisor: 1, last_view_broadcast: None, sent: Default::default() };
-        let mut section = SectionData { standing: vec![], standing_sig: 0, reports: vec![], reports_sig: 0,
+        let mut section = SectionData { standing: vec![], depot_rules: vec![], standing_sig: 0, reports: vec![], reports_sig: 0,
             captures: vec![], captures_sig: 0, exploration_journal_version: 1,
             exploration_journal: vec![sim::sites::JournalEntry { id: sim::EntityId(42),
                 kind: sim::sites::JournalKind::Site, pinned: true, note: "Return with escorts".into() }] };
@@ -3527,6 +3832,33 @@ mod tests {
             profile: sim::settlement::FoundingProfile::MineralHighlands } });
         assert!(game.pending.is_empty());
         assert_eq!(game.world.players[&owner].founding.started_at, started);
+    }
+
+    #[test]
+    fn the_admin_snapshot_reports_holdings_and_the_new_charter() {
+        let mut game = reporting_game(World::new(sim::SimConfig::for_players(972, 2)));
+        let owner = PlayerId(972);
+        let (outbound, _rx) = mpsc::channel(32);
+        let (view_tx, _) = watch::channel(None);
+        let (replace_tx, _) = watch::channel(false);
+        game.handle_input(GameInput::Connect { conn_id: 1, player_id: owner, name: "Charter".into(),
+            outbound, view_tx, replace_tx, view_divisor: 1 });
+        game.handle_input(GameInput::Intent { conn_id: 1, msg: ClientMsg::FoundColony {
+            profile: sim::settlement::FoundingProfile::CoastalPlains } });
+        game.tick();
+        let (reply, mut answer) = tokio::sync::oneshot::channel();
+        game.handle_input(GameInput::AdminStats { reply });
+        let snapshot = answer.try_recv().expect("the loop answers at once");
+        assert_eq!(snapshot.galaxy_id, game.galaxy_instance_id);
+        assert_eq!((snapshot.sim_time, snapshot.pacing), (game.world.time, 1.0));
+        let corp = snapshot.corporations.iter().find(|c| c.player_id == owner).expect("founded corporation");
+        assert!(!corp.bot);
+        assert_eq!(corp.name, "Charter");
+        assert!(corp.systems >= 1 && corp.fleets >= 1 && corp.ships >= corp.fleets);
+        let charter = corp.tutorial.as_ref().expect("a new corporation starts the charter");
+        assert_eq!(charter.reached.first(), Some(&(crate::tutorial::Step::Founded,
+            Some(game.world.players[&owner].founding.started_at))));
+        assert!(snapshot.corporations.iter().all(|c| !c.player_id.is_sentinel()), "pirates and the Authority are not players");
     }
 
     #[tokio::test]
@@ -3789,7 +4121,7 @@ mod tests {
         );
         assert_eq!(
             dispatch_chevron_targets(&ClientMsg::MarketBuy {
-                commodity: sim::Commodity::Fuel,
+                commodity: sim::Commodity::Deuterium,
                 units: 1,
                 max_unit_price: None,
             }),
@@ -4017,14 +4349,23 @@ mod tests {
         let opts = build_options();
         let research = research_catalog();
         for kind in sim::build::StructureKind::ALL {
+            if !kind.offered() {
+                assert!(opts.iter().all(|o| o.key != kind.slug()), "{} is no longer built", kind.slug());
+                continue;
+            }
             let option = opts.iter().find(|o| o.key == kind.slug()).unwrap();
             assert_eq!(option.research_prerequisite, kind.research_prerequisite());
+            assert_eq!(option.research_alternatives, kind.research_alternatives());
             if let Some(id) = option.research_prerequisite {
                 let programme = research.iter().find(|p| p.id == id).expect("unlock is visible in Research");
                 assert!(programme.blurb.starts_with("Unlocks "));
                 assert!(programme.blurb.contains(kind.title()), "{} advertises {}", id, kind.title());
             }
         }
+        let orbital = opts.iter().find(|o| o.key == "naval_drydock").unwrap();
+        assert_eq!(orbital.label, "Orbital Shipyard");
+        assert_eq!(orbital.research_prerequisite, Some("mat_autoforges"));
+        assert_eq!(orbital.research_alternatives, ["hull_modular_berths"]);
         // The UI reads the live recipe and research gate, including fractional
         // inputs; no parallel client conversion table can silently disagree.
         for converter in &sim::production::CONVERTERS {
@@ -4062,9 +4403,10 @@ mod tests {
             );
         }
         for k in sim::StructureKind::ALL {
-            assert!(
+            assert_eq!(
                 keys.contains(k.slug()),
-                "structure `{}` is missing from the catalogue",
+                k.offered(),
+                "structure `{}`: in the catalogue exactly when it is still built",
                 k.slug()
             );
         }

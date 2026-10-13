@@ -1,0 +1,54 @@
+{
+  "id": "power_plant/tier-3",
+  "mode": "built-in image_gen",
+  "revision": "fusion-without-solar-panels",
+  "prompt": "Use case: stylized-concept.\nAsset type: ONE standalone planetary building-layer sprite, square transparent PNG, approximately 1024 x 1024.\nPurpose: reusable architecture above a SEPARATE biome ground layer. Produce BUILDING ONLY, not a diorama. Genuine zero-alpha transparency around the building; preserve translucent soft shadow. No baked soil, gravel apron, grass, rocks around the site, concrete base tile, raised platform, roads, path, border or landscape. Small integral ramps, steps, pipe racks and support feet belonging to the structure are allowed.\nStyle: the approved new Boreal/Temperate structures, grounded near-future frontier engineering. Soft semi-realistic environmental 3D rendering, matte weathered steel, pale-stone and slate panels with dark grey trim, restrained amber service lights and a few warm windows. Large readable forms, no ink outlines, no cel shading, plastic gloss, extreme contrast, excessive greebles or neon. No text, logos, Authority branding, numerals, UI, people, vehicles or spacecraft. No lightning bolts or glowing energy effects; power reads through the machinery.\nCamera and lighting: elevated front-left three-quarter view about 55 degrees above the ground plane; more roof than wall, mild perspective; front and right walls visible. Soft upper-left daylight, neutral/cool fill and semi-transparent soft lower-right cast/contact shadow attached to the feet.\nFraming/alignment: complete compact structure centered in a square. Building width about 94% of the canvas (x \u2248 4\u201398%), never cropped. Keep the ground footprint centred at approximately x=50%; its near/front foot reaches y\u224888%, and its far/rear foot y\u224845%. This is a reusable stable site anchor, not a floating base. Keep a similar physical site footprint through upgrades; add height and reactor mass, not a sprawling campus.\nOutput exactly one structure, no tier lineup/contact sheet.\nInput image 1 is the house style for HEAVY INDUSTRY (tanks, pipework, panels, scale). Input image 2 is the house style for hot process plant (halls, heavy machinery). Create a NEW building family in that shared style; do not copy either building.\nSubject: POWER PLANT \u2014 TIER 3 of 6.\nFamily identity: the planet's power station. Tiers I\u2013II are SOLAR ARRAYS: tilted rows of dark blue-grey photovoltaic panels on steel stands, an inverter house with a low ridged roof, and a fenced transformer yard of insulators and busbars. No stacks, tanks or furnaces: sunlight burns nothing. Tiers III\u2013VI are FUSION PLANTS: a massive domed or toroidal reactor hall ringed by field-coil housings, a heavy shielded core block at its heart, banks of pale radiator fins and a transformer yard. No solar panels and no stacks on the fusion tiers. III\u2013IV store Deuterium in squat insulated tanks; V\u2013VI add frosted cryogenic Helium-3 tanks. A recognizable power-station silhouette, clearly different from the Fuel Refinery's distillation towers and the Smelter's furnace halls.\nThis tier specifically: a first fusion plant: one compact domed reactor hall ringed with field-coil housings, two squat insulated Deuterium tanks and a bank of radiator fins. No solar panels, no stacks.\nTier family progression for context (do NOT draw a lineup): 1: a small solar array, three short rows of panels, a small inverter house and a small transformer yard; 2: a larger solar array, five panel rows climbing to a taller inverter hall, a wider transformer yard; 3: a first fusion plant: one compact domed reactor hall ringed with field-coil housings, two squat insulated Deuterium tanks and a bank of radiator fins; 4: a larger fusion plant: a taller domed reactor hall, a control block, four Deuterium tanks and taller radiator banks; 5: a Helium-3 fusion plant: a broad toroidal reactor hall under a ribbed dome, frosted cryogenic Helium-3 tanks and wide radiator banks; 6: a great Helium-3 fusion plant: a larger toroidal reactor hall with a second reactor hall beside it, tall radiator banks and a row of frosted cryogenic tanks, on the same compact site.\nOutput: exactly the requested tier alone, genuine transparent PNG.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/fuel_refinery/tier-1.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/smelter/tier-1.png"
+  ],
+  "reference_sha256": {
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/fuel_refinery/tier-1.png": "dd19fca47cab72e4444decb136f7cda6fc2098c69a14e0b429070a2ee9d47e6c",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/smelter/tier-1.png": "186c7de11d9dfd3a1d3747d60f2f865fdd6ea441948198866b577daafd24e085"
+  },
+  "transparent_background": true,
+  "initial_generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-20097e23-0578-4671-a095-9452f7348ab0.png",
+  "generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-766a72da-0544-4af5-84e8-315ff3c60406.png",
+  "file": "buildings/power_plant/tier-3.png",
+  "source_brief": "docs/power-plant-art-prompt.md",
+  "brief_normalization": "Uses the user-provided fusion prompt: removes panel stands and add panels wording from the shared framing lines.",
+  "verification": {
+    "size": [
+      1254,
+      1254
+    ],
+    "mode": "RGBA",
+    "fullyTransparentPixels": 725299,
+    "partiallyTransparentPixels": 846809,
+    "solidBounds": [
+      43,
+      128,
+      1231,
+      1160
+    ],
+    "solidWidthFraction": 0.9474,
+    "lowestSolidFraction": 0.925,
+    "sha256": "35599cf06318d30132fdba36fddb9a1e474231fab61a9364a966c431943cdd91",
+    "nativeBytesPreserved": true,
+    "visualCheck": {
+      "noSolarPanels": true,
+      "noStacks": true,
+      "transformerYardVisible": true,
+      "reactorHalls": 1,
+      "fuelTanks": 2
+    }
+  },
+  "edits": [
+    {
+      "prompt": "Use case: precise-object-edit. Complete this transparent tier III FUSION POWER PLANT by adding its missing compact transformer yard. At the front-left beside the control house, integrate a SMALL open fenced electrical bay with two squat ribbed transformers, clearly visible ceramic insulators and metal busbars. It belongs to the same compact building, sits on small integral support feet, and has no solid ground slab or base tile. Keep the existing one domed reactor, field-coil housings, exactly TWO squat insulated tanks and rear radiator-fin bank, with the same pale stone/slate weathered steel, restrained amber lights, camera and upper-left lighting. Keep the complete plant about 94% of canvas width and place its lowest solid front foot near 88% of canvas height, with generous clear transparent space below it; fit the electrical bay inside this site instead of sprawling outward. No solar panels anywhere, no stacks, no terrain, no text or other objects. One square native-resolution RGBA PNG, genuine zero-alpha around the structure and soft translucent attached contact shadow.",
+      "referenced_image_paths": [
+        "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-20097e23-0578-4671-a095-9452f7348ab0.png"
+      ]
+    }
+  ]
+}

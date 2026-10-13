@@ -1,0 +1,7 @@
+{
+  "recipe": "nexus-ortho-top-perspective-hero-v1",
+  "source": "art-src/ship-models/authority-nexus-textured-v1/authority-nexus.glb",
+  "sourceSha256": "0565ddbbe96bed7b2a8432e49253b5f60d6c46a68ee17aa713b18e3658c723ce",
+  "topSha256": "122c79c4e6dabc5fd3459f65e09893c11dc2ccd0ea8637986d2c3ec48836d405",
+  "heroSha256": "69523540668afcf93bd3e45a1af978cb437dd17eb7896c8f5b4730c918072b29"
+}

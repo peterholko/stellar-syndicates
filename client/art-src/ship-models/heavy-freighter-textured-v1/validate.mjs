@@ -1,0 +1,11 @@
+import {createRequire} from 'node:module';
+import {readFile,writeFile} from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+const require=createRequire(import.meta.url);
+const validator=require('gltf-validator');
+const root=path.dirname(fileURLToPath(import.meta.url));
+const report=await validator.validateBytes(new Uint8Array(await readFile(path.join(root,'heavy-freighter.glb'))),{uri:'heavy-freighter.glb'});
+await writeFile(path.join(root,'validation.json'),JSON.stringify(report,null,2)+'\n');
+console.log(`${report.issues.numErrors} errors; ${report.issues.numWarnings} warnings; ${report.issues.numInfos} informational notes.`);
+if(report.issues.numErrors)process.exitCode=1;

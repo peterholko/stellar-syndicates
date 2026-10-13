@@ -23,7 +23,7 @@ fn transport_app(handle: GameHandle) -> Router {
         let revoke = revoke.clone();
         async move { ws.protocols([wire::SUBPROTOCOL]).on_upgrade(move |socket| async move {
             let _keep_auth_live = revoke;
-            handle_socket(socket, handle, session).await;
+            handle_socket(socket, handle, session, None).await;
         }) }
     }))
 }

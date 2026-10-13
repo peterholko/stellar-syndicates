@@ -103,6 +103,7 @@ mod tests {
         s.owner = Some(PlayerId(72));
         w.build_queue.push(BuildJob {
             id: 99,
+            construction_yard: None,
             owner,
             system: id,
             body_id: body.id,
@@ -145,6 +146,7 @@ mod tests {
         let body = w.systems.iter().find(|s| s.id == id).unwrap().bodies[0].id;
         w.build_queue.push(BuildJob {
             id: 100, owner, system: id, body_id: body,
+            construction_yard: None,
             what: crate::BuildKind::Ship { ship: crate::ShipKind::Convoy },
             started_tick: Some(w.tick), complete_tick: w.tick + 800,
             queued_tick: None, structure_work: None,
@@ -314,6 +316,8 @@ pub struct InformationHistory {
     programmes: BTreeMap<PlayerId, VecDeque<(f64, Option<String>)>>,
     research: BTreeMap<u64, Vec<(PlayerId, String, f64)>>,
     emplacements: BTreeMap<EntityId, Reports<crate::Emplacement>>,
+    /// Interdiction fields are public: anyone sees one once its light arrives.
+    interdictions: BTreeMap<EntityId, Reports<crate::interdiction::InterdictionField>>,
     captains: BTreeMap<PlayerId, BTreeMap<u32, Reports<crate::Captain>>>,
     shipments: BTreeMap<crate::tca::ShipmentId, Reports<(crate::tca::Shipment, bool)>>,
     standing: BTreeMap<PlayerId, BTreeMap<u32, Reports<crate::standing::StandingOrder>>>,
@@ -349,6 +353,14 @@ pub struct FleetAssets {
 }
 
 impl InformationHistory {
+    /// Add the landing module using each historical report's own population.
+    /// Do not import present tiers, ownership, inventory or timestamps.
+    pub(crate) fn migrate_command_centers(&mut self) {
+        for report in self.sites.values_mut().flat_map(|reports| reports.iter_mut()) {
+            if report.system.owner.is_some() { report.system.seed_command_centers(); }
+        }
+    }
+
     /// Re-express only the old report's own base storage as a building. Do not
     /// copy current inventory, ownership, queues or timestamps into delayed light.
     pub(crate) fn migrate_ground_storage(&mut self) {
@@ -426,6 +438,14 @@ impl InformationHistory {
     }
     pub fn emplacements(&self, cc: Vec2, c: f64, now: f64) -> Vec<crate::Emplacement> {
         self.emplacements
+            .values()
+            .filter_map(|r| r.at(cc, c, now).cloned())
+            .collect()
+    }
+
+    /// The interdiction fields whose light has reached `cc`, as they were then.
+    pub fn interdiction_fields(&self, cc: Vec2, c: f64, now: f64) -> Vec<crate::interdiction::InterdictionField> {
+        self.interdictions
             .values()
             .filter_map(|r| r.at(cc, c, now).cloned())
             .collect()
@@ -633,6 +653,17 @@ impl InformationHistory {
         }
         self.emplacements.retain(|id, history| {
             if world.emplacements.iter().any(|e| e.id == *id) { return true; }
+            history.record(world.time, history.last_pos, None, horizon);
+            history.expired_absence(world.time, horizon).is_none()
+        });
+        for f in world.interdictions.values() {
+            self.interdictions
+                .entry(f.id)
+                .or_default()
+                .record_present(world.time, f.pos, f, horizon);
+        }
+        self.interdictions.retain(|id, history| {
+            if world.interdictions.contains_key(id) { return true; }
             history.record(world.time, history.last_pos, None, horizon);
             history.expired_absence(world.time, horizon).is_none()
         });
@@ -867,6 +898,7 @@ fn site_system_matches(stored: &StarSystem, live: &StarSystem) -> bool {
         legacy_refinery_tier,
         blockade,
         blockade_prev,
+        mounts,
         trait_,
         garrison_fed,
         garrison_suppression,
@@ -898,6 +930,7 @@ fn site_system_matches(stored: &StarSystem, live: &StarSystem) -> bool {
         && *legacy_refinery_tier == live.legacy_refinery_tier
         && *blockade == live.blockade
         && *blockade_prev == live.blockade_prev
+        && mounts_match(mounts, &live.mounts)
         && *trait_ == live.trait_
         && *garrison_fed == live.garrison_fed
         && *garrison_suppression == live.garrison_suppression
@@ -906,6 +939,15 @@ fn site_system_matches(stored: &StarSystem, live: &StarSystem) -> bool {
         && *legacy_population == live.legacy_population
         && *legacy_assignments == live.legacy_assignments
         && *specialists == live.specialists
+}
+
+/// Station hardpoints match when their fits do and their health is in the
+/// same 5% band: repair creeps every tick, and a report a few percent behind
+/// is still a true picture (the stockpile is floored the same way).
+fn mounts_match(stored: &[crate::station::Mount], live: &[crate::station::Mount]) -> bool {
+    let band = |h: f64| (h * 20.0).floor() as i64;
+    stored.len() == live.len()
+        && stored.iter().zip(live).all(|(a, b)| a.fit == b.fit && band(a.health) == band(b.health))
 }
 
 /// The stored (floored) stockpile against the live one, floored the same way

@@ -1,0 +1,415 @@
+{
+  "asset": "Authority Arbiter",
+  "createdUTC": "2026-10-08T01:22:39.297285+00:00",
+  "sourceReference": {
+    "path": "client/art-src/authority-arbiter-reference-v1/authority-arbiter-reference.png",
+    "bytes": 2014433,
+    "sha256": "e647d2b934822a42cd57917895e19c95efae42605b75406b8ea8d0e300f4c1b2"
+  },
+  "sourceSprite": {
+    "path": "client/art-src/authority-arbiter-reference-v1/authority-arbiter.png",
+    "bytes": 1050709,
+    "sha256": "9e4aa2997aee45145433ef0f93ee62b500de18b89da1b0a4212899bc494ea078"
+  },
+  "variant": "Top-view fidelity art pass; dark imperial lead finish",
+  "updatedUTC": "2026-10-08T06:23:05.225294+00:00",
+  "triangles": 19388,
+  "renderSections": 25,
+  "geometryCounts": {
+    "haloRings": 1,
+    "haloStruts": 4,
+    "dorsalSpines": 3,
+    "spinalLances": 0,
+    "massDrivers": 1,
+    "accelerationRails": 2,
+    "heavyTwinTurrets": 6,
+    "secondaryTwinTurrets": 8,
+    "pairedPointDefenseMounts": 8,
+    "gunBarrels": 44,
+    "mainEngines": 4,
+    "commandTowers": 1,
+    "closedVentralHangars": 1
+  },
+  "textureSources": [
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/materials/material-atlas-artpass-v2.png",
+      "bytes": 2677667,
+      "sha256": "bad0ad5441bd9a4562b7aa30b0d749155bdc31e97a0d5e74fd4560b5d74122e8"
+    },
+    {
+      "path": "client/art-src/authority-arbiter-reference-v1/authority-arbiter-reference.png",
+      "bytes": 2014433,
+      "sha256": "e647d2b934822a42cd57917895e19c95efae42605b75406b8ea8d0e300f4c1b2"
+    }
+  ],
+  "imageGeneration": {
+    "tool": "image_gen.imagegen, built-in",
+    "prompt": {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/materials/art-pass-v2-prompt.json",
+      "bytes": 2278,
+      "sha256": "57e98a2c35a9c71683305911f388dd3248ab729d208e835ad74c34dafa769f0e"
+    }
+  },
+  "textureResolution": [
+    1024,
+    1024
+  ],
+  "defaultViewerVariant": "dark-imperial",
+  "materialVariants": {
+    "ivory": {
+      "file": "authority-arbiter.glb",
+      "bytes": 1541312,
+      "triangles": 19388,
+      "renderSections": 25
+    },
+    "dark-imperial": {
+      "file": "authority-arbiter-dark.glb",
+      "bytes": 1910776,
+      "triangles": 19388,
+      "renderSections": 25
+    }
+  },
+  "validation": {
+    "gltfErrors": 0,
+    "gltfWarnings": 0,
+    "threeLoaderPassed": true,
+    "closedComponents": 414,
+    "texturedPhysicalTriangles": 19388,
+    "texturedDownwardTriangles": 4874,
+    "weaponMuzzlesFoundByGameExtractor": 45,
+    "engineSocketsFoundByGameExtractor": 4,
+    "movingGunMounts": 22,
+    "movingMuzzleSockets": 44,
+    "weaponExtensionFractionOfShip": 0.0157,
+    "goldFractionOfUpwardSpineArmor": 1.0,
+    "massDriverBoreUnobstructed": true,
+    "massDriverBoreDepth": 2.37255,
+    "bothFinishesShareExactGeometryAndUVs": true,
+    "bothFinishesShareEmbeddedTextureBytes": true,
+    "readabilitySamples": [
+      {
+        "view": "TOP \u00b7 256 PX",
+        "canvasPixels": 256,
+        "lightScale": 1,
+        "edgePixelsAboveBackgroundBy12Of255": 1.0,
+        "medianShipLumaAboveBackground": 0.3524
+      },
+      {
+        "view": "TOP \u00b7 128 PX",
+        "canvasPixels": 128,
+        "lightScale": 1,
+        "edgePixelsAboveBackgroundBy12Of255": 1.0,
+        "medianShipLumaAboveBackground": 0.3563
+      },
+      {
+        "view": "TOP \u00b7 40% LIGHT",
+        "canvasPixels": 256,
+        "lightScale": 0.4,
+        "edgePixelsAboveBackgroundBy12Of255": 1.0,
+        "medianShipLumaAboveBackground": 0.2238
+      },
+      {
+        "view": "UNDERSIDE \u00b7 40% LIGHT",
+        "canvasPixels": 256,
+        "lightScale": 0.4,
+        "edgePixelsAboveBackgroundBy12Of255": 1.0,
+        "medianShipLumaAboveBackground": 0.1294
+      }
+    ],
+    "browserTested": false
+  },
+  "blenderUsed": false,
+  "gameIntegrationChanged": false,
+  "previousRevision": {
+    "path": "client/art-src/ship-models/authority-arbiter-textured-v1/revisions/long-mass-driver-v1/authority-arbiter-dark.glb",
+    "bytes": 5565808,
+    "sha256": "9de77a9ac92858b56560fac1bf7cfee96dac05c955fb81782168730ae85f023d"
+  },
+  "initialRevision": {
+    "path": "client/art-src/ship-models/authority-arbiter-textured-v1/revisions/spinal-lance-v1/authority-arbiter.glb",
+    "bytes": 5164212,
+    "sha256": "faa5a5af13a0587065693c4445628fc85c1249bfe5bf1dd429cce234f98d9d68"
+  },
+  "outputs": [
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/authority-arbiter.glb",
+      "bytes": 1541312,
+      "sha256": "2bf0c5428021e28e04e87b6610f68af069439aae4a33e0b7951a385c0701e392"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/authority-arbiter.obj",
+      "bytes": 4282884,
+      "sha256": "ef3a4b9198e0368415e410b08b0151529b0f7a180219ac0ac8eecde9127d3f7e"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/authority-arbiter.mtl",
+      "bytes": 311,
+      "sha256": "7821fbef8f280688940747eaee1e095a2fd90832a7428886f6ec570c4c7abf20"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/viewer.html",
+      "bytes": 5206598,
+      "sha256": "efb524adf29e9cd3d4a24a0afd4b7354bf60559634bc599cb9199e6b9f36eb3a"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/model-info.json",
+      "bytes": 33935,
+      "sha256": "a42da65a8efe10c47d3ab9c3f22e724368e2c3bf99447b60458a8e8bf0eb1d67"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/model-spec.json",
+      "bytes": 2078,
+      "sha256": "9bf2e99a4062b1aa80258a10567e48c6f22cd270136e180827174a8e5a4dcd6e"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/three-quarter.png",
+      "bytes": 911125,
+      "sha256": "5722a8a8deff2994a4422dec0461272a2d80028fb6f2ac553982bbcdff111406"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/contact-sheet.png",
+      "bytes": 1177081,
+      "sha256": "76285800e96eb5b02138cea05fba02b5ccfb3f79574786c0bedbd0315e00425e"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/surface-verification.json",
+      "bytes": 20814,
+      "sha256": "f669eb242c5255c6ca7d4da3223ccb27859df8ec319022db8de5e40cc36d38c0"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/gltf-validation.json",
+      "bytes": 1756,
+      "sha256": "df1502e024fbae0c944156ce061f033bbd0ce2579966a5dfeb3d5b3ece48d9d2"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/runtime-load-validation.json",
+      "bytes": 1044,
+      "sha256": "d28f93e4978ca45977d6cdacd30f91d3e8e415ab498800866bd28c3fe1963b9e"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/spines-detail.png",
+      "bytes": 1372409,
+      "sha256": "772ae993de080f4588d617e2fda54b70f0e30ae585dcd9edc37fe9217f47d0f3"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/mass-driver-detail.png",
+      "bytes": 892798,
+      "sha256": "d2608f406fca665cdf16f515f3e34053fc4aae46a4e6f91cadbf0792043b5849"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/top.png",
+      "bytes": 459755,
+      "sha256": "5283301c9e8bd294375af4295b16a92734ae314885f54546253d246209ae1acd"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/bottom.png",
+      "bytes": 448950,
+      "sha256": "edbf6a14b6da992f42e7730815bf8cf087f6b40c1040dfe1303ca8c5e56ce826"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/front.png",
+      "bytes": 399167,
+      "sha256": "8c19b6640779b70a3a3efd5b1e4fc9d7ee55b4c508477a130c0abf1117e3dbaf"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/back.png",
+      "bytes": 458236,
+      "sha256": "a1278df201d1662c54bc6f2ee2c675c748a559e28fa1720215e37e845caae73e"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/side.png",
+      "bytes": 350987,
+      "sha256": "13155c249ce67a133793c4dac487e6bc022089415ff251ce8ad2792e409ed20e"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/underside.png",
+      "bytes": 901596,
+      "sha256": "4034e70d5665c0c3977148e8b09a2a514ad7ab3143acdc3996fa927e5771d3de"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/rear-quarter.png",
+      "bytes": 943259,
+      "sha256": "2d2198e370ef0d06bc7dc3e8acdfc115b034cf317218e7529876a050703b5c39"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/README.md",
+      "bytes": 6648,
+      "sha256": "d8184a491309c9a7a70be3c38544a0f0ccf72ddffb1ad84d28f2a753feb51a32"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/build_model.py",
+      "bytes": 22978,
+      "sha256": "5a48b2698e1d01b1eeff6629ffe24c846f793d8d911af7517363ee74dd886788"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/reconstruction.py",
+      "bytes": 21535,
+      "sha256": "fd6026a50538786c8a334c77878fce822d107e9bbb16a9d68b52ca1bb921bc27"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/inspect_model.py",
+      "bytes": 12193,
+      "sha256": "47fb6771c006cb0f3fb4e3fb85d2ef6e8a050fce75dbb7678e0e0660b70092a3"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/render_core.py",
+      "bytes": 13837,
+      "sha256": "efe7a0dd4e53a3324c15456df7b60d005ee27763a42bdfc9eb69b9aa2e0c6a3e"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/viewer.js",
+      "bytes": 11876,
+      "sha256": "aa6d083943256136ebab1f812b9015bffa49b27405baa7c04240fc13dd70be99"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/viewer-shell.html",
+      "bytes": 4786,
+      "sha256": "72ca1835facda27467dac5cf7a8d67f0a9273ada256805525787f2765ea3fe0e"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/build_preview.mjs",
+      "bytes": 1535,
+      "sha256": "a7c23ae042e1aebd46d04a8e99e1dd702df18dbae307a31257b2ba81f6536795"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/test_asset.mjs",
+      "bytes": 7338,
+      "sha256": "9c40c74bcd7cb6c88141ab32ce038d55a6f218531454cadd3997efae050003bb"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/authority-arbiter-dark.glb",
+      "bytes": 1910776,
+      "sha256": "3472d243a2a2004d7ab703e1798fde92033d7a017b70ad6f9206b44f672c3af8"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/dark-model-info.json",
+      "bytes": 34314,
+      "sha256": "69ca48bb9f15178cb95b20694f8a529b5da3deb3c00bb0965567e0737ea0cd80"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/build_dark_variant.py",
+      "bytes": 5902,
+      "sha256": "1e1fe0d3586616a4b42ea073fe510462942abfdf4d3c87d22b83abfdba068e00"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/inspect_dark_variant.py",
+      "bytes": 6287,
+      "sha256": "6b7541f9ab6be2fc684c3a12019f8112119fd2a0eef0459aef02293ae78153e8"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/dark-surface-verification.json",
+      "bytes": 20652,
+      "sha256": "a0d63bd8258f71eda08e1f0f27f26d91718320dea1a5e72ce78cb2e4536ed1f8"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/dark-gltf-validation.json",
+      "bytes": 1761,
+      "sha256": "ea34294bf25bea145b6940711993229e11b49d8ecc50fa232a2ce6eb692c6886"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/dark-runtime-load-validation.json",
+      "bytes": 1051,
+      "sha256": "87dbf1fd70041c94dd8bb257feb45350fe1c278561cb88f141c0465d5e16a36f"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/package.json",
+      "bytes": 568,
+      "sha256": "663be9352a62a8446ebcdd2b171b16aa576d06edaef7a97df61c388e6c93ba1f"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/validate.mjs",
+      "bytes": 1121,
+      "sha256": "8ad5f6f054d6af98c13586463d64fa859d88306546affdc70c1423d15bb15a4d"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/dark-galaxy.png",
+      "bytes": 809301,
+      "sha256": "85dd5ace42618dd1ada61a52695e8cfa32cdc8f86e8dcd2acf4bf56317267551"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/dark-underside.png",
+      "bytes": 840367,
+      "sha256": "48ff93c4dff04150ff4cb01ea6609820654cd61258d3204ac7414c1f142e472e"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/dark-rear.png",
+      "bytes": 847799,
+      "sha256": "3d616523fa7c21153c56d68b2a5e733d6af3b22c2763528829a4529d1d891be0"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/dark-low-light.png",
+      "bytes": 692612,
+      "sha256": "6ccb832059b1aef4b808e1c00b2338a5cb58a1279a7e813e1f15f5609bad635e"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/dark-map-readability.png",
+      "bytes": 102696,
+      "sha256": "2597a715eb3d32efcaa2780cd8b179011219af4728dc921d90b10fa753f58e22"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/ivory-dark-comparison.png",
+      "bytes": 610051,
+      "sha256": "5a77f4e3a0a5d42719fc0ca26eaca8b8bcc37a01dc404e21fd74c37b2771ca72"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/build_review_art.py",
+      "bytes": 3684,
+      "sha256": "c3c2b2308f03d96bcfa0cae8185e1ed1292dd9c4779dbf59e4bb204af41aee00"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/review-sprite-manifest.json",
+      "bytes": 1398,
+      "sha256": "1e1d181e0c7b322759118fedba29ca666422455cea9b1d6c5bec2ba8cf58d347"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/materials/material-atlas-artpass-v2.png",
+      "bytes": 2677667,
+      "sha256": "bad0ad5441bd9a4562b7aa30b0d749155bdc31e97a0d5e74fd4560b5d74122e8"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/materials/art-pass-v2-prompt.json",
+      "bytes": 2278,
+      "sha256": "57e98a2c35a9c71683305911f388dd3248ab729d208e835ad74c34dafa769f0e"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/textures/authority-arbiter-basecolor.jpg",
+      "bytes": 350489,
+      "sha256": "7549a7a2156f63ccf95573a26e84007c8e52a6955e5b99afe298c6dcc3444e75"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/textures/authority-arbiter-metallic-roughness.png",
+      "bytes": 4621,
+      "sha256": "fe1e61124590e21423aa97f0418ca61dc7413c2d8fdeafe72f80ec533bac8cc4"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/textures/authority-arbiter-emissive.png",
+      "bytes": 9831,
+      "sha256": "31ea7be0c56d5f4d41b69df58386860f1df49b9af153acb0b294121c70c37c3d"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/previews/top-design-review.png",
+      "bytes": 1070846,
+      "sha256": "d151974a81ed9ea1063bf33779588caf3955bdbd0db8ec5f54f9f97def095fce"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/sprites/authority-arbiter-dark-top-1024.png",
+      "bytes": 463363,
+      "sha256": "9b0e6b3f0c502054e53e8e020fd32206f5a8d637fcec38e7878d037c841b2f50"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/sprites/authority-arbiter-dark-top-128.png",
+      "bytes": 15558,
+      "sha256": "1b6953f4716eb8b0998f6f2f1cb438f4ccf70e1b5f6e16c38e580560c62cae05"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/sprites/authority-arbiter-dark-top-256.png",
+      "bytes": 46156,
+      "sha256": "f2ef86a763e09ae1d89d56a7ffd971f3b84566b355fb01381d5dcd2c6402044b"
+    },
+    {
+      "path": "client/art-src/ship-models/authority-arbiter-textured-v1/sprites/authority-arbiter-dark-top-512.png",
+      "bytes": 142727,
+      "sha256": "bb6011ff7a8f9b11b2090eadf8f887149b363c6b8b239041b44ae5602e96dad7"
+    }
+  ]
+}

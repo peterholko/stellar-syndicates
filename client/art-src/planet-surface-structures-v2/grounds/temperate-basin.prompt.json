@@ -1,0 +1,11 @@
+{
+  "id": "ground/temperate-basin",
+  "mode": "built-in image_gen",
+  "prompt": "Use case: stylized-concept.\nAsset type: ONE standalone biome GROUND layer, square transparent PNG, approximately 1024 x 1024, for use underneath a separate colony building sprite.\nPrimary request: a modest natural ground transition patch with an EMPTY flat center for a building, no building in this image. True fully transparent alpha outside the patch, irregular softly feathered edge. The patch is a thin surface texture, not a floating terrain island: no thickness, cutaway walls, curb, raised slab or platform.\nInput image 1: biome terrain/color/lighting reference ONLY. Do not copy the whole landscape, horizon, sky, water, distant hills or tree forests.\nLayout: a high-oblique ground footprint, view about 55 degrees downward. Center at canvas x=50%, y=65%; softly irregular diamond-like patch occupying roughly x=9–91%, y=35–91%, with transparent area above. Quiet compacted natural earth/grit in the middle where the future building will sit, richer low biome texture near the fringe. Entire patch and feathering well inset, nothing touches any canvas edge. Matte diffuse soft upper-left light, no hard directional building shadow because no building is present.\nNo structures, foundations shaped as buildings, roads, paths leaving the patch, markings, text, people, vehicles, trees, tall vegetation, opaque sky/background or checkerboard. No smooth hard oval sticker rim.\nBiome: temperate-basin. Meadow grass, muted olive-green tufts, local grey-brown earth and modest neutral gravel. No Boreal moss blanket.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/habitable-v1/temperate-basin.png"
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/019fb19e-91e5-7c62-9601-74b4298e4889/exec-054da6df-6e7f-4af8-b6b0-fb9beaf4a712.png",
+  "file": "grounds/temperate-basin.png"
+}

@@ -1,0 +1,31 @@
+{
+  "id": "power_plant/orbital-solar",
+  "mode": "built-in image_gen",
+  "prompt": "Use case: stylized-concept.\nAsset type: a single standalone orbital power-station sprite for a space strategy game's planetary view, with genuine transparent alpha. Square canvas, approximately 1024 x 1024.\nInput image 1 is a MATERIAL/RENDERING reference only, the approved Orbital Shipyard. Do NOT copy its rails, gantries or berth. Input image 2 is the FAMILY reference: the same plant on the ground. Keep its identity and materials, but rebuild it as a free-floating station: no ground, feet, shadow on terrain, roads or landscape.\nCreate one FREE-FLOATING SPACE STRUCTURE, compact and readable at small size: a slim central truss spine with a compact inverter module and relay mast, carrying two long wings of dark blue-grey photovoltaic panels to either side. A short docking arm with cyan docking lights serves the supply tenders. Near-future frontier engineering, matte slate graphite steel and pale grey panels, restrained amber work lights, large readable forms, realistic restrained detail, soft semi-realistic environmental 3D rendering, no ink outlines or cel shading. No glow haze or energy beams.\nCamera: elevated three-quarter front-left, about 30 degrees, matching the orbital yards. Soft upper-left light with neutral fill. The structure about 90% of the canvas wide, centred, never cropped.\nNo planet, sky, stars, horizon, text, logos, people or spacecraft.\nOutput exactly one structure, genuine transparent PNG.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-shipyards-v1/naval_drydock/tier-1.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/power_plant/tier-2.png"
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-d8683773-de5b-40e1-be09-dbfa1e2e0ec4.png",
+  "file": "buildings/power_plant/orbital-solar.png",
+  "source_brief": "docs/power-plant-art-prompt.md",
+  "verification": {
+    "size": [
+      1254,
+      1254
+    ],
+    "mode": "RGBA",
+    "fullyTransparentPixels": 1232175,
+    "partiallyTransparentPixels": 339410,
+    "solidBounds": [
+      20,
+      221,
+      1237,
+      1086
+    ],
+    "solidWidthFraction": 0.9705,
+    "lowestSolidFraction": 0.866,
+    "sha256": "694f2e43b5cd77e41f86f8bc34f884600c0341435b5583dc41149708c29a7e3c"
+  }
+}

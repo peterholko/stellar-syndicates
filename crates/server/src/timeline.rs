@@ -26,6 +26,9 @@ use crate::protocol::{TimelineEntry, TimelineSeverity};
 const JOURNAL_CAP: usize = 40;
 /// Drop a not-yet-observable entry whose light somehow never lands (bounded mem).
 const MAX_PENDING_AGE: f64 = 1800.0;
+/// A held blockade strips about a unit and a half a second; each side gets one
+/// line a minute per system for it, with the running haul, instead of one a unit.
+const PLUNDER_LINE_SECS: f64 = 60.0;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Pending {
@@ -47,6 +50,10 @@ pub struct Timeline {
     /// so late-game raid warnings (and other fresh news) still reach live clients.
     #[serde(default)]
     revisions: BTreeMap<PlayerId, usize>,
+    /// Plunder not yet put in a line, per (player, system): when that player's
+    /// last plunder line for the system went out and the goods since.
+    #[serde(skip)]
+    plunder: BTreeMap<(PlayerId, sim::EntityId), (f64, BTreeMap<Commodity, u32>)>,
 }
 
 impl Timeline {
@@ -74,10 +81,10 @@ impl Timeline {
                                 "the formation no longer consists entirely of jump-capable hulls"
                             }
                             sim::JumpFailReason::OriginInGravityWell => {
-                                "the fleet is inside a gravity well"
+                                "the fleet is inside a gravity well or an interdiction field"
                             }
                             sim::JumpFailReason::TargetInGravityWell => {
-                                "the destination is inside a gravity well"
+                                "the destination is inside a gravity well or an interdiction field"
                             }
                             sim::JumpFailReason::OutOfRange => {
                                 "the destination is beyond jump range"
@@ -89,6 +96,29 @@ impl Timeline {
                             TimelineSeverity::Warn,
                             format!("Jump failed for fleet {fleet}: {why}."),
                         );
+                    }
+                }
+                // A field this player raised, or one of theirs collapsing:
+                // owner-only, on the light from the field.
+                EventPayload::InterdictionRaised { owner, fleet, pos, radius, expires_at, .. } => {
+                    if let Some(cc) = world.players.get(owner).map(|corp| corp.command_center) {
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        let minutes = ((expires_at - e.time) / 60.0).round();
+                        self.push(*owner, observe, TimelineSeverity::Info, format!(
+                            "Fleet {fleet} raised an interdiction field: fleets within {radius:.0} su drop out of warp \
+                             and can't jump, for up to {minutes:.0} minutes while it holds station."));
+                    }
+                }
+                EventPayload::InterdictionCollapsed { owner, fleet, pos, end, .. } => {
+                    if let Some(cc) = world.players.get(owner).map(|corp| corp.command_center) {
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        let why = match end {
+                            sim::interdiction::FieldEnd::Expired => "it ran its full time",
+                            sim::interdiction::FieldEnd::Left => "the destroyer left the field",
+                            sim::interdiction::FieldEnd::Lost => "the destroyer holding it up was lost",
+                        };
+                        self.push(*owner, observe, TimelineSeverity::Info,
+                            format!("Fleet {fleet}'s interdiction field collapsed: {why}."));
                     }
                 }
                 // Own economy / automation uses the SAME physical origin and
@@ -111,6 +141,8 @@ impl Timeline {
                 EventPayload::RaidResolved {
                     attacker,
                     defender,
+                    attacker_ship,
+                    target_ship,
                     attacker_kind,
                     target_kind,
                     outcome,
@@ -118,9 +150,11 @@ impl Timeline {
                     ..
                 } => {
                     for &p in &[*attacker, *defender] {
-                        let Some(cc) = world.players.get(&p).map(|corp| corp.command_center) else {
+                        let Some(corp) = world.players.get(&p) else {
                             continue;
                         };
+                        let cc = corp.command_center;
+                        let enemy_ship = if p == *attacker { *target_ship } else { *attacker_ship };
                         let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         let (sev, text) = raid_entry(
                             p,
@@ -129,6 +163,7 @@ impl Timeline {
                             *attacker_kind,
                             *target_kind,
                             *outcome,
+                            corp.founding.privateer == Some(enemy_ship),
                         );
                         self.push(p, observe, sev, text);
                     }
@@ -291,18 +326,23 @@ impl Timeline {
                 // Queue/start notices are private site news. The common physical-
                 // origin gate below applies the return delay, including activation.
                 EventPayload::BuildStarted {
+                    id,
                     owner,
                     system,
                     what,
                     complete_tick,
-                    ..
                 } => {
                     let name = system_name(world, *system);
+                    // A refit reuses the build notice; say what actually happens.
+                    let refit = world.refit_queue.iter().find(|j| j.id == *id);
                     self.push(
                         *owner,
                         e.time,
                         TimelineSeverity::Good,
-                        if *complete_tick == u64::MAX && matches!(what, sim::BuildKind::Upgrade { .. } | sim::BuildKind::Founding { .. }) {
+                        if let Some(job) = refit {
+                            let fit = job.to.modules().iter().map(|m| m.label()).collect::<Vec<_>>().join(", ");
+                            format!("Refit started at {name}: {} ← {}.", build_label(*what).trim_start_matches("a "), if fit.is_empty() { "standard fit".into() } else { fit })
+                        } else if *complete_tick == u64::MAX && matches!(what, sim::BuildKind::Upgrade { .. } | sim::BuildKind::Founding { .. }) {
                             format!("Construction queued at {name}: {}.", build_label(*what))
                         } else if *complete_tick == u64::MAX {
                             format!("Construction queued at {name}: {} · awaiting workforce.", build_label(*what))
@@ -326,22 +366,37 @@ impl Timeline {
                     // per-unit toasts. Inventory still updates on its own light.
                     if by.is_pirate() { continue; }
                     let name = system_name(world, *system);
-                    let good = commodity_name(*commodity);
+                    // A unit and a half a second would bury the log: each side
+                    // gets one line a minute per system with the haul since.
+                    let mut haul = |who: PlayerId| -> Option<String> {
+                        let entry = self.plunder.entry((who, *system)).or_insert((f64::NEG_INFINITY, BTreeMap::new()));
+                        *entry.1.entry(*commodity).or_default() += units;
+                        if e.time - entry.0 < PLUNDER_LINE_SECS {
+                            return None;
+                        }
+                        entry.0 = e.time;
+                        Some(std::mem::take(&mut entry.1).into_iter()
+                            .map(|(c, n)| format!("{n} {}", commodity_name(c))).collect::<Vec<_>>().join(", "))
+                    };
+                    let victim_line = haul(*owner);
+                    let prize_line = haul(*by);
                     // The VICTIM learns by light from the system, exactly as they
                     // learn the blockade itself — owning ground grants no FTL
                     // knowledge of what is happening on it (§6).
-                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                    if let (Some(goods), Some(cc)) = (victim_line, world.players.get(owner).map(|c2| c2.command_center)) {
                         let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         self.push(*owner, observe, TimelineSeverity::Bad, format!(
-                            "{name} is being STRIPPED — {units} {good} carried off by the blockade holding it. \
+                            "{name} is being STRIPPED — {goods} carried off by the blockade holding it. \
                              Break the blockade or keep losing stores."
                         ));
                     }
                     // The BESIEGER is there: it is their own fleet's prize, so it
                     // is own-clock news like any of their economy.
-                    self.push(*by, e.time, TimelineSeverity::Good, format!(
-                        "Prize taken at {name}: {units} {good} aboard the blockade — it still has to get home."
-                    ));
+                    if let Some(goods) = prize_line {
+                        self.push(*by, e.time, TimelineSeverity::Good, format!(
+                            "Prize taken at {name}: {goods} aboard the blockade — it still has to get home."
+                        ));
+                    }
                 }
                 // §roster: a fleet finished REPAIRS — every hull back to full.
                 // Exactly the kind of "ready when you are" news the check-in loop
@@ -420,12 +475,26 @@ impl Timeline {
                             "Can't build {} at {name}: your syndicate already fields its Titan — one flagship per syndicate (rebuild only after it is lost).",
                             build_label(*what)
                         ),
+                        sim::BuildRejectReason::OneStationPerSystem => format!(
+                            "Can't build {} at {name}: the system's station stands on another world — raise that one instead.",
+                            build_label(*what)
+                        ),
+                        sim::BuildRejectReason::StarFortressLimit => format!(
+                            "Can't raise a Star Fortress at {name}: your corporation already has one.",
+                        ),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);
                 }
                 EventPayload::IndustryRejected { owner, system, reason } => {
                     self.push(*owner, e.time, TimelineSeverity::Warn,
                         format!("{}: project refused — {reason}.", system_name(world,*system)));
+                }
+                EventPayload::BuildCancelled { owner, system, what, refunded } => {
+                    let goods = refunded.iter().map(|(c, units)| format!("{} {}", units.round(), c.display_name()))
+                        .collect::<Vec<_>>().join(", ");
+                    self.push(*owner, e.time, TimelineSeverity::Info,
+                        format!("Construction cancelled at {}: {}. Returned {goods} to the stockpile.",
+                            system_name(world, *system), build_label(*what)));
                 }
                 // A soft-rejected fleet ORDER — owner-only, whether preflight
                 // refused it or receiver-side conditions changed before delivery.
@@ -466,6 +535,24 @@ impl Timeline {
                                 .to_string(),
                         sim::OrderRejectReason::ExplorationThreat =>
                             format!("Exploration aborted: fleet {fleet} detected a nearby threat and is retreating away from the site."),
+                        sim::OrderRejectReason::NoInterdictor =>
+                            format!("Interdiction refused: fleet {fleet} has no working destroyer carrying an Interdiction Field."),
+                        sim::OrderRejectReason::InterdictorInGravityWell =>
+                            format!("Interdiction refused: fleet {fleet} is inside a gravity well or another field. Raise fields in open space."),
+                        sim::OrderRejectReason::InterdictorRecharging =>
+                            format!("Interdiction refused: fleet {fleet}'s field generator is still recharging."),
+                        sim::OrderRejectReason::InterdictorLowFuel =>
+                            format!("Interdiction refused: fleet {fleet} can't spare the fuel a field burns."),
+                        sim::OrderRejectReason::NeedsInterceptor =>
+                            format!("Order refused: fleet {fleet} has no interceptor. A blockade needs at least one to \
+                                run down what slips past it."),
+                        sim::OrderRejectReason::NotRivalTerritory =>
+                            "Order refused: only a system another corporation owns can be blockaded.".to_string(),
+                        sim::OrderRejectReason::StationAnchored =>
+                            format!("Order refused: fleet {fleet} is an anchored station. Unanchor it first (60 s)."),
+                        sim::OrderRejectReason::HostilitiesEnded =>
+                            format!("Blockade called off: fleet {fleet}'s war with the system's owner is over (a treaty, \
+                                a capture, or an expired right of reprisal). It is heading home."),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);
                 }
@@ -481,9 +568,29 @@ impl Timeline {
                         ));
                     }
                 }
-                // A rival BLOCKADE was established at one of your systems
-                // (§contestable-territory). The OWNER learns it light-delayed
-                // (a rival arrived at the system — news travels home at c); the
+                // A rival fleet took station at a DEFENDED system of yours, or
+                // your defense came back under a held blockade: the blockade is
+                // CONTESTED — only a battle until the defense falls. The OWNER
+                // learns it light-delayed; the BESIEGER instantly (it is there).
+                EventPayload::BlockadeContested { by, owner, system, pos } => {
+                    let name = system_name(world, *system);
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        self.push(*owner, observe, TimelineSeverity::Warn, if by.is_pirate() {
+                            format!("Pirates are attacking {name} — your defenses are fighting them off.")
+                        } else { format!(
+                            "{name} is CONTESTED — a rival fleet is fighting your defenses there. Shipping runs while \
+                             they hold; if they fall, the system is blockaded. Send warships to tip the fight."
+                        ) });
+                    }
+                    if !by.is_sentinel() { self.push(*by, e.time, TimelineSeverity::Info, format!(
+                        "Your fleet is fighting {name}'s defenses. Beat them to blockade the system; if your fleet \
+                         retreats, the blockade is off."
+                    )); }
+                }
+                // A rival BLOCKADE took HOLD at one of your systems
+                // (§contestable-territory): its defense is beaten. The OWNER
+                // learns it light-delayed (news travels home at c); the
                 // BESIEGER learns instantly (their fleet is there).
                 EventPayload::BlockadeEstablished {
                     by,
@@ -497,11 +604,14 @@ impl Timeline {
                         self.push(*owner, observe, TimelineSeverity::Bad, if by.is_pirate() {
                             format!("Pirates are raiding {name} — defend the stockpile or intercept their retreat.")
                         } else { format!(
-                            "{name} is under BLOCKADE — a rival fleet holds station; freighters in and out are cut off. Break the blockade (relief, a new defense tier) to restore your supply lines."
+                            "{name} is under BLOCKADE — its defenses have fallen. Freighters in and out are cut off \
+                             and its stores are being stripped. Send warships or build a Defense Platform tier to \
+                             contest it."
                         ) });
                     }
                     if !by.is_sentinel() { self.push(*by, e.time, TimelineSeverity::Good, format!(
-                        "Your blockade of {name} is established — its logistics are strangled while you hold station."
+                        "Your blockade of {name} holds — its defenses are beaten. Its logistics are cut and its \
+                         stores are yours while you hold station."
                     )); }
                 }
                 // A besieged system was CAPTURED (§contestable-territory Part 2).
@@ -614,8 +724,10 @@ impl Timeline {
                         ));
                     }
                 }
-                // A blockade at one of your systems lifted (§contestable-territory).
-                EventPayload::BlockadeLifted { owner, system, pos } => {
+                // A blockade at one of your systems lifted (§contestable-territory):
+                // the owner learns on the light from the system; the besieger, on
+                // its own clock (it was there).
+                EventPayload::BlockadeLifted { owner, system, pos, held, by } => {
                     let name = system_name(world, *system);
                     if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
                         let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
@@ -623,9 +735,43 @@ impl Timeline {
                             *owner,
                             observe,
                             TimelineSeverity::Good,
-                            format!("The blockade of {name} has LIFTED — logistics resume."),
+                            if *held {
+                                format!("The blockade of {name} has LIFTED — logistics resume.")
+                            } else {
+                                format!("The attack on {name} was beaten off — the rival fleet has left.")
+                            },
                         );
                     }
+                    if let Some(by) = by.filter(|b| !b.is_sentinel()) {
+                        self.push(by, e.time, TimelineSeverity::Info, format!("Your blockade of {name} is over."));
+                    }
+                    for who in [Some(*owner), *by].into_iter().flatten() {
+                        self.plunder.remove(&(who, *system));
+                    }
+                }
+                // §blockade-running: a freighter crossed a held blockade. Both
+                // corporations learn on the light from where it crossed.
+                EventPayload::BlockadeRun { owner, by, system, pos, caught, chance, .. } => {
+                    let name = system_name(world, *system);
+                    let pct = (chance * 100.0).round() as u32;
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        if *caught {
+                            self.push(*owner, observe, TimelineSeverity::Bad, format!(
+                                "Your freighter was caught running the blockade of {name} ({pct}% chance) — \
+                                 the blockaders are raiding it."
+                            ));
+                        } else {
+                            self.push(*owner, observe, TimelineSeverity::Good, format!(
+                                "Your freighter slipped past the blockade of {name} ({pct}% chance of being caught)."
+                            ));
+                        }
+                    }
+                    self.push(*by, e.time, TimelineSeverity::Info, if *caught {
+                        format!("Your blockade of {name} caught a freighter running it — your ships are raiding it.")
+                    } else {
+                        format!("A freighter slipped past your blockade of {name}.")
+                    });
                 }
                 // A scout captured intel (§scout part 2) — OWNER-ONLY, delivered
                 // when the capture's light (from the scout's position) reaches
@@ -723,6 +869,9 @@ impl Timeline {
                         R::StorageFull => {
                             "storage is FULL — ship goods out or build an Orbital Warehouse"
                         }
+                        // The sim latches this policy pause quietly; kept for
+                        // completeness should an event ever carry it.
+                        R::FoodReserve => "the camp's food reserve is full",
                     };
                     self.push(
                         *owner,
@@ -746,6 +895,28 @@ impl Timeline {
                         TimelineSeverity::Good,
                         format!("{} at {name} is producing again.", structure.title()),
                     );
+                }
+                // §power: a planet's grid fell short, or recovered. Latched in
+                // the sim; OWNER-ONLY, own clock.
+                EventPayload::Brownout { owner, system, body, power, no_fuel } => {
+                    let planet = body_name(world, *system, *body);
+                    let fuel = world.systems.iter().find(|s| s.id == *system)
+                        .and_then(|s| s.bodies.iter().find(|b| b.id == *body))
+                        .and_then(|b| sim::power::plant_fuel(b.tier(sim::StructureKind::PowerPlant)))
+                        .unwrap_or(sim::Commodity::Deuterium);
+                    let cause = if *no_fuel {
+                        format!(" · plant out of {}", if fuel == sim::Commodity::Helium3 { "Helium-3" } else { "Deuterium" })
+                    } else { String::new() };
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Warn,
+                        format!("Brownout · {planet} · {:.0}%{cause}", power * 100.0),
+                    );
+                }
+                EventPayload::PowerRestored { owner, system, body } => {
+                    let planet = body_name(world, *system, *body);
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!("Power restored · {planet}"));
                 }
                 // §economy Part 2: a colony moved on the FOOD LADDER — OWNER-ONLY,
                 // on the owner's own clock (own-economy precedent, like stockpiles
@@ -784,6 +955,29 @@ impl Timeline {
                         ),
                     };
                     self.push(*owner, e.time, sev, text);
+                }
+                // §founding R3: the Authority's one-time replacement starter hull.
+                EventPayload::FounderFreighterReplaced { owner, system, .. } => {
+                    let name = system_name(world, *system);
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Good,
+                        format!(
+                            "The Terran Charter Authority chartered a replacement Tiny Freighter at {name}. \
+                             The privateer withdrew; send the Freighter with your Interceptor as escort."
+                        ),
+                    );
+                }
+                // §founding R6/R10: a charter stipend, already stamped at the
+                // milestone's arrival on the founder's own clock.
+                EventPayload::CharterStipend { owner, title, credits } => {
+                    self.push(
+                        *owner,
+                        e.time,
+                        TimelineSeverity::Good,
+                        format!("Charter milestone · {title} · the Authority paid {credits:.0} Cr."),
+                    );
                 }
                 // §syndicates Part 3: an ally GARRISON's supply flipped at a HOST
                 // system — OWNER-ONLY (the sender, whose fleet it is), light-delayed
@@ -921,8 +1115,69 @@ impl Timeline {
                     let name = system_name(world, *system);
                     if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
                         let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        let belts = belt_discovery(world, *system)
+                            .map(|found| format!(" {found}"))
+                            .unwrap_or_default();
                         self.push(*owner, observe, TimelineSeverity::Good, format!(
-                            "Survey of {name} complete — exact geology charted (permanent; allies receive a relayed copy)."
+                            "Survey of {name} complete — its worlds and geology are charted (permanent; allies receive a relayed copy).{belts}"
+                        ));
+                    }
+                }
+                // §pockets: a prospecting pass or a barge's strike — OWNER-ONLY,
+                // light-delayed from the fleet, on the clock the find itself
+                // reaches command (the pocket rows appear with the notice).
+                EventPayload::ProspectCompleted { owner, system, body, found, pos } => {
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        let belt = body_name(world, *system, *body);
+                        let (sev, text) = if found.is_empty() {
+                            (TimelineSeverity::Info, format!("Prospected {belt}: nothing new found."))
+                        } else {
+                            let ores: Vec<&str> = found.iter().map(|c| commodity_name(*c)).collect();
+                            let plural = if found.len() > 1 { "pockets" } else { "pocket" };
+                            (TimelineSeverity::Good, format!("Prospected {belt}: {} {plural} found.", ores.join(" and ")))
+                        };
+                        self.push(*owner, observe, sev, text);
+                    }
+                }
+                // §belts: a station's anchoring and loading — owner-only,
+                // light-delayed from the station.
+                EventPayload::StationAnchored { owner, system, body, pos, .. }
+                | EventPayload::StationUnanchored { owner, system, body, pos, .. } => {
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        let belt = body_name(world, *system, *body);
+                        let (sev, text) = if matches!(e.payload, EventPayload::StationAnchored { .. }) {
+                            (TimelineSeverity::Good, format!("Station anchored at {belt}. Your barges there unload into it."))
+                        } else {
+                            (TimelineSeverity::Info, format!("Station unanchored at {belt}; free to move."))
+                        };
+                        self.push(*owner, observe, sev, text);
+                    }
+                }
+                EventPayload::StationReleased { owner, system, units, pos, .. } => {
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        let name = system_name(world, *system);
+                        self.push(*owner, observe, TimelineSeverity::Good, format!(
+                            "{name} is your colony: the station unloaded {units} units into its stockpile and is free to move."
+                        ));
+                    }
+                }
+                EventPayload::StationLoaded { owner, commodity, units, pos, .. } => {
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        self.push(*owner, observe, TimelineSeverity::Info, format!(
+                            "Loaded {units} {} from your station.", commodity_name(*commodity)
+                        ));
+                    }
+                }
+                EventPayload::PocketStruck { owner, system, body, ore, pos } => {
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        let belt = body_name(world, *system, *body);
+                        self.push(*owner, observe, TimelineSeverity::Good, format!(
+                            "Barge struck a {} pocket in {belt}.", commodity_name(*ore)
                         ));
                     }
                 }
@@ -1002,6 +1257,44 @@ impl Timeline {
                 // detail (tiers lost / result), light-delayed from the battle
                 // like any combat news. The attacker's side of the story arrives
                 // separately via the ordinary RaidResolved report.
+                // §orbital-defense: a hardpoint's new fit, reported from the
+                // system (the light-delay floor below applies).
+                EventPayload::StationRefitted { owner, system, mount, fit } => {
+                    let name = system_name(world, *system);
+                    let what = if fit.is_empty() {
+                        "the stock beam battery".to_string()
+                    } else {
+                        fit.split('+').map(|m| m.replace('_', " ")).collect::<Vec<_>>().join(", ")
+                    };
+                    self.push(*owner, e.time, TimelineSeverity::Info,
+                        format!("Hardpoint {} of the station at {name} now fields {what}.", mount + 1));
+                }
+                // §orbital-defense: the owner hears how its station fared, on
+                // the light from the battle.
+                EventPayload::StationEngaged { owner, system, pos, level, knocked_out, standing, enemy_destroyed, driven_off } => {
+                    let name = system_name(world, *system);
+                    let station = sim::station::level_name(*level);
+                    let total = sim::station::level(*level).map_or(0, |l| l.hardpoints);
+                    if let Some(cc) = world.players.get(owner).map(|c| c.command_center) {
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        let lost = if *knocked_out > 0 {
+                            format!(" — {knocked_out} of {total} hardpoints knocked out; they repair while the system is free")
+                        } else {
+                            String::new()
+                        };
+                        let (sev, text) = if *standing == 0 {
+                            (TimelineSeverity::Bad, format!(
+                                "Your {station} at {name} was silenced: every hardpoint is out. A blockade can hold the system until they repair."))
+                        } else if *enemy_destroyed {
+                            (TimelineSeverity::Good, format!("Your {station} at {name} destroyed the attackers{lost}."))
+                        } else if *driven_off {
+                            (TimelineSeverity::Good, format!("Your {station} at {name} drove the attackers off{lost}."))
+                        } else {
+                            (TimelineSeverity::Warn, format!("Your {station} at {name} fought{lost}."))
+                        };
+                        self.push(*owner, observe, sev, text);
+                    }
+                }
                 EventPayload::PlatformEngaged {
                     owner,
                     system,
@@ -1038,8 +1331,21 @@ impl Timeline {
                     needed,
                     kind,
                 } => {
-                    self.push(*owner, e.time, TimelineSeverity::Warn,
-                        format!("A {} was held — out of fuel (needed ~{:.0}). Refuel at a berth or call Authority Astral Assistance from the fleet panel.", kind.label(), needed));
+                    let what = if *kind == sim::fuel::ShortfallKind::Jump {
+                        format!("A jump was cancelled — too little Antimatter (needed {needed:.1}). Refill the bottle at a berth, the Hub or from a tender, then jump again.")
+                    } else {
+                        format!("A {} was held — out of fuel. Refuel at a berth or call Authority Astral Assistance from the fleet panel.", kind.label())
+                    };
+                    self.push(*owner, e.time, TimelineSeverity::Warn, what);
+                }
+                // §fuel-overhaul: a fleet ran one store dry and switched to the other.
+                EventPayload::FuelSwitched { owner, fleet, to } => {
+                    let line = if *to == sim::ship::TransitMode::Slow {
+                        format!("Fleet {} out of Deuterium · Slow on Uranium", fleet.0)
+                    } else {
+                        format!("Fleet {} out of Uranium · Full on Deuterium", fleet.0)
+                    };
+                    self.push(*owner, e.time, TimelineSeverity::Warn, line);
                 }
                 EventPayload::FuelRescueDispatched {
                     owner,
@@ -1052,7 +1358,7 @@ impl Timeline {
                         e.time,
                         TimelineSeverity::Info,
                         format!(
-                            "Authority Astral Assistance dispatched a rescue tender with ~{fuel:.0} Fuel — {cost:.0} credits charged."
+                            "Authority Astral Assistance dispatched a rescue tender with ~{fuel:.0} fuel — {cost:.0} credits charged."
                         ),
                     );
                 }
@@ -1068,7 +1374,7 @@ impl Timeline {
                         observe,
                         TimelineSeverity::Good,
                         format!(
-                            "AAA rescue complete — ~{fuel:.0} Fuel transferred; the fleet resumed its held order."
+                            "AAA rescue complete — ~{fuel:.0} fuel transferred; the fleet resumed its held order."
                         ),
                     );
                 }
@@ -1356,21 +1662,68 @@ fn commodity_name(c: Commodity) -> &'static str {
         Commodity::Alloys => "alloys",
         Commodity::Electronics => "electronics",
         Commodity::Polymers => "polymers",
-        Commodity::Fuel => "fuel",
+        Commodity::Deuterium => "deuterium",
         Commodity::Provisions => "provisions",
         Commodity::Machinery => "machinery",
         Commodity::Armaments => "armaments",
         Commodity::Composites => "composites",
         Commodity::HullSections => "hull sections",
         Commodity::PrecisionComponents => "precision components",
-        Commodity::DriveAssemblies => "drive assemblies",
+        Commodity::WarpCore => "warp cores",
         Commodity::CupriteOre => "cuprite ore",
         Commodity::TitaniumOre => "titanium ore",
         Commodity::CrystallineOre => "crystalline ore",
         Commodity::RareMetalOre => "rare-metal ore",
         Commodity::ConductiveMetals => "conductive metals",
         Commodity::Titanium => "titanium",
+        Commodity::OlivineOre => "olivine ore",
+        Commodity::BorniteOre => "bornite ore",
+        Commodity::IlmeniteOre => "ilmenite ore",
+        Commodity::IridiumOre => "iridium ore",
+        Commodity::Helium3Ice => "helium-3 ice",
+        Commodity::VoidCrystal => "void crystal",
+        Commodity::Iridium => "iridium",
+        Commodity::Helium3 => "helium-3",
+        Commodity::ExoticMatter => "exotic matter",
+        Commodity::Uranium => "uranium",
+        Commodity::Antimatter => "antimatter",
+        Commodity::FusionCore => "fusion cores",
     }
+}
+
+/// §belts: what a survey charted in a system's asteroid belts, e.g.
+/// "Asteroid belt discovered: metallic (ferrite ore, bornite ore)."
+fn belt_discovery(world: &World, id: sim::EntityId) -> Option<String> {
+    let sys = world.systems.iter().find(|s| s.id == id)?;
+    let belts: Vec<String> = sys
+        .bodies
+        .iter()
+        .filter_map(|b| {
+            let shape = b.belt?;
+            let ores: Vec<&str> = b.deposits.iter().map(|d| commodity_name(d.resource)).collect();
+            Some(if ores.is_empty() {
+                format!("{} (bare rock)", shape.kind.slug())
+            } else {
+                format!("{} ({})", shape.kind.slug(), ores.join(", "))
+            })
+        })
+        .collect();
+    match belts.len() {
+        0 => None,
+        1 => Some(format!("Asteroid belt discovered: {}.", belts[0])),
+        n => Some(format!("{n} asteroid belts discovered: {}.", belts.join("; "))),
+    }
+}
+
+/// §pockets: a body's name ("Veles Belt"), or its system's when it is gone.
+fn body_name(world: &World, system: sim::EntityId, body: u32) -> String {
+    world
+        .systems
+        .iter()
+        .find(|s| s.id == system)
+        .and_then(|s| s.bodies.iter().find(|b| b.id == body))
+        .map(|b| b.name.clone())
+        .unwrap_or_else(|| system_name(world, system))
 }
 
 fn system_name(world: &World, id: sim::EntityId) -> String {
@@ -1399,6 +1752,9 @@ fn fleet_label(world: &World, id: sim::EntityId) -> String {
                 sim::ShipKind::Colony => "colony",
                 sim::ShipKind::Transport => "transport",
                 sim::ShipKind::Scout => "scout",
+                sim::ShipKind::SurveyProbe => "survey probe",
+                sim::ShipKind::MiningBarge => "mining barge",
+                sim::ShipKind::MiningBeltStation => "mining belt station",
                 sim::ShipKind::Freighter => "freighter",
                 sim::ShipKind::Destroyer => "destroyer",
                 sim::ShipKind::Cruiser => "cruiser",
@@ -1459,6 +1815,15 @@ fn build_label(what: sim::BuildKind) -> &'static str {
             ship: sim::ShipKind::Scout,
         } => "a Scout",
         sim::BuildKind::Ship {
+            ship: sim::ShipKind::SurveyProbe,
+        } => "a Survey Probe",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::MiningBarge,
+        } => "a Mining Barge",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::MiningBeltStation,
+        } => "a Mining Belt Station",
+        sim::BuildKind::Ship {
             ship: sim::ShipKind::Destroyer,
         } => "a Destroyer",
         sim::BuildKind::Ship {
@@ -1504,6 +1869,10 @@ fn build_label(what: sim::BuildKind) -> &'static str {
             sim::ModuleKind::SurveyDrive => "Survey Drive",
             sim::ModuleKind::NebulaSpectrometer => "Nebula Spectrometer",
             sim::ModuleKind::PrismaticLance => "Prismatic Lance",
+            sim::ModuleKind::StasisWeb => "a Stasis Web",
+            sim::ModuleKind::WarpStabilizer => "a Warp Stabilizer",
+            sim::ModuleKind::InterdictionField => "an Interdiction Field",
+            sim::ModuleKind::JumpDrive => "a Jump Drive",
         },
     }
 }
@@ -1522,6 +1891,9 @@ fn kind_word(k: ShipKind) -> &'static str {
         ShipKind::Colony => "colony ship",
         ShipKind::Transport => "troop transport",
         ShipKind::Scout => "scout",
+        ShipKind::SurveyProbe => "survey probe",
+        ShipKind::MiningBarge => "mining barge",
+        ShipKind::MiningBeltStation => "mining belt station",
         ShipKind::Freighter => "freighter",
         ShipKind::Destroyer => "destroyer",
         ShipKind::Cruiser => "cruiser",
@@ -1878,6 +2250,8 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
 }
 
 /// The check-in line for a battle, framed for `me`'s role and the outcome.
+/// `enemy_is_privateer` names the founder's scripted Rogue Privateer instead
+/// of its internal hull class, so the tutorial fight reads as one story.
 fn raid_entry(
     me: PlayerId,
     attacker: PlayerId,
@@ -1885,21 +2259,37 @@ fn raid_entry(
     attacker_kind: ShipKind,
     target_kind: ShipKind,
     outcome: RaidOutcome,
+    enemy_is_privateer: bool,
 ) -> (TimelineSeverity, String) {
     use TimelineSeverity::*;
     let i_attack = me == attacker;
     let _ = defender;
+    let enemy = |kind: ShipKind, article: &str| {
+        if enemy_is_privateer {
+            "the Rogue Privateer".to_string()
+        } else {
+            format!("{article} {}", kind_word(kind))
+        }
+    };
     match outcome {
         RaidOutcome::TargetDestroyed => {
             if i_attack {
                 (
                     Good,
-                    format!("Your raider destroyed an enemy {}.", kind_word(target_kind)),
+                    format!(
+                        "Your {} destroyed {}.",
+                        kind_word(attacker_kind),
+                        enemy(target_kind, "an enemy")
+                    ),
                 )
             } else {
                 (
                     Bad,
-                    format!("You lost a {} to a hostile raider.", kind_word(target_kind)),
+                    format!(
+                        "You lost your {} to {}.",
+                        kind_word(target_kind),
+                        enemy(attacker_kind, "a hostile")
+                    ),
                 )
             }
         }
@@ -1913,7 +2303,7 @@ fn raid_entry(
                     ),
                 )
             } else {
-                (Good, "You destroyed an attacking raider.".to_string())
+                (Good, format!("You destroyed {}.", enemy(attacker_kind, "an attacking")))
             }
         }
         RaidOutcome::BothDestroyed => (Bad, "Both ships were lost in a clash.".to_string()),
@@ -1975,6 +2365,48 @@ mod tests {
         assert_eq!(tl.journal_len(owner), 1);
         assert!(tl.digest(owner).0[0].text.contains("complete"));
         assert_eq!(tl.journal_len(rival), 0);
+    }
+
+    /// A held blockade strips a unit and a half a second; each side reads one
+    /// line a minute with the haul since the last, not one a unit.
+    #[test]
+    fn plunder_is_one_line_a_minute_with_the_haul() {
+        let (w, owner, besieger) = world_with_two();
+        let system = w.players[&owner].home_system.unwrap();
+        let pos = w.systems.iter().find(|s| s.id == system).unwrap().pos;
+        let mut tl = Timeline::new();
+        for k in 0..150u32 {
+            let t = w.time + f64::from(k) * (2.0 / 3.0);
+            tl.ingest(&[Event::new(t, EventPayload::SystemPlundered {
+                by: besieger, owner, system, commodity: Commodity::Alloys, units: 1, pos,
+            })], &w);
+        }
+        tl.promote(w.time + 10_000.0);
+        let (prize, _) = tl.digest(besieger);
+        assert_eq!(prize.len(), 2, "100 seconds of plunder, two lines: {prize:?}");
+        assert!(prize[0].text.contains(": 1 alloys"), "{}", prize[0].text);
+        assert!(prize[1].text.contains(": 90 alloys"), "the minute's haul: {}", prize[1].text);
+        assert_eq!(tl.digest(owner).0.len(), 2);
+    }
+
+    #[test]
+    fn a_blockade_run_reaches_both_corporations_by_light() {
+        let (w, owner, besieger) = world_with_two();
+        let system = w.players[&owner].home_system.unwrap();
+        let pos = w.players[&owner].command_center + Vec2::new(3000.0, 0.0);
+        let mut tl = Timeline::new();
+        tl.ingest(&[Event::new(w.time, EventPayload::BlockadeRun {
+            owner, by: besieger, fleet: EntityId(77), system, pos, caught: true, chance: 0.657,
+        })], &w);
+        for (who, needle) in [(owner, "caught running the blockade"), (besieger, "caught a freighter")] {
+            let lands = w.time + sim::transit::delay(pos, w.players[&who].command_center, w.config.c);
+            tl.promote(lands - 1e-6);
+            assert!(tl.digest(who).0.iter().all(|e| !e.text.contains(needle)), "not before the light");
+            tl.promote(lands + 1e-6);
+            let (lines, _) = tl.digest(who);
+            assert!(lines.iter().any(|e| e.text.contains(needle)), "{lines:?}");
+        }
+        assert!(tl.digest(owner).0.iter().any(|e| e.text.contains("66%")));
     }
 
     #[test]
@@ -2051,7 +2483,7 @@ mod tests {
         for (t, units) in [(10.0_f64, 3u32), (20.0, 4)] {
             let trade = TradeEvent::AutoDispatched {
                 player: a,
-                commodity: Commodity::Fuel,
+                commodity: Commodity::Deuterium,
                 units,
                 source: EntityId(1),
                 rule_id: 1,

@@ -65,8 +65,12 @@ impl Bot {
         let surplus = p.sites.iter().map(|s| s.system.stockpile.iter()
             .filter(|(c, _)| c.is_ore()).map(|(_, n)| n).sum::<f64>()).sum::<f64>();
         let freight = self.preferred_freighter(p);
+        // §fuel: once a bigger hold is researched, a fleet of smaller hulls gets
+        // one: a Small Freighter brings three Tiny loads of Fuel home per run.
+        let bigger = p.count(freight) == 0 && p.own().filter(|f| f.kind.is_player_freighter())
+            .map(capacity).max().is_some_and(|hold| hold < freight.cargo_units());
         let freight_need = u32::from(carriers < ports * 2
-            || surplus > capacity_now as f64 * (2.0 / profile.trade));
+            || surplus > capacity_now as f64 * (2.0 / profile.trade) || bigger);
         // Replacement demand is computed from arrived surviving hulls + paid
         // jobs. There is no 'already built one' latch after a casualty.
         let escorts = carriers.max(1) + ports;
@@ -91,6 +95,10 @@ impl Bot {
             needs.push((H::Corvette, (navy / 2).max(1), 80.0 * profile.military));
         }
         if self.expansion.is_some() { needs.push((H::Colony, 1, 160.0 * profile.expansion)); }
+        // §belts phase 6: barges for the belts; a station once one pays.
+        let barges = p.barge_need();
+        if barges > 0 { needs.push((H::MiningBarge, barges, 60.0 * profile.industry)); }
+        if p.wants_station() { needs.push((H::MiningBeltStation, 1, 70.0 * profile.industry)); }
         if p.military_sites.iter().any(|s| s.owner.is_some_and(|o|
             p.relations.get(&o) == Some(&sim::diplomacy::RelationState::War))) {
             let marines = p.military_sites.iter().filter(|s| s.owner.is_some_and(|o|
@@ -105,10 +113,19 @@ impl Bot {
     pub(super) fn structure_value(&self, p: &Observation, kind: K) -> f64 {
         let profile = self.priorities();
         let role = self.role(p);
+        // §fuel: Fuel made at home needs Volatiles at home. A refinery fed by
+        // imported Volatiles saves no freight over importing the Fuel itself.
+        let volatiles = p.home.system.bodies.iter().any(|b| b.deposits.iter().any(|d| d.resource == C::Volatiles));
         let base = match kind {
             K::MiningComplex => if role == Role::Mining { 125.0 } else { 45.0 },
-            K::VolatileHarvester | K::FuelRefinery => if role == Role::Fuel || p.fuel_critical() { 150.0 } else { 35.0 },
+            K::VolatileHarvester => if role == Role::Fuel || volatiles { 150.0 } else { 35.0 },
+            K::FuelRefinery => if role == Role::Fuel || volatiles
+                && (p.home.system.tier(K::VolatileHarvester) > 0 || p.stock(C::Volatiles) >= 1.0) { 150.0 } else { 20.0 },
             K::Bioharvester | K::Agroplex => if role == Role::Agriculture || p.stock(C::Provisions) < 10.0 { 140.0 } else { 35.0 },
+            // §gaia: terraces grow only on Gaia worlds; a bot's home is never one.
+            K::LivingTerraces => if p.home.system.bodies.iter().any(|b| b.profile.environment == sim::body::Environment::Gaia) {
+                if role == Role::Agriculture || p.stock(C::Provisions) < 10.0 { 140.0 } else { 35.0 }
+            } else { 0.0 },
             K::Academy => 75.0 * profile.science * if role == Role::Science { 1.5 } else { 1.0 },
             K::Smelter => 85.0 * profile.industry,
             K::ElectronicsFabricator | K::ChemicalWorks | K::MachineWorks | K::CompositeWorks
@@ -121,11 +138,23 @@ impl Bot {
                     >= sim::colony::POP_CAP_PER_HABITAT_TIER * b.tier(K::Habitat) as f64
                         * b.habitat_capacity_mult() * sim::research::mod_of(&p.research, ModKey::HabitatCap))
                 { 140.0 * profile.expansion } else { 15.0 },
-            K::DefensePlatform | K::Garrison => if p.threatened(p.home.system.pos) { 200.0 } else { 55.0 * profile.military },
+            K::DefensePlatform | K::OrbitalDefense | K::Garrison => if p.threatened(p.home.system.pos) { 200.0 } else { 55.0 * profile.military },
             K::OrdnanceFoundry => if p.own().any(|f| f.damage.unwrap_or(0.0) > 0.15) { 200.0 } else { 40.0 * profile.military },
             K::SensorArray => 50.0 * profile.science,
             K::ServiceBerth => 10.0,
+            K::CommandCenter => if p.home.system.bodies.iter().any(|b| b.tier(kind) > 0
+                && b.pool_slots_built(sim::build::SlotPool::Infrastructure) >= b.infrastructure_slots()) {
+                170.0 * profile.expansion
+            } else { 45.0 * profile.industry },
             K::Shipyard | K::NavalDrydock | K::CapitalSlipway => 20.0,
+            // §power: placed per planet by `power_project`, valued there.
+            K::PowerPlant => 0.0,
+            // §fuel-overhaul: the home's own slow-freight fuel, from its ore.
+            K::UraniumMill => if p.home.system.tier(K::UraniumMill) == 0
+                && p.home.system.bodies.iter().any(|b| b.deposits.iter().any(|d| d.resource == C::MetallicOre))
+                { 170.0 } else { 25.0 },
+            // The last tech's factory: antimatter for the jump bottles.
+            K::AntimatterPlant => 40.0 * profile.military,
         };
         base / (1.0 + p.home.system.tier(kind) as f64 * 0.45)
     }
@@ -141,14 +170,26 @@ impl Bot {
         // Preserve the short, understandable opening; beyond these necessities
         // select a benefit/cost goal, not a finite list ending at tier two.
         if p.home.system.id == p.capital {
-            for project in [p.structure(K::MiningComplex, 1), p.structure(K::Shipyard, 1),
+            // §fuel-overhaul: the Uranium Mill right after the mine.
+            for project in [p.structure(K::MiningComplex, 1), p.structure(K::UraniumMill, 1), p.structure(K::Shipyard, 1),
                 (p.own().all(|f| !f.kind.is_player_freighter())).then(|| p.ship(H::TinyFreighter, 1)).flatten(),
-                p.structure(K::Academy, 1), p.ship(H::Scout, 1)] {
+                p.structure(K::Academy, 1),
+                // §charter v3: the survey step's stop is the Survey Probe's job,
+                // one probe per outstanding stop until its report lands.
+                self.charter_probe_due(p).and_then(|_| p.ship(H::SurveyProbe, 1)),
+                p.ship(H::Scout, 1),
+                // §belts: the charter's barge lesson, once the surveys are in.
+                p.belt_lesson.and_then(|_| p.ship(H::MiningBarge, 1))] {
                 if project.is_some() { return project; }
             }
         }
         if let Some(project) = self.recovery_project(p) { return Some(project); }
         let mut choices = Vec::new();
+        // §power: a planet short of power slows everything on it; its plant
+        // outranks almost any other project.
+        if let (Some(project), Some((_, short))) = (p.power_project(), p.power_shortfall()) {
+            choices.push((160.0 + 10.0 * short, project));
+        }
         for kind in K::ALL {
             if let Some(project) = p.structure(kind, p.home.system.tier(kind) + 1) {
                 choices.push((self.structure_value(p, kind), project));
@@ -227,9 +268,20 @@ impl Bot {
             for (&kind, &tier) in &body.structures {
                 let Some(a) = body.assignments.get(&kind).filter(|a| a.workers > 0) else { continue; };
                 let Some(recipe) = sim::production::assigned_converter(kind, Some(a)) else { continue; };
+                // Food has its own Provisions target. An Agroplex runs on the
+                // home's own Biomass; importing Biomass to feed it full-rate
+                // only churns freight into Provisions the colony can't eat.
+                if recipe.output == C::Provisions { continue; }
                 let rate = recipe.rate * sim::production::tier_throughput(tier)
                     * a.workers.min(tier) as f64 / tier.max(1) as f64 * p.home.system.staffing_share();
                 for &(c, n) in recipe.inputs { *flow.entry(c).or_default() += rate * n * lead; }
+            }
+        }
+        // §power: each plant's burn, over the same delivery windows (a Solar
+        // Array burns nothing).
+        for body in &p.home.system.bodies {
+            if let Some(fuel) = sim::power::plant_fuel(body.tier(K::PowerPlant)).filter(|_| body.grid.burn > 0.0) {
+                *flow.entry(fuel).or_default() += body.grid.burn * lead;
             }
         }
         let total = flow.values().sum::<f64>();

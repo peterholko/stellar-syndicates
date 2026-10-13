@@ -71,19 +71,20 @@ pub enum StructureKind {
     /// Works Biomass deposits.
     Bioharvester,
     // ── Processing (Industrial slots) ───────────────────────────────────────
-    /// MetallicOre + Fuel → Alloys.
+    /// MetallicOre → Alloys (§fuel-overhaul: no fuel; double power draw).
     Smelter,
     /// RareElements + Silicates → Electronics.
     ElectronicsFabricator,
     /// Volatiles + Biomass → Polymers.
     ChemicalWorks,
-    /// Volatiles → Fuel (the old Refinery, renamed).
+    /// Volatiles → Deuterium. Titled "Deuterium Refinery" (§fuel-overhaul); the
+    /// `fuel_refinery` save identity stays.
     #[serde(alias = "refinery")]
     FuelRefinery,
     /// Biomass → Provisions.
     Agroplex,
     // ── Advanced industry (Industrial slots) ────────────────────────────────
-    /// Alloys + Electronics + Fuel → Machinery.
+    /// Alloys + Electronics → Machinery.
     MachineWorks,
     /// Alloys + Electronics + Polymers → Armaments.
     ArmamentsComplex,
@@ -92,18 +93,18 @@ pub enum StructureKind {
     PrecisionWorks,
     DriveWorks,
     /// GATES the LIGHT hulls (`yard_for`): Tiny/Small Freighter, Scout/Colony at tier 1,
-    /// Medium Freighter/Raider/Corvette at tier 2, larger freight at tiers 3–5.
+    /// Medium Freighter/Raider/Corvette at tier 2. Larger freight is built in orbit.
     /// Its tier is also its SLIPWAY COUNT — concurrent hulls (§yards M1).
     Shipyard,
-    /// §yards: the LINE-WARSHIP yard — Destroyer/Cruiser/Battleship. Needs a
+    /// Orbital Shipyard — Large/Heavy/Bulk freight and Destroyer/Cruiser/Battleship.
+    /// Keeps the `naval_drydock` save identity. Needs a
     /// Shipyard ≥ 2 on the same system ([`yard_prereq`]): you learn to build
     /// before you build big. Its own tier is its own slip count, independent of
     /// the Shipyard's, so a yard world can lay light and line hulls in parallel.
     NavalDrydock,
-    /// §yards: the SUPER-CAPITAL yard — Dreadnought/Titan. Needs a Naval Drydock
+    /// §yards: the SUPER-CAPITAL yard — Dreadnought/Titan. Needs an Orbital Shipyard
     /// ≥ 3 here. Deliberately the deepest prerequisite chain in the game: a
-    /// capital slipway is a season's investment, and (unlike a home) it sits on
-    /// capturable ground.
+    /// capital slipway is a season's investment, supported by a capturable colony.
     CapitalSlipway,
     /// §yards: OUTFITTING AND MAINTENANCE — the yard that fits hulls rather than
     /// laying them. Holds the REFIT work that used to happen at any Shipyard, so
@@ -115,14 +116,24 @@ pub enum StructureKind {
     /// Population capacity + workforce slots (§economy Part 2 — the boost/upkeep
     /// semantics retire; capacity is the Habitat's value now).
     Habitat,
+    /// §gaia: GAIA WORLDS ONLY. Garden terraces that house people and grow
+    /// Provisions without Biomass — a no-input converter crewed one shift per
+    /// tier, so a Gaia world feeds itself and exports the surplus.
+    LivingTerraces,
     /// Late-game bulk storage, unlocked by Orbital Yards. The old `Depot`
     /// alias still loads existing buildings and paid jobs without re-gating them.
     #[serde(alias = "depot")]
     OrbitalWarehouse,
     /// Standing sensor bubble (unchanged semantics).
     SensorArray,
-    /// Static defense (combat semantics + `defense_pool` untouched).
+    /// Static defense (combat semantics + `defense_pool` untouched). LEGACY:
+    /// no longer built (the orbital defense station replaced it); pirate
+    /// bases and older colonies keep their tiers, which fight as before.
     DefensePlatform,
+    /// §orbital-defense: the system's ONE orbital defense station. Its tier is
+    /// its LEVEL, Defense Platform (1) to Star Fortress (5); see
+    /// [`crate::station`].
+    OrbitalDefense,
     /// Trains specialists locally (§economy Part 4) — endogenous supply so Sol
     /// never stays a permanent monopoly.
     Academy,
@@ -142,6 +153,20 @@ pub enum StructureKind {
     /// A one-tier Warehouse attachment. Light-hull utility fitting only; no slot,
     /// manufacturing, military work, or free workforce.
     ServiceBerth,
+    /// Planetary administration. Three levels, one free landing module per
+    /// settled world; no workforce posting or ordinary development slot.
+    CommandCenter,
+    /// §power: the planet's POWER PLANT — one per planet, in its own slot (no
+    /// pool slot), on any planet, moon, belt or gas giant. §fuel-overhaul:
+    /// Solar Array (I–II, burns nothing), Fusion Plant on Deuterium (III–IV) and
+    /// on Helium-3 (V–VI). No crew. See [`crate::power`].
+    PowerPlant,
+    /// §fuel-overhaul: Ferrite Ore → Uranium, the slow-warp fuel. No research:
+    /// every home can make its own from day one.
+    UraniumMill,
+    /// §fuel-overhaul: Deuterium + a fusion world's power → Antimatter. The
+    /// last tech (Antimatter Synthesis).
+    AntimatterPlant,
 }
 
 impl StructureKind {
@@ -155,22 +180,37 @@ impl StructureKind {
             Self::VolatileHarvester | Self::FuelRefinery => Some("prop_bunkerage"),
             Self::Smelter | Self::ChemicalWorks => Some("mat_enrichment"),
             Self::ElectronicsFabricator => Some("comp_signal_libraries"),
-            Self::MachineWorks | Self::PrecisionWorks | Self::DriveWorks => Some("mat_autoforges"),
+            Self::MachineWorks | Self::PrecisionWorks => Some("mat_autoforges"),
+            // §fuel-overhaul: local Warp and Fusion Cores wait for Fusion Reactors.
+            Self::DriveWorks => Some(crate::power::FUSION_RESEARCH),
+            Self::AntimatterPlant => Some("mat_foundry_vi_antimatter_synthesis"),
             Self::ArmamentsComplex => Some("weap_munitions_lines"),
             Self::CompositeWorks | Self::HullFabricator => Some("mat_prefab_construction"),
-            Self::NavalDrydock => Some("hull_modular_berths"),
+            Self::NavalDrydock => Some("mat_autoforges"),
             Self::CapitalSlipway => Some("hull_line_vii_dreadnought"),
             Self::OrdnanceFoundry => Some("hull_drydock_efficiency"),
             Self::OrbitalWarehouse => Some("mat_foundry_iv_orbital_yards"),
             Self::SensorArray => Some("comp_sensor_gain"),
-            Self::DefensePlatform | Self::Garrison => Some("weap_fire_control"),
+            Self::DefensePlatform | Self::OrbitalDefense | Self::Garrison => Some("weap_fire_control"),
             Self::MiningComplex | Self::Bioharvester | Self::Agroplex | Self::Shipyard
-            | Self::Habitat | Self::Warehouse | Self::Academy | Self::ServiceBerth => None,
+            | Self::Habitat | Self::Warehouse | Self::Academy | Self::ServiceBerth
+            | Self::CommandCenter | Self::LivingTerraces | Self::PowerPlant
+            | Self::UraniumMill => None,
         }
     }
 
-    /// Every kind, in display order.
-    pub const ALL: [StructureKind; 26] = [
+    /// Alternate initial unlocks, not higher-tier unlocks. Preserve the original
+    /// military route while allowing civilian industry to build orbital yards.
+    pub fn research_alternatives(self) -> &'static [&'static str] {
+        match self {
+            Self::NavalDrydock => &["hull_modular_berths"],
+            _ => &[],
+        }
+    }
+
+    /// Every kind, in display order. New kinds go LAST: the client seeds a
+    /// planet's first building addresses from this catalogue's order.
+    pub const ALL: [StructureKind; 32] = [
         StructureKind::MiningComplex,
         StructureKind::VolatileHarvester,
         StructureKind::Bioharvester,
@@ -193,10 +233,16 @@ impl StructureKind {
         StructureKind::OrbitalWarehouse,
         StructureKind::SensorArray,
         StructureKind::DefensePlatform,
+        StructureKind::OrbitalDefense,
         StructureKind::Academy,
         StructureKind::Garrison,
         StructureKind::Warehouse,
         StructureKind::ServiceBerth,
+        StructureKind::CommandCenter,
+        StructureKind::LivingTerraces,
+        StructureKind::PowerPlant,
+        StructureKind::UraniumMill,
+        StructureKind::AntimatterPlant,
     ];
 
     /// Which slot pool a built tier of this kind consumes.
@@ -215,6 +261,8 @@ impl StructureKind {
             | StructureKind::HullFabricator
             | StructureKind::PrecisionWorks
             | StructureKind::DriveWorks
+            | StructureKind::UraniumMill
+            | StructureKind::AntimatterPlant
             // §yards: the whole yard family is INDUSTRIAL. That pool is already
             // the tightest one (base 2 per body + population tier), which is the
             // point: a shipbuilding world visibly gives up its other industry.
@@ -231,16 +279,28 @@ impl StructureKind {
             // Shipyard-tier-2 requirement now, not industrial-slot scarcity.
             StructureKind::Agroplex
             | StructureKind::Habitat
+            | StructureKind::LivingTerraces
             | StructureKind::Warehouse
             | StructureKind::ServiceBerth
+            | StructureKind::CommandCenter
+            // §power: grouped with the civic utilities; it takes no slot.
+            | StructureKind::PowerPlant
             | StructureKind::OrbitalWarehouse
             | StructureKind::SensorArray
             | StructureKind::DefensePlatform
+            | StructureKind::OrbitalDefense
             | StructureKind::Academy
             // §ground: the garrison is civic infrastructure — a colony defends
             // itself out of the same budget that houses and feeds it.
             | StructureKind::Garrison => SlotPool::Infrastructure,
         }
+    }
+
+    /// Offered in the builder. The legacy Defense Platform is not: its tiers
+    /// (pirate bases, old colonies) still stand and fight, but stations are
+    /// built as `OrbitalDefense` (§orbital-defense).
+    pub fn offered(self) -> bool {
+        self != Self::DefensePlatform
     }
 
     /// The snake_case wire slug (matches `rename_all`).
@@ -265,13 +325,19 @@ impl StructureKind {
             StructureKind::CapitalSlipway => "capital_slipway",
             StructureKind::OrdnanceFoundry => "ordnance_foundry",
             StructureKind::Habitat => "habitat",
+            StructureKind::LivingTerraces => "living_terraces",
             StructureKind::Warehouse => "warehouse",
             StructureKind::ServiceBerth => "service_berth",
+            StructureKind::CommandCenter => "command_center",
             StructureKind::OrbitalWarehouse => "orbital_warehouse",
             StructureKind::SensorArray => "sensor_array",
             StructureKind::DefensePlatform => "defense_platform",
+            StructureKind::OrbitalDefense => "orbital_defense",
             StructureKind::Academy => "academy",
             StructureKind::Garrison => "garrison",
+            StructureKind::PowerPlant => "power_plant",
+            StructureKind::UraniumMill => "uranium_mill",
+            StructureKind::AntimatterPlant => "antimatter_plant",
         }
     }
 
@@ -284,7 +350,7 @@ impl StructureKind {
             StructureKind::Smelter => "Smelter",
             StructureKind::ElectronicsFabricator => "Electronics Fabricator",
             StructureKind::ChemicalWorks => "Chemical Works",
-            StructureKind::FuelRefinery => "Fuel Refinery",
+            StructureKind::FuelRefinery => "Deuterium Refinery",
             StructureKind::Agroplex => "Agroplex",
             StructureKind::MachineWorks => "Machine Works",
             StructureKind::ArmamentsComplex => "Armaments Complex",
@@ -293,19 +359,76 @@ impl StructureKind {
             StructureKind::PrecisionWorks => "Precision Works",
             StructureKind::DriveWorks => "Drive Works",
             StructureKind::Shipyard => "Shipyard",
-            StructureKind::NavalDrydock => "Naval Drydock",
+            StructureKind::NavalDrydock => "Orbital Shipyard",
             StructureKind::CapitalSlipway => "Capital Slipway",
             StructureKind::OrdnanceFoundry => "Ordnance Foundry",
             StructureKind::Habitat => "Habitat",
+            StructureKind::LivingTerraces => "Living Terraces",
             StructureKind::Warehouse => "Warehouse",
             StructureKind::ServiceBerth => "Service Berth",
+            StructureKind::CommandCenter => "Command Center",
             StructureKind::OrbitalWarehouse => "Orbital Warehouse",
             StructureKind::SensorArray => "Sensor Array",
             StructureKind::DefensePlatform => "Defense Platform",
+            StructureKind::OrbitalDefense => "Orbital Defense",
             StructureKind::Academy => "Academy",
             StructureKind::Garrison => "Garrison",
+            StructureKind::PowerPlant => "Power Plant",
+            StructureKind::UraniumMill => "Uranium Mill",
+            StructureKind::AntimatterPlant => "Antimatter Plant",
         }
     }
+}
+
+impl StructureKind {
+    pub fn uses_slot(self) -> bool {
+        !matches!(self, Self::ServiceBerth | Self::CommandCenter | Self::PowerPlant)
+    }
+
+    pub fn tier_title(self, tier: u32) -> &'static str {
+        if self == Self::OrbitalDefense { return crate::station::level_name(tier.max(1)); }
+        if self == Self::PowerPlant {
+            return if tier >= crate::power::FUSION_CORE_TIER { "Fusion Plant" } else { "Solar Array" };
+        }
+        if self != Self::CommandCenter { return self.title(); }
+        match tier {
+            0 | 1 => "Landing Command",
+            2 => "Colony Command Center",
+            _ => "Syndicate Headquarters",
+        }
+    }
+}
+
+/// Administration is local to the receiving planet. Never modifies light speed,
+/// the corporation's command origin, shipyard work or Academy research output.
+pub fn command_construction_mult(tier: u32) -> f64 {
+    match tier { 0 | 1 => 1.0, 2 => 0.90, _ => 0.80 }
+}
+pub fn command_infrastructure_bonus(tier: u32) -> u32 { tier.saturating_sub(1).min(2) }
+pub const COMMAND_CENTER_MIN_POPULATION: f64 = 0.001;
+
+pub const COMMAND_CENTER_RECIPES: [Recipe; 3] = [
+    Recipe { costs: &[(Commodity::Alloys, 15.0), (Commodity::Machinery, 5.0)], build_ticks: 180 * HZ },
+    Recipe { costs: &[(Commodity::Alloys, 40.0), (Commodity::Machinery, 12.0), (Commodity::Electronics, 8.0)], build_ticks: 300 * HZ },
+    Recipe { costs: &[(Commodity::Alloys, 120.0), (Commodity::Machinery, 40.0), (Commodity::Electronics, 30.0), (Commodity::Polymers, 20.0)], build_ticks: 900 * HZ },
+];
+
+/// Most structures retain their original per-upgrade recipe. Command Center
+/// tiers have explicit costs; callers must include pending upgrades in `tier`.
+pub fn recipe_for_tier(what: BuildKind, tier: u32) -> &'static Recipe {
+    if matches!(what, BuildKind::Upgrade { upgrade: StructureKind::CommandCenter }) {
+        &COMMAND_CENTER_RECIPES[tier.clamp(1, 3) as usize - 1]
+    } else if matches!(what, BuildKind::Upgrade { upgrade: StructureKind::PowerPlant })
+        && tier >= crate::power::FUSION_TIER
+    {
+        &FUSION_PLANT_RECIPE
+    } else if matches!(what, BuildKind::Upgrade { upgrade: StructureKind::PowerPlant })
+        && tier >= crate::power::FUSION_CORE_TIER
+    {
+        &DEUTERIUM_FUSION_PLANT_RECIPE
+    } else if matches!(what, BuildKind::Upgrade { upgrade: StructureKind::OrbitalDefense }) {
+        &crate::station::LEVELS[tier.clamp(1, crate::station::MAX_LEVEL) as usize - 1].recipe
+    } else { recipe_for(what) }
 }
 
 /// A queued construction job; ship completion requires earned yard work. Lives on
@@ -325,6 +448,10 @@ pub struct BuildJob {
     #[serde(default)]
     pub body_id: u32,
     pub what: BuildKind,
+    /// Freeze the working yard at receipt. Older paid large-freighter orders
+    /// have no field and finish at their original ground Shipyard.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub construction_yard: Option<StructureKind>,
     /// Receipt/enqueue tick, before any wait for the planet's construction slot.
     /// Absent in legacy saves; a modern waiting structure has this but no start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -360,6 +487,17 @@ pub struct BuildJob {
 }
 
 impl BuildJob {
+    pub fn work_yard(&self) -> Option<StructureKind> {
+        match self.what {
+            BuildKind::Ship { ship } => Some(self.construction_yard.unwrap_or_else(|| match ship {
+                ShipKind::LargeFreighter | ShipKind::HeavyFreighter | ShipKind::BulkFreighter => StructureKind::Shipyard,
+                _ => yard_for(ship).0,
+            })),
+            BuildKind::Module { module } if module.is_utility() => Some(module.workshop()),
+            _ => None,
+        }
+    }
+
     pub fn work(&self) -> Option<&BuildWork> {
         self.ship_work.as_ref().or(self.structure_work.as_ref())
     }
@@ -485,31 +623,39 @@ const HZ: u64 = TICK_HZ as u64;
 // Polymers. Tiny remains the cheapest replacement/secondary-route hull; research
 // unlocks larger holds, never an automatic replacement of existing ships.
 // Medium introduces Electronics, then Large/Heavy/Bulk introduce Hull Sections,
-// Precision Components and Drive Assemblies. These replace some bulk basics;
+// Precision Components and Warp Cores. These replace some bulk basics;
 // at reference market prices each step costs more outright but less per cargo
 // unit. Savings assume useful loads: a half-empty giant is not a free upgrade.
 // Capacities, fuel, upkeep and slower heavy-hull speeds live in ship.rs. Tunable.
+//
+// §fuel-overhaul: no recipe carries fuel (new hulls fill at the yard's dock),
+// and every warp hull carries the Authority's Warp Core — one for small hulls,
+// more for big ones. The Survey Probe's burn-out drive needs none.
 
 /// Opening freight hull; the first export fits into its 50-unit mixed hold.
 pub const TINY_FREIGHTER_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 20.0), (Commodity::Machinery, 8.0), (Commodity::Polymers, 8.0)],
+    costs: &[(Commodity::Alloys, 20.0), (Commodity::Machinery, 8.0), (Commodity::Polymers, 8.0),
+        (Commodity::WarpCore, 1.0)],
     build_ticks: 12 * HZ,
 };
 pub const SMALL_FREIGHTER_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 45.0), (Commodity::Machinery, 16.0), (Commodity::Polymers, 16.0)],
+    costs: &[(Commodity::Alloys, 45.0), (Commodity::Machinery, 16.0), (Commodity::Polymers, 16.0),
+        (Commodity::WarpCore, 1.0)],
     build_ticks: 24 * HZ,
 };
 pub const LARGE_FREIGHTER_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 180.0), (Commodity::Machinery, 45.0), (Commodity::Electronics, 25.0), (Commodity::HullSections, 12.0)],
+    costs: &[(Commodity::Alloys, 180.0), (Commodity::Machinery, 45.0), (Commodity::Electronics, 25.0), (Commodity::HullSections, 12.0),
+        (Commodity::WarpCore, 3.0)],
     build_ticks: 100 * HZ,
 };
 pub const HEAVY_FREIGHTER_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 320.0), (Commodity::Machinery, 70.0), (Commodity::HullSections, 30.0), (Commodity::PrecisionComponents, 15.0)],
+    costs: &[(Commodity::Alloys, 320.0), (Commodity::Machinery, 70.0), (Commodity::HullSections, 30.0), (Commodity::PrecisionComponents, 15.0),
+        (Commodity::WarpCore, 5.0)],
     build_ticks: 180 * HZ,
 };
 pub const BULK_FREIGHTER_RECIPE: Recipe = Recipe {
     costs: &[(Commodity::Alloys, 520.0), (Commodity::Machinery, 100.0), (Commodity::HullSections, 60.0),
-        (Commodity::PrecisionComponents, 25.0), (Commodity::DriveAssemblies, 16.0)],
+        (Commodity::PrecisionComponents, 25.0), (Commodity::WarpCore, 16.0)],
     build_ticks: 300 * HZ,
 };
 /// Legacy Convoy identifier now names the Medium Freighter.
@@ -519,26 +665,56 @@ pub const CONVOY_RECIPE: Recipe = Recipe {
         (Commodity::Machinery, 28.0),
         (Commodity::Polymers, 20.0),
         (Commodity::Electronics, 10.0),
+        (Commodity::WarpCore, 2.0),
     ],
     build_ticks: 50 * HZ,
 };
-/// Raider: **Alloys** + **Fuel** — costlier, needs the good frontier materials.
+/// Raider (Interceptor): costlier, needs the good frontier materials.
 pub const RAIDER_RECIPE: Recipe = Recipe {
     costs: &[
         (Commodity::Alloys, 20.0),
         (Commodity::Electronics, 12.0),
         (Commodity::Armaments, 15.0),
-        (Commodity::Fuel, 10.0),
+        (Commodity::WarpCore, 1.0),
     ],
     build_ticks: 10 * HZ,
 };
-/// Scout: cheap **Ore + Fuel** — the entry unit, buildable at the home turn one
-/// (cheap enough that a caught scout is an acceptable loss).
+/// §charting: the Survey Probe — a cheap, crewless, one-way drone that charts a
+/// system and is spent doing it. Its burn-out drive needs no Warp Core. Tunable.
+pub const SURVEY_PROBE_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 6.0), (Commodity::Electronics, 4.0)],
+    build_ticks: 10 * HZ,
+};
+/// §belts: the Mining Barge — about a Small Freighter's goods, with the
+/// Electronics of its cutters. No research: the founding charter teaches it.
+pub const MINING_BARGE_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 40.0),
+        (Commodity::Machinery, 20.0),
+        (Commodity::Polymers, 12.0),
+        (Commodity::Electronics, 6.0),
+        (Commodity::WarpCore, 1.0),
+    ],
+    build_ticks: 30 * HZ,
+};
+/// §belts: the Mining Belt Station, a Shipyard II hull behind Belt Stations.
+pub const MINING_BELT_STATION_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 160.0),
+        (Commodity::Machinery, 50.0),
+        (Commodity::Polymers, 30.0),
+        (Commodity::Electronics, 25.0),
+        (Commodity::WarpCore, 2.0),
+    ],
+    build_ticks: 180 * HZ,
+};
+/// Scout: the cheap entry unit (cheap enough that a caught scout is an
+/// acceptable loss).
 pub const SCOUT_RECIPE: Recipe = Recipe {
     costs: &[
         (Commodity::Alloys, 15.0),
         (Commodity::Electronics, 8.0),
-        (Commodity::Fuel, 8.0),
+        (Commodity::WarpCore, 1.0),
     ],
     build_ticks: 8 * HZ,
 };
@@ -548,6 +724,7 @@ pub const CORVETTE_RECIPE: Recipe = Recipe {
         (Commodity::Alloys, 25.0),
         (Commodity::Electronics, 12.0),
         (Commodity::Armaments, 12.0),
+        (Commodity::WarpCore, 1.0),
     ],
     build_ticks: 14 * HZ,
 };
@@ -559,7 +736,7 @@ pub const COLONY_RECIPE: Recipe = Recipe {
         (Commodity::Machinery, 15.0),
         (Commodity::Polymers, 20.0),
         (Commodity::Provisions, 30.0),
-        (Commodity::Fuel, 15.0),
+        (Commodity::WarpCore, 2.0),
     ],
     build_ticks: 30 * HZ,
 };
@@ -570,6 +747,10 @@ pub const COLONY_RECIPE: Recipe = Recipe {
 // hours-to-days: a capital under construction is a season event and a siege
 // target. Combat weight per Armaments spent peaks at Destroyer/Cruiser and
 // declines up the ladder (the efficiency invariant, pinned by test). Tunable.
+//
+// §rare-materials: the three ships of the line also take Iridium, the belt
+// pockets' metal, in place of Alloys at equal base value (13 Iridium for 45
+// Alloys), so every hull's credit value is unchanged.
 const HOUR_TICKS: u64 = 3600 * HZ;
 pub const DESTROYER_RECIPE: Recipe = Recipe {
     costs: &[
@@ -577,9 +758,9 @@ pub const DESTROYER_RECIPE: Recipe = Recipe {
         (Commodity::Electronics, 25.0),
         (Commodity::Armaments, 30.0),
         (Commodity::Machinery, 10.0),
-        (Commodity::Fuel, 15.0),
         (Commodity::HullSections, 6.0),
         (Commodity::PrecisionComponents, 4.0),
+        (Commodity::WarpCore, 2.0),
     ],
     build_ticks: 8 * HOUR_TICKS,
 };
@@ -590,48 +771,47 @@ pub const CRUISER_RECIPE: Recipe = Recipe {
         (Commodity::Armaments, 55.0),
         (Commodity::Machinery, 20.0),
         (Commodity::RareElements, 3.0),
-        (Commodity::Fuel, 30.0),
         (Commodity::HullSections, 16.0),
-        (Commodity::DriveAssemblies, 7.0),
+        (Commodity::WarpCore, 7.0),
     ],
     build_ticks: 18 * HOUR_TICKS,
 };
 pub const BATTLESHIP_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 140.0),
+        (Commodity::Alloys, 95.0),
+        (Commodity::Iridium, 13.0),
         (Commodity::Electronics, 60.0),
         (Commodity::Armaments, 120.0),
         (Commodity::Machinery, 40.0),
         (Commodity::RareElements, 9.0),
-        (Commodity::Fuel, 60.0),
         (Commodity::HullSections, 40.0),
-        (Commodity::DriveAssemblies, 14.0),
+        (Commodity::WarpCore, 14.0),
     ],
     build_ticks: 48 * HOUR_TICKS,
 };
 pub const DREADNOUGHT_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 280.0),
+        (Commodity::Alloys, 190.0),
+        (Commodity::Iridium, 26.0),
         (Commodity::Electronics, 130.0),
         (Commodity::Armaments, 230.0),
         (Commodity::Machinery, 90.0),
         (Commodity::RareElements, 22.0),
-        (Commodity::Fuel, 120.0),
         (Commodity::HullSections, 80.0),
-        (Commodity::DriveAssemblies, 31.0),
+        (Commodity::WarpCore, 31.0),
     ],
     build_ticks: 96 * HOUR_TICKS,
 };
 pub const TITAN_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 600.0),
+        (Commodity::Alloys, 375.0),
+        (Commodity::Iridium, 65.0),
         (Commodity::Electronics, 250.0),
         (Commodity::Armaments, 480.0),
         (Commodity::Machinery, 200.0),
         (Commodity::RareElements, 55.0),
-        (Commodity::Fuel, 260.0),
         (Commodity::HullSections, 180.0),
-        (Commodity::DriveAssemblies, 70.0),
+        (Commodity::WarpCore, 70.0),
     ],
     build_ticks: 192 * HOUR_TICKS,
 };
@@ -708,7 +888,7 @@ pub const PRECISION_WORKS_RECIPE: Recipe = Recipe {
     build_ticks: 35 * HZ,
 };
 pub const DRIVE_WORKS_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Machinery, 45.0), (Commodity::Alloys, 60.0), (Commodity::Electronics, 30.0), (Commodity::Fuel, 20.0)],
+    costs: &[(Commodity::Machinery, 45.0), (Commodity::Alloys, 60.0), (Commodity::Electronics, 30.0)],
     build_ticks: 45 * HZ,
 };
 pub const SHIPYARD_RECIPE: Recipe = Recipe {
@@ -758,6 +938,71 @@ pub const HABITAT_RECIPE: Recipe = Recipe {
     ],
     build_ticks: 20 * HZ,
 };
+/// §power, §fuel-overhaul: a Solar Array tier (I–II) — panel fields on an
+/// alloy frame, cheap enough to raise beside the first upgrades after the
+/// charter.
+pub const POWER_PLANT_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 30.0),
+        (Commodity::Machinery, 12.0),
+        (Commodity::Electronics, 8.0),
+    ],
+    build_ticks: 25 * HZ,
+};
+/// §fuel-overhaul: a Deuterium Fusion Plant tier (III–IV) — the solar frame
+/// plus the Authority's Fusion Core.
+pub const DEUTERIUM_FUSION_PLANT_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 30.0),
+        (Commodity::Machinery, 12.0),
+        (Commodity::Electronics, 8.0),
+        (Commodity::FusionCore, 1.0),
+    ],
+    build_ticks: 40 * HZ,
+};
+/// §power: each Helium-3 fusion tier (V–VI) — reactor walls of Iridium around
+/// precision field coils and a Fusion Core.
+pub const FUSION_PLANT_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 120.0),
+        (Commodity::Machinery, 40.0),
+        (Commodity::Electronics, 30.0),
+        (Commodity::PrecisionComponents, 10.0),
+        (Commodity::Iridium, 12.0),
+        (Commodity::FusionCore, 1.0),
+    ],
+    build_ticks: 90 * HZ,
+};
+/// §fuel-overhaul: the Uranium Mill — a cheap ore-sifting plant any home can
+/// raise from the founding kit.
+pub const URANIUM_MILL_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 20.0), (Commodity::Machinery, 8.0)],
+    build_ticks: 15 * HZ,
+};
+/// §fuel-overhaul: the Antimatter Plant — containment rings of Exotic Matter
+/// around Fusion Cores. The last tech's factory.
+pub const ANTIMATTER_PLANT_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 200.0),
+        (Commodity::Machinery, 80.0),
+        (Commodity::Electronics, 60.0),
+        (Commodity::PrecisionComponents, 30.0),
+        (Commodity::ExoticMatter, 20.0),
+        (Commodity::FusionCore, 2.0),
+    ],
+    build_ticks: 120 * HZ,
+};
+/// §gaia: grown more than built — living soil (Biomass) and polymer membranes
+/// over an alloy frame; slower than a Habitat to raise.
+pub const LIVING_TERRACES_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 30.0),
+        (Commodity::Polymers, 25.0),
+        (Commodity::Biomass, 20.0),
+        (Commodity::Machinery, 10.0),
+    ],
+    build_ticks: 30 * HZ,
+};
 pub const WAREHOUSE_RECIPE: Recipe = Recipe {
     costs: &[(Commodity::Alloys, 30.0), (Commodity::Machinery, 8.0)],
     build_ticks: 15 * HZ,
@@ -801,7 +1046,7 @@ pub const TRANSPORT_RECIPE: Recipe = Recipe {
         (Commodity::Alloys, 40.0),
         (Commodity::Armaments, 30.0),
         (Commodity::Provisions, 40.0),
-        (Commodity::Fuel, 15.0),
+        (Commodity::WarpCore, 2.0),
     ],
     build_ticks: 24 * HZ,
 };
@@ -889,15 +1134,41 @@ pub const FUEL_TRANSFER_RIG_RECIPE: Recipe = Recipe {
 };
 
 pub const SURVEY_DRIVE_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::DriveAssemblies, 2.0), (Commodity::Alloys, 12.0)],
+    costs: &[(Commodity::WarpCore, 2.0), (Commodity::Alloys, 12.0)],
     build_ticks: 2 * MODULE_BUILD_TICKS,
 };
 pub const NEBULA_SPECTROMETER_RECIPE: Recipe = Recipe {
     costs: &[(Commodity::PrecisionComponents, 4.0), (Commodity::Electronics, 12.0)],
     build_ticks: 2 * MODULE_BUILD_TICKS,
 };
+/// §rare-materials: the special modules take Exotic Matter, about a fifth of
+/// their value, in place of goods of equal base value.
 pub const PRISMATIC_LANCE_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::PrecisionComponents, 4.0), (Commodity::Armaments, 12.0), (Commodity::Silicates, 8.0)],
+    costs: &[(Commodity::PrecisionComponents, 4.0), (Commodity::Armaments, 8.0), (Commodity::Silicates, 6.0),
+        (Commodity::ExoticMatter, 2.0)],
+    build_ticks: 2 * MODULE_BUILD_TICKS,
+};
+
+/// Control electronics around a field coil.
+pub const STASIS_WEB_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Electronics, 8.0), (Commodity::Machinery, 4.0), (Commodity::Armaments, 2.0)],
+    build_ticks: MODULE_BUILD_TICKS,
+};
+/// A hardened drive core: the price of being able to leave.
+pub const WARP_STABILIZER_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Machinery, 6.0), (Commodity::Electronics, 4.0), (Commodity::Alloys, 6.0)],
+    build_ticks: MODULE_BUILD_TICKS,
+};
+/// A gravity-well projector: the dearest control module.
+pub const INTERDICTION_FIELD_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::PrecisionComponents, 3.0), (Commodity::Electronics, 5.0), (Commodity::Machinery, 6.0),
+        (Commodity::ExoticMatter, 2.0)],
+    build_ticks: 2 * MODULE_BUILD_TICKS,
+};
+/// §fuel-overhaul: a fold drive — a Warp Core wrapped in Exotic Matter, and
+/// its antimatter bottle.
+pub const JUMP_DRIVE_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::WarpCore, 1.0), (Commodity::PrecisionComponents, 4.0), (Commodity::ExoticMatter, 3.0)],
     build_ticks: 2 * MODULE_BUILD_TICKS,
 };
 
@@ -917,6 +1188,10 @@ pub fn module_recipe(kind: ModuleKind) -> &'static Recipe {
         ModuleKind::SurveyDrive => &SURVEY_DRIVE_RECIPE,
         ModuleKind::NebulaSpectrometer => &NEBULA_SPECTROMETER_RECIPE,
         ModuleKind::PrismaticLance => &PRISMATIC_LANCE_RECIPE,
+        ModuleKind::StasisWeb => &STASIS_WEB_RECIPE,
+        ModuleKind::WarpStabilizer => &WARP_STABILIZER_RECIPE,
+        ModuleKind::InterdictionField => &INTERDICTION_FIELD_RECIPE,
+        ModuleKind::JumpDrive => &JUMP_DRIVE_RECIPE,
     }
 }
 
@@ -926,7 +1201,6 @@ static DEEP_SPACE_SENSOR_RECIPE: Recipe = Recipe {
     costs: &[
         (Commodity::Alloys, 60.0),
         (Commodity::Electronics, 120.0),
-        (Commodity::Fuel, 40.0),
     ],
     build_ticks: 70 * HZ,
 };
@@ -938,7 +1212,7 @@ static BUILDER_RECIPE: Recipe = Recipe {
     costs: &[
         (Commodity::Alloys, 60.0),
         (Commodity::Machinery, 25.0),
-        (Commodity::Fuel, 20.0),
+        (Commodity::WarpCore, 1.0),
     ],
     build_ticks: 50 * HZ,
 };
@@ -971,6 +1245,9 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         BuildKind::Ship {
             ship: ShipKind::Scout,
         } => &SCOUT_RECIPE,
+        BuildKind::Ship { ship: ShipKind::SurveyProbe } => &SURVEY_PROBE_RECIPE,
+        BuildKind::Ship { ship: ShipKind::MiningBarge } => &MINING_BARGE_RECIPE,
+        BuildKind::Ship { ship: ShipKind::MiningBeltStation } => &MINING_BELT_STATION_RECIPE,
         BuildKind::Ship {
             ship: ShipKind::Corvette,
         } => &CORVETTE_RECIPE,
@@ -1028,21 +1305,27 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
             StructureKind::CapitalSlipway => &CAPITAL_SLIPWAY_RECIPE,
             StructureKind::OrdnanceFoundry => &ORDNANCE_FOUNDRY_RECIPE,
             StructureKind::Habitat => &HABITAT_RECIPE,
+            StructureKind::LivingTerraces => &LIVING_TERRACES_RECIPE,
             StructureKind::Warehouse => &WAREHOUSE_RECIPE,
             StructureKind::ServiceBerth => &SERVICE_BERTH_RECIPE,
+            StructureKind::CommandCenter => &COMMAND_CENTER_RECIPES[0],
             StructureKind::OrbitalWarehouse => &ORBITAL_WAREHOUSE_RECIPE,
             StructureKind::SensorArray => &SENSOR_ARRAY_RECIPE,
             StructureKind::DefensePlatform => &DEFENSE_PLATFORM_RECIPE,
+            StructureKind::OrbitalDefense => &crate::station::LEVELS[0].recipe,
             StructureKind::Academy => &ACADEMY_RECIPE,
             StructureKind::Garrison => &GARRISON_RECIPE,
+            StructureKind::PowerPlant => &POWER_PLANT_RECIPE,
+            StructureKind::UraniumMill => &URANIUM_MILL_RECIPE,
+            StructureKind::AntimatterPlant => &ANTIMATTER_PLANT_RECIPE,
         },
     }
 }
 
-// --- FUEL REFINERY (§buildings step 3b → §economy Part 3) -------------------------
-// The old REFINERY_RATE/YIELD pair is RETIRED: the Fuel Refinery is one row of
-// the data-driven converter table now (`production::CONVERTERS` — 1.0 Volatiles
-// per Fuel at 0.40/s), staffed and factor-chained like all industry.
+// --- DEUTERIUM REFINERY (§buildings step 3b → §economy Part 3) --------------------
+// The old REFINERY_RATE/YIELD pair is RETIRED: the refinery is one row of the
+// data-driven converter table now (`production::CONVERTERS` — 1.0 Volatiles
+// per Deuterium at 0.8/s), staffed and factor-chained like all industry.
 
 // --- HABITAT (§buildings step 3a → §economy Part 2) ------------------------------
 // The old per-tier upkeep + fed-boost pair is RETIRED: a Habitat now houses
@@ -1123,14 +1406,17 @@ pub fn pop_tier(population: f64) -> u32 {
 /// Tunable.
 pub fn yard_for(kind: ShipKind) -> (StructureKind, u32) {
     match kind {
-        // Light + civilian — the Shipyard, exactly as before.
+        // Local ground yard: light hulls and freight up to Medium.
         ShipKind::Builder => (StructureKind::Shipyard, 1),
         ShipKind::TinyFreighter | ShipKind::SmallFreighter => (StructureKind::Shipyard, 1),
         ShipKind::Convoy => (StructureKind::Shipyard, 2),
-        ShipKind::LargeFreighter => (StructureKind::Shipyard, 3),
-        ShipKind::HeavyFreighter => (StructureKind::Shipyard, 4),
-        ShipKind::BulkFreighter => (StructureKind::Shipyard, 5),
+        ShipKind::LargeFreighter => (StructureKind::NavalDrydock, 1),
+        ShipKind::HeavyFreighter => (StructureKind::NavalDrydock, 2),
+        ShipKind::BulkFreighter => (StructureKind::NavalDrydock, 3),
         ShipKind::Scout => (StructureKind::Shipyard, 1),
+        ShipKind::SurveyProbe => (StructureKind::Shipyard, 1),
+        ShipKind::MiningBarge => (StructureKind::Shipyard, 1),
+        ShipKind::MiningBeltStation => (StructureKind::Shipyard, 2),
         ShipKind::Colony => (StructureKind::Shipyard, 1), // civilian settlement
         ShipKind::Raider => (StructureKind::Shipyard, 2), // military industry is earned
         ShipKind::Corvette => (StructureKind::Shipyard, 2),
@@ -1222,6 +1508,11 @@ pub const RESEARCHED_MAX_STRUCTURE_TIER: u32 = 6;
 /// used to keep gated structures locked until their first research unlock.
 pub fn max_buildable_tier(kind: StructureKind, research_unlocked_tier: u32) -> u32 {
     if kind == StructureKind::ServiceBerth { return 1; }
+    // §orbital-defense: each station level is its own research unlock; the
+    // legacy platform is no longer built.
+    if kind == StructureKind::OrbitalDefense { return research_unlocked_tier.min(crate::station::MAX_LEVEL); }
+    if kind == StructureKind::DefensePlatform { return 0; }
+    if kind == StructureKind::CommandCenter { return if research_unlocked_tier >= 3 { 3 } else { 2 }; }
     if kind.research_prerequisite().is_some() && research_unlocked_tier == 0 {
         return 0;
     }
@@ -1296,8 +1587,9 @@ mod tests {
     fn structures_have_research_unlocks_without_locking_the_founding_loop() {
         use StructureKind::*;
         use crate::research::{self, Effect, ResearchState};
+        // §gaia: Living Terraces need no research; a Gaia world is their gate.
         let starter = [MiningComplex, Bioharvester, Agroplex, Shipyard, Habitat,
-            Warehouse, Academy];
+            Warehouse, Academy, LivingTerraces, PowerPlant, UraniumMill];
         let gated = [
             (VolatileHarvester, "prop_bunkerage"), (FuelRefinery, "prop_bunkerage"),
             (Smelter, "mat_enrichment"), (ChemicalWorks, "mat_enrichment"),
@@ -1305,13 +1597,25 @@ mod tests {
             (MachineWorks, "mat_autoforges"),
             (ArmamentsComplex, "weap_munitions_lines"),
             (CompositeWorks, "mat_prefab_construction"), (HullFabricator, "mat_prefab_construction"),
-            (PrecisionWorks, "mat_autoforges"), (DriveWorks, "mat_autoforges"),
-            (NavalDrydock, "hull_modular_berths"), (CapitalSlipway, "hull_line_vii_dreadnought"),
+            (PrecisionWorks, "mat_autoforges"), (DriveWorks, crate::power::FUSION_RESEARCH),
+            (AntimatterPlant, "mat_foundry_vi_antimatter_synthesis"),
+            (NavalDrydock, "mat_autoforges"), (CapitalSlipway, "hull_line_vii_dreadnought"),
             (OrdnanceFoundry, "hull_drydock_efficiency"), (SensorArray, "comp_sensor_gain"),
             (OrbitalWarehouse, "mat_foundry_iv_orbital_yards"),
-            (DefensePlatform, "weap_fire_control"), (Garrison, "weap_fire_control"),
+            (Garrison, "weap_fire_control"),
         ];
-        assert_eq!(starter.len() + gated.len() + 1, StructureKind::ALL.len());
+        // The legacy platform is no longer built; the station climbs its own
+        // research ladder (checked below).
+        assert_eq!(starter.len() + gated.len() + 4, StructureKind::ALL.len());
+        assert_eq!(DefensePlatform.research_prerequisite(), Some("weap_fire_control"));
+        assert_eq!(max_buildable_tier(DefensePlatform, 6), 0, "legacy platforms are never built");
+        for level in crate::station::LEVELS.iter() {
+            let programme = research::programme(level.research).expect("real research");
+            assert!(!programme.hidden && programme.effects.contains(&Effect::UnlockStructureTier(OrbitalDefense, level.level)),
+                "{}", level.name);
+            assert_eq!(max_buildable_tier(OrbitalDefense, level.level), level.level);
+        }
+        assert_eq!(max_buildable_tier(OrbitalDefense, 0), 0);
         assert_eq!(ServiceBerth.research_prerequisite(), None);
         assert_eq!(max_buildable_tier(ServiceBerth, 6), 1, "attachment has only one tier");
         for kind in starter {
@@ -1359,9 +1663,12 @@ mod tests {
     }
 
     /// §ladder B6.1 — THE EFFICIENCY INVARIANT (load-bearing): combat weight
-    /// per Armaments spent PEAKS at Destroyer-or-Cruiser and STRICTLY DECLINES
-    /// Battleship → Dreadnought → Titan. Capitals buy presence and role, never
-    /// efficiency — enforced, not hoped.
+    /// per Armaments spent PEAKS at Destroyer-or-Cruiser, and the Titan is the
+    /// least efficient spend. Capitals buy presence and role, never efficiency
+    /// — enforced, not hoped. (Battle rules v12 raised the Dreadnought's
+    /// broadside to 15 so it holds its rung between Battleship and Titan in
+    /// battle; that lifts it just past the Battleship here, still under the
+    /// peak.)
     #[test]
     fn capital_efficiency_peaks_at_destroyer_or_cruiser_and_declines_up() {
         let arm = |k: ShipKind| -> f64 {
@@ -1384,8 +1691,8 @@ mod tests {
             "the ladder peaks at Destroyer/Cruiser"
         );
         assert!(
-            b > n && n > t,
-            "efficiency strictly declines Battleship → Dreadnought → Titan ({b:.4} > {n:.4} > {t:.4})"
+            b > t && n > t,
+            "the Titan is the least efficient capital ({b:.4}, {n:.4} > {t:.4})"
         );
         assert!(
             peak > t,
@@ -1472,6 +1779,12 @@ mod tests {
             for unlocked in 0..=5u32 {
                 if kind == StructureKind::ServiceBerth {
                     assert_eq!(max_buildable_tier(kind, unlocked), 1);
+                } else if kind == StructureKind::DefensePlatform {
+                    assert_eq!(max_buildable_tier(kind, unlocked), 0, "legacy");
+                } else if kind == StructureKind::OrbitalDefense {
+                    assert_eq!(max_buildable_tier(kind, unlocked), unlocked, "one level per unlock");
+                } else if kind == StructureKind::CommandCenter {
+                    assert_eq!(max_buildable_tier(kind, unlocked), if unlocked >= 3 { 3 } else { 2 });
                 } else if kind.research_prerequisite().is_some() && unlocked == 0 {
                     assert_eq!(max_buildable_tier(kind, unlocked), 0);
                 } else {
@@ -1481,10 +1794,42 @@ mod tests {
         }
     }
 
+    /// §rare-materials: the belt pockets' materials have work, each swapped in
+    /// at equal base value. Iridium goes into the ships of the line and Drive
+    /// Assemblies; Exotic Matter into the special modules and Tier V+ research.
+    #[test]
+    fn rare_materials_go_into_capitals_drives_special_modules_and_top_research() {
+        use crate::research::Field;
+        use Commodity as C;
+        let has = |costs: &[(C, f64)], good| costs.iter().any(|(g, n)| *g == good && *n > 0.0);
+        for ship in crate::ship::ALL_SHIP_KINDS.into_iter().filter(|k| k.is_buildable()) {
+            let costs = recipe_for(BuildKind::Ship { ship }).costs;
+            assert_eq!(has(costs, C::Iridium), crate::ship::is_siege_anchor(ship), "{ship:?}");
+        }
+        let drive = crate::production::converter_for(StructureKind::DriveWorks).unwrap();
+        assert!(has(drive.inputs, C::Iridium));
+        let value = |b: &[(C, f64)]| b.iter().map(|(c, n)| crate::market::base_price(*c) * n).sum::<f64>();
+        assert!((value(drive.inputs) - 165.0).abs() < 1e-9, "the Drive Works basket, without its furnace fuel");
+        for module in [ModuleKind::PrismaticLance, ModuleKind::InterdictionField] {
+            assert!(has(module_recipe(module).costs, C::ExoticMatter), "{module:?}");
+        }
+        for tier in 1..=8u8 {
+            for field in [Field::Propulsion, Field::Materials, Field::Computation, Field::Weapons, Field::Hulls, Field::Life] {
+                let basket = crate::research::basket(field, tier);
+                assert_eq!(has(&basket, C::ExoticMatter), tier >= 5, "{field:?} {tier}");
+                let rare: Vec<_> = basket.iter().copied().filter(|(c, _)| matches!(c, C::RareElements | C::ExoticMatter)).collect();
+                let before = if tier >= 3 { 100.0 * 0.003 * (tier - 2) as f64 } else { 0.0 };
+                assert!((value(&rare) - before).abs() < 1e-9, "{field:?} {tier}: equal value");
+            }
+        }
+    }
+
     #[test]
     fn component_chains_feed_heavy_hulls_but_leave_opening_hulls_alone() {
         use Commodity as C;
-        let components = [C::Composites, C::HullSections, C::PrecisionComponents, C::DriveAssemblies];
+        // §fuel-overhaul: every warp hull carries the Authority's Warp Core, so
+        // the opening economy's components are the colony-made chains.
+        let components = [C::Composites, C::HullSections, C::PrecisionComponents];
         for ship in [ShipKind::Raider, ShipKind::Scout, ShipKind::Corvette, ShipKind::Convoy,
             ShipKind::Colony, ShipKind::Builder, ShipKind::Transport] {
             assert!(recipe_for(BuildKind::Ship { ship }).costs.iter()
@@ -1492,11 +1837,13 @@ mod tests {
         }
         // Substitutions create demand for a supply network, not a hidden large
         // price increase on top of the same old recipe. Base values stay ±1%.
-        for (ship, previous) in [(ShipKind::Destroyer, 5540.0), (ShipKind::Cruiser, 11374.0),
-            (ShipKind::Battleship, 24690.0), (ShipKind::Dreadnought, 50840.0), (ShipKind::Titan, 110260.0)] {
+        // §fuel-overhaul: the hulls lost their fuel and the Destroyer gained two
+        // Warp Cores.
+        for (ship, previous) in [(ShipKind::Destroyer, 5756.0), (ShipKind::Cruiser, 10923.0),
+            (ShipKind::Battleship, 23910.0), (ShipKind::Dreadnought, 49265.0), (ShipKind::Titan, 106970.0)] {
             let costs = recipe_for(BuildKind::Ship { ship }).costs;
             assert!(costs.iter().any(|(good, units)| *good == C::HullSections && *units > 0.0));
-            let core = if ship == ShipKind::Destroyer { C::PrecisionComponents } else { C::DriveAssemblies };
+            let core = if ship == ShipKind::Destroyer { C::PrecisionComponents } else { C::WarpCore };
             assert!(costs.iter().any(|(good, units)| *good == core && *units > 0.0));
             let value: f64 = costs.iter().map(|(good, units)| crate::market::base_price(*good) * units).sum();
             assert!((value / previous - 1.0).abs() < 0.01, "{ship:?}: {value} vs {previous}");

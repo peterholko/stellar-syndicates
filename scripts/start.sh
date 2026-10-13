@@ -14,6 +14,8 @@
 # Accounts: ACCOUNTS_DATABASE_URL (falls back to DATABASE_URL), APP_ORIGIN.
 # Local development starts scripts/devdb.sh if neither DB URL is set.
 # Env: PORT (8080), SIM_PACING (1), GALAXY_SEED, MAX_PLAYERS, BOT_PLAYERS, RUST_LOG.
+# ADMIN_LOGINS=login[,login] opens the operator dashboard at /admin.html
+# (docs/admin-dashboard.md); unset, it is off.
 # Bots are saved with the galaxy; ordinary restarts need no BOT_PLAYERS override.
 set -euo pipefail
 

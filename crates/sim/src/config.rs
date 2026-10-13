@@ -138,6 +138,8 @@ impl SimConfig {
             system_count: 12 + player_count * 4,
             // Double the chart's stars, not its habitable planets: 32 → 64 in
             // the default four-player galaxy (28 frontier + 4 home + 32 sparse).
+            // Each home's six-system neighbourhood (galaxy::HOME_NEIGHBOURS,
+            // a third habitable) brings it to 88.
             exploration_system_count: 12 + player_count * 5,
             // Local sensor bubbles are 80,000 su (20% of a four-player galaxy
             // radius): coverage remains islands around the command center and

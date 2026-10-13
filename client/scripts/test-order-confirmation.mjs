@@ -27,7 +27,8 @@ function fixture() {
     cargo_manifest: [{ commodity: "alloys", units: 20 }] });
   const state = { playerId: "1", simTime: 60, selectedShipId: "101", selectedShipIds: new Set(["101"]),
     selectedOrderId: null, ghosts: [ghost("101", "raider"), ghost("102", "convoy", "hub"),
-      ghost("103", "convoy", "home"), { ...ghost("999", "raider"), own: false }],
+      ghost("103", "convoy", "home"), { ...ghost("999", "raider"), own: false },
+      { ...ghost("104", "destroyer"), fuel: 50, loadouts: [{ kind: "destroyer", modules: ["interdiction_field"], n: 1 }] }],
     pendingIntent: null, pendingOrders: new Map(), orders: { "101": { x: 20_000, y: 0 } },
     raids: { "101": "999" }, commandCenter: { x: 0, y: 0 },
     galaxy: { c: 400, hub: { x: 80_000, y: 0 }, systems: [{ id: "home", name: "Freya", pos: { x: 0, y: 0 } }] },
@@ -41,7 +42,9 @@ function fixture() {
   const fleets = compile("core/derive/fleet.ts", { "../../state": clock, "../../protocol": protocol,
     "./geo": { HYPERLIMIT_SU: 900 } });
   const tenders = compile("core/derive/tenders.ts", { "../../protocol": protocol, "./fleet": fleets });
-  const commands = compile("core/fleetorders.ts", { "../icons": icons, "./derive/fleet": fleets, "./derive/tenders": tenders });
+  const interdiction = compile("core/derive/interdiction.ts");
+  const commands = compile("core/fleetorders.ts", { "../icons": icons, "./derive/fleet": fleets, "./derive/tenders": tenders,
+    "./derive/interdiction": interdiction });
   const readiness = compile("core/derive/readiness.ts", { "../../protocol": protocol, "./fleet": fleets });
   const orders = compile("core/derive/orders.ts", { "../../state": clock,
     "./fleet": fleets, "../fleetorders": commands, "../../icons": icons,
@@ -63,6 +66,7 @@ function fixture() {
     "../../core/derive/format": { informationDelay: age => `${age}s information delay` },
     "../../core/derive/nebula": { jumpRangeAt: () => 50_000 },
     "../../core/derive/geo": geo, "../../icons": icons, "../../protocol": protocol,
+    "../../core/derive/interdiction": interdiction,
     "../../core/derive/market": { kitAffordable: () => true },
     "../signature": { sheetFingerprint: JSON.stringify },
     "../dom": { renderDeferred: () => false, setHtml: (node, html) => { node.innerHTML = html; } } };
@@ -90,7 +94,7 @@ test("tender orders freeze the selected recipient and require Confirm on both sh
     const tender = f.state.ghosts.find(g => g.id === "103");
     tender.kind = "convoy";
     tender.loadouts = [{ kind: "convoy", n: 1, modules: ["fuel_transfer_rig"] }];
-    tender.cargo_manifest = [{ commodity: "fuel", units: 40 }];
+    tender.cargo_manifest = [{ commodity: "deuterium", units: 40 }];
     let selected = "101";
     const form = { querySelector: () => ({ value: selected }) };
     f.root.querySelector = form.querySelector;
@@ -116,45 +120,81 @@ test("tender orders freeze the selected recipient and require Confirm on both sh
   }
 });
 
-test("Economy needs confirmation on desktop, strip and mobile; combat hulls cannot select it", () => {
+test("Slow needs confirmation on desktop, strip and mobile; ships of the line cannot select it", () => {
   for (const surface of ["fleet", "strip", "mobile"]) {
     const f = fixture();
     f.state.selectedShipId = "102";
     f.state.selectedShipIds = new Set(["102"]);
     const before = JSON.stringify(f.state.ghosts);
-    const click = () => surface === "fleet" ? f.fleetClick("transit", {mode:"economy"}, "102")
-      : surface === "strip" ? f.stripClick("transit", {mode:"economy"})
-      : f.mobileClick("fleet-transit", {id:"102",mode:"economy"});
+    const click = () => surface === "fleet" ? f.fleetClick("transit", {mode:"slow"}, "102")
+      : surface === "strip" ? f.stripClick("transit", {mode:"slow"})
+      : f.mobileClick("fleet-transit", {id:"102",mode:"slow"});
     click();
     assert.equal(f.sent.length, 0);
-    assert.match(f.orders.intentSummary(f.state.pendingIntent), /Economy.*25% speed.*10% trip Fuel/);
+    assert.match(f.orders.intentSummary(f.state.pendingIntent), /Slow.*½ speed.*Uranium/);
     f.intent.clearPendingIntent();
     assert.equal(f.sent.length, 0);
     click();
     f.intent.confirmPendingIntent();
-    assert.deepEqual(plain(f.sent), [{type:"SetFleetTransit",fleet_id:"102",mode:"economy"}]);
+    assert.deepEqual(plain(f.sent), [{type:"SetFleetTransit",fleet_id:"102",mode:"slow"}]);
     assert.equal(JSON.stringify(f.state.ghosts), before, "no optimistic mode or fuel changes");
-    assert.equal(f.commands.fleetCommandsValid([{type:"SetFleetTransit",fleet_id:"101",mode:"economy"}],f.state),false);
+    assert.equal(f.commands.fleetCommandsValid([{type:"SetFleetTransit",fleet_id:"101",mode:"slow"}],f.state),true,"warships fly Slow too");
+    f.state.ghosts.push({...f.state.ghosts[0],id:"105",kind:"battleship",composition:[{kind:"battleship",count:1}]});
+    assert.equal(f.commands.fleetCommandsValid([{type:"SetFleetTransit",fleet_id:"105",mode:"slow"}],f.state),false,"a ship of the line carries no fission store");
   }
 });
 
-test("Economy quotes 10% trip Fuel and 25% speed for every freighter size", () => {
+test("Slow quotes a quarter of the energy at half speed on Uranium; Fusion Freight cuts freighter Deuterium to a tenth", () => {
   const f = fixture(), fleet = f.deps["../../core/derive/fleet"];
+  const dest = {x:85_000,y:0};
+  const fulls = [];
   for (const kind of ["tiny_freighter","small_freighter","convoy","large_freighter","heavy_freighter","bulk_freighter"]) {
     const full = {...f.state.ghosts[1],kind,composition:[{kind,count:1}],fuel_capacity:undefined,
       cargo_manifest:[{commodity:"metallic_ore",units:protocol.cargoUnitsPerHull(kind)}]};
-    const economy = {...full,transit:"economy"}, stealth = {...full,transit:"stealth"};
-    const dest = {x:85_000,y:0};
-    assert.ok(Math.abs(fleet.estimatedFuelForLeg(economy,dest)-fleet.estimatedFuelForLeg(full,dest)*.1)<1e-9);
+    const slow = {...full,transit:"slow"}, stealth = {...full,transit:"stealth"};
+    assert.ok(Math.abs(fleet.estimatedFuelForLeg(slow,dest)-fleet.estimatedFuelForLeg(full,dest)*.25)<1e-9);
     assert.equal(fleet.estimatedFuelForLeg(stealth,dest),fleet.estimatedFuelForLeg(full,dest));
-    assert.equal(fleet.transitSpeedMultiplier(economy),.25);
+    assert.equal(fleet.transitSpeedMultiplier(slow),.5);
     assert.equal(fleet.transitSpeedMultiplier(stealth),.5);
-    assert.equal(fleet.fleetFuelCapacity(economy),fleet.fleetFuelCapacity(full));
+    assert.equal(fleet.regimeFuel(slow),"uranium");
+    assert.equal(fleet.regimeFuel(full),"deuterium");
+    assert.equal(fleet.fleetFuelCapacity(slow),fleet.fleetFuelCapacity(full));
+    assert.equal(fleet.fleetUraniumCapacity(slow),fleet.fleetFuelCapacity(full),"a freighter's fission store matches its tank");
+    fulls.push([full, fleet.estimatedFuelForLeg(full,dest)]);
   }
-  const mixed = {...f.state.ghosts[1],transit:"economy",composition:[{kind:"convoy",count:1},{kind:"raider",count:1}]};
-  assert.equal(fleet.economyCapable(mixed),false);
-  assert.equal(fleet.cruiseFuelMultiplier(mixed),1);
-  assert.equal(fleet.transitSpeedMultiplier(mixed),1);
+  const line = {...f.state.ghosts[1],transit:"slow",composition:[{kind:"convoy",count:1},{kind:"battleship",count:1}]};
+  assert.equal(fleet.slowCapable(line),false);
+  assert.equal(fleet.cruiseFuelMultiplier(line),1);
+  assert.equal(fleet.transitSpeedMultiplier(line),1);
+  const escorted = {...f.state.ghosts[1],transit:"slow",composition:[{kind:"convoy",count:1},{kind:"raider",count:1}]};
+  assert.equal(fleet.slowCapable(escorted),true,"an escorted freighter flies Slow with its escort");
+  const raider = {...f.state.ghosts[0],transit:"full"}, raiderLeg = fleet.estimatedFuelForLeg(raider,dest);
+  f.state.research = {programmes:[{id:"prop_line_fusion_freight",state:"completed"}]};
+  for (const [full, before] of fulls) assert.ok(Math.abs(fleet.estimatedFuelForLeg(full,dest)-before*.1)<1e-9, "Fusion Freight: a tenth of the Deuterium");
+  assert.equal(fleet.estimatedFuelForLeg(raider,dest),raiderLeg,"warships are unaffected");
+  assert.ok(Math.abs(fleet.estimatedFuelForLeg({...fulls[0][0],transit:"slow"},dest)-fulls[0][1]*.25)<1e-9,"Slow still burns a quarter on Uranium");
+});
+
+test("Fusion Freight cuts each freighter's share; Slow moves quote Uranium; drive research speeds own hulls", () => {
+  const f = fixture(), fleet = f.deps["../../core/derive/fleet"];
+  f.state.research = {programmes:[{id:"prop_line_fusion_freight",state:"completed"}]};
+  const mixed = {...f.state.ghosts[1],transit:"full",cargo_manifest:[],composition:[{kind:"tiny_freighter",count:1},{kind:"scout",count:1}]};
+  const expected = (1500 * .1 + 80) / (1500 + 80);
+  assert.ok(Math.abs(fleet.cruiseFuelMultiplier(mixed) - expected) < 1e-12, "a riding Scout pays its own share, no more");
+  const rival = {...mixed,own:false};
+  assert.equal(fleet.cruiseFuelMultiplier(rival), 1, "a rival's research is unknown");
+  const slow = f.state.ghosts.find(g => g.id === "102");
+  Object.assign(slow, {transit:"slow",uranium:1,uranium_capacity:157.5,fuel:500});
+  f.intent.beginPendingIntent({verb:"move",shipId:"102",dest:{x:85_000,y:0}});
+  assert.match(f.orders.intentSummary(f.state.pendingIntent), /Uranium ~[\d.]+ \/ 1 aboard · FUEL SHORT/,
+    "a Slow trip is checked against the Uranium store, not the fusion tank");
+  f.intent.clearPendingIntent();
+  const raider = f.state.ghosts[0], before = fleet.fleetBaseSpeed(raider), jumpBefore = fleet.jumpAntimatter(raider, 50_000);
+  f.state.research.programmes.push({id:"prop_military_drives",state:"completed"},{id:"prop_expedition_iii_torch_regime",state:"completed"});
+  assert.ok(Math.abs(fleet.fleetBaseSpeed(raider) - before * 1.2 * 1.3) < 1e-9, "warship speed research moves warships");
+  assert.equal(fleet.fleetBaseSpeed({...raider,own:false}), before);
+  assert.ok(Math.abs(fleet.cruiseFuelMultiplier({...raider,transit:"full",cargo_manifest:[]}) - 1.4) < 1e-12, "Torch Regime taxes the warship's cruise");
+  assert.equal(fleet.jumpAntimatter(raider, 50_000), jumpBefore, "but never its jump");
 });
 
 test("Stealth on the fleet panel previews; Cancel changes nothing; Confirm sends exactly once", () => {
@@ -188,6 +228,28 @@ test("bottom strip and mobile Stealth/Recall also wait for Confirm", () => {
     assert.equal(f.state.pendingIntent.verb, "command");
     f.intent.confirmPendingIntent(); f.intent.confirmPendingIntent();
     assert.equal(f.sent.length, 1);
+  }
+});
+
+test("raising an interdiction field stages on both shells and sends once", () => {
+  for (const mobile of [false, true]) {
+    const f = fixture();
+    if (mobile) f.mobileClick("fleet-interdict", { id: "104" }); else f.fleetClick("interdict", {}, "104");
+    assert.equal(f.sent.length, 0);
+    assert.equal(f.state.pendingIntent.verb, "command");
+    f.intent.confirmPendingIntent(); f.intent.confirmPendingIntent();
+    assert.deepEqual(plain(f.sent), [{ type: "DeployInterdiction", fleet_id: "104" }]);
+  }
+  // Without a generator, inside a field, or recharging, it never stages.
+  for (const tweak of [
+    st => { st.ghosts.find(g => g.id === "104").loadouts = []; },
+    st => { st.interdictionFields = [{ id: "f", pos: { x: 10_000, y: 0 }, radius: 1500, own: false, fleet: "9", expires_at: 999 }]; },
+    st => { st.ghosts.find(g => g.id === "104").interdiction_ready = st.simTime + 60; },
+    st => { st.ghosts.find(g => g.id === "104").fuel = 5; },
+  ]) {
+    const f = fixture(); tweak(f.state);
+    f.intent.beginFleetCommand({ type: "DeployInterdiction", fleet_id: "104" });
+    assert.equal(f.state.pendingIntent, null);
   }
 });
 
@@ -335,9 +397,9 @@ test("disconnect preserves the preview without silently sending on reconnect", (
 test("cargo, Authority and rescue risks remain in the shared confirmation", () => {
   const f = fixture();
   for (const [command, pattern] of [
-    [{ type: "HaulToMarketHub", fleet_id: "103", sell_on_arrival: true }, /Fuel short/],
+    [{ type: "HaulToMarketHub", fleet_id: "103", sell_on_arrival: true }, /Deuterium short/],
     [{ type: "SetEngageFreight", fleet_id: "101", on: true }, /citations/],
-    [{ type: "RequestFuelRescue", fleet_id: "101" }, /3× market Fuel/],
+    [{ type: "RequestFuelRescue", fleet_id: "101" }, /3× market Deuterium/],
   ]) {
     f.intent.beginFleetCommand(command);
     assert.match(f.readiness.intentReadinessWarnings(f.state, f.state.pendingIntent).join(" "), pattern);

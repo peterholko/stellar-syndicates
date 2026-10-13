@@ -1,0 +1,31 @@
+python3 prepare_textures.py
+Packed native reference artwork into three 2048px PBR maps, with a dedicated underside projection.
+
+python3 build_model.py
+{
+  "meshes": 35,
+  "renderSections": 35,
+  "sourceComponents": 181,
+  "triangles": 33772,
+  "exportedVertices": 32044,
+  "dimensionsXYZ": [
+    11.72,
+    4.11,
+    18.7
+  ],
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "embeddedTextures": 3,
+  "axes": "Y up, -Z forward",
+  "source": "../../battleship-reference-v1/battleship-reference.png",
+  "generator": "Python/NumPy, no Blender",
+  "optimization": "Static parts combined by material; independent turret assemblies retained; exact vertex deduplication; 16-bit indices where possible"
+}
+
+node validate.mjs
+0 errors; 0 warnings; 56 informational notes.
+
+node build_preview.mjs
+Built standalone viewer.html with embedded GLB and renderer.

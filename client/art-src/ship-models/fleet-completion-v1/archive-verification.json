@@ -1,0 +1,49 @@
+{
+  "passed": true,
+  "archives": [
+    {
+      "file": "destroyer-textured-v1.zip",
+      "MiB": 9.87
+    },
+    {
+      "file": "battleship-textured-v1.zip",
+      "MiB": 13.32
+    },
+    {
+      "file": "dreadnought-textured-v1.zip",
+      "MiB": 15.22
+    },
+    {
+      "file": "scout-textured-v1.zip",
+      "MiB": 7.48
+    },
+    {
+      "file": "colony-ship-textured-v1.zip",
+      "MiB": 14.28
+    },
+    {
+      "file": "troop-transport-textured-v1.zip",
+      "MiB": 11.79
+    },
+    {
+      "file": "construction-ship-textured-v1.zip",
+      "MiB": 12.38
+    },
+    {
+      "file": "medium-freighter-textured-v1.zip",
+      "MiB": 11.42
+    },
+    {
+      "file": "authority-freighter-textured-v1.zip",
+      "MiB": 14.84
+    },
+    {
+      "file": "nine-new-ships-v1.zip",
+      "MiB": 174.99
+    },
+    {
+      "file": "ship-lod-experiment-v9.zip",
+      "MiB": 333.39
+    }
+  ]
+}

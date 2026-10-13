@@ -1,0 +1,13 @@
+Edit the supplied Tiny Freighter reference sheet with one localized correction.
+
+Keep the title, TOP view, BOTTOM view, SIDE view, all existing labels, the white background, page dimensions, and their positions unchanged. These three ship views are approved.
+
+Replace ONLY the ship drawing above the FRONT label at the lower right. The current drawing there is an incorrect overhead view. Redraw it as the true orthographic FRONT ELEVATION of the ship in the approved side view.
+
+Precise camera: camera directly in front of the nose, exactly level with the ship's center, looking horizontally straight aft along its longitudinal axis. Zero downward or upward camera tilt, zero yaw, no perspective. The nose points directly at the viewer, and the ship's long axis goes INTO the page.
+
+The FRONT drawing should therefore be a WIDE, LOW frontal facade about 430 pixels wide and 180 pixels tall on this sheet, centered around x=1330, y=635. Width is about 2.4 times height. In this projection the entire length of the cabin, cargo, and rear machinery overlaps in depth instead of extending vertically. Show a broad rectangular silver cargo body with chamfered corners in the background, a narrow low central cockpit and projecting nose in front of it, and a cyan windshield on the upper part of the central cabin. The cockpit roof is only slightly above the cargo roof, exactly as the approved SIDE view shows. Show the front end face of the cargo container shoulders to the left and right of the cockpit. Include the two amber-gold clamp positions, dark frame, silver panels, cyan marker lights, clean vents and restrained wear, consistent with the approved TOP and SIDE.
+
+The rear cargo section and the two rear engines are behind the cargo body and occluded in this straight front projection. Do not draw engine exhaust apertures, engine bells, or two hanging thruster pods. Do not draw a long pointed vertical prow. Do not repeat the top silhouette or squeeze an overhead view. No bird's-eye view and no three-quarter view. A true head-on front view should look like the front of a broad, squat working cargo spacecraft, with the nose foreshortened to its frontal cross-section.
+
+Preserve the exact rendering style and all other sheet contents. Keep the FRONT label where it is.

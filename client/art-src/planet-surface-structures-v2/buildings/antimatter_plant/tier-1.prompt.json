@@ -1,0 +1,31 @@
+{
+  "id": "antimatter_plant/tier-1",
+  "mode": "built-in image_gen",
+  "prompt": "Use case: stylized-concept.\nAsset type: ONE standalone planetary building-layer sprite, square transparent PNG, approximately 1024 x 1024.\nPurpose: reusable architecture above a SEPARATE biome ground layer. Produce BUILDING ONLY, not a diorama. Genuine zero-alpha transparency around the building; preserve translucent soft shadow. No baked soil, gravel apron, grass, rocks around the site, concrete base tile, raised platform, roads, path, border or landscape. Small integral ramps, steps, pipe racks, conduits and support feet belonging to the structure are allowed.\nStyle: the approved new Boreal/Temperate structures, grounded near-future frontier engineering. Soft semi-realistic environmental 3D rendering, matte weathered steel, pale-stone and slate panels with dark grey trim, restrained amber service lights and a few warm windows. Large readable forms, no ink outlines, no cel shading, plastic gloss, extreme contrast, excessive greebles or neon. No text, logos, Authority branding, numerals, UI, people, vehicles or spacecraft. No glow haze, beams, sparks or energy effects.\nCamera and lighting: elevated front-left three-quarter view about 55 degrees above the ground plane; more roof than wall, mild perspective; front and right walls visible. Soft upper-left daylight, neutral/cool fill and semi-transparent soft lower-right cast/contact shadow attached to the feet.\nFraming/alignment: complete compact structure centered in a square. Building width about 94% of the canvas (x \u2248 4\u201398%), never cropped. Keep the ground footprint centred at approximately x=50%; its near/front foot reaches y\u224888%, and its far/rear foot y\u224845%. Keep a similar physical site footprint through upgrades; add height and machine mass, not a sprawling campus.\nOutput exactly one structure, no tier lineup/contact sheet.\nInput image 1 is the house style for advanced precision manufacturing. Input image 2 is the house style for fuel processing (tanks, pipework). Create a NEW building family in that shared style; do not copy either building.\nSubject: ANTIMATTER PLANT \u2014 TIER 1 of 4.\nFamily identity: a particle factory. A long, low accelerator ring housing, half-buried and armoured, runs around a central collider hall; heavy power conduits arrive from a transformer yard; insulated Deuterium feed tanks stand on one side; a small, heavily shielded containment vault with thick doors stores the finished magnetic bottles. Pale ceramic and dark steel, very clean, restrained cyan-white service lights. The precision reads through the machinery. Clearly different from the Drive Works' assembly halls and the Fuel Refinery's distillation towers.\nThis tier specifically: a small half-buried accelerator ring around one collider hall, two Deuterium feed tanks and a small containment vault.\nTier family progression for context (do NOT draw a lineup): 1: a small accelerator ring, one collider hall, two feed tanks and a small containment vault; 2: a larger ring, a taller collider hall and a wider transformer yard; 3: a double ring around a domed collider hall, four feed tanks and a larger vault; 4: a great antimatter plant: a large double ring, a tall domed collider hall, a full transformer yard and a fortified vault, on the same compact site.\nOutput: exactly the requested tier alone, genuine transparent PNG.\nFraming priority: the entire lowest solid front foot must sit at y=88% of the canvas, with the bottom 12% left transparent except a faint attached shadow. All solid geometry stays inside x=3%\u201397%; no clipped edge. Keep a compact site, grow the building upward, and keep every solar row inside that same site where applicable.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/drive_works/tier-1.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/fuel_refinery/tier-1.png"
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-f6aea905-7315-4b64-8288-639789b1631c.png",
+  "file": "buildings/antimatter_plant/tier-1.png",
+  "source_brief": "docs/fuel-overhaul-art-prompt.md",
+  "verification": {
+    "size": [
+      1254,
+      1254
+    ],
+    "mode": "RGBA",
+    "fullyTransparentPixels": 849316,
+    "partiallyTransparentPixels": 722991,
+    "solidBounds": [
+      41,
+      315,
+      1218,
+      1104
+    ],
+    "solidWidthFraction": 0.9386,
+    "lowestSolidFraction": 0.8804,
+    "sha256": "61c63ebf3d4f8a9c94380cfd1988849b1ebe4f191e0f8b4631c349e869238986"
+  }
+}

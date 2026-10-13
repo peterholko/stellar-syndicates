@@ -1,0 +1,36 @@
+{
+  "source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-2c2e79b9-c301-4013-9027-638ef10f8591.png",
+  "output": "/Users/peter/projects/stellar-syndicates/client/art-src/survey-probe-reference-v1/survey-probe.png",
+  "prompt": "Use case: precise-object-edit. Edit Image 1, the generated Survey Probe sprite. Preserve its compact plated robotic core, four and only four X-splayed antenna booms, two folded radiator fins, one rear engine, pale titanium/gunmetal/brass materials, ochre marks and fine finish, and genuine transparent background.\n\nCorrect ONLY the orientation of the existing sensor dish and engine relative to the strict orthographic top-down camera. The nose points UP and the thruster points DOWN. The forward dish is mounted vertically like a forward-facing radar dish: its circular opening and cyan lens face UP along the sheet toward 12 o'clock, NOT toward the overhead camera. In this directly overhead view the dish must appear as a shallow curved transverse oval / crescent of its rim and curved rear housing at the nose, NOT a full circle with a face-on cyan eye. There is still exactly one substantial forward sensor dish and no guns, crew, cockpit or windows. Likewise the single aft cylindrical thruster must show only its cylindrical wall and a thin edge-on cyan aperture at the very tail, never a face-on circular exhaust aimed at the overhead camera. Remove the extra central stalk sticking forward from the dish; keep exactly four diagonal antenna booms.\n\nMaintain a coherent true TOP plan projection throughout, without pitching the camera. One craft on a square transparent canvas; whole craft including antenna tips spans 89% canvas height with 5.5% padding top/bottom, centered horizontally, width to overall length about 0.75. No ground, text, backdrop, scene, exhaust plume, drop shadow, labels, halos or other objects.",
+  "originalPrompt": "Use case: stylized-concept.\nAsset type: one production-quality transparent raster spaceship hull sprite for Stellar Syndicates, a premium space strategy game.\nInput image: Image 1 is an existing Stellar Syndicates hull, attached ONLY as the fleet's style, material and finish reference. Do not copy its silhouette.\nPrimary request: design a NEW hull as a fresh, distinctive, professionally art-directed hard-surface spacecraft. It must read clearly both as a 32–80 pixel galaxy-map sprite and in a closer view.\nComposition: strict orthographic TOP-DOWN plan view, camera directly overhead at 90 degrees; the craft's nose points exactly UP (12 o'clock), its thruster points DOWN. One complete centered craft on a square canvas. Its length spans about 88–90% of the canvas height, with about 5% clear space above the nose and below the tail, centered left to right, matching the existing fleet sprites. No perspective tilt, no side view. The outer silhouette should be purposeful and unmistakable.\nVisual style: clean high-end rendered hard-surface game art; crisp machined geometry, readable large forms with restrained secondary panel detail. Brushed titanium, cool gunmetal, pale silver panels, a cyan sensor lens and tiny cyan running lights; restrained warm brass hardware. Consistent soft upper-left illumination and good value separation for a dark navy map. Neutral lights, no team-color wash.\nBackground: genuinely transparent PNG with real RGBA alpha, including gaps between parts. No ground plane, black rectangle, painted checkerboard, smoke, outer halo, scene or starfield. Only a tiny thruster-aperture glow, no exhaust plume. No beams, scans, signals or effects.\nConstraints: exactly one craft, no text, numbers, labels, logos, watermark, border, circular badge or UI. No painterly brush marks, crayon edges, excessive micro-greeble noise, organic shapes, toy appearance or recognizable franchise design. Maximize real native detail without artificially upscaling.\n\nSubject and distinguishing silhouette (takes priority):\nA SURVEY PROBE, a small CREWLESS robotic drone, NOT a crewed ship: no cockpit, no windows, no crew modules, no guns, no cargo. A compact armored sensor core with ONE large forward sensor dish whose cyan lens faces the nose; FOUR slim antenna booms splayed diagonally like an X from the core; two small folded solar/radiator fins at the sides; and exactly ONE small cylindrical thruster at the tail. About 0.75 width-to-length ratio. Pale silver and gunmetal with a few ochre hazard markings. The silhouette must say robotic probe, clearly simpler than the Scout.\n",
+  "referenced_image_paths": [
+    "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-49f58b76-ca91-4c81-b9a0-736183e43b18.png"
+  ],
+  "originalReferences": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/ships-2026-09-08/scout.png"
+  ],
+  "mode": "builtin-imagegen",
+  "processing": "crop-hull",
+  "assembly": {
+    "method": "Crop transparent canvas margins only; no pixel resampling or artificial upscale",
+    "left": 30,
+    "top": 13,
+    "side": 1193
+  },
+  "verification": {
+    "width": 1193,
+    "height": 1193,
+    "channels": 4,
+    "hasAlpha": true,
+    "fileSHA256": "95890a0ca0dfc6c0992cf8ff937f52599fcfdcc3b0415e5774dae0283e3d11a5",
+    "transparentPixels": 1174436,
+    "partiallyTransparentPixels": 248050,
+    "solidBounds": [
+      229,
+      65,
+      963,
+      1126
+    ]
+  },
+  "created": "2026-10-09"
+}

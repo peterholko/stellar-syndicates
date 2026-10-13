@@ -1,0 +1,1538 @@
+{
+  "name": "Authority Arbiter \u2014 dark imperial armor",
+  "triangles": 20148,
+  "renderSections": 26,
+  "sourceComponents": 402,
+  "materials": 2,
+  "embeddedTextures": 3,
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "dimensionsXYZ": [
+    13.72,
+    6.91,
+    27.4397
+  ],
+  "axes": "Y up, -Z forward",
+  "units": "Relative model units; gameplay scale is assigned at integration",
+  "sockets": [
+    {
+      "name": "socket.mass-driver.muzzle",
+      "translation": [
+        0.0,
+        0.64,
+        -15.701960784313727
+      ],
+      "extras": {
+        "role": "capital-mass-driver",
+        "direction": [
+          0.0,
+          0.0,
+          -1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.interdiction.center",
+      "translation": [
+        0.0,
+        0.74,
+        -0.0
+      ],
+      "extras": {
+        "role": "interdiction-field",
+        "direction": [
+          0.0,
+          1.0,
+          -0.0
+        ]
+      }
+    },
+    {
+      "name": "socket.command",
+      "translation": [
+        0.0,
+        4.28,
+        6.2745098039215685
+      ],
+      "extras": {
+        "role": "command-tower",
+        "direction": [
+          0.0,
+          0.0,
+          -1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.1",
+      "translation": [
+        -3.0980392156862746,
+        0.04,
+        11.830196078431372
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.2",
+      "translation": [
+        -1.0196078431372548,
+        0.04,
+        11.830196078431372
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.3",
+      "translation": [
+        1.0588235294117647,
+        0.04,
+        11.830196078431372
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.4",
+      "translation": [
+        3.1372549019607843,
+        0.04,
+        11.830196078431372
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.muzzle.port.1.1",
+      "translation": [
+        -5.1686274509803924,
+        1.88,
+        -2.2213725490196077
+      ],
+      "extras": {
+        "role": "turret-muzzle",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-port-1"
+      }
+    },
+    {
+      "name": "socket.muzzle.port.1.2",
+      "translation": [
+        -5.1686274509803924,
+        1.88,
+        -2.6413725490196076
+      ],
+      "extras": {
+        "role": "turret-muzzle",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-port-1"
+      }
+    },
+    {
+      "name": "socket.turret.port.1",
+      "translation": [
+        -3.1372549019607843,
+        1.31,
+        -2.4313725490196076
+      ],
+      "extras": {
+        "role": "heavy-twin-turret",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-port-1",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.muzzle.port.2.1",
+      "translation": [
+        -5.1686274509803924,
+        1.88,
+        0.5237254901960784
+      ],
+      "extras": {
+        "role": "turret-muzzle",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-port-2"
+      }
+    },
+    {
+      "name": "socket.muzzle.port.2.2",
+      "translation": [
+        -5.1686274509803924,
+        1.88,
+        0.10372549019607843
+      ],
+      "extras": {
+        "role": "turret-muzzle",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-port-2"
+      }
+    },
+    {
+      "name": "socket.turret.port.2",
+      "translation": [
+        -3.1372549019607843,
+        1.31,
+        0.3137254901960784
+      ],
+      "extras": {
+        "role": "heavy-twin-turret",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-port-2",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.muzzle.port.3.1",
+      "translation": [
+        -5.1686274509803924,
+        1.88,
+        3.1119607843137254
+      ],
+      "extras": {
+        "role": "turret-muzzle",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-port-3"
+      }
+    },
+    {
+      "name": "socket.muzzle.port.3.2",
+      "translation": [
+        -5.1686274509803924,
+        1.88,
+        2.6919607843137254
+      ],
+      "extras": {
+        "role": "turret-muzzle",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-port-3"
+      }
+    },
+    {
+      "name": "socket.turret.port.3",
+      "translation": [
+        -3.1372549019607843,
+        1.31,
+        2.9019607843137254
+      ],
+      "extras": {
+        "role": "heavy-twin-turret",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-port-3",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.muzzle.starboard.1.1",
+      "translation": [
+        5.1686274509803924,
+        1.88,
+        -2.2213725490196077
+      ],
+      "extras": {
+        "role": "turret-muzzle",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-starboard-1"
+      }
+    },
+    {
+      "name": "socket.muzzle.starboard.1.2",
+      "translation": [
+        5.1686274509803924,
+        1.88,
+        -2.6413725490196076
+      ],
+      "extras": {
+        "role": "turret-muzzle",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-starboard-1"
+      }
+    },
+    {
+      "name": "socket.turret.starboard.1",
+      "translation": [
+        3.1372549019607843,
+        1.31,
+        -2.4313725490196076
+      ],
+      "extras": {
+        "role": "heavy-twin-turret",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-starboard-1",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.muzzle.starboard.2.1",
+      "translation": [
+        5.1686274509803924,
+        1.88,
+        0.5237254901960784
+      ],
+      "extras": {
+        "role": "turret-muzzle",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-starboard-2"
+      }
+    },
+    {
+      "name": "socket.muzzle.starboard.2.2",
+      "translation": [
+        5.1686274509803924,
+        1.88,
+        0.10372549019607843
+      ],
+      "extras": {
+        "role": "turret-muzzle",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-starboard-2"
+      }
+    },
+    {
+      "name": "socket.turret.starboard.2",
+      "translation": [
+        3.1372549019607843,
+        1.31,
+        0.3137254901960784
+      ],
+      "extras": {
+        "role": "heavy-twin-turret",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-starboard-2",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.muzzle.starboard.3.1",
+      "translation": [
+        5.1686274509803924,
+        1.88,
+        3.1119607843137254
+      ],
+      "extras": {
+        "role": "turret-muzzle",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-starboard-3"
+      }
+    },
+    {
+      "name": "socket.muzzle.starboard.3.2",
+      "translation": [
+        5.1686274509803924,
+        1.88,
+        2.6919607843137254
+      ],
+      "extras": {
+        "role": "turret-muzzle",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-starboard-3"
+      }
+    },
+    {
+      "name": "socket.turret.starboard.3",
+      "translation": [
+        3.1372549019607843,
+        1.31,
+        2.9019607843137254
+      ],
+      "extras": {
+        "role": "heavy-twin-turret",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "assembly": "turret-starboard-3",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.secondary.port.1.1",
+      "translation": [
+        -3.6339675529147497,
+        1.62,
+        -6.767786563646484
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          -0.9084904526785746,
+          0.0,
+          -0.41790560823214434
+        ],
+        "assembly": "secondary-port-1"
+      }
+    },
+    {
+      "name": "socket.secondary.port.1.2",
+      "translation": [
+        -3.5378492630213563,
+        1.62,
+        -6.976739367762556
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          -0.9084904526785746,
+          0.0,
+          -0.41790560823214434
+        ],
+        "assembly": "secondary-port-1"
+      }
+    },
+    {
+      "name": "socket.secondary.port.1",
+      "translation": [
+        -2.4313725490196076,
+        1.28,
+        -6.431372549019608
+      ],
+      "extras": {
+        "role": "secondary-twin-turret",
+        "direction": [
+          -0.9084904526785746,
+          0.0,
+          -0.41790560823214434
+        ],
+        "assembly": "secondary-port-1",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.secondary.port.2.1",
+      "translation": [
+        -3.1763330604220332,
+        1.57,
+        -3.8384212133185707
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          -0.9841833239736953,
+          0.0,
+          -0.17715299831526515
+        ],
+        "assembly": "secondary-port-2"
+      }
+    },
+    {
+      "name": "socket.secondary.port.2.2",
+      "translation": [
+        -3.1355878708095224,
+        1.57,
+        -4.064783377832521
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          -0.9841833239736953,
+          0.0,
+          -0.17715299831526515
+        ],
+        "assembly": "secondary-port-2"
+      }
+    },
+    {
+      "name": "socket.secondary.port.2",
+      "translation": [
+        -1.9215686274509804,
+        1.23,
+        -3.764705882352941
+      ],
+      "extras": {
+        "role": "secondary-twin-turret",
+        "direction": [
+          -0.9841833239736953,
+          0.0,
+          -0.17715299831526515
+        ],
+        "assembly": "secondary-port-2",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.secondary.port.3.1",
+      "translation": [
+        -3.3649004337836175,
+        1.6600000000000001,
+        5.378492829687005
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          -0.9805806756909201,
+          0.0,
+          0.19611613513818402
+        ],
+        "assembly": "secondary-port-3"
+      }
+    },
+    {
+      "name": "socket.secondary.port.3.2",
+      "translation": [
+        -3.4100071448654,
+        1.6600000000000001,
+        5.152959274278093
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          -0.9805806756909201,
+          0.0,
+          0.19611613513818402
+        ],
+        "assembly": "secondary-port-3"
+      }
+    },
+    {
+      "name": "socket.secondary.port.3",
+      "translation": [
+        -2.156862745098039,
+        1.32,
+        5.0588235294117645
+      ],
+      "extras": {
+        "role": "secondary-twin-turret",
+        "direction": [
+          -0.9805806756909201,
+          0.0,
+          0.19611613513818402
+        ],
+        "assembly": "secondary-port-3",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.secondary.port.4.1",
+      "translation": [
+        -4.513974086029389,
+        2.14,
+        8.28617641785298
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          -0.9347835805883489,
+          0.0,
+          0.3552177606235726
+        ],
+        "assembly": "secondary-port-4"
+      }
+    },
+    {
+      "name": "socket.secondary.port.4.2",
+      "translation": [
+        -4.595674170972812,
+        2.14,
+        8.07117619431766
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          -0.9347835805883489,
+          0.0,
+          0.3552177606235726
+        ],
+        "assembly": "secondary-port-4"
+      }
+    },
+    {
+      "name": "socket.secondary.port.4",
+      "translation": [
+        -3.372549019607843,
+        1.8,
+        7.803921568627451
+      ],
+      "extras": {
+        "role": "secondary-twin-turret",
+        "direction": [
+          -0.9347835805883489,
+          0.0,
+          0.3552177606235726
+        ],
+        "assembly": "secondary-port-4",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.secondary.starboard.1.1",
+      "translation": [
+        3.5378492630213563,
+        1.62,
+        -6.976739367762556
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          0.9084904526785746,
+          0.0,
+          -0.41790560823214434
+        ],
+        "assembly": "secondary-starboard-1"
+      }
+    },
+    {
+      "name": "socket.secondary.starboard.1.2",
+      "translation": [
+        3.6339675529147497,
+        1.62,
+        -6.767786563646484
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          0.9084904526785746,
+          0.0,
+          -0.41790560823214434
+        ],
+        "assembly": "secondary-starboard-1"
+      }
+    },
+    {
+      "name": "socket.secondary.starboard.1",
+      "translation": [
+        2.4313725490196076,
+        1.28,
+        -6.431372549019608
+      ],
+      "extras": {
+        "role": "secondary-twin-turret",
+        "direction": [
+          0.9084904526785746,
+          0.0,
+          -0.41790560823214434
+        ],
+        "assembly": "secondary-starboard-1",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.secondary.starboard.2.1",
+      "translation": [
+        3.1355878708095224,
+        1.57,
+        -4.064783377832521
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          0.9841833239736953,
+          0.0,
+          -0.17715299831526515
+        ],
+        "assembly": "secondary-starboard-2"
+      }
+    },
+    {
+      "name": "socket.secondary.starboard.2.2",
+      "translation": [
+        3.1763330604220332,
+        1.57,
+        -3.8384212133185707
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          0.9841833239736953,
+          0.0,
+          -0.17715299831526515
+        ],
+        "assembly": "secondary-starboard-2"
+      }
+    },
+    {
+      "name": "socket.secondary.starboard.2",
+      "translation": [
+        1.9215686274509804,
+        1.23,
+        -3.764705882352941
+      ],
+      "extras": {
+        "role": "secondary-twin-turret",
+        "direction": [
+          0.9841833239736953,
+          0.0,
+          -0.17715299831526515
+        ],
+        "assembly": "secondary-starboard-2",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.secondary.starboard.3.1",
+      "translation": [
+        3.4100071448654,
+        1.6600000000000001,
+        5.152959274278093
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          0.9805806756909201,
+          0.0,
+          0.19611613513818402
+        ],
+        "assembly": "secondary-starboard-3"
+      }
+    },
+    {
+      "name": "socket.secondary.starboard.3.2",
+      "translation": [
+        3.3649004337836175,
+        1.6600000000000001,
+        5.378492829687005
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          0.9805806756909201,
+          0.0,
+          0.19611613513818402
+        ],
+        "assembly": "secondary-starboard-3"
+      }
+    },
+    {
+      "name": "socket.secondary.starboard.3",
+      "translation": [
+        2.156862745098039,
+        1.32,
+        5.0588235294117645
+      ],
+      "extras": {
+        "role": "secondary-twin-turret",
+        "direction": [
+          0.9805806756909201,
+          0.0,
+          0.19611613513818402
+        ],
+        "assembly": "secondary-starboard-3",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.secondary.starboard.4.1",
+      "translation": [
+        4.595674170972812,
+        2.14,
+        8.07117619431766
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          0.9347835805883489,
+          0.0,
+          0.3552177606235726
+        ],
+        "assembly": "secondary-starboard-4"
+      }
+    },
+    {
+      "name": "socket.secondary.starboard.4.2",
+      "translation": [
+        4.513974086029389,
+        2.14,
+        8.28617641785298
+      ],
+      "extras": {
+        "role": "secondary-muzzle",
+        "direction": [
+          0.9347835805883489,
+          0.0,
+          0.3552177606235726
+        ],
+        "assembly": "secondary-starboard-4"
+      }
+    },
+    {
+      "name": "socket.secondary.starboard.4",
+      "translation": [
+        3.372549019607843,
+        1.8,
+        7.803921568627451
+      ],
+      "extras": {
+        "role": "secondary-twin-turret",
+        "direction": [
+          0.9347835805883489,
+          0.0,
+          0.3552177606235726
+        ],
+        "assembly": "secondary-starboard-4",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.point-defense.dorsal.port.1.1",
+      "translation": [
+        -1.9445190538302497,
+        1.7202836000708739,
+        -1.2396723234579
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          -0.899187501582008,
+          0.07193500012656064,
+          -0.4316100007593638
+        ],
+        "assembly": "point-defense-dorsal-port-1"
+      }
+    },
+    {
+      "name": "socket.point-defense.dorsal.port.1.2",
+      "translation": [
+        -1.8861003597063055,
+        1.7202836000708739,
+        -1.361377936216117
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          -0.899187501582008,
+          0.07193500012656064,
+          -0.4316100007593638
+        ],
+        "assembly": "point-defense-dorsal-port-1"
+      }
+    },
+    {
+      "name": "socket.point-defense.dorsal.port.1",
+      "translation": [
+        -1.2549019607843137,
+        1.53,
+        -1.0588235294117647
+      ],
+      "extras": {
+        "role": "paired-point-defense",
+        "direction": [
+          -0.899187501582008,
+          0.07193500012656064,
+          -0.4316100007593638
+        ],
+        "assembly": "point-defense-dorsal-port-1",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.point-defense.dorsal.port.2.1",
+      "translation": [
+        -1.8861003597063055,
+        1.7202836000708739,
+        4.341770093078861
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          -0.899187501582008,
+          0.07193500012656064,
+          0.4316100007593638
+        ],
+        "assembly": "point-defense-dorsal-port-2"
+      }
+    },
+    {
+      "name": "socket.point-defense.dorsal.port.2.2",
+      "translation": [
+        -1.9445190538302497,
+        1.7202836000708739,
+        4.220064480320645
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          -0.899187501582008,
+          0.07193500012656064,
+          0.4316100007593638
+        ],
+        "assembly": "point-defense-dorsal-port-2"
+      }
+    },
+    {
+      "name": "socket.point-defense.dorsal.port.2",
+      "translation": [
+        -1.2549019607843137,
+        1.53,
+        4.03921568627451
+      ],
+      "extras": {
+        "role": "paired-point-defense",
+        "direction": [
+          -0.899187501582008,
+          0.07193500012656064,
+          0.4316100007593638
+        ],
+        "assembly": "point-defense-dorsal-port-2",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.point-defense.dorsal.starboard.1.1",
+      "translation": [
+        1.8861003597063055,
+        1.7202836000708739,
+        -1.361377936216117
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          0.899187501582008,
+          0.07193500012656064,
+          -0.4316100007593638
+        ],
+        "assembly": "point-defense-dorsal-starboard-1"
+      }
+    },
+    {
+      "name": "socket.point-defense.dorsal.starboard.1.2",
+      "translation": [
+        1.9445190538302497,
+        1.7202836000708739,
+        -1.2396723234579
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          0.899187501582008,
+          0.07193500012656064,
+          -0.4316100007593638
+        ],
+        "assembly": "point-defense-dorsal-starboard-1"
+      }
+    },
+    {
+      "name": "socket.point-defense.dorsal.starboard.1",
+      "translation": [
+        1.2549019607843137,
+        1.53,
+        -1.0588235294117647
+      ],
+      "extras": {
+        "role": "paired-point-defense",
+        "direction": [
+          0.899187501582008,
+          0.07193500012656064,
+          -0.4316100007593638
+        ],
+        "assembly": "point-defense-dorsal-starboard-1",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.point-defense.dorsal.starboard.2.1",
+      "translation": [
+        1.9445190538302497,
+        1.7202836000708739,
+        4.220064480320645
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          0.899187501582008,
+          0.07193500012656064,
+          0.4316100007593638
+        ],
+        "assembly": "point-defense-dorsal-starboard-2"
+      }
+    },
+    {
+      "name": "socket.point-defense.dorsal.starboard.2.2",
+      "translation": [
+        1.8861003597063055,
+        1.7202836000708739,
+        4.341770093078861
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          0.899187501582008,
+          0.07193500012656064,
+          0.4316100007593638
+        ],
+        "assembly": "point-defense-dorsal-starboard-2"
+      }
+    },
+    {
+      "name": "socket.point-defense.dorsal.starboard.2",
+      "translation": [
+        1.2549019607843137,
+        1.53,
+        4.03921568627451
+      ],
+      "extras": {
+        "role": "paired-point-defense",
+        "direction": [
+          0.899187501582008,
+          0.07193500012656064,
+          0.4316100007593638
+        ],
+        "assembly": "point-defense-dorsal-starboard-2",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.point-defense.ventral.port.1.1",
+      "translation": [
+        -2.101381798928289,
+        -1.280283600070874,
+        -1.2396723234579
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          -0.899187501582008,
+          -0.07193500012656064,
+          -0.4316100007593638
+        ],
+        "assembly": "point-defense-ventral-port-1"
+      }
+    },
+    {
+      "name": "socket.point-defense.ventral.port.1.2",
+      "translation": [
+        -2.0429631048043446,
+        -1.280283600070874,
+        -1.361377936216117
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          -0.899187501582008,
+          -0.07193500012656064,
+          -0.4316100007593638
+        ],
+        "assembly": "point-defense-ventral-port-1"
+      }
+    },
+    {
+      "name": "socket.point-defense.ventral.port.1",
+      "translation": [
+        -1.411764705882353,
+        -1.09,
+        -1.0588235294117647
+      ],
+      "extras": {
+        "role": "paired-point-defense",
+        "direction": [
+          -0.899187501582008,
+          -0.07193500012656064,
+          -0.4316100007593638
+        ],
+        "assembly": "point-defense-ventral-port-1",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.point-defense.ventral.port.2.1",
+      "translation": [
+        -2.0429631048043446,
+        -1.280283600070874,
+        4.341770093078861
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          -0.899187501582008,
+          -0.07193500012656064,
+          0.4316100007593638
+        ],
+        "assembly": "point-defense-ventral-port-2"
+      }
+    },
+    {
+      "name": "socket.point-defense.ventral.port.2.2",
+      "translation": [
+        -2.101381798928289,
+        -1.280283600070874,
+        4.220064480320645
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          -0.899187501582008,
+          -0.07193500012656064,
+          0.4316100007593638
+        ],
+        "assembly": "point-defense-ventral-port-2"
+      }
+    },
+    {
+      "name": "socket.point-defense.ventral.port.2",
+      "translation": [
+        -1.411764705882353,
+        -1.09,
+        4.03921568627451
+      ],
+      "extras": {
+        "role": "paired-point-defense",
+        "direction": [
+          -0.899187501582008,
+          -0.07193500012656064,
+          0.4316100007593638
+        ],
+        "assembly": "point-defense-ventral-port-2",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.point-defense.ventral.starboard.1.1",
+      "translation": [
+        2.0429631048043446,
+        -1.280283600070874,
+        -1.361377936216117
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          0.899187501582008,
+          -0.07193500012656064,
+          -0.4316100007593638
+        ],
+        "assembly": "point-defense-ventral-starboard-1"
+      }
+    },
+    {
+      "name": "socket.point-defense.ventral.starboard.1.2",
+      "translation": [
+        2.101381798928289,
+        -1.280283600070874,
+        -1.2396723234579
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          0.899187501582008,
+          -0.07193500012656064,
+          -0.4316100007593638
+        ],
+        "assembly": "point-defense-ventral-starboard-1"
+      }
+    },
+    {
+      "name": "socket.point-defense.ventral.starboard.1",
+      "translation": [
+        1.411764705882353,
+        -1.09,
+        -1.0588235294117647
+      ],
+      "extras": {
+        "role": "paired-point-defense",
+        "direction": [
+          0.899187501582008,
+          -0.07193500012656064,
+          -0.4316100007593638
+        ],
+        "assembly": "point-defense-ventral-starboard-1",
+        "barrels": 2
+      }
+    },
+    {
+      "name": "socket.point-defense.ventral.starboard.2.1",
+      "translation": [
+        2.101381798928289,
+        -1.280283600070874,
+        4.220064480320645
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          0.899187501582008,
+          -0.07193500012656064,
+          0.4316100007593638
+        ],
+        "assembly": "point-defense-ventral-starboard-2"
+      }
+    },
+    {
+      "name": "socket.point-defense.ventral.starboard.2.2",
+      "translation": [
+        2.0429631048043446,
+        -1.280283600070874,
+        4.341770093078861
+      ],
+      "extras": {
+        "role": "point-defense-muzzle",
+        "direction": [
+          0.899187501582008,
+          -0.07193500012656064,
+          0.4316100007593638
+        ],
+        "assembly": "point-defense-ventral-starboard-2"
+      }
+    },
+    {
+      "name": "socket.point-defense.ventral.starboard.2",
+      "translation": [
+        1.411764705882353,
+        -1.09,
+        4.03921568627451
+      ],
+      "extras": {
+        "role": "paired-point-defense",
+        "direction": [
+          0.899187501582008,
+          -0.07193500012656064,
+          0.4316100007593638
+        ],
+        "assembly": "point-defense-ventral-starboard-2",
+        "barrels": 2
+      }
+    }
+  ],
+  "geometryCounts": {
+    "haloRings": 1,
+    "haloStruts": 4,
+    "dorsalSpines": 3,
+    "spinalLances": 0,
+    "massDrivers": 1,
+    "accelerationRails": 2,
+    "heavyTwinTurrets": 6,
+    "secondaryTwinTurrets": 8,
+    "pairedPointDefenseMounts": 8,
+    "gunBarrels": 44,
+    "mainEngines": 4,
+    "commandTowers": 1,
+    "closedVentralHangars": 1
+  },
+  "triangleBudget": [
+    12000,
+    22000
+  ],
+  "generator": "Python/NumPy, existing fleet reconstruction workflow; no Blender",
+  "textures": "Original three embedded maps remain byte-identical; standard glTF COLOR_0 applies the dark palette on the model.",
+  "optimization": "Static hull merged by material; halo separate; 22 independently pivoted gun mounts; exact vertex deduplication; 16-bit indices",
+  "assemblies": {
+    "hull": {
+      "role": "static-armor",
+      "pivotYUp": [
+        0,
+        0,
+        0
+      ]
+    },
+    "interdiction-halo": {
+      "role": "interdiction-projector",
+      "pivotYUp": [
+        0,
+        0,
+        0
+      ]
+    },
+    "turret-port-1": {
+      "role": "turret-yaw",
+      "pivotYUp": [
+        -3.1372549019607843,
+        1.31,
+        -2.4313725490196076
+      ]
+    },
+    "turret-port-2": {
+      "role": "turret-yaw",
+      "pivotYUp": [
+        -3.1372549019607843,
+        1.31,
+        0.3137254901960784
+      ]
+    },
+    "turret-port-3": {
+      "role": "turret-yaw",
+      "pivotYUp": [
+        -3.1372549019607843,
+        1.31,
+        2.9019607843137254
+      ]
+    },
+    "turret-starboard-1": {
+      "role": "turret-yaw",
+      "pivotYUp": [
+        3.1372549019607843,
+        1.31,
+        -2.4313725490196076
+      ]
+    },
+    "turret-starboard-2": {
+      "role": "turret-yaw",
+      "pivotYUp": [
+        3.1372549019607843,
+        1.31,
+        0.3137254901960784
+      ]
+    },
+    "turret-starboard-3": {
+      "role": "turret-yaw",
+      "pivotYUp": [
+        3.1372549019607843,
+        1.31,
+        2.9019607843137254
+      ]
+    },
+    "secondary-port-1": {
+      "role": "secondary-turret-yaw",
+      "pivotYUp": [
+        -2.4313725490196076,
+        1.28,
+        -6.431372549019608
+      ]
+    },
+    "secondary-port-2": {
+      "role": "secondary-turret-yaw",
+      "pivotYUp": [
+        -1.9215686274509804,
+        1.23,
+        -3.764705882352941
+      ]
+    },
+    "secondary-port-3": {
+      "role": "secondary-turret-yaw",
+      "pivotYUp": [
+        -2.156862745098039,
+        1.32,
+        5.0588235294117645
+      ]
+    },
+    "secondary-port-4": {
+      "role": "secondary-turret-yaw",
+      "pivotYUp": [
+        -3.372549019607843,
+        1.8,
+        7.803921568627451
+      ]
+    },
+    "secondary-starboard-1": {
+      "role": "secondary-turret-yaw",
+      "pivotYUp": [
+        2.4313725490196076,
+        1.28,
+        -6.431372549019608
+      ]
+    },
+    "secondary-starboard-2": {
+      "role": "secondary-turret-yaw",
+      "pivotYUp": [
+        1.9215686274509804,
+        1.23,
+        -3.764705882352941
+      ]
+    },
+    "secondary-starboard-3": {
+      "role": "secondary-turret-yaw",
+      "pivotYUp": [
+        2.156862745098039,
+        1.32,
+        5.0588235294117645
+      ]
+    },
+    "secondary-starboard-4": {
+      "role": "secondary-turret-yaw",
+      "pivotYUp": [
+        3.372549019607843,
+        1.8,
+        7.803921568627451
+      ]
+    },
+    "point-defense-dorsal-port-1": {
+      "role": "point-defense-yaw",
+      "pivotYUp": [
+        -1.2549019607843137,
+        1.53,
+        -1.0588235294117647
+      ]
+    },
+    "point-defense-dorsal-port-2": {
+      "role": "point-defense-yaw",
+      "pivotYUp": [
+        -1.2549019607843137,
+        1.53,
+        4.03921568627451
+      ]
+    },
+    "point-defense-dorsal-starboard-1": {
+      "role": "point-defense-yaw",
+      "pivotYUp": [
+        1.2549019607843137,
+        1.53,
+        -1.0588235294117647
+      ]
+    },
+    "point-defense-dorsal-starboard-2": {
+      "role": "point-defense-yaw",
+      "pivotYUp": [
+        1.2549019607843137,
+        1.53,
+        4.03921568627451
+      ]
+    },
+    "point-defense-ventral-port-1": {
+      "role": "point-defense-yaw",
+      "pivotYUp": [
+        -1.411764705882353,
+        -1.09,
+        -1.0588235294117647
+      ]
+    },
+    "point-defense-ventral-port-2": {
+      "role": "point-defense-yaw",
+      "pivotYUp": [
+        -1.411764705882353,
+        -1.09,
+        4.03921568627451
+      ]
+    },
+    "point-defense-ventral-starboard-1": {
+      "role": "point-defense-yaw",
+      "pivotYUp": [
+        1.411764705882353,
+        -1.09,
+        -1.0588235294117647
+      ]
+    },
+    "point-defense-ventral-starboard-2": {
+      "role": "point-defense-yaw",
+      "pivotYUp": [
+        1.411764705882353,
+        -1.09,
+        4.03921568627451
+      ]
+    }
+  },
+  "artDirection": "Blue-charcoal armor, lighter nickel chamfers and armor edges, aged gold crests, preserved amber bridge and cyan running lights. Midtone armor remains readable against the near-black galaxy map.",
+  "note": "Material experiment on the approved mass-driver model. Geometry, UVs, hierarchy, sockets and triangle count are preserved. No game integration changes.",
+  "socketCoordinates": "model-info.json records rest-pose model coordinates; GLB weapon sockets are children of their gun assemblies and use local coordinates.",
+  "variant": "dark-imperial",
+  "palette": {
+    "armor": [
+      0.09,
+      0.125,
+      0.185
+    ],
+    "raisedArmor": [
+      0.115,
+      0.155,
+      0.215
+    ],
+    "edgeMetal": [
+      0.33,
+      0.41,
+      0.52
+    ],
+    "gold": [
+      0.83,
+      0.86,
+      0.91
+    ],
+    "structure": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "lights": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "paletteTriangleCounts": {
+    "armor": 2058,
+    "edgeMetal": 4214,
+    "gold": 4422,
+    "structure": 7756,
+    "raisedArmor": 1366,
+    "lights": 332
+  },
+  "sourceModelSHA256": "46e4a474fc3c6d936432388b870a9374a47cdfcd37970b54aa1fdf9808e76ace"
+}

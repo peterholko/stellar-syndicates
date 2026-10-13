@@ -1,0 +1,23 @@
+{
+  "source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-0c02299f-ed48-4d8a-b57e-f0517162ced2.png",
+  "output": "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/habitable-v1/boreal-world-v2.png",
+  "prompt": "Use case: precise-object-edit. Edit this Boreal World surface painting at exactly 1672 x 941. Preserve the camera, crop, curved horizon, lighting, palette, starfield, large blue lakes, distant snowy mountains, conifer forests outside the middle meadow, and foreground rock-and-forest scenery.\n\nMake one small focused refinement: the broad central meadow still has too many scattered obstructing tree clumps and granite patches for the colony. Inside the middle-distance open-land band, roughly x=330–1330 and y=505–710, remove the remaining isolated trees, tiny tree groups, scattered boulders, bare grey granite patches and low minor rock hummocks. Replace them with the same softly mottled low grass and heath, making the meadow a broad continuous smooth level open floor. Widen it a little toward its near edge through y=735 where needed. The main lake shore and the large foreground ridges stay intact. Retain sparse trees and boulders at the OUTER meadow fringes, not scattered across its center. Natural irregular transitions into the existing forest, not a rectangular clearing or a field. Keep the major granite outcrops well outside this open belt.\n\nThe result needs comfortable continuous room for at least 17 separated colony buildings, without drawing any buildings or marked sites. No roads, paths, farms, fields, plots, structures, ruins, vehicles, text or interface. Keep the same cinematic painterly finish, no changed camera or sky.",
+  "originalPrompt": "Use case: precise-object-edit.\nEdit this planet-surface painting (Image 1, 1672 × 941). Keep the composition, camera, horizon, planetary curvature, lighting, colours, starfield and painterly style exactly, and output the same 1672 × 941 framing.\nWiden the open ground in the middle distance. In the band between about 55% and 80% of the image height, across the central two-thirds of the width, turn most of the dense conifer forest, granite outcrops and small ponds into one continuous open meadow of low grass and heath, with only a few scattered trees and boulders. The result needs enough level, open ground for a settlement of about 17 buildings. Keep the large lakes, rivers, cliffs, coasts and forests elsewhere, so the world still reads as itself.\nNo buildings, roads, paths, fields, plots, ruins, vehicles, text or interface.\n",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/habitable-v1/boreal-world-v2.png"
+  ],
+  "previousDraft": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-a83b5216-61bd-450e-b8fe-2eb4f76d6d31.png",
+  "originalReferences": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-view/habitable-v1/boreal-world.png"
+  ],
+  "processing": "painting",
+  "verification": {
+    "width": 1672,
+    "height": 941,
+    "channels": 3,
+    "hasAlpha": false,
+    "fileSHA256": "7548b5ddf35e8c4ef23c0914d34e3cef9c85ffd1a014c32c745d7f1e56ff7b66"
+  },
+  "mode": "builtin-imagegen",
+  "created": "2026-10-09"
+}

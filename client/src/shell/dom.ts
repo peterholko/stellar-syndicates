@@ -202,11 +202,22 @@ export function morphElement(target: Element, source: Element): void {
   }
   // A <select>'s selection lives in the PROPERTY, not the attribute: reconciling
   // its <option>s can leave the property pointing at nothing, so restore it when
-  // the previously-selected value still exists.
-  const wanted = target instanceof HTMLSelectElement ? target.value : null;
+  // the previously-selected value still exists. When the render itself moved
+  // the selection (a draft or preset changed the model), the render wins.
+  const select = target instanceof HTMLSelectElement;
+  const wanted = select ? target.value : null;
+  const renderedBefore = select ? renderedSelection(target) : null;
+  const renderedNow = select ? renderedSelection(source) : null;
   morphChildren(target, source);
-  if (target instanceof HTMLSelectElement && wanted !== null && target.value !== wanted
-    && [...target.options].some((o) => o.value === wanted)) {
-    target.value = wanted;
+  const next = renderedNow !== null && renderedNow !== renderedBefore ? renderedNow : wanted;
+  if (target instanceof HTMLSelectElement && next !== null && target.value !== next
+    && [...target.options].some((o) => o.value === next)) {
+    target.value = next;
   }
+}
+
+/// The option a render marked `selected` (its attribute, not the live choice).
+function renderedSelection(el: Element): string | null {
+  const option = [...el.querySelectorAll("option")].find((o) => o.hasAttribute("selected"));
+  return option ? (option as HTMLOptionElement).value : null;
 }

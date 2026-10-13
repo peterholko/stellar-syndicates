@@ -31,7 +31,8 @@ const fleets = load("core/derive/fleet.ts", { "../../state": clock, "../../proto
 const exploration = load("core/derive/exploration.ts", { "./fleet": fleets, "../../protocol": protocol });
 const icons = load("icons.ts");
 const commands = load("core/fleetorders.ts", { "./derive/fleet": fleets,
-  "./derive/exploration": exploration, "../icons": icons });
+  "./derive/exploration": exploration, "../icons": icons,
+  "./derive/format": { fmtDur: n => `${Math.max(0, Math.round(n))}s` } });
 const renderer = { stateVersion: 0, centerOnWorld: p => { renderer.center = p; } };
 const orders = load("core/derive/orders.ts", { "../../state": clock, "../fleetorders": commands,
   "./fleet": fleets, "../../icons": icons });
@@ -64,9 +65,10 @@ assert.equal(sent.length, 0, "Dispatch opens Confirm/Cancel; it does not send an
 assert.deepEqual(plain(st.pendingIntent.dest), contact.pos);
 const readiness = load("core/derive/readiness.ts", { "./fleet": fleets, "../../protocol": protocol });
 st.ghosts[0].fuel = 0;
-assert.match(readiness.intentReadinessWarnings(st, st.pendingIntent).join(" "), /Fuel short/,
+assert.match(readiness.intentReadinessWarnings(st, st.pendingIntent).join(" "), /Deuterium short/,
   "expeditions inherit the normal inline dispatch fuel warning");
-assert.match(commands.fleetCommandSummary(st.pendingIntent, st), /Move → 40000, 20000 su/);
+// §founding R5: one preview grammar: the destination by name, then distance, ETA and fuel.
+assert.match(commands.fleetCommandSummary(st.pendingIntent, st), /Move → Unknown contact 810 · [\d,]+ su · ETA ~\d+s · Deuterium ~\d+/);
 intent.clearPendingIntent();
 assert.equal(sent.length, 0);
 action("investigate"); intent.confirmPendingIntent(); intent.confirmPendingIntent();
@@ -115,9 +117,11 @@ action("back"); assert.equal(st.selectedExplorationSiteId, null);
 Object.assign(st, { battles: [], battleRecords: [], jumpDepartures: [], emplacements: [],
   selectedShipId: "scout", anchors: [] });
 Object.assign(renderer, { worldToScreen: p => p, fleetScreenPosition: g => g.pos,
-  fleetHitRadius: () => 24, battlePick: () => null });
+  fleetHitRadius: () => 24, battlePick: () => null, operationPick: () => null });
+const beltsDerive = load("core/derive/belts.ts", { "../../protocol": protocol, "../../icons": icons, "./fleet": fleets });
 const map = load("core/mapclick.ts", { "../protocol": protocol, "../state": clock,
-  "./derive/fleet": fleets, "./derive/exploration": exploration });
+  "./derive/fleet": fleets, "./derive/exploration": exploration, "./derive/belts": beltsDerive,
+  "./derive/format": { operationTitle: () => "Privateer patrol" } });
 const mapCtx = { ...ctx, jumpAiming: null, guardAiming: null, emplaceArmed: null };
 const click = inspect => map.resolveMapClick(contact.pos.x, contact.pos.y,
   { shift: false, long: false, inspect }, mapCtx);
@@ -134,6 +138,123 @@ st.selectedShipId = "freighter";
 contact.details = details;
 assert.equal(click(false).intent.verb, "move");
 assert.equal(click(false).intent.shipId, "freighter");
+// A contract tag under the cursor opens its contract, even with a fleet selected.
+st.operations = [{ id: "O1", state: "offered" }];
+renderer.operationPick = () => "O1";
+const contractClick = click(false);
+assert.deepEqual([contractClick.kind, contractClick.target.type, contractClick.target.id], ["select", "operation", "O1"], "a contract tag is never a move target");
+assert.match(contractClick.target.readout, /click again for <b>Drifting &lt;wreck&gt;<\/b>/, "the contact beneath stays one click away");
+renderer.operationPick = () => null;
+st.operations = [];
+
+// §belts: a barge selected + a click on a charted system with an ore belt
+// stages a MineBelt order for its most valuable ore; it never sends it.
+const beltSys = { id: "sif", name: "Sif", pos: { x: 50_000, y: 0 } };
+st.galaxy.systems.push(beltSys);
+st.systems.push({ id: "sif", owner: null, bodies: [{ id: 2, name: "Sif Belt", kind: "asteroid_belt", deposits: [
+  { resource: "metallic_ore", richness: 0.2 }, { resource: "cuprite_ore", richness: 0.15 }] }] });
+st.ghosts.push({ id: "barge", kind: "mining_barge", own: true, owner: "1", pos: { x: 40_000, y: 0 },
+  vel: { x: 0, y: 0 }, composition: [{ kind: "mining_barge", count: 1 }] });
+renderer.systemHitRadius = () => 15;
+st.selectedShipId = "barge";
+const clickBelt = () => map.resolveMapClick(beltSys.pos.x, beltSys.pos.y, { shift: false, long: false, inspect: false }, mapCtx);
+assert.equal(clickBelt().intent.verb, "command");
+assert.deepEqual(plain(clickBelt().intent.commands), [{ type: "MineBelt", fleet_id: "barge", system_id: "sif", body_id: 2, ore: "cuprite_ore" }]);
+assert.equal(sent.length, 3, "a mining click only stages the order");
+// §belts: a lone station selected + a click on that charted belt system
+// stages an AnchorStation order at its richest belt.
+const depot = { id: "depot", kind: "mining_belt_station", own: true, owner: "1", pos: { x: 40_000, y: 0 },
+  vel: { x: 0, y: 0 }, composition: [{ kind: "mining_belt_station", count: 1 }] };
+st.ghosts.push(depot);
+st.selectedShipId = "depot";
+assert.deepEqual(plain(clickBelt().intent.commands), [{ type: "AnchorStation", fleet_id: "depot", system_id: "sif", body_id: 2 }]);
+depot.anchor = { system: "sif", body: 2, phase: "anchored", since: 0 };
+assert.notEqual(clickBelt().intent?.commands?.[0]?.type, "AnchorStation", "an anchored station stays put");
+st.ghosts.pop();
+st.selectedShipId = "barge";
+// §pockets: a found pocket worth more than the belt's own ore is the target.
+st.systems.at(-1).bodies[0].pockets = [{ resource: "titanium_ore", richness: 0.6, reserves: 900 }];
+assert.deepEqual(plain(clickBelt().intent.commands),
+  [{ type: "MineBelt", fleet_id: "barge", system_id: "sif", body_id: 2, ore: "titanium_ore", pocket: true }]);
+st.systems.at(-1).bodies[0].pockets[0].reserves = 0;
+assert.equal(clickBelt().intent.commands[0].ore, "cuprite_ore", "a worked-out pocket is passed over");
+delete st.systems.at(-1).bodies[0].pockets;
+st.systems.at(-1).owner = "2";
+assert.notEqual(clickBelt().intent?.verb, "command", "a rival's belt is not offered");
+st.systems.at(-1).owner = null;
+st.systems.at(-1).bodies[0].deposits = null;
+assert.notEqual(clickBelt().intent?.verb, "command", "an uncharted belt is a move, not a mining order");
+
+// §belts: the charter's barge lesson reads only served state: Shipyard, then
+// the barge, then a one-click order to the belt the surveys charted.
+st.systems.find(sys => sys.id === "sif").bodies[0].deposits = [
+  { resource: "metallic_ore", richness: 0.2 }, { resource: "cuprite_ore", richness: 0.15 }];
+const guide = load("core/derive/founding.ts", { "../../protocol": protocol, "./fleet": fleets,
+  "./format": { fmtDur: n => `${Math.round(n)}s` }, "../../icons": icons });
+const yardHome = { id: "home", owner: "1", bodies: [{ id: 0, name: "Home", structures: { shipyard: 1 } }],
+  assignments: [{ body_id: 0, structure: "shipyard", workers: 1, specialists: {} }], builds: [],
+  storage_used: 10, storage_cap: 500 };
+st.systems.push(yardHome);
+st.galaxy.systems.push({ id: "home", name: "Home", pos: { x: 0, y: 0 } });
+// Industry · chart a nearby system: build a probe, then one click sends it.
+// The fixture Scout is dwelling on an expedition (survey_progress .4), which
+// is not a survey of the stop: it neither counts as charting nor gets pulled.
+st.founding = { stage: "survey_candidates", local_opening: true, survey_candidates: ["sif"], belt_target: null,
+  stipends: [], expansion_unlocked: false };
+const barge = st.ghosts.pop();
+let plan = guide.foundingPlan(st, yardHome);
+assert.equal(plan.chapter.name, "Industry");
+assert.deepEqual(plain(plan.checklist.map(item => item.done)), [true, true, false]);
+assert.equal(plan.primary.action, "build-probe");
+st.ghosts.push({ id: "probe", kind: "survey_probe", own: true, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 },
+  composition: [{ kind: "survey_probe", count: 1 }] });
+assert.equal(guide.foundingPlan(st, yardHome).primary.action, "survey-stop");
+assert.deepEqual(plain(guide.foundingCommands("survey-stop", st, yardHome)),
+  [{ type: "SurveySystem", fleet_id: "probe", system_id: "sif" }]);
+Object.assign(st.ghosts.at(-1), { pos: { x: 50_000, y: 60 }, survey_progress: 0.5 });
+plan = guide.foundingPlan(st, yardHome);
+assert.equal(plan.primary.action, "probe");
+assert.match(plan.progress.join(" "), /Surveying Sif · 50%/);
+st.ghosts.pop(); st.ghosts.push(barge);
+
+// Reach: the barge, the belt, the haul home.
+st.founding = { stage: "build_barge", local_opening: true, survey_candidates: ["sif"], belt_target: { system: "sif", body: 2 },
+  stipends: [], expansion_unlocked: true };
+plan = guide.foundingPlan(st, yardHome);
+assert.equal(plan.chapter.name, "Reach");
+assert.equal(plan.primary.action, "build-barge");
+assert.match(plan.primary.copy, /Sif Belt/);
+assert.deepEqual(plain(plan.checklist.map(item => item.done)), [false, false, false]);
+yardHome.storage_used = 500;
+assert.match(guide.foundingPlan(st, yardHome).primary.reason, /storage is full/, "a full home is named before the kit is bought");
+yardHome.storage_used = 10;
+yardHome.builds = [{ key: "mining_barge" }];
+assert.match(guide.foundingPlan(st, yardHome).progress.join(" "), /Mining Barge under construction/);
+yardHome.builds = [];
+st.founding.stage = "mine_belt";
+plan = guide.foundingPlan(st, yardHome);
+assert.equal(plan.primary.action, "mine-belt");
+assert.deepEqual(plain(guide.foundingCommands("mine-belt", st, yardHome)),
+  [{ type: "MineBelt", fleet_id: "barge", system_id: "sif", body_id: 2, ore: "cuprite_ore" }]);
+st.ghosts.at(-1).industry = { kind: "mine", system: "sif", body: 2, ore: "cuprite_ore", mined: 3, fraction: 0, status: "mining" };
+plan = guide.foundingPlan(st, yardHome);
+assert.equal(plan.primary.action, "barge");
+assert.match(plan.progress.join(" "), /cutting .*Sif Belt in Sif/);
+st.founding.stage = "haul_ore";
+plan = guide.foundingPlan(st, yardHome);
+assert.deepEqual(plain(plan.checklist.map(item => item.done)), [true, true, false]);
+assert.equal(plan.primary.action, "barge-home");
+assert.deepEqual(plain(guide.foundingCommands("barge-home", st, yardHome)),
+  [{ type: "MoveShip", ship_id: "barge", dest: { x: 0, y: 0 } }]);
+Object.assign(st.ghosts.at(-1), { industry: null, docked: "home", cargo_manifest: [{ commodity: "cuprite_ore", units: 40 }] });
+assert.equal(guide.foundingPlan(st, yardHome).primary.action, "barge-unload");
+assert.deepEqual(plain(guide.foundingCommands("barge-unload", st, yardHome)),
+  [{ type: "SystemUnload", fleet_id: "barge", system: "home" }]);
+st.ghosts.pop();
+st.founding.stage = "mine_belt";
+assert.equal(guide.foundingPlan(st, yardHome).primary.title, "Replace the Mining Barge", "a lost barge is rebuilt");
+delete st.founding;
+st.galaxy.systems.pop(); st.galaxy.systems.pop(); st.systems.pop(); st.systems.pop();
 
 // Exercise the actual map layer with minimal Pixi primitives, without a GPU.
 class Node {
@@ -142,24 +263,28 @@ class Node {
   destroy() { this.destroyed = true; }
 }
 class Graphics extends Node {
-  clear() { return this; } poly() { return this; } stroke() { return this; }
-  circle() { return this; } fill() { return this; } roundRect() { return this; }
+  clear() { return this; } poly() { return this; } stroke() { return this; } moveTo() { return this; }
+  arc() { return this; } circle() { return this; } fill() { return this; } roundRect() { return this; }
 }
+const markers = load("core/derive/map-markers.ts", { "./exploration": exploration,
+  "./format": { fmt: n => String(n), fmtDur: s => `${s}s`, operationTitle: () => "Contract" } });
 const { ExplorationLayer } = load("explorationlayer.ts", { "pixi.js": {
   Container: Node, Sprite: Node, Text: Node, Graphics, Texture: { EMPTY: null },
-  Assets: { load: async path => ({ path }) },
-}, "./core/derive/exploration": exploration });
+}, "./core/derive/exploration": exploration, "./core/derive/map-markers": markers,
+  "./map-glyph-textures": { loadMapGlyphs: async () => new Map(["contact-unknown", "site-derelict"].map(name => [name, { glyph: name }])) } });
 const layer = new ExplorationLayer();
 await layer.load();
 contact.details = null;
 layer.draw([contact], contact.id, p => p);
 const marker = layer.markers.get(contact.id);
-assert.equal(marker.sprite.visible, false, "the unknown diamond must not select hidden-kind art");
+assert.equal(marker.sprite.texture.glyph, "contact-unknown", "an unknown contact shows a signal, never its hidden kind");
+assert.equal(marker.sprite.tint, markers.CONTACT_COLOR);
 contact.details = details;
-layer.draw([contact], contact.id, p => ({ x: p.x * 2, y: p.y * 2 }));
-assert.equal(marker.sprite.texture.path, "/art/exploration/derelict.png");
-assert.equal(marker.sprite.width, exploration.EXPLORATION_MARKER_PX);
+layer.draw([contact], contact.id, p => ({ x: p.x * 2, y: p.y * 2 }), [], [], 24);
+assert.equal(marker.sprite.texture.glyph, "site-derelict", "an identified contact shows its kind's glyph");
+assert.equal(marker.sprite.width, markers.contactBadgePx(24) * .62, "badges grow with zoom");
 assert.equal(marker.sprite.x, contact.pos.x * 2);
+assert.equal(layer.pick(contact.pos.x * 2 + 5, contact.pos.y * 2 - 5), contact.id, "the badge is its own pick target");
 assert.equal(layer.markers.get(contact.id), marker, "Views reuse the same marker");
 layer.draw([], null, p => p);
 assert.equal(marker.sprite.destroyed, true);
@@ -171,7 +296,7 @@ for (const kind of ["derelict", "station", "asteroids", "anomaly", "precursor"])
   assert.equal(metadata.hasAlpha, true);
   assert.equal(metadata.width, 256); assert.equal(metadata.height, 256);
 }
-console.log("Exploration: unknown/report-only art and contents, Scout/Freighter roles, Confirm/Cancel, restoration, pooled markers and five transparent runtime assets pass.");
+console.log("Exploration: unknown/report-only glyphs and contents, Scout/Freighter roles, Confirm/Cancel, restoration, contract clicks, pooled sensor badges and five transparent panel illustrations pass.");
 
 // Deep choices never piggyback on a travel click or an expired client timer.
 contact.details = { ...details, opportunity: { task: "study", requirement: "research_team", seconds: 60,
@@ -252,10 +377,10 @@ reducer.applyServerMessage({ type: "Welcome", player_id: "new-owner", galaxy: { 
 assert.equal(st.explorationJournal.length, 0); assert.equal(st.explorationSites.length, 0);
 
 const extraction = { ...contact, details: { ...details, opportunity: { task: "extract", requirement: "fuelled_freighter",
-  costs: { fuel: 6 }, cargo: { volatiles: 300 }, seconds: 45 } } };
+  costs: { deuterium: 6 }, cargo: { volatiles: 300 }, seconds: 45 } } };
 const hauler = ghost("cargo", "convoy");
 assert.match(exploration.deepExpeditionReason(extraction, hauler), /supplies/);
-hauler.cargo_manifest = [{ commodity: "fuel", units: 6 }, { commodity: "alloys", units: 400 }];
+hauler.cargo_manifest = [{ commodity: "deuterium", units: 6 }, { commodity: "alloys", units: 400 }];
 assert.match(exploration.deepExpeditionReason(extraction, hauler), /room/);
 hauler.cargo_manifest[1].units = 390;
 assert.equal(exploration.deepExpeditionReason(extraction, hauler), "");

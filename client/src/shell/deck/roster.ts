@@ -2,8 +2,8 @@ import { captainTitle, captainXpFloor, fleetCommandLoad, officerFleetName } from
 import { fleetRosterDockName, shipKindLabel } from "../../core/derive/fleet";
 import { fmt, fmtEta } from "../../core/derive/format";
 import { foundingHomeSystemId, systemName } from "../../core/derive/geo";
-import { researchQueueIds, sendResearchQueue } from "../../core/derive/research";
-import { icon, label } from "../../icons";
+import { researchQueueIds, researchSuppliesPerHour, sendResearchQueue, supplyAmount } from "../../core/derive/research";
+import { commodityIcon, icon, label } from "../../icons";
 import type {
   AcademyRow,
   CaptainAttribute,
@@ -283,7 +283,8 @@ export class DeckRosterRoutes {
   }
 
   private researchAcademiesHtml(academies: AcademyRow[], rate: number): string {
-    const rows = academies.map((row) => `<div class="deck-academy-row${row.supplied ? "" : " is-warn"}"><span><b>${esc(row.system)}</b><small>${row.supplied ? "Supplied" : "Unsupplied"}</small></span><em>Tier ${ROMAN[row.tier] ?? row.tier} · ${row.rate.toFixed(2)}/s</em></div>`).join("");
+    // §power: a browned-out Academy shows its planet's power share.
+    const rows = academies.map((row) => `<div class="deck-academy-row${row.supplied && (row.power ?? 1) >= 0.999 ? "" : " is-warn"}"><span><b>${esc(row.system)}</b><small>${row.supplied ? "Supplied" : "Unsupplied"}${(row.power ?? 1) < 0.999 ? ` · Power ${Math.round((row.power ?? 1) * 100)}%` : ""}</small></span><em>Tier ${ROMAN[row.tier] ?? row.tier} · ${row.rate.toFixed(2)}/s</em></div>`).join("");
     return `<section class="deck-section"><header><h3>Academies · ${rate.toFixed(2)}/s</h3><button type="button" data-deck-act="research-academy">Open Academy</button></header><div class="deck-academies">${rows || `<div class="deck-empty-inline">No staffed Academy</div>`}</div></section>`;
   }
 
@@ -337,7 +338,9 @@ export class DeckRosterRoutes {
     const requirements = programme.state === "locked" ? `<section class="deck-research-requirements"><h4>To unlock</h4>${missingPredecessor ? `<p>Complete one ${esc(predecessor)} technology.</p>` : ""}${gateHtml}${!missingPredecessor && gateMet ? `<p>Awaiting unlock confirmation.</p>` : ""}</section>` : "";
     const dossier = programme.recovered_data ? `<div class="deck-research-dossier">Recovered data · ${Math.round(programme.recovered_data / Math.max(1, programme.cost) * 100)}% research work banked</div>` : "";
     const needsAcademy = programme.state !== "completed" && !research.academies.some((academy) => academy.supplied);
-    return `<article class="deck-section deck-research-detail" aria-label="Selected technology"><header>${icon(fieldIcon(programme.field), "md")}<div><small>${esc(FIELD_TITLE[programme.field])} · Tier ${ROMAN[programme.tier] ?? programme.tier}${programme.school ? ` · ${esc(SCHOOL_TITLE[programme.school] ?? label(programme.school))}` : ""}</small><h3>${esc(programme.name)}</h3></div></header><span class="deck-research-state is-${escAttr(programme.state)}">${esc(researchStatus(programme, queue))}</span><p class="deck-research-benefit">${esc(programme.blurb)}</p><dl class="deck-research-cost"><dt title="Total research-seconds required; completion time depends on staffed, supplied Academies.">Research work</dt><dd>${fmt(programme.cost)}</dd></dl>${dossier}${requirements}${needsAcademy ? `<div class="deck-research-supply"><span>Staff and supply an Academy to progress.</span><button type="button" data-deck-act="research-academy">Open Academy</button></div>` : ""}</article>`;
+    const supplies = programme.state === "completed" ? "" : researchSuppliesPerHour(programme)
+      .map(([good, n]) => `<span title="${escAttr(label(good))}">${commodityIcon(good)}<b>${supplyAmount(n)}</b></span>`).join("");
+    return `<article class="deck-section deck-research-detail" aria-label="Selected technology"><header>${icon(fieldIcon(programme.field), "md")}<div><small>${esc(FIELD_TITLE[programme.field])} · Tier ${ROMAN[programme.tier] ?? programme.tier}${programme.school ? ` · ${esc(SCHOOL_TITLE[programme.school] ?? label(programme.school))}` : ""}</small><h3>${esc(programme.name)}</h3></div></header><span class="deck-research-state is-${escAttr(programme.state)}">${esc(researchStatus(programme, queue))}</span><p class="deck-research-benefit">${esc(programme.blurb)}</p><dl class="deck-research-cost"><dt title="Total research-seconds required; completion time depends on staffed, supplied Academies.">Research work</dt><dd>${fmt(programme.cost)}</dd></dl>${supplies ? `<dl class="deck-research-cost deck-research-supplies"><dt title="Goods an Academy draws from its stockpile per hour, at research rate 1">Supplies /h</dt><dd>${supplies}</dd></dl>` : ""}${dossier}${requirements}${needsAcademy ? `<div class="deck-research-supply"><span>Staff and supply an Academy to progress.</span><button type="button" data-deck-act="research-academy">Open Academy</button></div>` : ""}</article>`;
   }
 
   private toggleGroup(fleet: GhostView): void {

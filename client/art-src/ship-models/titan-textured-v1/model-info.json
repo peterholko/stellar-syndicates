@@ -1,0 +1,21 @@
+{
+  "meshes": 23,
+  "renderSections": 23,
+  "sourceComponents": 228,
+  "triangles": 19360,
+  "exportedVertices": 22516,
+  "dimensionsXYZ": [
+    10.25,
+    3.1717,
+    18.65
+  ],
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "embeddedTextures": 3,
+  "axes": "Y up, -Z forward",
+  "source": "../../titan-reference-v4/titan-reference.png",
+  "generator": "Python/NumPy, no Blender",
+  "optimization": "Static parts combined by material; four turret assemblies retained; exact vertex deduplication; 16-bit indices where possible"
+}

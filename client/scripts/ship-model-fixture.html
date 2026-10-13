@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stellar Syndicates · Ship model integration</title></head>
+<body><div id="app"></div><div class="deck" id="fixture-deck">
+<header class="fixture-toolbar"><b>STELLAR SYNDICATES</b><span>Model integration preview</span><button id="fixture-map">Galaxy map</button><button id="fixture-yard">Shipyard</button><button id="fixture-models">All models</button><button id="fixture-stress">500 ships</button><button id="fixture-refresh">Refresh report</button><button id="fixture-stock">Toggle stock</button><a href="?mobile=1">Mobile shipyard</a><a href="./battle-model-fixture.html">Battle preview</a></header>
+<p id="fixture-status" role="status">Isolated preview · no live orders</p>
+<div id="fixture-map-tools"><label>Map ship <select id="fixture-map-kind"></select></label><button id="fixture-mining-comparison">Barge comparison</button><button id="fixture-station-comparison">Station comparison</button><button id="fixture-mining-system">Mining belt system</button><button id="fixture-closeup">Close-up 3D</button><button id="fixture-turn">Turn hull</button><button id="fixture-formation">Form fleet</button><button id="fixture-motion">Move ship</button><button id="fixture-dense">500 close-up</button><button id="fixture-visibility">Visibility cases</button></div>
+<section id="deck-planet-stage" hidden><div id="deck-planet-stage-body"></div></section>
+<aside id="deck-workspace" hidden><div id="deck-workspace-body"></div></aside>
+<section id="deck-build-workbench" class="deck-build-workbench" aria-labelledby="deck-build-workbench-title" tabindex="-1" hidden><header class="deck-build-workbench__header"><div><span>Construction workbench</span><h2 id="deck-build-workbench-title">Build</h2></div><button type="button" data-deck-act="build-workbench-close" aria-label="Close construction workbench">✕</button></header><div id="deck-build-workbench-body" class="deck-build-workbench__body"></div></section>
+<section id="fixture-inspector" hidden><label>Ship type <select id="fixture-kind"></select></label><div id="fixture-model"></div></section>
+<div id="fixture-zoom"><button id="fixture-zoom-in" aria-label="Zoom in on galaxy">+</button><button id="fixture-zoom-out" aria-label="Zoom out on galaxy">−</button></div>
+<div id="deck-hover" hidden></div>
+</div><script type="module" src="./ship-model-fixture.ts"></script></body></html>

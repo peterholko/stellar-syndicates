@@ -14,6 +14,9 @@ export const FOUNDING_STORY = [
   { art: "first-landing", title: "A world to call home",
     text: "Start with a small settlement, not an empire. Develop your colony, turn its resources into trade, and decide what your corporation will become.",
     alt: "Settlers unload their landing ship beside the first habitats and storehouses in a green river valley." },
+  { art: "stay-vigilant-firing", title: "Stay vigilant",
+    text: "The frontier holds danger as well as opportunity. Pirates prey on unguarded ships, and privateers from other charters may come for your hard-won resources. Stay vigilant, protect your trade routes, and be ready to defend your new home.",
+    alt: "Pirate and privateer ships fire a few shots at a civilian freighter among asteroids above a frontier world." },
 ] as const;
 const PROFILE_STEP = FOUNDING_STORY.length;
 const LANDING_STEP = PROFILE_STEP + 1;
@@ -179,7 +182,7 @@ export class SettlementUI {
       } else {
         const landing = this.step === LANDING_STEP;
         const content = !landing ? `<p>Three habitable home-world profiles. The same ships, supplies and safe opening; a different local opportunity.</p><div class="settlement-choices">${FOUNDING_PROFILES.map(p => `<button type="button" data-settlement-act="profile" data-profile="${p.id}" aria-pressed="${p.id === this.profile}">${terrainCard(p.terrain)}<b>${p.name}</b><span>${p.opportunity}</span><small>${p.detail}</small></button>`).join("")}</div><p class="settlement-muted">Illustrative terrain. Only your selected home is settled; these are not three free colonies. Every profile supports mining, farming and later industry.</p>`
-          : `<p>Deploy a Founding Camp with 2,000 settlers, room for 3,000, and storage for 250 goods. Bioharvester and Agroplex crews are already working.</p><div class="settlement-kit">${structureImage("habitat", 1, "lg")}${structureImage("warehouse", 1, "lg")}</div><p>2,000 credits · 30 Alloys · 15 Machinery · 15 Provisions · 60 Fuel.</p><p><b>First decisions:</b> commission the mine, prospect your world, then choose extraction, storage or housing improvements. Your Tiny Freighter, Interceptor and Scout are ready.</p>`;
+          : `<p>Deploy a Founding Camp with 2,000 settlers, room for 3,000, and storage for 250 goods. Your Landing Command is deployed; Bioharvester and Agroplex crews are already working.</p><div class="settlement-kit">${structureImage("command_center", 1, "lg")}${structureImage("habitat", 1, "lg")}${structureImage("warehouse", 1, "lg")}</div><p>2,000 credits · 70 Alloys · 27 Machinery · 15 Provisions · 20 Uranium · 10 Deuterium · 1 Warp Core.</p><p><b>First decisions:</b> commission the mine, prospect your world, then choose extraction, storage or housing improvements. Your Tiny Freighter and Interceptor are ready.</p>`;
         html = `<div class="settlement-hero" style="--settlement-art:url('${art(profile.terrain)}')"><small>STELLAR SYNDICATES · FOUNDING CHARTER</small><h1 id="settlement-title" tabindex="-1">${landing ? `Settle the ${profile.name}` : "Choose where your story begins"}</h1><span>${landing ? "2 / 2 · Confirm settlement" : "1 / 2 · Choose your world"}</span></div><div class="settlement-content">${content}${statusLine}<footer><button type="button" data-settlement-act="back" ${this.submitting ? "disabled" : ""}>${landing ? "Back" : "Back to story"}</button><button type="button" class="settlement-primary" data-settlement-act="${landing ? "land" : "next"}" ${this.submitting || (landing && offline) ? "disabled" : ""}>${this.submitting ? "Establishing colony…" : landing ? "Confirm settlement" : "Choose this world"}</button></footer></div>`;
       }
     } else {

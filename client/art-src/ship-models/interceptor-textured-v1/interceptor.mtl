@@ -1,0 +1,43 @@
+newmtl material_0
+Kd 1 1 1
+Ks .25 .25 .25
+Ns 48
+map_Kd textures/interceptor-basecolor.png
+map_Ke textures/interceptor-emissive.png
+
+newmtl material_1
+Kd 0.88 0.91 0.94
+Ks .25 .25 .25
+Ns 48
+map_Kd textures/interceptor-basecolor.png
+map_Ke textures/interceptor-emissive.png
+
+newmtl material_2
+Kd 0.1 0.12 0.135
+Ks .25 .25 .25
+Ns 48
+
+newmtl material_3
+Kd 0.035 0.045 0.055
+Ks .25 .25 .25
+Ns 48
+
+newmtl material_4
+Kd 0.48 0.5 0.51
+Ks .25 .25 .25
+Ns 48
+
+newmtl material_5
+Kd 0.4 0.27 0.13
+Ks .25 .25 .25
+Ns 48
+
+newmtl material_6
+Kd 0.003 0.15 0.3
+Ks .25 .25 .25
+Ns 48
+
+newmtl material_7
+Kd 0.035 0.055 0.07
+Ks .25 .25 .25
+Ns 48

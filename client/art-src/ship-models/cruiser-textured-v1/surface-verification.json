@@ -1,0 +1,81 @@
+{
+  "underside": [
+    {
+      "part": "01 | continuous armored hull with mapped belly",
+      "downwardTriangles": 128,
+      "texturedPercent": 100.0,
+      "usesBottomArtwork": true,
+      "nondegenerateUVs": true
+    },
+    {
+      "part": "04 | port shoulder armor around recessed bay",
+      "downwardTriangles": 67,
+      "texturedPercent": 100.0,
+      "usesBottomArtwork": true,
+      "nondegenerateUVs": true
+    },
+    {
+      "part": "04 | starboard shoulder armor around recessed bay",
+      "downwardTriangles": 67,
+      "texturedPercent": 100.0,
+      "usesBottomArtwork": true,
+      "nondegenerateUVs": true
+    },
+    {
+      "part": "08 | ventral keel radiator enclosure",
+      "downwardTriangles": 22,
+      "texturedPercent": 100.0,
+      "usesBottomArtwork": true,
+      "nondegenerateUVs": true
+    },
+    {
+      "part": "08 | port ventral radiator hatch",
+      "downwardTriangles": 22,
+      "texturedPercent": 100.0,
+      "usesBottomArtwork": true,
+      "nondegenerateUVs": true
+    },
+    {
+      "part": "08 | starboard ventral radiator hatch",
+      "downwardTriangles": 22,
+      "texturedPercent": 100.0,
+      "usesBottomArtwork": true,
+      "nondegenerateUVs": true
+    },
+    {
+      "part": "engine.port.outer | armored nacelle",
+      "downwardTriangles": 160,
+      "texturedPercent": 100.0,
+      "usesBottomArtwork": true,
+      "nondegenerateUVs": true
+    },
+    {
+      "part": "engine.port.inner | armored nacelle",
+      "downwardTriangles": 160,
+      "texturedPercent": 100.0,
+      "usesBottomArtwork": true,
+      "nondegenerateUVs": true
+    },
+    {
+      "part": "engine.starboard.inner | armored nacelle",
+      "downwardTriangles": 160,
+      "texturedPercent": 100.0,
+      "usesBottomArtwork": true,
+      "nondegenerateUVs": true
+    },
+    {
+      "part": "engine.starboard.outer | armored nacelle",
+      "downwardTriangles": 160,
+      "texturedPercent": 100.0,
+      "usesBottomArtwork": true,
+      "nondegenerateUVs": true
+    }
+  ],
+  "turrets": 2,
+  "mainGunBarrels": 4,
+  "sternEngines": 4,
+  "reviewRenderSize": [
+    1600,
+    1200
+  ]
+}

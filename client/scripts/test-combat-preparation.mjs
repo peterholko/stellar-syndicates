@@ -12,13 +12,18 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const g = { id: "E101", own: true, mission_profile: { priority: "balanced", screening: "automatic", withdrawal: "never" } };
 const command = exports.missionCommand(g, "priority", "missile_ships");
 assert.deepEqual(plain(command), { type: "SetFleetMission", fleet_id: "E101", mission: {
-  priority: "missile_ships", screening: "automatic", withdrawal: "never",
+  priority: "missile_ships", screening: "automatic", withdrawal: "never", formation: "automatic",
 } });
 assert.equal(g.mission_profile.priority, "balanced", "a button builds an intent, never applies the setting");
 assert.equal(exports.missionCommand({ ...g, own: false }, "priority", "missile_ships"), null);
 assert.equal(exports.missionCommand(g, "priority", "invalid"), null);
 assert.equal(exports.missionCommand(g, "__proto__", "transports"), null);
 assert.equal(exports.missionCommand(g, "withdrawal", "hull50").mission.withdrawal, "hull50");
+// Formations (battle rules v10): a profile from before them reads as Automatic.
+assert.equal(exports.missionCommand(g, "formation", "wedge").mission.formation, "wedge");
+assert.equal(exports.missionCommand(g, "formation", "phalanx"), null);
+assert.match(exports.missionHtml(g, []), /<b>Formation<\/b>.*data-value="automatic" aria-pressed="true"/s);
+for (const shape of ["battle_line", "escort_ring", "wedge", "free"]) assert.match(exports.missionHtml(g, []), new RegExp(`data-field="formation" data-value="${shape}"`));
 
 const pending = [{ configuration: { kind: "mission", mission: command.mission } }];
 const waiting = exports.missionHtml(g, pending);
