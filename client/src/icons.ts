@@ -35,6 +35,7 @@ export type IconKey =
   // fleets / ship kinds
   | "fleet" | "scout" | "raider" | "corvette" | "convoy" | "colony" | "builder" | "transport"
   | "tiny_freighter" | "small_freighter" | "large_freighter" | "heavy_freighter" | "bulk_freighter" | "mining_barge" | "mining_belt_station"
+  | "free_trader"
   | "destroyer" | "cruiser" | "battleship" | "dreadnought" | "titan"
   // verbs / orders
   | "move" | "attack" | "raid" | "withdraw" | "reinforce" | "recall" | "blockade" | "siege"
@@ -65,6 +66,10 @@ export function label(slug: string): string {
   if (slug === "helium3_ice") return "Helium-3 Ice";
   if (slug === "helium3") return "Helium-3";
   if (slug === "naval_drydock") return "Orbital Shipyard";
+  // §charter-v4: Electronics read as Semiconductors; the slug stays.
+  if (slug === "electronics") return "Semiconductors";
+  if (slug === "electronics_fabricator") return "Semiconductor Fab";
+  if (slug === "electronics_center") return "Semiconductor center";
   // §founding R2: a camp's harvest pauses at its food reserve, keeping storage free.
   if (slug === "food_reserve") return "Food reserve full · paused";
   return slug.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
@@ -140,7 +145,7 @@ export const ICONS: Record<IconKey, IconDef> = {
   structureVolatileHarvester: S("volatile_harvester", "Volatile Harvester"),
   structureBioharvester: S("bioharvester", "Bioharvester"),
   structureSmelter: S("smelter", "Smelter"),
-  structureElectronicsFabricator: S("electronics_fabricator", "Electronics Fabricator"),
+  structureElectronicsFabricator: S("electronics_fabricator", "Semiconductor Fab"),
   structureChemicalWorks: S("chemical_works", "Chemical Works"),
   structureFuelRefinery: S("fuel_refinery", "Fuel Refinery"),
   structureAgroplex: S("agroplex", "Agroplex"),
@@ -165,7 +170,7 @@ export const ICONS: Record<IconKey, IconDef> = {
   structureAcademy: S("academy", "Academy"),
   structureGarrison: S("garrison", "Garrison"),
   // §power: stand-in — the Fuel Refinery's art until the plant's own lands.
-  structurePowerPlant: S("fuel_refinery", "Power Plant"),
+  structurePowerPlant: S("power_plant", "Power Plant"),
   // §fuel-overhaul: stand-ins until their own art lands.
   structureUraniumMill: S("fuel_refinery", "Uranium Mill"),
   structureAntimatterPlant: S("fuel_refinery", "Antimatter Plant"),
@@ -182,7 +187,7 @@ export const ICONS: Record<IconKey, IconDef> = {
   roleAgriculture: N("role-agriculture", "Agricultural exporter"),
   roleMining: N("role-mining", "Mining center"),
   roleFuel: N("role-fuel-production", "Fuel complex"),
-  roleElectronics: N("role-electronics", "Electronics center"),
+  roleElectronics: N("role-electronics", "Semiconductor center"),
   roleShipbuilding: N("role-shipbuilding", "Shipbuilding center"),
   rolePopulation: N("role-population-center", "Population center"),
   roleOutpost: N("role-strategic-outpost", "Strategic outpost"),
@@ -199,6 +204,7 @@ export const ICONS: Record<IconKey, IconDef> = {
   bulk_freighter: H("bulk_freighter", "Bulk Freighter"),
   mining_barge: H("mining_barge", "Mining Barge"),
   mining_belt_station: H("mining_belt_station", "Mining Belt Station"),
+  free_trader: H("free_trader", "Free Trader"),
   colony: H("colony", "Colony ship"),
   builder: H("builder", "Construction Ship"),
   transport: H("transport", "Troop Transport"),
@@ -335,7 +341,8 @@ export function icon(key: IconKey, size: IconSize = "sm", tip?: string, cls = ""
     const command = def.structure === "command_center";
     const station = def.structure === "orbital_defense";
     // §gaia: Living Terraces have no separate menu set; menus show their scene sprites.
-    const sceneOnly = def.structure === "living_terraces";
+    // These families have no separate menu icon set: menus use the scene sprites.
+    const sceneOnly = def.structure === "living_terraces" || def.structure === "power_plant";
     const tier = Number.isFinite(structureTier) ? Math.max(1, Math.min(command ? 3 : station ? 5 : 6, Math.floor(structureTier))) : 1;
     const base = command ? `/art/derived/command-center/v1/tier-${tier}`
       : station ? `/art/derived/stations/v1/level-${tier}`

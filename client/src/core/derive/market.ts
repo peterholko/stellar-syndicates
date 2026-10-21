@@ -105,8 +105,21 @@ export function structureLevel(option: BuildOpt, tier: number): BuildOpt {
   const level = levels?.find(entry => entry.tier === tier) ?? levels?.at(-1);
   return level ? { ...option, ...level, research_prerequisite: level.research_prerequisite ?? undefined } : option;
 }
-export const structureBuildSeconds = (option: BuildOpt, body: BodyView): number =>
-  option.build_secs * (body.structure_build_time_mult ?? body.construction_time_mult);
+/** §first-session: mirror of the sim's charter opening builds
+ * (`founding::OPENING_BUILDS`): while the charter runs, level I of these on the
+ * home system's Command Center world rises in OPENING_BUILD_SECS. */
+export const OPENING_BUILD_SECS = 10;
+const OPENING_BUILDS: ReadonlySet<string> = new Set(["mining_complex", "bioharvester", "habitat", "agroplex", "power_plant"]);
+export function openingBuild(key: string, tier: number, systemId: string, body: BodyView): boolean {
+  if (tier !== 1 || !OPENING_BUILDS.has(key) || !((body.structures.command_center ?? 0) > 0)) return false;
+  const stage = state?.founding?.stage;
+  if (!stage || stage === "complete") return false;
+  const at = state.galaxy?.systems?.find((system) => system.id === systemId)?.pos;
+  const home = state.commandCenter;
+  return !!at && !!home && Math.hypot(at.x - home.x, at.y - home.y) < 1;
+}
+export const structureBuildSeconds = (option: BuildOpt, body: BodyView, opening = false): number =>
+  opening ? OPENING_BUILD_SECS : option.build_secs * (body.structure_build_time_mult ?? body.construction_time_mult);
 export const MINERAL_DEPOSITS: Commodity[] = ["metallic_ore", "cuprite_ore", "titanium_ore", "crystalline_ore", "rare_metal_ore", "olivine_ore", "bornite_ore", "ilmenite_ore", "iridium_ore", "void_crystal", "rare_elements", "silicates"];
 
 /** §fuel-overhaul: lines that run one of several standing recipes, picked by
@@ -130,7 +143,7 @@ export function recipeOutputs(recipe: ConversionRecipe): [Commodity, number][] {
 export function commodityPurpose(commodity: Commodity, catalog: readonly BuildOpt[]): string {
   const ore = catalog.find(o => o.key === "smelter")?.refining_recipes?.find(r => r.inputs[0]?.[0] === commodity);
   if (ore) return `Sell raw or refine into ${recipeOutputs(ore).map(([c]) => label(c)).join(" + ")}.`;
-  if (commodity === "conductive_metals") return "Conductors for Electronics production.";
+  if (commodity === "conductive_metals") return "Conductors for Semiconductor production.";
   if (commodity === "titanium") return "Structural metal for heavy Hull Sections.";
   return "";
 }
@@ -206,7 +219,7 @@ export function bindMarketDerive(source: () => Net | null, fitSource: () => Modu
 }
 
 
-// Pretty "40 Alloys + 60 Electronics + 30 Deuterium" for tooltips and refusals.
+// Pretty "40 Alloys + 60 Semiconductors + 30 Deuterium" for tooltips and refusals.
 export function kitCostLabel(kind: string): string {
   return (EMPLACE_KITS[kind] ?? [])
     .map(([c, n]) => `${n} ${label(c)}`)
@@ -436,16 +449,22 @@ export function structOption(o: BuildOpt, dyn: SystemStateView, body: BodyView, 
   // §gaia: Living Terraces grow only on a Gaia world.
   const environmentReason = o.requires_environment && body.environment !== o.requires_environment
     ? `Grows only on ${label(o.requires_environment)} worlds.` : "";
-  const buildable = !maxed && !populationReason && !environmentReason && !attachmentReason && !stationReason && !researchLocked && !poolFull && !noDeposit && !yardPrereq && afford;
+  // §charter-v4: the charter's land grant covers only the landing world until
+  // "Expand mining operations" (sim World::apply_build).
+  const landing = (dyn.bodies ?? []).find((b) => (b.structures?.command_center ?? 0) > 0);
+  const grantReason = state.founding?.land_grant_open === false && dyn.owner === state.playerId && landing && body.id !== landing.id
+    ? `Charter land grant: ${landing.name} only, until you expand mining.` : "";
+  const buildable = !maxed && !grantReason && !populationReason && !environmentReason && !attachmentReason && !stationReason && !researchLocked && !poolFull && !noDeposit && !yardPrereq && afford;
   const reason = (maxed ? (o.key === "orbital_defense" ? "The Star Fortress is the station's top level."
     : o.key === "command_center" ? "Maximum Command Center level reached (III)." : "Top level reached.") : "")
-    || populationReason || environmentReason || attachmentReason || stationReason || (researchLocked ? `Requires ${researchTitle} research.`
+    || grantReason || populationReason || environmentReason || attachmentReason || stationReason || (researchLocked ? `Requires ${researchTitle} research.`
     : noDeposit ? "No matching deposit on this body — a mine only works its own rock."
     : yardPrereq ? `Needs ${YARD_TITLE[yardPrereq.yard] ?? yardPrereq.yard} tier ${yardPrereq.tier} somewhere in this system (have ${yardPrereq.have}).`
     : poolFull ? `This body's ${POOL_LABEL[pool]} slots are full (${pools[pool].used}/${pools[pool].total}).`
       : !afford ? "Not enough goods available at this system." : "");
   // The same gates, in the same order, as the build sheet's short labels.
   const gate = (maxed ? "Top level" : "")
+    || (grantReason ? `Land grant: ${landing!.name} only` : "")
     || (populationReason ? `Needs ${o.min_population!.toLocaleString()} residents` : "")
     || (environmentReason ? `${label(o.requires_environment!)} worlds only` : "")
     || (attachmentReason ? targetTier > 1 ? "Top level" : "Needs a Warehouse" : "")

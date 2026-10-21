@@ -24,7 +24,26 @@ impl World {
             several.swap(i, j);
         }
         let quota = ((habitable as f64 * MULTI_HABITABLE_SHARE).round() as usize).max(1);
-        let special: BTreeSet<EntityId> = several.iter().take(quota).copied().collect();
+        let mut special: BTreeSet<EntityId> = several.iter().take(quota).copied().collect();
+        // At least one per galaxy: when no star rolled several, a habitable
+        // system's largest other terrestrial or ocean planet turns Terran.
+        if special.is_empty() {
+            let mut hosts: Vec<EntityId> = self.systems.iter()
+                .filter(|s| !homes.contains(&s.id) && worlds(s) == 1 && s.bodies.iter().any(could_settle))
+                .map(|s| s.id).collect();
+            for i in (1..hosts.len()).rev() {
+                let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+                hosts.swap(i, j);
+            }
+            if let Some(&id) = hosts.first()
+                && let Some(system) = self.systems.iter_mut().find(|s| s.id == id)
+                && let Some(body) = system.bodies.iter_mut().filter(|b| could_settle(b)).max_by_key(|b| b.profile.size)
+            {
+                body.profile.environment = crate::body::Environment::Terran;
+                body.habitable = true;
+                special.insert(id);
+            }
+        }
         for system in self.systems.iter_mut() {
             if homes.contains(&system.id) || special.contains(&system.id) || worlds(system) < 2 {
                 continue;
@@ -33,6 +52,12 @@ impl World {
             system.clear_habitability_except(best);
         }
     }
+}
+
+/// A planet that could be made a second habitable world.
+fn could_settle(body: &crate::body::Body) -> bool {
+    body.parent.is_none() && !body.habitable
+        && matches!(body.kind, crate::body::BodyKind::Terrestrial | crate::body::BodyKind::Ocean)
 }
 
 #[cfg(test)]

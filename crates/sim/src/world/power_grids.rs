@@ -1,6 +1,7 @@
-//! §power: per-planet grids — the base, the plant, brownouts and fusion.
-//! §fuel-overhaul: Solar Arrays (I–II) burn nothing; Fusion Plants burn
-//! Deuterium (III–IV) and Helium-3 (V–VI).
+//! §power: per-planet grids — the Command Center's reactor, the plant,
+//! brownouts and fusion. §fuel-overhaul: Solar Arrays (I–II) burn nothing;
+//! Fusion Plants burn Deuterium (III–IV) and Helium-3 (V–VI). §charter-v4: no
+//! planet has free power; a Command Center powers its own planet with 1 MW.
 
 use super::*;
 use crate::body::{Body, BodyKind};
@@ -9,10 +10,12 @@ use crate::cargo::Commodity as C;
 use crate::power::{FUEL_PER_MW_S, Grid};
 use crate::production::Assignment;
 
-/// A home with every structure cleared, crews to spare and a full larder.
+/// A home with every structure cleared (the Command Center too), crews to
+/// spare and a full larder, on v4 power.
 fn grid_home() -> (World, PlayerId, EntityId, Vec<u32>) {
     let mut w = World::new(SimConfig::for_players(123, 4));
     w.legacy_test_bootstrap = true;
+    w.strict_power = true;
     w.enclaves.clear();
     let owner = PlayerId(5720);
     w.step(&[Command::AddPlayer { id: owner, name: "Grid".into() }]);
@@ -59,33 +62,37 @@ fn run(w: &mut World) -> Vec<Event> {
 }
 
 #[test]
-fn every_planet_runs_tier_one_work_on_its_own_base() {
-    // The charter-complete home: its mine, yard and Academy spread over
-    // planets other than the Command Center's.
-    let (mut w, _, home, solid) = grid_home();
-    place(&mut w, home, solid[0], K::MiningComplex, 1);
-    place(&mut w, home, solid[0], K::Shipyard, 1);
-    place(&mut w, home, solid[1], K::Academy, 1);
+fn no_planet_has_free_power_but_a_command_center_runs_a_mine() {
+    let (mut w, owner, home, solid) = grid_home();
+    // The landing world: its Command Center's reactor runs a Mining Complex I.
+    body_mut(&mut w, home, solid[1]).set_tier(K::CommandCenter, 1);
+    place(&mut w, home, solid[1], K::MiningComplex, 1);
     place(&mut w, home, solid[1], K::Agroplex, 1);
+    // A sibling world with work but no power source: nothing powered runs.
+    place(&mut w, home, solid[0], K::MiningComplex, 1);
     let events = run(&mut w);
-    assert_eq!(grid(&w, home, solid[0]).demand, 2.0);
     assert_eq!(grid(&w, home, solid[1]).demand, 1.0, "food draws nothing");
-    for id in &solid[..2] {
-        assert_eq!(grid(&w, home, *id).power, 1.0);
-    }
-    assert!(!events.iter().any(|e| matches!(e.payload, EventPayload::Brownout { .. })));
+    assert_eq!(grid(&w, home, solid[1]).power, 1.0);
+    assert_eq!(grid(&w, home, solid[0]).power, 0.0, "no Command Center, no plant");
+    assert!(events.iter().any(|e| matches!(e.payload,
+        EventPayload::Brownout { owner: o, body, .. } if o == owner && body == solid[0])));
+    // A Shipyard beside the reactor's mine needs a plant.
+    place(&mut w, home, solid[1], K::Shipyard, 1);
+    run(&mut w);
+    assert_eq!(grid(&w, home, solid[1]).power, 0.5);
 }
 
 #[test]
 fn a_planet_past_its_base_browns_out_until_a_solar_array_lifts_it() {
     let (mut w, owner, home, solid) = grid_home();
     let id = solid[0];
+    body_mut(&mut w, home, id).set_tier(K::CommandCenter, 1);
     place(&mut w, home, id, K::MiningComplex, 2);
     place(&mut w, home, id, K::Shipyard, 2);
     let events = run(&mut w);
     let g = grid(&w, home, id);
     assert!((g.demand - 4.4).abs() < 1e-9);
-    assert_eq!(g.power, 0.68, "the base's 3 MW of 4.4");
+    assert_eq!(g.power, 0.22, "the reactor's 1 MW of 4.4");
     assert!(events.iter().any(|e| matches!(e.payload,
         EventPayload::Brownout { owner: o, body, no_fuel: false, .. } if o == owner && body == id)));
     // A Solar Array needs no fuel at all: full power, nothing burned.
@@ -108,15 +115,15 @@ fn a_fusion_plant_browns_out_until_it_has_deuterium() {
     let events = run(&mut w);
     let g = grid(&w, home, id);
     assert!((g.demand - 24.0).abs() < 1e-9, "{}", g.demand);
-    assert!(g.no_fuel && g.power == 0.85, "the base and the kept solar fields: (3 + 17.6) / 24");
+    assert!(g.no_fuel && g.power == 0.73, "only the kept solar fields: 17.6 / 24");
     assert!(events.iter().any(|e| matches!(e.payload,
         EventPayload::Brownout { owner: o, body, no_fuel: true, .. } if o == owner && body == id)));
     set_stock(&mut w, home, C::Deuterium, 100.0);
     let events = run(&mut w);
     let g = grid(&w, home, id);
     assert_eq!(g.power, 1.0);
-    assert!((g.burn - 3.4 * FUEL_PER_MW_S).abs() < 1e-9, "burns only the load above the base and the solar fields");
-    assert!((stock(&w, home, C::Deuterium) - (100.0 - 3.4 * FUEL_PER_MW_S * DT)).abs() < 1e-9);
+    assert!((g.burn - 6.4 * FUEL_PER_MW_S).abs() < 1e-9, "burns only the load above the solar fields");
+    assert!((stock(&w, home, C::Deuterium) - (100.0 - 6.4 * FUEL_PER_MW_S * DT)).abs() < 1e-9);
     assert!(events.iter().any(|e| matches!(e.payload, EventPayload::PowerRestored { body, .. } if body == id)));
 }
 
@@ -128,7 +135,7 @@ fn planets_never_share_power() {
     body_mut(&mut w, home, solid[1]).set_tier(K::PowerPlant, 3);
     set_stock(&mut w, home, C::Deuterium, 100.0);
     run(&mut w);
-    assert_eq!(grid(&w, home, solid[0]).power, 0.68, "a plant next door doesn't help");
+    assert_eq!(grid(&w, home, solid[0]).power, 0.0, "a plant next door doesn't help");
     assert_eq!(grid(&w, home, solid[1]).burn, 0.0, "an idle plant burns nothing");
     assert_eq!(stock(&w, home, C::Deuterium), 100.0);
 }
@@ -139,6 +146,7 @@ fn a_brownout_slows_the_planets_factories_by_its_share() {
     // draw (output per Volatile is fixed) falls by exactly the grid's share.
     let draw = |powered: bool| {
         let (mut w, _, home, solid) = grid_home();
+        body_mut(&mut w, home, solid[0]).set_tier(K::CommandCenter, 1);
         place(&mut w, home, solid[0], K::FuelRefinery, 2);
         place(&mut w, home, solid[0], K::MiningComplex, 2);
         if powered {
@@ -146,19 +154,19 @@ fn a_brownout_slows_the_planets_factories_by_its_share() {
         }
         set_stock(&mut w, home, C::Volatiles, 1_000.0);
         run(&mut w);
-        assert_eq!(grid(&w, home, solid[0]).power, if powered { 1.0 } else { 0.68 });
+        assert_eq!(grid(&w, home, solid[0]).power, if powered { 1.0 } else { 0.22 });
         1_000.0 - stock(&w, home, C::Volatiles)
     };
     let (dim, full) = (draw(false), draw(true));
     assert!(full > 0.0);
-    assert!((dim / full - 0.68).abs() < 1e-9, "{dim} / {full}");
+    assert!((dim / full - 0.22).abs() < 1e-9, "{dim} / {full}");
 }
 
 #[test]
 fn a_dry_colony_still_refines_its_own_fuel() {
-    // No deadlock: the base keeps the refinery turning, and the fusion plant
-    // burns the Deuterium it makes.
-    // §fuel-overhaul: 23 MW, past the plant's 20.6 MW of base and kept solar.
+    // No deadlock: the kept solar fields keep the refinery turning, and the
+    // fusion plant burns the Deuterium it makes.
+    // §fuel-overhaul: 23 MW, past the plant's 17.6 MW of kept solar.
     let (mut w, _, home, solid) = grid_home();
     place(&mut w, home, solid[0], K::FuelRefinery, 6);
     place(&mut w, home, solid[0], K::MiningComplex, 6);
@@ -196,7 +204,7 @@ fn the_fusion_tiers_need_fusion_reactors_and_burn_helium3() {
     assert!((g.demand - 80.5).abs() < 1e-9, "{}", g.demand);
     assert_eq!(g.power, 1.0);
     assert_eq!(stock(&w, home, C::Deuterium), 100.0, "Helium-3 fusion burns no Deuterium");
-    let burned = (77.5 - 17.6) * FUEL_PER_MW_S / crate::fuel::HELIUM3_FUEL_EQUIV * DT;
+    let burned = (80.5 - 17.6) * FUEL_PER_MW_S / crate::fuel::HELIUM3_FUEL_EQUIV * DT;
     assert!((100.0 - stock(&w, home, C::Helium3) - burned).abs() < 1e-9);
 }
 

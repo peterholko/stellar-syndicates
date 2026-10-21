@@ -160,6 +160,14 @@
       "topSha256": "043cf56f52b3e7c6f6736e88f3372a6c9cf968988080b8822ac5015305f11c39",
       "perspectiveSha256": "61fd9e47172ef25e5b7a02047bbf8e4ef2c74a52a40ae9283ca9474b21647377",
       "bottomSha256": "df314738f6ebca833c1396a1cc2d218ecf54ba14717ace9c4821c12ac9bf79a9"
+    },
+    "free_trader": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/free-trader-lod2.glb",
+      "sourceSha256": "aee828a50a5bdc3441bb34a9459b765c7d3fe40269ad4e5d4a89f4a151288391",
+      "triangles": 4354,
+      "topSha256": "92a258e22ac96c8997340923db5c7e54de432dd8554bae0c2d5f2b5370767e0d",
+      "perspectiveSha256": "e1187149ca3481fa485b05b01c2d50c513df94ded1d6fd5498a056097186fecf",
+      "bottomSha256": "caa361051c1cd666188c0be1f6da8655f57a7c614c390d44f1550cfc9e35ae41"
     }
   }
 }

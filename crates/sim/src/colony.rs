@@ -102,12 +102,15 @@ pub const TERRACE_POP_PER_TIER: f64 = 0.020;
 /// A colony ship plants one 1,000-person workforce cohort.
 pub const COLONY_FOUNDING_POP: f64 = 0.001;
 
-/// A new corporation begins with 2,000 people: two legible workforce cohorts,
-/// not an already-developed multi-million-person colony.
-pub const HOME_FOUNDING_POP: f64 = 0.002;
+/// A new corporation begins with 6,000 people: six legible workforce cohorts,
+/// one for each post the founding charter asks to staff (Bioharvester,
+/// Agroplex, Mining Complex, Shipyard, Academy, a second Mining Complex) —
+/// §workforce cap, Oct 16 2026: posts can't exceed the workforce any more.
+pub const HOME_FOUNDING_POP: f64 = 0.006;
 
-/// Opening food buffer. At 2,000 people this is roughly three minutes of demand,
-/// enough for the staffed Bioharvester→Agroplex chain to establish itself.
+/// Opening food buffer. With the kit's Provisions, about six minutes of demand
+/// for 6,000 people: enough for the staffed Bioharvester→Agroplex chain (the
+/// first ten-second builds) to establish itself.
 pub const HOME_PROVISIONS_SEED: f64 = 15.0;
 
 // --- WORKFORCE ---------------------------------------------------------------

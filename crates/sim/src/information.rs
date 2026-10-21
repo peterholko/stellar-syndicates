@@ -357,7 +357,10 @@ impl InformationHistory {
     /// Do not import present tiers, ownership, inventory or timestamps.
     pub(crate) fn migrate_command_centers(&mut self) {
         for report in self.sites.values_mut().flat_map(|reports| reports.iter_mut()) {
-            if report.system.owner.is_some() { report.system.seed_command_centers(); }
+            if report.system.owner.is_some() {
+                report.system.seed_command_centers();
+                report.system.seed_landing_plants();
+            }
         }
     }
 
@@ -907,6 +910,7 @@ fn site_system_matches(stored: &StarSystem, live: &StarSystem) -> bool {
         legacy_population,
         legacy_assignments,
         specialists,
+        landing_holds,
     } = stored;
     *id == live.id
         && *pos == live.pos
@@ -939,6 +943,7 @@ fn site_system_matches(stored: &StarSystem, live: &StarSystem) -> bool {
         && *legacy_population == live.legacy_population
         && *legacy_assignments == live.legacy_assignments
         && *specialists == live.specialists
+        && *landing_holds == live.landing_holds
 }
 
 /// Station hardpoints match when their fits do and their health is in the

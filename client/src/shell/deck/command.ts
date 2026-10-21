@@ -3,7 +3,7 @@ import { fmtDur, operationTitle } from "../../core/derive/format";
 import { foundingHomeSystemId } from "../../core/derive/geo";
 import { nextDecisionLabel } from "../../core/derive/orders";
 import { postVictoryHandoff } from "../../core/derive/handoff";
-import { bestMineBody, FOUNDING_STEP, FOUNDING_TOTAL, foundingBargeGoal, foundingBelt, foundingBusinessGoals, foundingCommands, foundingScoutGoal, foundingLocalGoals, foundingPlan, shieldStatus, type FoundingPlan } from "../../core/derive/founding";
+import { expansionBody, FOUNDING_STEP, FOUNDING_TOTAL, foundingBargeGoal, foundingBelt, foundingBuildTarget, foundingBusinessGoals, foundingCommands, foundingScoutGoal, foundingLocalGoals, foundingPlan, landingBody, shieldStatus, type FoundingPlan } from "../../core/derive/founding";
 import { coach } from "../coach";
 import { charterLedgerHtml } from "./ledger";
 import { icon, label } from "../../icons";
@@ -194,9 +194,12 @@ export class DeckCommandRoutes {
     const next = p ? `<div class="deck-founding__next${plan.blocked ? " is-blocked" : ""}"><small>${plan.blocked ? "Needs attention" : "Next"}</small><b>${esc(p.title)}</b>${p.reason ? `<em>${esc(p.reason)}</em>` : ""}<p>${esc(p.copy)}</p>${prospects}${action}</div>` : "";
     const waiting = plan.waiting.length
       ? `<div class="deck-founding__waiting"><button type="button" class="deck-founding__waiting-toggle" data-deck-act="founding-waiting" aria-expanded="${this.waitingOpen}">While you wait · ${plan.waiting.length}</button>${this.waitingOpen ? plan.waiting.map((step) => `<button type="button" data-deck-act="founding-action" data-action="${esc(step.action)}"><span><b>${esc(step.label)}</b><small>${esc(step.copy)}</small></span></button>`).join("") : ""}</div>` : "";
+    const g = plan.goal;
+    const goal = g ? `<div class="deck-founding__goal"><small>Long-term goal</small><b>${esc(g.title)}</b><p>${esc(g.copy)}</p>`
+      + `<button type="button" data-deck-act="founding-action" data-action="${esc(g.action)}" ${this.foundingActionAvailable(g.action, founding) ? "" : "disabled"}>${esc(g.label)}</button></div>` : "";
     const rewards = founding.stage === "complete" && postVictoryHandoff().some(g => !g.done)
       ? `<button type="button" data-deck-act="handoff-details">Next objectives &amp; rewards</button>` : "";
-    return header + `<div class="deck-founding__body">${progress}${next}${waiting}${rewards}</div>`;
+    return header + `<div class="deck-founding__body">${progress}${next}${goal}${waiting}${rewards}</div>`;
   }
 
   private commandHtml(): string {
@@ -228,17 +231,28 @@ export class DeckCommandRoutes {
     const academyBody = home?.bodies.find((body) => (body.structures.academy ?? 0) > 0);
     const academyStaffed = !!academyBody && home?.assignments.some((line) => line.body_id === academyBody.id && line.structure === "academy" && (line.workers > 0 || Object.values(line.specialists).some((count) => count > 0)));
     const content: Record<FoundingStage, FoundingContent> = {
-      local_recovery: { title: "Send your first shipment", copy: "Load Ferrite Ore and send the Freighter to the Market Hub with the Interceptor guarding it.", action: "opening-imports", label: "Plan the shipment" },
-      prepare_export: { title: "Send your first shipment", copy: "Load Ferrite Ore and send the Freighter to the Market Hub with the Interceptor guarding it.", action: "opening-imports", label: "Plan the shipment" },
+      build_bioharvester: { title: "Build a Bioharvester", copy: "It harvests Biomass. Staff it when it stands.", action: "build-bioharvester", label: "Build Bioharvester" },
+      build_habitat: { title: "Build a Habitat", copy: "Your settlers move out of the colony ship.", action: "build-habitat", label: "Build Habitat" },
+      build_agroplex: { title: "Build an Agroplex", copy: "It turns Biomass into Provisions. Staff it when it stands.", action: "build-agroplex", label: "Build Agroplex" },
+      pirate_raid: { title: "The mine is running", copy: "Ferrite Ore is coming in.", action: "mine", label: "Open the mine" },
+      sell_ore: { title: "Find semiconductors", copy: "The Solar Array needs them.", action: "market", label: "Open Market" },
+      power_shipyard: { title: "Build a Solar Array", copy: "A Shipyard needs more than the Command Center's 1 MW.", action: "build-power", label: "Build Solar Array" },
+      buy_semiconductors: { title: "Build a Solar Array", copy: "A Shipyard needs more than the Command Center's 1 MW.", action: "build-power", label: "Build Solar Array" },
+      build_freighter: { title: "Build an Interceptor", copy: "Shipyard II, then the Interceptor. It hunts the privateer.", action: "build-interceptor", label: "Build Interceptor" },
+      build_interceptor: { title: "Build an Interceptor", copy: "Shipyard II, then the Interceptor. It hunts the privateer.", action: "build-interceptor", label: "Build Interceptor" },
+      expand_mining: { title: "Expand mining operations", copy: "A Solar Array and a Mining Complex on another world of your system.", action: "build-expansion-power", label: "Build Solar Array" },
+      local_recovery: { title: "Export your ore", copy: "Load Ferrite Ore and send the Freighter to the Market Hub.", action: "opening-imports", label: "Plan the shipment" },
+      prepare_export: { title: "Export your ore", copy: "Load Ferrite Ore and send the Freighter to the Market Hub.", action: "opening-imports", label: "Plan the shipment" },
       grow_business: { title: founding.local_opening ? "Shipment underway" : "Grow your business", copy: founding.local_opening ? "Your first session can end here. Your confirmed return route can sell and bring supplies home; check its report next session. A manual one-way order still needs return instructions." : "Expand exports or start refining. Either advances the tutorial; both remain open.", action: "command", label: "Choose next investment", alternatives: foundingBusinessGoals(this.ctx.state, home) },
-      build_shipyard: { title: "Build a Shipyard", copy: "Import Alloys, Machinery and Electronics with your export earnings, then staff it.", action: "build-shipyard", label: "Build Shipyard" },
+      build_shipyard: { title: "Build a Shipyard", copy: "40 Alloys, 20 Machinery and 15 Semiconductors, then staff it.", action: "build-shipyard", label: "Build Shipyard" },
       build_mine: mineBody
         ? { title: mineStaffed ? "Mining Complex staffed" : "Assign workforce to Mining Complex I", copy: mineStaffed ? `${mineBody.name} is producing Ferrite Ore.` : "An unstaffed mine produces no ore.", action: "mine", label: `Open ${mineBody.name}` }
         : { title: "Build Mining Complex I", copy: "Establish the ore line for the opening export.", action: "build-mine", label: "Build Mining Complex I" },
-      build_convoy: { title: "Prepare a Freighter", copy: "Assign workforce to the Shipyard, then build a Tiny Freighter.", action: "build-convoy", label: "Build Freighter" },
+      build_convoy: { title: "Build a Tiny Freighter", copy: "Assign workforce to the Shipyard, then build a Tiny Freighter.", action: "build-convoy", label: "Build Freighter" },
       build_second_freighter: { title: "Build a second Tiny Freighter", copy: "Import its materials and staff the Shipyard to expand your trade capacity.", action: "build-convoy", label: "Build Tiny Freighter" },
-      export_production: { title: "Dispatch the opening export", copy: "Load Ferrite Ore, then send the Freighter.", action: "convoy", label: "Select Freighter" },
-      defeat_privateer: { title: "Guard the Freighter", copy: "Intercept the Rogue Privateer before it reaches the civilian hull.", action: "privateer", label: "Select Rogue Privateer" },
+      export_production: { title: "Export your ore", copy: "Load Ferrite Ore, then send the Freighter.", action: "convoy", label: "Select Freighter" },
+      defeat_privateer: { title: "Destroy the privateer", copy: "Send your Interceptor after it.", action: "attack-privateer", label: "Attack" },
+      eliminate_den: { title: "Eliminate the privateer den", copy: "Send your Interceptor to the den its log named.", action: "assault-den", label: "Send Interceptor" },
       complete_export: { title: "Complete the guarded export", copy: "Sell Ferrite Ore at the Market Hub.", action: "convoy", label: "Select Freighter" },
       build_academy: academyBody
         ? { title: academyStaffed ? "Academy staffed" : "Assign workforce to Academy I", copy: academyStaffed ? "Its first research report is reaching command." : "An unstaffed Academy produces no research.", action: "academy", label: `Open ${academyBody.name}` }
@@ -281,33 +295,32 @@ export class DeckCommandRoutes {
         action === "guarded-recovery" ? "Send the Freighter with its escort in one order." : "Send your Scout from here.");
     } else if (action === "opening-imports") {
       this.hooks.go({ name: "logistics" });
-      coach("send-shipment", "Check the basket and spending cap, then send it. The Interceptor guards the trip.");
+      coach("send-shipment", founding.stage === "defeat_privateer" ? "Check the basket and spending cap, then send it. The Interceptor guards the trip." : "Check the basket and spending cap, then send it.");
     } else if (action === "build-service-berth" && home && system) {
       const body = home.bodies.find(b => (b.structures.warehouse ?? 0) > 0);
       if (body) this.openBuild(system, body, "structures", "service_berth");
-    } else
-    if (action === "build-shipyard" && homeId && home && system) {
-      const body = bestShipyardBody(home);
-      if (body) this.openBuild(system, body, "structures", "shipyard");
-    } else if (action === "build-mine" && homeId && home && system) {
-      const body = bestMineBody(home);
-      if (body) this.openBuild(system, body, "structures", "mining_complex");
-    } else if (action === "build-academy" && home && system) {
-      const body = [...home.bodies].sort((a, b) => (b.infrastructure_slots ?? 0) - (a.infrastructure_slots ?? 0))[0];
-      if (body) this.openBuild(system, body, "structures", "academy");
     } else if (action === "build-smelter" && home && system) {
       const body = [...home.bodies].sort((a,b) => Number(b.special === "volcanic_mantle") - Number(a.special === "volcanic_mantle") || (b.industrial_slots ?? 0) - (a.industrial_slots ?? 0))[0];
       if (body) this.openBuild(system, body, "structures", "smelter");
-    } else if (["mine", "academy", "shipyard", "smelter"].includes(action) && homeId && home && system) {
-      const structure = action === "mine" ? "mining_complex" : action;
+    } else if (action.startsWith("build-") && home && system) {
+      // §charter-v4: the land grant keeps builds on the landing world until expansion.
+      const target = foundingBuildTarget(action, this.ctx.state, home);
+      if (target) this.openBuild(system, target.body, target.mode, target.select);
+    } else if (action === "home-world" && home && system) {
+      const body = landingBody(home);
+      if (body) this.openWorld(system, body);
+    } else if (action === "expansion-mine" && home && system) {
+      const body = expansionBody(home);
+      if (body) this.openWorld(system, body, "mining_complex");
+    } else if (STAFF_STRUCTURE[action] && home && system) {
+      const structure = STAFF_STRUCTURE[action];
       const body = home.bodies.find((entry) => (entry.structures[structure] ?? 0) > 0);
       if (body) this.openWorld(system, body, structure);
-    } else if (["build-convoy", "build-scout", "build-colony", "build-barge", "build-probe"].includes(action) && homeId && home && system) {
-      const body = home.bodies.find((entry) => (entry.structures.shipyard ?? 0) > 0) ?? bestShipyardBody(home);
-      if (body) this.openBuild(system, body, "ships", action === "build-convoy" ? "tiny_freighter"
-        : action === "build-barge" ? "mining_barge" : action === "build-probe" ? "survey_probe" : action.slice("build-".length));
     } else if (action === "market") {
       this.hooks.go({ name: "market" });
+    } else if (action.startsWith("merchant-")) {
+      // §merchant: open the free trader's stall with this build's shortfall filled in.
+      this.hooks.go({ name: "merchant", query: { for: action.slice("merchant-".length) } });
     } else if (action === "research" || action === "research-enrichment") {
       this.hooks.go({ name: "research", query: action === "research-enrichment" ? { programme: "mat_enrichment" } : undefined });
     } else if (action === "command") {
@@ -316,6 +329,8 @@ export class DeckCommandRoutes {
       this.hooks.go({ name: "operations" });
     } else if (action === "privateer" && founding.privateer) {
       this.hooks.focusFleet(founding.privateer);
+    } else if (action === "den" && founding.den) {
+      this.openSystem(founding.den);
     } else if (action === "shipment-trip") {
       const fleet = this.fleetOfKind("convoy");
       this.hooks.go(fleet ? { name: "logistics", query: { fleet: fleet.id } } : { name: "logistics" });
@@ -327,15 +342,18 @@ export class DeckCommandRoutes {
     }
     // §founding R5: point at the control the step needs, not just the screen.
     if (action.startsWith("build-")) coach("queue-build", "Queue the build here.");
-    else if (["mine", "academy", "shipyard", "smelter"].includes(action)) coach("staff-plus", "Add one workforce here, then confirm it just below.");
+    else if (STAFF_STRUCTURE[action] || action === "expansion-mine") coach("staff-plus", "Add one workforce here, then confirm it just below.");
     else if (action === "scout" && founding.recovered) coach("refit", "Fit the recovered Recon Suite here.");
   }
 
   private foundingActionAvailable(action: string, founding: FoundingView): boolean {
     if (["market", "research", "command", "operations"].includes(action)) return true;
-    if (["build-shipyard", "build-mine", "build-academy", "build-convoy", "build-scout", "build-colony", "build-barge", "build-probe", "mine", "academy", "shipyard"].includes(action)) return !!foundingHomeSystemId();
+    if (action.startsWith("build-") || STAFF_STRUCTURE[action] || ["expansion-mine", "home-world"].includes(action)) return !!foundingHomeSystemId();
     if (action === "privateer") return !!founding.privateer && this.ctx.state.ghosts.some((entry) => entry.id === founding.privateer);
-    if (["mine-belt", "survey-stop", "barge-home", "barge-unload"].includes(action)) return !!foundingCommands(action, this.ctx.state, this.homeDynamic());
+    if (action === "den") return !!founding.den;
+    if (["mine-belt", "survey-stop", "barge-home", "barge-unload", "attack-privateer", "assign-captain", "assault-den"].includes(action)) {
+      return !!foundingCommands(action, this.ctx.state, this.homeDynamic());
+    }
     return action === "convoy" || action === "scout" || action === "colony" || action === "barge" || action === "probe" ? !!this.fleetOfKind(action) : true;
   }
 
@@ -393,13 +411,10 @@ export class DeckCommandRoutes {
   }
 }
 
-function bestShipyardBody(system: SystemStateView): BodyView | undefined {
-  return [...system.bodies].sort((a, b) => {
-    const aLow = a.special === "low_gravity" ? 1 : 0;
-    const bLow = b.special === "low_gravity" ? 1 : 0;
-    return bLow - aLow || (b.industrial_slots ?? 0) - (a.industrial_slots ?? 0) || a.id - b.id;
-  })[0];
-}
+/** The guide's staffing actions and the structure each opens. */
+const STAFF_STRUCTURE: Record<string, string> = {
+  mine: "mining_complex", academy: "academy", shipyard: "shipyard", smelter: "smelter", bioharvester: "bioharvester", agroplex: "agroplex",
+};
 
 function esc(value: string): string {
   return value.replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]!);

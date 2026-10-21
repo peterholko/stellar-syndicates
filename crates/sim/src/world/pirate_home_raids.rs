@@ -16,7 +16,7 @@ impl World {
         events: &mut Vec<Event>) -> bool
     {
         let Some(enclave) = self.enclaves.get(&base) else { return false; };
-        if !enclave.active(self.time) || pirate::permanent_site(enclave.tier)
+        if !enclave.active(self.time) || enclave.permanent()
             || self.pirate_support_disabled(base, pirate::CombatObjective::DisableSupply)
             || enclave.pack != Some(fleet) || self.pirate_home_raids.contains_key(&fleet) { return false; }
         let Some(pack) = self.fleets.get(&fleet) else { return false; };

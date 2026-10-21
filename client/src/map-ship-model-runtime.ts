@@ -2,21 +2,21 @@
 // renders an atlas, which Pixi composites inside the existing fleet layers.
 // No DOM overlay can cover labels, intercept gestures, or escape galaxy fades.
 import * as THREE from "three";
-import type { ShipKind } from "./protocol";
+import type { ShipArtKind } from "./shipart";
 import { disposeModel, loadShipModel, modelLighting } from "./ship-model-stage";
 import { MAP_MODEL_CLOSE_SLOTS, MAP_MODEL_FRAME_PADDING, MAP_MODEL_SLOTS } from "./map-ship-model-policy";
 
 export interface MapModelDraw {
   id: string;
-  kind: ShipKind;
+  kind: ShipArtKind;
   slot: number;
   escorts: number;
   angle: number;
   tilt: number;
 }
 interface CachedHull { model: THREE.Group; used: number }
-interface Instance { group: THREE.Group; yaw: THREE.Group; kind: ShipKind; escorts: number }
-interface Sample { id: string; kind: ShipKind; escorts: number; angle: number }
+interface Instance { group: THREE.Group; yaw: THREE.Group; kind: ShipArtKind; escorts: number }
+interface Sample { id: string; kind: ShipArtKind; escorts: number; angle: number }
 
 export class MapShipModelRuntime {
   readonly canvas = document.createElement("canvas");
@@ -26,11 +26,11 @@ export class MapShipModelRuntime {
   private renderer: THREE.WebGLRenderer;
   private lighting: ReturnType<typeof modelLighting>;
   private camera = new THREE.OrthographicCamera(-1, 1, 1, -1, .01, 100);
-  private hulls = new Map<ShipKind, CachedHull>();
-  private loading = new Map<ShipKind, AbortController>();
-  private failures = new Map<ShipKind, number>();
+  private hulls = new Map<ShipArtKind, CachedHull>();
+  private loading = new Map<ShipArtKind, AbortController>();
+  private failures = new Map<ShipArtKind, number>();
   private instances = new Map<string, Instance>();
-  private wanted = new Set<ShipKind>();
+  private wanted = new Set<ShipArtKind>();
   private samples = new Map<number, Sample>();
   private signature = "";
   private lastRender = -Infinity;
@@ -72,7 +72,7 @@ export class MapShipModelRuntime {
 
   get healthy(): boolean { return !this.lost && !this.disposed; }
 
-  private request(kind: ShipKind, now: number): void {
+  private request(kind: ShipArtKind, now: number): void {
     if (this.hulls.has(kind) || this.loading.has(kind) || this.loading.size >= 2
       || (this.failures.get(kind) ?? 0) > now) return;
     const abort = new AbortController();

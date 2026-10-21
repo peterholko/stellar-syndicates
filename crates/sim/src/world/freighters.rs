@@ -268,20 +268,23 @@ fn freight_unlocks_and_yard_tiers_are_enforced_at_receipt() {
 }
 
 #[test]
-fn tiny_freighter_advances_the_founding_export() {
+fn the_retired_freighter_step_hands_on_and_an_export_draws_no_privateer() {
     let (mut w, owner, _home) = fixture();
-    w.players.get_mut(&owner).unwrap().founding.set_stage(crate::founding::FoundingStage::BuildConvoy, w.time);
-    let id = w.players[&owner].founding.convoy.unwrap();
+    w.players.get_mut(&owner).unwrap().founding.set_stage(crate::founding::FoundingStage::BuildFreighter, w.time);
+    let home = w.players[&owner].home;
+    let id = w.alloc_entity_id();
+    w.fleets.insert(id, Fleet::single(id, owner, ShipKind::TinyFreighter, home, FleetOrder::Idle, None));
     w.step(&[]);
-    assert_eq!(w.players[&owner].founding.convoy, Some(id));
-    // §charter v3: a founder with a Freighter goes on to the first shipment,
-    // and an escorted departure draws the privateer lesson.
-    assert_eq!(w.players[&owner].founding.stage, crate::founding::FoundingStage::PrepareExport);
-    let guard = w.fleets.values().find(|f| f.owner == owner && f.is_combatant()).unwrap().id;
-    w.fleets.get_mut(&guard).unwrap().order = FleetOrder::Guard { target: id };
-    w.fleets.get_mut(&id).unwrap().order = FleetOrder::MoveTo { dest: w.hub };
+    // §charter-v5: the Freighter left the charter; its step hands on to the
+    // Interceptor, and a Hub run is ordinary trade, not a privateer lesson.
+    assert_eq!(w.players[&owner].founding.stage, crate::founding::FoundingStage::BuildInterceptor);
+    let guard = w.alloc_entity_id();
+    w.fleets.insert(guard, Fleet::single(guard, owner, ShipKind::Raider, home, FleetOrder::Guard { target: id }, None));
+    let f = w.fleets.get_mut(&id).unwrap();
+    f.add_cargo(C::MetallicOre, 20);
+    f.order = FleetOrder::MoveTo { dest: w.hub };
     w.step(&[]);
-    assert!(w.players[&owner].founding.privateer.is_some());
+    assert!(w.players[&owner].founding.privateer.is_none());
 }
 
 #[test]

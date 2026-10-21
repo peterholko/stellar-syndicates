@@ -4,7 +4,7 @@ export function mountDeckMarkup(root: HTMLElement): void {
   root.innerHTML = `
     <div id="deck" class="deck">
       <header id="deck-topbar" class="deck-topbar">
-        <div id="deck-identity" class="deck-identity"><b id="deck-corp">—</b><span id="deck-corp-id">—</span></div>
+        <button type="button" id="deck-identity" class="deck-identity" title="Corporation card"><b id="deck-corp">—</b><span id="deck-corp-id">—</span></button>
         <div id="deck-stats" class="deck-stats">
           <span>Credits <b id="deck-credits">—</b><small id="deck-reserved"></small></span>
           <span>Equity <b id="deck-equity">—</b></span>
@@ -13,6 +13,8 @@ export function mountDeckMarkup(root: HTMLElement): void {
           <span id="deck-link">offline</span>
         </div>
         <div id="deck-construction-chip" class="deck-construction-chip" hidden></div>
+        <div id="deck-merchant-chip" class="deck-construction-chip deck-merchant-chip" hidden></div>
+        <div id="deck-signals-chip" class="deck-construction-chip deck-signals-chip" hidden></div>
         <nav id="deck-nav" class="deck-nav" aria-label="Command Deck">
           ${navButton("command", "Command")}
           ${navButton("fleets", "Fleets")}

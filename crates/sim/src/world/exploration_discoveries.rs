@@ -122,7 +122,7 @@ impl World {
                         let age = crate::transit::delay(other.pos, fleet.pos, self.config.c);
                         let seen = other.pos - other.vel * age;
                         (seen.distance(station) < 6_000.0 && crate::detection::detected(
-                            other.signature() * self.nebula_signature_factor(seen),
+                            other.detection_signature() * self.nebula_signature_factor(seen),
                             &[(fleet.pos, EXPEDITION_LOOKOUT_RANGE * self.nebula_sensor_factor(fleet.pos))], seen))
                             .then_some((other.id, seen.distance(fleet.pos)))
                     }).min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0))).map(|v| v.0)).flatten();

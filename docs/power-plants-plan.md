@@ -1,10 +1,19 @@
 # Power plants: plan
 
-Status: built Oct 10 2026, uncommitted, protocol v48. Phases 1–5 are in; art
-(phase 6) is briefed in [power-plant-art-prompt.md](power-plant-art-prompt.md)
-and stands in with the Fuel Refinery's. The phase 0 dry run couldn't use bot
+Status: built Oct 10 2026, uncommitted, protocol v48. Phases 1–5 are in; the
+art (phase 6, [power-plant-art-prompt.md](power-plant-art-prompt.md)) was
+generated Oct 12 and wired in Oct 14: Solar Array I–II, Fusion Plant III–VI,
+and a floating pair for belts and gas giants. The phase 0 dry run couldn't use bot
 data (bots stall in the charter), so the numbers below are the starting ones.
 Every open decision took the recommended option.
+
+**Charter v4 (Oct 14 2026, protocol v51,
+[founding-charter.md](founding-charter.md)):** the free 3 MW base is gone. No
+planet has free power: a Command Center's reactor gives its own planet 1 MW
+(`power::COMMAND_CENTER_MW`, `base_mw`), and every other powered building needs
+a plant on its planet. A home lands with no plant; its Solar Array is charter
+step 6. The 3 MW base below survives only as the sim's test sandbox
+(`LEGACY_BASE_MW`).
 
 **Built:**
 
@@ -116,7 +125,8 @@ never fails.
 **Supply, per planet**
 
 - **Base:** every planet supplies 3 MW of its own, free and fuel-free. Belts
-  and gas giants too.
+  and gas giants too. §charter-v4: retired; only a Command Center's planet
+  has a base, its reactor's 1 MW.
 - **Power Plant:** one per planet, in its own slot (no Resource, Industrial or
   Infrastructure slot). It can stand on any planet, moon, belt or gas giant.
   - **Output:** 8 × tier throughput: 8 / 17.6 / 30.4 / 48 / 68.8 / 92 MW.

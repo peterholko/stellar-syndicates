@@ -133,7 +133,9 @@ impl BodySize {
         }
     }
 
-    fn industrial_base(self) -> u32 {
+    /// Industrial and Infrastructure sites before population and the Command
+    /// Center add more: a bigger world has room for more of both.
+    fn site_base(self) -> u32 {
         match self {
             Self::Tiny => 1,
             Self::Small | Self::Medium => 2,
@@ -293,7 +295,7 @@ impl BodySpecial {
             Self::HydrocarbonSeas => "Volatiles extraction ×1.35; Fuel and Polymer yield ×1.20",
             Self::CrystallineCrust => "Crystalline and Rare-metal ores (or legacy minerals) extraction ×1.35",
             Self::FertileBiosphere => "Biomass extraction ×1.35; Provisions yield ×1.20",
-            Self::PrecursorRuins => "Electronics yield ×1.25",
+            Self::PrecursorRuins => "Semiconductor yield ×1.25",
         }
     }
 }
@@ -414,17 +416,19 @@ impl Body {
         let terraces = crate::colony::TERRACE_POP_PER_TIER
             * self.tier(crate::StructureKind::LivingTerraces) as f64 * self.habitat_capacity_mult();
         let tier = self.tier(crate::StructureKind::Habitat);
+        // The founding camp's first Habitat houses the 6,000 settlers and two
+        // cohorts more; its Quarters project, four more beyond that.
         if tier == 1 && let Some(camp) = &self.founding_camp {
-            return terraces + if camp.done(crate::settlement::SettlementProject::Quarters) { 0.006 } else { 0.003 };
+            return terraces + if camp.done(crate::settlement::SettlementProject::Quarters) { 0.012 } else { 0.008 };
         }
         crate::colony::POP_CAP_PER_HABITAT_TIER * tier as f64 * self.habitat_capacity_mult() + terraces
     }
 
     pub fn warehouse_capacity(&self) -> f64 {
-        let tier = self.tier(crate::StructureKind::Warehouse);
-        if tier == 1 && self.founding_camp.as_ref().is_some_and(|c|
-            !c.done(crate::settlement::SettlementProject::Storehouse)) { return 250.0; }
-        crate::build::warehouse_capacity(tier)
+        // §charter-v4: the founding camp's Storehouse project now enlarges the
+        // landing holds (`StarSystem::landing_holds_cap`); a Warehouse built on
+        // the camp world holds its full amount.
+        crate::build::warehouse_capacity(self.tier(crate::StructureKind::Warehouse))
     }
     pub fn tier(&self, kind: crate::build::StructureKind) -> u32 {
         self.structures.get(&kind).copied().unwrap_or(0)
@@ -705,8 +709,8 @@ impl Body {
     }
 
     /// INDUSTRIAL slots: gas giants host none (nowhere to stand); every other
-    /// body starts with 2 and grows with ITS population tier — so even a fresh
-    /// colony has industrial breathing room (2) and a major world runs 4.
+    /// body starts with its size's base (Tiny 1, Small/Medium 2, Large 3,
+    /// Huge 4) and grows with ITS population tier.
     pub fn industrial_slots(&self) -> u32 {
         self.base_industrial_slots() + body_pop_tier(self.population)
     }
@@ -715,17 +719,30 @@ impl Body {
         if matches!(self.kind, BodyKind::GasGiant | BodyKind::AsteroidBelt) {
             0
         } else {
-            self.profile.size.industrial_base()
+            self.profile.size.site_base()
         }
     }
 
-    /// INFRASTRUCTURE slots: 1, +1 if habitable, +1 once developed. A belt has
-    /// none: it hosts mines (Resource slots) and nothing else.
+    /// Infrastructure sites before habitability, population and the Command
+    /// Center: the same size base as Industrial. A gas giant's civic works are
+    /// orbital (1); a belt hosts mines only (0).
+    pub fn base_infrastructure_slots(&self) -> u32 {
+        match self.kind {
+            BodyKind::AsteroidBelt => 0,
+            BodyKind::GasGiant => 1,
+            _ => self.profile.size.site_base(),
+        }
+    }
+
+    /// INFRASTRUCTURE slots: the size base, +1 if habitable, +1 once
+    /// developed, plus the Command Center's. The pool once held only a
+    /// Habitat and an Agroplex; it now houses storage, the Academy and
+    /// defences too, so a Large home world starts with 4 sites, not 2.
     pub fn infrastructure_slots(&self) -> u32 {
         if self.is_belt() {
             return 0;
         }
-        1 + self.habitable as u32 + (body_pop_tier(self.population) >= 1) as u32
+        self.base_infrastructure_slots() + self.habitable as u32 + (body_pop_tier(self.population) >= 1) as u32
             + crate::build::command_infrastructure_bonus(self.tier(crate::StructureKind::CommandCenter))
             + self.founding_camp.as_ref().is_some_and(|c|
                 c.profile == crate::settlement::FoundingProfile::CoastalPlains
@@ -1146,16 +1163,22 @@ mod tests {
             2,
             "non-gas base is 2 (industrial headroom)"
         );
-        assert_eq!(b.infrastructure_slots(), 1, "not habitable, undeveloped");
+        assert_eq!(b.infrastructure_slots(), 2, "a Medium world's size base; not habitable, undeveloped");
         b.population = BODY_POP_DEVELOPED;
         assert_eq!(b.industrial_slots(), 3, "base 2 + one pop tier");
-        assert_eq!(b.infrastructure_slots(), 2);
+        assert_eq!(b.infrastructure_slots(), 3);
+        b.habitable = true;
+        assert_eq!(b.infrastructure_slots(), 4, "+1 habitable");
+        b.profile.size = BodySize::Large;
+        assert_eq!(b.infrastructure_slots(), 5, "Large base 3, like Industrial");
+        b.habitable = false;
         b.kind = BodyKind::GasGiant;
         assert_eq!(
             b.industrial_slots(),
             1,
             "gas giants have no base industrial slot (0 + one pop tier)"
         );
+        assert_eq!(b.infrastructure_slots(), 2, "a gas giant's one orbital site + one pop tier");
         b.deposits.clear();
         assert_eq!(b.resource_slots(), 0, "a bare rock hosts no extraction");
     }

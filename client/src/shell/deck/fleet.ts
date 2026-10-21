@@ -1001,13 +1001,14 @@ function driveLabel(g: GhostView): string {
 }
 
 function fleetTitle(g: GhostView): string {
-  if (g.tca && g.kind === "freighter") return g.rescue_service ? "AAA Rescue Tender" : g.migrant ? "Authority Migrant Liner" : "Authority Freighter";
+  if (g.tca && g.kind === "freighter") return g.merchant ? "Free Trader" : g.rescue_service ? "AAA Rescue Tender" : g.migrant ? "Authority Migrant Liner" : "Authority Freighter";
   if (g.tca) return "Authority Enforcement";
   if (g.pirate && g.kind === "raider") return "Pirate Interceptor";
   return `${shipKindLabel(g.kind)} fleet`;
 }
 
 function fleetHeaderIcon(g: GhostView): IconKey {
+  if (g.merchant) return "free_trader";
   if (fleetExactCount(g) !== 1) return "fleet";
   const onlyShip = g.composition?.find((entry) => entry.count === 1)?.kind ?? g.kind;
   return shipKindIcon(onlyShip);

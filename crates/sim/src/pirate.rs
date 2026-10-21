@@ -169,8 +169,10 @@ pub fn patrol_fitting(variant: u8) -> crate::module::Loadout {
         0 => vec![MassDriver], 1 => vec![TorpedoRack], _ => vec![ReflectivePlating],
     })
 }
-/// No enclave is seeded within this of ANY home slot (keeps piracy off the doorstep).
-pub const PIRATE_HOME_EXCLUSION: f64 = 2600.0;
+/// No enclave is seeded within this of ANY home slot (keeps piracy off the
+/// doorstep). §hub-district: about the gap the old 74k su home ring left to
+/// the pirate band, now that homes sit 100–150k su out.
+pub const PIRATE_HOME_EXCLUSION: f64 = 70_000.0;
 /// Enclaves live in this frontier band (0 = inner margin, 1 = rim) — the MID ring.
 pub const PIRATE_RING_LO: f64 = 0.30;
 pub const PIRATE_RING_HI: f64 = 0.72;
@@ -295,11 +297,21 @@ pub struct Enclave {
     /// their old dormant/respawn cycle; no new state is inferred from a clock.
     #[serde(default)]
     pub cleared: bool,
+    /// §charter-v4: a founder's privateer den. Its weak garrison holds the
+    /// site (no raids, no growth) and it stays cleared once it falls.
+    #[serde(default)]
+    pub founder_den: bool,
 }
 
 impl Enclave {
     /// Whether the enclave is ACTIVE (not in post-suppression dormancy) at `now`.
     pub fn active(&self, now: f64) -> bool {
         !self.cleared && now >= self.dormant_until
+    }
+
+    /// A fixed site: its garrison holds it, it never grows or raids, and it
+    /// stays cleared. The depot, the stronghold and the charter's dens.
+    pub fn permanent(&self) -> bool {
+        permanent_site(self.tier) || self.founder_den
     }
 }

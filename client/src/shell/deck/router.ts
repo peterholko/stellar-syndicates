@@ -8,6 +8,8 @@ export type DeckRouteName =
   | "logistics"
   | "doctrine"
   | "market"
+  | "merchant"
+  | "signals"
   | "research"
   | "officers"
   | "operations"
@@ -45,6 +47,8 @@ export const DECK_ROUTES: Record<DeckRouteName, DeckRouteMeta> = {
   logistics: { title: "Logistics", width: "wide" },
   doctrine: { title: "Doctrine", width: "standard" },
   market: { title: "Market Hub", width: "wide" },
+  merchant: { title: "Free Trader", width: "wide" },
+  signals: { title: "Signals", width: "wide" },
   research: { title: "Research", width: "wide" },
   officers: { title: "Officers", width: "wide" },
   operations: { title: "Operations", width: "standard" },

@@ -77,14 +77,13 @@ async fn crash_restores_only_the_saved_instant_including_orders_and_delayed_ligh
     game.handle_input(connect(2, 20, 2));
     game.handle_input(confirm_landing(1));
     game.handle_input(confirm_landing(2));
-    ticks(&mut game, 6);
-    let fleet = game
-        .world
-        .fleets
-        .values()
-        .find(|f| f.owner == PlayerId(10))
-        .unwrap()
-        .id;
+    ticks(&mut game, 1);
+    // §charter-v4: founders land with no ships; bring one for the order.
+    let fleet = sim::EntityId(9_300_000_010);
+    let home = game.world.players[&PlayerId(10)].home;
+    game.world.fleets.insert(fleet, sim::ship::Fleet::single(fleet, PlayerId(10), sim::ship::ShipKind::Raider,
+        home, sim::ship::FleetOrder::Idle, None));
+    ticks(&mut game, 5);
     let from = game.world.fleets[&fleet].pos;
     game.handle_input(GameInput::Intent {
         conn_id: 1,

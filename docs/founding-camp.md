@@ -33,30 +33,41 @@ not an optimistic timer.
 These are alternative profiles for the allocated home world, not three free
 colonies. Whole-system ownership and galaxy geography are unchanged. No extra
 habitable planets are generated. All profiles retain the same starter package:
-2,000 people, 2,000 credits, Tiny Freighter and Interceptor, plus 70 Alloys,
-27 Machinery, 15 Provisions, 20 Uranium, 10 Deuterium and 1 Warp Core (charter
-v3 folded the retired recovery cache's 20 Alloys and 4 Machinery into the kit;
-the fuel overhaul added the Uranium Mill's goods and the barge's Warp Core).
+6,000 people (Oct 16 2026: one workforce per charter post), 2,000 credits
+and the charter kit, and no ships
+([founding-charter.md](founding-charter.md), charter v4, Oct 14 2026).
 
-The four existing starting structures are gathered on the settled world:
-Habitat, Warehouse, Bioharvester and Agroplex. Ferrite extraction is available
-there, but the player must still build and staff the Mining Complex. No
-Shipyard is granted. Camp accommodation initially holds 3,000 people and its
-Warehouse holds 250 goods.
+**The landing (charter v4):** the colony ship lands on the settled world and
+becomes its Command Center. Nothing else stands anywhere in the system: no
+Warehouse, farms, Habitat, power plant or mine. The ship's holds, 1,000 goods,
+are the colony's storage, and its reactor gives the planet 1 MW. The settlers
+live aboard until the founder builds the Habitat. The founder builds the
+Bioharvester, Habitat, Agroplex and Mining Complex as the charter's first four
+steps. Camp accommodation is 3,000 people once Habitat I stands.
+
+The camp world is a Large habitable planet with 4 Infrastructure sites: the
+Habitat and Agroplex take 2, which leaves two, one for the charter's Academy.
+It also has two resource sites: Biomass for the Bioharvester and a basic
+Ferrite Ore deposit (Oct 14 2026) for the first mine. Infrastructure sites follow planet size like Industrial ones (Tiny 1,
+Small and Medium 2, Large 3, Huge 4), +1 if habitable, +1 once developed, plus
+the Command Center's bonus. Gas giants have 1 (orbital) and belts none. Until
+Oct 13 2026 every planet had a base of 1, so a camp world started with 3
+buildings on 2 sites and no room for the Academy.
 
 The first settlement is always a habitable world: the home's garden, the
 habitable world with a Biomass deposit for the Bioharvester, so every camp can
-feed itself. Every generated home has one. The home's Ferrite deposits move to
-the camp world, and its free resource slot stays open for the Mining Complex. A
-seven-seed, six-join test covers this for every starting slot, including one
-that previously starved. Galaxies from before this change are not supported;
+feed itself. Every generated home has one. Nothing moves to it: it has its own
+basic Ferrite Ore, and the system's ore body (Planet III in a fresh home) keeps
+its deposit for the charter's "Expand mining operations" step. A seven-seed,
+six-join test covers this for every starting slot, including one that
+previously starved. Galaxies from before this change are not supported;
 regenerate them with `--reset-galaxy`.
 
 ### Food reserve
 
 While the founding programme runs, and afterwards until the storehouse is
-expanded, a camp keeps a food reserve instead of filling its 250-unit Warehouse
-with food: the larger of ten minutes of demand and 40 units of Provisions and
+expanded, a camp keeps a food reserve instead of filling its storage with
+food: the larger of ten minutes of demand and 40 units of Provisions and
 Biomass together. At the reserve the Bioharvester pauses (and an Agroplex with
 nothing to process pauses with it); harvesting resumes below 75% of the
 reserve. The pause is quiet, with no timeline entry, and the planet panel shows
@@ -94,8 +105,8 @@ unchanged. See `client/art-src/planet-view/habitable-v1/README.md`.
 | --- | --- | --- | --- |
 | Prospect the home world | None | 60 seconds | Profile opportunity; prerequisite for surface workings |
 | Open surface workings | 8 Alloys, 2 Machinery | 120 seconds | 50% more Ferrite deposit output; requires a built mine |
-| Expand the storehouse | 7 Alloys, 1 Machinery | 90 seconds | Camp Warehouse capacity rises from 250 to 700 |
-| Build permanent quarters | 5 Alloys, 1 Machinery | 120 seconds | Base accommodation rises from 3,000 to 6,000 |
+| Expand the storehouse | 7 Alloys, 1 Machinery | 90 seconds | The colony ship's holds rise from 1,000 to 1,300 |
+| Build permanent quarters | 5 Alloys, 1 Machinery | 120 seconds | Base accommodation rises from 3,000 to 6,000; needs Habitat I |
 
 Projects appear in the planet panel and the parallel founding goals. They are
 not additional mandatory export milestones. They use unreserved local goods
@@ -105,9 +116,9 @@ Order delivery, build progress, completion notices and resulting capacity
 changes follow the normal command/report light delays. Research-gated structure
 tiers remain gated; these projects do not grant Tier II structures.
 
-All four projects plus the mine and Service Berth fit within the initial kit
-(50 Alloys and 19 Machinery), in any order. Project costs do not create an early
-requirement to import materials before the opening can be completed.
+The charter kit covers all four projects alongside the charter's own builds,
+in any order. Project costs do not create an early requirement to import
+materials before the opening can be completed.
 
 Storage does not increase loading speed. Housing does not grant people or
 workers: provisions, jobs and real migrant arrivals still govern growth.

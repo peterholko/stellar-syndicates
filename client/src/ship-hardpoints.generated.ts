@@ -3,7 +3,7 @@
 // loadShipModel): centred, nose toward -Z, nose-to-tail length 2. Points are
 // [x, y, z]: engine nozzle sockets, and gun barrel sockets (turret mounts when
 // a hull has no barrels). size is the hull's bounding box [x, y, z].
-import type { ShipKind } from "./protocol";
+import type { ShipArtKind } from "./shipart";
 
 export type HardpointXYZ = readonly [number, number, number];
 
@@ -13,7 +13,7 @@ export interface ShipHardpoints {
   readonly guns: readonly HardpointXYZ[];
 }
 
-export const SHIP_HARDPOINTS: Record<ShipKind, ShipHardpoints> = {
+export const SHIP_HARDPOINTS: Record<ShipArtKind, ShipHardpoints> = {
   "raider": {
     size: [1.6416, 0.3539, 2],
     engines: [[-0.233, -0.0431, 0.995], [0.233, -0.0431, 0.995]],
@@ -112,6 +112,11 @@ export const SHIP_HARDPOINTS: Record<ShipKind, ShipHardpoints> = {
   "freighter": {
     size: [1.3137, 0.3507, 2],
     engines: [[-0.4552, -0.0084, 1.0028], [-0.1695, -0.0084, 1.0028], [0.2059, -0.0084, 1.0028], [0.4916, -0.0084, 1.0028]],
+    guns: [],
+  },
+  "free_trader": {
+    size: [1.1972, 0.3454, 2],
+    engines: [[-0.3736, -0.0065, 1.001], [0.3736, -0.0065, 1.001]],
     guns: [],
   },
   "survey_probe": {

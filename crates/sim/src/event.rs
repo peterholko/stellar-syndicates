@@ -569,12 +569,90 @@ pub enum EventPayload {
         fleet: EntityId,
         system: EntityId,
     },
+    /// §contract-board: the day's contracts were posted at the Market Hub
+    /// (origin: the hub). Owner-only.
+    ContractBoardPosted {
+        owner: PlayerId,
+        day: u64,
+        count: u32,
+    },
+    /// §contract-board: enough of a day's contracts paid out; the bonus was
+    /// paid with the last of them. Owner-only, stamped on arrival.
+    ContractBoardBonus {
+        owner: PlayerId,
+        day: u64,
+        credits: f64,
+    },
+    /// §signals: the Command Center picked up a faint signal near home.
+    /// Owner-only.
+    SignalDetected {
+        owner: PlayerId,
+        signal: EntityId,
+        number: u32,
+        kind: crate::signals::SignalKind,
+        hazardous: bool,
+    },
+    /// §signals: a sweep's report reached command, with what it found.
+    /// Owner-only, stamped on arrival.
+    SignalReported {
+        owner: PlayerId,
+        signal: EntityId,
+        number: u32,
+        kind: crate::signals::SignalKind,
+        captain: String,
+        xp: u32,
+        hurt: bool,
+        finds: Vec<crate::signals::SignalFind>,
+    },
+    /// §medals: a weekly medal, awarded at the Market Hub's ledger close
+    /// (origin: the hub). Owner-only news; the published table is public.
+    MedalWon {
+        owner: PlayerId,
+        week: u32,
+        category: crate::rankings::RankingCategory,
+        place: u8,
+    },
     /// §founding R6/R10: the Authority paid a charter stipend for a founding
     /// milestone or a charter-ledger goal. Owner-only, stamped when earned.
     CharterStipend {
         owner: PlayerId,
         title: String,
         credits: f64,
+    },
+    /// §merchant: the traveling merchant docked at a corporation's home and
+    /// is trading. Owner-only.
+    MerchantArrived {
+        owner: PlayerId,
+        system: EntityId,
+    },
+    /// §merchant: a trade with the merchant settled. Owner-only.
+    MerchantTraded {
+        owner: PlayerId,
+        system: EntityId,
+        bought: std::collections::BTreeMap<Commodity, u32>,
+        sold: std::collections::BTreeMap<Commodity, u32>,
+        paid: f64,
+        received: f64,
+    },
+    /// §merchant: a trade with the merchant was refused. Owner-only.
+    MerchantTradeRefused {
+        owner: PlayerId,
+        system: EntityId,
+        reason: String,
+    },
+    /// §merchant: the merchant left (charter fulfilled or its stay ran out).
+    MerchantDeparted {
+        owner: PlayerId,
+        system: EntityId,
+    },
+    /// §charter-v5: the founder's privateer broke off its raid on the colony
+    /// at `pos` with `stolen` from the home stockpile. The free trader is on
+    /// its way. Owner-only, on its light home.
+    FoundingRaided {
+        owner: PlayerId,
+        system: EntityId,
+        pos: crate::Vec2,
+        stolen: std::collections::BTreeMap<crate::cargo::Commodity, u32>,
     },
     /// §pirates: a player DESTROYED a pirate enclave's base (ground its defense to
     /// 0). `owner` = the victor (they seize the plunder into their inventory);
@@ -1435,7 +1513,8 @@ impl Event {
             | SystemCaptured { pos, .. }
             | Citation { pos, .. } | EnforcementDispatched { pos, .. }
             | EnforcementWithdrawn { pos, .. } | JumpFailed { pos, .. }
-            | InterdictionRaised { pos, .. } | InterdictionCollapsed { pos, .. } => Some(*pos),
+            | InterdictionRaised { pos, .. } | InterdictionCollapsed { pos, .. }
+            | FoundingRaided { pos, .. } => Some(*pos),
             BuildStarted { system, .. } | SystemUpgraded { system, .. } | StationRefitted { system, .. }
             | SettlementDeveloped { system, .. }
             | BuildRejected { system, .. } | IndustryRejected { system, .. } | BuildCancelled { system, .. }
@@ -1446,6 +1525,8 @@ impl Event {
             | AssignmentSet { system, .. } | ProductionSuspended { system, .. }
             | ProductionResumed { system, .. } | FoodStateChanged { system, .. }
             | Brownout { system, .. } | PowerRestored { system, .. }
+            | MerchantArrived { system, .. } | MerchantTraded { system, .. }
+            | MerchantTradeRefused { system, .. } | MerchantDeparted { system, .. }
             | NodeSupplyChanged { system, .. } | GarrisonSupplyChanged { host: system, .. }
                 => world.systems.iter().find(|s| s.id == *system).map(|s| s.pos),
             ShipSpawned { id: fleet, .. } | FleetSupplyChanged { fleet, .. }

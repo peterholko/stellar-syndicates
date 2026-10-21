@@ -19,6 +19,21 @@ use sim::{
     TradeEvent, TransitMode, Vec2,
 };
 
+/// v55: §signals — `View.signals`, AnswerSignal, DismissSignal, the
+/// `signal` expedition task and `CaptainRosterView.hurt_until`; the first
+/// finds' news lines retired into the signals' first ten.
+/// v54: §medals (`RankingRow.medals`), §contract-board (`View.board`,
+/// `OperationView.board_day`) and §first-finds (news lines only).
+/// v53: §charter-v5 — the pirate raid: the `pirate_raid` and `sell_ore`
+/// stages, `FoundingView.raid_seen` / `raided` (for `counterfeit_revealed` /
+/// `ambushed`).
+/// v52: §charter-v4 — the privateer den: the `eliminate_den` stage and
+/// `FoundingView.den` / `den_cleared`.
+/// v51: §charter-v4 — the bare landing and the counterfeit semiconductors:
+/// eight new `FoundingStage`s (build_bioharvester … expand_mining) and
+/// `FoundingView.counterfeit_revealed` / `ambushed` / `land_grant_open`.
+/// v50: §merchant — the traveling merchant: MerchantTrade, the owner-only
+/// `merchant` catalogue and the public `GhostView.merchant` flag.
 /// v49: §fuel-overhaul — Uranium/Deuterium/Antimatter fleet stores
 /// (`GhostView.uranium`, `helium3`, `antimatter` and capacities), the Slow
 /// transit mode, solar plants (`PowerView.fuel` optional), SetDepotRule and
@@ -35,7 +50,7 @@ use sim::{
 /// Binary MessagePack transport: bump the WebSocket subprotocol and the
 /// client's wire version together; old text clients must refresh, not silently
 /// misinterpret binary data. Welcome retains the version for the UI contract.
-pub const PROTOCOL_VERSION: u32 = 49;
+pub const PROTOCOL_VERSION: u32 = 55;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +164,13 @@ pub enum ClientMsg {
         units: u32,
         #[serde(default)]
         max_unit_price: Option<f64>,
+    },
+    /// §merchant: one exchange with the merchant docked at the player's home.
+    MerchantTrade {
+        #[serde(default)]
+        buys: BTreeMap<Commodity, u32>,
+        #[serde(default)]
+        sells: BTreeMap<Commodity, u32>,
     },
 
     /// Sell at the Global Market (§9, §TCA): draws from the corp's
@@ -485,6 +507,15 @@ pub enum ClientMsg {
     AnnotateExploration {
         entry: sim::sites::JournalEntry,
     },
+    /// §signals: send a captained fleet to sweep one of your signals.
+    AnswerSignal {
+        fleet_id: EntityId,
+        signal_id: EntityId,
+    },
+    /// §signals: clear an answered signal's report card.
+    DismissSignal {
+        signal_id: EntityId,
+    },
 
     /// ATTACK a rival fleet (§offensive-orders Part 1) — the targeted destroy verb.
     /// Orderable on any rival fleet; the attacker must contain a raider. Light-
@@ -738,6 +769,19 @@ pub struct FoundingView {
     /// §belts: the charted belt the barge lesson points at. It is always in
     /// a system the corporation surveyed or owns.
     pub belt_target: Option<BeltTargetView>,
+    /// §charter-v5: command has seen the raiding privateer (from then on the
+    /// colony tracks it).
+    pub raid_seen: bool,
+    /// §charter-v5: the report of what the raid took has reached command.
+    pub raided: bool,
+    /// §charter-v4: the charter's land grant has opened the rest of the home
+    /// system ("Expand mining operations"); until then only the landing world.
+    pub land_grant_open: bool,
+    /// §charter-v4: the privateer den's system, once the privateer's kill
+    /// report (its log names the den) has reached command.
+    pub den: Option<EntityId>,
+    /// §charter-v4: the report that the den fell has reached command.
+    pub den_cleared: bool,
 }
 
 /// §belts: a belt by its system and its body id within that system.
@@ -745,6 +789,49 @@ pub struct FoundingView {
 pub struct BeltTargetView {
     pub system: EntityId,
     pub body: u32,
+}
+
+/// §merchant: the traveling merchant serving the viewer's home. Owner-only;
+/// the home is beside the command center, so its stall needs no light delay.
+#[derive(Debug, Clone, Serialize)]
+pub struct MerchantView {
+    pub fleet: EntityId,
+    pub system: EntityId,
+    pub phase: sim::merchant::MerchantPhase,
+    pub leave_by: f64,
+    pub markup: f64,
+    /// What it sells: stock left, its price and the Hub mid it set out with.
+    pub goods: Vec<MerchantGoodView>,
+    /// What it pays for Ferrite Ore, and how much more it will take.
+    pub ore_price: f64,
+    pub ore_room: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MerchantGoodView {
+    pub commodity: Commodity,
+    pub stock: u32,
+    pub price: f64,
+    pub hub_mid: f64,
+}
+
+impl MerchantView {
+    pub fn of(visit: &sim::merchant::MerchantVisit) -> Self {
+        Self {
+            fleet: visit.fleet,
+            system: visit.system,
+            phase: visit.phase,
+            leave_by: visit.leave_by,
+            markup: visit.markup,
+            goods: visit.stock.iter().map(|(&commodity, &stock)| MerchantGoodView {
+                commodity, stock,
+                price: visit.sell_price(commodity).unwrap_or(0.0),
+                hub_mid: visit.mids.get(&commodity).copied().unwrap_or(0.0),
+            }).collect(),
+            ore_price: visit.buy_price(Commodity::MetallicOre).unwrap_or(0.0),
+            ore_room: visit.ore_room(),
+        }
+    }
 }
 
 /// §founding R6: one paid charter milestone stipend.
@@ -1615,6 +1702,61 @@ pub struct OperationView {
     pub joined: bool,
     pub assigned_fleet: Option<EntityId>,
     pub winner: Option<PlayerId>,
+    /// §contract-board: the day this contract was posted on the board.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub board_day: Option<u64>,
+}
+
+/// §signals: the corporation's signals near home. Owner-only. What a signal
+/// holds stays off the wire until its report reaches command.
+#[derive(Debug, Clone, Serialize)]
+pub struct SignalsView {
+    /// When the next signal is due; None while the open slots are full.
+    pub next_at: Option<f64>,
+    pub open_max: u32,
+    /// The scripted first ten: how many reports are in, and what the next holds.
+    pub first_ten: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_ten_next: Option<&'static str>,
+    pub signals: Vec<SignalView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SignalView {
+    pub id: EntityId,
+    pub number: u32,
+    pub kind: sim::signals::SignalKind,
+    pub hazardous: bool,
+    pub pos: Vec2,
+    pub detected_at: f64,
+    pub xp: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub report: Option<SignalReportView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SignalReportView {
+    pub at: f64,
+    pub fleet: EntityId,
+    pub captain: String,
+    pub xp: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hurt_until: Option<f64>,
+    pub finds: Vec<sim::signals::SignalFind>,
+}
+
+/// §contract-board: the corporation's board, as of the reports that have
+/// reached command. Owner-only.
+#[derive(Debug, Clone, Serialize)]
+pub struct ContractBoardView {
+    pub day: u64,
+    /// When the next day's contracts are posted.
+    pub next_at: f64,
+    /// Contracts from this day's board paid out so far.
+    pub done: u32,
+    pub needed: u32,
+    pub bonus_credits: f64,
+    pub bonus_paid: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2358,6 +2500,9 @@ pub struct CaptainRosterView {
     pub assigned_fleet: Option<EntityId>,
     pub stationed_system: Option<EntityId>,
     pub recovering_until: Option<f64>,
+    /// §signals: hurt on a Hazardous signal; sits signals out until then.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hurt_until: Option<f64>,
     /// Withheld until the casualty report reaches command. `killed` is
     /// permanent; the other outcomes retain this officer through recovery.
     pub loss_fate: Option<sim::CaptainLossFate>,
@@ -2458,6 +2603,9 @@ pub struct GhostView {
     /// Public role identity for an Authority Astral Assistance tender.
     #[serde(default)]
     pub rescue_service: bool,
+    /// §merchant: public role identity for the traveling merchant's ship.
+    #[serde(default)]
+    pub merchant: bool,
     /// An observable convoy route (waypoints), light-delayed like its position.
     /// A silent rival convoy has no ghost at all outside detection coverage.
     pub route: Option<Vec<Vec2>>,
@@ -2698,6 +2846,9 @@ pub enum ServerMsg {
         /// guarded export). Owner-only.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         charter_ledger: Option<CharterLedgerView>,
+        /// §merchant: the traveling merchant serving the viewer's home.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        merchant: Option<MerchantView>,
         /// §TCA: the Market Hub freight desk — timetable, terms per owned
         /// destination, and the player's OWN shipment queue. Owner-only, fresh
         /// (it is the player's own administration, like the wallet).
@@ -2726,6 +2877,12 @@ pub enum ServerMsg {
         /// that has actually reached this corporation.
         #[serde(default)]
         operations: Vec<OperationView>,
+        /// §contract-board: None until the charter is fulfilled.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        board: Option<ContractBoardView>,
+        /// §signals: None until signals open (after the den).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signals: Option<SignalsView>,
         /// Arrived site snapshots only; never the procedural hidden-site table.
         #[serde(default)]
         exploration_sites: Vec<sim::sites::SiteReport>,

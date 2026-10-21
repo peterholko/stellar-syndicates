@@ -1,0 +1,39 @@
+{
+  "mode": "built-in image_gen",
+  "status": "All three opaque 1024 x 1024 masters delivered 2026-10-16 using built-in image_gen. Gestures revised at Peter's request: neutral offers a semiconductor, pleased laughs with an open palm, and scoff strokes a beard braid. Exact generation prompts and refinements are recorded in generation.json.",
+  "images": [
+    {
+      "slug": "teo-brannick",
+      "prompt": "Use case: character-portrait\nAsset type: one square character portrait for the trading panel of Stellar Syndicates, a persistent science-fiction colony and trading game. It is shown small, 72 to 96 pixels, beside the trader's spoken lines.\nInput image 1: STYLE reference only, one of the game's approved captain portraits. Match its realistic painterly digital portrait style, head-and-shoulders framing, soft directional light and restrained detail. Do not copy that person, the navy uniform or the bridge.\nInput image 2: SHIP AND LIVERY reference, the approved painting of the trader's ship, the Long Odds: white and charcoal hull, lilac-and-white striped market canopy, brass fittings. Use its colors for the clothing and the background; the ship itself does not appear.\nComposition/framing: one opaque square portrait, exactly 1024 x 1024 pixels. Head and shoulders plus one raised hand; the face a little above center, turned three-quarters toward the viewer, the eyes about 38% from the top. Keep the face, beard, loupe and raised hand inside the central 80% so the portrait survives a rounded-square crop. It must read at 72 pixels: a strong silhouette and clear light-dark separation between the face and an uncluttered background.\nSubject: Teo Brannick, an independent free trader in their sixties: big, broad-shouldered and heavyset; weathered, ruddy skin with deep laugh lines; bushy grey eyebrows; a long grey beard woven into two thick braids bound with small brass rings; a jeweler's brass loupe on a hinged headband flipped down over one eye, magnifying it; heavy brass and silver rings on every finger. A worn cream-and-plum spacer's long coat with brass buttons and frayed cuffs, a lilac-and-white striped scarf, a cargo-tag lanyard. One ringed hand is raised beside the face, holding up a small dark semiconductor module between thumb and forefinger as if naming its price. Expression: a broad, knowing, theatrical grin; a showman about to haggle, charming and a little dangerous, enjoying every second.\nBackground: the Long Odds' cargo deck, softly out of focus: stacked crates and strapped containers under the lilac-and-white striped canopy, a warm amber hanging lamp, a cool blue-white cargo-screen glow at one edge.\nStyle/medium: high-end realistic digital painting matching the game's captain portraits; grounded materials (worn wool, brass, leather), believable anatomy and hands. Not a cartoon, not a photograph, not a poster.\nLighting/mood: warm amber key light from the lamp, a cool blue-white rim on the far side, a faint lilac bounce from the canopy; friendly, roguish, larger than life.\nConstraints: absolutely no text, letters, numbers, logos, labels, watermark, borders, frames or interface. No weapons. Exactly one person. Deliver exactly one finished portrait.",
+      "master": "client/art-src/free-trader-portrait-v1/teo-brannick.png",
+      "size": "1024x1024",
+      "usedBy": "client/src/core/derive/trader.ts traderPortrait (neutral)",
+      "references": [
+        "client/public/art/captains/astrid_nystrom_senior.png",
+        "client/art-src/story-events-v1/free-trader-inbound.png"
+      ]
+    },
+    {
+      "slug": "teo-brannick-pleased",
+      "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET: Teo Brannick's neutral portrait. Keep the same identity, head size, framing, clothing, loupe, rings, two beard braids, lighting, colors and background. Change the facial expression and hand gesture.\nExpression: a delighted open-mouthed belly laugh, eyes crinkled nearly shut, head tipped back a few degrees.\nGesture: remove the semiconductor and replace the pinching pose with a welcoming open palm at shoulder/chin height, angled diagonally upward and slightly toward the viewer, fingers gently spread and relaxed. Reposition the forearm and sleeve naturally. One visible hand with five anatomically correct digits, heavy brass and silver rings, no handheld object, and no duplicate limbs. Keep the hand inside the central 80% without covering the face.\nOutput: one opaque 1024 x 1024 square portrait. Realistic painterly digital finish. No text, letters, numbers, glyphs, logos, labels, watermark, borders, frames, interface or weapons. Cargo tag remains blank.",
+      "master": "client/art-src/free-trader-portrait-v1/teo-brannick-pleased.png",
+      "size": "1024x1024",
+      "usedBy": "client/src/core/derive/trader.ts traderPortrait (pleased: a deal, a big order)",
+      "optional": true,
+      "references": [
+        "client/art-src/free-trader-portrait-v1/teo-brannick.png"
+      ]
+    },
+    {
+      "slug": "teo-brannick-scoff",
+      "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET: Teo Brannick's neutral portrait. Keep the same identity, head size, framing, clothing, loupe, rings, two beard braids, lighting, colors and background. Change the facial expression and hand gesture.\nExpression: a theatrical scoff at a poor offer, one bushy eyebrow raised, the eye behind the loupe narrowed, lips pressed into a skeptical half-frown, chin pulled back.\nGesture: remove the semiconductor and lower the hand inward across the upper chest to stroke the upper part of the image-left beard braid just below the chin. Thumb behind the beard, ringed fingers loosely curled around it in an unconvinced, contemplative touch. Reposition the forearm and sleeve naturally. Preserve both beard lengths and brass bands apart from the slight bend at the touch. One visible hand with five anatomically correct digits, no handheld object, and no duplicate limbs.\nOutput: one opaque 1024 x 1024 square portrait. Realistic painterly digital finish. No text, letters, numbers, glyphs, logos, labels, watermark, borders, frames, interface or weapons. Cargo tag remains blank.",
+      "master": "client/art-src/free-trader-portrait-v1/teo-brannick-scoff.png",
+      "size": "1024x1024",
+      "usedBy": "client/src/core/derive/trader.ts traderPortrait (scoff: a refusal)",
+      "optional": true,
+      "references": [
+        "client/art-src/free-trader-portrait-v1/teo-brannick.png"
+      ]
+    }
+  ]
+}

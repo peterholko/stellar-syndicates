@@ -94,7 +94,7 @@ impl World {
                 // No CC/global sensor sharing or unseen current-position aim.
                 let age = crate::transit::delay(other.pos, fleet.pos, self.config.c);
                 let seen = other.pos - other.vel * age;
-                let sig = other.signature()
+                let sig = other.detection_signature()
                     * self.veil_factor_held(&held, other.owner, seen)
                     * self.nebula_signature_factor(seen);
                 let detected = if other.broadcasts() {
@@ -586,12 +586,9 @@ impl World {
                             }
                         }),
                 );
-                sources.extend(
-                    self.emplacements
-                        .iter()
-                        .filter(|e| e.owner == player)
-                        .map(|e| (e.pos, e.kind.sensor_range())),
-                );
+                // §sensors: Sensor Arrays find contacts too, not only deep
+                // space sensors — the arrays are how a home's reach grows.
+                sources.extend(self.array_sensor_sources(player));
                 for site in self.exploration.sites.values() {
                     let detailed = site.surveyed.contains(&player);
                     let key = (if detailed { site.revision } else { 0 }, detailed);
@@ -776,7 +773,8 @@ impl World {
                     changed = true;
                 }
             }
-            ExpeditionTask::Study | ExpeditionTask::Extract => unreachable!(),
+            // Signals are not sites (`world::signals`).
+            ExpeditionTask::Study | ExpeditionTask::Extract | ExpeditionTask::Signal => unreachable!(),
         }
         self.fleets.get_mut(&id).unwrap().order = FleetOrder::Idle;
         self.fleets.get_mut(&id).unwrap().vel = Vec2::ZERO;

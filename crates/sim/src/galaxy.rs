@@ -202,6 +202,10 @@ pub struct StarSystem {
     /// outlast the flag). Owner-only in the View.
     #[serde(default)]
     pub specialists: BTreeMap<crate::specialist::SpecialistKind, u32>,
+    /// §charter-v4: the landed colony ship's holds, the home's storage before
+    /// any Warehouse (`build::LANDING_HOLDS`). Zero everywhere else.
+    #[serde(default)]
+    pub landing_holds: f64,
 }
 
 /// The live BLOCKADE at a system (§contestable-territory). Recomputed each tick
@@ -861,6 +865,17 @@ impl StarSystem {
             .sum::<u32>() + self.industry.workforce()
     }
 
+    /// §workforce cap: the crews this system's built structures can take —
+    /// one per tier of every structure that works only with a crew.
+    pub fn workforce_posts(&self) -> u32 {
+        self.bodies
+            .iter()
+            .flat_map(|b| b.structures.iter())
+            .filter(|(kind, _)| kind.takes_workforce())
+            .map(|(_, tier)| *tier)
+            .sum()
+    }
+
     /// §economy Part 3: the SYSTEM-wide staffing share — the one workforce
     /// pool (Σ body populations) diluted across every posted crew on every
     /// body, uniformly (fair, legible, deadlock-free).
@@ -1017,6 +1032,29 @@ impl StarSystem {
         };
         ground + crate::build::STORAGE_PER_ORBITAL_WAREHOUSE_TIER
                 * self.tier_sum(crate::build::StructureKind::OrbitalWarehouse) as f64
+            + self.landing_holds_cap()
+    }
+
+    /// §charter-v4: the colony ship's holds, enlarged by the founding camp's
+    /// Storehouse project.
+    pub fn landing_holds_cap(&self) -> f64 {
+        if self.landing_holds <= 0.0 {
+            return 0.0;
+        }
+        let storehouse = self.bodies.iter().any(|b| b.founding_camp.as_ref()
+            .is_some_and(|c| c.done(crate::settlement::SettlementProject::Storehouse)));
+        self.landing_holds + if storehouse { crate::build::STOREHOUSE_HOLDS } else { 0.0 }
+    }
+
+    /// §charter-v4: the colony ship lands and becomes the Command Center.
+    /// Nothing else stands anywhere in the system (no farms, Habitat,
+    /// Warehouse or power plant), and its holds are the colony's storage.
+    pub(crate) fn bare_landing(&mut self) {
+        for b in &mut self.bodies {
+            b.structures.retain(|k, _| *k == crate::build::StructureKind::CommandCenter);
+            b.assignments.clear();
+        }
+        self.landing_holds = crate::build::LANDING_HOLDS;
     }
 
     /// Founding kit / old-save migration only, never a per-tick repair. A lost
@@ -1030,15 +1068,28 @@ impl StarSystem {
     /// Founding / one-time migration only. Never rebuild lost administration on
     /// a tick or a reconnect, and never seed an uninhabited industrial outpost.
     /// §power: a new landing command comes with its planet's first Power Plant.
+    /// The landing module on every settled solid world. §charter-v4: no free
+    /// power plant comes with it; its Command Center's reactor powers the
+    /// planet (`power::base_mw`).
     pub(crate) fn seed_command_centers(&mut self) {
         for body in &mut self.bodies {
             if body.kind != crate::body::BodyKind::GasGiant && !body.is_belt()
                 && body.population >= crate::build::COMMAND_CENTER_MIN_POPULATION
                 && body.tier(crate::StructureKind::CommandCenter) == 0 {
                 body.set_tier(crate::StructureKind::CommandCenter, 1);
-                if body.tier(crate::StructureKind::PowerPlant) == 0 {
-                    body.set_tier(crate::StructureKind::PowerPlant, 1);
-                }
+            }
+        }
+    }
+
+    /// The pre-v4 landing plant: a Solar Array I beside each Command Center.
+    /// Generated homes keep it for the legacy mechanics sandbox (a founder's
+    /// bare landing removes it) and old saves keep it on migration; a v4
+    /// colony landing gets none.
+    pub(crate) fn seed_landing_plants(&mut self) {
+        for body in &mut self.bodies {
+            if body.tier(crate::StructureKind::CommandCenter) > 0
+                && body.tier(crate::StructureKind::PowerPlant) == 0 {
+                body.set_tier(crate::StructureKind::PowerPlant, 1);
             }
         }
     }
@@ -1079,6 +1130,10 @@ pub struct HomeSlot {
     /// mineral-led second. Exact properties remain survey-gated to each player.
     #[serde(default)]
     pub founding_opportunities: Vec<EntityId>,
+    /// §charter-v4: this home's den system: a local survey stop holding only a
+    /// rich asteroid belt, where the founder's privateer den stands.
+    #[serde(default)]
+    pub den_system: Option<EntityId>,
 }
 
 /// §ore-ladder: the RAW deposit table — what a system's deposits can be, how
@@ -1213,15 +1268,25 @@ pub fn generate_systems(
     radius: f64,
     count: u32,
     names: &[String],
+    homes: &[Vec2],
     alloc: &mut dyn FnMut() -> EntityId,
 ) -> Vec<StarSystem> {
     let mut systems = Vec::with_capacity(count as usize);
     for i in 0..count as usize {
-        // Area-uniform radius in [0.12R, 0.96R].
-        let u = rng.next_f64().sqrt();
-        let r = radius * (0.12 + 0.84 * u);
-        let theta = rng.range(0.0, std::f64::consts::TAU);
-        let pos = Vec2::from_polar(theta, r);
+        // Area-uniform radius in [0.12R, 0.96R]. §hub-district: redrawn
+        // (a bounded number of times) to stay off every home's doorstep.
+        let draw = |rng: &mut Rng| {
+            let u = rng.next_f64().sqrt();
+            (u, Vec2::from_polar(rng.range(0.0, std::f64::consts::TAU), radius * (0.12 + 0.84 * u)))
+        };
+        let mut placed = draw(rng);
+        for _ in 0..64 {
+            if homes.iter().all(|h| h.distance(placed.1) >= FRONTIER_HOME_CLEARANCE_SU) {
+                break;
+            }
+            placed = draw(rng);
+        }
+        let (u, pos) = placed;
         let id = alloc();
         // §naming: the caller supplies a galaxy-unique, seed-shuffled name list.
         let name = names[i].clone();
@@ -1236,6 +1301,10 @@ pub fn generate_systems(
     }
     systems
 }
+
+/// §hub-district: frontier stars keep this far from every home, outside its
+/// doorstep stars (15–22k su).
+pub const FRONTIER_HOME_CLEARANCE_SU: f64 = 25_000.0;
 
 /// Shared empty administration for both full colony systems and sparse
 /// exploration systems. The caller owns the body roster; no filler planets or
@@ -1279,6 +1348,7 @@ pub(crate) fn unowned_system(
         legacy_population: 0.0,
         legacy_assignments: BTreeMap::new(),
         specialists: BTreeMap::new(),
+        landing_holds: 0.0,
     }
 }
 
@@ -1339,41 +1409,82 @@ pub const HOME_NEIGHBOURS: usize = 6;
 /// world stays habitable (§rare-gardens).
 pub const MULTI_HABITABLE_SHARE: f64 = 0.08;
 pub const HOME_NEIGHBOURS_HABITABLE: usize = 2;
-/// The neighbourhood ring around a home: outside the local survey stops
-/// (18–33k su) and inside the 80,000 su command-center sensor bubble.
+/// The neighbourhood ring around a home: outside its doorstep stars (15–22k
+/// su) and inside the 80,000 su command-center sensor bubble. §hub-district:
+/// only on the home's own side, nearer it than any other home.
 pub const NEIGHBOURHOOD_INNER_SU: f64 = 28_000.0;
 pub const NEIGHBOURHOOD_OUTER_SU: f64 = 70_000.0;
 
-/// Generate `count` home-anchor slots evenly spaced around a ring at
-/// `ring_frac · radius`, with small seeded jitter so they aren't perfectly
-/// regular.
-pub const HOME_SLOT_RADIAL_JITTER_FRAC: f64 = 0.08;
+/// §hub-district (Oct 15 2026): every home starts about the same distance from
+/// the wormhole hub. Homes sit [`HOME_RING_SU`] out, within a
+/// [`HOME_BAND_SU`]-wide band, and at least [`HOME_SPACING_SU`] apart: twice
+/// the reach of their doorstep stars, plus a buffer. One hub holds 20.
+pub const HOME_RING_SU: f64 = 125_000.0;
+pub const HOME_BAND_SU: f64 = 50_000.0;
+pub const HOME_SPACING_SU: f64 = 60_000.0;
+/// A single ring's radial scatter: homes within ±5k su of the ring.
+pub const HOME_RING_JITTER_SU: f64 = 5_000.0;
+/// Small stars scattered between the hub and the homes, area-uniform in this
+/// annulus and off every doorstep, so the space inside the ring isn't empty.
+pub const HUB_GAP_STARS: u32 = 12;
+pub const HUB_GAP_SU: (f64, f64) = (20_000.0, 100_000.0);
 
+/// Generate `count` home-anchor slots around the hub at `ring_frac · radius`.
+/// - Up to 12 (as many as fit [`HOME_SPACING_SU`] apart): one ring, every
+///   home the same distance out, give or take [`HOME_RING_JITTER_SU`].
+/// - 13 to 20: two staggered rows at the band's edges, alternating inner and
+///   outer. An odd count leaves one place empty.
+/// - More than a hub holds: still two rows, closer than the spacing.
+///
+/// Each slot draws its two jitter values from `rng`, bounded so the spacing
+/// survives any draw.
 pub fn generate_home_slots(
     rng: &mut Rng,
     radius: f64,
     ring_frac: f64,
     count: u32,
 ) -> Vec<HomeSlot> {
-    let count = count.max(1);
-    let base = radius * ring_frac;
-    let mut slots = Vec::with_capacity(count as usize);
-    for i in 0..count {
-        let base_angle = std::f64::consts::TAU * (i as f64) / (count as f64);
-        // Jitter angle by up to ±¼ of the slot spacing, radius by ±8%.
-        let ang_jitter = rng.range(-1.0, 1.0) * (std::f64::consts::TAU / count as f64) * 0.25;
-        let r_jitter =
-            base * rng.range(-HOME_SLOT_RADIAL_JITTER_FRAC, HOME_SLOT_RADIAL_JITTER_FRAC);
-        let pos = Vec2::from_polar(base_angle + ang_jitter, base + r_jitter);
-        slots.push(HomeSlot {
-            pos,
-            owner: None,
-            claimed_at: None,
-            system: None, // set when the co-located home system is generated
-            founding_opportunities: Vec::new(),
-        });
-    }
-    slots
+    use std::f64::consts::{PI, TAU};
+    let count = count.max(1) as usize;
+    let centre = radius * ring_frac;
+    let spacing = HOME_SPACING_SU;
+    // Half-angle whose chord at `r` is the spacing (None: no chord that long).
+    let half = |r: f64| (spacing / (2.0 * r) <= 1.0).then(|| (spacing / (2.0 * r)).asin());
+    let one_ring = count == 1 || 2.0 * centre * (PI / count as f64).sin() >= spacing;
+    // (radius, angle) places, and how far each may jitter in angle and radius.
+    let (places, turn, sway): (Vec<(f64, f64)>, f64, f64) = if one_ring {
+        let step = TAU / count as f64;
+        let sway = HOME_RING_JITTER_SU.min(centre * 0.5);
+        // Neighbours swung toward each other and both pulled inward still clear it.
+        let turn = half(centre - sway).map_or(0.0, |h| ((step - 2.0 * h) / 2.0).clamp(0.0, step / 4.0));
+        ((0..count).map(|i| (centre, step * i as f64)).collect(), turn, sway)
+    } else {
+        let places = count + count % 2;
+        let step = TAU / places as f64;
+        let (inner, outer) = (centre - HOME_BAND_SU / 2.0, centre + HOME_BAND_SU / 2.0);
+        // Same-row neighbours are two steps apart; adjacent ones one step,
+        // across the band.
+        let same = half(inner).map_or(0.0, |h| step - h);
+        let cos_min = (inner * inner + outer * outer - spacing * spacing) / (2.0 * inner * outer);
+        let across = if cos_min >= 1.0 { step / 4.0 } else if cos_min <= -1.0 { 0.0 } else { (step - cos_min.acos()) / 2.0 };
+        let turn = same.min(across).clamp(0.0, step / 4.0);
+        let rows = (0..count).map(|i| (if i % 2 == 0 { inner } else { outer }, step * i as f64)).collect();
+        (rows, turn, 0.0)
+    };
+    places
+        .into_iter()
+        .map(|(r, angle)| {
+            let pos = Vec2::from_polar(angle + rng.range(-1.0, 1.0) * turn, r + rng.range(-1.0, 1.0) * sway);
+            HomeSlot {
+                pos,
+                owner: None,
+                claimed_at: None,
+                system: None, // set when the co-located home system is generated
+                founding_opportunities: Vec::new(),
+                den_system: None,
+            }
+        })
+        .collect()
 }
 
 /// XORed into the seed so each home system's geology is deterministic but
@@ -1389,7 +1500,9 @@ const HOME_SYSTEM_MAGIC: u64 = 0x484F_4D45_5359_5354; // "HOMESYST"
 fn generate_home_deposits(rng: &mut Rng) -> Vec<Deposit> {
     // §economy: the direct successors of the old Provisions + Ore pair — the
     // home extracts BIOMASS (→ Provisions via the Agroplex) and METALLIC ORE
-    // (→ Alloys via a Smelter), at the same modest richnesses.
+    // (→ Alloys via a Smelter), at the same modest richnesses. §home-ore: the
+    // garden's own basic ore is added after body generation (see
+    // `generate_home_system`), so this roster and its draws stay as they were.
     vec![
         Deposit {
             resource: Commodity::Biomass,
@@ -1419,6 +1532,30 @@ pub(crate) fn home_starting_stockpile() -> BTreeMap<Commodity, f64> {
         (Commodity::Machinery, 27.0),
         (Commodity::Alloys, 70.0),
         (Commodity::WarpCore, 1.0),
+    ].into_iter().collect()
+}
+
+/// §charter-v4: the outfitting kit in the landed colony ship's holds. It
+/// covers every charter build but semiconductors: the Bioharvester, Habitat,
+/// Agroplex, mine, Solar Array, Shipyard and its second level, the
+/// Interceptor (its Armaments too), the Academy, the expansion's Solar Array
+/// and mine, the Survey Probe and the Mining Barge, plus a Tiny Freighter for
+/// Hub trade and the Uranium Mill's goods (20 Alloys, 8 Machinery) so a home
+/// can fuel its own hulls. §charter-v5: the raid takes its semiconductors and
+/// Armaments (`founding::RAID_TAKES`) as the mine comes online.
+/// Founders land with no ships and new hulls fill at the dock, so its Uranium
+/// (with the home's fuel seed) fills a Tiny Freighter (52.5), the Survey
+/// Probe and most of the Mining Barge until the Uranium Mill runs.
+pub(crate) fn charter_kit() -> BTreeMap<Commodity, f64> {
+    [
+        (Commodity::Provisions, crate::founding::KIT_PROVISIONS),
+        (Commodity::Uranium, 100.0),
+        (Commodity::Alloys, 410.0),
+        (Commodity::Machinery, 163.0),
+        (Commodity::Polymers, 40.0),
+        (Commodity::Armaments, crate::founding::KIT_ARMAMENTS),
+        (Commodity::WarpCore, 3.0),
+        (Commodity::Electronics, crate::founding::KIT_SEMICONDUCTORS),
     ].into_iter().collect()
 }
 
@@ -1464,6 +1601,20 @@ pub fn generate_home_system(
     }) {
         b.profile.geology = crate::body::Geology::Average;
     }
+    // §home-ore (Oct 14 2026): the garden also holds a basic Ferrite Ore
+    // deposit beside its Biomass, so the first mine can stand on the habitable
+    // world. The system's own ore body keeps its deposit. Added after the
+    // rolls above with a fixed mid-range richness, so no other home draw moves.
+    if let Some(b) = garden.and_then(|g| bodies.iter_mut().find(|b| b.id == g))
+        && !b.deposits.iter().any(|d| d.resource == Commodity::MetallicOre)
+    {
+        b.deposits.push(Deposit {
+            resource: Commodity::MetallicOre,
+            richness: DEPOSIT_BASE_RICHNESS * 0.85,
+            reserves: None,
+            accessibility: 0.1,
+        });
+    }
     let mut sys = StarSystem {
         id,
         pos,
@@ -1499,6 +1650,7 @@ pub fn generate_home_system(
         legacy_population: 0.0,
         legacy_assignments: BTreeMap::new(),
         specialists: BTreeMap::new(),
+        landing_holds: 0.0,
     };
     // §rare-gardens: the garden is the home's ONLY habitable world. More people
     // need another system; a system with two such worlds should feel special.
@@ -1522,6 +1674,7 @@ pub fn generate_home_system(
     }
     sys.seed_population(crate::colony::HOME_FOUNDING_POP);
     sys.seed_command_centers();
+    sys.seed_landing_plants();
     // Both starting cohorts staff the food chain. Posting a mining job shares
     // that workforce under the normal staffing rule and attracts Managed migrants;
     // it does not require a third, silently granted cohort.
@@ -2061,6 +2214,31 @@ mod deposit_tests {
             let frontier = rng.next_f64();
             let ore = roll_raw_deposit_where(&mut rng, frontier, |c| c.is_ore());
             assert!(ore.is_ore(), "{ore:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod home_ore_tests {
+    use super::*;
+
+    /// §home-ore: the habitable world holds a basic Ferrite Ore deposit beside
+    /// its Biomass (two resource sites), and the system's own ore body keeps its.
+    #[test]
+    fn the_home_planet_holds_basic_ore_beside_its_biomass() {
+        for seed in [1, 42, 123, 456, 812, 9001] {
+            for index in 0..4 {
+                let sys = generate_home_system(seed, index, EntityId(index as u64 + 1),
+                    Vec2::ZERO, "Home".into());
+                let garden = sys.bodies.iter().find(|b| b.habitable).expect("a home has its garden");
+                let has = |b: &crate::body::Body, c: Commodity| b.deposits.iter().any(|d| d.resource == c);
+                assert!(has(garden, Commodity::Biomass) && has(garden, Commodity::MetallicOre));
+                assert_eq!(garden.resource_slots(), 2, "a Bioharvester and a mine side by side");
+                let ore = garden.deposits.iter().find(|d| d.resource == Commodity::MetallicOre).unwrap();
+                assert_eq!(ore.richness, DEPOSIT_BASE_RICHNESS * 0.85, "basic, and no extra draw");
+                assert!(sys.bodies.iter().any(|b| b.id != garden.id && has(b, Commodity::MetallicOre)),
+                    "the system's own ore body keeps its deposit");
+            }
         }
     }
 }

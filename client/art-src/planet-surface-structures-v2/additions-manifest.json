@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "scope": "Additions and replacements after the original v2 review set (Oct 2026), approved by Peter in conversation. Same entry shape as source-manifest.json. A replacement takes the place of the original entry for the same family and tier; the original master stays on disk and in source-manifest.json as provenance.",
+  "scope": "Additions and replacements after the original v2 review set (Oct 2026), approved by Peter in conversation. Same entry shape as source-manifest.json. A replacement takes the place of the original entry for the same family and tier; the original master stays on disk and in source-manifest.json as provenance. §power (Oct 14 2026): the Power Plant family, Solar Array I–II and Fusion Plant III–VI, plus `orbitals`: the floating plant drawn on belts and gas giants, one look per tier range.",
   "buildings": [
     {
       "id": "living_terraces/tier-1",
@@ -181,6 +181,186 @@
         "bytes": 1220533,
         "sha256": "9643b0898f959a4c7490321e0f8d88f0393fb70ec25984c8a86a6a695f2f1bf1"
       }
+    },
+    {
+      "id": "power_plant/tier-1",
+      "family": "power_plant",
+      "tier": 1,
+      "name": "Power Plant",
+      "identity": "The planet's power station. Tiers I–II are Solar Arrays: tilted rows of dark blue-grey photovoltaic panels on steel stands, an inverter house and a fenced transformer yard. Tiers III–VI are Fusion Plants: a domed or toroidal reactor hall ringed by field-coil housings, radiator fins and a transformer yard; Deuterium tanks at III–IV, frosted cryogenic Helium-3 tanks at V–VI.",
+      "description": "a small solar array: three short rows of tilted photovoltaic panels on steel stands, a small inverter house and a small transformer yard",
+      "file": "buildings/power_plant/tier-1.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-121da711-6e79-4e66-bf83-7bea6c121ced.png",
+      "promptFile": "buildings/power_plant/tier-1.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1254,
+        "height": 1254,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.633505795807483,
+        "edgeMax": 2,
+        "boundsAlpha16": {
+          "left": 14,
+          "top": 249,
+          "right": 1236,
+          "bottom": 1056
+        },
+        "bytes": 1696735,
+        "sha256": "69f8a80c0f9e8d1d50dc6ccb50585921902b65cab67526aeb2b94e1ebcb7235b"
+      }
+    },
+    {
+      "id": "power_plant/tier-2",
+      "family": "power_plant",
+      "tier": 2,
+      "name": "Power Plant",
+      "identity": "The planet's power station. Tiers I–II are Solar Arrays: tilted rows of dark blue-grey photovoltaic panels on steel stands, an inverter house and a fenced transformer yard. Tiers III–VI are Fusion Plants: a domed or toroidal reactor hall ringed by field-coil housings, radiator fins and a transformer yard; Deuterium tanks at III–IV, frosted cryogenic Helium-3 tanks at V–VI.",
+      "description": "a larger solar array: five panel rows stepping up toward a taller inverter hall, and a wider transformer yard",
+      "file": "buildings/power_plant/tier-2.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-ac35ca0f-73ec-41cc-bad0-e9ffec11e514.png",
+      "promptFile": "buildings/power_plant/tier-2.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1254,
+        "height": 1254,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.6266047531471858,
+        "edgeMax": 1,
+        "boundsAlpha16": {
+          "left": 24,
+          "top": 223,
+          "right": 1241,
+          "bottom": 1122
+        },
+        "bytes": 1585251,
+        "sha256": "528ab71eace7ed7d0df3c57595d72d4477088840d420810d7cf86bfbc9b764b8"
+      }
+    },
+    {
+      "id": "power_plant/tier-3",
+      "family": "power_plant",
+      "tier": 3,
+      "name": "Power Plant",
+      "identity": "The planet's power station. Tiers I–II are Solar Arrays: tilted rows of dark blue-grey photovoltaic panels on steel stands, an inverter house and a fenced transformer yard. Tiers III–VI are Fusion Plants: a domed or toroidal reactor hall ringed by field-coil housings, radiator fins and a transformer yard; Deuterium tanks at III–IV, frosted cryogenic Helium-3 tanks at V–VI.",
+      "description": "a first fusion plant: one compact domed reactor hall ringed with field-coil housings, two squat insulated Deuterium tanks and a bank of radiator fins",
+      "file": "buildings/power_plant/tier-3.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-766a72da-0544-4af5-84e8-315ff3c60406.png",
+      "promptFile": "buildings/power_plant/tier-3.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1254,
+        "height": 1254,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.46123473465452813,
+        "edgeMax": 1,
+        "boundsAlpha16": {
+          "left": 35,
+          "top": 126,
+          "right": 1237,
+          "bottom": 1168
+        },
+        "bytes": 2169096,
+        "sha256": "35599cf06318d30132fdba36fddb9a1e474231fab61a9364a966c431943cdd91"
+      }
+    },
+    {
+      "id": "power_plant/tier-4",
+      "family": "power_plant",
+      "tier": 4,
+      "name": "Power Plant",
+      "identity": "The planet's power station. Tiers I–II are Solar Arrays: tilted rows of dark blue-grey photovoltaic panels on steel stands, an inverter house and a fenced transformer yard. Tiers III–VI are Fusion Plants: a domed or toroidal reactor hall ringed by field-coil housings, radiator fins and a transformer yard; Deuterium tanks at III–IV, frosted cryogenic Helium-3 tanks at V–VI.",
+      "description": "a larger fusion plant: a taller domed reactor hall joined to a control block, four insulated Deuterium tanks and taller radiator banks",
+      "file": "buildings/power_plant/tier-4.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-b28e97ee-6993-4e63-bb81-8b77b254cf69.png",
+      "promptFile": "buildings/power_plant/tier-4.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1254,
+        "height": 1254,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.3492320586881151,
+        "edgeMax": 10,
+        "boundsAlpha16": {
+          "left": 41,
+          "top": 67,
+          "right": 1245,
+          "bottom": 1142
+        },
+        "bytes": 2467588,
+        "sha256": "1ecb8fffd2164b787e7d14fc410888fe6e12a13a4e71600f749009cdf00b9e12"
+      }
+    },
+    {
+      "id": "power_plant/tier-5",
+      "family": "power_plant",
+      "tier": 5,
+      "name": "Power Plant",
+      "identity": "The planet's power station. Tiers I–II are Solar Arrays: tilted rows of dark blue-grey photovoltaic panels on steel stands, an inverter house and a fenced transformer yard. Tiers III–VI are Fusion Plants: a domed or toroidal reactor hall ringed by field-coil housings, radiator fins and a transformer yard; Deuterium tanks at III–IV, frosted cryogenic Helium-3 tanks at V–VI.",
+      "description": "a Helium-3 fusion plant: a broad toroidal reactor hall under a ribbed dome, frosted cryogenic Helium-3 tanks and wide radiator banks",
+      "file": "buildings/power_plant/tier-5.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-78ea9b23-c791-413e-baa9-3340a55a42bc.png",
+      "promptFile": "buildings/power_plant/tier-5.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1254,
+        "height": 1254,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.45008063510959506,
+        "edgeMax": 1,
+        "boundsAlpha16": {
+          "left": 12,
+          "top": 110,
+          "right": 1244,
+          "bottom": 1157
+        },
+        "bytes": 2125197,
+        "sha256": "1722cb8b3e3f282bac5c9ac8aa1c668f9fa2302cd52b7f428ed229385a5a09cb"
+      }
+    },
+    {
+      "id": "power_plant/tier-6",
+      "family": "power_plant",
+      "tier": 6,
+      "name": "Power Plant",
+      "identity": "The planet's power station. Tiers I–II are Solar Arrays: tilted rows of dark blue-grey photovoltaic panels on steel stands, an inverter house and a fenced transformer yard. Tiers III–VI are Fusion Plants: a domed or toroidal reactor hall ringed by field-coil housings, radiator fins and a transformer yard; Deuterium tanks at III–IV, frosted cryogenic Helium-3 tanks at V–VI.",
+      "description": "a great Helium-3 fusion plant: a larger toroidal reactor hall with a second reactor hall beside it, tall radiator banks and a row of frosted cryogenic tanks",
+      "file": "buildings/power_plant/tier-6.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-fce276c1-025c-4c62-a11f-a8b975a141e1.png",
+      "promptFile": "buildings/power_plant/tier-6.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1254,
+        "height": 1254,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.4687888708286593,
+        "edgeMax": 21,
+        "boundsAlpha16": {
+          "left": 9,
+          "top": 118,
+          "right": 1253,
+          "bottom": 1109
+        },
+        "bytes": 2149470,
+        "sha256": "0a956096ca165ef8972a9f45432d15623a6bb49093681ad0924172895e4d49ab"
+      }
     }
   ],
   "biomes": [
@@ -304,6 +484,78 @@
         },
         "bytes": 1624532,
         "sha256": "8eb85fc1e4f1c54c88f940e94c6713d4521a7e0b0e3b0aa114f53ce2fd136b9d"
+      }
+    }
+  ],
+  "orbitals": [
+    {
+      "id": "power_plant/orbital-solar",
+      "family": "power_plant",
+      "variant": "solar",
+      "tiers": [
+        1,
+        2
+      ],
+      "name": "Orbital Solar Array",
+      "identity": "The planet's power station. Tiers I–II are Solar Arrays: tilted rows of dark blue-grey photovoltaic panels on steel stands, an inverter house and a fenced transformer yard. Tiers III–VI are Fusion Plants: a domed or toroidal reactor hall ringed by field-coil housings, radiator fins and a transformer yard; Deuterium tanks at III–IV, frosted cryogenic Helium-3 tanks at V–VI.",
+      "description": "a slim central truss spine with a compact inverter module and relay mast, carrying two long wings of dark blue-grey photovoltaic panels",
+      "file": "buildings/power_plant/orbital-solar.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-d8683773-de5b-40e1-be09-dbfa1e2e0ec4.png",
+      "promptFile": "buildings/power_plant/orbital-solar.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1254,
+        "height": 1254,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.783569133795777,
+        "edgeMax": 1,
+        "boundsAlpha16": {
+          "left": 18,
+          "top": 219,
+          "right": 1238,
+          "bottom": 1087
+        },
+        "bytes": 1018414,
+        "sha256": "694f2e43b5cd77e41f86f8bc34f884600c0341435b5583dc41149708c29a7e3c"
+      }
+    },
+    {
+      "id": "power_plant/orbital-fusion",
+      "family": "power_plant",
+      "variant": "fusion",
+      "tiers": [
+        3,
+        4,
+        5,
+        6
+      ],
+      "name": "Orbital Fusion Plant",
+      "identity": "The planet's power station. Tiers I–II are Solar Arrays: tilted rows of dark blue-grey photovoltaic panels on steel stands, an inverter house and a fenced transformer yard. Tiers III–VI are Fusion Plants: a domed or toroidal reactor hall ringed by field-coil housings, radiator fins and a transformer yard; Deuterium tanks at III–IV, frosted cryogenic Helium-3 tanks at V–VI.",
+      "description": "a toroidal fusion reactor ringed by field-coil housings around a shielded core block, frosted cryogenic tanks at its hub and wide pale radiator wings",
+      "file": "buildings/power_plant/orbital-fusion.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-55ce41b2-adbc-4edd-8626-c8e2496b4d21.png",
+      "promptFile": "buildings/power_plant/orbital-fusion.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1254,
+        "height": 1254,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.5786554794990957,
+        "edgeMax": 1,
+        "boundsAlpha16": {
+          "left": 64,
+          "top": 133,
+          "right": 1219,
+          "bottom": 1177
+        },
+        "bytes": 1792352,
+        "sha256": "940d7d9b4b1f4dced0455b4e3bdd58a88b50a17ae00f675c67fa8cca4c336a66"
       }
     }
   ]

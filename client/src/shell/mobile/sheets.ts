@@ -3,6 +3,8 @@ import type { Rect } from "../types";
 
 export type SheetId =
   | "market"
+  | "merchant"
+  | "signals"
   | "fleets"
   | "research"
   | "officers"

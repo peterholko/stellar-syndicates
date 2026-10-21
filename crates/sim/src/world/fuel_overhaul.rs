@@ -30,17 +30,14 @@ fn stock(w: &World, sys: EntityId, c: C) -> f64 {
 }
 
 #[test]
-fn the_founding_fleet_arrives_with_full_stores_and_the_kit_carries_both_fuels() {
+fn the_kit_carries_both_fuels_and_the_charters_warp_cores() {
     let (w, owner, home) = founded();
-    let fleets: Vec<&Fleet> = w.fleets.values().filter(|f| f.owner == owner).collect();
-    let tiny = fleets.iter().find(|f| f.contains(ShipKind::TinyFreighter)).unwrap();
-    let interceptor = fleets.iter().find(|f| f.contains(ShipKind::Raider)).unwrap();
-    let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
-    assert!(near(tiny.fuel, 52.5) && near(tiny.uranium, 52.5) && tiny.antimatter == 0.0);
-    assert!(near(interceptor.fuel, 7.0) && near(interceptor.uranium, 7.0) && near(interceptor.antimatter, 2.0));
-    assert_eq!(stock(&w, home, C::Uranium), crate::fuel::URANIUM_HOME_SEED);
+    assert!(!w.fleets.values().any(|f| f.owner == owner), "§charter-v4: no founding fleet");
+    let kit = crate::galaxy::charter_kit();
+    assert_eq!(stock(&w, home, C::Uranium), kit[&C::Uranium] + crate::fuel::URANIUM_HOME_SEED,
+        "new hulls fill at the dock: the kit fuels the first Freighter");
     assert_eq!(stock(&w, home, C::Deuterium), crate::fuel::DEUTERIUM_HOME_SEED);
-    assert_eq!(stock(&w, home, C::WarpCore), 1.0, "the charter's barge needs a Warp Core");
+    assert_eq!(stock(&w, home, C::WarpCore), 3.0, "the Freighter, the Interceptor and the barge");
 }
 
 #[test]
@@ -113,6 +110,7 @@ fn the_uranium_mill_needs_no_research_and_sifts_two_uranium_per_ore() {
     sys.stockpile.insert(C::MetallicOre, 100.0);
     let body = sys.bodies.iter().find(|b| !b.is_belt() && b.kind != crate::body::BodyKind::GasGiant).unwrap().id;
     let b = sys.bodies.iter_mut().find(|b| b.id == body).unwrap();
+    b.set_tier(K::PowerPlant, 1); // §charter-v4: no free power
     b.set_tier(K::UraniumMill, 1);
     b.assignments.insert(K::UraniumMill, Assignment::crew(1));
     for _ in 0..30 {
@@ -380,13 +378,14 @@ fn after_fusion_freight_only_freighters_launch_on_full() {
     sys.set_population(0.05);
     let yard = sys.bodies.iter().find(|b| !b.is_belt() && b.kind != crate::body::BodyKind::GasGiant).unwrap().id;
     let b = sys.bodies.iter_mut().find(|b| b.id == yard).unwrap();
+    b.set_tier(K::PowerPlant, 1); // §charter-v4: no free power
     b.set_tier(K::Shipyard, 2);
     b.assignments.insert(K::Shipyard, Assignment::crew(2));
     for (c, n) in [(C::Alloys, 500.0), (C::Machinery, 200.0), (C::Polymers, 200.0), (C::Electronics, 200.0),
         (C::WarpCore, 10.0), (C::Composites, 100.0)] {
         sys.stockpile.insert(c, n);
     }
-    let mut launched = |w: &mut World, ship: ShipKind| {
+    let launched = |w: &mut World, ship: ShipKind| {
         let before: std::collections::BTreeSet<EntityId> = w.fleets.keys().copied().collect();
         w.apply_build(owner, home, Some(yard), BuildKind::Ship { ship }, None, Loadout::default(), &mut Vec::new());
         let job = w.build_queue.iter().find(|j| j.owner == owner).expect("queued").complete_tick;
@@ -428,11 +427,12 @@ fn stealth_runs_quieter_than_slow() {
     let f = w.fleets.get_mut(&id).unwrap();
     f.transit = TransitMode::Slow;
     f.vel = Vec2::new(f.transit_speed(), 0.0);
-    let slow = f.signature();
+    let slow = f.core_output();
     f.transit = TransitMode::Stealth;
     f.vel = Vec2::new(f.transit_speed(), 0.0);
-    let stealth = f.signature();
+    let stealth = f.core_output();
     assert!((stealth - slow * crate::detection::STEALTH_QUIET).abs() < 1e-12, "{slow} {stealth}");
+    assert!(f.signature() < (slow).sqrt(), "and so is its signature");
 }
 
 #[test]

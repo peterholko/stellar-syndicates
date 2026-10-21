@@ -349,7 +349,7 @@ last chapter, **Reach**:
 
 - The survey step charts one stop: the home's local stop that keeps a belt
   with ore (`founding_lesson_stop`).
-- Each home's rocky stop, 18–33k su out, keeps one Stony or Metallic belt with
+- Each home's rocky stop, 18–33k su out (since Oct 15 2026 the den system, 15–20k su out), keeps one Stony or Metallic belt with
   ore (`local-stop-belt-v1` keyed stream). Sparse stars otherwise stay bare.
 - A barge with a full hold comes home from there on one tank; beyond about
   34k su it cannot.

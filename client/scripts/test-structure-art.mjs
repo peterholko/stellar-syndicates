@@ -19,8 +19,10 @@ const descriptions = catalog.slice(catalog.indexOf("const STRUCTURE_DESCRIPTION"
 // §gaia: Living Terraces have no separate menu set; their menus use the scene sprites.
 // §power: the Power Plant borrows the Fuel Refinery's art until its own lands;
 // §fuel-overhaul: so do the Uranium Mill and the Antimatter Plant.
-const STAND_INS = { power_plant: "Power Plant", uranium_mill: "Uranium Mill", antimatter_plant: "Antimatter Plant" };
-assert.deepEqual(structures.sort(), [...descriptions.matchAll(/^  (\w+): "/gm)].map(match => match[1]).filter(key => !["service_berth", "command_center", "living_terraces", ...Object.keys(STAND_INS)].includes(key)).sort(), "legacy standalone structures retain their original tiered art");
+const STAND_INS = { uranium_mill: "Uranium Mill", antimatter_plant: "Antimatter Plant" };
+assert.deepEqual(structures.sort(), [...descriptions.matchAll(/^  (\w+): "/gm)].map(match => match[1]).filter(key => !["service_berth", "command_center", "living_terraces", "power_plant", ...Object.keys(STAND_INS)].includes(key)).sort(), "legacy standalone structures retain their original tiered art");
+// §power: the Power Plant has no separate menu set either; menus use its scene sprites.
+assert.match(icons.structureImage("power_plant", 2), /\/planet-surface-structures\/v2\/buildings\/power_plant\/tier-2-128\.webp/);
 for (const [key, name] of Object.entries(STAND_INS)) assert.equal(icons.structureImage(key, 2), icons.structureImage("fuel_refinery", 2).replace("Fuel Refinery", name), `the ${name}'s stand-in art, under its own name`);
 assert.equal(icons.structureIcon("service_berth"), icons.structureIcon("warehouse"), "the Service Berth is a Warehouse attachment");
 assert.equal(icons.structureImage("service_berth", 1), icons.structureImage("warehouse", 1));

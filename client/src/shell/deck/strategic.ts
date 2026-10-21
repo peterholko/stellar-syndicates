@@ -27,6 +27,10 @@ import { currentSurvivor, nearestRepairYard, survivingGuardTarget, survivorOrder
 import { captainTitle } from "../../core/derive/captains";
 import { dispatchWarnings, fleetReadiness } from "../../core/derive/readiness";
 import { captainPortrait } from "../art";
+import { corpCard, fmtDays } from "../../core/derive/medals";
+import { boardLine, boardSummary } from "../../core/derive/board";
+import { signalsSummary } from "../../core/derive/signals";
+import { corpCardHtml, medalChipsHtml } from "../corpcard";
 import { icon, label, type IconKey } from "../../icons";
 import type {
   BattleReportView,
@@ -113,7 +117,7 @@ export class DeckStrategicRoutes {
       route,
       this.rankCategory,
       this.ctx.state.simTime,
-      this.ctx.state.operations,
+      this.ctx.state.operations, this.ctx.state.board,
       this.ctx.state.explorationSites, this.ctx.state.selectedExplorationSiteId,
       this.ctx.state.explorationJournal,
       this.ctx.state.midgameStage,
@@ -142,7 +146,7 @@ export class DeckStrategicRoutes {
       + (explorationFocused(this.ctx.state) ? "" : this.operationsHtml(route.query?.contract)));
     else if (route.name === "syndicate") setHtml(this.root, this.syndicateHtml());
     else if (route.name === "faction") setHtml(this.root, this.factionHtml());
-    else if (route.name === "rankings") setHtml(this.root, this.rankingsHtml());
+    else if (route.name === "rankings") setHtml(this.root, route.query?.corp ? this.corpCardHtml(route.query.corp) : this.rankingsHtml());
     else setHtml(this.root, this.battleHtml(route));
     return true;
   }
@@ -156,11 +160,18 @@ export class DeckStrategicRoutes {
       go: this.hooks.go, openWorld: this.hooks.openWorld, selectFleet: id => this.hooks.selectFleets([id]),
     })) return true;
     const action = button.dataset.deckAct;
+    if (action === "open-signals") { this.hooks.go({ name: "signals" }); return true; }
     if (!action?.startsWith("strategic-")) return false;
     if (action === "strategic-rank") {
       if (button.dataset.category) this.rankCategory = button.dataset.category;
       this.invalidate();
       this.render(route, true);
+      return true;
+    }
+    // §medals: a corporation's card, from the published table.
+    if (action === "strategic-corp" || action === "strategic-corp-back") {
+      this.hooks.go(action === "strategic-corp" && button.dataset.corp
+        ? { name: "rankings", query: { corp: button.dataset.corp } } : { name: "rankings" });
       return true;
     }
     if (action.startsWith("strategic-operation-")) this.operationAction(action, button);
@@ -221,12 +232,18 @@ export class DeckStrategicRoutes {
     const selected = this.ctx.state.operations.find(o => o.id === contract);
     const counterRaids = this.ctx.state.operations.filter(o => o !== selected
       && o.briefing?.follow_up.startsWith("counter_raid_") && ["offered", "active"].includes(o.state));
-    const others = this.ctx.state.operations.filter(o => o !== selected && !counterRaids.includes(o));
+    // §contract-board: today's contracts have their own section.
+    const board = boardSummary(this.ctx.state, liveSimTime());
+    // §signals: their own pop-out; one line here leads to it.
+    const signals = this.ctx.state.signals
+      ? `<button type="button" class="deck-signals-link" data-deck-act="open-signals"><b>Signals</b><span>${esc(signalsSummary(this.ctx.state.signals, liveSimTime()))}</span><span aria-hidden="true">›</span></button>` : "";
+    const others = this.ctx.state.operations.filter(o => o !== selected && !counterRaids.includes(o)
+      && !board?.contracts.includes(o));
     const available = others.filter((o) => o.state === "offered" || (o.state === "active" && !o.joined));
     const active = others.filter((o) => o.state === "active" && o.joined);
     const history = others.filter((o) => !["offered", "active"].includes(o.state)).sort((a, b) => b.reported_at - a.reported_at).slice(0, 12);
     const group = (title: string, rows: OperationView[], empty = "") => `<section class="deck-section"><header><div><h3>${esc(title)}</h3>${rows.length ? `<p>${rows.length} arrived record${rows.length === 1 ? "" : "s"}.</p>` : ""}</div><b>${rows.length}</b></header>${rows.map((o) => this.operationCard(o)).join("") || `<div class="deck-empty-inline">${esc(empty)}</div>`}</section>`;
-    return `<section class="deck-page deck-operations"><header class="deck-page__lead"><span>Contracts · objectives · shared projects</span><h2>${esc(stage)}</h2><p>${esc(stageCopy)}</p></header>${selected ? group(selected.briefing?.follow_up.startsWith("counter_raid_") ? "Counterattack" : "Funding contract", [selected]) : ""}${counterRaids.length ? group("Defend home · strike back", counterRaids) : ""}${handoffHtml()}${group("Active contracts", active, "No operation is currently assigned.")}${group("Available contracts", available, "No arrived offers. The board updates when fresh reports reach command.")}${history.length ? group("History", history) : ""}</section>`;
+    return `<section class="deck-page deck-operations"><header class="deck-page__lead"><span>Contracts · objectives · shared projects</span><h2>${esc(stage)}</h2><p>${esc(stageCopy)}</p></header>${selected ? group(selected.briefing?.follow_up.startsWith("counter_raid_") ? "Counterattack" : "Funding contract", [selected]) : ""}${counterRaids.length ? group("Defend home · strike back", counterRaids) : ""}${handoffHtml()}${signals}${board ? `<section class="deck-section deck-board"><header><div><h3>Contract board</h3><p>${esc(boardLine(board))}</p></div><b>${board.contracts.length}</b></header>${board.contracts.map((o) => this.operationCard(o)).join("") || `<div class="deck-empty-inline">Today's contracts are on their way from the Market Hub.</div>`}</section>` : ""}${group("Active contracts", active, "No operation is currently assigned.")}${group("Available contracts", available, "No arrived offers. The board updates when fresh reports reach command.")}${history.length ? group("History", history) : ""}</section>`;
   }
 
   private operationCard(operation: OperationView): string {
@@ -249,7 +266,8 @@ export class DeckStrategicRoutes {
       } else actions.push(actionButton("strategic-operation-abandon", "Abandon", operation.id, "is-danger"));
     }
     const hullArt = operationHullArt(operation);
-    const time = operation.state === "completed" ? "complete" : `${fmtDur(Math.max(0, operation.expires_at - liveSimTime()))} remaining`;
+    const left = Math.max(0, operation.expires_at - liveSimTime());
+    const time = operation.state === "completed" ? "complete" : `${left >= 3_600 ? fmtDays(left) : fmtDur(left)} remaining`;
     const brief = operation.briefing;
     const readiness = brief ? `<div class="deck-operation__brief"><b>${esc(brief.difficulty)}</b><span>${esc(brief.suitable_fleets)}</span></div>` : "";
     return `<article class="deck-operation is-${operation.state}">${hullArt ? `<img src="${escAttr(hullArt)}" alt="">` : ""}<div><header><span>${operationIcon(operation)}<b>${esc(operationTitle(operation))}</b></span><em>${esc(human(operation.state))}</em></header>${readiness}<p>${esc(operationCopy(operation))}</p><div class="deck-meter"><i style="width:${pct.toFixed(1)}%"></i></div><footer><span>${operation.progress}/${operation.goal}</span><span>${esc(operationReward(operation))}</span><span>${esc(time)}</span><span class="deck-stale-value">${esc(informationDelay(Math.max(0, liveSimTime() - operation.reported_at)))}</span></footer>${actions.length ? `<div class="deck-operation__actions">${actions.join("")}</div>` : ""}</div></article>`;
@@ -425,8 +443,16 @@ export class DeckStrategicRoutes {
     const category = RANK_CATS.find((candidate) => candidate.slug === this.rankCategory) ?? RANK_CATS[0];
     const rows = [...this.ctx.state.rankings].sort((a, b) => category.value(b) - category.value(a));
     const categories = RANK_CATS.map((candidate) => `<button type="button" data-deck-act="strategic-rank" data-category="${candidate.slug}" aria-pressed="${candidate.slug === category.slug}">${esc(candidate.short)}</button>`).join("");
-    const rankingRows = rows.map((row, index) => `<div class="deck-ranking-row${row.player_id === this.ctx.state.playerId ? " is-me" : ""}"><b>${index + 1}</b><span><strong>${esc(row.name)}</strong>${row.player_id === this.ctx.state.playerId ? `<small>you</small>` : ""}${row.titles.map((title) => `<em>${esc(title)}</em>`).join("")}</span><output>${esc(category.format(row))}</output></div>`).join("");
+    const rankingRows = rows.map((row, index) => `<button type="button" class="deck-ranking-row${row.player_id === this.ctx.state.playerId ? " is-me" : ""}" data-deck-act="strategic-corp" data-corp="${escAttr(row.player_id)}"><b>${index + 1}</b><span><strong>${esc(row.name)}</strong>${row.player_id === this.ctx.state.playerId ? `<small>you</small>` : ""}${row.titles.map((title) => `<em>${esc(title)}</em>`).join("")}${medalChipsHtml(row)}</span><output>${esc(category.format(row))}</output></button>`).join("");
     return `<section class="deck-page deck-rankings"><header class="deck-page__lead"><span>Published campaign ledger</span><h2>Rankings</h2><p>The same light-delayed close is published to every corporation.</p></header><section class="deck-section"><header><div><h3>${esc(category.label)}</h3><p>${esc(category.copy)}</p></div><b>${rows.length}</b></header><div class="deck-rank-categories">${categories}</div><div class="deck-ranking-table">${rankingRows || `<div class="deck-empty-inline">No ledger published yet; the first close lands shortly after campaign start.</div>`}</div></section></section>`;
+  }
+
+  private corpCardHtml(id: string): string {
+    const st = this.ctx.state;
+    const card = corpCard(st.rankings, id, st.playerId === null ? null : String(st.playerId), st.simTime);
+    const back = `<button type="button" data-deck-act="strategic-corp-back">All rankings</button>`;
+    return `<section class="deck-page deck-rankings">${card ? corpCardHtml(card, back)
+      : `<div class="deck-empty-inline">Not in the published ledger yet.</div>${back}`}</section>`;
   }
 
   private battleHtml(route: DeckRoute): string {

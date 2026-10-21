@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import sharp from "sharp";
 import { buildShipModelAssets } from "./build-ship-model-assets.mjs";
-import { ART_STAND_INS } from "./ship-model-catalog.mjs";
+import { ART_STAND_INS, ART_VARIANTS } from "./ship-model-catalog.mjs";
 
 const client = fileURLToPath(new URL("..", import.meta.url));
 const version = "models-v1";
@@ -45,7 +45,9 @@ export async function buildShipDerivatives() {
   const freight = await json(path.join(freightRoot, "prompts.json"));
   assert.equal(freight.ships.length, 6, "Six player freight sizes");
   const ships = [...prompts.ships.filter(s => s.kind !== "convoy").map(s => ({ ...s, input: path.join(sourceRoot, `${s.slug}.png`) })),
-    ...freight.ships.map(s => ({ ...s, input: path.join(freightRoot, `${s.slug}-alpha.png`) }))];
+    ...freight.ships.map(s => ({ ...s, input: path.join(freightRoot, `${s.slug}-alpha.png`) })),
+    // Model-only art variants come last: their footprint is the flown hull's.
+    ...Object.entries(ART_VARIANTS).map(([kind, { flies }]) => ({ kind, slug: kind, flies }))];
   const oldRoot = path.join(client, "public", "art", "ship_sprites");
   const interceptor = await hullGeometry(await readFile(path.join(oldRoot, "raider_attack_ship.png")));
   const manifest = { version, recipe, sizes, ships: {}, formations: {} };
@@ -62,10 +64,12 @@ export async function buildShipDerivatives() {
     const meta = await sharp(bytes).metadata();
     assert.ok(meta.hasAlpha && meta.width === 1254 && meta.height === 1254, `${ship.slug}: native transparent master`);
     const geometry = await hullGeometry(bytes);
-    const legacy = await hullGeometry(await readFile(path.join(oldRoot, ship.existing)));
     // The old Interceptor's visible length is the ruler for the approved combat
-    // ladder. Civilians retain their previous footprint despite new PNG padding.
-    const referenceRatio = combat.has(ship.kind) ? interceptor.lengthRatio : legacy.lengthRatio;
+    // ladder. Civilians retain their previous footprint despite new PNG padding;
+    // an art variant shows at the footprint of the hull it flies as.
+    const referenceRatio = ship.flies ? manifest.ships[ship.flies].referenceRatio
+      : combat.has(ship.kind) ? interceptor.lengthRatio
+      : (await hullGeometry(await readFile(path.join(oldRoot, ship.existing)))).lengthRatio;
     const sourceSha256 = hash(bytes);
     const old = previous?.recipe === recipe && previous.ships[ship.kind];
     const levels = [];

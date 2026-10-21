@@ -31,7 +31,7 @@ import type { BattleRecordView, KeyframeView, PlayerId, ShipKind } from "./proto
 import { hashId, mulberry32 } from "./prng";
 import { starAnchor, starTypeFor, starIconUrl, starVisualRatio } from "./stars";
 import { STAR_TINT, SystemViewScene, type VisualSystem } from "./systemview";
-import { battleBackdropPlan, battleSceneryFrame, battleSystemScenery, type BattleBackdropPlan, type BattleScenerySource } from "./battlebackdrop";
+import { backdropDrift, battleBackdropPlan, battleSceneryFrame, battleSystemScenery, type BattleBackdropPlan, type BattleScenerySource } from "./battlebackdrop";
 import { glowSpriteTexture, terminatorTexture, towardStarRotation, drawRings } from "./systembodyfx";
 import { stationArtUrl, stationName } from "./core/derive/station";
 import { planetArtUrl, planetArtwork } from "./planetart";
@@ -310,6 +310,8 @@ let arenaWorldBody: { x: number; y: number; r: number } | null = null;
 let arenaWorld: Container | null = null;
 let arenaWorldDisc: Sprite | null = null;
 let backdropSystem: SystemViewScene | null = null;
+/** The backdrop's system scenery or orbital scene: it drifts with parallax. */
+let backdropMover: Container | null = null;
 let backdropVisual: VisualSystem | null = null; // frozen served astronomy, never live administration
 let backdropPlan: BattleBackdropPlan | null = null; // the place the fight stands, frozen at open
 const SYSTEM_BACKDROP_ALPHA = 0.42; // Tunable: recognizable scenery below ships/weapon effects
@@ -970,6 +972,7 @@ export function theaterDebug(): Record<string, unknown> | null {
       belts: backdropVisual.asteroidBelts.length,
       alpha: backdropSystem?.root.alpha,
       star: backdropSystem?.starLayoutPosition(),
+      drift: backdropMover ? [Math.round(backdropMover.position.x), Math.round(backdropMover.position.y)] : null,
     } : null,
     cam: { x: +camX.toFixed(1), y: +camY.toFixed(1), zoom: +camZoom.toFixed(3), withdrawFrom: st.withdrawFrom },
     view: { angled: viewAngled, tilt: +tiltY.toFixed(3), pitch: +hullPitch().toFixed(4) },
@@ -1206,6 +1209,14 @@ function buildArenaWorld(rec: BattleRecordView): void {
   }
 }
 
+/// The backdrop's scenery drifts against the camera with parallax: below the
+/// fight, never riding along with a followed hull. The starfield stays put.
+function drawBackdropDrift(): void {
+  if (!backdropMover) return;
+  const drift = backdropDrift({ x: sx(0), y: sy(0) }, CANVAS_W, CANVAS_H);
+  backdropMover.position.set(drift.x, drift.y);
+}
+
 /// Keep the arena world under the camera: centred on its arena point, its
 /// diameter the world's in arena units at the current zoom.
 function drawArenaWorld(): void {
@@ -1234,6 +1245,7 @@ function buildBackdrop(rec: BattleRecordView): void {
   // Detach before clearing the disposable starfield; don't destroy shared art
   // or a scene whose asynchronous texture load is still in flight.
   backdropSystem?.root.removeFromParent();
+  backdropMover = null;
   layers.backdrop.removeChildren().forEach((c) => c.destroy({ children: true }));
   // Seeded starfield everywhere (deterministic per battle — the standing law).
   const rng = mulberry32(hashId(`${rec.id}:backdrop`));
@@ -1260,7 +1272,10 @@ function buildBackdrop(rec: BattleRecordView): void {
   scenery.root.alpha = SYSTEM_BACKDROP_ALPHA;
   scenery.setSystem(visual, texCache.get(url) ?? null);
   scenery.layout(CANVAS_W, CANVAS_H, battleSceneryFrame(CANVAS_W, CANVAS_H));
-  layers.backdrop.addChild(scenery.root);
+  // The shared scene sits in a disposable mover, so the parallax never
+  // fights the scene's own layout.
+  backdropMover = layers.backdrop.addChild(new Container());
+  backdropMover.addChild(scenery.root);
   if (!texCache.has(url)) {
     // No timer polling, and late art cannot repaint a different/closed battle.
     void Assets.load<Texture>(url).then((texture) => {
@@ -1283,6 +1298,7 @@ function buildOrbitalBackdrop(rec: BattleRecordView, plan: BattleBackdropPlan): 
   const reach = 0.5 * Math.hypot(w, h);
   const scene = new Container();
   layers.backdrop.addChild(scene);
+  backdropMover = scene;
   // The star: a broad glare plus its artwork near the edge it lies beyond.
   const starX = w / 2 + dir.x * reach * 0.74;
   const starY = h / 2 + dir.y * reach * 0.74;
@@ -2117,6 +2133,7 @@ function frame(dt: number): void {
   drawDebris();
   drawArenaWorld();
   drawArenaStations();
+  drawBackdropDrift();
   drawFx(dt);
   applyShakeAndBanner();
 }

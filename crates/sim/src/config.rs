@@ -35,6 +35,10 @@ pub const C_SPEED_RATIO: f64 = 2.0;
 /// speed does not silently resize a generated chart.
 pub const GALAXY_SCALE: f64 = 50.0;
 
+/// §hub-district: the galaxy of one wormhole hub and its 20 homes, in sim
+/// units: the four-player size, which every larger galaxy keeps.
+pub const ONE_HUB_RADIUS: f64 = 400_000.0;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimConfig {
     /// Seed for all deterministic generation in this galaxy.
@@ -54,8 +58,10 @@ pub struct SimConfig {
     /// space between homes stays proportional across 4–12 players (§4).
     pub galaxy_radius: f64,
 
-    /// Fraction of `galaxy_radius` at which home anchors sit. The default keeps
-    /// the physical home ring stable even when player count changes the radius.
+    /// Fraction of `galaxy_radius` at which home anchors sit: the middle of
+    /// the hub district's band ([`crate::galaxy::HOME_RING_SU`]). The default
+    /// keeps the physical home ring stable even when player count changes the
+    /// radius.
     pub home_ring_frac: f64,
 
     /// Number of full frontier systems, excluding homes and exploration stars.
@@ -116,38 +122,40 @@ impl SimConfig {
     /// with player count per §4 so inter-home distance stays proportional).
     pub fn for_players(seed: u64, player_count: u32) -> Self {
         let player_count = player_count.max(1);
-        // Radius grows ~sqrt(players): area scales with player count so density
-        // of homes stays roughly constant.
+        // Radius grows ~sqrt(players) up to four, then holds: §hub-district,
+        // up to 20 players share one wormhole hub's 400,000 su galaxy, its
+        // frontier denser rather than farther. (More hubs will revisit this.)
         // Preserve the established chart scale independently of the movement
         // and information-speed tunables.
-        let galaxy_radius = 4000.0 * (player_count as f64).sqrt() * crate::config::GALAXY_SCALE;
+        let galaxy_radius = (4000.0 * (player_count as f64).sqrt() * crate::config::GALAXY_SCALE).min(ONE_HUB_RADIUS);
         let cfg = SimConfig {
             seed,
             max_players: player_count,
             // Base c becomes 2,000 su/s straight warp light after WARP_FACTOR.
-            // On the preserved chart this prices home→hub at roughly 37–40 s
-            // and the longest hub→rim reports near 200 s. At the fastest warp
-            // hull the ratio remains 3.48×, above [`C_SPEED_RATIO`].
+            // §hub-district: this prices home→hub at about 62 s (50–75 s across
+            // the band) and the longest hub→rim reports near 200 s. At the
+            // fastest warp hull the ratio remains 3.48×, above [`C_SPEED_RATIO`].
             c: 400.0,
             galaxy_radius,
-            // Preserve the lane-era chart geometry exactly. The 80,000-su
-            // nominal ring is now a generation constant, not a relay throw.
-            home_ring_frac: 80_000.0
-                / (1.0 + crate::galaxy::HOME_SLOT_RADIAL_JITTER_FRAC)
-                / galaxy_radius,
+            // §hub-district: homes 125,000 su from the hub, whatever the
+            // player count (`galaxy::generate_home_slots` lays out the band).
+            home_ring_frac: crate::galaxy::HOME_RING_SU / galaxy_radius,
             system_count: 12 + player_count * 4,
             // Double the chart's stars, not its habitable planets: 32 → 64 in
             // the default four-player galaxy (28 frontier + 4 home + 32 sparse).
             // Each home's six-system neighbourhood (galaxy::HOME_NEIGHBOURS,
-            // a third habitable) brings it to 88.
-            exploration_system_count: 12 + player_count * 5,
-            // Local sensor bubbles are 80,000 su (20% of a four-player galaxy
-            // radius): coverage remains islands around the command center and
-            // Raider pickets. Convoys carry only a 0.25× local traffic sensor,
-            // leaving meaningful blind space between homes.
+            // a third habitable) brings it to 88, and §hub-district's stars
+            // between the hub and the homes to 100.
+            exploration_system_count: 12 + player_count * 5 + crate::galaxy::HUB_GAP_STARS,
+            // §sensors (Oct 16 2026): a Command Center's own sensors reach
+            // 6,000 su — one Raider at full throttle; a holding one only inside
+            // the home's 1,300 su near zone. Seeing farther takes Sensor Arrays
+            // or sensor fits on ships (Raider pickets carry this same bubble;
+            // Convoys a 0.25× traffic set). Declared transponders are heard out
+            // to `detection::NOISE_HORIZON_SU` instead.
             // Expressed through GALAXY_SCALE to preserve the chart-unit convention;
             // system-scale constants (docking, hyperlimit, claim) do not scale.
-            sensor_range: 1600.0 * crate::config::GALAXY_SCALE,
+            sensor_range: 120.0 * crate::config::GALAXY_SCALE,
             // PLAYTEST preset: equal squadrons grind for ~45 s (production ships
             // ~2700 s / 45 min — battles at the scale of light-delays + relief).
             battle_target_secs: default_battle_target_secs(),
@@ -236,18 +244,30 @@ mod light_invariant_tests {
         );
     }
 
+    /// §hub-district: every home within the band around the hub, and no two
+    /// closer than the spacing, for every galaxy one hub holds.
     #[test]
-    fn every_jittered_home_ring_preserves_the_80k_chart_extent() {
-        let chart_extent = 80_000.0;
-        for players in [1, 4, 12] {
-            let cfg = SimConfig::for_players(1, players);
-            let outermost_home = cfg.galaxy_radius
-                * cfg.home_ring_frac
-                * (1.0 + crate::galaxy::HOME_SLOT_RADIAL_JITTER_FRAC);
-            assert!(
-                (outermost_home - chart_extent).abs() < 1e-9,
-                "{players} players: outer home {outermost_home} != {chart_extent}",
-            );
+    fn homes_ring_the_hub_inside_the_band_and_keep_their_spacing() {
+        use crate::galaxy::{HOME_BAND_SU, HOME_RING_JITTER_SU, HOME_RING_SU, HOME_SPACING_SU};
+        for players in 1..=20 {
+            for seed in [1, 7, 42, 0xC0FFEE] {
+                let cfg = SimConfig::for_players(seed, players);
+                let mut rng = crate::rng::Rng::new(seed);
+                let slots = crate::galaxy::generate_home_slots(&mut rng, cfg.galaxy_radius, cfg.home_ring_frac, players);
+                assert_eq!(slots.len(), players as usize);
+                let one_ring = players <= 12;
+                for slot in &slots {
+                    let out = slot.pos.length();
+                    let band = if one_ring { HOME_RING_JITTER_SU } else { HOME_BAND_SU / 2.0 };
+                    assert!((out - HOME_RING_SU).abs() <= band + 1e-6, "{players} players: a home {out:.0} su out");
+                }
+                for (i, a) in slots.iter().enumerate() {
+                    for b in &slots[i + 1..] {
+                        let d = a.pos.distance(b.pos);
+                        assert!(d >= HOME_SPACING_SU - 1e-6, "{players} players, seed {seed}: homes {d:.0} su apart");
+                    }
+                }
+            }
         }
     }
 }

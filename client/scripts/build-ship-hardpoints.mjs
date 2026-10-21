@@ -84,7 +84,7 @@ export function renderHardpoints(table) {
 // loadShipModel): centred, nose toward -Z, nose-to-tail length 2. Points are
 // [x, y, z]: engine nozzle sockets, and gun barrel sockets (turret mounts when
 // a hull has no barrels). size is the hull's bounding box [x, y, z].
-import type { ShipKind } from "./protocol";
+import type { ShipArtKind } from "./shipart";
 
 export type HardpointXYZ = readonly [number, number, number];
 
@@ -94,7 +94,7 @@ export interface ShipHardpoints {
   readonly guns: readonly HardpointXYZ[];
 }
 
-export const SHIP_HARDPOINTS: Record<ShipKind, ShipHardpoints> = {
+export const SHIP_HARDPOINTS: Record<ShipArtKind, ShipHardpoints> = {
 ${rows.join("\n")}
 };
 `;

@@ -30,7 +30,9 @@ function makeRecord(): BattleRecordView {
     return exact ? [{ kind: type, exact, class: exact === 1 ? "one" : "eight_to_fifteen" }] : [];
   });
   const deathTarget = ships.filter(s => s.side === 1).at(-1)!;
-  const rec: BattleRecordView = { id: `battle-model-fixture-${scene.value}-${kind.value}`, pos: { x: 0, y: 0 }, system: null,
+  // ?system=ID gives the fight that system's backdrop (its star from the id).
+  const rec: BattleRecordView = { id: `battle-model-fixture-${scene.value}-${kind.value}`, pos: { x: 0, y: 0 },
+    system: new URLSearchParams(location.search).get("system"),
     started_at: 0, raid: false, fidelity: "participant", own_side: 0, light_frontier_tick: 4, outcome: "both_survive",
     sides: [0, 1].map(side => ({ corp: side ? "foe" : "own", posture: "engage_any", platform_tiers: 0,
       initial: counts(ships, side), flagship_name: side ? "Vesper" : "Aurora", loadouts: combat.map(type => ({ kind: type, n: 1,

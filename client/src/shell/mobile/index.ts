@@ -22,6 +22,7 @@ import { MobileNoticeStack } from "./notices";
 import { MobileParitySurfaces } from "./parity";
 import { activateSheetStack, pushSheet, replaceSheet, SheetStack, type SheetEntry, type SheetView } from "./sheets";
 import { MobileSurfaces } from "./surfaces";
+import { MobileSignals } from "./signals";
 
 const byId = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 const escapeHtml = (value: string): string => value.replace(
@@ -42,6 +43,7 @@ class MobileShell implements Shell {
   private ground: MobileGroundTheater | null = null;
   private surfaces: MobileSurfaces | null = null;
   private parity: MobileParitySurfaces | null = null;
+  private signals: MobileSignals | null = null;
   private statusSignature = "";
   private orientationMedia: MediaQueryList | null = null;
   private foundingResizeObserver: ResizeObserver | null = null;
@@ -100,9 +102,18 @@ class MobileShell implements Shell {
       exitSemantic: () => this.map?.exitSemanticView(),
       notice: (html) => this.notices?.push(html),
     });
+    this.signals = new MobileSignals(ctx, this.sheets, {
+      notice: (html) => this.notices?.push(html),
+      focus: (pos) => { ctx.renderer.centerOnWorld(pos); this.sheets?.closeAll(); },
+    });
     this.foundingResizeObserver = new ResizeObserver(() => this.syncFoundingNoticeOffset());
     this.foundingResizeObserver.observe(byId("m-founding"));
     byId("m-status-toggle").addEventListener("click", () => this.toggleStatus(), { signal });
+    // §medals: your corporation's card.
+    byId("m-corp-card").addEventListener("click", () => {
+      const me = ctx.state.playerId;
+      if (me !== null) this.openSheet({ id: "rankings", props: { corp: String(me) } });
+    }, { signal });
     byId("m-armed-cancel").addEventListener("click", () => this.map?.cancelArmedMode(), { signal });
     bindAccountForm("m", ctx, signal);
     byId("m-tabs").addEventListener("click", (event) => {
@@ -117,6 +128,7 @@ class MobileShell implements Shell {
     byId("m-sheet-body").addEventListener("click", (event) => {
       if (this.battle?.handleClick(event)) return;
       if (this.ground?.handleClick(event)) return;
+      if (this.signals?.handleClick(event)) return;
       if (this.parity?.handleClick(event)) return;
       if (this.surfaces?.handleClick(event)) return;
       const action = (event.target as Element).closest<HTMLButtonElement>("button[data-mobile-act]")?.dataset.mobileAct;
@@ -126,6 +138,7 @@ class MobileShell implements Shell {
     byId("m-founding").addEventListener("click", (event) => { this.surfaces?.handleClick(event); }, { signal });
     for (const kind of ["input", "change"] as const) byId("m-sheet-body").addEventListener(kind, event => {
       const target = event.target;
+      if (target instanceof HTMLInputElement && this.surfaces?.handleMerchantInput(target)) return;
       if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement) this.parity?.handleInput(target);
     }, { signal });
 
@@ -169,10 +182,13 @@ class MobileShell implements Shell {
         this.unreadReports++;
         this.notices?.push({ html: `<b>${escapeHtml(event.message)}</b>`, tone: "bad",
           destination: { id: "log" }, durationMs: 20_000 });
+      } else if (event.kind === "SignalNews") {
+        this.notices?.push({ html: `<b>${escapeHtml(event.title)}</b> — ${escapeHtml(event.message)}`, tone: event.tone === "good" ? "good" : undefined,
+          destination: { id: "signals" }, durationMs: event.tone === "good" ? 16_000 : 10_000 });
       } else if (event.kind === "CharterMilestone") {
         this.unreadReports++;
-        this.notices?.push({ html: `<b>${escapeHtml(event.title)}</b> — ${escapeHtml(event.message)}`, tone: "good",
-          destination: { id: "log" }, durationMs: 16_000 });
+        this.notices?.push({ html: `<b>${escapeHtml(event.title)}</b> — ${escapeHtml(event.message)}`, tone: event.tone ?? "good",
+          destination: { id: "log" }, durationMs: event.tone === "bad" ? 24_000 : 16_000 });
       } else if (event.kind === "ReportArrived") {
         const report = reportNotice(event.report, this.ctx?.state.galaxy?.pirate_id, this.ctx?.state.founding?.privateer ?? this.ctx?.state.lastFoundingPrivateer);
         this.unreadReports++;
@@ -291,6 +307,7 @@ class MobileShell implements Shell {
     this.ground?.close();
     this.ground = null;
     this.parity = null;
+    this.signals = null;
     this.surfaces = null;
     activateSheetStack(null);
     this.sheets = null;
@@ -399,6 +416,8 @@ class MobileShell implements Shell {
   private renderSheet(entry: SheetEntry): SheetView {
     const titles: Record<SheetEntry["id"], [string, string]> = {
       market: ["Market Hub", "Exchange · warehouse"],
+      merchant: ["Free Trader", "At your home"],
+      signals: ["Signals", "Near home"],
       fleets: ["Fleets", "Corporate roster"],
       research: ["Research", "Programme boards"],
       officers: ["Officers", "Captain roster"],
@@ -421,7 +440,8 @@ class MobileShell implements Shell {
     };
     const [title, eyebrow] = titles[entry.id];
     if (entry.id === "intent") return this.renderIntentSheet(title, eyebrow);
-    const surface = this.battle?.render(entry) ?? this.ground?.render(entry) ?? this.parity?.render(entry) ?? this.surfaces?.render(entry);
+    const surface = this.battle?.render(entry) ?? this.ground?.render(entry) ?? this.signals?.render(entry)
+      ?? this.parity?.render(entry) ?? this.surfaces?.render(entry);
     if (surface) return surface;
     return {
       title,
@@ -431,7 +451,7 @@ class MobileShell implements Shell {
   }
 
   private sheetRefreshNeeded(entry: SheetEntry): boolean {
-    for (const renderer of [this.battle, this.ground, this.parity, this.surfaces]) {
+    for (const renderer of [this.battle, this.ground, this.signals, this.parity, this.surfaces]) {
       const needed = renderer?.refreshNeeded(entry);
       if (needed !== null && needed !== undefined) return needed;
     }

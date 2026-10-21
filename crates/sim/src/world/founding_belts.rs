@@ -3,9 +3,13 @@
 //! and sends it there, and the lesson ends when command hears it cutting ore.
 use super::*;
 
+/// The lesson's fallback belt lies within this of home: the old 80,000 su
+/// sensor bubble, kept as a plain distance once §sensors shrank the bubble.
+const FALLBACK_BELT_REACH_SU: f64 = 80_000.0;
+
 impl World {
     /// §charter v3: the one system the survey step charts: the home's local
-    /// survey stop (18–33k su out), the one keeping a belt with ore first.
+    /// doorstep star (15–22k su out), the one keeping a belt with ore first.
     pub(super) fn founding_lesson_stop(&self, home: Vec2) -> Option<EntityId> {
         self.systems
             .iter()
@@ -21,7 +25,7 @@ impl World {
     /// The charted belt the barge lesson points at: a surveyed prospect's
     /// belt (the mineral prospect, then the garden), else the nearest other
     /// charted belt within sensor range of home, else the home belt. Only
-    /// unowned systems or the corporation's own, never a pirate base.
+    /// unowned systems or the corporation's own, never a live pirate base.
     pub(super) fn founding_belt_target(&self, owner: PlayerId) -> Option<(EntityId, u32)> {
         let corp = self.players.get(&owner)?;
         let home = corp.home_system;
@@ -29,7 +33,8 @@ impl World {
         let usable = |s: &StarSystem| {
             Some(s.id) != home
                 && (s.owner == Some(owner) || (s.owner.is_none() && corp.surveyed.contains(&s.id)))
-                && !self.enclaves.values().any(|e| e.system == s.id)
+                // A den destroyed for good is safe to mine.
+                && !self.enclaves.values().any(|e| e.system == s.id && !(e.cleared && e.permanent()))
         };
         let belt_of = |s: &StarSystem| {
             s.bodies
@@ -49,7 +54,7 @@ impl World {
         let nearest = self
             .systems
             .iter()
-            .filter(|s| usable(s) && s.pos.distance(origin) <= self.config.sensor_range)
+            .filter(|s| usable(s) && s.pos.distance(origin) <= FALLBACK_BELT_REACH_SU)
             .filter_map(|s| belt_of(s).map(|target| (s.pos.distance(origin), target)))
             .min_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
         if let Some((_, target)) = nearest {

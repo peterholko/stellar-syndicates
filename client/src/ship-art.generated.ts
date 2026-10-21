@@ -620,6 +620,37 @@ export const SHIP_ART = {
       }
     ]
   },
+  "free_trader": {
+    "anchor": [
+      0.5,
+      0.5
+    ],
+    "lengthRatio": 0.8931419457735247,
+    "referenceRatio": 0.82421875,
+    "calib": 0.9228306361607144,
+    "levels": [
+      {
+        "size": 128,
+        "url": "/art/derived/ships/models-v1/free_trader-128.png?v=7807f6e63952"
+      },
+      {
+        "size": 256,
+        "url": "/art/derived/ships/models-v1/free_trader-256.png?v=b128b6059e86"
+      },
+      {
+        "size": 512,
+        "url": "/art/derived/ships/models-v1/free_trader-512.png?v=63091c45a825"
+      },
+      {
+        "size": 1024,
+        "url": "/art/derived/ships/models-v1/free_trader-1024.png?v=3e527eb41edf"
+      },
+      {
+        "size": 1254,
+        "url": "/art/derived/ships/models-v1/free_trader-1254.png?v=92a258e22ac9"
+      }
+    ]
+  },
   "survey_probe": {
     "anchor": [
       0.5,

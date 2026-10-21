@@ -1,0 +1,138 @@
+{
+  "mode": "built-in image_gen",
+  "date": "2026-10-15",
+  "images": [
+    {
+      "slug": "counterfeit-semiconductors",
+      "master": "client/art-src/story-events-v1/counterfeit-semiconductors.png",
+      "nativeDimensions": [
+        1672,
+        941
+      ],
+      "mode": "RGB",
+      "sha256": "435ccf1dd4bb97fb7a2c62e1d35a898d735612ba5bb6da06be40f387719cf531",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-693f1d97-67b7-41b6-9f4e-ba303ba1cb52.png",
+      "processing": "Copied native image bytes; no resize, crop or upscale."
+    },
+    {
+      "slug": "free-trader-inbound",
+      "master": "client/art-src/story-events-v1/free-trader-inbound.png",
+      "nativeDimensions": [
+        1672,
+        941
+      ],
+      "mode": "RGB",
+      "sha256": "9ac5e8cd193136aa51037c16e0a93c90e519040c5beae93bb2b8188519cafa9f",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-2f1430e1-fc57-4433-bee8-f260c31f8bba.png",
+      "processing": "Copied native image bytes; no resize, crop or upscale."
+    },
+    {
+      "slug": "pirates-on-the-lane",
+      "master": "client/art-src/story-events-v1/pirates-on-the-lane.png",
+      "nativeDimensions": [
+        1672,
+        941
+      ],
+      "mode": "RGB",
+      "sha256": "dda0bdcd9b8c478f2254636eab0354349089fd393575fb41ac0abf143a3c7927",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-6a9bbee9-6fee-44de-a058-83cb8c17066b.png",
+      "processing": "Copied native edited image bytes; no resize, crop or upscale.",
+      "revisions": [
+        {
+          "slug": "pirates-on-the-lane",
+          "master": "client/art-src/story-events-v1/revisions/pirates-on-the-lane-v1-interceptor.png",
+          "nativeDimensions": [
+            1672,
+            941
+          ],
+          "mode": "RGB",
+          "sha256": "5caae7a7c344be03b503550309e4f386f6cfc54594ecb045fbf03264647e4b6d",
+          "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-5775bdc3-d168-4541-a2d9-0fff03f4b49c.png",
+          "processing": "Copied native image bytes; no resize, crop or upscale."
+        },
+        {
+          "slug": "pirates-on-the-lane",
+          "master": "client/art-src/story-events-v1/revisions/pirates-on-the-lane-v2-privateer-rear.png",
+          "nativeDimensions": [
+            1672,
+            941
+          ],
+          "mode": "RGB",
+          "sha256": "ed4d81eeeda838d4ec8da93261a21527d22b97eff31edf34d85535b9236f0590",
+          "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-5b0f7a20-697b-4dbd-95da-3a6ab420f2ec.png",
+          "processing": "Copied native edited image bytes; no resize, crop or upscale.",
+          "revision": "v2-privateer-raider"
+        },
+        {
+          "slug": "pirates-on-the-lane",
+          "master": "client/art-src/story-events-v1/revisions/pirates-on-the-lane-v3-privateer-front-close.png",
+          "nativeDimensions": [
+            1672,
+            941
+          ],
+          "mode": "RGB",
+          "sha256": "ed6d2549be4a65d06016444a968f083c47ee9cc8765778d9f1bd8d3c82986717",
+          "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-8f40528a-0d9b-4d26-a038-ec28e41bdc35.png",
+          "processing": "Copied native edited image bytes; no resize, crop or upscale.",
+          "revision": "v3-privateer-facing-freighter"
+        }
+      ],
+      "revision": "v4-distant-privateer-facing-freighter"
+    },
+    {
+      "slug": "pirate-raid",
+      "master": "client/art-src/story-events-v1/pirate-raid.png",
+      "nativeDimensions": [
+        1672,
+        941
+      ],
+      "mode": "RGB",
+      "sha256": "48a9847a742686c5a1c82fae613605ea5ba7c1b393cd0eab35340e7859b90167",
+      "generatedAt": "2026-10-16",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-589b5148-ad32-42c3-b832-fafd45eb434c.png",
+      "references": [
+        "client/art-src/story-events-v1/revisions/pirate-raid-v1-cable-lift.png",
+        "client/art-src/privateer-raider-reference-v1/privateer-raider-reference.png"
+      ],
+      "processing": "Copied native edited image bytes; no resize, crop or upscale.",
+      "generationSteps": [
+        {
+          "kind": "armed boarding party loading stolen cargo",
+          "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-589b5148-ad32-42c3-b832-fafd45eb434c.png"
+        }
+      ],
+      "revisions": [
+        {
+          "slug": "pirate-raid",
+          "master": "client/art-src/story-events-v1/revisions/pirate-raid-v1-cable-lift.png",
+          "nativeDimensions": [
+            1672,
+            941
+          ],
+          "mode": "RGB",
+          "sha256": "9020b0fdd4dc86c3c8bbd97cf625a49b5449f76cc2d8ffd01c157602855df19c",
+          "generatedAt": "2026-10-16",
+          "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-7eb9fa80-9532-4ef9-b83a-c0d5a18b1444.png",
+          "references": [
+            "client/art-src/founding-intro-v1/first-landing.png",
+            "client/art-src/story-events-v1/free-trader-inbound.png",
+            "client/art-src/privateer-raider-reference-v1/privateer-raider-reference.png"
+          ],
+          "processing": "Copied native generated image bytes; no resize, crop or upscale.",
+          "generationSteps": [
+            {
+              "kind": "generation",
+              "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-ab344f0e-fc66-4735-b334-385989d3669b.png"
+            },
+            {
+              "kind": "scale correction",
+              "generatedSource": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-7eb9fa80-9532-4ef9-b83a-c0d5a18b1444.png"
+            }
+          ]
+        }
+      ],
+      "revision": "v2-armed-pirates-loading"
+    }
+  ],
+  "updatedAt": "2026-10-16"
+}

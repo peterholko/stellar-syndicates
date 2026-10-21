@@ -51,6 +51,13 @@ const TINT: Record<string, number> = {
   black_hole: 0xff9a4a, magnetar: 0xb98cff,
 };
 
+/** The star artwork's turn at wall time `t` (s). The galaxy map's resolved
+ * disc turns with the System View's, so the handoff never snaps. */
+export function starSpinAngle(slug: string, t: number): number {
+  const motion = MOTION[slug] ?? MOTION.yellow_star;
+  return motion.spin > 0 ? -(t / motion.spin) * Math.PI * 2 : 0;
+}
+
 export class StarFx {
   /** Behind the star sprite (corona/envelope), in normalized star units. */
   readonly under = new Container();
@@ -106,7 +113,7 @@ export class StarFx {
    * while art loads); its scale is never touched — only its rotation. */
   update(t: number, sprite: Sprite | null): void {
     const motion = MOTION[this.slug] ?? MOTION.yellow_star;
-    if (sprite) sprite.rotation = motion.spin > 0 ? -(t / motion.spin) * Math.PI * 2 : 0;
+    if (sprite) sprite.rotation = starSpinAngle(this.slug, t);
     const breath = 0.5 + 0.5 * Math.sin(t * 0.9);
     const flicker = motion.flicker > 0
       ? motion.flicker * (0.5 + 0.5 * Math.sin(t * (Math.PI * 2) / Math.max(0.4, motion.spin / 2)))

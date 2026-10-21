@@ -17,7 +17,7 @@ impl World {
                 && !self.home_neighbours.contains(&s.id)
                 && (radius * 0.30..=radius * 0.80).contains(&s.pos.length())
                 && s.bodies.iter().all(|b| b.structures.values().all(|n| *n == 0))
-                && self.home_slots.iter().all(|h| h.pos.distance(s.pos) >= 30_000.0)
+                && self.home_slots.iter().all(|h| h.pos.distance(s.pos) >= pirate::PIRATE_HOME_EXCLUSION)
                 && self.fleets.values().all(|f| f.pos.distance(s.pos) > 20_000.0)
                 && self.engagements.values().all(|e| e.pos.distance(s.pos) > 20_000.0))
                 // Guard a genuine industrial opportunity, not a random empty
@@ -37,7 +37,7 @@ impl World {
                 plunder: BTreeMap::from([(Commodity::Alloys, if tier == pirate::STRONGHOLD_TIER { 240 } else { 100 }),
                     (Commodity::Electronics, if tier == pirate::STRONGHOLD_TIER { 100 } else { 40 })]),
                 next_launch_at: 0.0, next_grow_at: 0.0, dormant_until: 0.0,
-                pack: Some(pack), cleared: false });
+                pack: Some(pack), cleared: false, founder_den: false });
         }
     }
 
@@ -116,7 +116,7 @@ mod tests {
     }
     fn arrive(w: &mut World) {
         w.time = w.pending_operation_reports.iter().map(|r| r.arrive_at).fold(w.time, f64::max);
-        w.deliver_operation_reports();
+        w.deliver_operation_reports(&mut Vec::new());
     }
 
     #[test]
@@ -191,7 +191,7 @@ mod tests {
         assert!(loot.iter().all(|id| !w.operations[id].is_visible_to(p)));
         arrive(&mut w);
         assert_eq!(w.players[&p].credits, before + 8000.0);
-        w.deliver_operation_reports();
+        w.deliver_operation_reports(&mut Vec::new());
         assert_eq!(w.players[&p].credits, before + 8000.0);
         let freighter = friendly(&mut w, p, ShipKind::Convoy, pos);
         let alloys = *loot.iter().find(|id| matches!(w.operations[id].kind,

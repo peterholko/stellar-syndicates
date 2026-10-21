@@ -8,9 +8,12 @@ fn yard() -> (World, PlayerId, EntityId, EntityId) {
     let owner = PlayerId(91_123);
     w.step(&[Command::AddPlayer { id: owner, name: "Utility test".into() }]);
     w.enclaves.clear();
+    // Utility equipment, not the charter: no fakes, and a powered yard.
+    w.players.get_mut(&owner).unwrap().founding.enabled = false;
     let home = w.players[&owner].home_system.unwrap();
     let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
     sys.set_population(0.05);
+    sys.bodies[0].structures.insert(K::PowerPlant, 1);
     for b in &mut sys.bodies {
         b.assignments.clear();
         for kind in [K::Shipyard, K::OrdnanceFoundry, K::ArmamentsComplex] { b.structures.remove(&kind); }

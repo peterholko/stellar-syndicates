@@ -1,0 +1,125 @@
+{
+  "id": "free-trader",
+  "name": "Free Trader",
+  "center": [
+    254,
+    436
+  ],
+  "pixelsPerUnit": [
+    38,
+    38
+  ],
+  "reference": "free-trader-reference-v1/free-trader-reference.png",
+  "sprite": "free-trader-reference-v1/free-trader.png",
+  "triangleBudget": [
+    6000,
+    8000
+  ],
+  "counts": {
+    "canopyPanels": 8,
+    "dockingCollars": 4,
+    "mainEngines": 2,
+    "bridges": 1,
+    "guns": 0
+  },
+  "regions": {
+    "top": [
+      28,
+      55,
+      480,
+      816
+    ],
+    "bottom": [
+      529,
+      50,
+      986,
+      816
+    ],
+    "front": [
+      1124,
+      63,
+      1619,
+      271
+    ],
+    "back": [
+      1061,
+      337,
+      1682,
+      530
+    ],
+    "side": [
+      1015,
+      598,
+      1754,
+      799
+    ]
+  },
+  "patches": {
+    "silver": [
+      752,
+      1000,
+      1024,
+      1272
+    ],
+    "dark": [
+      1040,
+      1000,
+      1312,
+      1272
+    ],
+    "brass": [
+      1328,
+      1000,
+      1600,
+      1272
+    ],
+    "enginewall": [
+      1040,
+      1000,
+      1312,
+      1272
+    ],
+    "glass": [
+      198,
+      126,
+      300,
+      179
+    ],
+    "cyan": [
+      1194,
+      453,
+      1205,
+      467
+    ],
+    "purple": [
+      1630,
+      1000,
+      1840,
+      1050
+    ],
+    "cream": [
+      1630,
+      1070,
+      1840,
+      1120
+    ]
+  },
+  "highResolutionTop": {
+    "sourceBounds": [
+      277,
+      36,
+      977,
+      1207
+    ],
+    "crop": [
+      269,
+      28,
+      985,
+      1215
+    ],
+    "atlasOrigin": [
+      0,
+      850
+    ]
+  }
+}

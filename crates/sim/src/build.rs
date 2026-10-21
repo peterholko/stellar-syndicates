@@ -245,6 +245,37 @@ impl StructureKind {
         StructureKind::AntimatterPlant,
     ];
 
+    /// §workforce cap: does this structure do nothing until a crew is posted?
+    /// (The client's `WORKFORCE_STRUCTURES`.) Each built tier is one post.
+    pub fn takes_workforce(self) -> bool {
+        matches!(
+            self,
+            StructureKind::MiningComplex
+                | StructureKind::VolatileHarvester
+                | StructureKind::Bioharvester
+                | StructureKind::Smelter
+                | StructureKind::ElectronicsFabricator
+                | StructureKind::ChemicalWorks
+                | StructureKind::FuelRefinery
+                | StructureKind::MachineWorks
+                | StructureKind::ArmamentsComplex
+                | StructureKind::Agroplex
+                | StructureKind::LivingTerraces
+                | StructureKind::Academy
+                | StructureKind::CompositeWorks
+                | StructureKind::HullFabricator
+                | StructureKind::PrecisionWorks
+                | StructureKind::DriveWorks
+                | StructureKind::UraniumMill
+                | StructureKind::AntimatterPlant
+                | StructureKind::Shipyard
+                | StructureKind::NavalDrydock
+                | StructureKind::CapitalSlipway
+                | StructureKind::OrdnanceFoundry
+                | StructureKind::ServiceBerth
+        )
+    }
+
     /// Which slot pool a built tier of this kind consumes.
     pub fn slot_pool(self) -> SlotPool {
         match self {
@@ -348,7 +379,7 @@ impl StructureKind {
             StructureKind::VolatileHarvester => "Volatile Harvester",
             StructureKind::Bioharvester => "Bioharvester",
             StructureKind::Smelter => "Smelter",
-            StructureKind::ElectronicsFabricator => "Electronics Fabricator",
+            StructureKind::ElectronicsFabricator => "Semiconductor Fab",
             StructureKind::ChemicalWorks => "Chemical Works",
             StructureKind::FuelRefinery => "Deuterium Refinery",
             StructureKind::Agroplex => "Agroplex",
@@ -1349,17 +1380,14 @@ pub const PLATFORM_TIER_DEFENSE: f64 = 3.0;
 
 // --- SENSOR ARRAY (§buildings step 2b) ----------------------------------------
 
-/// Bubble radius of a tier-1 array — matches the global ship/CC bubble, so one
-/// tier buys a ship's worth of standing vision at the system. Tunable.
+/// Bubble radius of a tier-1 array: §sensors (Oct 16 2026) 20,000 su, a home's
+/// doorstep stars for anything under way. Tunable.
 ///
 /// Scaled with the galaxy, exactly as `config.sensor_range` is.
-/// Left absolute it would have projected 2,200 against a 110,000 fleet bubble —
-/// the building would have been worthless, and the panel that now reports its
-/// reach as a number would have been reporting a lie.
-pub const SENSOR_ARRAY_BASE: f64 = 2200.0 * crate::config::GALAXY_SCALE;
-/// Extra radius per tier past the first (+40% of base) — a tier-2 array outsees
-/// any ship. Tunable.
-pub const SENSOR_ARRAY_PER_TIER: f64 = 880.0 * crate::config::GALAXY_SCALE;
+pub const SENSOR_ARRAY_BASE: f64 = 400.0 * crate::config::GALAXY_SCALE;
+/// Extra radius per tier past the first: II 30k … VI 70k, where the nearest
+/// rival homes and pirate space begin. Tunable.
+pub const SENSOR_ARRAY_PER_TIER: f64 = 200.0 * crate::config::GALAXY_SCALE;
 
 /// The sensor bubble radius an array of `tier` projects (0 = no array).
 pub fn sensor_array_radius(tier: u32) -> f64 {
@@ -1548,6 +1576,11 @@ pub const DEV_SLOTS_MAX: u32 = 5;
 
 /// Warehouse I's capacity; preserves the former opening allowance. Tunable.
 pub const STORAGE_WAREHOUSE_INITIAL: f64 = 700.0;
+/// §charter-v4: the landed colony ship's holds: the home's storage until it
+/// builds a Warehouse, enough for the outfitting kit and its fuel. Tunable.
+pub const LANDING_HOLDS: f64 = 1_000.0;
+/// §charter-v4: what the founding camp's Storehouse project adds to the holds.
+pub const STOREHOUSE_HOLDS: f64 = 300.0;
 /// Each additional ground Warehouse tier adds this much (I–VI). Tunable.
 pub const STORAGE_PER_WAREHOUSE_TIER: f64 = 400.0;
 /// Late-game orbital bulk storage, additional to ground warehouses. Tunable.

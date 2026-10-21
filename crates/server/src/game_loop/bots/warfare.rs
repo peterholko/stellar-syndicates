@@ -52,14 +52,14 @@ impl Bot {
             let key = format!("fleet:{}", f.id);
             if !self.ready(&key, p.now) { continue; }
             if p.fighting.contains(&f.id) {
-                if f.damage.unwrap_or(0.0) > 0.5 {
+                if f.damage.unwrap_or(0.0) > 0.5 && !p.at_den(f) {
                     self.wait(key, p, f.pos);
                     self.status = "withdrawing a damaged formation on received battle evidence".into();
                     return Some(Command::Withdraw { player_id: p.owner, fleet_id: f.id });
                 }
                 continue;
             }
-            if f.damage.unwrap_or(0.0) > 0.2 {
+            if f.damage.unwrap_or(0.0) > 0.2 && !p.at_den(f) {
                 let yard = p.sites.iter().filter(|s| s.system.tier(K::OrdnanceFoundry) > 0
                     && p.enough_fuel(f, s.system.pos)).min_by(|a, b|
                         f.pos.distance(a.system.pos).total_cmp(&f.pos.distance(b.system.pos)));
@@ -72,7 +72,7 @@ impl Bot {
                     return Some(Command::MoveShip { player_id: p.owner, ship_id: f.id, dest: yard.system.pos });
                 }
             }
-            if f.damage.unwrap_or(0.0) > 0.2 || store(f) < p.tank(f) * 0.3 {
+            if f.damage.unwrap_or(0.0) > 0.2 && !p.at_den(f) || store(f) < p.tank(f) * 0.3 {
                 if let Some(cmd) = self.return_for_fuel(p, f) { return Some(cmd); }
             }
         }

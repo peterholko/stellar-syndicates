@@ -95,12 +95,58 @@ the System View. Ships near a
 star ease to their System View size over the same approach (complete by 64×,
 fully inside the 1,300 su near zone, back to full size 5,200 su out), so a
 departing hull never dwarfs the system it is leaving and keeps its size across
-the doorway. Past 96× the galaxy map keeps zooming unless the pointer is on the
-star; there, ships near a star keep the System View's proportion to the growing
-preview (never smaller than their System View size), so zooming onto a ship
-near a star no longer enlarges it for close inspection. See `nearStarBlend` and
-`shipSizePx` in `render.ts`; the sizes come from `systemShipPx`. Fleets beside
-the Market Hub take the same size (`docs/hub-model.md`).
+the doorway. Past 96× the galaxy map keeps zooming only over deep space or a
+visible hull; there, ships near a star keep the System View's proportion to the
+growing preview (never smaller than their System View size), so zooming onto a
+ship near a star no longer enlarges it for close inspection. See `nearStarBlend`
+and `shipSizePx` in `render.ts`; the sizes come from `systemShipPx`. Fleets
+beside the Market Hub take the same size (`docs/hub-model.md`).
+
+Positions follow over the same dive (Peter, Oct 20 2026: a travelling ship
+was out of alignment across the handoff). The orbits are a picture, not
+distances, so the galaxy's true positions and the System View's band could
+not agree: a ship 800 su out sat among the preview's planets on the map and
+outside the outermost orbit in the System View. From 40× to 96× a hull within
+the near zone now slides from its true position to the System View's own
+placement: its distance mapped into the band (`nearRadius`), on the tilted
+plane, at its true bearing, with its heading foreshortened to match. Beyond
+1,300 su it eases back to its true position by 5,200 su (farther when the
+preview is large, so the mapping never folds). Picks, the route line's start,
+guard lines and the move preview use the same placement
+(`nearStarPlacement` in `render.ts`); a route's end at the star stays at
+the star. Below 40× everything is drawn true. Not covered: hostiles loitering
+within 416 su (the System View's cordon around the besieged world) and barges
+working a belt.
+
+## The handoff (Oct 16 2026)
+
+- Over the same 40×→96× dive the star's lens flare resolves into the System
+  View's own disc: the disc opens from a quarter of the star's size, the flare
+  fades, and at 96× the galaxy draws the System View's star exactly (art,
+  visible size, anchor, and its turn, `starSpinAngle`). The preview's orbits
+  pass beneath the star, as in the System View.
+- At the doorway the whole orbit preview is the way in, not only the star: the
+  outermost orbit and the worlds on it, or 0.6 System View units around an
+  uncharted star (`approachSystemAt`). A visible hull keeps the wheel or pinch
+  for inspection until the camera reaches 384×. The + key or button enters the
+  star under the map's centre, else the selected star while it is on screen.
+- Past 96× the preview keeps growing with the camera up to the System View's
+  own fit (reached at about 274×). A handoff from any depth starts the
+  schematic where the preview stands (`Transition.growFrom`), so nothing
+  shrinks on the way in, and mid-handoff the preview rides the schematic's
+  scale (`handoffGrowth`).
+- The crossfade is one curve of the semantic position, the same both ways: the
+  System View fades in over an opaque galaxy, then the galaxy fades out beneath
+  it (`SYSTEM_FADE_SPLIT`). Identical pictures (star, orbits, worlds) therefore
+  never dim or double.
+- Entering always starts the orrery at rest. A retreat starts from wherever its
+  star is on screen (`handoffCamFrom`) while a zoomed orrery eases back to rest;
+  the wheel and the − button first return the orrery to rest, then leave.
+
+Rig: the `markers-fixture` launch entry (port 4181) with
+`?charted=1` charts Freya. In the embedded pane drive it by hand: `__pump(n)`
+renders frames, `__crop(x, y, w, h)` mirrors a magnified region over the canvas
+for a screenshot (take the screenshot twice; the first can be stale).
 
 ## Battle theater
 

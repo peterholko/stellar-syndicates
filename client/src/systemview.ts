@@ -715,6 +715,19 @@ export class SystemViewScene {
     return SYSTEM_STAR_VISIBLE_UNITS * this.baseScale;
   }
 
+  /// Scene px per normalized unit with the orrery camera at rest: the scale
+  /// the galaxy map's approach preview grows toward.
+  restScale(): number {
+    return this.baseScale;
+  }
+
+  /// The near zone's outer radius (normalized): where `nearRadius` puts a
+  /// contact at the defenses' reach. The galaxy map places hulls near a star
+  /// with the same band during the approach.
+  nearOuterRadius(): number {
+    return this.nearOuter;
+  }
+
   /// `starLayer` lives at normalized schematic origin; worldRoot maps that origin
   /// to `starLayout`. Inverting the parent content scale here therefore holds the
   /// sprite and procedural glow at full size about the exact star anchor.

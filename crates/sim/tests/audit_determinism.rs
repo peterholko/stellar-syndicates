@@ -29,12 +29,13 @@ fn build(seed: u64) -> World {
     ]);
     // Put one dark hull in clean nearby space so the periodic JumpShip below
     // exercises pending, spool, teleport and last_jump state in both nets.
-    let jump_id = w
-        .fleets
-        .iter()
-        .find(|(_, fleet)| fleet.owner == a && fleet.can_jump())
-        .map(|(id, _)| *id)
-        .expect("the opening roster has a jump hull");
+    // §charter-v4: founders land with no ships, so the audit brings its own
+    // Interceptor (an id far past anything the run allocates).
+    let jump_id = sim::ids::EntityId(9_000_000_001);
+    let home = w.players[&a].home;
+    w.fleets.insert(jump_id, sim::ship::Fleet::single(jump_id, a, sim::ship::ShipKind::Raider, home,
+        sim::ship::FleetOrder::Idle, None));
+    assert!(w.fleets[&jump_id].can_jump(), "an Interceptor can jump");
     let cc = w.players[&a].command_center;
     let safe = cc + Vec2::new(5_000.0, 5_000.0);
     assert!(safe.distance(w.hub) >= sim::transit::HYPERLIMIT);
@@ -177,6 +178,7 @@ fn a_pre_feature_snapshot_loads() {
         "pending_citations",
         "expeditions",
         "next_expedition_at",
+        "merchants",
     ] {
         obj.remove(k);
     }

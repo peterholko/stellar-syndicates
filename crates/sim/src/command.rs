@@ -143,6 +143,19 @@ pub enum Command {
         max_unit_price: Option<f64>,
     },
 
+    /// §merchant: trade with the traveling merchant docked at the player's
+    /// home. One atomic exchange: `buys` come out of its stock into the home
+    /// stockpile, `sells` (Ferrite Ore) go the other way, credits settle at
+    /// once. Refused whole if anything doesn't fit (stock, ore cap, credits,
+    /// home goods or storage).
+    MerchantTrade {
+        player_id: PlayerId,
+        #[serde(default)]
+        buys: std::collections::BTreeMap<crate::cargo::Commodity, u32>,
+        #[serde(default)]
+        sells: std::collections::BTreeMap<crate::cargo::Commodity, u32>,
+    },
+
     /// Sell at market (§9, §TCA): draws ONLY from the corp's Market Warehouse
     /// and settles instantly across the quantity-aware curve — the goods are
     /// already at the Exchange, so there is no crossing and no price-on-arrival
@@ -722,6 +735,18 @@ pub enum Command {
     AnnotateExploration {
         player_id: PlayerId,
         entry: crate::sites::JournalEntry,
+    },
+    /// §signals: send a captained fleet to sweep one of the corporation's
+    /// signals; it turns for home afterwards. Light-delayed like a move.
+    AnswerSignal {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        signal_id: EntityId,
+    },
+    /// §signals: clear an answered signal's report card. Local bookkeeping.
+    DismissSignal {
+        player_id: PlayerId,
+        signal_id: EntityId,
     },
 
     /// ATTACK a rival fleet (§offensive-orders Part 1) — the targeted DESTROY verb.

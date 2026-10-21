@@ -183,12 +183,12 @@ async fn postgres_admin_dashboard_records_sign_ins_play_commands_and_the_charter
             ships: 11,
             credits: 2500.0,
             valuation: 9000.0,
-            // Founded ten game-minutes ago; the mine and the first shipment
-            // since; the privateer fight is next.
+            // Founded ten game-minutes ago; the mine and the raid since; the
+            // ore sale to the trader is next.
             tutorial: Some(TutorialProgress { reached: vec![
                 (Step::Founded, Some(3000.0)),
                 (Step::Mine, Some(3300.0)),
-                (Step::Shipment, Some(3420.0)),
+                (Step::Raid, Some(3420.0)),
             ] }),
         },
         CorporationStats {
@@ -328,7 +328,7 @@ async fn postgres_admin_dashboard_records_sign_ins_play_commands_and_the_charter
     let recorded: Vec<(String, DateTime<Utc>, Option<f64>)> = sqlx::query_as(
         "SELECT step, reached_at, sim_time FROM tutorial_progress WHERE galaxy_id='test-galaxy' ORDER BY sim_time")
         .fetch_all(&pool).await.unwrap();
-    assert_eq!(recorded.iter().map(|(step, _, _)| step.as_str()).collect::<Vec<_>>(), ["founded", "mine", "shipment"]);
+    assert_eq!(recorded.iter().map(|(step, _, _)| step.as_str()).collect::<Vec<_>>(), ["founded", "mine", "raid"]);
     let ten_minutes_ago = Utc::now() - chrono::Duration::minutes(10);
     assert!((recorded[0].1 - ten_minutes_ago).num_seconds().abs() < 30, "founded ten game-minutes back");
     assert_eq!(recorded[2].2, Some(3420.0));
@@ -344,20 +344,21 @@ async fn postgres_admin_dashboard_records_sign_ins_play_commands_and_the_charter
     assert_eq!(stage("entered")["reached"], 1);
     assert_eq!(stage("entered")["waiting_active"], 1, "the alt signed up but has not played");
     assert_eq!(stage("mine")["reached"], 1);
-    assert_eq!(stage("privateer")["reached"], 0);
-    assert_eq!(stage("privateer")["waiting_active"], 1, "the pilot's shipment is under way");
-    assert_eq!(stage("privateer")["label"], "Defeat the Rogue Privateer");
-    assert_eq!(row["tutorial"]["next"], "privateer");
+    assert_eq!(stage("sell_ore")["reached"], 0);
+    assert_eq!(stage("sell_ore")["waiting_active"], 1, "the pilot's ore sale is next");
+    assert_eq!(stage("sell_ore")["label"], "Sell ore to the trader");
+    assert_eq!(row["tutorial"]["next"], "sell_ore");
     assert_eq!((row["in_funnel"].as_bool(), row["active"].as_bool(), row["operator"].as_bool()), (Some(true), Some(true), Some(false)));
     let ops_row = overview["players"].as_array().unwrap().iter().find(|p| p["login"] == "ops@example.com").unwrap();
     assert_eq!((ops_row["operator"].as_bool(), ops_row["in_funnel"].as_bool()), (Some(true), Some(false)));
-    assert_eq!((row["tutorial"]["done"].as_u64(), row["tutorial"]["total"].as_u64()), (Some(3), Some(10)));
+    assert_eq!((row["tutorial"]["done"].as_u64(), row["tutorial"]["total"].as_u64()), (Some(3), Some(19)));
     assert!(row["tutorial"].get("steps").is_none(), "the overview stays compact");
     let charter = &detail["player"]["tutorial"];
-    assert_eq!(charter["steps"].as_array().unwrap().len(), 12);
+    assert_eq!(charter["steps"].as_array().unwrap().len(), 21);
     assert_eq!(charter["steps"][2]["key"], "founded");
     assert!(charter["steps"][2]["at"].is_string());
-    assert!(charter["steps"][5]["at"].is_null(), "no privateer report yet");
+    assert!(charter["steps"][7]["at"].is_string(), "the raid's report is in");
+    assert!(charter["steps"][8]["at"].is_null(), "no ore sale yet");
 
     // Asking again writes nothing new.
     call(&app, "GET", "/api/admin/overview", Some(&ops), None).await;

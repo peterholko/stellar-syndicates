@@ -1,0 +1,31 @@
+{
+  "slug": "drifting-wreck",
+  "mode": "built-in image_gen",
+  "status": "Generated; used as the series reference for the remaining twelve paintings at Peter's request.",
+  "master": "client/art-src/signals-v1/drifting-wreck.png",
+  "nativeSize": {
+    "width": 1672,
+    "height": 941
+  },
+  "transparentBackground": false,
+  "postProcessing": "None; generated PNG copied unchanged.",
+  "initialGeneration": {
+    "references": [
+      {
+        "path": "client/art-src/founding-intro-v1/first-landing.png",
+        "role": "Style only"
+      },
+      {
+        "path": "client/art-src/exploration/derelict.png",
+        "role": "Subject only"
+      }
+    ],
+    "prompt": "Use case: stylized-concept.\nAsset type: Painting 1 of 13, \"Drifting wreck\", for the Signals card and report in the science-fiction strategy game Stellar Syndicates.\n\nInput image 1 is a STYLE reference only: first-landing.png. Match its realistic cinematic science-fiction painting, grounded materials, natural lighting and restrained detail. Do not copy its landscape, people, buildings, planet or composition.\nInput image 2 is a SUBJECT reference only: derelict.png. Repaint this split civilian freighter and loose cargo in the series' painterly cinematic style, with a new wider composition and realistic space lighting.\n\nScene: open space close to a young colony's home star, viewed from a nearby ship whose hull and cockpit are outside the image. Cold blue-black space, faint nebula haze, sparse stars, a small distant warm star low in one corner. Quiet dark negative space at the edges.\nSubject: a dead independent freighter drifting in two pieces. A mid-sized silver-grey titanium cargo hull torn apart at its midsection, the halves slowly separating, a few cargo containers spilling out, stripped cables trailing between the two pieces, a short row of small amber emergency lights still blinking along the spine. Scorched ragged edges; engine dark. Preserve the subject reference's recognizable hull family, split midsection, cargo pods and material character, but paint it as part of a fully integrated scene.\nLighting and mood: restrained warm starlight from one side and small amber emergency lights. Warm amber is the accent against cold space. Still, abandoned, silent.\n\nFormat and composition: ONE finished opaque wide 16:9 landscape painting, full frame, not a collage. Prefer native 1672 x 941 pixels; if the native output is 1536 x 1024, preserve these proportional framing requirements. The entire wreck and essential cargo and trailing cables form one central focal group inside the central 60% of the width (x 20% to 80%) and middle 45% of the height (y 27.5% to 72.5%). Arrange the two halves on a shallow diagonal across this safe central band; leave ample quiet space above, below and beside them. Do not crop the subject. The image must still read clearly as a small card and survive a central 21:9 banner crop. The star is a small background accent.\n\nAvoid: any text, labels, numbers, logos, emblems, flags, skulls, watermarks, borders, interface, collage or inset. No people. No planet filling the frame. No spacecraft other than the wreck subject. No visible observer ship or cockpit. No explosions, fire, engine flames or weapons fire. No artificial presentation backdrop or cutout sprite appearance.",
+    "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-3208ba50-b5cb-4291-8a11-7c2f4e164b34.png"
+  },
+  "selectedRevision": {
+    "reason": "Pull back to fit the central framing requirements; simplify the background.",
+    "prompt": "Use case: precise-object-edit.\nEdit the attached Drifting wreck painting to correct its composition for a game card and a very wide banner crop.\n\nKeep the exact two-part freighter design, silver-grey titanium, damaged midsection, trailing cables, loose cargo pods, small amber emergency lights, cinematic painting style, and still abandoned mood.\n\nThe essential change is a MUCH MORE DISTANT CAMERA. Reduce the entire wreck-and-cargo group to approximately 55% of its present scale, centered in the frame. All parts of the freighter INCLUDING the tall antenna, cargo pods and cables must fit fully within the middle 45% of the image height, from y=28% to y=72%, and central 60% of its width, x=20% to x=80%. Center the group at x=50%, y=50%. Keep both separated hull halves readable. This is a distant discovery in spacious darkness; it must not fill the frame. Do not crop or truncate anything. Use the same wide 16:9 canvas, ideally 1672 x 941 native pixels.\n\nSimplify the environment to support that distant composition: remove ALL of the asteroids, foreground boulders and scattered rocks. The wreck, its few loose cargo containers and a small amount of nearby torn metal are the only solid objects. Replace the busy background with very dark cold blue-black open space, sparse stars and only a faint whisper of nebula haze. The outer edges, upper quarter and lower quarter should be quiet and dark. Keep the warm star low in the left corner but make it a small distant point with restrained glow, not a large bright sunburst. Preserve subtle warm light falling on one side of the wreck; amber remains the sole accent colour.\n\nOne full-frame opaque painting. No text, labels, numbers, logos, emblems, flags, skulls, watermark, borders, interface, other ships, people, planets, explosions, fire or weapons fire.",
+    "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-feebe699-01f4-418f-9b1a-9171c6bddc7c.png"
+  }
+}

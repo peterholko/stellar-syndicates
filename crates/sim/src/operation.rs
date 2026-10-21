@@ -27,6 +27,37 @@ pub const CONTROL_HOLD_S: f64 = 3.0 * 60.0;
 /// Optional beginner jobs repeat, but never flood the founding checklist.
 pub const FOLLOW_UP_COOLDOWN_S: f64 = 10.0 * 60.0;
 pub const FOLLOW_UP_PIRATE_SPEED_MULT: f64 = 0.50;
+
+// ─── §contract-board (Oct 19 2026, Peter): Travian's daily quests, without
+// the trap. Once its charter is fulfilled, a corporation gets a day's
+// contracts from the Authority; they replace the old 15-minute Survey and
+// Market offers. Earned rewards are paid on arrival as ever, and an accepted
+// contract keeps a full day whenever it was accepted. Tunable.
+/// A board day, in sim seconds: a real day at the dev server's 1× pacing.
+pub const BOARD_DAY_S: f64 = 24.0 * 60.0 * 60.0;
+pub const BOARD_CONTRACTS: usize = 4;
+/// Finishing this many of one day's contracts pays the bonus.
+pub const BOARD_BONUS_AFTER: u32 = 3;
+pub const BOARD_BONUS_CREDITS: f64 = 1_000.0;
+pub const BOARD_BONUS_STANDING: f64 = 2.0;
+pub const BOARD_SURVEY_CREDITS: f64 = 400.0;
+pub const BOARD_SURVEY_STANDING: f64 = 2.0;
+pub const BOARD_DELIVERY_CREDITS_PER_UNIT: f64 = 8.0;
+
+/// A corporation's contract board.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ContractBoard {
+    /// The last day posted (`time / BOARD_DAY_S`).
+    #[serde(default)]
+    pub day: Option<u64>,
+    /// Contracts finished, by the day they were posted (as their reports
+    /// arrived); the last few days only.
+    #[serde(default)]
+    pub done: BTreeMap<u64, u32>,
+    /// The days whose bonus has been paid.
+    #[serde(default)]
+    pub bonus_days: BTreeSet<u64>,
+}
 pub const FOLLOW_UP_PIRATE_DAMAGE_MULT: f64 = 0.10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -255,6 +286,10 @@ pub struct Operation {
     pub stage: u8,
     #[serde(default)]
     pub hold_since: Option<f64>,
+    /// §contract-board: the day this contract was posted on its corporation's
+    /// board. None: any other operation.
+    #[serde(default)]
+    pub board_day: Option<u64>,
 }
 
 impl Operation {

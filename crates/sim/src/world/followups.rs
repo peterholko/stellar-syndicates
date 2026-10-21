@@ -34,7 +34,7 @@ impl World {
             Commodity::Biomass => (Commodity::Provisions, "Biomass → Agroplex → Provisions"),
             Commodity::Volatiles => (Commodity::Deuterium, "Volatiles → Fuel Refinery → Fuel"),
             Commodity::RareElements | Commodity::Silicates => (Commodity::Electronics,
-                "Rare Elements + Silicates → Electronics Fabricator → Electronics"),
+                "Rare Elements + Silicates → Semiconductor Fab → Semiconductors"),
             _ => (Commodity::Alloys, "Ferrite Ore + Fuel → Smelter → Alloys"),
         };
         let chapters = if onboarding {
@@ -104,7 +104,7 @@ impl World {
                         units: 60, source_fleet: EntityId(0) }, 60,
                     OperationReward { credits: 1_200.0, captain_xp: 90, authority_standing: 0.0, research_insight: 35.0 },
                     "Guarded salvage", "High · extraction objective", "Freighter · 60 free cargo; mixed Corvette/Interceptor escort",
-                    "Recover 60 Electronics from a guarded wreck. A driver raider and screening Corvette defend it. Extract the goods; destroying both is not required.".into()),
+                    "Recover 60 Semiconductors from a guarded wreck. A driver raider and screening Corvette defend it. Extract the goods; destroying both is not required.".into()),
                 FollowUpKind::Salvage => (OperationIssuer::SalvageOffice,
                     OperationKind::RescueSalvage { pos: site, commodity: Commodity::Alloys, units: 24,
                         source_fleet: EntityId(0) }, 24,
@@ -310,7 +310,7 @@ mod tests {
         world.refresh_followup_operations(player, &mut Vec::new());
         world.time = world.pending_operation_reports.iter().map(|r| r.arrive_at)
             .fold(world.time, f64::max);
-        world.deliver_operation_reports();
+        world.deliver_operation_reports(&mut Vec::new());
     }
 
     fn job(world: &World, kind: FollowUpKind) -> OperationId {
@@ -384,7 +384,7 @@ mod tests {
         assert_ne!(w.operations[&id].known[&p].state, OperationState::Completed);
         assert_eq!(w.players[&p].credits, before, "physical success isn't an immediate payout");
         w.time = w.pending_operation_reports.iter().map(|r| r.arrive_at).fold(w.time, f64::max);
-        w.deliver_operation_reports();
+        w.deliver_operation_reports(&mut Vec::new());
         assert_eq!(w.players[&p].credits, before + 900.0);
         // Renewing cannot create an ever-growing crowd of surviving pirates.
         w.time += crate::operation::FOLLOW_UP_COOLDOWN_S + 1.0;
@@ -494,9 +494,9 @@ mod tests {
         assert!(w.players[&p].credits <= before, "no early payout (upkeep can debit)");
         let after_battle = w.players[&p].credits;
         w.time = w.pending_operation_reports.iter().map(|r| r.arrive_at).fold(w.time, f64::max);
-        w.deliver_operation_reports();
+        w.deliver_operation_reports(&mut Vec::new());
         assert_eq!(w.players[&p].credits, after_battle + 750.0);
-        w.deliver_operation_reports();
+        w.deliver_operation_reports(&mut Vec::new());
         assert_eq!(w.players[&p].credits, after_battle + 750.0);
         w.time += crate::operation::FOLLOW_UP_COOLDOWN_S + 1.0;
         w.refresh_followup_operations(p, &mut Vec::new());

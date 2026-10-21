@@ -8,6 +8,8 @@ fn scene() -> (World, PlayerId, EntityId, u32) {
     let owner = PlayerId(7801);
     w.step(&[Command::AddPlayer { id: owner, name: "Local command".into() }]);
     w.enclaves.clear();
+    // Command Center mechanics, not the charter: no land grant, no fakes.
+    w.players.get_mut(&owner).unwrap().founding.enabled = false;
     let home = w.players[&owner].home_system.unwrap();
     let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
     let body = sys.bodies.iter().find(|b| b.tier(K::CommandCenter) == 1).unwrap().id;
@@ -42,10 +44,9 @@ fn landing_command_is_free_unstaffed_and_uses_no_development_slot() {
     assert_eq!(b.infrastructure_slots(), without.infrastructure_slots());
     assert_eq!(b.command_construction_mult(), 1.0);
     assert_eq!(w.players[&owner].command_center, sys.pos);
-    // §power: the landing command comes with its planet's first Power Plant,
-    // slot-free too.
-    assert_eq!(b.tier(K::PowerPlant), 1);
-    assert_eq!(sys.tier_sum(K::PowerPlant), 1, "only the command's own planet");
+    // §charter-v4: no free plant comes with it; its reactor powers the planet.
+    assert_eq!(sys.tier_sum(K::PowerPlant), 0);
+    assert_eq!(crate::power::base_mw(b.tier(K::CommandCenter)), crate::power::COMMAND_CENTER_MW);
 }
 
 #[test]
@@ -156,7 +157,7 @@ fn colony_landings_deploy_a_landing_command() {
     assert_eq!(colony.owner, Some(owner));
     assert_eq!(colony.tier_sum(K::CommandCenter), 1);
     let command = colony.bodies.iter().find(|b| b.tier(K::CommandCenter) == 1).unwrap();
-    assert_eq!(command.tier(K::PowerPlant), 1, "a landing brings its plant");
+    assert_eq!(command.tier(K::PowerPlant), 0, "§charter-v4: no free plant; the reactor powers it");
 }
 
 #[test]

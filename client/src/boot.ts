@@ -2,6 +2,7 @@ import "./styles/tokens.css";
 import "./styles/settlement.css";
 import "./ship-model-preview";
 import { SettlementUI } from "./settlement";
+import { FOLLOW_UP_MS, freeTraderEvent, piratesEvent, StoryEventUI } from "./story-events";
 import { accounts } from "./auth";
 
 import { updateSignals } from "./core/derive/orders";
@@ -33,7 +34,19 @@ let activeShell: Shell | null = null;
 let activeKind: ShellKind | null = null;
 let shellGeneration = 0;
 
+// §charter-v4: story turns pop up over either shell.
+const storyEvents = new StoryEventUI(event => {
+  state.storyTold.add(event.key);
+  activeShell?.onCore([]);
+});
+
 function present(events: Parameters<Shell["onCore"]>[0]): void {
+  for (const event of events) {
+    // §charter-v5: the raid's report, then the trader, on the server's word
+    // that it docked.
+    if (event.kind === "StoryEvent" && event.story === "pirates") storyEvents.show(piratesEvent(event));
+    if (event.kind === "StoryEvent" && event.story === "free_trader") storyEvents.showAfterGap(freeTraderEvent(), FOLLOW_UP_MS);
+  }
   activeShell?.onCore(events);
 }
 
@@ -61,6 +74,7 @@ net = new Net({
   onSessionReplaced: () => {
     present(applySessionReplaced(state));
     settlement.endSession();
+    storyEvents.endSession();
   },
   onError: () => {
     const events = applyLinkStatus(state.playerId === null ? "offline" : "reconnecting", state);

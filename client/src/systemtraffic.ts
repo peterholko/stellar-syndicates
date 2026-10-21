@@ -9,7 +9,8 @@
 // participants. What it decides is purely presentational:
 //
 //   * BERTH   — a fleet berthed at this system parks beside the world hosting
-//               the facility it uses (systemlayout.berthAnchor).
+//               the facility it uses; the free trader beside the home world
+//               it serves (systemlayout.fleetBerth).
 //   * NEAR    — a fleet under way in the star's near zone keeps its true
 //               bearing and distance, drawn to scale outside the orbits.
 //   * CORDON  — a hostile fleet loitering at the system rings the world it
@@ -29,7 +30,7 @@ import type {
 import { battleRecordMarkKey } from "./battlehistory";
 import { blockadeBadge, siegeClock } from "./core/derive/blockade";
 import {
-  DOCK_RADIUS_SU, NEAR_ZONE_SU, PLATFORM_COVER_SU, berthAnchor, defendedWorld, pictureAge, siegeTarget,
+  DOCK_RADIUS_SU, NEAR_ZONE_SU, PLATFORM_COVER_SU, defendedWorld, fleetBerth, pictureAge, siegeTarget,
   type AnchorBody,
 } from "./systemlayout";
 
@@ -113,7 +114,7 @@ export interface SystemPicture {
 export interface SystemPictureInput {
   system: SystemInfo;
   dynamic: SystemStateView | undefined;
-  galaxy: Pick<GalaxyInfo, "c" | "siege_secs" | "sensor_range">;
+  galaxy: Pick<GalaxyInfo, "c" | "siege_secs">;
   ghosts: readonly GhostView[];
   battles: readonly BattleView[];
   battleRecords: readonly BattleRecordView[];
@@ -136,6 +137,9 @@ const LOITER_SU = DOCK_RADIUS_SU * 1.6;
 const ORBITAL_BATTLE_SU = PLATFORM_COVER_SU;
 /** Hulls a world always draws individually (the System View's smallest cap). */
 const ALWAYS_DRAWN = 3;
+/** Edge arrows only for fleets within this of the star (a plain distance: the
+ * ghosts shown are already fogged; the old 80k sensor bubble). */
+const EDGE_ARROW_SU = 80_000;
 /** Inbound arrows only for arrivals inside this window (sim s). */
 const INBOUND_ETA_MAX_S = 45 * 60;
 /** Outbound arrows only for fleets that left the near zone this recently (sim s). */
@@ -312,7 +316,7 @@ export function deriveSystemPicture(input: SystemPictureInput): SystemPicture {
   for (const pb of battles) {
     for (const id of battleById.get(pb.id)?.participants ?? []) engagedIn.set(id, pb.id);
   }
-  const arrowRange = galaxy.sensor_range || 0;
+  const arrowRange = EDGE_ARROW_SU;
   const fleets: PictureFleet[] = [];
   for (const g of input.ghosts) {
     const tone = fleetTone(g);
@@ -329,7 +333,7 @@ export function deriveSystemPicture(input: SystemPictureInput): SystemPicture {
       continue;
     }
     if (dockedHere(g, system.id)) {
-      fleets.push({ ...base, placement: { mode: "berth", body: berthAnchor(g.kind, bodies), slot: 0, slots: 1 } });
+      fleets.push({ ...base, placement: { mode: "berth", body: fleetBerth(g, bodies), slot: 0, slots: 1 } });
       continue;
     }
     const belt = workingBelt(g, system.id, star);

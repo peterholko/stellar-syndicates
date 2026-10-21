@@ -30,8 +30,10 @@ export const INBOX_W = {
   idleStockpile: 30, captureWon: 28, battleReport: 26, noAutomation: 20,
 };
 
-const HOSTILE_CONCERN_MULT = 1.6;
-/** §founding R8: until the first guarded export leaves, these decisions fold
+/** Hostile Interceptors this near an owned system make the inbox (the old
+ * 80k sensor bubble × 1.6). A plain distance: what is shown is already fogged. */
+const HOSTILE_CONCERN_SU = 128_000;
+/** §founding R8: until the privateer's bounty is in, these decisions fold
  * into one "Also happening" line so the guide and real threats stay on top. */
 const FOCUS_FOLD = ["nodeopen:", "nodes:", "operations:", "surveyops", "surveyrep:", "enclave:", "idle:", "queue:",
   "invites:", "idlefleet:", "loaded:", "storage:", "refinery:", "noauto"];
@@ -39,18 +41,29 @@ const FOCUS_KEY = "focus:also";
 const IDLE_UNITS = 30;
 const MAX_HOSTILE_ITEMS = 4;
 const FOUNDING_DIRECTIVE: Record<FoundingStage, string> = {
+  build_bioharvester: "Build and staff a Bioharvester",
+  build_habitat: "Build a Habitat",
+  build_agroplex: "Build and staff an Agroplex",
   build_mine: "Build and staff the Mining Complex",
-  local_recovery: "Send your first shipment",
-  prepare_export: "Send your first shipment",
-  export_production: "Send your first shipment",
-  build_convoy: "Replace your Freighter, then ship your ore",
-  defeat_privateer: "Protect the shipment from the Rogue Privateer",
+  pirate_raid: "Pirates raid the colony",
+  sell_ore: "Sell ore to the trader",
+  power_shipyard: "Build a Solar Array",
+  buy_semiconductors: "Buy semiconductors, then build the Solar Array",
   build_shipyard: "Build and staff a Shipyard",
   complete_export: "Build and staff a Shipyard",
   grow_business: "Build and staff a Shipyard",
   build_second_freighter: "Build and staff a Shipyard",
+  build_freighter: "Build a Tiny Freighter",
+  build_convoy: "Build a Tiny Freighter",
+  local_recovery: "Export your ore",
+  prepare_export: "Export your ore",
+  export_production: "Export your ore",
+  build_interceptor: "Build an Interceptor",
+  defeat_privateer: "Destroy the Rogue Privateer",
+  eliminate_den: "Eliminate the privateer den",
   build_academy: "Start research at an Academy",
   first_research: "Start research at an Academy",
+  expand_mining: "Expand mining operations",
   build_scout: "Chart a nearby system with a Survey Probe",
   survey_candidates: "Chart a nearby system with a Survey Probe",
   build_barge: "Build a Mining Barge",
@@ -230,7 +243,7 @@ export class DeckLogRoutes {
     const homeId = foundingHomeSystemId();
     const plan = state.founding && state.founding.stage !== "complete"
       ? foundingPlan(state, state.systems.find((system) => system.id === homeId)) : null;
-    const focus = plan?.chapter.name === "Landfall" && !state.founding?.export_dispatched && !this.focusOpen;
+    const focus = !!plan && !state.founding?.bounty_received && !this.focusOpen;
     if (state.founding && state.founding.stage !== "complete") {
       const step = plan?.primary;
       const chapter = plan && plan.chapter.name !== "Founding" ? `${plan.chapter.name} ${plan.chapter.done}/${plan.chapter.total}` : "Founding directive";
@@ -282,7 +295,7 @@ export class DeckLogRoutes {
         age: battle.started_at, actions });
     }
 
-    const threatRadius = galaxy.sensor_range * HOSTILE_CONCERN_MULT;
+    const threatRadius = HOSTILE_CONCERN_SU;
     const hostiles: DeckInboxItem[] = [];
     const holding = new Set<string>();
     for (const fleet of state.ghosts) {
@@ -314,9 +327,10 @@ export class DeckLogRoutes {
       const tier = system.intel?.enclave_tier ?? 0;
       if (tier <= 0) continue;
       const key = `enclave:${system.id}`;
+      const site = pirateSite(tier, state.founding?.den === system.id)!;
       push({ key, weight: INBOX_W.enclave, tone: "warn", icon: "raider",
-        headline: `${pirateSite(tier)!.title} · ${systemName(system.id)}`,
-        stakes: pirateSite(tier)!.goal,
+        headline: `${site.title} · ${systemName(system.id)}`,
+        stakes: site.goal,
         age: system.intel?.observed_at, actions: [focusSystem(system.id), dismiss(key)] });
     }
 

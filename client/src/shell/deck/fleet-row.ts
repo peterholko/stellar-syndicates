@@ -33,6 +33,7 @@ export function fleetListRow(fleet: GhostView, options: FleetRowOptions): string
 }
 
 function fleetListIcon(fleet: GhostView): IconKey {
+  if (fleet.merchant) return "free_trader";
   // A single hull gets its ship art; a formation keeps the multi-ship emblem.
   if (fleetExactCount(fleet) !== 1) return "fleet";
   const kind = fleet.composition?.find((stack) => stack.count === 1)?.kind ?? fleet.kind;

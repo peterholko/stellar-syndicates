@@ -3,11 +3,12 @@ import type { ViewState } from "../state";
 import type { ColonyProjectKind, Commodity, EntityId, FreightRoute, GhostView, Manifest, OutpostKind, ProjectTarget, RouteStop, SystemStateView } from "../protocol";
 import { fleetCargoManifest } from "../protocol";
 import { foundingHomeSystemId } from "../core/derive/geo";
+import { FOUNDING_STEP } from "../core/derive/founding";
 import { commodityIcon, icon, ICONS, label, type IconKey } from "../icons";
 import { COMMODITIES, MINERAL_DEPOSITS } from "../core/derive/market";
 import { fleetCargoCapacity, fleetFuelCapacity, guardCapable, PROSPECT_SECS, shipKindLabel, transitLabel } from "../core/derive/fleet";
 import { availableStock, colonyProjectReason, firstShipmentRoute, freightRouteReason, hubQuote, openingImportPlan, productionPlan, projectName,
-  routeAboard, routeCruiseSpeed, routeHubEstimate, routeLegSeconds, routePortId, routePortPosition } from "../core/derive/industry";
+  routeAboard, routeCruiseSpeed, routeHubEstimate, routeLegSeconds, routePortId, routePortPosition, type OpeningInvestment } from "../core/derive/industry";
 import { planetArtUrl, planetArtwork, type PlanetArtKind } from "../planetart";
 import { HUB_MODEL } from "../hub-model.generated";
 import type { FleetCommand } from "../core/fleetorders";
@@ -108,9 +109,17 @@ const aboard = (g: GhostView): Manifest => Object.fromEntries(fleetCargoManifest
 function homeSystem(st: ViewState): SystemStateView | undefined {
   return st.systems.find(s => s.owner === st.playerId && s.id === foundingHomeSystemId()) ?? st.systems.find(s => s.owner === st.playerId);
 }
-/** §charter v3: Landfall's guarded shipment, until its departure is reported. */
-const SHIPMENT_STAGES = ["build_mine", "local_recovery", "prepare_export", "export_production", "build_convoy"];
-const firstShipmentPending = (st: ViewState) => !!st.founding?.local_opening && !st.founding.export_dispatched && SHIPMENT_STAGES.includes(st.founding.stage);
+/** The charter export, until its departure is reported. §charter-v5: step 12,
+ * "Export your ore", after the den (the other stages are retired). */
+const SHIPMENT_STAGES = ["build_freighter", "build_convoy", "local_recovery", "prepare_export", "export_production"];
+const firstShipmentPending = (st: ViewState) => {
+  const f = st.founding;
+  return !!f?.local_opening && !f.export_dispatched && SHIPMENT_STAGES.includes(f.stage);
+};
+/** The charter shipment's return basket: the Academy's kit, which comes next. */
+const shipmentGoal = (st: ViewState): OpeningInvestment => st.founding?.local_opening ? "refining" : "transport";
+/** "Charter · step 9": the guide's own numbering. */
+const charterStep = (st: ViewState) => st.founding ? `Charter · step ${FOUNDING_STEP[st.founding.stage]}` : "Charter";
 /** A route (or other configure) order on its way to this fleet. */
 const routeOrderPending = (st: ViewState, id: string) => !!st.pendingOrders?.get(id)?.some(o => o.kind === "configure" && !o.configuration && !o.lost);
 /** Ship kinds read the same in every list; a second hull of a kind is numbered. */
@@ -142,6 +151,9 @@ function portArt(st: ViewState, port: RouteStop["port"]): string {
   return kind && planetArtwork(kind) ? `<img class="lx-port__art" src="${planetArtUrl(kind, 96)}" alt="">` : `<span class="lx-port__art" aria-hidden="true"></span>`;
 }
 function defaultEscort(st: ViewState, freighter: GhostView): GhostView | undefined {
+  // §charter-v5: once the privateer's bounty is paid nothing hunts the lane;
+  // an escort would only hold the trip until it is home and fuelled for it.
+  if (st.founding?.local_opening && st.founding.bounty_received) return undefined;
   const escorts = st.ghosts.filter(g => g.id !== freighter.id && guardCapable(g));
   return escorts.find(g => g.guard_target === freighter.id) ?? escorts.find(g => !!g.docked && g.docked === freighter.docked) ?? escorts[0];
 }
@@ -190,7 +202,7 @@ function railHtml(st: ViewState, v: Ui, fleets: GhostView[], names: Map<string, 
     + `${fleets.length ? `<button type="button" class="lx-rail__new" ${act("new-route")}>+ New route</button>` : ""}</aside>`;
 }
 
-/** One stop's work in a line: "sell 50 Ferrite Ore, then buy 14 Electronics". */
+/** One stop's work in a line: "sell 50 Ferrite Ore, then buy 14 Semiconductors". */
 function stopSummary(stop: RouteStop, route: FreightRoute): string {
   const list = (m: Manifest) => { const l = listed(m); return l.length <= 2 ? l.map(([c, n]) => `${amount(n)} ${label(c)}`).join(" and ") : `${amount(total(m))} units of ${l.length} goods`; };
   const hub = stop.port.kind === "hub", parts: string[] = [];
@@ -236,7 +248,7 @@ function itineraryHtml(st: ViewState, route: FreightRoute, legs: (number | null)
 }
 
 function planHtml(st: ViewState, v: Ui, fleet: GhostView, home: SystemStateView, names: Map<string, string>): string {
-  const plan = openingImportPlan(st, home, "transport");
+  const plan = openingImportPlan(st, home, shipmentGoal(st));
   const basket = v.basket ?? plan.manifest;
   const escort = defaultEscort(st, fleet);
   const route = firstShipmentRoute(home, fleet, escort?.id ?? null, basket, v.cap);
@@ -266,14 +278,14 @@ function planHtml(st: ViewState, v: Ui, fleet: GhostView, home: SystemStateView,
   const notes: Record<number, string> = oreHere < ore ? { 0: `<p class="lx-stop__note is-warn">Waits for ${ore} ore · ${oreHere} in stock</p>` } : {};
   const escortName = escort ? names.get(escort.id) ?? shipKindLabel(escort.kind) : "";
   const fleetDock = dockName(st, fleet);
-  return `<div class="lx-lead"><div><span class="lx-label">Charter · step 2</span><h3>Send your first shipment</h3><p>Sell ore at the Market Hub and bring ${esc(kit)} materials home.</p></div><span class="lx-chip is-accent">${escort ? "Escorted" : "Unescorted"} · one trip</span></div>`
+  return `<div class="lx-lead"><div><span class="lx-label">${esc(charterStep(st))}</span><h3>${st.founding?.stage === "defeat_privateer" ? "Send the escorted export" : "Send your first shipment"}</h3><p>Sell ore at the Market Hub and bring ${esc(kit)} materials home.</p></div><span class="lx-chip is-accent">${escort ? "Escorted" : "Unescorted"} · one trip</span></div>`
     + itineraryHtml(st, route, legs, null, notes)
     + `<div class="lx-split"><section class="lx-box" aria-label="Return basket"><h4>Return basket <small>${held} / ${hold} hold</small></h4><div class="lx-goods">${basketRows}</div>`
     + `<div class="lx-meter${held >= hold ? " is-full" : ""}"><span><span>Hold</span><span>${held} / ${hold}</span></span><i><b style="width:${Math.min(100, held / Math.max(1, hold) * 100).toFixed(0)}%"></b></i></div>`
     + `<p class="lx-note">${coverage}</p></section>`
     + `<section class="lx-box" aria-label="Trip"><h4>Trip</h4><dl class="lx-facts">`
     + `<dt>Freighter</dt><dd>${hullIcon(fleet)}<span>${esc(names.get(fleet.id) ?? shipKindLabel(fleet.kind))}${fleetDock ? ` · ${esc(fleetDock)}` : ""}</span></dd>`
-    + `<dt>Escort</dt><dd>${escort ? `${hullIcon(escort)}<span>${esc(escortName)}</span><span class="lx-chip">guards it</span>` : `<span class="is-warn">No escort ready. The charter counts the shipment only with one guarding the Freighter.</span>`}</dd>`
+    + `<dt>Escort</dt><dd>${escort ? `${hullIcon(escort)}<span>${esc(escortName)}</span><span class="lx-chip">guards it</span>` : st.founding?.stage === "defeat_privateer" ? `<span class="is-warn">No Interceptor ready. Pirates turn unescorted Freighters back.</span>` : `<span>None</span>`}</dd>`
     + `<dt>Spending cap</dt><dd><input type="number" min="0" max="1000000000" step="100" value="${v.cap}" aria-label="Spending cap in credits" ${field("plan-cap")}><small>Skips what it can't afford.</small></dd></dl>`
     + (money ? `<div class="lx-money" aria-label="Expected money"><span>Ore sale</span><span class="is-good">+${cr(money.sold)}</span><span>Basket</span><span class="is-warn">−${cr(money.bought)}</span>`
       + `<span class="lx-money__net">Net</span><span class="lx-money__net ${net >= 0 ? "is-good" : "is-warn"}">${net >= 0 ? "+" : "−"}${cr(Math.abs(net))}</span></div>` : `<p class="lx-note">Prices arrive with the next Hub report.</p>`)
@@ -312,7 +324,7 @@ function statusHtml(st: ViewState, fleet: GhostView, run: Extract<NonNullable<Gh
   }).join("");
   const escort = route.escort ? names.get(route.escort) ?? "escort" : null;
   const pending = routeOrderPending(st, fleet.id);
-  return `<div class="lx-lead"><div><span class="lx-label">${route.name === "First shipment" ? "Charter · step 2" : "Route"}</span><h3>${esc(route.name)}${complete ? " · complete" : ""}</h3><p>${esc(doing)}</p></div>`
+  return `<div class="lx-lead"><div><span class="lx-label">${route.name === "First shipment" ? "Charter" : "Route"}</span><h3>${esc(route.name)}${complete ? " · complete" : ""}</h3><p>${esc(doing)}</p></div>`
     + `<span class="lx-chip is-accent">${escort ? `Escorted by the ${esc(escort)}` : "Unescorted"} · ${route.repeat ? "repeats" : "one trip"}</span></div>`
     + (pending ? `<p class="lx-banner" role="status">Route order sent. The Freighter acts on it when the order arrives.</p>` : "")
     + itineraryHtml(st, route, legs, live)
@@ -588,7 +600,7 @@ export function handleIndustryAction(el: HTMLElement, ctx: CoreContext): boolean
   else if (a === "basket") {
     const home = homeSystem(st), good = el.dataset.good as Commodity, step = Number(el.dataset.step);
     if (!home || !fleet || !good || !step) return true;
-    const basket = { ...(v.basket ?? openingImportPlan(st, home, "transport").manifest) };
+    const basket = { ...(v.basket ?? openingImportPlan(st, home, shipmentGoal(st)).manifest) };
     if (step > 0 && total(basket) >= fleetCargoCapacity(fleet)) return true;
     basket[good] = Math.max(0, (basket[good] ?? 0) + step);
     v.basket = basket;
@@ -598,7 +610,7 @@ export function handleIndustryAction(el: HTMLElement, ctx: CoreContext): boolean
     const home = homeSystem(st), f = fleet && fleetCargoCapacity(fleet) > 0 ? fleet : cargoFleets(st)[0];
     if (!home || !f) return true;
     v.fleet = f.id;
-    const route = firstShipmentRoute(home, f, defaultEscort(st, f)?.id ?? null, v.basket ?? openingImportPlan(st, home, "transport").manifest, v.cap);
+    const route = firstShipmentRoute(home, f, defaultEscort(st, f)?.id ?? null, v.basket ?? openingImportPlan(st, home, shipmentGoal(st)).manifest, v.cap);
     if (a !== "send-shipment") { v.route = route; v.editing = true; v.picker = null; v.tab = "routes"; return true; }
     const reason = freightRouteReason(st, f, route);
     if (reason) { v.feedback = reason; return true; }

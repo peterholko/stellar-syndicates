@@ -1,0 +1,172 @@
+{
+ "mode": "built-in image_gen",
+ "status": "All thirteen masters generated and saved at native size. These are the original briefs; exact generation and revision prompts are in generation-records.json and drifting-wreck.generation.json.",
+ "series": "Drifting-wreck was generated first and used as the series reference for all twelve remaining paintings at Peter's request.",
+ "images": [
+  {
+   "slug": "drifting-wreck",
+   "signal": "Drifting wreck",
+   "hazard": "Routine",
+   "master": "client/art-src/signals-v1/drifting-wreck.png",
+   "size": "1672x941",
+   "references": [
+    "client/art-src/founding-intro-v1/first-landing.png",
+    "client/art-src/exploration/derelict.png"
+   ],
+   "usedBy": "Signals panel (planned): card art and the report",
+   "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for a Signals card in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen deep-space discovery paintings that must read as one set.\nInput image 1: STYLE AND WORLD reference only, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials and restrained detail. Create the new scene below, not a copy of that composition.\nInput image 2: SUBJECT reference only: the exploration map sprite of a split freighter wreck (client/art-src/exploration/derelict.png). Keep its split hull and loose pods; repaint it in the series' painted style.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. One strong focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop and still reads as a 384-pixel card. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nSeries look: seen from a nearby ship in open space close to a young colony's home star. A distant warm star low in one corner, a faint nebula haze, a sparse starfield. The subject lit from one side by that star and by its own small lights. Cold blue-black space with one warm or signature accent per scene.\nPrimary request: a dead independent freighter drifting in two pieces.\nSubject: a mid-sized cargo hull torn apart at its midsection, the two halves slowly separating, a few cargo containers spilling into space, stripped cables trailing between the pieces, a short row of amber emergency lights still blinking along the spine. Silver-grey titanium, scorched edges.\nAccent and mood: warm amber emergency lights against cold space; still and abandoned.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject, no explosions, fire or weapons fire, no people unless stated. Output one finished full-frame opaque 1672 x 941 illustration, no crop or upscale."
+  },
+  {
+   "slug": "cargo-pod",
+   "signal": "Cargo pod",
+   "hazard": "Routine",
+   "master": "client/art-src/signals-v1/cargo-pod.png",
+   "size": "1672x941",
+   "references": [
+    "client/art-src/founding-intro-v1/first-landing.png"
+   ],
+   "usedBy": "Signals panel (planned): card art and the report",
+   "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for a Signals card in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen deep-space discovery paintings that must read as one set.\nInput image 1: STYLE AND WORLD reference only, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials and restrained detail. Create the new scene below, not a copy of that composition.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. One strong focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop and still reads as a 384-pixel card. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nSeries look: seen from a nearby ship in open space close to a young colony's home star. A distant warm star low in one corner, a faint nebula haze, a sparse starfield. The subject lit from one side by that star and by its own small lights. Cold blue-black space with one warm or signature accent per scene.\nPrimary request: a single lost cargo container tumbling end over end, alone.\nSubject: a battered industrial cargo pod with reinforced corner frames, dented panels and a frayed tether trailing behind it, a small locator light blinking white. No ship anywhere.\nAccent and mood: weathered grey-green paint, a white locator light; lonely and quiet.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject, no explosions, fire or weapons fire, no people unless stated. Output one finished full-frame opaque 1672 x 941 illustration, no crop or upscale."
+  },
+  {
+   "slug": "ore-fragment",
+   "signal": "Ore fragment",
+   "hazard": "Routine",
+   "master": "client/art-src/signals-v1/ore-fragment.png",
+   "size": "1672x941",
+   "references": [
+    "client/art-src/founding-intro-v1/first-landing.png",
+    "client/art-src/belt-chunks-v1/metallic.png"
+   ],
+   "usedBy": "Signals panel (planned): card art and the report",
+   "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for a Signals card in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen deep-space discovery paintings that must read as one set.\nInput image 1: STYLE AND WORLD reference only, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials and restrained detail. Create the new scene below, not a copy of that composition.\nInput image 2: MATERIAL reference only: the game's metallic asteroid belt chunk (client/art-src/belt-chunks-v1/metallic.png). Match its rock colour and texture.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. One strong focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop and still reads as a 384-pixel card. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nSeries look: seen from a nearby ship in open space close to a young colony's home star. A distant warm star low in one corner, a faint nebula haze, a sparse starfield. The subject lit from one side by that star and by its own small lights. Cold blue-black space with one warm or signature accent per scene.\nPrimary request: a broken-off asteroid fragment rich in one ore.\nSubject: a large dark rock fragment split along a fresh fracture, exposing thick veins of bright metallic ore that catch the starlight with copper-red and steel-blue glints; small chips and dust drifting around it.\nAccent and mood: warm metallic glints in the ore veins; promising, raw.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject, no explosions, fire or weapons fire, no people unless stated. Output one finished full-frame opaque 1672 x 941 illustration, no crop or upscale."
+  },
+  {
+   "slug": "silent-probe",
+   "signal": "Silent probe",
+   "hazard": "Routine",
+   "master": "client/art-src/signals-v1/silent-probe.png",
+   "size": "1672x941",
+   "references": [
+    "client/art-src/founding-intro-v1/first-landing.png",
+    "client/art-src/survey-probe-reference-v1/survey-probe-reference.png"
+   ],
+   "usedBy": "Signals panel (planned): card art and the report",
+   "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for a Signals card in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen deep-space discovery paintings that must read as one set.\nInput image 1: STYLE AND WORLD reference only, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials and restrained detail. Create the new scene below, not a copy of that composition.\nInput image 2: DESIGN reference: the corporation's own Survey Probe (client/art-src/survey-probe-reference-v1/survey-probe-reference.png). Paint an older, weathered predecessor of the same family: keep the family resemblance, change the details.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. One strong focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop and still reads as a 384-pixel card. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nSeries look: seen from a nearby ship in open space close to a young colony's home star. A distant warm star low in one corner, a faint nebula haze, a sparse starfield. The subject lit from one side by that star and by its own small lights. Cold blue-black space with one warm or signature accent per scene.\nPrimary request: someone else's old survey probe, long dormant.\nSubject: a small boxy survey drone drifting alone, its sensor dish half folded, a stubby antenna boom, faded and pitted paint, micrometeorite scars, one dim green status light still on.\nAccent and mood: a single dim green light; forgotten, patient.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject, no explosions, fire or weapons fire, no people unless stated. Output one finished full-frame opaque 1672 x 941 illustration, no crop or upscale."
+  },
+  {
+   "slug": "distress-beacon",
+   "signal": "Distress beacon",
+   "hazard": "Routine or Hazardous",
+   "master": "client/art-src/signals-v1/distress-beacon.png",
+   "size": "1672x941",
+   "references": [
+    "client/art-src/founding-intro-v1/first-landing.png"
+   ],
+   "usedBy": "Signals panel (planned): card art and the report",
+   "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for a Signals card in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen deep-space discovery paintings that must read as one set.\nInput image 1: STYLE AND WORLD reference only, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials and restrained detail. Create the new scene below, not a copy of that composition.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. One strong focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop and still reads as a 384-pixel card. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nSeries look: seen from a nearby ship in open space close to a young colony's home star. A distant warm star low in one corner, a faint nebula haze, a sparse starfield. The subject lit from one side by that star and by its own small lights. Cold blue-black space with one warm or signature accent per scene.\nPrimary request: a crew in trouble calls for help.\nSubject: a small emergency beacon pod pulsing slow red-orange light, tethered to a damaged civilian escape capsule. The capsule's small viewport glows warm from inside and frost covers part of its hull. No people visible; the lit interior implies survivors.\nAccent and mood: a pulsing red-orange beacon; tense but hopeful.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject, no explosions, fire or weapons fire, no people unless stated. Output one finished full-frame opaque 1672 x 941 illustration, no crop or upscale."
+  },
+  {
+   "slug": "sensor-ghost",
+   "signal": "Sensor ghost",
+   "hazard": "Routine",
+   "master": "client/art-src/signals-v1/sensor-ghost.png",
+   "size": "1672x941",
+   "references": [
+    "client/art-src/founding-intro-v1/first-landing.png"
+   ],
+   "usedBy": "Signals panel (planned): card art and the report",
+   "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for a Signals card in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen deep-space discovery paintings that must read as one set.\nInput image 1: STYLE AND WORLD reference only, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials and restrained detail. Create the new scene below, not a copy of that composition.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. One strong focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop and still reads as a 384-pixel card. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nSeries look: seen from a nearby ship in open space close to a young colony's home star. A distant warm star low in one corner, a faint nebula haze, a sparse starfield. The subject lit from one side by that star and by its own small lights. Cold blue-black space with one warm or signature accent per scene.\nPrimary request: a sensor reading that may be nothing.\nSubject: a faint ring-shaped distortion in empty space where starlight bends and doubles, with a few drifting ice motes catching light around it. Deliberately sparse and uncertain: almost nothing there.\nAccent and mood: a pale cyan shimmer; mysterious, quiet.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject, no explosions, fire or weapons fire, no people unless stated. Output one finished full-frame opaque 1672 x 941 illustration, no crop or upscale."
+  },
+  {
+   "slug": "authority-courier",
+   "signal": "Authority courier",
+   "hazard": "Routine",
+   "master": "client/art-src/signals-v1/authority-courier.png",
+   "size": "1672x941",
+   "references": [
+    "client/art-src/founding-intro-v1/first-landing.png",
+    "client/art-src/authority-freighter-reference-v1/authority-freighter-reference.png"
+   ],
+   "usedBy": "Signals panel (planned): card art and the report",
+   "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for a Signals card in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen deep-space discovery paintings that must read as one set.\nInput image 1: STYLE AND WORLD reference only, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials and restrained detail. Create the new scene below, not a copy of that composition.\nInput image 2: LIVERY AND DESIGN reference only: the Terran Charter Authority's freighter (client/art-src/authority-freighter-reference-v1/authority-freighter-reference.png). Use its steel-blue and white colours and clean institutional lines on a much smaller drone.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. One strong focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop and still reads as a 384-pixel card. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nSeries look: seen from a nearby ship in open space close to a young colony's home star. A distant warm star low in one corner, a faint nebula haze, a sparse starfield. The subject lit from one side by that star and by its own small lights. Cold blue-black space with one warm or signature accent per scene.\nPrimary request: a lost Terran Charter Authority courier drone.\nSubject: a small, neat courier drone in Authority steel-blue and white, its engine dark, one hatch slightly open with a sealed document canister visible inside. Clean, official design.\nAccent and mood: cool blue-white running lights; orderly and stranded.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject, no explosions, fire or weapons fire, no people unless stated. Output one finished full-frame opaque 1672 x 941 illustration, no crop or upscale."
+  },
+  {
+   "slug": "abandoned-outpost",
+   "signal": "Abandoned outpost",
+   "hazard": "Hazardous",
+   "master": "client/art-src/signals-v1/abandoned-outpost.png",
+   "size": "1672x941",
+   "references": [
+    "client/art-src/founding-intro-v1/first-landing.png",
+    "client/art-src/exploration/station.png"
+   ],
+   "usedBy": "Signals panel (planned): card art and the report",
+   "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for a Signals card in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen deep-space discovery paintings that must read as one set.\nInput image 1: STYLE AND WORLD reference only, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials and restrained detail. Create the new scene below, not a copy of that composition.\nInput image 2: SUBJECT reference only: the exploration map sprite of an abandoned station (client/art-src/exploration/station.png).\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. One strong focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop and still reads as a 384-pixel card. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nSeries look: seen from a nearby ship in open space close to a young colony's home star. A distant warm star low in one corner, a faint nebula haze, a sparse starfield. The subject lit from one side by that star and by its own small lights. Cold blue-black space with one warm or signature accent per scene.\nPrimary request: a mothballed deep-space outpost whose reactor is failing.\nSubject: a compact station of stacked modules on an open lattice frame, two folded solar wings, most windows dark, the reactor housing glowing unstable orange through cracked shielding, thin venting plumes drifting from it.\nAccent and mood: an unstable orange reactor glow; uneasy and dangerous.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject, no explosions, fire or weapons fire, no people unless stated. Output one finished full-frame opaque 1672 x 941 illustration, no crop or upscale."
+  },
+  {
+   "slug": "pirate-stash",
+   "signal": "Pirate stash",
+   "hazard": "Hazardous",
+   "master": "client/art-src/signals-v1/pirate-stash.png",
+   "size": "1672x941",
+   "references": [
+    "client/art-src/founding-intro-v1/first-landing.png",
+    "client/art-src/privateer-raider-reference-v1/privateer-raider-reference.png"
+   ],
+   "usedBy": "Signals panel (planned): card art and the report",
+   "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for a Signals card in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen deep-space discovery paintings that must read as one set.\nInput image 1: STYLE AND WORLD reference only, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials and restrained detail. Create the new scene below, not a copy of that composition.\nInput image 2: COLOUR LANGUAGE reference only: the privateer's ship (client/art-src/privateer-raider-reference-v1/privateer-raider-reference.png). Use its patched orange and yellow armour on the crates. Do not show the ship.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. One strong focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop and still reads as a 384-pixel card. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nSeries look: seen from a nearby ship in open space close to a young colony's home star. A distant warm star low in one corner, a faint nebula haze, a sparse starfield. The subject lit from one side by that star and by its own small lights. Cold blue-black space with one warm or signature accent per scene.\nPrimary request: loot hidden by the privateers' network, booby-trapped.\nSubject: crates and fuel drums strapped together under patched netting in the shadow of a small asteroid, ringed by three small drifting proximity mines with blinking red sensor eyes. Patched orange and yellow armour plating on the crates.\nAccent and mood: blinking red mine sensors; hidden and threatening.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject, no explosions, fire or weapons fire, no people unless stated. Output one finished full-frame opaque 1672 x 941 illustration, no crop or upscale."
+  },
+  {
+   "slug": "ghost-ship",
+   "signal": "Ghost ship",
+   "hazard": "Hazardous",
+   "master": "client/art-src/signals-v1/ghost-ship.png",
+   "size": "1672x941",
+   "references": [
+    "client/art-src/founding-intro-v1/first-landing.png",
+    "client/art-src/corvette-reference-v1/corvette-reference.png"
+   ],
+   "usedBy": "Signals panel (planned): card art and the report",
+   "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for a Signals card in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen deep-space discovery paintings that must read as one set.\nInput image 1: STYLE AND WORLD reference only, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials and restrained detail. Create the new scene below, not a copy of that composition.\nInput image 2: HULL FAMILY reference: the corvette (client/art-src/corvette-reference-v1/corvette-reference.png). Paint an older, battle-scarred warship of this family, not this exact ship.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. One strong focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop and still reads as a 384-pixel card. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nSeries look: seen from a nearby ship in open space close to a young colony's home star. A distant warm star low in one corner, a faint nebula haze, a sparse starfield. The subject lit from one side by that star and by its own small lights. Cold blue-black space with one warm or signature accent per scene.\nPrimary request: a crewless warship hulk, half-alive.\nSubject: a mid-sized military hull drifting dark with deep battle scars and missing armour plates, one turret slowly turning on its own, a few systems flickering pale blue, small debris orbiting it.\nAccent and mood: flickering pale blue systems; eerie and dangerous.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject, no explosions, fire or weapons fire, no people unless stated. Output one finished full-frame opaque 1672 x 941 illustration, no crop or upscale."
+  },
+  {
+   "slug": "precursor-fragment",
+   "signal": "Precursor fragment",
+   "hazard": "Hazardous",
+   "master": "client/art-src/signals-v1/precursor-fragment.png",
+   "size": "1672x941",
+   "references": [
+    "client/art-src/founding-intro-v1/first-landing.png",
+    "client/art-src/nebulas/precursor_cloud.png"
+   ],
+   "usedBy": "Signals panel (planned): card art and the report",
+   "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for a Signals card in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen deep-space discovery paintings that must read as one set.\nInput image 1: STYLE AND WORLD reference only, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials and restrained detail. Create the new scene below, not a copy of that composition.\nInput image 2: COLOUR reference only: the precursor nebula (client/art-src/nebulas/precursor_cloud.png).\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. One strong focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop and still reads as a 384-pixel card. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nSeries look: seen from a nearby ship in open space close to a young colony's home star. A distant warm star low in one corner, a faint nebula haze, a sparse starfield. The subject lit from one side by that star and by its own small lights. Cold blue-black space with one warm or signature accent per scene.\nPrimary request: a shard of an ancient, non-human installation.\nSubject: a tall angular fragment of dark glassy material carved with fine geometric channels that glow faint gold, slowly turning, with tiny fragments orbiting it. Clearly not made by people.\nAccent and mood: a faint gold geometric glow; ancient and awe-inspiring.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject, no explosions, fire or weapons fire, no people unless stated. Output one finished full-frame opaque 1672 x 941 illustration, no crop or upscale."
+  },
+  {
+   "slug": "exotic-flare",
+   "signal": "Exotic flare",
+   "hazard": "Hazardous",
+   "master": "client/art-src/signals-v1/exotic-flare.png",
+   "size": "1672x941",
+   "references": [
+    "client/art-src/founding-intro-v1/first-landing.png"
+   ],
+   "usedBy": "Signals panel (planned): card art and the report",
+   "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for a Signals card in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen deep-space discovery paintings that must read as one set.\nInput image 1: STYLE AND WORLD reference only, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials and restrained detail. Create the new scene below, not a copy of that composition.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. One strong focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop and still reads as a 384-pixel card. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nSeries look: seen from a nearby ship in open space close to a young colony's home star. A distant warm star low in one corner, a faint nebula haze, a sparse starfield. The subject lit from one side by that star and by its own small lights. Cold blue-black space with one warm or signature accent per scene.\nPrimary request: a spill of energy from an exotic node.\nSubject: a twisting ribbon of violet energy curling in from beyond the frame and crackling around small floating crystals that glow violet-white; the space around it slightly warped.\nAccent and mood: violet and violet-white, the game's exotic-node colour; dangerous and beautiful.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject, no explosions, fire or weapons fire, no people unless stated. Output one finished full-frame opaque 1672 x 941 illustration, no crop or upscale."
+  },
+  {
+   "slug": "teos-lost-crate",
+   "signal": "Teo's lost crate",
+   "hazard": "Routine",
+   "master": "client/art-src/signals-v1/teos-lost-crate.png",
+   "size": "1672x941",
+   "references": [
+    "client/art-src/founding-intro-v1/first-landing.png",
+    "client/art-src/free-trader-reference-v1/free-trader-reference.png"
+   ],
+   "usedBy": "Signals panel (planned): card art and the report",
+   "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for a Signals card in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen deep-space discovery paintings that must read as one set.\nInput image 1: STYLE AND WORLD reference only, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials and restrained detail. Create the new scene below, not a copy of that composition.\nInput image 2: LIVERY reference only: the free trader's ship, the Long Odds (client/art-src/free-trader-reference-v1/free-trader-reference.png). Use its purple-and-cream livery and brass fittings on the crate. Do not show the ship.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. One strong focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop and still reads as a 384-pixel card. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nSeries look: seen from a nearby ship in open space close to a young colony's home star. A distant warm star low in one corner, a faint nebula haze, a sparse starfield. The subject lit from one side by that star and by its own small lights. Cold blue-black space with one warm or signature accent per scene.\nPrimary request: a trader's crate lost from the Long Odds.\nSubject: a sturdy, well-loved trader's crate drifting alone, painted in purple and cream with brass corner fittings and a brass latch, a few rope bindings and patches, a small brass locator lamp glowing warm. No stencils or writing.\nAccent and mood: a warm brass lamp; a little theatrical, like its owner.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject, no explosions, fire or weapons fire, no people unless stated. Output one finished full-frame opaque 1672 x 941 illustration, no crop or upscale."
+  }
+ ]
+}

@@ -11,28 +11,47 @@ never take that slot. Founding Camp projects do share it. Goods are paid when
 an order reaches the world, so the build list counts goods already promised to
 orders in flight as held.
 
+## One order, one bar (Oct 15 2026)
+
+Peter: "the fact there are two progression bars feels wrong". One build
+showed its progress in four places: the construction bar, a ring on the
+planet, a second bar (or "upgrading to II · 40s") in the structure list, and
+the system view's own queue with bars. After a clickable mockup
+(https://claude.ai/artifact/N6KuZvpK6oymghDR7byy3u) he said "implement it".
+
+- An order's bar and time exist only in its world's **Construction card**.
+- Everywhere else an order is one word (`jobTag`, `SENDING` in
+  `core/derive/worldbuild.ts`): **Building** (holds the slot), **Starting**
+  (first in line, start not yet reported), **#N** (its place in line),
+  **Sending** (still on its way).
+- A world's slot in one line (`slotLine`), for the top-bar menu and the system
+  view: "Mining Complex II · 38s · +1 queued", or "Build slot idle".
+
 ## Desktop world view
 
-- **Construction bar**, pinned under the world's header so it never scrolls
-  away. It shows:
-  - the job holding the slot, with a progress bar and time left (or "Queued ·
-    starts next" while its start report travels);
-  - orders sent from this client and not yet reported. An order with no report
-    after two light legs plus a margin says it may have been refused, with
-    Dismiss;
-  - "N queued · next X". This expands to the whole line with start and ready
-    estimates, plus Cancel where allowed (see below);
-  - hulls in this world's yard;
-  - **Build** for structures and **Build ship** on a shipbuilding world.
-- **Structure rows:**
-  - A building being upgraded reads "upgrading to II · 1m".
-  - A new building that is still under construction or ordered is listed
-    beneath the built ones.
-- **On the planet:**
-  - The active site has a progress ring and the time left.
-  - Waiting sites show their place in line.
-  - An upgrade rides on its building ("↑ II · 40s").
-  - An order in flight holds its site as a faint "order sent" ghost.
+- **Construction card**, pinned under the world's header so it never scrolls
+  away. One list, in order:
+  - the order holding the slot: art, title, the one progress bar, the time
+    left (its tooltip says how old the report is) and Cancel. "Starting…"
+    while its start report travels;
+  - waiting orders: "#2", title, "starts in 38s", Cancel. Always listed; the
+    old "N queued · next X" fold is gone;
+  - orders sent from this client and not yet reported: "Sending · 9s"
+    (tooltip: confirms in). An order with no report 15 s after two light legs
+    is presumed refused: it says so, with Dismiss, and it no longer holds its
+    goods or blocks ordering that building again (Oct 15 2026: the refused
+    Solar Array that found the fake semiconductors held the trader's
+    semiconductors for 10 minutes). The order that finds the fakes is dropped
+    at once;
+  - hulls in this world's yard, **Build** and
+    **Build ship** on a shipbuilding world.
+  - Clicking a building on the planet marks its order in the card.
+- **Structure rows:** a building with an order reads "Tier 1 · Operating ·
+  ↑ II" plus its tag. A new building that is under construction or ordered is
+  listed beneath the built ones with its tag. No bars, no times.
+- **On the planet:** each site with an order carries its tag (Building in
+  green, #2, Sending dashed). No ring, no time. An order in flight holds its
+  site as a faint ghost.
 - **Building (§build-sheet, Oct 9 2026):** choosing what to build or upgrade
   opens as a sheet across the planet view, from Peter's approved mockup
   (https://claude.ai/artifact/QghcWtTiTF3qboLTp9GQFM). The world column, with
@@ -46,8 +65,8 @@ orders in flight as held.
     here (N)* with each reason ("No free Industrial site", "Needs Shipyard II",
     "Gaia worlds only", "Needs … research").
   - Cards show the building's scene art on this world's ground, the step
-    ("New", "IV → V"), any order state ("Order sent", "V queued #2",
-    "II building · 40s"), and goods icons with numbers plus the build time.
+    ("New", "IV → V"), its newest order's tag ("Sending", "V · #2",
+    "II · Building"), and goods icons with numbers plus the build time.
     Short goods are red.
   - The detail column shows a larger picture, the level ladder I–VI, a short
     description and the sim's own figures (`structureFacts` in
@@ -66,34 +85,49 @@ orders in flight as held.
   - Ships keep the central workbench. Done or Esc closes the sheet.
 - **The Queue button:**
   - It names the exact job ("Queue Smelter I", "Queue level V").
-  - Once sent, it reads "Order sent · confirming" and cannot send again.
-  - After the report, the card shows its place in line, and the button offers
-    the next level as its own order.
+  - Sending it closes the sheet (Peter, Oct 20 2026), on desktop and mobile;
+    Build opens it again for the next order. The order shows at once on the
+    Construction card and on its building ("Sending"). Hulls keep their
+    workbench open.
+  - Once sent, the order holds its spot as "V · Sending" and cannot send again.
+  - After the report, the order keeps the spot: its tag ("II · #2", "I ·
+    Building") and its **Cancel**. The next level is a quiet "Also queue level
+    III" link below, never a primary button where the last click landed
+    (Oct 15 2026: Peter queued level II by accident).
   - Missing goods are listed with **Buy at Market**.
 - **Completion:** the toast opens the world with the new building selected. If
   the building needs a crew, the toast says so and the workforce + is ringed.
 - **Top bar chip:** "N building · M idle" across every developed world. It
-  opens a menu with each world's job and time left, or "Build slot idle", plus
-  Open or Build.
+  opens a menu with each world's `slotLine`, plus Open or Build.
+
+## System view
+
+The system's Construction section (Overview, Production and the Build tab)
+lists its developed worlds, one `slotLine` each, with that world's hulls and
+modules beneath ("Medium Freighter · 5m", "waiting for a slip", "paused ·
+needs workforce"), and **Open** (or **Build** on an idle slot, which opens the
+world's build sheet). It draws no bars.
 
 ## Cancel
 
 `CancelBuild { system_id, job_id }` travels at light speed like
-`DevelopSystem`. On arrival, a structure order that is still waiting is
-removed, and its recipe at its tier (times the Unstable Geology premium, as
-`apply_build` charged) returns to the system stockpile. A `BuildCancelled`
-event shows on the timeline.
+`DevelopSystem`. On arrival, the structure order is removed, waiting or
+building (since Oct 15 2026; a started job's progress is lost and the next
+order takes the slot), and its recipe at its tier (times the Unstable Geology
+premium, as `apply_build` charged) returns to the system stockpile. A
+`BuildCancelled` event shows on the timeline.
 
 It is refused, through `IndustryRejected`, when:
 
-- the job has started;
-- it is not a structure;
+- it is not a structure (Founding Camp projects included);
 - a later order for the same structure on that world still builds on it;
 - the job is gone;
 - the system has changed hands.
 
-The client offers Cancel only on the cancellable rows, behind a Confirm.
-`BuildState` carries the job `id`.
+The client offers Cancel only on the cancellable orders, behind a Confirm: in
+the Construction card, in the build sheet's action spot, and on mobile in the
+build detail and the world's Construction list. `BuildState` carries the job
+`id`.
 
 ## Also fixed
 
@@ -103,12 +137,19 @@ steps could not be built from the UI.
 
 ## Code
 
-- **Queue model:** `client/src/core/derive/worldbuild.ts`.
-- **Bar and build sheet:** `empire.ts` (`constructionModel`, `constructionBarHtml`,
-  `worldSheetHtml`, `sheetCard`, `sheetDetailHtml`, `PendingBuild`).
-- **Column and scene:** `planet.ts` (the sheet renders in the scene; `upgradeHtml`).
-- **Styles:** the bottom of `planet-panel.css`; the chip in `deck.css`.
+- **Queue model and words:** `client/src/core/derive/worldbuild.ts`
+  (`structureQueue`, `jobTitle`, `jobTag`, `SENDING`, `slotLine`, `yardStatus`).
+- **Card, system section and build sheet:** `empire.ts` (`constructionModel`,
+  `constructionBarHtml`, `queueHtml`, `worldSheetHtml`, `sheetCard`,
+  `sheetDetailHtml`, `PendingBuild`).
+- **Column and scene:** `planet.ts` (tags, `pickedOn`, `upgradeHtml`; the sheet
+  renders in the scene).
+- **Mobile:** `parity.ts` (`planetInfrastructure`: the world's list with the one
+  bar; `systemConstruction`: one line per world; `structureDetail`).
+- **Styles:** `planet-panel.css` (card, tags, sheet); `deck.css` (system lines,
+  the chip); `mobile.css` (`.m-order--head`).
 - **Sim:** `crates/sim/src/world/construction.rs` (`cancel_build`).
-- **Tests:** `client/scripts/test-planet-panel.mjs`; the sim construction tests.
-
-Mobile keeps its own build sheet for now.
+- **Tests:** `client/scripts/test-planet-panel.mjs` (`--serve --construction`
+  seeds a timed build, a waiting upgrade and a hull), `test-progression.mjs`
+  (progress estimates, system lines), `test-industry.mjs` (mobile); the sim
+  construction tests.

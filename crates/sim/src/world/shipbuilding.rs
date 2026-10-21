@@ -61,6 +61,8 @@ mod tests {
         }
         let body = &mut s.bodies[0];
         body.structures.insert(K::Shipyard, 1);
+        // §charter-v4: a reload drops the sandbox's free power; the yard has a plant.
+        body.structures.insert(K::PowerPlant, 1);
         let body_id = body.id;
         for (c, _) in crate::build::TINY_FREIGHTER_RECIPE.costs { s.stockpile.insert(*c, 1000.0); }
         (w, owner, home, body_id)

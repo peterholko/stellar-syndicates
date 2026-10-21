@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { SHIP_MODELS } from "./ship-models.generated";
-import type { ShipKind } from "./protocol";
+import type { ShipArtKind } from "./shipart";
 
 export function modelLighting(renderer: THREE.WebGLRenderer): { scene: THREE.Scene; dispose(): void } {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -92,7 +92,7 @@ export async function resizeModelTextures(model: THREE.Object3D, maxSize: number
   }
 }
 
-export async function loadShipModel(kind: ShipKind, signal?: AbortSignal, maxTextureSize?: number): Promise<THREE.Group> {
+export async function loadShipModel(kind: ShipArtKind, signal?: AbortSignal, maxTextureSize?: number): Promise<THREE.Group> {
   const response = await fetch(SHIP_MODELS[kind].url, { signal });
   if (!response.ok) throw new Error(`Ship model HTTP ${response.status}`);
   const bytes = await response.arrayBuffer();

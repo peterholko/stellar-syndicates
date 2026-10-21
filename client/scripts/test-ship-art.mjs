@@ -23,13 +23,18 @@ const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const manifest = JSON.parse(await readFile(new URL("public/art/derived/ships/models-v1/manifest.json", client), "utf8"));
 const kinds = ["raider", "convoy", "scout", "corvette", "colony", "builder", "transport",
   "destroyer", "cruiser", "battleship", "dreadnought", "titan", "freighter",
-  "tiny_freighter", "small_freighter", "large_freighter", "heavy_freighter", "bulk_freighter", "mining_barge", "mining_belt_station"];
+  "tiny_freighter", "small_freighter", "large_freighter", "heavy_freighter", "bulk_freighter", "mining_barge", "mining_belt_station",
+  "free_trader"];
 // The Survey Probe still borrows Scout art; every other kind has its own master.
 const standIns = { survey_probe: "scout" };
 assert.deepEqual(Object.keys(generated.SHIP_ART).sort(), [...kinds, ...Object.keys(standIns)].sort());
 for (const [kind, from] of Object.entries(standIns)) assert.deepEqual(generated.SHIP_ART[kind], generated.SHIP_ART[from]);
 assert.notDeepEqual(generated.SHIP_ART.mining_barge, generated.SHIP_ART.small_freighter, "Mining Barge has its own art");
 assert.notDeepEqual(generated.SHIP_ART.mining_belt_station, generated.SHIP_ART.builder, "Mining Belt Station has its own art");
+// §merchant: the free trader's own art, at the footprint of the Authority
+// Freighter hull it flies as in the sim.
+assert.notDeepEqual(generated.SHIP_ART.free_trader.levels, generated.SHIP_ART.freighter.levels, "Free Trader has its own art");
+assert.equal(manifest.ships.free_trader.referenceRatio, manifest.ships.freighter.referenceRatio, "Free Trader keeps the Authority Freighter's footprint");
 let checked = 0;
 for (const kind of kinds) {
   const hull = manifest.ships[kind];

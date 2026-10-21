@@ -3,7 +3,7 @@
 // verification); in M3 it becomes a delayed, fogged picture.
 
 import type {
-  EmplacementView, InterdictionFieldView, AnchorView, CaptainRosterView, CharterLedgerView, CharterView, FleetDoctrine, FoundingView, FreightView, GalaxyInfo, GhostView, JumpDepartureView, MarketView, PathPointView, PendingOrderView, PlayerId, StandingOrder, DepotRule, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
+  EmplacementView, InterdictionFieldView, AnchorView, CaptainRosterView, CharterLedgerView, CharterView, FleetDoctrine, FoundingView, FreightView, GalaxyInfo, GhostView, JumpDepartureView, MarketView, MerchantView, PathPointView, PendingOrderView, PlayerId, StandingOrder, DepotRule, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
 import { defaultDoctrine } from "./protocol";
 import type { FleetCommand } from "./core/fleetorders";
 import { emptyTransactions, type TransactionHistoryState } from "./core/derive/transactions";
@@ -159,6 +159,8 @@ export interface ViewState {
   founding: FoundingView | null;
   /// §founding R10: the charter ledger once it opens (first guarded export).
   charterLedger: CharterLedgerView | null;
+  /** §merchant: the traveling merchant serving your home, while it's here. */
+  merchant: MerchantView | null;
   /** §founding R7: the scripted Privateer's id, kept after the bounty report
    * clears it from the served guide, so its defeat notice can name it. */
   lastFoundingPrivateer: string | null;
@@ -194,6 +196,10 @@ export interface ViewState {
   syndicateInvites: import("./protocol").SyndicateInviteView[];
   /// Operations are already filtered to the latest report that has arrived.
   operations: import("./protocol").OperationView[];
+  /// §contract-board: null until the charter is fulfilled.
+  board: import("./protocol").ContractBoardView | null;
+  /// §signals: null until signals open (after the den).
+  signals: import("./protocol").SignalsView | null;
   explorationSites: import("./protocol").ExplorationSiteView[];
   explorationJournal: import("./protocol").ExplorationJournalEntry[];
   selectedExplorationSiteId: string | null;
@@ -215,6 +221,10 @@ export interface ViewState {
   /// Whether `awaySince` has been latched this session (so live re-sends don't
   /// move the boundary).
   awaySet: boolean;
+  /// §charter-v4: story turns already told — their pop-up shown this session,
+  /// or their news met in an earlier one. The guide names what a turn reveals
+  /// (the free trader) only once it has been told.
+  storyTold: Set<"free_trader" | "pirates">;
   // Interaction.
   selectedShipId: string | null;
   /// Client-only command grouping; every member remains an independent fleet
@@ -276,6 +286,7 @@ export function initialState(): ViewState {
     charter: null,
     founding: null,
     charterLedger: null,
+    merchant: null,
     lastFoundingPrivateer: null,
     charterLadder: [],
     researchCatalog: [],
@@ -291,6 +302,8 @@ export function initialState(): ViewState {
     syndicate: null,
     syndicateInvites: [],
     operations: [],
+    board: null,
+    signals: null,
     explorationSites: [],
     explorationJournal: [],
     selectedExplorationSiteId: null,
@@ -303,6 +316,7 @@ export function initialState(): ViewState {
     timeline: [],
     awaySince: 0,
     awaySet: false,
+    storyTold: new Set(),
     selectedShipId: null,
     selectedShipIds: new Set(),
     selectedSystemId: null,

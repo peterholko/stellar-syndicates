@@ -4,8 +4,10 @@
 export const STAGE_KEYS = [
   "signed_up", "entered",
   "founded",
-  "mine", "shipment", "privateer",
-  "shipyard", "research", "survey",
+  "bioharvester", "habitat", "agroplex", "mine",
+  "raid", "sell_ore", "power", "shipyard",
+  "interceptor", "privateer", "den", "shipment",
+  "research", "expansion", "survey",
   "barge", "belt_mining", "haul",
 ] as const;
 

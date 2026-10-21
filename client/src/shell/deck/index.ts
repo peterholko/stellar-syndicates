@@ -18,13 +18,18 @@ import { DECK_ROUTES, DeckRouter, type DeckCrumb, type DeckRoute, type DeckRoute
 import { DeckCommandStrip } from "./strip";
 import { DeckCommandRoutes } from "./command";
 import { deckTradeNotice, DeckMarketRoutes } from "./market";
+import { DeckMerchantRoutes } from "./merchant";
+import { DeckSignalsRoutes } from "./signals";
+import { openSignals } from "../../core/derive/signals";
 import { DeckPolicyRoutes } from "./policy";
 import { DeckFleetRoutes } from "./fleet";
 import { DeckLogRoutes } from "./log";
 import { bindResearchNet } from "../../core/derive/research";
-import { fmtBuildDur, gameClock, informationDelay } from "../../core/derive/format";
-import { isProjectKey, isStructureJob, needsWorkforce, romanTier, worldSlots } from "../../core/derive/worldbuild";
-import { icon, label } from "../../icons";
+import { fmtDur, gameClock, informationDelay } from "../../core/derive/format";
+import { merchantLeavesIn } from "../../core/derive/merchant";
+import { TRADER } from "../../core/derive/trader";
+import { isProjectKey, isStructureJob, needsWorkforce, slotLine, worldSlots } from "../../core/derive/worldbuild";
+import { icon } from "../../icons";
 import { liveSimTime } from "../../state";
 import { setHtml } from "../dom";
 import { DeckBottomBand } from "./bottom-band";
@@ -50,6 +55,8 @@ class DeckShell implements Shell {
   private command: DeckCommandRoutes | null = null;
   private welcome: DeckWelcome | null = null;
   private market: DeckMarketRoutes | null = null;
+  private merchant: DeckMerchantRoutes | null = null;
+  private signals: DeckSignalsRoutes | null = null;
   private policy: DeckPolicyRoutes | null = null;
   private fleet: DeckFleetRoutes | null = null;
   private log: DeckLogRoutes | null = null;
@@ -140,6 +147,14 @@ class DeckShell implements Shell {
       go: (route) => this.router?.go(route),
       notice: (html) => this.setStatus(html),
     });
+    this.merchant = new DeckMerchantRoutes(byId("deck-workspace-body"), ctx, {
+      go: (route) => this.router?.go(route),
+      notice: (html) => this.setStatus(html),
+    });
+    this.signals = new DeckSignalsRoutes(byId("deck-workspace-body"), ctx, {
+      go: (route) => this.router?.go(route),
+      notice: (html) => this.setStatus(html),
+    });
     this.policy = new DeckPolicyRoutes(byId("deck-workspace-body"), ctx, {
       go: (route) => this.router?.go(route),
       notice: (html) => this.setStatus(html),
@@ -207,6 +222,17 @@ class DeckShell implements Shell {
       this.setNavOverflow(false);
       this.openRoute(route);
     }, { signal });
+    // §medals: your corporation's card.
+    byId("deck-identity").addEventListener("click", () => {
+      const me = ctx.state.playerId;
+      if (me !== null) this.router?.go({ name: "rankings", query: { corp: String(me) } });
+    }, { signal });
+    byId("deck-merchant-chip").addEventListener("click", (event) => {
+      if ((event.target as Element).closest("[data-deck-act=merchant-chip]")) this.router?.go({ name: "merchant" });
+    }, { signal });
+    byId("deck-signals-chip").addEventListener("click", (event) => {
+      if ((event.target as Element).closest("[data-deck-act=signals-chip]")) this.router?.go({ name: "signals" });
+    }, { signal });
     byId("deck-construction-chip").addEventListener("click", (event) => {
       if ((event.target as Element).closest("[data-deck-act=construction-chip]")) this.setConstructionMenu(!this.constructionMenu);
     }, { signal });
@@ -229,7 +255,7 @@ class DeckShell implements Shell {
     // The top bar refits whenever its row or a neighbour (credits, the
     // construction chip) changes size.
     const navFit = new ResizeObserver(() => fitDeckNav());
-    for (const id of ["deck-topbar", "deck-identity", "deck-stats", "deck-construction-chip", "deck-profile-open"]) navFit.observe(byId(id));
+    for (const id of ["deck-topbar", "deck-identity", "deck-stats", "deck-construction-chip", "deck-merchant-chip", "deck-signals-chip", "deck-profile-open"]) navFit.observe(byId(id));
     signal.addEventListener("abort", () => navFit.disconnect());
     byId("deck-workspace").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
@@ -241,6 +267,8 @@ class DeckShell implements Shell {
       if (this.command?.handleWorkspaceAction(button, this.router?.current ?? null)) return;
       if (this.empire?.handleAction(button, this.router?.current ?? null)) return;
       if (this.market?.handleAction(button, this.router?.current ?? null)) return;
+      if (this.merchant?.handleAction(button, this.router?.current ?? null)) return;
+      if (this.signals?.handleAction(button, this.router?.current ?? null)) return;
       if (this.policy?.handleAction(button, this.router?.current ?? null)) return;
       if (button.dataset.deckAct === "back") this.router?.back();
       else if (button.dataset.deckAct === "close") this.router?.close();
@@ -260,6 +288,7 @@ class DeckShell implements Shell {
         if (event.type === "change" && target instanceof HTMLInputElement && target.type !== "checkbox") return;
         if (this.fleet?.handleInput(target, this.router?.current ?? null)) return;
         if (this.market?.handleInput(target, this.router?.current ?? null)) return;
+        if (this.merchant?.handleInput(target, this.router?.current ?? null)) return;
         if (this.strategic?.handleInput(target, this.router?.current ?? null)) return;
         this.policy?.handleInput(target, this.router?.current ?? null);
       }
@@ -394,6 +423,8 @@ class DeckShell implements Shell {
     this.command?.render(this.router?.current ?? null);
     this.welcome?.render();
     this.market?.render(this.router?.current ?? null);
+    this.merchant?.render(this.router?.current ?? null);
+    this.signals?.render(this.router?.current ?? null);
     this.policy?.render(this.router?.current ?? null);
     this.fleet?.render(this.router?.current ?? null);
     this.roster?.render(this.router?.current ?? null);
@@ -430,6 +461,8 @@ class DeckShell implements Shell {
     this.command?.teardown();
     this.welcome?.teardown();
     this.market?.invalidate();
+    this.merchant?.invalidate();
+    this.signals?.invalidate();
     this.policy?.invalidate();
     this.fleet?.invalidate();
     this.roster?.invalidate();
@@ -446,6 +479,8 @@ class DeckShell implements Shell {
     this.command = null;
     this.welcome = null;
     this.market = null;
+    this.merchant = null;
+    this.signals = null;
     this.policy = null;
     this.fleet = null;
     this.roster = null;
@@ -670,6 +705,9 @@ class DeckShell implements Shell {
       case "operation":
         this.router.go({ name: "operations", query: { contract: target.id } });
         break;
+      case "signal":
+        this.router.go({ name: "signals", query: { signal: target.id } });
+        break;
       case "ongoingBattle": {
         // One marker family: the id is a running engagement OR a concluded record.
         const running = state.battles.some((battle) => battle.id === target.id);
@@ -736,13 +774,37 @@ class DeckShell implements Shell {
     const rows = slots.map((slot) => {
       const system = state.galaxy?.systems.find((entry) => entry.id === slot.systemId);
       const job = slot.job;
-      const title = job ? job.project ? label(job.key) : `${label(job.key)} ${romanTier(job.tier)}` : "";
-      const line = job ? `${title} · ${job.readyIn === null ? "—" : fmtBuildDur(job.readyIn)}${slot.waiting ? ` · +${slot.waiting} queued` : ""}` : "Build slot idle";
+      const line = slotLine(job, slot.waiting);
       return `<div class="deck-construction-menu__row${job ? "" : " is-idle"}"><span><b>${escapeHtml(slot.body.name)}</b><small>${escapeHtml(system?.name ?? "")} · ${escapeHtml(line)}</small></span><button type="button" role="menuitem" data-deck-act="construction-open" data-system="${escapeHtml(slot.systemId)}" data-body="${slot.body.id}" data-build="${job ? "" : "1"}">${job ? "Open" : "Build"}</button></div>`;
     }).join("");
     setHtml(menu, `<p>One structure builds at a time on each world.</p>${rows}`);
     const anchor = chip.getBoundingClientRect();
     menu.style.left = `${Math.max(8, Math.min(anchor.left, window.innerWidth - menu.offsetWidth - 8))}px`;
+  }
+
+  /** §signals: "Signals · 3" while any are open or a report waits. */
+  private renderSignalsChip(): void {
+    if (!this.ctx) return;
+    const view = this.ctx.state.signals;
+    const chip = byId("deck-signals-chip");
+    const open = openSignals(view);
+    const reports = view?.signals.filter((s) => s.report).length ?? 0;
+    chip.hidden = !view || (!open && !reports);
+    if (chip.hidden) return;
+    const label = reports ? `Signals · ${open} · report in` : `Signals · ${open}`;
+    setHtml(chip, `<button type="button" class="deck-construction-chip__button${reports ? " has-report" : ""}" data-deck-act="signals-chip" title="Signals near home">${icon("sensor", "sm")}<span><b>${label}</b></span></button>`);
+  }
+
+  /** §merchant: shown while the free trader is at your home. */
+  private renderMerchantChip(): void {
+    if (!this.ctx) return;
+    const merchant = this.ctx.state.merchant;
+    const chip = byId("deck-merchant-chip");
+    // The trader is news only once its pop-up has told it docked.
+    chip.hidden = !merchant || merchant.phase !== "docked" || !this.ctx.state.storyTold.has("free_trader");
+    if (!merchant || chip.hidden) return;
+    const status = fmtDur(merchantLeavesIn(merchant, liveSimTime()));
+    setHtml(chip, `<button type="button" class="deck-construction-chip__button" data-deck-act="merchant-chip" title="${TRADER.name} of ${TRADER.ship}, at your home">${icon("market", "sm")}<span><b>Free trader</b> · ${status}</span></button>`);
   }
 
   private setConstructionMenu(open: boolean): void {
@@ -833,7 +895,8 @@ class DeckShell implements Shell {
     if (focus) requestAnimationFrame(() => this.ctx?.renderer.ensureWorldVisible(focus));
     const commandHandled = this.command?.render(route, true) ?? false;
     const empireHandled = this.empire?.render(route, true) ?? false;
-    const marketHandled = this.market?.render(route, true) ?? false;
+    const marketHandled = (this.market?.render(route, true) ?? false) || (this.merchant?.render(route, true) ?? false)
+      || (this.signals?.render(route, true) ?? false);
     const policyHandled = this.policy?.render(route, true) ?? false;
     const fleetHandled = this.fleet?.render(route, true) ?? false;
     const rosterHandled = this.roster?.render(route, true) ?? false;
@@ -858,6 +921,10 @@ class DeckShell implements Shell {
   private routeFocus(route: DeckRoute): { x: number; y: number } | null {
     if (!this.ctx) return null;
     if (route.name === "market") return this.ctx.state.galaxy?.hub ?? null;
+    if (route.name === "merchant") {
+      const home = this.ctx.state.merchant?.system;
+      return this.ctx.state.galaxy?.systems.find((system) => system.id === home)?.pos ?? null;
+    }
     if (route.name === "fleet" && route.params?.id) {
       return this.ctx.state.ghosts.find((fleet) => fleet.id === route.params!.id)?.pos ?? null;
     }
@@ -1002,13 +1069,21 @@ class DeckShell implements Shell {
         tone: notice.tone,
         destination: { name: "battle", params: { id: event.recordId } },
       });
+    } else if (event.kind === "SignalNews") {
+      this.toasts.push({
+        title: event.title,
+        message: event.message,
+        tone: event.tone,
+        destination: { name: "signals" },
+        durationMs: event.tone === "good" ? 16_000 : 10_000,
+      });
     } else if (event.kind === "CharterMilestone") {
       this.toasts.push({
         title: event.title,
         message: event.message,
-        tone: "good",
+        tone: event.tone ?? "good",
         destination: { name: "command" },
-        durationMs: 16_000,
+        durationMs: event.tone === "bad" ? 24_000 : 16_000,
       });
     } else if (event.kind === "EstimateReady") {
       const win = event.estimate.win_pct == null ? "Projection ready" : `${Math.round(event.estimate.win_pct)}% projected win chance`;
@@ -1049,6 +1124,8 @@ class DeckShell implements Shell {
     if (!force && signature === this.chromeSignature) return;
     this.chromeSignature = signature;
     this.renderConstructionChip();
+    this.renderMerchantChip();
+    this.renderSignalsChip();
     byId("deck-corp").textContent = state.name || "—";
     byId("deck-corp-id").textContent = state.playerId !== null ? formatId(state.playerId) : "—";
     byId("deck-credits").textContent = state.wallet ? `${reserved > 0 ? "~" : ""}${Math.round(spendableMarketCredits()).toLocaleString()}` : "—";

@@ -163,7 +163,7 @@ impl ColonyRole {
             Self::PopulationWorld => "Population World",
             Self::MiningWorld => "Mining World",
             Self::FuelComplex => "Fuel Complex",
-            Self::ElectronicsCenter => "Electronics Center",
+            Self::ElectronicsCenter => "Semiconductor Center",
             Self::AgriculturalExporter => "Agricultural Exporter",
             Self::ShipbuildingCenter => "Shipbuilding Center",
             Self::StrategicOutpost => "Strategic Outpost",
@@ -353,7 +353,7 @@ pub fn colony_opportunities(system: &StarSystem, jump_neighbors: usize) -> Vec<C
                 score,
                 Some(body),
                 format!(
-                    "{} ×{extraction:.2} with Electronics fabrication ×{fabrication:.2}",
+                    "{} ×{extraction:.2} with Semiconductor fabrication ×{fabrication:.2}",
                     resource.display_name(),
                 ),
             );

@@ -3,7 +3,7 @@
    toast lane — so orders, founding steps and toasts stay live while a world is open.
    Management for the same world is the `world` workspace route beside it. Only served
    structures get footprints. */
-.deck-planet-stage { position: fixed; z-index: var(--z-planet); top: var(--deck-topbar-height); left: 0; right: var(--deck-workspace-inset, 0px); bottom: 0; display: grid; grid-template-rows: minmax(0, 1fr); min-width: 0; padding: var(--space-3) var(--space-4) calc(var(--deck-workbench-bottom-inset, 0px) + var(--space-3)); background: var(--bg); pointer-events: auto; }
+.deck-planet-stage { position: fixed; z-index: var(--z-planet); top: var(--deck-topbar-height); left: 0; right: var(--deck-workspace-inset, 0px); bottom: 0; display: grid; grid-template-rows: minmax(0, 1fr); min-width: 0; padding: var(--space-3) var(--space-4) calc(var(--deck-bottom-row-inset, 0px) + var(--space-3)); background: var(--bg); pointer-events: auto; }
 @media (prefers-reduced-motion: no-preference) {
   .deck-planet-stage:not([hidden]) { animation: deck-planet-stage-in .28s ease-out; }
   @keyframes deck-planet-stage-in { from { opacity: 0; } }
@@ -158,7 +158,6 @@
 .deck-planet__assignment { display: grid; gap: var(--space-2); }
 /* The label and its stepper share one row; − and + sit right beside the number. */
 .deck-planet__assignment-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
-.deck-planet__assignment-row > div:first-child { display: grid; gap: var(--space-1); }
 .deck-planet__assignment .deck-stepper { display: grid; grid-template-columns: var(--deck-control-height) minmax(calc(var(--deck-control-height) * 1.25), auto) var(--deck-control-height); align-items: center; text-align: center; font-variant-numeric: tabular-nums; }
 .deck-planet__reported, .deck-planet__inputs { display: grid; gap: var(--space-1); }
 .deck-planet__reported > div, .deck-planet__inputs > div { display: flex; flex-wrap: wrap; gap: var(--space-2); }
@@ -235,34 +234,37 @@
 .deck-construction h3 { margin: 0; color: var(--accent); font-size: var(--fs-fine); letter-spacing: .1em; text-transform: uppercase; }
 .deck-construction > header > small { color: var(--dim); font-size: var(--fs-fine); }
 .deck-construction__actions { display: flex; gap: var(--space-2); margin-left: auto; }
-.deck-construction__job { display: grid; grid-template-columns: var(--deck-control-height) minmax(0, 1fr) auto; gap: var(--space-2); align-items: center; }
-.deck-construction__job > .icon { width: var(--deck-control-height); height: var(--deck-control-height); object-fit: contain; }
+/* One list: the order building now (the only bar and time it has anywhere),
+   then those waiting by place, then orders still on their way. */
+.deck-construction__line { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.deck-construction__job { display: grid; grid-template-columns: var(--space-6) var(--deck-control-height) minmax(0, 1fr) auto auto; gap: var(--space-2); align-items: center; padding: var(--space-1) var(--space-2) var(--space-1) 0; border: 1px solid transparent; border-radius: var(--space-1); background: var(--field-bg); }
+.deck-construction__job > .icon { justify-self: center; width: var(--space-6); height: var(--space-6); object-fit: contain; }
+.deck-construction__job.is-head > .icon { width: var(--deck-control-height); height: var(--deck-control-height); }
 .deck-construction__job > div { display: grid; gap: var(--space-1); min-width: 0; }
 .deck-construction__job small { color: var(--dim); font-size: var(--fs-fine); }
 .deck-construction__job small.is-warn { color: var(--warn); }
 .deck-construction__job > em { color: var(--positive); font-style: normal; font-variant-numeric: tabular-nums; }
-.deck-construction__job.is-sent { padding: var(--space-1) var(--space-2); border: 1px dashed var(--field-bd); border-radius: var(--space-1); }
+.deck-construction__job > em.is-quiet { color: var(--dim); }
+.deck-construction__job.is-head { background: color-mix(in srgb, var(--positive) 7%, var(--field-bg)); }
+/* The building picked on the planet. */
+.deck-construction__job.is-picked { border-color: var(--accent); }
+.deck-construction__job.is-sent { border: 1px dashed var(--field-bd); background: transparent; }
 .deck-construction__job.is-sent > .icon { opacity: .45; }
-.deck-construction__job.is-sent > em { color: var(--dim); }
 .deck-construction__idle { margin: 0; color: var(--dim); font-size: var(--fs-fine); }
-.deck .deck-construction__more { display: flex; justify-content: space-between; gap: var(--space-2); width: 100%; padding: var(--space-1) var(--space-2); color: var(--dim); font-size: var(--fs-fine); text-align: left; }
-.deck-construction__more b { color: var(--ink); }
-.deck-construction__queue { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
-.deck-construction__queue li { display: grid; grid-template-columns: var(--space-6) var(--space-6) minmax(0, 1fr) auto; gap: var(--space-2); align-items: center; padding: var(--space-1) var(--space-2); border-radius: var(--space-1); background: var(--field-bg); }
-.deck-construction__queue li > div { display: grid; min-width: 0; }
-.deck-construction__queue small { color: var(--dim); font-size: var(--fs-fine); }
-.deck-construction__queue .icon { width: var(--space-6); height: var(--space-6); object-fit: contain; }
-.deck-construction__pos { color: var(--dim); font-size: var(--fs-fine); text-align: center; }
+.deck-construction__pos { color: var(--dim); font-size: var(--fs-fine); text-align: right; }
 .deck-construction__confirm { display: flex; gap: var(--space-1); }
 .deck .deck-construction button.is-danger { border-color: var(--negative); color: var(--negative); }
-.deck-construction__note, .deck-construction__note-inline { margin: 0; color: var(--fg-stale); font-size: var(--fs-fine); }
+.deck-construction__note-inline { margin: 0; color: var(--fg-stale); font-size: var(--fs-fine); }
 .deck-construction__hulls { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); padding-top: var(--space-1); border-top: 1px solid var(--border); font-size: var(--fs-fine); }
 .deck-construction__hulls small { color: var(--dim); }
 
 /* Buildings still rising list beneath the built ones. */
 .deck .deck-planet__row.is-rising { border: 1px dashed var(--border); border-radius: var(--deck-radius); }
 .deck-planet__row.is-rising > .icon { opacity: .5; filter: grayscale(.5); }
-.deck-planet__row.is-rising small, .deck-planet__upgrading { color: var(--accent); }
+/* An order's tag in the list, worded as on the planet. */
+.deck-planet__tag { display: inline-block; padding: 0 var(--space-2); border: 1px solid var(--field-bd); border-radius: 999px; color: var(--dim); font-size: 11px; line-height: 16px; white-space: nowrap; }
+.deck-planet__tag.is-active { border-color: color-mix(in srgb, var(--positive) 60%, var(--field-bd)); color: var(--positive); }
+.deck-planet__tag.is-sent { border-style: dashed; }
 
 /* §build-sheet: building opens across the planet view. The sheet shares the
    scene's grid cell, below the worlds strip, and dims the planet behind it; the
@@ -343,11 +345,16 @@
 .deck-bsheet__when { margin: 0; color: var(--dim); font-size: var(--fs-fine); }
 .deck-bsheet__actions { display: grid; gap: var(--space-2); }
 .deck .deck-bsheet__actions > .is-primary { min-height: calc(var(--deck-control-height) + var(--space-1)); font-weight: 600; }
+/* §construction: an order on this world holds the action spot. */
+.deck-bsheet__state { margin: 0; padding: 6px 10px; border: 1px solid var(--field-bd); border-radius: 6px; color: var(--fg); font-size: var(--fs-fine); }
+.deck .deck-bsheet__actions > .deck-bsheet__also { justify-self: start; min-height: 0; padding: 2px 0; border: 0; background: none; color: var(--dim); font-size: var(--fs-fine); text-decoration: underline; }
 /* A narrower stage keeps Queue in view beside the cards with a slimmer detail;
    only a very narrow one stacks the detail under the cards. */
 @container build-sheet (max-width: 760px) {
   .deck-bsheet__body { grid-template-columns: minmax(0, 1fr) 236px; }
   .deck .deck-bsheet__card { flex-basis: 124px; }
+  /* Too narrow for both: an order's tag sits under the next level. */
+  .deck-bsheet__card .deck-bsheet__status { top: 28px; }
   .deck-bsheet__card .deck-bsheet__art { --planet-footprint: 90px; height: 94px; }
   .deck-bsheet__detail { padding: var(--space-3); }
   .deck-bsheet__hero { --planet-footprint: 150px; height: 136px; }
@@ -367,16 +374,14 @@
 .deck-planet__upgrade { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2); border-radius: var(--deck-radius); background: var(--field-bg); }
 .deck-planet__upgrade small { display: block; color: var(--dim); font-size: var(--fs-fine); }
 
-/* On the planet: progress where the work happens. */
-.deck-planet__pill { position: absolute; left: 50%; top: calc(50% + var(--planet-footprint) * .28); z-index: 2; transform: translateX(-50%); display: inline-flex; align-items: center; gap: var(--space-1); padding: 1px var(--space-2) 1px var(--space-1); border: 1px solid var(--field-bd); border-radius: 999px; background: rgba(7, 15, 26, .88); color: var(--ink); font-size: 11px; line-height: 16px; white-space: nowrap; pointer-events: none; }
-.deck-planet__pill b { color: var(--positive); font-weight: 600; }
-.deck-planet__pill > i { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--field-bd); font-size: 10px; font-style: normal; }
+/* On the planet: where the work is (Building, #2, Sending), never how far it
+   has got; the Construction card alone draws the bar and the time. */
+.deck-planet__pill { position: absolute; left: 50%; top: calc(50% + var(--planet-footprint) * .28); z-index: 2; transform: translateX(-50%); display: inline-flex; align-items: center; gap: var(--space-1); padding: 1px var(--space-2); border: 1px solid var(--field-bd); border-radius: 999px; background: rgba(7, 15, 26, .88); color: var(--ink); font-size: 11px; line-height: 16px; white-space: nowrap; pointer-events: none; }
+.deck-planet__pill.is-active { border-color: color-mix(in srgb, var(--positive) 60%, var(--field-bd)); color: var(--positive); }
 .deck-planet__pill.is-waiting, .deck-planet__pill.is-sent { color: var(--dim); }
+.deck-planet__pill.is-sent { border-style: dashed; }
 .deck-planet__pill.is-ghost { border-color: var(--accent); }
 .deck-planet__pill.is-ghost b { color: var(--accent); }
-.deck-planet__ring { flex: none; width: 14px; height: 14px; transform: rotate(-90deg); }
-.deck-planet__ring circle { fill: none; stroke: var(--field-bd); stroke-width: 3; }
-.deck-planet__ring circle + circle { stroke: var(--positive); stroke-linecap: round; }
 .deck-planet__site.is-construction.is-waiting > .icon { opacity: .22; filter: grayscale(.8); }
 .deck .deck-planet__site.is-sent { color: var(--dim); }
 .deck-planet__site.is-sent > .icon { opacity: .18; filter: grayscale(1); }

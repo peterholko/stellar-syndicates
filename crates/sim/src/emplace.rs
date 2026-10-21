@@ -33,9 +33,9 @@ impl EmplacementKind {
 }
 
 /// How far a deep space sensor sees. Deliberately shorter than a system's own
-/// array: a picket buys you REACH, not better eyes, and stringing several out is
-/// meant to cost more than upgrading one.
-pub const DEEP_SPACE_SENSOR_RANGE: f64 = 60_000.0;
+/// array (20,000 su at tier I): a picket buys you REACH, not better eyes, and
+/// stringing several out is meant to cost more than upgrading one.
+pub const DEEP_SPACE_SENSOR_RANGE: f64 = 12_000.0;
 
 /// One placed structure.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

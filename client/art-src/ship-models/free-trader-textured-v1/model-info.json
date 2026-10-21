@@ -1,0 +1,145 @@
+{
+  "name": "Free Trader",
+  "triangles": 7872,
+  "renderSections": 2,
+  "sourceComponents": 94,
+  "materials": 2,
+  "embeddedTextures": 3,
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "dimensionsXYZ": [
+    11.8905,
+    3.43,
+    19.8637
+  ],
+  "axes": "Y up, -Z forward",
+  "units": "Relative model units; gameplay scale is assigned at integration",
+  "sockets": [
+    {
+      "name": "socket.docking.1",
+      "translation": [
+        -5.9652631578947375,
+        0.48,
+        -2.763157894736842
+      ],
+      "extras": {
+        "role": "customer-shuttle-docking",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ],
+        "side": "port",
+        "station": "forward"
+      }
+    },
+    {
+      "name": "socket.docking.2",
+      "translation": [
+        -5.9652631578947375,
+        0.48,
+        1.394736842105263
+      ],
+      "extras": {
+        "role": "customer-shuttle-docking",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ],
+        "side": "port",
+        "station": "aft"
+      }
+    },
+    {
+      "name": "socket.docking.3",
+      "translation": [
+        5.9652631578947375,
+        0.48,
+        -2.763157894736842
+      ],
+      "extras": {
+        "role": "customer-shuttle-docking",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "side": "starboard",
+        "station": "forward"
+      }
+    },
+    {
+      "name": "socket.docking.4",
+      "translation": [
+        5.9652631578947375,
+        0.48,
+        1.394736842105263
+      ],
+      "extras": {
+        "role": "customer-shuttle-docking",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "side": "starboard",
+        "station": "aft"
+      }
+    },
+    {
+      "name": "socket.engine.port",
+      "translation": [
+        -3.710526315789474,
+        0.26,
+        9.9
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.starboard",
+      "translation": [
+        3.710526315789474,
+        0.26,
+        9.9
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "geometryCounts": {
+    "canopyPanels": 8,
+    "dockingCollars": 4,
+    "mainEngines": 2,
+    "bridges": 1,
+    "guns": 0
+  },
+  "triangleBudget": [
+    6000,
+    8000
+  ],
+  "generator": "Python/NumPy, existing fleet reconstruction workflow; no Blender",
+  "textures": "Native 1254px sprite dorsal crop and five-view ventral/elevation/cap pixels; native cropped existing fleet swatches on hidden fittings. No upscaling or newly generated art.",
+  "optimization": "Static parts merged by material; exact vertex deduplication; 16-bit indices",
+  "note": "Concept reconstruction: top-view footprint is authoritative where generated elevations disagree. Unarmed static hull, six attachment sockets; gameplay integration is separate.",
+  "sourceImages": [
+    "free-trader-reference-v1/free-trader.png",
+    "free-trader-reference-v1/free-trader-reference.png"
+  ],
+  "paintEmissive": false
+}

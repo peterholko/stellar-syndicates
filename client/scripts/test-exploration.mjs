@@ -117,7 +117,7 @@ action("back"); assert.equal(st.selectedExplorationSiteId, null);
 Object.assign(st, { battles: [], battleRecords: [], jumpDepartures: [], emplacements: [],
   selectedShipId: "scout", anchors: [] });
 Object.assign(renderer, { worldToScreen: p => p, fleetScreenPosition: g => g.pos,
-  fleetHitRadius: () => 24, battlePick: () => null, operationPick: () => null });
+  fleetHitRadius: () => 24, battlePick: () => null, operationPick: () => null, signalPick: () => null });
 const beltsDerive = load("core/derive/belts.ts", { "../../protocol": protocol, "../../icons": icons, "./fleet": fleets });
 const map = load("core/mapclick.ts", { "../protocol": protocol, "../state": clock,
   "./derive/fleet": fleets, "./derive/exploration": exploration, "./derive/belts": beltsDerive,
@@ -189,22 +189,24 @@ assert.notEqual(clickBelt().intent?.verb, "command", "an uncharted belt is a mov
 // the barge, then a one-click order to the belt the surveys charted.
 st.systems.find(sys => sys.id === "sif").bodies[0].deposits = [
   { resource: "metallic_ore", richness: 0.2 }, { resource: "cuprite_ore", richness: 0.15 }];
+const merchants = load("core/derive/merchant.ts", { "./industry": {
+  availableStock: (s, c) => Math.max(0, s.stockpile?.find(x => x.commodity === c)?.units ?? 0) } });
 const guide = load("core/derive/founding.ts", { "../../protocol": protocol, "./fleet": fleets,
-  "./format": { fmtDur: n => `${Math.round(n)}s` }, "../../icons": icons });
+  "./format": { fmtDur: n => `${Math.round(n)}s` }, "../../icons": icons, "./merchant": merchants });
 const yardHome = { id: "home", owner: "1", bodies: [{ id: 0, name: "Home", structures: { shipyard: 1 } }],
   assignments: [{ body_id: 0, structure: "shipyard", workers: 1, specialists: {} }], builds: [],
   storage_used: 10, storage_cap: 500 };
 st.systems.push(yardHome);
 st.galaxy.systems.push({ id: "home", name: "Home", pos: { x: 0, y: 0 } });
-// Industry · chart a nearby system: build a probe, then one click sends it.
+// Expansion · chart a nearby system: build a probe, then one click sends it.
 // The fixture Scout is dwelling on an expedition (survey_progress .4), which
 // is not a survey of the stop: it neither counts as charting nor gets pulled.
 st.founding = { stage: "survey_candidates", local_opening: true, survey_candidates: ["sif"], belt_target: null,
   stipends: [], expansion_unlocked: false };
 const barge = st.ghosts.pop();
 let plan = guide.foundingPlan(st, yardHome);
-assert.equal(plan.chapter.name, "Industry");
-assert.deepEqual(plain(plan.checklist.map(item => item.done)), [true, true, false]);
+assert.equal(plan.chapter.name, "Expansion");
+assert.deepEqual(plain(plan.checklist.map(item => item.done)), [true, true, true, false], "export, research and mining done");
 assert.equal(plan.primary.action, "build-probe");
 st.ghosts.push({ id: "probe", kind: "survey_probe", own: true, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 },
   composition: [{ kind: "survey_probe", count: 1 }] });

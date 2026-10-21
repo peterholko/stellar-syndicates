@@ -13,6 +13,7 @@
 import { Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import type { CountClass, GhostView, ShipKind } from "./protocol";
 import { countClassLabel, fleetExactCount } from "./protocol";
+import { fleetArtKind, type ShipArtKind } from "./shipart";
 import { ORBIT_TILT, formatAge, nearRadius, systemShipPx } from "./systemlayout";
 import type { FleetTone, PictureAnchor, PictureFleet, SystemPicture } from "./systemtraffic";
 import { seeded } from "./systembodyfx";
@@ -55,7 +56,7 @@ export type TrafficPick =
 
 export interface TrafficModelCandidate {
   id: string;
-  kind: ShipKind;
+  kind: ShipArtKind;
   x: number;
   y: number;
   canvasPx: number;
@@ -270,7 +271,7 @@ export class SystemTrafficLayer {
       if (!fleet?.selected || !marker.present || !marker.sprite.visible || marker.px < 32) continue;
       if (fleet.ghost.pirate) continue; // pirate hull culture keeps its art
       out.push({
-        id, kind: fleet.ghost.migrant ? "colony" : fleet.ghost.kind, x: marker.x, y: marker.y,
+        id, kind: fleetArtKind(fleet.ghost), x: marker.x, y: marker.y,
         canvasPx: marker.px, angle: marker.angle, alpha: marker.sprite.alpha, selected: true,
         escorts: marker.escorts, sprite: marker.sprite, model: marker.model,
       });
@@ -733,7 +734,7 @@ export class SystemTrafficLayer {
 /** What a contact is called on the System View (hull culture, not class, for
  * pirates; the Authority's own services by name). */
 function fleetName(g: GhostView): string {
-  if (g.tca) return g.migrant ? "Migrant Liner" : g.rescue_service ? "AAA Rescue Tender" : "Authority Freighter";
+  if (g.tca) return g.merchant ? "Free Trader" : g.migrant ? "Migrant Liner" : g.rescue_service ? "AAA Rescue Tender" : "Authority Freighter";
   if (g.pirate) return g.kind === "raider" ? "Pirate raiders" : `Pirate ${KIND_LABEL[g.kind]}`;
   return KIND_LABEL[g.kind];
 }

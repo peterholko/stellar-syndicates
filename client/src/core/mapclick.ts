@@ -10,6 +10,7 @@ import { jumpRangeAt } from "./derive/nebula";
 import { armedSelection } from "./derive/orders";
 import { jumpDepartureKey } from "./session";
 import { siteTitle } from "./derive/exploration";
+import { SIGNAL_INFO } from "./derive/signals";
 import { operationTitle } from "./derive/format";
 
 export type EmplacementKind = EmplacementView["kind"];
@@ -31,6 +32,8 @@ export type SelectTarget = (
   | { type: "hub" }
   | { type: "exploration"; id: string }
   | { type: "operation"; id: string }
+  /** §signals: opens the Signals panel at that signal. */
+  | { type: "signal"; id: string }
   | { type: "ongoingBattle"; id: string }
   | { type: "aftermath"; id: number }
   | { type: "capture"; id: number }
@@ -347,7 +350,9 @@ export function resolveMapClick(
       });
     } else {
       const contact = ghost.tca && ghost.kind === "freighter"
-        ? ghost.rescue_service
+        ? ghost.merchant
+          ? "Free Trader"
+          : ghost.rescue_service
           ? "AAA Rescue Tender"
           : ghost.migrant
             ? "Authority Migrant Liner"
@@ -459,6 +464,12 @@ export function resolveMapClick(
       label: site.details?.name ?? "Unknown contact", target: { type: "exploration", id: site.id },
       readout: "" });
   }
+
+  // §signals: a precise target too: it opens the Signals panel.
+  const signalId = renderer.signalPick(sx, sy);
+  const signal = signalId ? state.signals?.signals.find((candidate) => candidate.id === signalId) : undefined;
+  if (signal) cands.push({ key: `signal:${signal.id}`, sortD: -1e6,
+    label: SIGNAL_INFO[signal.kind].name, target: { type: "signal", id: signal.id }, readout: "" });
 
   // A contract tag is a precise target: it opens the contract (accept, assign
   // or follow it from its card), never a movement order.

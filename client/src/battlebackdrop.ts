@@ -39,10 +39,22 @@ export function battleSystemScenery(systemId: string | null, source?: BattleScen
   return visual;
 }
 
-/** Fixed screen-space scenery, slightly off-center; never the tactical camera.
+/** Screen-space scenery, slightly off-center, below the tactical camera.
  * A few outer orbits may crop naturally at the viewport, as a distant backdrop. */
 export function battleSceneryFrame(width: number, height: number) {
   return { x: width * 0.05, y: -height * 0.14, w: width * 1.2, h: height * 1.2 };
+}
+
+/** How far the backdrop's star (or world) drifts against the camera, as a
+ * share of the battlefield's own screen motion: far below the fight, it moves
+ * slower than the hulls but never rides along with a followed one (Oct 15
+ * 2026: a black hole kept pace with a followed Interceptor). Tunable. */
+export const BACKDROP_PARALLAX = 0.3;
+
+/** The backdrop's offset when the arena centre is drawn at `center` on a
+ * `width` x `height` canvas. */
+export function backdropDrift(center: { x: number; y: number }, width: number, height: number): { x: number; y: number } {
+  return { x: (center.x - width / 2) * BACKDROP_PARALLAX, y: (center.y - height / 2) * BACKDROP_PARALLAX };
 }
 
 /** The place a system battle is fought, frozen from the served picture at open.

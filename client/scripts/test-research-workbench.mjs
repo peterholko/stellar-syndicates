@@ -94,7 +94,7 @@ assert.match(root.innerHTML, /30% research work banked/);
 // §rare-materials: the served basket reads per research-hour beside the work.
 st.research.programmes.find(p => p.id === materialTwo.id).supplies = [["electronics", 0.02], ["machinery", 0.004]];
 render();
-assert.match(root.innerHTML, /Supplies \/h<\/dt><dd><span title="Electronics">.*?<b>72<\/b><\/span><span title="Machinery">.*?<b>14<\/b>/);
+assert.match(root.innerHTML, /Supplies \/h<\/dt><dd><span title="Semiconductors">.*?<b>72<\/b><\/span><span title="Machinery">.*?<b>14<\/b>/);
 click("research-add");
 assert.equal(sent.length, sentOnce, "locked research is inspectable but never dispatchable");
 const beforeChoices = choices();

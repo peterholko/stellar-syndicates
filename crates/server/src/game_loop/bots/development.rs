@@ -4,6 +4,12 @@ use super::*;
 
 impl Bot {
     pub(super) fn recovery_project(&self, p: &Observation) -> Option<Project> {
+        // §charter-v4: a founder lands with no ships. Until the privateer
+        // falls, the charter's own order builds the first Freighter and
+        // Interceptor; there is nothing to recover yet.
+        if p.local_opening && p.founding_stage.step() <= sim::FoundingStage::DefeatPrivateer.step() {
+            return None;
+        }
         // Losing the last earning hull or Interceptor changes the plan. Count
         // paid replacement jobs too; a stale casualty picture must not order
         // the same replacement at every shipyard.

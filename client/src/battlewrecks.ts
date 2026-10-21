@@ -5,13 +5,14 @@
 // hull chunks and the flat-art slices both read this module, so both paths
 // break a hull at the same places.
 import type { ShipKind } from "./protocol";
+import type { ShipArtKind } from "./shipart";
 import { mulberry32 } from "./prng";
 
 /// Sections a hull breaks into (0 = it shatters into debris only).
-export const WRECK_PIECES: Record<ShipKind, number> = {
+export const WRECK_PIECES: Record<ShipArtKind, number> = {
   raider: 0, scout: 0, survey_probe: 0, tiny_freighter: 0,
   corvette: 2, small_freighter: 2, builder: 2, destroyer: 2, mining_barge: 2, mining_belt_station: 4,
-  cruiser: 3, convoy: 3, colony: 3, transport: 3, freighter: 3, battleship: 3, large_freighter: 3,
+  cruiser: 3, convoy: 3, colony: 3, transport: 3, freighter: 3, free_trader: 3, battleship: 3, large_freighter: 3,
   heavy_freighter: 4, dreadnought: 4, bulk_freighter: 4,
   titan: 5,
 };

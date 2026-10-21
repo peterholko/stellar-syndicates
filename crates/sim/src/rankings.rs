@@ -120,8 +120,10 @@ impl RankingStats {
 }
 
 /// The nine ranking categories, in display order. Each is a scoreboard for one
-/// playstyle; the leader of each earns a display TITLE.
+/// playstyle; the leader of each earns a display TITLE. §medals: serialised as
+/// its slug (a won medal names its category).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RankingCategory {
     Valuation,
     TradeThroughput,
@@ -160,6 +162,21 @@ impl RankingCategory {
             RankingCategory::SystemsDeveloped => "systems_developed",
             RankingCategory::IntelGathered => "intel_gathered",
             RankingCategory::Recovery => "recovery",
+        }
+    }
+
+    /// The category's name in player-facing text (the client's labels).
+    pub fn label(self) -> &'static str {
+        match self {
+            RankingCategory::Valuation => "Valuation",
+            RankingCategory::TradeThroughput => "Trade throughput",
+            RankingCategory::MarketProfit => "Net market profit",
+            RankingCategory::CargoCaptured => "Cargo captured",
+            RankingCategory::CargoProtected => "Cargo protected",
+            RankingCategory::BattleEfficiency => "Battle efficiency",
+            RankingCategory::SystemsDeveloped => "Systems developed",
+            RankingCategory::IntelGathered => "Intel gathered",
+            RankingCategory::Recovery => "Recovery",
         }
     }
 
@@ -205,6 +222,10 @@ pub struct RankingRow {
     pub recovery: f64,
     /// The titles this corp holds as of this ledger (category leaders).
     pub titles: Vec<String>,
+    /// §medals: every weekly medal this corp has won, by category (public
+    /// record, like the rest of the row).
+    #[serde(default)]
+    pub medals: Vec<MedalTally>,
 }
 
 impl RankingRow {
@@ -267,6 +288,115 @@ pub fn assemble(mut rows: Vec<RankingRow>) -> Vec<RankingRow> {
     rows
 }
 
+// ─── §medals (Oct 19 2026, Peter): weekly medals ─────────────────────────────
+// Each week the top three corporations in each category earn gold, silver and
+// bronze, on the week's own gains. Awarded at the ledger close that ends the
+// week, from the same hub-side counters as the published table, and kept for
+// good: the rankings rows carry each corporation's tally.
+
+/// A medal week, in sim seconds: a real week at the dev server's 1× pacing.
+/// The sim clock stops while the server is down, so a sim week is never shorter.
+pub const MEDAL_WEEK_S: u64 = 7 * 24 * 60 * 60;
+/// Places that earn a medal in each category: gold, silver, bronze. A galaxy
+/// holds at most twenty corporations, so a top three still means something.
+pub const MEDAL_PLACES: usize = 3;
+/// The categories with weekly medals. Recovery, a comeback measure, has none.
+pub const MEDAL_CATEGORIES: [RankingCategory; 8] = [
+    RankingCategory::Valuation,
+    RankingCategory::TradeThroughput,
+    RankingCategory::MarketProfit,
+    RankingCategory::CargoCaptured,
+    RankingCategory::CargoProtected,
+    RankingCategory::BattleEfficiency,
+    RankingCategory::SystemsDeveloped,
+    RankingCategory::IntelGathered,
+];
+
+/// One medal won: its week (1 = the galaxy's first), category and place
+/// (1 gold, 2 silver, 3 bronze).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Medal {
+    pub week: u32,
+    pub category: RankingCategory,
+    pub place: u8,
+}
+
+/// A corporation's medal case: what it has won, and where its week began.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MedalCase {
+    #[serde(default)]
+    pub won: Vec<Medal>,
+    /// The counters and valuation when this corporation's week began: the
+    /// last award, its join, or (for an older save) its first close after load.
+    #[serde(default)]
+    pub week_start: RankingStats,
+    #[serde(default)]
+    pub week_start_valuation: f64,
+    #[serde(default)]
+    pub started: bool,
+}
+
+impl MedalCase {
+    /// Start a week from these counters.
+    pub fn begin_week(&mut self, stats: &RankingStats, valuation: f64) {
+        self.week_start = stats.clone();
+        self.week_start_valuation = valuation;
+        self.started = true;
+    }
+}
+
+/// A row's medals in one category, for the published table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MedalTally {
+    /// The category's slug.
+    pub category: String,
+    pub gold: u32,
+    pub silver: u32,
+    pub bronze: u32,
+}
+
+/// The tally of `won` by category, in display order; categories without a
+/// medal are left out.
+pub fn tally(won: &[Medal]) -> Vec<MedalTally> {
+    MEDAL_CATEGORIES.iter().filter_map(|&cat| {
+        let count = |place: u8| won.iter().filter(|m| m.category == cat && m.place == place).count() as u32;
+        let (gold, silver, bronze) = (count(1), count(2), count(3));
+        (gold + silver + bronze > 0).then(|| MedalTally { category: cat.slug().to_string(), gold, silver, bronze })
+    }).collect()
+}
+
+/// The week's gains in one category, from its start to now. None: not
+/// eligible (battle efficiency needs `MIN_RANKED_ENGAGEMENTS` this week;
+/// Recovery has no medal).
+pub fn weekly_value(cat: RankingCategory, start: &RankingStats, start_valuation: f64,
+    now: &RankingStats, valuation: f64) -> Option<f64> {
+    Some(match cat {
+        RankingCategory::Valuation => valuation - start_valuation,
+        RankingCategory::TradeThroughput => now.trade_units.saturating_sub(start.trade_units) as f64,
+        RankingCategory::MarketProfit => now.market_profit() - start.market_profit(),
+        RankingCategory::CargoCaptured => now.cargo_captured.saturating_sub(start.cargo_captured) as f64,
+        RankingCategory::CargoProtected => now.cargo_protected.saturating_sub(start.cargo_protected) as f64,
+        RankingCategory::BattleEfficiency => {
+            if now.engagements.saturating_sub(start.engagements) < MIN_RANKED_ENGAGEMENTS {
+                return None;
+            }
+            (now.hull_destroyed - start.hull_destroyed)
+                / (now.hull_lost - start.hull_lost).max(EFFICIENCY_HULL_FLOOR)
+        }
+        RankingCategory::SystemsDeveloped => now.tiers_built.saturating_sub(start.tiers_built) as f64,
+        RankingCategory::IntelGathered => now.intel_snapshots.saturating_sub(start.intel_snapshots) as f64,
+        RankingCategory::Recovery => return None,
+    })
+}
+
+/// One category's podium: the top `MEDAL_PLACES` by value, gold first. Only a
+/// gain above zero places; ties go to the lowest id (the titles' rule). Pure.
+pub fn podium(mut entries: Vec<(PlayerId, f64)>) -> Vec<PlayerId> {
+    entries.retain(|(_, v)| *v > 0.0 && v.is_finite());
+    entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then(a.0.0.cmp(&b.0.0)));
+    entries.into_iter().take(MEDAL_PLACES).map(|(p, _)| p).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,7 +418,45 @@ mod tests {
             intel_gathered: 0,
             recovery: 0.0,
             titles: Vec::new(),
+            medals: Vec::new(),
         }
+    }
+
+    /// §medals: a podium of three, gains above zero only, ties to the lowest id.
+    #[test]
+    fn a_podium_takes_the_top_three_gains_and_breaks_ties_to_the_lowest_id() {
+        let p = |n| PlayerId(n);
+        assert_eq!(podium(vec![(p(5), 10.0), (p(2), 30.0), (p(9), 30.0), (p(1), 0.0), (p(4), 20.0)]),
+            vec![p(2), p(9), p(4)]);
+        assert!(podium(vec![(p(1), 0.0), (p(2), -5.0), (p(3), f64::NAN)]).is_empty(), "no gain, no medal");
+    }
+
+    /// §medals: a week's gains, not the campaign totals; efficiency needs three
+    /// engagements this week; Recovery has no medal.
+    #[test]
+    fn weekly_values_measure_the_weeks_own_gains() {
+        let start = RankingStats { trade_units: 100, hull_destroyed: 50.0, hull_lost: 10.0, engagements: 4, ..Default::default() };
+        let mut now = start.clone();
+        now.trade_units = 160;
+        assert_eq!(weekly_value(RankingCategory::TradeThroughput, &start, 0.0, &now, 0.0), Some(60.0));
+        assert_eq!(weekly_value(RankingCategory::Valuation, &start, 2_000.0, &now, 2_500.0), Some(500.0));
+        assert_eq!(weekly_value(RankingCategory::BattleEfficiency, &start, 0.0, &now, 0.0), None, "no fights this week");
+        now.engagements += 3;
+        now.hull_destroyed += 200.0;
+        assert_eq!(weekly_value(RankingCategory::BattleEfficiency, &start, 0.0, &now, 0.0), Some(200.0 / EFFICIENCY_HULL_FLOOR));
+        assert_eq!(weekly_value(RankingCategory::Recovery, &start, 0.0, &now, 9.0), None);
+    }
+
+    #[test]
+    fn a_tally_counts_each_category_by_place_in_display_order() {
+        let m = |week, category, place| Medal { week, category, place };
+        let won = [m(1, RankingCategory::IntelGathered, 2), m(1, RankingCategory::Valuation, 1),
+            m(2, RankingCategory::Valuation, 1), m(2, RankingCategory::Valuation, 3)];
+        assert_eq!(tally(&won), vec![
+            MedalTally { category: "valuation".into(), gold: 2, silver: 0, bronze: 1 },
+            MedalTally { category: "intel_gathered".into(), gold: 0, silver: 1, bronze: 0 },
+        ]);
+        assert_eq!(serde_json::to_string(&won[0]).unwrap(), r#"{"week":1,"category":"intel_gathered","place":2}"#);
     }
 
     fn titles_of(rows: &[RankingRow], id: u64) -> &[String] {

@@ -19,6 +19,7 @@ export const SURFACE_STRUCTURE_TIERS: Readonly<Record<string, number>> = {
   "mining_complex": 6,
   "orbital_warehouse": 6,
   "ordnance_foundry": 6,
+  "power_plant": 6,
   "precision_works": 6,
   "sensor_array": 6,
   "service_berth": 1,
@@ -41,3 +42,14 @@ export const SURFACE_GROUND_LAYERS: readonly string[] = [
   "barren",
   "marginal"
 ];
+/** A family's floating look by tier, for worlds with no ground. */
+export const SURFACE_ORBITAL_ART: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  "power_plant": {
+    "1": "solar",
+    "2": "solar",
+    "3": "fusion",
+    "4": "fusion",
+    "5": "fusion",
+    "6": "fusion"
+  }
+};

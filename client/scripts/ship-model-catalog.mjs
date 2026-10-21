@@ -21,7 +21,15 @@ export const SHIP_MODELS = [
   ["heavy_freighter", "heavy-freighter", "Heavy Freighter"],
   ["bulk_freighter", "bulk-freighter", "Bulk Freighter"],
   ["freighter", "authority-freighter", "Authority Freighter"],
+  ["free_trader", "free-trader", "Free Trader"],
 ].map(([kind, id, title]) => ({ kind, id, title }));
+
+// Art for a hull that flies in the sim as another kind (art kind → the kind
+// it flies as). Its map sprite keeps that kind's footprint. §merchant: the
+// free trader is an Authority Freighter hull in the sim.
+export const ART_VARIANTS = {
+  free_trader: { flies: "freighter" },
+};
 
 // A hull whose own art is not generated yet borrows a sibling's sprite, model
 // and hardpoints under its own name (kind → the kind it borrows from). Remove

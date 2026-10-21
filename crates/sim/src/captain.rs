@@ -282,6 +282,9 @@ pub struct Captain {
     pub recover_at: Option<f64>,
     #[serde(default)]
     pub loss_fate: Option<CaptainLossFate>,
+    /// §signals: hurt on a Hazardous signal; sits signals out until then.
+    #[serde(default)]
+    pub hurt_until: Option<f64>,
     pub level: u8,
     pub xp: u32,
     pub unspent: u8,
@@ -410,6 +413,7 @@ impl Captain {
             missing_report_at: None,
             recover_at: None,
             loss_fate: None,
+            hurt_until: None,
             level: 1,
             xp: 0,
             unspent: 0,

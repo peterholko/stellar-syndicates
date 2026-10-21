@@ -3,8 +3,8 @@ import { anchorStatus, beltActions, prospectLine } from "../../core/derive/belts
 import { colonyPurpose } from "../../core/derive/colony";
 import { commandDelayTo } from "../../core/derive/geo";
 import { pirateSite } from "../../core/derive/pirates";
-import { buildProgress, buildsByPlanet } from "../../core/derive/construction";
-import { gridLine, hullJobs, maxLevel, nextOrderTiming, romanTier as roman, structureFacts, structureQueue, WORKFORCE_STRUCTURES, type StructureJob } from "../../core/derive/worldbuild";
+import { nodeBonusDesc, nodeLabel } from "../../core/derive/research";
+import { gridLine, hullJobs, isStructureJob, jobTag, jobTitle, maxLevel, nextOrderTiming, romanTier as roman, SENDING, slotLine, structureFacts, structureQueue, WORKFORCE_STRUCTURES, yardStatus, type StructureJob } from "../../core/derive/worldbuild";
 import { isOrbitalYard, planetStructureImage } from "../../planet-structure-art";
 import { planetSurface, type PlanetSurface } from "../../planet-surfaces";
 import { coach } from "../coach";
@@ -29,6 +29,7 @@ import {
   structureLevel,
   structureResearched,
   structureBuildSeconds,
+  openingBuild,
   conversionSummary,
   MINERAL_DEPOSITS,
   systemFlavor,
@@ -41,7 +42,8 @@ import {
 import { latestGroundRecordFor, SHIP_STATS } from "../../core/derive/orders";
 import type { CoreEvent } from "../../core/events";
 import { commodityIcon as commodityGlyph, icon, label, structureImage, type IconKey } from "../../icons";
-import type { AssignmentView, BodyView, Commodity, Deposit, ModuleKind, ShipKind, SystemInfo, SystemStateView } from "../../protocol";
+import type { AssignmentView, BodyView, BuildState, Commodity, Deposit, ModuleKind, ShipKind, SystemInfo, SystemStateView } from "../../protocol";
+import { fleetArtKind } from "../../shipart";
 import { fleetExactCount } from "../../protocol";
 import { liveSimTime } from "../../state";
 import { starTypeFor } from "../../stars";
@@ -52,7 +54,7 @@ import { sheetFingerprint } from "../signature";
 import type { CoreContext } from "../types";
 import { fleetListRow } from "./fleet-row";
 import { PlanetPanel, type PlanetDockedFleet, type PlanetPanelModel, type PlanetSiege } from "./planet";
-import { berthAnchor, siegeTarget, type AnchorBody } from "../../systemlayout";
+import { fleetBerth, siegeTarget, type AnchorBody } from "../../systemlayout";
 import { refiningComparison } from "../refining";
 import { isSitePool } from "./planet-sites";
 import "../../styles/planet-panel.css";
@@ -91,11 +93,11 @@ const STRUCTURE_DESCRIPTION: Record<string, string> = {
   volatile_harvester: "Extracts Volatiles from a local deposit.",
   bioharvester: "Harvests Biomass from the biosphere.",
   smelter: "Refines ore into metals. Double power.",
-  electronics_fabricator: "Silicates and Rare Elements → Electronics.",
+  electronics_fabricator: "Silicates and Rare Elements → Semiconductors.",
   chemical_works: "Volatiles and Biomass → Polymers.",
   fuel_refinery: "Volatiles → Deuterium.",
   agroplex: "Biomass → Provisions.",
-  machine_works: "Alloys and Electronics → Machinery. Double power.",
+  machine_works: "Alloys and Semiconductors → Machinery. Double power.",
   armaments_complex: "Makes Armaments and fleet modules.",
   composite_works: "Makes Composites for hulls and drives.",
   hull_fabricator: "Makes Hull Sections for Destroyers and larger.",
@@ -124,6 +126,11 @@ import { MODULES, moduleFitsHull } from "../../core/derive/equipment";
 /** §construction: a structure order this client sent that no served report has
  * shown yet. It holds its goods in the builder's arithmetic until the report
  * arrives, and says so when no report comes back. */
+/** Seconds past its expected report after which an order in flight is
+ * presumed refused: it stops holding goods and blocking a new order, and the
+ * card offers Dismiss. */
+const SILENT_AFTER_S = 15;
+
 interface PendingBuild {
   systemId: string;
   bodyId: number;
@@ -195,8 +202,6 @@ export class DeckEmpireRoutes {
   private worldBuilder: { world: string; site: { pool: Pool; slot: number } | null; siteOnly: boolean;
     placing: boolean; tab: Pool; blocked: Pool[] } | null = null;
   private pendingBuilds: PendingBuild[] = [];
-  /** Worlds whose waiting line is expanded in the construction bar. */
-  private readonly queueOpen = new Set<string>();
   private cancelArmed: number | null = null;
   private readonly cancelSent = new Map<number, number>();
   /** A completion toast asked to point at the new building's workforce. */
@@ -252,7 +257,7 @@ export class DeckEmpireRoutes {
     const signature = sheetFingerprint([
       route, this.systemTab, this.builderMode, this.selectedBuild, this.selectedHull,
       this.shipQuantity, this.pendingFit, this.buildFeedback, this.workbenchOpen, Math.floor(liveSimTime()),
-      this.worldBuilder, this.pendingBuilds, [...this.queueOpen], this.cancelArmed, [...this.cancelSent.keys()],
+      this.worldBuilder, this.pendingBuilds, this.cancelArmed, [...this.cancelSent.keys()],
       context.system, context.dynamic, this.ctx.state.timeline.length, this.ctx.state.syndicate?.fits,
       this.ctx.state.market,
       this.ctx.state.syndicate?.flagship_name,
@@ -392,7 +397,9 @@ export class DeckEmpireRoutes {
     }
     if (action === "open-world") {
       const body = dynamic?.bodies.find((candidate) => String(candidate.id) === button.dataset.body);
-      if (body) {
+      // An idle work slot opens straight onto its build sheet.
+      if (body && button.dataset.build) this.hooks.openWorldBuild(system.id, body.id, {});
+      else if (body) {
         // A production line names its structure so the world opens on it.
         if (button.dataset.structure) this.planet.focus(button.dataset.structure);
         this.hooks.go(worldRoute(system, body));
@@ -491,7 +498,7 @@ export class DeckEmpireRoutes {
     const alert = brief
       ? `<div class="deck-alert deck-alert--${brief.tone === "good" ? "info" : brief.tone}"><b>${esc(brief.title)}</b><span>${esc(brief.detail)}</span></div>`
       : "";
-    const pirate = pirateSite(dynamic?.intel?.enclave_tier ?? 0);
+    const pirate = pirateSite(dynamic?.intel?.enclave_tier ?? 0, this.ctx.state.founding?.den === system.id);
     const threat = pirate ? `<article class="deck-operation">${pirate.art ? `<img src="${pirate.art}" alt="">` : ""}<div><b>${pirate.title}</b><p>${pirate.goal}</p><span>Reported defenses: ${dynamic?.intel?.defense_tier ?? "?"} tiers</span></div></article>` : "";
     const active = this.systemTab === "overview"
       ? this.systemOverview(system, dynamic, mine, owner, survey)
@@ -512,6 +519,7 @@ export class DeckEmpireRoutes {
       stat("Survey", survey),
       stat("Worlds", dynamic?.deposits == null && !mine ? "Uncharted" : String(bodies.length || "—")),
       stat("Spectrum", label(system.band)),
+      ...nodeStat(dynamic, mine),
     ];
     if (!mine || !dynamic) {
       return `<div class="deck-stat-grid">${publicStats.join("")}</div>` +
@@ -526,6 +534,7 @@ export class DeckEmpireRoutes {
       stat("Development", `${dynamic.slots_used}/${dynamic.slots_total}`, dynamic.slots_total > 0 && dynamic.slots_used >= dynamic.slots_total),
       stat("Storage", `${fmt(dynamic.storage_used)}/${fmt(dynamic.storage_cap)}`, dynamic.storage_cap > 0 && dynamic.storage_used >= dynamic.storage_cap),
       stat("Construction", String(dynamic.builds.length)),
+      ...nodeStat(dynamic, mine),
     ];
     return `<div class="deck-stat-grid">${ownerStats.join("")}</div>${systemDefenseHtml(this.ctx.state, system, dynamic, this.defenseRadius.get(system.id) ?? DEFAULT_DEFENSE_RADIUS, "deck", this.defenseAssigning.has(system.id), this.stationDraft.get(system.id) ?? null)}${this.groundActivityHtml(dynamic)}${this.opportunityHtml(dynamic)}${this.queueHtml(dynamic)}`;
   }
@@ -629,28 +638,27 @@ export class DeckEmpireRoutes {
     return `<button type="button" class="deck-assignment is-warn" data-deck-act="open-world" data-body="${body.id}" data-structure="${esc(structure)}" aria-label="Open ${esc(label(structure))} on ${esc(body.name)}"><div><b>${esc(label(structure))} · Tier ${tier}</b><span>${esc(body.name)} · needs workforce</span><small>Idle</small></div><span class="deck-assignment__workers"><b>0</b><small>workforce</small></span></button>`;
   }
 
-  /** The construction queue: every world's jobs for the system rail, or one
-   * world's own jobs (no grouping) for that world's column. */
-  private queueHtml(dynamic: SystemStateView, bodyId?: number): string {
+  /** §construction: the system's worlds, one line each: the structure in its
+   * work slot, its time and how many wait, with a way to it. Hulls and
+   * modules read beneath their yard's world. An order's bar and its Cancel
+   * live in that world's Construction card. */
+  private queueHtml(dynamic: SystemStateView): string {
     const now = liveSimTime();
-    const groups = buildsByPlanet(dynamic.builds).filter((group) => bodyId === undefined || group.bodyId === bodyId);
-    const rows = groups.map(({ bodyId: groupBody, jobs }) => {
-      const body = dynamic.bodies.find((entry) => entry.id === groupBody);
-      const builds = jobs.map((job) => {
-        const duration = job.complete_time == null ? null : Math.max(0, job.complete_time - now);
-        const progress = buildProgress(job, now);
-        const bar = progress == null ? "" : `<span class="deck-queue-progress" role="progressbar" aria-label="${esc(buildName(job.key))} build progression" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.toFixed(0)}"><i style="width:${progress.toFixed(1)}%"></i></span>`;
-        const status = job.queued ? "Queued" : duration == null ? "Paused · needs workforce" : duration > 0 ? `Building · ${fmtBuildDur(duration)}` : "completing";
-        return `<div class="deck-queue-row${job.queued ? " is-queued" : ""}"><span>${icon("queue", "sm")}<span><b>${esc(buildName(job.key))}</b>${bar}</span></span><em>${status}</em></div>`;
-      }).join("");
-      return bodyId === undefined ? `<div class="deck-planet-queue"><h4>${esc(body?.name ?? "System yard")}</h4>${builds}</div>` : builds;
+    const catalog = this.ctx.state.galaxy?.build_options ?? [];
+    const yard = dynamic.builds.filter((job) => !isStructureJob(job.key));
+    const yardLine = (job: BuildState) => `<small>${esc(buildName(job.key))} · ${yardStatus(job, now)}</small>`;
+    const rows = dynamic.bodies.filter((body) => Object.values(body.structures).some((tier) => tier > 0)
+      || dynamic.builds.some((job) => job.body_id === body.id)).map((body) => {
+      const line = structureQueue(dynamic, body, catalog, now);
+      const idle = !line.length;
+      return `<div class="deck-slot-row${idle ? " is-idle" : ""}"><span><b>${esc(body.name)}</b><small class="deck-slot-row__slot">${esc(slotLine(line[0] ?? null, line.length - 1))}</small>${yard.filter((job) => job.body_id === body.id).map(yardLine).join("")}</span><button type="button" data-deck-act="open-world" data-body="${body.id}"${idle ? ' data-build="1"' : ""}>${idle ? "Build" : "Open"}</button></div>`;
     }).join("");
+    const stray = yard.filter((job) => !dynamic.bodies.some((body) => body.id === job.body_id));
+    const strayRow = stray.length ? `<div class="deck-slot-row"><span><b>System yard</b>${stray.map(yardLine).join("")}</span></div>` : "";
     const feedback = this.buildFeedback?.systemId === dynamic.id && this.buildFeedback.text
       ? `<div class="deck-build-feedback is-${this.buildFeedback.tone}">${esc(this.buildFeedback.text)}</div>`
       : "";
-    const count = groups.reduce((sum, group) => sum + group.jobs.length, 0);
-    const queueCount = rows ? `<b>${count}</b>` : "";
-    return `<section class="deck-section"><header><div><h3>${bodyId === undefined ? "Construction queue" : "Construction here"}</h3></div>${queueCount}</header>${feedback}${rows || `<div class="deck-empty-inline">Empty</div>`}</section>`;
+    return `<section class="deck-section"><header><div><h3>Construction</h3></div></header>${feedback}${rows || strayRow ? `<div class="deck-slot-list">${rows}${strayRow}</div>` : `<div class="deck-empty-inline">Empty</div>`}</section>`;
   }
 
   private handleBuildAction(button: HTMLButtonElement, route: DeckRoute): boolean {
@@ -728,6 +736,10 @@ export class DeckEmpireRoutes {
           this.planet.preferSite(model, this.selectedBuild, slot);
         }
         this.dispatchBuild(this.selectedBuild, dynamic.id, body.id);
+        // Queued: the picker closes, as the build sheet does.
+        this.hooks.notice(`<b>Build order sent</b> · ${esc(buildName(this.selectedBuild))} → ${esc(body.name)}.`);
+        this.closeBuildWorkbench(route);
+        return true;
       }
     } else if (action === "builder-queue-ships") {
       if (!this.selectedHull) return true;
@@ -867,10 +879,10 @@ export class DeckEmpireRoutes {
       this.render(route, true);
       return true;
     }
-    if (action?.startsWith("world-builder-") || action === "world-queue-toggle" || action?.startsWith("world-cancel")
+    if (action?.startsWith("world-builder-") || action?.startsWith("world-cancel")
       || action === "world-pending-dismiss") {
       if (dynamic.owner !== this.ctx.state.playerId) return true;
-      this.worldBuilderAction(action, button, route, system, dynamic, body);
+      this.worldBuilderAction(action, button, system, dynamic, body);
       this.render(route, true);
       return true;
     }
@@ -1074,11 +1086,18 @@ export class DeckEmpireRoutes {
   /** Goods promised to this system's orders in flight: not spent yet, not free either. */
   private heldFor(systemId: string): Map<Commodity, number> {
     const held = new Map<Commodity, number>();
-    for (const order of this.pendingBuilds) {
+    for (const order of this.awaitedBuilds()) {
       if (order.systemId !== systemId) continue;
       for (const cost of order.costs) held.set(cost.commodity, (held.get(cost.commodity) ?? 0) + cost.units);
     }
     return held;
+  }
+
+  /** Orders in flight whose report is still due; a silent one no longer
+   * holds goods, blocks a new order or shows as Sending. */
+  private awaitedBuilds(): PendingBuild[] {
+    const now = liveSimTime();
+    return this.pendingBuilds.filter((order) => now <= order.expectBy + SILENT_AFTER_S);
   }
 
   /** Drop orders a served report has confirmed, and forget long-silent ones. */
@@ -1105,8 +1124,7 @@ export class DeckEmpireRoutes {
     }
   }
 
-  private worldBuilderAction(action: string, button: HTMLButtonElement, route: DeckRoute, system: SystemInfo, dynamic: SystemStateView, body: BodyView): void {
-    const world = worldKey(route);
+  private worldBuilderAction(action: string, button: HTMLButtonElement, system: SystemInfo, dynamic: SystemStateView, body: BodyView): void {
     const wb = this.worldBuilder;
     if (action === "world-builder-exit") this.worldBuilder = null;
     else if (action === "world-builder-pick" && button.dataset.key) {
@@ -1134,10 +1152,7 @@ export class DeckEmpireRoutes {
     } else if (action === "world-builder-place-back" && wb) wb.placing = false;
     else if (action === "world-builder-market") this.hooks.go({ name: "market" });
     else if (action === "world-builder-queue" && button.dataset.key) this.queueWorldBuild(system, dynamic, body, button.dataset.key);
-    else if (action === "world-queue-toggle") {
-      if (this.queueOpen.has(world)) this.queueOpen.delete(world); else this.queueOpen.add(world);
-      this.cancelArmed = null;
-    } else if (action === "world-cancel") this.cancelArmed = Number(button.dataset.job);
+    else if (action === "world-cancel") this.cancelArmed = Number(button.dataset.job);
     else if (action === "world-cancel-keep") this.cancelArmed = null;
     else if (action === "world-cancel-confirm") {
       const id = Number(button.dataset.job);
@@ -1145,7 +1160,7 @@ export class DeckEmpireRoutes {
       if (job?.cancellable) {
         this.ctx.send({ type: "CancelBuild", system_id: system.id, job_id: id });
         this.cancelSent.set(id, liveSimTime());
-        this.hooks.notice(`<b>Cancel sent</b> · ${esc(this.jobTitle(job))} at ${esc(body.name)}. Its goods return when the order arrives.`);
+        this.hooks.notice(`<b>Cancel sent</b> · ${esc(jobTitle(job))} at ${esc(body.name)}. Its goods return when the order arrives.`);
       }
       this.cancelArmed = null;
     } else if (action === "world-pending-dismiss") {
@@ -1160,7 +1175,9 @@ export class DeckEmpireRoutes {
     const pools = bodyPoolUsage(body, dynamic);
     const state = structOption(entry, dynamic, body, pools);
     const short = this.shortfall(dynamic, system.id, state.o);
-    if (!state.buildable || short.length || this.pendingBuilds.some((order) => order.systemId === system.id && order.bodyId === body.id && order.key === key)) return;
+    if (!state.buildable || short.length || this.awaitedBuilds().some((order) => order.systemId === system.id && order.bodyId === body.id && order.key === key)) return;
+    // A silent earlier order for it is presumed refused: this one replaces it.
+    this.pendingBuilds = this.pendingBuilds.filter((order) => !(order.systemId === system.id && order.bodyId === body.id && order.key === key));
     const model = this.planetModel(system, dynamic, body);
     let slot: number | null = null;
     const site = this.worldBuilder?.site;
@@ -1174,11 +1191,8 @@ export class DeckEmpireRoutes {
     this.dispatchBuild(key, system.id, body.id);
     this.pendingBuilds.push({ systemId: system.id, bodyId: body.id, key, tier: state.targetTier, seen, sentAt: now,
       expectBy: now + 2 * delay + 3, slot, costs: state.o.costs.map((cost) => ({ commodity: cost.commodity as Commodity, units: cost.units })) });
-    // The site is taken: the sheet goes back to the whole tab.
-    if (this.worldBuilder) {
-      this.worldBuilder.site = null;
-      this.worldBuilder.siteOnly = false;
-    }
+    // Queued: the sheet closes (Peter, Oct 20 2026); Build opens it again.
+    this.worldBuilder = null;
     this.hooks.notice(`<b>Build order sent</b> · ${esc(state.o.label)} ${roman(state.targetTier)} → ${esc(body.name)}.`);
   }
 
@@ -1193,43 +1207,51 @@ export class DeckEmpireRoutes {
     });
   }
 
-  private jobTitle(job: StructureJob): string {
-    return job.project ? label(job.key) : `${buildName(job.key)} ${roman(job.tier)}`;
-  }
-
-  /** The construction bar pinned under the world's header. */
+  /** §construction: the card pinned under the world's header. It lists this
+   * world's one work slot in order: the order building now with the only bar
+   * and time it has anywhere, those waiting by place, and orders still on
+   * their way. The planet, the structure list and the system view tag the
+   * same orders (Building, #2, Sending) without a bar. */
   private constructionBarHtml(system: SystemInfo, dynamic: SystemStateView, body: BodyView, line: readonly StructureJob[]): string {
     const now = liveSimTime();
     const world = `${system.id}:${body.id}`;
     const delay = commandDelayTo(system.pos) ?? 0;
     const pending = this.pendingBuilds.filter((order) => order.systemId === system.id && order.bodyId === body.id);
-    const head = line[0];
-    const waiting = line.slice(1);
-    const open = this.queueOpen.has(world) && waiting.length > 0;
     const actions = `<span class="deck-construction__actions"><button type="button" class="is-primary" data-deck-act="world-build" data-mode="structures" data-coach="world-build">Build</button>${isShipbuildingBody(body) ? `<button type="button" data-deck-act="world-build" data-mode="ships">Build ship</button>` : ""}</span>`;
-    const stale = delay >= 2 ? ` · as reported ~${Math.ceil(delay)}s ago` : "";
-    const active = head
-      ? `<div class="deck-construction__job">${structureImage(head.key, head.tier, "md")}<div><b>${esc(this.jobTitle(head))}</b>${progressBar(head, this.jobTitle(head))}<small>${!head.active ? "Queued · starts next" : head.project ? "Founding Camp project" : (body.structures[head.key] ?? 0) > 0 ? `Level ${roman(body.structures[head.key])} → ${roman(head.tier)}` : "New building"}${stale}</small></div><em>${etaText(head.readyIn)}</em></div>`
-      : `<p class="deck-construction__idle">Build slot free</p>`;
+    const stale = delay >= 2 ? ` title="As reported ~${Math.ceil(delay)}s ago"` : "";
+    // A building clicked on the planet marks its order here.
+    const picked = this.planet.pickedOn(system.id, body.id);
+    const rows = line.map((job) => {
+      const title = jobTitle(job);
+      const classes = `deck-construction__job${job.position === 1 ? " is-head" : ""}${!job.project && job.key === picked ? " is-picked" : ""}`;
+      if (job.position === 1) {
+        const when = job.active ? `<em${stale}>${etaText(job.readyIn)}</em>` : `<em class="is-quiet">Starting…</em>`;
+        return `<li class="${classes}"><span class="deck-construction__pos"></span>${structureImage(job.key, job.tier, "md")}<div><b>${esc(title)}</b>${job.active ? progressBar(job, title) : ""}</div>${when}${this.cancelControl(job)}</li>`;
+      }
+      const starts = job.startsIn === null ? "after the jobs ahead" : job.startsIn > 0.5 ? `starts in ${fmtBuildDur(job.startsIn)}` : "starts next";
+      return `<li class="${classes}"><span class="deck-construction__pos">#${job.position}</span>${structureImage(job.key, job.tier, "sm")}<div><b>${esc(title)}</b><small>${starts}</small></div><em></em>${this.cancelControl(job)}</li>`;
+    });
     const sent = pending.map((order) => {
-      const silent = now > order.expectBy + 15;
-      return `<div class="deck-construction__job is-sent">${structureImage(order.key, order.tier, "md")}<div><b>${esc(buildName(order.key))} ${roman(order.tier)}</b><small${silent ? ' class="is-warn"' : ""}>${silent ? "No report yet · it may have been refused" : `Order sent · confirms in ${fmtBuildDur(Math.max(1, order.expectBy - now))}`}</small></div>${silent ? `<button type="button" data-deck-act="world-pending-dismiss" data-key="${esc(order.key)}">Dismiss</button>` : "<em>…</em>"}</div>`;
-    }).join("");
-    const next = waiting[0];
-    const more = next ? `<button type="button" class="deck-construction__more" data-deck-act="world-queue-toggle" aria-expanded="${open}"><span>${waiting.length} queued · next <b>${esc(this.jobTitle(next))}</b>${next.startsIn !== null && next.startsIn > 0.5 ? `, starts in ${fmtBuildDur(next.startsIn)}` : ""}</span><span aria-hidden="true">${open ? "▾" : "▸"}</span></button>` : "";
-    const rows = open ? `<ol class="deck-construction__queue">${waiting.map((job) => {
-      const control = job.job.id !== undefined && this.cancelSent.has(job.job.id) ? `<span class="deck-construction__note-inline">Cancel sent</span>`
-        : job.cancellable && this.cancelArmed === job.job.id ? `<span class="deck-construction__confirm"><button type="button" class="is-danger" data-deck-act="world-cancel-confirm" data-job="${job.job.id}">Confirm cancel</button><button type="button" data-deck-act="world-cancel-keep">Keep</button></span>`
-        : job.cancellable ? `<button type="button" data-deck-act="world-cancel" data-job="${job.job.id}">Cancel</button>` : "";
-      return `<li><span class="deck-construction__pos">#${job.position}</span>${structureImage(job.key, job.tier, "sm")}<div><b>${esc(this.jobTitle(job))}</b><small>${job.startsIn === null ? "starts after the jobs ahead" : job.startsIn > 0.5 ? `starts in ${fmtBuildDur(job.startsIn)}` : "starts next"}${job.readyIn !== null ? ` · ready in ${fmtBuildDur(job.readyIn)}` : ""}</small></div>${control}</li>`;
-    }).join("")}</ol>${waiting.some((job) => job.cancellable) ? `<p class="deck-construction__note">Cancel returns the goods.</p>` : ""}` : "";
+      const silent = now > order.expectBy + SILENT_AFTER_S;
+      const left = fmtBuildDur(Math.max(1, order.expectBy - now));
+      const note = silent ? `<small class="is-warn">No report yet · it may have been refused</small>` : `<small title="Confirms in ${left}">${SENDING} · ${left}</small>`;
+      return `<li class="deck-construction__job is-sent"><span class="deck-construction__pos"></span>${structureImage(order.key, order.tier, "sm")}<div><b>${esc(buildName(order.key))} ${roman(order.tier)}</b>${note}</div><em></em>${silent ? `<button type="button" data-deck-act="world-pending-dismiss" data-key="${esc(order.key)}">Dismiss</button>` : ""}</li>`;
+    });
+    const list = rows.length || sent.length ? `<ol class="deck-construction__line">${rows.join("")}${sent.join("")}</ol>` : `<p class="deck-construction__idle">Build slot free</p>`;
     const hulls = hullJobs(dynamic, body);
-    const yard = hulls.length ? `<div class="deck-construction__hulls"><small>Hulls in the yard</small>${hulls.map((job) => {
-      const left = job.complete_time == null ? null : Math.max(0, job.complete_time - now);
-      return `<span>${esc(buildName(job.key))} · ${job.queued ? "waiting for a slip" : left === null ? "paused · needs workforce" : etaText(left)}</span>`;
-    }).join("")}</div>` : "";
+    const yard = hulls.length ? `<div class="deck-construction__hulls"><small>Hulls in the yard</small>${hulls.map((job) =>
+      `<span>${esc(buildName(job.key))} · ${yardStatus(job, now)}</span>`).join("")}</div>` : "";
     const sheet = this.worldBuilder?.world === world && !this.worldBuilder.placing;
-    return `<section class="deck-construction${sheet ? " is-building" : ""}" aria-label="Construction on ${esc(body.name)}"><header><h3>Construction</h3>${actions}</header>${active}${sent}${more}${rows}${yard}</section>`;
+    return `<section class="deck-construction${sheet ? " is-building" : ""}" aria-label="Construction on ${esc(body.name)}"><header><h3>Construction</h3>${actions}</header>${list}${yard}</section>`;
+  }
+
+  /** Cancel for a structure order, waiting or building, behind a Confirm. */
+  private cancelControl(job: StructureJob): string {
+    if (job.job.id !== undefined && this.cancelSent.has(job.job.id)) return `<span class="deck-construction__note-inline">Cancel sent</span>`;
+    if (!job.cancellable) return "";
+    return this.cancelArmed === job.job.id
+      ? `<span class="deck-construction__confirm"><button type="button" class="is-danger" data-deck-act="world-cancel-confirm" data-job="${job.job.id}">Confirm cancel</button><button type="button" data-deck-act="world-cancel-keep">Keep</button></span>`
+      : `<button type="button" data-deck-act="world-cancel" data-job="${job.job.id}">Cancel</button>`;
   }
 
   /** §build-sheet: building opens across the planet view, so the world's
@@ -1240,7 +1262,7 @@ export class DeckEmpireRoutes {
   private worldSheetHtml(system: SystemInfo, dynamic: SystemStateView, body: BodyView, line: readonly StructureJob[], art: string): string {
     const wb = this.worldBuilder!;
     const pools = bodyPoolUsage(body, dynamic);
-    const pending = this.pendingBuilds.filter((order) => order.systemId === system.id && order.bodyId === body.id);
+    const pending = this.awaitedBuilds().filter((order) => order.systemId === system.id && order.bodyId === body.id);
     const surface = planetSurface(art, system.id, body);
     const site = wb.siteOnly ? wb.site : null;
     if (site) wb.tab = site.pool;
@@ -1271,7 +1293,7 @@ export class DeckEmpireRoutes {
       return `<button type="button" class="deck-bsheet__tab" role="tab" aria-selected="${wb.tab === pool}" data-deck-act="world-builder-tab" data-pool="${pool}"${site && pool !== site.pool ? " disabled" : ""}><b>${POOL_LABEL[pool]}<small>${taken}/${total}</small></b><span class="deck-bsheet__meter${taken >= total ? " is-full" : ""}"><i style="width:${pct.toFixed(0)}%"></i></span></button>`;
     }).join("");
     const free = Math.max(0, pools[wb.tab].total - used(wb.tab));
-    const cards = (items: readonly SheetEntry[]) => `<div class="deck-bsheet__cards">${items.map((item) => this.sheetCard(item, body, surface)).join("")}</div>`;
+    const cards = (items: readonly SheetEntry[]) => `<div class="deck-bsheet__cards">${items.map((item) => this.sheetCard(item, system.id, body, surface)).join("")}</div>`;
     const sections: string[] = [];
     if (upgrades.length) sections.push(`<section class="deck-bsheet__sec"><h3>Upgrade</h3>${cards(upgrades)}</section>`);
     sections.push(`<section class="deck-bsheet__sec"><h3>New <small>${free} free site${free === 1 ? "" : "s"}</small></h3>${fresh.length ? cards(fresh) : free ? "<p>Nothing new fits here.</p>" : ""}</section>`);
@@ -1303,22 +1325,21 @@ export class DeckEmpireRoutes {
     return item.state.foundsNew && !item.block && !item.order && !isOrbitalYard(item.key) && item.entry.consumes_slot !== false;
   }
 
-  private sheetCard(item: SheetEntry, body: BodyView, surface: PlanetSurface | null): string {
+  private sheetCard(item: SheetEntry, systemId: string, body: BodyView, surface: PlanetSurface | null): string {
     const { state } = item;
     const resting = state.maxed || (!!item.block && item.existing);
     const tier = resting ? Math.max(1, state.currentTier) : item.block ? 1 : state.targetTier;
     const level = state.maxed ? "Top" : item.block ? "" : state.foundsNew ? "New" : `${roman(state.targetTier - 1)} → ${roman(state.targetTier)}`;
-    const waiting = item.jobs.filter((job) => !job.active).at(-1);
-    const active = item.jobs.find((job) => job.active);
-    const status = item.order ? `<span class="deck-bsheet__status is-quiet">Order sent</span>`
-      : waiting ? `<span class="deck-bsheet__status is-quiet">${roman(waiting.tier)} queued #${waiting.position}</span>`
-      : active ? `<span class="deck-bsheet__status">${roman(active.tier)} building · ${etaText(active.readyIn)}</span>` : "";
+    // Its newest order, tagged as everywhere outside the Construction card.
+    const latest = item.jobs.at(-1);
+    const status = item.order ? `<span class="deck-bsheet__status is-quiet">${SENDING}</span>`
+      : latest ? `<span class="deck-bsheet__status${latest.active ? "" : " is-quiet"}">${roman(latest.tier)} · ${jobTag(latest)}</span>` : "";
     const short = new Map(item.short.map((entry) => [entry.commodity, entry.units]));
     const facts = item.block ? `<span class="deck-bsheet__why">${esc(item.block)}</span>`
       : `<span class="deck-bsheet__line">${state.o.costs.map((cost) => {
         const missing = short.get(cost.commodity as Commodity);
         return `<span${missing ? ' class="is-short"' : ""} title="${esc(label(cost.commodity))}${missing ? ` · ${fmt(missing)} short` : ""}">${commodityGlyph(cost.commodity as Commodity)}${cost.units}</span>`;
-      }).join("")}<span>${fmtBuildDur(structureBuildSeconds(state.o, body))}</span></span>`;
+      }).join("")}<span>${fmtBuildDur(structureBuildSeconds(state.o, body, openingBuild(item.key, state.targetTier, systemId, body)))}</span></span>`;
     return `<button type="button" class="deck-bsheet__card${item.block ? " is-blocked" : ""}" data-deck-act="world-builder-pick" data-key="${esc(item.key)}" aria-pressed="${item.key === this.selectedBuild}"><span class="deck-bsheet__art">${planetStructureImage(item.key, tier, "120px", false, surface)}</span>${level ? `<span class="deck-bsheet__level">${level}</span>` : ""}${status}<b>${esc(state.o.label)}</b>${facts}</button>`;
   }
 
@@ -1331,12 +1352,13 @@ export class DeckEmpireRoutes {
     const top = maxLevel(entry);
     const ladder = top > 1 ? `<div class="deck-bsheet__ladder" style="--levels:${top}" aria-label="Levels">${Array.from({ length: top }, (_, index) => index + 1).map((tier) => {
       // Catalogued levels name their research; V and VI of any other
-      // building need research only the sim can check.
+      // building need research only the sim can check. Rungs show no terrain;
+      // on a world with no ground they show a family's floating look.
       const level = entry.tiers?.find((candidate) => candidate.tier === tier);
       const locked = level?.research_prerequisite && !structureResearched(structureLevel(entry, tier)) ? level.research_prerequisite : null;
       const research = level ? !!locked : top === 6 && tier >= 5;
       const tip = locked ? `Needs ${this.programmeName(locked)} research` : research ? "Levels V and VI need research" : "";
-      return `<span class="deck-bsheet__rung${tier <= state.currentTier ? " is-have" : ""}${tier === state.targetTier && !item.block && !state.maxed ? " is-next" : ""}${research ? " is-research" : ""}"${tip ? ` title="${esc(tip)}"` : ""}>${planetStructureImage(key, tier, "48px")}<small>${roman(tier)}</small></span>`;
+      return `<span class="deck-bsheet__rung${tier <= state.currentTier ? " is-have" : ""}${tier === state.targetTier && !item.block && !state.maxed ? " is-next" : ""}${research ? " is-research" : ""}"${tip ? ` title="${esc(tip)}"` : ""}>${planetStructureImage(key, tier, "48px", false, surface === null ? null : undefined)}<small>${roman(tier)}</small></span>`;
     }).join("")}</div>` : "";
     const step = `Level ${roman(state.targetTier - 1)} → ${roman(state.targetTier)}`;
     const kind = item.block ? `<span class="is-warn">${esc(item.block)}</span>`
@@ -1357,7 +1379,7 @@ export class DeckEmpireRoutes {
     const chosen = this.worldBuilder?.site?.pool === state.pool;
     const where = this.placeable(item) ? `<div class="deck-bsheet__where"><span>${chosen ? "Your site" : "Site picked for you"}</span><button type="button" data-deck-act="world-builder-place">Choose on planet</button></div>` : "";
     const delay = commandDelayTo(system.pos) ?? 0;
-    const timing = nextOrderTiming(line, structureBuildSeconds(state.o, body), delay);
+    const timing = nextOrderTiming(line, structureBuildSeconds(state.o, body, openingBuild(key, state.targetTier, system.id, body)), delay);
     const warn = !item.order && !item.block && item.short.length > 0;
     const when = item.block || state.maxed ? ""
       : item.order ? `Confirms in ${fmtBuildDur(Math.max(1, item.order.expectBy - liveSimTime()))}`
@@ -1366,7 +1388,13 @@ export class DeckEmpireRoutes {
       : (timing.startsIn ?? 0) >= 1 ? `Starts in ${fmtBuildDur(timing.startsIn!)} · ready in ${fmtBuildDur(timing.readyIn)}`
       : `Ready in ${fmtBuildDur(timing.readyIn)}`;
     const name = state.foundsNew ? `${state.o.label} ${roman(state.targetTier)}` : entry.tiers?.length ? state.o.label : `level ${roman(state.targetTier)}`;
-    const actions = item.order ? `<button type="button" class="is-primary" disabled>Order sent · confirming</button>`
+    // An order already on this world holds the spot: its state and Cancel.
+    // The next level is a deliberate, secondary choice, never a primary
+    // button where the last click landed.
+    const latest = item.jobs.at(-1);
+    const queueable = !item.block && !state.maxed && !item.short.length && state.buildable;
+    const actions = item.order ? `<p class="deck-bsheet__state">${roman(item.order.tier)} · ${SENDING}</p>`
+      : latest ? `<p class="deck-bsheet__state">${roman(latest.tier)} · ${jobTag(latest)}</p>${this.cancelControl(latest)}${queueable ? `<button type="button" class="deck-bsheet__also" data-deck-act="world-builder-queue" data-key="${esc(key)}">Also queue ${esc(name)}</button>` : ""}`
       : item.block || state.maxed ? ""
       : item.short.length || !state.buildable ? `<button type="button" class="is-primary" disabled>Queue ${esc(name)}</button><button type="button" data-deck-act="world-builder-market">Buy at Market</button>`
       : `<button type="button" class="is-primary" data-deck-act="world-builder-queue" data-key="${esc(key)}" data-coach="queue-build">Queue ${esc(name)}</button>`;
@@ -1388,7 +1416,7 @@ export class DeckEmpireRoutes {
     const builderHtml = building ? this.worldSheetHtml(system, dynamic, body, line, art) : "";
     const pick = building ? this.worldOptions(dynamic, body).find((entry) => entry.key === this.selectedBuild) : undefined;
     const pickState = pick ? structOption(pick, dynamic, body, bodyPoolUsage(body, dynamic)) : null;
-    const pending = this.pendingBuilds.filter((order) => order.systemId === system.id && order.bodyId === body.id);
+    const pending = this.awaitedBuilds().filter((order) => order.systemId === system.id && order.bodyId === body.id);
     // A new building with no other gate may be placed; one already on its way
     // is not a new site to preview.
     const fresh = !!pickState?.foundsNew && !pickState.gate && !pickState.maxed && !pending.some((order) => order.key === pick?.key);
@@ -1462,10 +1490,10 @@ export class DeckEmpireRoutes {
     const anchors = anchorBodies(dynamic);
     const state = this.ctx.state;
     return state.ghosts
-      .filter((ghost) => dockedAtSystem(ghost, system.id) && berthAnchor(ghost.kind, anchors) === body.id)
+      .filter((ghost) => dockedAtSystem(ghost, system.id) && fleetBerth(ghost, anchors) === body.id)
       .map((ghost) => ({
-        id: ghost.id, kind: ghost.migrant ? "colony" : ghost.kind, own: ghost.own, count: fleetExactCount(ghost),
-        name: ghost.migrant ? "Migrant Liner" : ghost.rescue_service ? "AAA Rescue Tender" : shipKindLabel(ghost.kind),
+        id: ghost.id, kind: ghost.migrant ? "colony" : ghost.kind, art: fleetArtKind(ghost), own: ghost.own, count: fleetExactCount(ghost),
+        name: ghost.merchant ? "Free Trader" : ghost.migrant ? "Migrant Liner" : ghost.rescue_service ? "AAA Rescue Tender" : shipKindLabel(ghost.kind),
         selected: state.selectedShipId === ghost.id || state.selectedShipIds.has(ghost.id),
       }));
   }
@@ -1534,7 +1562,7 @@ export class DeckEmpireRoutes {
     const recipe = option.key === "smelter" ? option.refining_recipes?.find(r => body.deposits?.some(d => d.resource === r.inputs[0][0])) ?? option.conversion : undefined;
     const comparison = recipe ? refiningComparison(this.ctx.state, dynamic, body.id, recipe) : "";
     const description = option.description ?? STRUCTURE_DESCRIPTION[option.key] ?? "Adds a new capability to this world.";
-    return `<article class="deck-build-detail"><header>${structureImage(option.key, state.targetTier, "md", undefined, "deck-structure-icon")}<span><small>${esc(category)}</small><h3>${esc(option.label)}</h3></span></header><p>${esc(description)}</p>${option.conversion ? `<p class="deck-production-recipe">${esc(conversionSummary(option))}</p>` : ""}<table class="deck-cost-table" aria-label="Construction requirements"><thead><tr><th aria-label="Resource"></th><th scope="col">Cost</th><th scope="col">Stock</th></tr></thead><tbody>${costs}</tbody></table><dl><div><dt>Build time</dt><dd>${fmtBuildDur(structureBuildSeconds(option, body))}</dd></div><div><dt>Slot</dt><dd>${slot}</dd></div></dl>${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}${comparison}</article>`;
+    return `<article class="deck-build-detail"><header>${structureImage(option.key, state.targetTier, "md", undefined, "deck-structure-icon")}<span><small>${esc(category)}</small><h3>${esc(option.label)}</h3></span></header><p>${esc(description)}</p>${option.conversion ? `<p class="deck-production-recipe">${esc(conversionSummary(option))}</p>` : ""}<table class="deck-cost-table" aria-label="Construction requirements"><thead><tr><th aria-label="Resource"></th><th scope="col">Cost</th><th scope="col">Stock</th></tr></thead><tbody>${costs}</tbody></table><dl><div><dt>Build time</dt><dd>${fmtBuildDur(structureBuildSeconds(option, body, openingBuild(option.key, state.targetTier, dynamic.id, body)))}</dd></div><div><dt>Slot</dt><dd>${slot}</dd></div></dl>${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}${comparison}</article>`;
   }
 
   private shipBuilder(dynamic: SystemStateView, body: BodyView): string {
@@ -1720,8 +1748,14 @@ function shippableStock(dynamic: SystemStateView) {
   return (dynamic.stockpile ?? []).filter((slot) => !SHIP_FUELS.includes(slot.commodity) && slot.units >= 1);
 }
 
-function stat(name: string, value: string, warn = false): string {
-  return `<span class="deck-stat${warn ? " is-warn" : ""}"><small>${esc(name)}</small><b>${esc(value)}</b></span>`;
+function stat(name: string, value: string, warn = false, tip = ""): string {
+  return `<span class="deck-stat${warn ? " is-warn" : ""}"${tip ? ` title="${esc(tip)}"` : ""}><small>${esc(name)}</small><b>${esc(value)}</b></span>`;
+}
+
+/** §node: the system's exotic node, its bonus in the tooltip. */
+function nodeStat(dynamic: SystemStateView | undefined, mine: boolean): string[] {
+  const node = dynamic?.node;
+  return node ? [stat("Exotic node", nodeLabel(node, mine).replace(/^◈ /, ""), mine && node.awakened && !node.fed, nodeBonusDesc(node.bonus))] : [];
 }
 
 function buildName(key: string): string {

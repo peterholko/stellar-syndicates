@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import type { ShipKind } from "./protocol";
+import type { ShipArtKind } from "./shipart";
 import { disposeModel, loadShipModel, modelLighting } from "./ship-model-stage";
 
 /** How far toward the frame's edges the framed hull may reach. */
@@ -35,7 +35,7 @@ export class ModelPreview {
   private request: AbortController | null = null;
   private model: THREE.Group | null = null;
   private vertices: THREE.Vector3[] = [];
-  private kind: ShipKind | null = null;
+  private kind: ShipArtKind | null = null;
   private radius = 1.5;
   private frame = 0;
   private visible = true;
@@ -71,7 +71,7 @@ export class ModelPreview {
     document.addEventListener("visibilitychange", this.render, { signal: this.events.signal });
   }
 
-  async setKind(kind: ShipKind): Promise<void> {
+  async setKind(kind: ShipArtKind): Promise<void> {
     if (this.disposed || (kind === this.kind && (this.model || this.request))) return;
     this.kind = kind;
     this.request?.abort();

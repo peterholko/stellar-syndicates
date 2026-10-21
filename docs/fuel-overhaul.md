@@ -72,7 +72,9 @@ freight.
 - **Helium-3** fills capitals' tanks at 6 Fuel a unit and fuels Fusion Plants
   V–VI. Its gas-giant harvester trickle almost never fires, because
   generated gas giants carry no Volatiles.
-- **Distance:** homes sit 68–80k su from the Hub (74k in the production seed).
+- **Distance:** homes sat 68–80k su from the Hub (74k in the production seed).
+  Since Oct 15 2026 they sit 100–150k su out ([hub-district.md](hub-district.md));
+  the trip costs below scale with distance.
 - **Research:** only the Line school goes past tier V, and a test enforces it.
 - **Bodies keep no orbit radius,** only their order in the system.
 
@@ -236,7 +238,9 @@ with time and cost, e.g. "Slow · 26 min · 96 Cr" and "Full · 13 min · 959 Cr
 ### Planet power
 
 Grids, the free 3 MW base, one plant per planet, plant output (8 / 17.6 /
-30.4 / 48 / 68.8 / 92 MW) and brownouts all stay.
+30.4 / 48 / 68.8 / 92 MW) and brownouts all stay. (Charter v4, Oct 14 2026,
+retired the free base: only a Command Center's planet has one, its reactor's
+1 MW. See [founding-charter.md](founding-charter.md).)
 
 | Tier | Plant | Runs on | Burn above base | Build |
 | --- | --- | --- | --- | --- |

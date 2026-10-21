@@ -239,6 +239,8 @@ impl Commodity {
             Self::RareMetalOre => "rare-metal ore".into(),
             Self::Helium3Ice => "helium-3 ice".into(),
             Self::Helium3 => "helium-3".into(),
+            // §charter-v4: shown as Semiconductors; the slug stays.
+            Self::Electronics => "semiconductors".into(),
             _ => self.slug().replace('_', " "),
         }
     }

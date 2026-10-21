@@ -1,6 +1,27 @@
 use super::*;
 
+/// §charter-v4: founders land with no ships. Most policy fixtures model a
+/// later economy, so `game` gives every bot the v3 pair (a Tiny Freighter and
+/// an Interceptor at home); `game_bare` keeps the real landing.
 fn game(players: u32, bots: u32) -> GameLoop {
+    let mut game = game_bare(players, bots);
+    let owners: Vec<PlayerId> = game.bots.keys().copied().collect();
+    for (i, owner) in owners.into_iter().enumerate() {
+        let home = game.world.players[&owner].home;
+        // The Interceptor first, as v3 spawned them: fixtures clone the first.
+        let raider = EntityId(9_000_000_000 + 2 * i as u64);
+        let freighter = EntityId(9_000_000_001 + 2 * i as u64);
+        game.world.fleets.insert(freighter, sim::ship::Fleet::single_slow(freighter, owner, H::TinyFreighter, home,
+            sim::ship::FleetOrder::Idle, None));
+        game.world.fleets.insert(raider, sim::ship::Fleet::single(raider, owner, H::Raider, home,
+            sim::ship::FleetOrder::Idle, None));
+    }
+    // Their pictures reach the bots like any fleet's: through recorded light.
+    game.history.record(&game.world);
+    game
+}
+
+fn game_bare(players: u32, bots: u32) -> GameLoop {
     let (status, _) = watch::channel(ServerStatus::default());
     let (estimates, _) = mpsc::unbounded_channel();
     let mut game = GameLoop::new(World::new(sim::SimConfig::for_players(0xC0FFEE, players)), 1.0, status, estimates);
@@ -15,10 +36,11 @@ fn advance(game: &mut GameLoop, seconds: f64) {
 
 #[test]
 fn eight_bots_join_an_eight_player_galaxy_with_normal_starts() {
-    let g = game(8, 8);
+    let g = game_bare(8, 8);
     assert_eq!(g.world.config.max_players, 8);
-    // 60 full + 8 homes + 52 sparse, plus each home's six-system neighbourhood.
-    assert_eq!(g.world.systems.len(), 104 + 8 * sim::galaxy::HOME_NEIGHBOURS);
+    // 60 full + 8 homes + 52 sparse, plus each home's six-system neighbourhood
+    // and the stars between the hub and the homes.
+    assert_eq!(g.world.systems.len(), 104 + sim::galaxy::HUB_GAP_STARS as usize + 8 * sim::galaxy::HOME_NEIGHBOURS);
     assert_eq!(g.world.players.len(), 8);
     assert_eq!(g.bots.len(), 8);
     assert_eq!(g.sessions.connection_count(), 0);
@@ -27,41 +49,40 @@ fn eight_bots_join_an_eight_player_galaxy_with_normal_starts() {
     for (&owner, corp) in &g.world.players {
         assert!(owner.0 > i64::MAX as u64 && !owner.is_sentinel());
         let home = g.world.systems.iter().find(|s| Some(s.id) == corp.home_system).unwrap();
-        assert!((home.population() - 0.002).abs() < 1e-6);
+        assert!((home.population() - sim::colony::HOME_FOUNDING_POP).abs() < 1e-6);
         assert_eq!(home.tier(K::MiningComplex), 0);
         assert_eq!(home.tier(K::Shipyard), 0);
         assert_eq!(home.tier(K::CommandCenter), 1);
         assert_eq!(corp.research.completed.len(), 0);
-        let own: Vec<_> = g.world.fleets.values().filter(|f| f.owner == owner).collect();
-        assert_eq!(own.len(), 2, "§charter v3: a Tiny Freighter and an Interceptor");
-        assert_eq!(own.iter().map(|f| f.count(H::TinyFreighter)).sum::<u32>(), 1);
-        assert_eq!(own.iter().map(|f| f.count(H::Raider)).sum::<u32>(), 1);
-        assert_eq!(own.iter().map(|f| f.count(H::Scout)).sum::<u32>(), 0);
-        assert_eq!(own.iter().map(|f| f.cargo_capacity()).sum::<u32>(), 50);
+        // §charter-v4: the same bare landing as a human founder, no ships.
+        assert!(!g.world.fleets.values().any(|f| f.owner == owner));
+        assert_eq!(corp.founding.stage, sim::FoundingStage::BuildBioharvester);
+        assert_eq!(home.tier(K::Bioharvester) + home.tier(K::Habitat) + home.tier(K::PowerPlant), 0);
     }
 }
 
 #[test]
 fn every_bot_starts_developing_without_a_socket() {
-    let mut g = game(8, 8);
-    advance(&mut g, 90.0);
+    // §charter-v4: from the bare landing, the guide's order: food, housing,
+    // provisions, the mine; every build on the landing world.
+    let mut g = game_bare(8, 8);
+    advance(&mut g, 240.0);
     for (&owner, bot) in &g.bots {
         let p = g.bot_observation(owner).unwrap();
-        // Mine, workforce, persistent guard: safety holds need not generate a
-        // fourth order just to prove that the offline controller is alive.
-        assert!(bot.commands_sent >= 3, "{owner} must make decisions without a session");
-        assert_eq!(p.home.system.tier(K::MiningComplex), 1);
-        assert!(p.home.system.bodies.iter().any(|b| b.assignments.get(&K::MiningComplex)
-            .is_some_and(|a| a.workers > 0)));
-        // Nearby recovery traffic can also expose a neighbour's pirate. A
-        // persistent escort legitimately intercepts that threat, not only its
-        // own tutorial privateer, before its next guard report arrives.
-        let intercepting=g.world.fleets.values().any(|f| f.owner==owner && f.is_combatant()
-            && matches!(f.order, sim::ship::FleetOrder::Intercept{target}
-                if g.world.fleets.get(&target).is_some_and(|enemy| enemy.owner!=owner)));
-        assert!(intercepting || p.own().any(|f| f.guard_target.is_some() || f.kind == H::Raider && p.fighting.contains(&f.id)),
-            "{owner}: a guard either remains assigned or reacts to a threat; status={}, fleets={:?}",
-            bot.status, g.world.fleets.values().filter(|f| f.owner==owner).map(|f|(f.id,&f.order,f.fuel)).collect::<Vec<_>>());
+        assert!(bot.commands_sent >= 4, "{owner} must make decisions without a session");
+        let home = &p.home.system;
+        let landing = p.landing_body().unwrap();
+        let staffed = |kind: K| home.bodies.iter().any(|b| b.assignments.get(&kind).is_some_and(|a| a.workers > 0));
+        for kind in [K::Bioharvester, K::Habitat, K::Agroplex, K::MiningComplex] {
+            assert!(home.bodies.iter().find(|b| b.id == landing).unwrap().tier(kind) >= 1,
+                "{owner}: {kind:?} on the landing world; status={} stage={:?} sent={} bodies={:?} stock={:?} builds={:?} queue={:?}",
+                bot.status, p.founding_stage, bot.commands_sent,
+                home.bodies.iter().map(|b| (b.id, &b.structures)).collect::<Vec<_>>(), home.stockpile,
+                p.home.builds.len(), g.world.build_queue.iter().filter(|j| j.owner == owner).map(|j| (j.what, j.body_id)).collect::<Vec<_>>());
+        }
+        assert!(staffed(K::Bioharvester) && staffed(K::Agroplex) && staffed(K::MiningComplex), "{owner}");
+        assert!(home.bodies.iter().filter(|b| b.id != landing).all(|b| b.structures.is_empty()),
+            "{owner}: the land grant keeps the rest of the system empty");
     }
 }
 
@@ -245,6 +266,7 @@ fn planning_picture() -> (Bot, Observation) {
     let owner = PlayerId(BOT_ID_BASE);
     let mut p = g.bot_observation(owner).unwrap();
     p.local_opening = false; // these policy fixtures model the post-opening economy
+    landed_v3(&mut p);
     p.account = Some(MarketAccountSample { standing: 100.0, credits: 20_000.0,
         valuation: 0.0, warehouse: BTreeMap::new(), orders: Vec::new() });
     p.ticker = Some(view::MarketTickerSample {
@@ -253,6 +275,21 @@ fn planning_picture() -> (Bot, Observation) {
         available_sell: C::ALL.iter().map(|c| (*c, 1_000)).collect(),
     });
     (g.bots[&owner].clone(), p)
+}
+
+/// §charter-v4: the landing buildings the v3 start came with (the farms, the
+/// Habitat and the landing world's Solar Array), for pictures of the economy
+/// after them. The land grant is open, as it is past the charter.
+fn landed_v3(p: &mut Observation) {
+    let landing = p.landing_body().unwrap();
+    let b = p.home.system.bodies.iter_mut().find(|b| b.id == landing).unwrap();
+    for kind in [K::Bioharvester, K::Habitat, K::Agroplex, K::PowerPlant] {
+        b.set_tier(kind, 1);
+    }
+    for kind in [K::Bioharvester, K::Agroplex] {
+        b.assignments.insert(kind, sim::production::Assignment::crew(1));
+    }
+    p.land_grant_open = true;
 }
 
 // Policy fixtures below do not advance the world. They supply an arrived
@@ -698,6 +735,8 @@ fn spending_reservations_survive_saves_and_wait_for_account_light() {
 fn project_shortfalls_buy_before_buffer_top_ups_and_food_lines_import_nothing() {
     let (mut bot, mut p) = planning_picture();
     let body = p.home.system.bodies[0].id;
+    // A later economy's stock, not the charter kit filling the holds.
+    p.home.system.stockpile.clear();
     p.home.system.stockpile.insert(C::Machinery, 0.0);
     p.home.system.stockpile.insert(C::Deuterium, 150.0);
     p.home.system.stockpile.insert(C::Provisions, 150.0);
@@ -737,30 +776,19 @@ fn the_charter_survey_stop_gets_a_probe_even_past_a_picket() {
     assert_eq!(bot.charter_probe_due(&p), None, "no second probe while the first one's report is due");
 }
 
-/// The first shipment counts only if an escorted Freighter carries Ferrite
-/// Ore: the ore goes first, ahead of dearer Provisions. Until it leaves,
-/// Authority doesn't take the ore, unless the colony's storage is full.
+/// §charter-v5: until the trader has bought its first ore, Authority doesn't
+/// take the ore, unless the colony's storage is full; then ore is ordinary
+/// surplus again.
 #[test]
-fn the_first_shipment_carries_ferrite_ore_and_authority_leaves_it_alone() {
+fn the_ore_waits_for_the_trader_and_authority_leaves_it_alone() {
     let (mut bot, mut p) = planning_picture();
-    p.founding_stage = sim::FoundingStage::PrepareExport;
-    p.exported = false;
+    p.local_opening = true;
+    p.founding_stage = sim::FoundingStage::SellOre;
     p.home.system.stockpile.insert(C::MetallicOre, 120.0);
     p.home.system.stockpile.insert(C::Provisions, 400.0);
     p.home.system.stockpile.insert(C::Deuterium, 100.0);
-    let id = p.own().find(|g| g.kind.is_player_freighter()).unwrap().id;
-    for g in &mut p.ghosts {
-        g.fuel = g.fuel_capacity;
-        if g.kind == H::Raider { g.guard_target = Some(id); }
-    }
-    let cmd = bot.routes(&p, &BTreeMap::new());
-    let Some(Command::SetFreightRoute { route: Some(route), .. }) = cmd else { panic!("{cmd:?}") };
-    let home = &route.stops[0];
-    assert!(home.load.get(&C::MetallicOre).is_some_and(|n| *n > 0), "{:?}", home.load);
-
-    bot.waits.clear();
     assert!(bot.export_surplus(&p, &BTreeMap::new(), false).is_none_or(|c|
-        !matches!(c, Command::BookFreightIn { commodity: C::MetallicOre, .. })), "ore waits for the Freighter");
+        !matches!(c, Command::BookFreightIn { commodity: C::MetallicOre, .. })), "ore waits for the trader");
     bot.waits.clear();
     let cmd = bot.export_surplus(&p, &BTreeMap::new(), true);
     assert!(matches!(cmd, Some(Command::BookFreightIn { commodity: C::Provisions, .. })),
@@ -768,8 +796,12 @@ fn the_first_shipment_carries_ferrite_ore_and_authority_leaves_it_alone() {
     p.home.system.stockpile.insert(C::Provisions, 0.0);
     bot.waits.clear();
     let cmd = bot.export_surplus(&p, &BTreeMap::new(), true);
-    assert!(matches!(cmd, Some(Command::BookFreightIn { commodity: C::MetallicOre, units, .. }) if units > 0 && units <= 70),
-        "full storage still ships the ore, keeping one load: {cmd:?}");
+    assert!(matches!(cmd, Some(Command::BookFreightIn { commodity: C::MetallicOre, units, .. }) if units > 0),
+        "full storage still ships the ore: {cmd:?}");
+    p.founding_stage = sim::FoundingStage::PowerShipyard;
+    bot.waits.clear();
+    assert!(matches!(bot.export_surplus(&p, &BTreeMap::new(), false),
+        Some(Command::BookFreightIn { commodity: C::MetallicOre, .. })), "sold to the trader, the rest is surplus");
 }
 
 #[test]
@@ -1162,11 +1194,16 @@ fn bots_power_their_short_planets_and_fuel_the_plants() {
     let scout = strategic_hull(&p, 9911, H::Scout, 1);
     p.ghosts.push(scout);
     let busy = p.home.system.bodies[0].id;
+    let landing = p.landing_body().unwrap();
+    assert_ne!(busy, landing);
+    // §charter-v4: no free power. The landing world's mine runs on the Command
+    // Center's reactor; the busy planet has neither reactor nor plant.
     for b in &mut p.home.system.bodies {
-        b.grid = sim::power::Grid { demand: if b.id == busy { 6.4 } else { 1.0 }, supply: 3.0, power: 0.0, ..Default::default() };
-        b.grid.power = (3.0 / b.grid.demand).min(1.0);
+        let (demand, supply) = if b.id == busy { (6.4, 0.0) } else if b.id == landing { (1.0, 9.0) } else { (0.0, 0.0) };
+        b.grid = sim::power::Grid { demand, supply, power: if demand > 0.0 { (supply / demand).min(1.0) } else { 1.0 },
+            ..Default::default() };
     }
-    assert_eq!(p.power_shortfall().map(|(body, _)| body), Some(busy), "the short planet, not the one on its base");
+    assert_eq!(p.power_shortfall().map(|(body, _)| body), Some(busy), "the short planet, not the powered one");
     let project = p.power_project().expect("a plant for the short planet");
     assert_eq!((project.what, project.body), (BuildKind::Upgrade { upgrade: K::PowerPlant }, busy));
     assert_eq!(bot.strategic_project(&p), Some(project), "power comes before other development");
@@ -1296,8 +1333,10 @@ fn pirate_held_colony_candidates_change_only_when_the_scout_report_arrives() {
     g.bots.get_mut(&owner).unwrap().next_think = 1e9;
     advance(&mut g, 100.0);
     let cc = g.world.players[&owner].command_center;
-    let target = g.world.systems.iter_mut().find(|s| s.owner.is_none()
-        && s.pos.distance(cc) > 10_000.0 && s.bodies.iter().any(|b| b.habitable)).unwrap();
+    // The nearest, so its light has reached the command center.
+    let target = g.world.systems.iter_mut().filter(|s| s.owner.is_none()
+        && s.pos.distance(cc) > 10_000.0 && s.bodies.iter().any(|b| b.habitable))
+        .min_by(|a, b| a.pos.distance(cc).total_cmp(&b.pos.distance(cc))).unwrap();
     let id = target.id;
     let pos = target.pos;
     g.world.players.get_mut(&owner).unwrap().surveyed.insert(id);
@@ -1503,11 +1542,6 @@ fn freighters_bring_the_missing_fuel_home_from_the_hub() {
     }
     let wanted = BTreeMap::from([(C::Deuterium, 200.0)]);
 
-    // The charter's first shipment keeps its Freighter home.
-    p.exported = false;
-    assert!(bot.routes(&p, &wanted).is_none(), "no empty run before the first shipment");
-    p.exported = true;
-
     // Nothing worth selling at home, yet the dry home sends its hull.
     let Some(Command::SetFreightRoute { route: Some(out), .. }) = bot.routes(&p, &wanted) else { panic!("fuel run") };
     assert_eq!(out.stops[1].port, FreightPort::Hub);
@@ -1601,6 +1635,47 @@ fn freight_frames_bring_one_small_freighter_to_a_tiny_fleet() {
     assert_eq!(small(&bot, &p), Some(1));
     p.ghosts.push(strategic_hull(&p, 9603, H::SmallFreighter, 1));
     assert_eq!(small(&bot, &p), Some(1), "one is enough");
+}
+
+/// §merchant: a docked merchant covers the project's shortfall at its markup,
+/// and nothing else; no docked merchant or no spare cash, no purchase. Short
+/// of cash, the ore the home doesn't want goes to it toward the shortfall.
+#[test]
+fn a_docked_merchant_covers_only_the_projects_shortfall() {
+    use sim::merchant::{MerchantPhase, MerchantVisit};
+    let (mut bot, mut p) = planning_picture();
+    let wanted = BTreeMap::new();
+    // §charter-v5: after the raid, the kit's semiconductors are gone.
+    p.home.system.stockpile.insert(C::Electronics, 0.0);
+    let project = p.structure(K::Shipyard, 1).expect("a Shipyard is buildable");
+    let mut visit = MerchantVisit::founding(EntityId(9999), p.owner, p.home.system.id, p.now, sim::market::base_price);
+    assert!(bot.merchant(&p, Some(project), &wanted).is_none(), "no merchant, no purchase");
+    p.merchant = Some(visit.clone());
+    assert!(bot.merchant(&p, Some(project), &wanted).is_none(), "not until it docks");
+    visit.phase = MerchantPhase::Docked;
+    p.merchant = Some(visit);
+    let costs = p.project_costs(project);
+    let Some(Command::MerchantTrade { buys, sells, .. }) = bot.merchant(&p, Some(project), &wanted) else {
+        panic!("it buys the shortfall");
+    };
+    assert!(sells.is_empty());
+    assert!(buys.contains_key(&C::Electronics), "the raid took them: {buys:?}");
+    for (c, n) in &buys {
+        assert_eq!(*n, (costs[c] - p.stock(*c)).ceil() as u32, "{c:?}: the shortfall, not a buffer");
+    }
+    assert!(!bot.ready("merchant", p.now), "one purchase per round trip");
+    bot.waits.clear(); bot.commitments.clear();
+    p.account.as_mut().unwrap().credits = 100.0;
+    p.home.system.stockpile.insert(C::MetallicOre, 0.0);
+    assert!(bot.merchant(&p, Some(project), &wanted).is_none(), "spare cash only");
+    p.home.system.stockpile.insert(C::MetallicOre, 100.0);
+    let Some(Command::MerchantTrade { sells, .. }) = bot.merchant(&p, Some(project), &wanted) else {
+        panic!("its spare ore goes toward the shortfall");
+    };
+    assert!(sells.get(&C::MetallicOre).is_some_and(|n| *n > 0 && *n <= 100));
+    bot.waits.clear(); bot.commitments.clear();
+    let keep = BTreeMap::from([(C::MetallicOre, 100.0)]);
+    assert!(bot.merchant(&p, Some(project), &keep).is_none(), "ore the home wants stays");
 }
 
 #[test]
@@ -2000,4 +2075,173 @@ fn bots_develop_and_physically_trade_without_bonus_resources() {
     assert!(g.world.players[&owner].founding.sale_report_at.is_some(), "an executed ore sale report reached command");
     eprintln!("bot opening passed at {:.1} sim minutes: {} commands, {} own fleets", p.now / 60.0,
         g.bots[&owner].commands_sent, p.own().count());
+}
+
+/// §charter-v5: a bot plays the opening as a founder does: the landing's
+/// buildings, the raid, the ore sale to the trader, the Solar Array and the
+/// Shipyard, an Interceptor that destroys the lurking privateer for its
+/// bounty, its den and the expansion's mine on another home world.
+#[test]
+fn a_bot_plays_the_charter_through_the_raid_and_the_privateer() {
+    let mut g = game_bare(2, 1);
+    let owner = PlayerId(BOT_ID_BASE);
+    for _ in 0..36 {
+        advance(&mut g, 60.0);
+        if g.world.players[&owner].founding.stage.step() > sim::FoundingStage::ExpandMining.step() { break; }
+    }
+    let f = &g.world.players[&owner].founding;
+    let status = &g.bots[&owner].status;
+    assert!(f.raid_report_at.is_some() && f.merchant_called, "the raid struck, the trader called; {status}");
+    assert!(f.ore_sold > 0, "ore sold to the trader; {status}");
+    assert!(f.reward_granted, "the Interceptor destroyed the privateer; {status}");
+    let den = f.den.expect("the den rose with the privateer");
+    assert!(f.den_report_at.is_some() && g.world.enclaves[&den].cleared, "the Interceptor destroyed the den; {status}");
+    assert!(f.stage.step() > sim::FoundingStage::ExpandMining.step(), "mining expanded within 36 minutes: {:?}; {status}", f.stage);
+    let minute = |s: sim::FoundingStage| f.milestones.get(&s).map_or(-1.0, |at| at / 60.0);
+    eprintln!("bot charter: raid {:.1} min, ore sold {:.1}, Interceptor {:.1}, privateer {:.1}, den {:.1}, export {:.1}, expanded {:.1}",
+        minute(sim::FoundingStage::PirateRaid), minute(sim::FoundingStage::PowerShipyard),
+        minute(sim::FoundingStage::DefeatPrivateer), minute(sim::FoundingStage::EliminateDen),
+        minute(sim::FoundingStage::PrepareExport), minute(sim::FoundingStage::FirstResearch),
+        minute(sim::FoundingStage::SurveyCandidates));
+    eprintln!("bot charter: export report {:.1} min", f.export_dispatched_at.unwrap_or(-60.0) / 60.0);
+    eprintln!("bot charter: {} ore sold to the trader; status {status}", f.ore_sold);
+    let home = g.world.players[&owner].home_system.unwrap();
+    let sys = g.world.systems.iter().find(|s| s.id == home).unwrap();
+    assert!(sys.bodies.iter().any(|b| b.tier(K::CommandCenter) == 0 && b.tier(K::MiningComplex) > 0 && b.tier(K::PowerPlant) > 0),
+        "a powered mine on another home world");
+}
+
+/// §charter-v5: the ore-sale step sells the trader all the ore it will take.
+#[test]
+fn the_ore_sale_step_sells_the_trader_what_ore_it_will_take() {
+    let (mut bot, mut p) = planning_picture();
+    p.founding_stage = sim::FoundingStage::SellOre;
+    p.home.system.stockpile.insert(C::MetallicOre, 420.0);
+    assert!(bot.charter_ore_sale(&p).is_none(), "no trader in orbit");
+    let mut visit = sim::merchant::MerchantVisit::founding(EntityId(5), p.owner, p.home.system.id, p.now,
+        sim::market::base_price);
+    visit.phase = sim::merchant::MerchantPhase::Docked;
+    p.merchant = Some(visit);
+    assert!(matches!(bot.charter_ore_sale(&p), Some(Command::MerchantTrade { sells, .. })
+        if sells.get(&C::MetallicOre) == Some(&sim::merchant::ORE_CAP)));
+}
+
+/// §charter-v5: the trader's last call: the bounty buys what the builds
+/// after the den lack, before the trader leaves.
+#[test]
+fn the_last_call_buys_what_the_builds_after_the_den_lack() {
+    let (mut bot, mut p) = planning_picture();
+    p.local_opening = true;
+    p.founding_stage = sim::FoundingStage::EliminateDen;
+    p.home.system.stockpile.insert(C::Electronics, 3.0);
+    p.home.system.stockpile.insert(C::Alloys, 1_000.0);
+    p.home.system.stockpile.insert(C::Machinery, 1_000.0);
+    p.home.system.stockpile.insert(C::Polymers, 1_000.0);
+    p.home.system.stockpile.insert(C::Provisions, 1_000.0);
+    assert!(bot.charter_stock_up(&p).is_none(), "no trader in orbit");
+    let mut visit = sim::merchant::MerchantVisit::founding(EntityId(5), p.owner, p.home.system.id, p.now,
+        sim::market::base_price);
+    visit.phase = sim::merchant::MerchantPhase::Docked;
+    p.merchant = Some(visit);
+    assert_eq!(super::opening::charter_goods_ahead()[&C::Electronics], 33.0,
+        "Academy 15, Solar Array 8, Survey Probe 4, Mining Barge 6");
+    // The Interceptor's fuel too, as far as its stock goes.
+    let fuel = ((p.fuel_target_of(C::Deuterium) * 2.0 - p.stock(C::Deuterium)).ceil().max(0.0) as u32).min(30);
+    assert!(matches!(bot.charter_stock_up(&p), Some(Command::MerchantTrade { buys, .. })
+        if buys.get(&C::Electronics) == Some(&30) && buys.get(&C::Deuterium).copied().unwrap_or(0) == fuel
+            && buys.len() <= 2), "less the 3 at home; the kit covers the rest");
+    let (mut bot, _) = planning_picture();
+    p.home.system.stockpile.insert(C::Alloys, 100.0);
+    let alloys = super::opening::charter_goods_ahead()[&C::Alloys];
+    assert!(matches!(bot.charter_stock_up(&p), Some(Command::MerchantTrade { buys, .. })
+        if buys.get(&C::Alloys) == Some(&((alloys - 100.0) as u32))), "a short kit good too");
+    let (mut bot, _) = planning_picture();
+    p.founding_stage = sim::FoundingStage::DefeatPrivateer;
+    assert!(bot.charter_stock_up(&p).is_none(), "not before the bounty");
+}
+
+/// §charter-v5: from the trader's last call on, optional works leave the
+/// charter's builds ahead their goods: nothing nearby replaces them.
+#[test]
+fn the_charter_holds_back_what_its_builds_ahead_need() {
+    let (_, mut p) = planning_picture();
+    p.local_opening = true;
+    p.founding_stage = sim::FoundingStage::DefeatPrivateer;
+    assert!(p.charter_reserve().is_empty(), "the trader still sells");
+    p.founding_stage = sim::FoundingStage::FirstResearch;
+    let reserve = p.charter_reserve();
+    let academy = sim::build::recipe_for(BuildKind::Upgrade { upgrade: K::Academy });
+    assert!(academy.costs.iter().all(|(c, n)| reserve.get(c).copied().unwrap_or(0.0) >= *n), "the Academy's goods");
+    let landing = p.landing_body().unwrap();
+    p.home.system.bodies.iter_mut().find(|b| b.id == landing).unwrap().set_tier(K::Academy, 1);
+    let left = p.charter_reserve();
+    assert_eq!(reserve[&C::Electronics] - left.get(&C::Electronics).copied().unwrap_or(0.0), 15.0,
+        "built, the Academy holds nothing back");
+    p.founding_stage = sim::FoundingStage::Complete;
+    assert!(p.charter_reserve().is_empty());
+}
+
+/// §charter-v5: the privateer step sends an Interceptor after the privateer
+/// the colony has tracked since its raid; one already fighting is left alone.
+#[test]
+fn the_privateer_step_sends_the_interceptor_after_the_tracked_privateer() {
+    let (mut bot, mut p) = planning_picture();
+    let raider = p.own().find(|g| g.kind == H::Raider).unwrap().clone();
+    p.founding_stage = sim::FoundingStage::DefeatPrivateer;
+    assert!(bot.charter_privateer(&p).is_none(), "nothing tracked yet");
+    let mut pirate = raider.clone();
+    pirate.id = EntityId(424_243);
+    pirate.own = false;
+    pirate.owner = PlayerId::PIRATE;
+    pirate.pos = p.home.system.pos + Vec2::new(9_000.0, 0.0);
+    p.ghosts.push(pirate.clone());
+    p.privateer = Some(pirate.id);
+    assert!(matches!(bot.charter_privateer(&p),
+        Some(Command::AttackFleet { fleet_id, target_id, .. }) if fleet_id == raider.id && target_id == pirate.id));
+    let (mut bot, _) = planning_picture();
+    p.fighting.insert(raider.id);
+    assert!(bot.charter_privateer(&p).is_none(), "already fighting");
+}
+
+/// §charter-v4: the den step flies the Interceptor to the den its privateer's
+/// log named; escort duty waits until it falls.
+#[test]
+fn the_den_step_sends_the_interceptor_to_the_den_and_pauses_escorts() {
+    let (mut bot, mut p) = planning_picture();
+    let raider = p.own().find(|g| g.kind == H::Raider).unwrap().clone();
+    p.founding_stage = sim::FoundingStage::EliminateDen;
+    let den = p.home.system.pos + Vec2::new(20_000.0, 0.0);
+    assert!(bot.charter_den(&p).is_none(), "no den named yet");
+    p.den = Some((EntityId(424_242), den));
+    assert!(bot.clone().guards(&p).is_none(), "the Interceptor is not put on escort duty");
+    assert!(matches!(bot.charter_den(&p),
+        Some(Command::MoveShip { ship_id, dest, .. }) if ship_id == raider.id && dest == den));
+    // On its way, at the den, or fighting there: left alone.
+    let (mut bot, _) = planning_picture();
+    let ghost = p.ghosts.iter_mut().find(|g| g.id == raider.id).unwrap();
+    ghost.path = Some(vec![crate::protocol::PathPointView { pos: den }]);
+    assert!(bot.charter_den(&p).is_none());
+    let ghost = p.ghosts.iter_mut().find(|g| g.id == raider.id).unwrap();
+    ghost.path = None;
+    ghost.pos = den + Vec2::new(150.0, 0.0);
+    assert!(bot.charter_den(&p).is_none());
+    // Back home damaged: it goes again. Nothing repairs before an Ordnance
+    // Foundry, and the garrison never regrows.
+    let ghost = p.ghosts.iter_mut().find(|g| g.id == raider.id).unwrap();
+    ghost.pos = p.home.system.pos;
+    ghost.damage = Some(0.5);
+    let (mut bot, _) = planning_picture();
+    assert!(matches!(bot.charter_den(&p), Some(Command::MoveShip { ship_id, .. }) if ship_id == raider.id));
+    // At the den it fights to the end, however hurt.
+    let ghost = p.ghosts.iter_mut().find(|g| g.id == raider.id).unwrap();
+    ghost.pos = den + Vec2::new(100.0, 0.0);
+    ghost.damage = Some(0.7);
+    p.fighting.insert(raider.id);
+    let (mut bot, _) = planning_picture();
+    assert!(!matches!(bot.recover_military(&p), Some(Command::Withdraw { fleet_id, .. }) if fleet_id == raider.id),
+        "no withdrawal from the den");
+    p.fighting.clear();
+    let (mut bot, _) = planning_picture();
+    assert!(!matches!(bot.recover_military(&p), Some(Command::MoveShip { ship_id, .. }) if ship_id == raider.id),
+        "no trip home for repairs that can't happen");
 }

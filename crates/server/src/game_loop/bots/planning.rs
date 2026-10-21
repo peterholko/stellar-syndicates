@@ -265,6 +265,12 @@ impl Bot {
                     let priority = match kind {
                         K::Bioharvester | K::Agroplex => 0,
                         K::MiningComplex => 1,
+                        // §charter-v4: the charter's yard and Academy count as
+                        // staffed only with a crew; they share the first two
+                        // cohorts with food and the mine until migrants come.
+                        K::Shipyard if p.local_opening && matches!(p.founding_stage,
+                            sim::FoundingStage::BuildShipyard | sim::FoundingStage::BuildFreighter) => 1,
+                        K::Academy if p.local_opening && p.founding_stage == sim::FoundingStage::FirstResearch => 1,
                         K::Shipyard | K::NavalDrydock | K::CapitalSlipway | K::Garrison
                             if site.builds.iter().any(|job| job.body_id == body.id && matches!(job.what, BuildKind::Ship { .. }) && job.work_yard() == Some(kind)) => 2,
                         K::OrdnanceFoundry if p.own().any(|f| f.damage.unwrap_or(0.0) > 0.05) => 2,

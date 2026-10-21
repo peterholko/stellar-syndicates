@@ -11,7 +11,7 @@ export const MODULES: { kind: ModuleKind; name: string; label: string; icon: Ico
   { kind: "reflective_plating", name: "Reflective Plating", icon: "moduleReflectivePlating", fit: 2, role: "Beam protection" },
   { kind: "whipple_armor", name: "Whipple Armor", icon: "moduleWhippleArmor", fit: 3, role: "Kinetic protection" },
   { kind: "extended_tanks", name: "Extended Tanks", icon: "moduleExtendedTanks", fit: 2, role: "+75% tank capacity · fuel not included" },
-  { kind: "recon_suite", name: "Recon Suite", icon: "moduleReconSuite", fit: 2, role: "Scout contacts 30k → 60k · sensors 40k; Interceptor sensors 120k su" },
+  { kind: "recon_suite", name: "Recon Suite", icon: "moduleReconSuite", fit: 2, role: "Scout contacts 30k → 60k · sensors 3k; Interceptor sensors 9k su" },
   { kind: "cargo_pods", name: "Cargo Pods", icon: "moduleCargoPods", fit: 2, role: "Doubles this hull's cargo hold · replaces Extended Tanks" },
   { kind: "escort_datalink", name: "Escort Datalink", icon: "moduleEscortDatalink", fit: 2, role: "Corvette · requires Point-Defense Screen · priority intercept at 2× PD reach" },
   { kind: "fuel_transfer_rig", name: "Fuel Transfer Rig", icon: "moduleFuelTransferRig", fit: 2, role: "Freighter · refuels owned fleets from fuel cargo, Antimatter included · replaces Cargo Pods / Extended Tanks" },

@@ -65,6 +65,11 @@ export class DeckBottomBand {
     this.root.style.setProperty("--deck-strip-bottom", `${stripBottom}px`);
     this.root.style.setProperty("--deck-zoom-bottom", `${zoomBottom}px`);
     this.root.style.setProperty("--deck-bottom-band-height", `${occupiedHeight}px`);
+    // The planet view keeps its height whatever the tutorial's: Founding (and
+    // a strip docked above it) overlaps the scene, which clears only the
+    // bottom row and the band's own offset from the window edge.
+    const row = Math.max(stripHeight, zoomHeight);
+    document.documentElement.style.setProperty("--deck-bottom-row-inset", `${row > 0 ? row + gap : 0}px`);
     const signature = [width, stripWidth, stripHeight, foundingWidth, foundingHeight, zoomWidth, zoomHeight, stripBottom, zoomBottom].join(":");
     if (signature !== this.layoutSignature) {
       this.layoutSignature = signature;
@@ -80,5 +85,6 @@ export class DeckBottomBand {
     this.root.style.removeProperty("--deck-strip-bottom");
     this.root.style.removeProperty("--deck-zoom-bottom");
     this.root.style.removeProperty("--deck-bottom-band-height");
+    document.documentElement.style.removeProperty("--deck-bottom-row-inset");
   }
 }

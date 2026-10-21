@@ -23,19 +23,36 @@ await buildPlanetSurfaceStructureArt();
 deps["./icons"] = await compile("icons.ts");
 deps["./planet-surface-structure-art.generated"] = await compile("planet-surface-structure-art.generated.ts");
 const { planetStructureImage, isOrbitalYard } = await compile("planet-structure-art.ts");
-const { SURFACE_STRUCTURE_TIERS: families, SURFACE_GROUND_LAYERS: biomes } = deps["./planet-surface-structure-art.generated"];
+const { SURFACE_STRUCTURE_TIERS: families, SURFACE_GROUND_LAYERS: biomes, SURFACE_ORBITAL_ART: orbitalArt } = deps["./planet-surface-structure-art.generated"];
 const manifestFile = new URL("public/art/derived/planet-surface-structures/v2/manifest.json", client);
 const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
-assert.equal(Object.keys(manifest.assets).length, 155, "142 ground buildings + 13 shared biomes; shipyards already have their own pipeline");
+assert.equal(Object.keys(manifest.assets).length, 163, "148 ground buildings + 13 shared biomes + 2 orbital plants; shipyards already have their own pipeline");
 const empire = await source("shell/deck/empire.ts");
 const descriptions = empire.slice(empire.indexOf("const STRUCTURE_DESCRIPTION"), empire.indexOf("import { MODULES"));
 const catalogue = [...descriptions.matchAll(/^  (\w+): "/gm)].map(match => match[1]);
 const allFamilies = { ...families, shipyard: 6, naval_drydock: 6, capital_slipway: 6 };
-// §power: the Power Plant draws the Fuel Refinery's scene art until its own lands;
-// §fuel-overhaul: so do the Uranium Mill and the Antimatter Plant.
-const standIns = ["power_plant", "uranium_mill", "antimatter_plant"];
+// §fuel-overhaul: the Uranium Mill and the Antimatter Plant draw the Fuel
+// Refinery's scene art until their own lands.
+const standIns = ["uranium_mill", "antimatter_plant"];
 assert.deepEqual(Object.keys(allFamilies).sort(), catalogue.filter(key => !standIns.includes(key)).sort(), "every live structure kind has dedicated scene art");
 for (const key of standIns) assert.equal(planetStructureImage(key, 2, "64px", false, "temperate-basin"), planetStructureImage("fuel_refinery", 2, "64px", false, "temperate-basin"));
+// §power: the Power Plant draws its own six tiers on the ground: Solar Arrays,
+// then Fusion Plants. Over a belt or gas giant (no ground) it floats: the
+// orbital solar plant for I–II, the orbital fusion plant for III–VI.
+assert.equal(families.power_plant, 6);
+assert.match(planetStructureImage("power_plant", 1, "64px", false, "temperate-basin"), /\/buildings\/power_plant\/tier-1-256\.webp/);
+assert.match(planetStructureImage("power_plant", 1, "64px", false, "temperate-basin"), /\/grounds\/temperate-basin-256\.webp/, "a ground plant stands on its world's ground");
+for (const [tier, look] of [[1, "solar"], [2, "solar"], [3, "fusion"], [6, "fusion"]]) {
+  const html = planetStructureImage("power_plant", tier, "64px", false, null);
+  assert.match(html, new RegExp(`/buildings/power_plant/orbital-${look}-256\\.webp`), `tier ${tier} floats as the ${look} plant`);
+  assert.doesNotMatch(html, /\/grounds\//, "no ground under a floating plant");
+}
+assert.match(planetStructureImage("power_plant", 2, "48px"), /\/buildings\/power_plant\/tier-2-256\.webp/, "menus without a world show the ground plant");
+assert.match(planetStructureImage("mining_complex", 1, "64px", false, null), /\/buildings\/mining_complex\/tier-1-256\.webp/, "families without a floating look keep their art");
+for (const look of ["solar", "fusion"]) {
+  const asset = manifest.assets[`buildings/power_plant/orbital-${look}`];
+  assert.equal(asset.source, `art-src/planet-surface-structures-v2/buildings/power_plant/orbital-${look}.png`);
+}
 // §gaia: the terraces draw their own six tiers; §marginal worlds have their own ground.
 assert.match(planetStructureImage("living_terraces", 6, "64px", false, "temperate-basin"), /\/buildings\/living_terraces\/tier-6-256\.webp/);
 assert.match(planetStructureImage("habitat", 1, "64px", false, "marginal"), /\/grounds\/marginal-256\.webp/, "buildings on Marginal worlds stand on Marginal ground");
@@ -45,7 +62,7 @@ for (const tier of [4, 5, 6]) {
   assert.equal(manifest.assets[`buildings/agroplex/tier-${tier}`].source, `${masters}/tier-${tier}-v2.png`);
   assert.ok((await stat(new URL(`${masters}/tier-${tier}.png`, client))).size > 0, `original Agroplex ${tier} kept`);
 }
-assert.equal(Object.values(allFamilies).reduce((sum, count) => sum + count, 0), 160);
+assert.equal(Object.values(allFamilies).reduce((sum, count) => sum + count, 0), 166);
 const { HABITABLE_SURFACES } = await compile("planet-surfaces.ts");
 assert.deepEqual([...biomes].sort(), [...HABITABLE_SURFACES, "terrestrial", "desert", "ocean", "ice", "lava", "barren", "marginal"].sort(), "every painted surface has its ground");
 
@@ -113,7 +130,8 @@ for (const [family, maxTier] of Object.entries(allFamilies)) {
       assert.equal(html.includes('class="planet-structure-ground"'), Boolean(terrain));
       if (terrain) assert.ok(html.includes(`/grounds/${biome}-256.webp`));
       const variant = family === "naval_drydock" ? "-occupied" : "";
-      assert.ok(html.includes(`/${family}/tier-${tier}${variant}-256.webp`));
+      const floating = biome === null ? orbitalArt[family]?.[String(tier)] : undefined;
+      assert.ok(html.includes(floating ? `/${family}/orbital-${floating}-256.webp` : `/${family}/tier-${tier}${variant}-256.webp`));
       for (const url of new Set([...html.matchAll(/(\/art\/[^\s\"]+\.webp)/g)].map(match => match[1]))) {
         assert.ok((await stat(new URL(`public${url}`, client))).size > 0, `${family}/${tier}/${biome}: served derivative exists`);
       }
@@ -131,4 +149,4 @@ assert.ok(!deps["./icons"].structureImage("warehouse", 1).includes("planet-surfa
 const before = (await stat(manifestFile)).mtimeMs;
 assert.equal((await buildPlanetSurfaceStructureArt()).written, 0, "no re-encoding unchanged masters");
 assert.equal((await stat(manifestFile)).mtimeMs, before, "no manifest churn");
-console.log(`PASS: all 28 families / 160 tiers, 13 biomes, special tier caps, orbital exclusions, 465 native-alpha derivatives (${(encodedBytes / 1048576).toFixed(1)} MiB), provenance, existing icons and cache.`);
+console.log(`PASS: all ${Object.keys(allFamilies).length} families / ${Object.values(allFamilies).reduce((sum, count) => sum + count, 0)} tiers, ${biomes.length} biomes, the Power Plant's orbital looks, special tier caps, orbital exclusions, ${Object.keys(manifest.assets).length * 3} native-alpha derivatives (${(encodedBytes / 1048576).toFixed(1)} MiB), provenance, existing icons and cache.`);

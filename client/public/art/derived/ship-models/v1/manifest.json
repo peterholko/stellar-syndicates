@@ -200,6 +200,16 @@
       "bytes": 2929848,
       "sha256": "9a4038f31e548579ca7ad8d1753d0e604da921659852816b8db97d24187468e5",
       "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/authority-freighter-lod2.glb"
+    },
+    "free_trader": {
+      "id": "free-trader",
+      "title": "Free Trader",
+      "triangles": 4354,
+      "url": "/art/derived/ship-models/v1/free-trader-lod2.glb?v=aee828a50a5b",
+      "poster": "/art/derived/ships/models-v1/previews/free_trader-768.webp",
+      "bytes": 3966304,
+      "sha256": "aee828a50a5bdc3441bb34a9459b765c7d3fe40269ad4e5d4a89f4a151288391",
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/free-trader-lod2.glb"
     }
   }
 }

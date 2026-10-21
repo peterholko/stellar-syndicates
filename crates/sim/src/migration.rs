@@ -28,7 +28,8 @@ pub const MIGRATION_MAX_IN_FLIGHT_PER_CORP: usize = 3;
 #[serde(rename_all = "snake_case")]
 pub enum MigrationPolicy {
     Closed,
-    /// Accept a cohort only when posted jobs exceed the system workforce.
+    /// Accept a cohort only on a staffing shortage: no worker free while
+    /// built posts still want crews.
     #[default]
     Managed,
     /// Accept cohorts while housing and food permit.

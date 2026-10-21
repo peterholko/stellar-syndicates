@@ -342,9 +342,11 @@ export class MobileMapInteraction {
       }
     }
 
+    // At the doorway, anywhere on a star's orbit preview goes in; a visible
+    // hull keeps the camera until it can go no deeper.
     if (factor > 1 && renderer.atSystemZoomThreshold()
-      && !renderer.fleetUnderPoint(midpoint.x, midpoint.y)) {
-      const system = this.systemUnderPoint(midpoint.x, midpoint.y);
+      && (renderer.atMaxZoom() || !renderer.fleetUnderPoint(midpoint.x, midpoint.y))) {
+      const system = this.systemUnderPoint(midpoint.x, midpoint.y) ?? renderer.approachSystemAt(midpoint.x, midpoint.y);
       const bodies = system ? this.ctx.state.systems.find((entry) => entry.id === system.id)?.bodies ?? [] : [];
       if (system && renderer.beginSystemScrubIn(system, bodies)) {
         renderer.adjustSystemScrub(scrubDelta);
@@ -423,6 +425,10 @@ export class MobileMapInteraction {
       case "operation":
         this.clearSelection();
         this.hooks.openSheet({ id: "operations" });
+        break;
+      case "signal":
+        this.clearSelection();
+        this.hooks.openSheet({ id: "signals", props: { id: target.id } });
         break;
       case "ongoingBattle":
         this.hooks.openSheet({ id: "battle", props: { id: target.id } });

@@ -23,6 +23,8 @@ fn orders() -> Vec<Value> {
         json!({"type":"JumpShip", "ship_id":"9007199254740993", "dest":{"x":-1234.5,"y":65536}}),
         json!({"type":"MarketBuy", "commodity":"alloys", "units":50, "max_unit_price":19.875}),
         json!({"type":"MarketSell", "commodity":"metallic_ore", "units":7}),
+        json!({"type":"MerchantTrade", "buys":{"electronics":15,"machinery":13}, "sells":{"metallic_ore":40}}),
+        json!({"type":"MerchantTrade", "buys":{"alloys":15}}),
         json!({"type":"GuardFleet", "interceptor_id":"42", "target_id":"43"}),
         json!({"type":"SetFleetTransit", "fleet_id":"43", "mode":"slow"}),
         json!({"type":"SetAssignment", "system_id":"2", "structure":"extractor", "workers":12, "specialists":{}, "body_id":1}),

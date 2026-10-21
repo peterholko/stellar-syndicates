@@ -828,6 +828,47 @@
           "url": "/art/derived/ships/models-v1/bulk_freighter-1254.png?v=f5cfa3902e5a"
         }
       ]
+    },
+    "free_trader": {
+      "source": "art-src/ship-models/game-ready-v1/free_trader-top.png",
+      "sourceSha256": "92a258e22ac96c8997340923db5c7e54de432dd8554bae0c2d5f2b5370767e0d",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/free-trader-lod2.glb",
+      "modelSha256": "aee828a50a5bdc3441bb34a9459b765c7d3fe40269ad4e5d4a89f4a151288391",
+      "triangles": 4354,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.82421875,
+      "calib": 0.9228306361607144,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 17558,
+          "url": "/art/derived/ships/models-v1/free_trader-128.png?v=7807f6e63952"
+        },
+        {
+          "size": 256,
+          "bytes": 61319,
+          "url": "/art/derived/ships/models-v1/free_trader-256.png?v=b128b6059e86"
+        },
+        {
+          "size": 512,
+          "bytes": 219802,
+          "url": "/art/derived/ships/models-v1/free_trader-512.png?v=63091c45a825"
+        },
+        {
+          "size": 1024,
+          "bytes": 797679,
+          "url": "/art/derived/ships/models-v1/free_trader-1024.png?v=3e527eb41edf"
+        },
+        {
+          "size": 1254,
+          "bytes": 1027788,
+          "url": "/art/derived/ships/models-v1/free_trader-1254.png?v=92a258e22ac9"
+        }
+      ]
     }
   },
   "formations": {

@@ -979,6 +979,84 @@ impl Timeline {
                         format!("Charter milestone · {title} · the Authority paid {credits:.0} Cr."),
                     );
                 }
+                // §merchant: the traveling merchant's visit, owner-only. Its
+                // docking is the first the founder hears of it: the client's
+                // pop-up and the guide's trader steps start from this line. Its
+                // markup stays its own business.
+                EventPayload::MerchantArrived { owner, system } => {
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
+                        "A free trader docked at {}.", system_name(world, *system)));
+                }
+                // §contract-board: posted at the hub; the news comes with the offers.
+                EventPayload::ContractBoardPosted { owner, count, .. } => {
+                    if let Some(cc) = world.players.get(owner).map(|c| c.command_center) {
+                        self.push(*owner, e.time + sim::transit::delay(world.hub, cc, world.config.c),
+                            TimelineSeverity::Info, format!("Contract board · {count} new contracts."));
+                    }
+                }
+                EventPayload::ContractBoardBonus { owner, credits, .. } => {
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
+                        "Contract board · {} done · bonus {credits:.0} Cr.", sim::operation::BOARD_BONUS_AFTER));
+                }
+                // §signals: picked up by the Command Center itself.
+                EventPayload::SignalDetected { owner, kind, hazardous, .. } => {
+                    self.push(*owner, e.time, TimelineSeverity::Info, format!(
+                        "New signal · {}{}.", kind.name(), if *hazardous { " · Hazardous" } else { "" }));
+                }
+                // §signals: already stamped on arrival at command.
+                EventPayload::SignalReported { owner, number, kind, captain, xp, hurt, finds, .. } => {
+                    let mut parts: Vec<String> = finds.iter().map(signal_find_text).collect();
+                    parts.push(format!("+{xp} XP"));
+                    if *hurt { parts.push(format!("{captain} hurt")); }
+                    let head = if (*number as usize) <= sim::signals::FIRST_TEN {
+                        format!("First find {number}/{}", sim::signals::FIRST_TEN)
+                    } else { "Report in".into() };
+                    self.push(*owner, e.time, TimelineSeverity::Good,
+                        format!("{head} · {} · {}.", kind.name(), parts.join(" · ")));
+                }
+                // §medals: awarded at the hub's ledger close; the news reaches
+                // command with the published table.
+                EventPayload::MedalWon { owner, week, category, place } => {
+                    if let Some(cc) = world.players.get(owner).map(|c| c.command_center) {
+                        let medal = match place { 1 => "Gold", 2 => "Silver", _ => "Bronze" };
+                        self.push(*owner, e.time + sim::transit::delay(world.hub, cc, world.config.c),
+                            TimelineSeverity::Good, format!("Week {week} · {medal} medal · {}.", category.label()));
+                    }
+                }
+                // §charter-v5: the privateer's raid, on its light home. The
+                // client turns this line into the raid's story pop-up.
+                EventPayload::FoundingRaided { owner, system, pos, stolen } => {
+                    if let Some(corp) = world.players.get(owner) {
+                        let observe = e.time + sim::transit::delay(*pos, corp.command_center, world.config.c);
+                        let goods: Vec<String> = stolen.iter().filter(|(_, n)| **n > 0)
+                            .map(|(c, n)| format!("{n} {}", commodity_name(*c))).collect();
+                        let took = match goods.split_last() {
+                            None => "nothing".to_string(),
+                            Some((last, [])) => last.clone(),
+                            Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+                        };
+                        self.push(*owner, observe, TimelineSeverity::Bad,
+                            format!("Pirates raided {} and took {took}.", system_name(world, *system)));
+                    }
+                }
+                EventPayload::MerchantTraded { owner, bought, sold, paid, received, .. } => {
+                    let goods = |m: &BTreeMap<Commodity, u32>| m.iter()
+                        .map(|(c, n)| format!("{n} {}", c.display_name())).collect::<Vec<_>>().join(", ");
+                    let mut parts = Vec::new();
+                    if !bought.is_empty() { parts.push(format!("bought {} for {paid:.0} Cr", goods(bought))); }
+                    if !sold.is_empty() { parts.push(format!("sold {} for {received:.0} Cr", goods(sold))); }
+                    self.push(*owner, e.time, TimelineSeverity::Info,
+                        format!("Free trader: {}.", parts.join("; ")));
+                }
+                EventPayload::MerchantTradeRefused { owner, reason, .. } => {
+                    self.push(*owner, e.time, TimelineSeverity::Warn,
+                        format!("Free trader: trade refused — {reason}."));
+                }
+                // §persona: Teo Brannick and the Long Odds (client trader.ts).
+                EventPayload::MerchantDeparted { owner, system } => {
+                    self.push(*owner, e.time, TimelineSeverity::Info,
+                        format!("Teo Brannick's Long Odds left {}.", system_name(world, *system)));
+                }
                 // §syndicates Part 3: an ally GARRISON's supply flipped at a HOST
                 // system — OWNER-ONLY (the sender, whose fleet it is), light-delayed
                 // from the distant host to their command center (NOT own-economy —
@@ -1044,12 +1122,19 @@ impl Timeline {
                         } else {
                             String::new()
                         };
-                        let aftermath = if world.enclaves.get(system).is_some_and(|e| sim::pirate::permanent_site(e.tier)) {
+                        let den = world.enclaves.get(system).is_some_and(|e| e.founder_den);
+                        let aftermath = if world.enclaves.get(system).is_some_and(|e| e.permanent()) {
                             "Site secured for settlement.".to_string()
                         } else {
                             format!("Raids from this source paused for {}m.", (sim::pirate::PIRATE_DORMANCY / 60.0).round())
                         };
-                        self.push(*owner, observe, TimelineSeverity::Good, format!("Pirate hideout at {name} cleared. {aftermath}{tail}"));
+                        // §charter-v4: the founder's den guarded the local belt;
+                        // §charter-v5: the guide makes surveying it a long-term goal.
+                        self.push(*owner, observe, TimelineSeverity::Good, if den {
+                            format!("Privateer den at {name} destroyed. Its asteroid belt looks rich in minerals.{tail}")
+                        } else {
+                            format!("Pirate hideout at {name} cleared. {aftermath}{tail}")
+                        });
                     }
                 }
                 // §node: an EXOTIC system AWAKENED — announced GALAXY-WIDE,
@@ -1480,6 +1565,13 @@ impl Timeline {
                     if *state == sim::OperationState::Active && *progress > 0 {
                         continue; // progress lives on the board; don't flood the check-in journal
                     }
+                    // §contract-board: one line for the day's board, none per
+                    // offer, and none as untaken offers lapse.
+                    if matches!(state, sim::OperationState::Offered | sim::OperationState::Expired)
+                        && world.operations.get(operation).is_some_and(|o| o.board_day.is_some())
+                    {
+                        continue;
+                    }
                     let text = match state {
                         sim::OperationState::Offered => "A new private operation is available.",
                         sim::OperationState::Active => "A new public or shared operation is active.",
@@ -1660,7 +1752,7 @@ fn commodity_name(c: Commodity) -> &'static str {
         Commodity::Volatiles => "volatiles",
         Commodity::Biomass => "biomass",
         Commodity::Alloys => "alloys",
-        Commodity::Electronics => "electronics",
+        Commodity::Electronics => "semiconductors",
         Commodity::Polymers => "polymers",
         Commodity::Deuterium => "deuterium",
         Commodity::Provisions => "provisions",
@@ -2327,6 +2419,26 @@ fn raid_entry(
     }
 }
 
+
+/// §signals: one find, as a report line reads it.
+fn signal_find_text(find: &sim::signals::SignalFind) -> String {
+    use sim::signals::SignalFind as F;
+    let goods = |goods: &[(sim::Commodity, u32)]| goods.iter()
+        .map(|(c, n)| format!("{n} {}", c.display_name())).collect::<Vec<_>>().join(", ");
+    match find {
+        F::Credits { credits } => format!("{credits:.0} Cr"),
+        F::Standing { credits, standing } => format!("{credits:.0} Cr, +{standing:.0} standing"),
+        F::CargoAboard { goods: g } => format!("{} aboard", goods(g)),
+        F::Cache { goods: g, .. } => format!("{} left for a Freighter", goods(g)),
+        F::ModuleAboard { module } => format!("{} crate aboard", module.label()),
+        F::Dossier { programme } => format!("dossier · {}",
+            sim::research::programme(programme).map_or(programme.as_str(), |p| p.name)),
+        F::Blueprint { module } => format!("{} blueprint", module.label()),
+        F::Captain { name } => format!("Captain {name} rescued"),
+        F::Specialist { specialist } => format!("{} flying home", specialist.title()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2555,7 +2667,7 @@ mod tests {
         tl.promote(arrived + 60.0 - 1e-6);
         assert_eq!(tl.journal_len(a), 1, "the outcome has its own wavefront too");
         tl.promote(arrived + 60.0);
-        assert!(tl.digest(a).0[1].text.contains("8 electronics"));
+        assert!(tl.digest(a).0[1].text.contains("8 semiconductors"));
         assert_eq!(tl.journal_len(b), 0);
     }
 

@@ -1,4 +1,4 @@
-import type { ShipKind } from "./protocol";
+import type { ShipArtKind } from "./shipart";
 import { SHIP_MODELS } from "./ship-models.generated";
 
 // The established map machine-size ramp is 12–24×. Start loading only inside
@@ -27,7 +27,7 @@ export function mapModelCloseUp(ships: readonly MapModelCandidate[], narrow: boo
 
 export interface MapModelCandidate {
   id: string;
-  kind: ShipKind;
+  kind: ShipArtKind;
   x: number;
   y: number;
   canvasPx: number;

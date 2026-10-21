@@ -69,7 +69,7 @@ fn the_first_research_grant_funds_the_programme_started_at_the_research_step() {
     site_mut(&mut w,home).set_tier(K::Academy,1);
     site_mut(&mut w,home).assign(K::Academy,Assignment::crew(1));
     w.advance_founding_programs(&[]);
-    assert_eq!(w.players[&owner].founding.stage, S::SurveyCandidates,
+    assert_eq!(w.players[&owner].founding.stage, S::ExpandMining,
         "a programme under way at a staffed Academy completes the step");
     // The grant is one-time, whatever the player does next.
     let corp = w.players.get_mut(&owner).unwrap();

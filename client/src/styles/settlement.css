@@ -50,3 +50,10 @@
   .settlement-choices, .settlement-projects { grid-template-columns: 1fr; }
   .settlement-choices img { height: 90px; }
 }
+/* §charter-v4: story event pop-ups reuse the prologue's slide. */
+.story-event { width: min(860px, calc(100vw - 32px)); }
+.story-event .settlement-story-image { aspect-ratio: 1672 / 941; }
+/* An icon standing in for a painting: 2× (128 px), on a quarantine glow. */
+.story-event .settlement-story-frame.is-icon { height: min(50dvh, calc(min(860px, 100vw - 32px) * 941 / 1672)); display: grid; place-items: center; background: radial-gradient(circle, #5c1f1f 0, #050b12 38%); }
+.story-event .settlement-story-frame.is-icon img { width: 128px; height: 128px; max-height: none; aspect-ratio: auto; }
+.story-event .settlement-story-caption footer { justify-content: flex-end; }

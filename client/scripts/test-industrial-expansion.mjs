@@ -24,6 +24,7 @@ const derive=compile("core/derive/industry.ts",{"./fleet":fleets,"./market":mark
 const icons=compile("icons.ts");
 const protocol=compile("protocol.ts");
 const shell=compile("shell/industry.ts",{"../core/derive/fleet":fleets,"../core/derive/industry":derive,"../icons":icons,
+  "../core/derive/founding":compile("core/derive/founding.ts"),
   "../core/derive/geo":{foundingHomeSystemId:()=>"home"},"../planetart":{planetArtwork:()=>({}),planetArtUrl:k=>`/planet/${k}.png`},
   "../hub-model.generated":{HUB_MODEL:{hero:"/hub.webp"}},
   "../protocol":protocol,"../core/derive/market":{COMMODITIES:["metallic_ore","deuterium","alloys","biomass","uranium"]}});
@@ -166,7 +167,9 @@ shell.handleIndustryAction({dataset:{industryAct:"close-editor"}},ctx);
 let card=shell.industryHtml(state);
 assert.match(card,/Send your first shipment/);
 assert.match(card,/data-coach="send-shipment"/,"the guide's coach ring has a target");
-assert.match(card,/Covers all 35 Shipyard goods you lack/,"coverage counts the home deficit");
+assert.match(card,/Covers all 35 Academy goods you lack/,"coverage counts the home deficit for the Academy, which comes next");
+assert.match(card,/Charter · step 12/,"the guide's own step number");
+assert.match(card,/<dt>Escort<\/dt><dd><img/,"the Interceptor rides along when one is ready");
 assert.match(card,/Waits for 50 ore · 0 in stock/,"the load waits for ore it does not have yet");
 assert.match(card,/Prices arrive with the next Hub report/,"no money estimate before a price report");
 const basketBefore=plain(derive.openingImportPlan(state,site,"transport").manifest);
@@ -195,6 +198,16 @@ assert.ok(derive.routeHubEstimate(state,shipment).bought<estimate.bought,"wareho
 assert.deepEqual(derive.routeAboard(shipment),[50,shipment.stops[1].load ? Object.values(shipment.stops[1].load).reduce((n,v)=>n+v,0) : 0,0]);
 assert.equal(shipment.transit,"slow","the first shipment flies Slow on Uranium");
 assert.deepEqual(plain(derive.routeLegSeconds(state,state.ghosts[0],shipment)),[100,100],"10,000 su at Slow (40 × 5 × ½ su/s)");
+// §charter-v5: once the privateer's bounty is paid nothing hunts the lane, so
+// the export goes alone; an escort would hold it until it was home and fuelled.
+state.founding.bounty_received=true;
+card=shell.industryHtml(state);
+assert.match(card,/Unescorted · one trip/);
+assert.match(card,/<dt>Escort<\/dt><dd><span>None<\/span>/);
+shell.handleIndustryAction({dataset:{industryAct:"send-shipment"}},ctx);
+assert.deepEqual(plain(staged.at(-1).map(c=>c.type)),["SetFreightRoute"],"no guard order");
+assert.equal(staged.at(-1)[0].route.escort,null);
+state.founding.bounty_received=false;
 state.market=null;state.wallet=null;
 const received=plain(site);
 shell.handleIndustryAction({dataset:{industryAct:"refining-floor",on:"true"}},ctx);

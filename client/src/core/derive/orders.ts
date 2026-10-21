@@ -14,6 +14,7 @@ import { liveSimTime, state, type PendingIntent } from "../../state";
 import { emplacementLabel, systemName } from "./geo";
 import { projectedBand } from "./research";
 import { estimatedFuelForLeg, fleetBaseSpeed, jumpAntimatter, regimeStore, shipKindLabel, transitLabel, transitSpeedMultiplier, WARP_FACTOR } from "./fleet";
+import { SIGNAL_INFO } from "./signals";
 import { doneAtLocal, fmt, fmtDur } from "./format";
 import { siegeClock } from "./blockade";
 import { fleetCommandSummary } from "../fleetorders";
@@ -196,6 +197,9 @@ export function orderObject(p: PendingOrderView): string {
     case "blockade": return `Blockade → ${p.target_id ? systemName(p.target_id) : "rival system"}`;
     case "survey": {
       const site = state.explorationSites?.find(s => s.id === p.target_id);
+      // §signals: answering one rides the survey order kind.
+      const signal = state.signals?.signals.find(s => s.id === p.target_id);
+      if (signal) return `Signal → ${SIGNAL_INFO[signal.kind].name}`;
       return site ? `Expedition → ${site.details?.name ?? "Unknown contact"}` : `Survey → ${p.target_id ? systemName(p.target_id) : "system"}`;
     }
     case "guard": return `Guard → ${target ? `your ${shipKindLabel(target.kind)} fleet` : "friendly fleet"}`;
@@ -294,8 +298,10 @@ export function nextDecisionLabel(): string {
   // soonest thing worth waiting for (owner-only live progress, honest estimate).
   for (const g of state.ghosts) {
     if (g.own && g.survey_progress != null) {
-      const seconds = g.expedition?.task === "restore" ? 60 : g.expedition?.task === "recover" ? 30 : SURVEY_SECS_UI;
-      consider(now + (1 - g.survey_progress) * seconds, g.expedition ? "an expedition completes" : "a survey completes");
+      const task = g.expedition?.task;
+      const seconds = task === "restore" ? 60 : task === "recover" || task === "signal" ? 30 : SURVEY_SECS_UI;
+      consider(now + (1 - g.survey_progress) * seconds,
+        task === "signal" ? "a signal sweep completes" : g.expedition ? "an expedition completes" : "a survey completes");
     }
   }
   if (!isFinite(at)) return "All quiet — nothing scheduled needs you.";

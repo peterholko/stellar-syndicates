@@ -45,22 +45,10 @@ impl World {
                 sys.bodies[index].assignments.insert(kind, posting);
             }
         }
-        // Bring the starter Ferrite deposit onto the settlement world. No new
-        // planet, habitable slot, stockpile grant, RNG draw or extra ore source.
-        let mut ores = Vec::new();
-        for b in &mut sys.bodies {
-            b.deposits.retain(|d| {
-                if d.resource == C::MetallicOre {
-                    ores.push(d.clone());
-                    false
-                } else {
-                    true
-                }
-            });
-        }
-        let body = &mut sys.bodies[index];
-        body.deposits.extend(ores);
-        body.founding_camp = Some(FoundingCamp::new(profile));
+        // §home-ore: the garden holds its own basic Ferrite Ore (generated),
+        // and the system's ore body keeps its deposit for the charter's
+        // "Expand mining operations" step. Nothing moves.
+        sys.bodies[index].founding_camp = Some(FoundingCamp::new(profile));
     }
 
     pub(super) fn build_settlement_project(
@@ -95,7 +83,7 @@ impl World {
         }
         if project == P::SurfaceWorkings
             && (!camp.done(P::Prospect) || b.tier(K::MiningComplex) == 0)
-            || project == P::Storehouse && b.tier(K::Warehouse) != 1
+            || project == P::Storehouse && sys.landing_holds <= 0.0
             || project == P::Quarters && b.tier(K::Habitat) != 1
         {
             events.push(Event::new(
@@ -260,6 +248,17 @@ mod tests {
         w.time = w.tick as f64 * crate::config::DT;
         w.resolve_builds(&mut Vec::new());
     }
+    /// §charter-v4: the camp lands bare; the player builds these. Place them,
+    /// staffed where they work.
+    fn build_on_camp(w: &mut World, home: EntityId, id: u32, kinds: &[K]) {
+        let b = w.systems.iter_mut().find(|s| s.id == home).unwrap().bodies.iter_mut().find(|b| b.id == id).unwrap();
+        for kind in kinds {
+            b.set_tier(*kind, 1);
+            if *kind != K::Habitat {
+                b.assignments.insert(*kind, crate::production::Assignment::crew(1));
+            }
+        }
+    }
     #[test]
     fn founding_profiles_preserve_population_world_budget_and_starter_economy() {
         let baseline = World::new(SimConfig::for_players(12648430, 2));
@@ -282,18 +281,18 @@ mod tests {
             );
             let sys = w.systems.iter().find(|s| s.id == home).unwrap();
             let b = body(&w, home, id);
-            assert_eq!(b.population, 0.002);
-            assert_eq!(b.population_capacity(), 0.003);
-            assert_eq!(sys.storage_cap(), 250.0);
+            assert_eq!(b.population, crate::colony::HOME_FOUNDING_POP);
+            assert_eq!(b.population_capacity(), 0.0, "§charter-v4: the settlers live aboard until the Habitat");
+            assert_eq!(sys.storage_cap(), crate::build::LANDING_HOLDS, "the colony ship's holds");
             assert_eq!(b.tier(K::MiningComplex), 0);
             assert_eq!(b.tier(K::Shipyard), 0);
             assert_eq!(b.tier(K::CommandCenter), 1, "Landing Command deploys on the selected settlement planet");
             assert!(b.has_deposit_for(K::MiningComplex));
             assert!(b.has_deposit_for(K::Bioharvester));
             assert_eq!(w.players[&owner].credits, 2000.0);
-            assert_eq!(w.fleets.values().filter(|f| f.owner == owner).count(), 2);
-            assert_eq!(sys.stockpile[&C::Alloys], 70.0);
-            assert_eq!(sys.stockpile[&C::Machinery], 27.0);
+            assert_eq!(w.fleets.values().filter(|f| f.owner == owner).count(), 0);
+            assert_eq!(sys.stockpile[&C::Alloys], 410.0);
+            assert_eq!(sys.stockpile[&C::Machinery], 163.0);
         }
     }
     #[test]
@@ -317,11 +316,16 @@ mod tests {
                 let camp = sys.bodies.iter().find(|b| b.founding_camp.is_some()).unwrap();
                 let at = format!("seed {seed} join {join} {}", camp.name);
                 assert!(camp.habitable, "{at}: the first settlement is habitable");
-                assert!(camp.tier(K::Bioharvester) == 1 && camp.has_deposit_for(K::Bioharvester),
+                assert!(camp.has_deposit_for(K::Bioharvester),
                     "{at}: the Bioharvester must work Biomass on the camp world");
+                // §charter-v4: the camp lands bare; both its resource sites are
+                // free for the Bioharvester and the mine (its own basic ore).
                 assert!(camp.has_deposit_for(K::MiningComplex)
-                    && camp.pool_slots(SlotPool::Resource) > camp.pool_slots_built(SlotPool::Resource),
-                    "{at}: the camp world must host the Mining Complex");
+                    && camp.pool_slots(SlotPool::Resource) >= camp.pool_slots_built(SlotPool::Resource) + 2,
+                    "{at}: the camp world must host the Bioharvester and the Mining Complex");
+                // The Habitat, Agroplex and Academy all fit its Infrastructure.
+                assert!(camp.pool_slots(SlotPool::Infrastructure) >= camp.pool_slots_built(SlotPool::Infrastructure) + 3,
+                    "{at}: the camp world must have room for the Habitat, Agroplex and Academy");
                 assert_eq!(camp.population, crate::colony::HOME_FOUNDING_POP, "{at}");
                 assert!(sys.bodies.iter().filter(|b| b.id != camp.id).all(|b| b.population == 0.0
                     && b.tier(K::Habitat) == 0 && b.tier(K::CommandCenter) == 0), "{at}: people and administration move together");
@@ -350,7 +354,8 @@ mod tests {
 
     #[test]
     fn a_camp_keeps_a_food_reserve_instead_of_filling_its_warehouse() {
-        let (mut w, _owner, home, _id) = start(F::VerdantLowlands);
+        let (mut w, _owner, home, id) = start(F::VerdantLowlands);
+        build_on_camp(&mut w, home, id, &[K::Bioharvester, K::Agroplex, K::Habitat]);
         let mut events = Vec::new();
         // Twenty sim-minutes of the default Bioharvester -> Agroplex chain.
         for _ in 0..(20 * 60 * crate::config::TICK_HZ) {
@@ -363,8 +368,10 @@ mod tests {
         let food = sys.stockpile.get(&C::Provisions).copied().unwrap_or(0.0)
             + sys.stockpile.get(&C::Biomass).copied().unwrap_or(0.0);
         assert!(food <= reserve + 5.0, "food {food:.1} must hover at the reserve {reserve:.1}");
-        assert!(sys.storage_headroom() >= 250.0 - 120.0 - reserve - 5.0,
-            "the camp warehouse keeps room for ore: {:.1}", sys.storage_headroom());
+        let goods: f64 = sys.stockpile.iter().filter(|(c, _)| !matches!(c, C::Provisions | C::Biomass))
+            .map(|(_, n)| n).sum();
+        assert!(sys.storage_headroom() >= sys.storage_cap() - goods - reserve - 5.0,
+            "food never crowds out the holds' room for ore: {:.1}", sys.storage_headroom());
         assert_eq!(sys.food_state, crate::colony::FoodState::WellSupplied);
         let held = sys.bodies.iter().any(|b| b.assignments.get(&K::Bioharvester)
             .is_some_and(|a| a.suspended == Some(crate::production::SuspendReason::FoodReserve)));
@@ -430,6 +437,7 @@ mod tests {
     #[test]
     fn projects_are_fifo_paid_once_and_do_not_create_population() {
         let (mut w, owner, home, id) = start(F::CoastalPlains);
+        build_on_camp(&mut w, home, id, &[K::Habitat]);
         queue(&mut w, owner, home, id, P::Prospect);
         queue(&mut w, owner, home, id, P::Quarters);
         queue(&mut w, owner, home, id, P::Quarters);
@@ -441,20 +449,21 @@ mod tests {
         );
         assert_eq!(
             w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&C::Alloys],
-            65.0
+            405.0
         );
         let slots = body(&w, home, id).infrastructure_slots();
         finish(&mut w);
         assert_eq!(body(&w, home, id).infrastructure_slots(), slots + 1);
-        assert_eq!(body(&w, home, id).population_capacity(), 0.003);
+        assert_eq!(body(&w, home, id).population_capacity(), 0.008);
         w = serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
         finish(&mut w);
-        assert_eq!(body(&w, home, id).population_capacity(), 0.006);
+        assert_eq!(body(&w, home, id).population_capacity(), 0.012);
         assert_eq!(
             body(&w, home, id).population,
-            0.002,
+            crate::colony::HOME_FOUNDING_POP,
             "housing is not instant people"
         );
+        // §charter-v4: the Storehouse enlarges the colony ship's holds.
         queue(&mut w, owner, home, id, P::Storehouse);
         finish(&mut w);
         assert_eq!(
@@ -463,7 +472,7 @@ mod tests {
                 .find(|s| s.id == home)
                 .unwrap()
                 .storage_cap(),
-            700.0
+            crate::build::LANDING_HOLDS + crate::build::STOREHOUSE_HOLDS
         );
         assert!(w.build_queue.is_empty());
     }
@@ -589,6 +598,8 @@ mod tests {
     #[test]
     fn completed_settlement_capacity_and_profile_wait_for_report_light() {
         let (mut w, owner, home, id) = start(F::CoastalPlains);
+        build_on_camp(&mut w, home, id, &[K::Habitat]);
+        w.record_information();
         let pos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
         let cc = pos + Vec2::new(10.0 * crate::transit::signal_speed(w.config.c), 0.0);
         w.players.get_mut(&owner).unwrap().command_center = cc;
@@ -607,7 +618,7 @@ mod tests {
                 .find(|b| b.id == id)
                 .unwrap()
                 .population_capacity(),
-            0.003
+            0.008
         );
         let after = w
             .information
@@ -621,7 +632,7 @@ mod tests {
                 .find(|b| b.id == id)
                 .unwrap()
                 .population_capacity(),
-            0.006
+            0.012
         );
         assert_eq!(
             after
@@ -631,7 +642,7 @@ mod tests {
                 .find(|b| b.id == id)
                 .unwrap()
                 .population,
-            0.002
+            crate::colony::HOME_FOUNDING_POP
         );
     }
 }

@@ -112,6 +112,15 @@ struct Observation {
     exported: bool,
     founding_stage: sim::FoundingStage,
     local_opening: bool,
+    /// §charter-v4: the charter's land grant has opened the home's other
+    /// worlds; until then the bot builds only on its landing world.
+    land_grant_open: bool,
+    /// §charter-v4: during "Eliminate the privateer den", the den's system
+    /// and position, as the privateer's log named it.
+    den: Option<(EntityId, Vec2)>,
+    /// §charter-v5: during "Destroy the privateer", the privateer the colony
+    /// has tracked since its raid.
+    privateer: Option<EntityId>,
     opening_recovered: bool,
     recovery_site: Option<sim::sites::SiteReport>,
     expansion_unlocked: bool,
@@ -133,6 +142,9 @@ struct Observation {
     military_sites: Vec<warfare::MilitarySite>,
     relations: BTreeMap<PlayerId, sim::diplomacy::RelationState>,
     captains: Vec<sim::Captain>,
+    /// §merchant: the merchant serving this home (its stall is beside the
+    /// command center, so this is its report).
+    merchant: Option<sim::merchant::MerchantVisit>,
 }
 
 #[derive(Clone)]
@@ -150,6 +162,22 @@ struct DevelopmentGoal { project: Project, target: u32, since: f64 }
 impl GameLoop {
     /// Explicit configuration applies only to a fresh galaxy. Resuming without
     /// BOT_PLAYERS restores the saved roster; it never re-joins or duplicates it.
+    /// Dev only: `DEV_START_SHIPS=raider` (comma-separated hull kinds) gives
+    /// every corporation founded from now on those hulls at home, for testing
+    /// before the charter builds them. Read on each start; never saved.
+    pub(crate) fn configure_dev_start_ships(&mut self) -> anyhow::Result<()> {
+        let Ok(list) = std::env::var("DEV_START_SHIPS") else { return Ok(()); };
+        let kinds = list.split(',').map(str::trim).filter(|kind| !kind.is_empty())
+            .map(|kind| serde_json::from_value::<sim::ShipKind>(serde_json::Value::String(kind.into()))
+                .map_err(|_| anyhow::anyhow!("DEV_START_SHIPS: unknown hull kind {kind:?}")))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        if !kinds.is_empty() {
+            tracing::warn!(ships = ?kinds, "DEV_START_SHIPS: new founders get these hulls at home");
+        }
+        self.world.dev_start_ships = kinds;
+        Ok(())
+    }
+
     pub(super) fn configure_bots(&mut self, requested: Option<u32>) -> anyhow::Result<()> {
         let Some(count) = requested else { return Ok(()); };
         if !self.bots.is_empty() {
@@ -208,24 +236,31 @@ impl GameLoop {
                 .sum::<f64>();
             Some(Prospect { id: *id, pos: s.pos, score })
         }).collect();
+        // §sensors: the same picture a player gets — battles past the noise
+        // horizon from this corporation's receivers are not heard.
+        let arrays = self.world.known_sensor_sources(owner);
+        let receivers: Vec<sim::Vec2> = std::iter::once(cc).chain(arrays.iter().map(|(pos, _)| *pos)).collect();
+        let heard = |pos: sim::Vec2, own: bool| own || sim::detection::heard(receivers.iter().copied(), pos);
         let mut fighting = BTreeSet::new();
         for battle in self.world.active_battles() {
             let delay = sim::transit::delay(battle.pos, cc, c);
-            if now >= battle.started_at + delay {
+            if now >= battle.started_at + delay && heard(battle.pos, owner == battle.a_owner || owner == battle.d_owner) {
                 fighting.extend(view::battle_participants_at(
                     self.world.battle_records.get(&battle.id), &battle.participants, now, delay));
             }
         }
         for battle in &self.concluded_battles {
-            if battle.shows_in_progress(cc, c, now) {
+            if battle.shows_in_progress(cc, c, now) && heard(battle.pos, owner == battle.a_owner || owner == battle.d_owner) {
                 fighting.extend(view::battle_participants_at(
                     self.world.battle_records.get(&battle.id), &battle.participants,
                     now, sim::transit::delay(battle.pos, cc, c)));
             }
         }
         let (veil, deep_scan) = self.world.known_node_regions(owner);
+        let mut revealed = fighting.clone();
+        revealed.extend(view::tracked_contacts(&self.world, owner, now));
         let mut ghosts = self.history.view_for_with_arrays(owner, cc, c, now,
-            &self.world.known_sensor_sources(owner), &fighting,
+            &arrays, &revealed,
             view::NodeEffects { veil: &veil, deep_scan: &deep_scan });
         ghosts.sort_by_key(|g| g.id);
         let market_time = now - sim::transit::delay(self.world.hub, cc, c);
@@ -251,6 +286,14 @@ impl GameLoop {
             // served in FoundingView, not an early read of survey geology.
             founding_stage: corp.founding.stage,
             local_opening: corp.founding.local_opening,
+            land_grant_open: corp.founding.land_grant_open(),
+            den: (corp.founding.stage == sim::FoundingStage::EliminateDen
+                    && corp.founding.privateer_report_at.is_some_and(|at| at <= now)
+                    && !corp.founding.den_report_at.is_some_and(|at| at <= now))
+                .then_some(corp.founding.den).flatten()
+                .and_then(|id| self.world.systems.iter().find(|s| s.id == id).map(|s| (id, s.pos))),
+            privateer: (corp.founding.stage == sim::FoundingStage::DefeatPrivateer)
+                .then_some(corp.founding.privateer).flatten(),
             opening_recovered: corp.founding.recovery_report_at.is_some_and(|at| at <= now),
             recovery_site: corp.founding.recovery_site.and_then(|id| self.world.exploration.sites.get(&id)).and_then(|s| s.known.get(&owner)).cloned(),
             expansion_unlocked: corp.founding.expansion_unlocked(),
@@ -294,6 +337,7 @@ impl GameLoop {
             chart: self.world.systems.iter().map(|s| (s.id, s.pos)).collect(),
             military_sites, relations,
             captains: self.world.information.captains(owner, cc, c, now),
+            merchant: self.world.merchants.values().find(|v| v.customer == owner).cloned(),
         })
     }
 
@@ -444,11 +488,13 @@ impl Observation {
         sim::build::recipe_for_tier(project.what, tier).costs.iter().map(|(c, n)| (*c, n * mult)).collect()
     }
 
-    /// §power: the planet whose demand outruns its plant (and base), with the
-    /// MW it is short. A dry plant is a fuel problem, not a building one.
+    /// §power: the planet whose demand outruns its plant (and its Command
+    /// Center's reactor), with the MW it is short. A dry plant is a fuel
+    /// problem, not a building one.
     pub(super) fn power_shortfall(&self) -> Option<(u32, f64)> {
         self.home.system.bodies.iter().filter(|b| !b.grid.no_fuel)
-            .map(|b| (b.id, b.grid.demand - sim::power::BASE_MW - sim::power::plant_mw(b.tier(K::PowerPlant))))
+            .map(|b| (b.id, b.grid.demand - sim::power::base_mw(b.tier(K::CommandCenter))
+                - sim::power::plant_mw(b.tier(K::PowerPlant))))
             .filter(|(_, short)| *short > 1e-9)
             .max_by(|a, b| a.1.total_cmp(&b.1).then(b.0.cmp(&a.0)))
     }
@@ -475,6 +521,8 @@ impl Observation {
         // rather than repeatedly ordering construction into a full slot pool.
         let preferred = system.site_for(kind);
         let body = system.bodies.iter().filter(|b| {
+            // §charter-v4: inside the land grant, only the landing world.
+            if !self.land_grant_open && b.tier(K::CommandCenter) == 0 { return false; }
             let extraction = matches!(kind, K::MiningComplex | K::Bioharvester | K::VolatileHarvester);
             (kind != K::CommandCenter || b.population >= sim::build::COMMAND_CENTER_MIN_POPULATION
                 && b.kind != sim::body::BodyKind::GasGiant)
@@ -564,8 +612,12 @@ impl Bot {
         // line, and its reorder point sat below it: every refill began in a crisis.
         // §fuel-overhaul: one target per fuel.
         for fuel in FUELS { *wanted.entry(fuel).or_default() += p.fuel_target_of(fuel); }
-        let food = (p.home.system.population() * sim::colony::PROVISIONS_PER_MILLION_PER_S
-            * p.supply_lead() * 2.0).min(p.home.system.storage_cap() * 0.25)
+        // Two delivery windows of what the home's own farms don't cover.
+        // §charter-v5: none while the charter's Landfall builds those farms;
+        // the kit's Provisions last until they run.
+        let landfall = p.local_opening && p.founding_stage.step() <= sim::FoundingStage::BuildAgroplex.step();
+        let short = (p.home.system.population() * sim::colony::PROVISIONS_PER_MILLION_PER_S - p.food_grown()).max(0.0);
+        let food = if landfall { 0.0 } else { (short * p.supply_lead() * 2.0).min(p.home.system.storage_cap() * 0.25) }
             .max(if p.stock(C::Provisions) < 10.0 { 40.0 } else { 20.0 });
         *wanted.entry(C::Provisions).or_default() += food;
         if let Some(programme) = p.research.active.as_deref().and_then(sim::research::programme)
@@ -603,13 +655,16 @@ impl Bot {
         self.refresh_development(p);
         self.refresh_network(p);
         if let Some(cmd) = self.rescue(p).or_else(|| self.recover_military(p)).or_else(|| self.staff(p))
-            .or_else(|| self.military(p)).or_else(|| self.guards(p)).or_else(|| self.officers(p))
+            .or_else(|| self.military(p)).or_else(|| self.charter_privateer(p)).or_else(|| self.charter_den(p))
+            .or_else(|| self.charter_stock_up(p)).or_else(|| self.charter_ore_sale(p)).or_else(|| self.guards(p))
+            .or_else(|| self.officers(p))
             .or_else(|| self.local_opening(p))
             .or_else(|| self.scouts(p)).or_else(|| self.belt_lesson(p)).or_else(|| self.belt_work(p))
             .or_else(|| self.colonies(p)) { return Some(cmd); }
         let project = self.project(p);
         let wanted = self.desired_stock(p, project);
         if let Some(cmd) = self.network_routes(p) { return Some(cmd); }
+        if let Some(cmd) = self.merchant(p, project, &wanted) { return Some(cmd); }
         if self.ready("build", p.now) && p.home.builds.is_empty() {
             if let Some(project) = project {
                 if self.may_build(p, project) {

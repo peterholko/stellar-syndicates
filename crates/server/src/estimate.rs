@@ -115,7 +115,7 @@ pub fn prepare_estimate(
         c,
         now,
         arrays,
-        &std::collections::BTreeSet::new(),
+        &crate::view::tracked_contacts(world, viewer, now),
         NodeEffects {
             veil: &veil,
             deep_scan: &deep,

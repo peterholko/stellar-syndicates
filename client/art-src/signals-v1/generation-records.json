@@ -1,0 +1,496 @@
+{
+  "mode": "built-in image_gen",
+  "status": "All thirteen painting subjects generated; masters saved without post-processing.",
+  "seriesReference": "client/art-src/signals-v1/drifting-wreck.png",
+  "firstPaintingRecord": "drifting-wreck.generation.json",
+  "transparentBackground": false,
+  "postProcessing": "None. Selected native PNGs copied unchanged.",
+  "paintings": [
+    {
+      "number": 2,
+      "slug": "cargo-pod",
+      "name": "Cargo pod",
+      "master": "client/art-src/signals-v1/cargo-pod.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-eaed533c-f0a1-4467-945a-24f9b44b3d0c.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept.\nAsset type: a single cinematic science-fiction painting for the Signals card and report in Stellar Syndicates, one coherent series of thirteen discovery illustrations.\nInput image 1 is the SERIES STYLE reference only: the drifting-wreck painting. Match its realistic cinematic painting style, grounded materials, restrained detail, cold blue-black space, subtle warm illumination and quiet abandoned atmosphere. Paint the NEW subject specified below; the wreck itself does not belong in this painting.\nSeries environment: open space close to a young colony's home star, viewed from a nearby ship outside the picture. A small distant warm star low in one corner, very faint nebula haze and sparse stars. Light the subject gently from one side with the star and its own small lights. Dark quiet edges.\nFormat and framing: one opaque full-frame wide 16:9 landscape image, ideally native 1672 x 941. One clear focal group near the centre. Keep ALL essential subject details, appendages and small associated objects fully inside x=20–80% of the image width and y=27.5–72.5% of the image height. Leave ample space around the group. The distant camera composition must survive a central 21:9 banner crop and remain readable on a small card. Never enlarge the subject to fill the canvas. No collage or inset.\nConstraints: no text, writing, labels, numbers, logos, emblems, flags, skulls, watermark, borders, or interface. No people. No planet filling the frame. No observer ship, cockpit, or any other spacecraft besides the explicitly requested subject. No explosions, fire or weapons fire. Include only the objects specified for this painting; no added asteroid field.\nPainting 2 of 13: Cargo pod.\nSubject: A single lost cargo container tumbling end over end, alone: a battered industrial pod with reinforced corner frames, dented panels and a frayed tether trailing behind it, a small white locator light blinking. Weathered grey-green paint. Accent: white locator light. Mood: lonely, quiet. The pod and its tether are the only objects; no ship.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/drifting-wreck.png"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-eaed533c-f0a1-4467-945a-24f9b44b3d0c.png"
+      },
+      "revisions": [],
+      "file": {
+        "slug": "cargo-pod",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1849109,
+        "sha256": "614efe689ce58dfc1872c6794a7e92f927cd5fae381fed42cd81ff4dee81c5a3",
+        "unchangedFromGeneratedOutput": true
+      }
+    },
+    {
+      "number": 3,
+      "slug": "ore-fragment",
+      "name": "Ore fragment",
+      "master": "client/art-src/signals-v1/ore-fragment.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-ab93b8ff-dbdb-48a2-8362-1d26eb38c070.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept.\nAsset type: a single cinematic science-fiction painting for the Signals card and report in Stellar Syndicates, one coherent series of thirteen discovery illustrations.\nInput image 1 is the SERIES STYLE reference only: the drifting-wreck painting. Match its realistic cinematic painting style, grounded materials, restrained detail, cold blue-black space, subtle warm illumination and quiet abandoned atmosphere. Paint the NEW subject specified below; the wreck itself does not belong in this painting.\nSeries environment: open space close to a young colony's home star, viewed from a nearby ship outside the picture. A small distant warm star low in one corner, very faint nebula haze and sparse stars. Light the subject gently from one side with the star and its own small lights. Dark quiet edges.\nFormat and framing: one opaque full-frame wide 16:9 landscape image, ideally native 1672 x 941. One clear focal group near the centre. Keep ALL essential subject details, appendages and small associated objects fully inside x=20–80% of the image width and y=27.5–72.5% of the image height. Leave ample space around the group. The distant camera composition must survive a central 21:9 banner crop and remain readable on a small card. Never enlarge the subject to fill the canvas. No collage or inset.\nConstraints: no text, writing, labels, numbers, logos, emblems, flags, skulls, watermark, borders, or interface. No people. No planet filling the frame. No observer ship, cockpit, or any other spacecraft besides the explicitly requested subject. No explosions, fire or weapons fire. Include only the objects specified for this painting; no added asteroid field.\nInput image 2: Use this rock sprite for rock colour and texture only; do not copy its framing. Ignore the sprite's cyan game-highlight outline; paint physical rock and metallic veins without any surrounding neon outline.\nPainting 3 of 13: Ore fragment.\nSubject: A large dark asteroid fragment split along a fresh fracture, exposing thick veins of bright metallic ore that catch the starlight with copper-red and steel-blue glints; small chips and dust drift around it. Accent: warm metallic glints. Mood: promising, raw.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/drifting-wreck.png",
+          "/Users/peter/projects/stellar-syndicates/client/art-src/belt-chunks-v1/metallic.png"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-9881862c-3e56-4989-9001-42345f3c6ff8.png"
+      },
+      "revisions": [
+        {
+          "prompt": "Edit only the camera distance and placement of the attached ore-fragment painting. Preserve its exact realistic painted style, dark metallic fractured rock, copper-red ore glints, steel-blue glints, loose chips, lighting and blue-black space background.\nPull the camera farther back: SHRINK THE ENTIRE ROCK-AND-CHIPS GROUP TO 65% OF ITS CURRENT SIZE, centered at the exact centre of the image. The whole cluster, including every chip, must now fit between 30% and 70% of the canvas height and inside the central 60% of the width. Fill the newly exposed area naturally with the same dark space. Keep the same native 1672 x 941 wide canvas; do not crop.\nThe image should read as one central freshly split ore fragment with small chips, viewed from a distance amid generous quiet space. Keep the small warm star low in the corner. No added objects, no text, symbols, border, interface or people. Opaque full frame.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-9881862c-3e56-4989-9001-42345f3c6ff8.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-ab93b8ff-dbdb-48a2-8362-1d26eb38c070.png"
+        }
+      ],
+      "file": {
+        "slug": "ore-fragment",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1875123,
+        "sha256": "d599dbd19d1cebd5a7b649781640a004fa19b1b1c65c8ed0f6f2a63c9ad88e0f",
+        "unchangedFromGeneratedOutput": true
+      }
+    },
+    {
+      "number": 4,
+      "slug": "silent-probe",
+      "name": "Silent probe",
+      "master": "client/art-src/signals-v1/silent-probe.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-01de5ad9-94ee-410f-86de-30cf68d124e4.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept.\nAsset type: a single cinematic science-fiction painting for the Signals card and report in Stellar Syndicates, one coherent series of thirteen discovery illustrations.\nInput image 1 is the SERIES STYLE reference only: the drifting-wreck painting. Match its realistic cinematic painting style, grounded materials, restrained detail, cold blue-black space, subtle warm illumination and quiet abandoned atmosphere. Paint the NEW subject specified below; the wreck itself does not belong in this painting.\nSeries environment: open space close to a young colony's home star, viewed from a nearby ship outside the picture. A small distant warm star low in one corner, very faint nebula haze and sparse stars. Light the subject gently from one side with the star and its own small lights. Dark quiet edges.\nFormat and framing: one opaque full-frame wide 16:9 landscape image, ideally native 1672 x 941. One clear focal group near the centre. Keep ALL essential subject details, appendages and small associated objects fully inside x=20–80% of the image width and y=27.5–72.5% of the image height. Leave ample space around the group. The distant camera composition must survive a central 21:9 banner crop and remain readable on a small card. Never enlarge the subject to fill the canvas. No collage or inset.\nConstraints: no text, writing, labels, numbers, logos, emblems, flags, skulls, watermark, borders, or interface. No people. No planet filling the frame. No observer ship, cockpit, or any other spacecraft besides the explicitly requested subject. No explosions, fire or weapons fire. Include only the objects specified for this painting; no added asteroid field.\nCamera distance is critical: the complete focal group should occupy only about ONE THIRD of the full canvas height, roughly 320 pixels on a 941-pixel-tall canvas, centred vertically. Keep all appendages within that distant compact silhouette. There must be much more surrounding space than subject.\nInput image 2: The player's own Survey Probe: design-family reference only. Create an older, weathered predecessor with a family resemblance and changed details. No reference-sheet lettering or labels; no white background; show one drone only.\nPainting 4 of 13: Silent probe.\nSubject: A small boxy survey drone drifting alone, sensor dish half folded, a stubby antenna boom, faded pitted paint, micrometeorite scars, one dim green status light still on. Paint an older, weathered predecessor of the supplied Survey Probe family, not that exact probe. Accent: dim green. Mood: forgotten, patient.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/drifting-wreck.png",
+          "/Users/peter/projects/stellar-syndicates/client/art-src/survey-probe-reference-v1/survey-probe-reference.png"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-043f9177-f475-4dc9-94cc-8ab408228fce.png"
+      },
+      "revisions": [
+        {
+          "prompt": "Revise the attached silent survey-probe painting to match this older predecessor design.\nPreserve the painted style, the boxy white-grey and brass body with faded pitted paint, micrometeorite scars, and the current dark-space environment and lighting.\nChange the antenna system: remove the four long extended antenna arms. Leave just ONE SHORT STUBBY antenna boom. Make the sensor dish mechanically HALF FOLDED: two hinged dish sections partially closed toward one another, rather than a fully open round dish.\nExactly ONE dim green status light remains on, a small point on the main body. All other lights are off. No green glowing bands on the antenna.\nAlso pull the camera back so the complete drone, folded dish and short antenna fit inside y=30% to 70% of the image height, centered at x=50%, y=50%, surrounded by ample quiet blue-black space. A forgotten, patient old machine.\nKeep one opaque 1672 x 941 landscape painting. No other objects, ships or people; no text, labels, markings, symbols, interface or border.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-043f9177-f475-4dc9-94cc-8ab408228fce.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-01de5ad9-94ee-410f-86de-30cf68d124e4.png"
+        }
+      ],
+      "file": {
+        "slug": "silent-probe",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1833033,
+        "sha256": "ba6407b530b29654fa26de22b48ba40fc545d5f95e327c196b24d5de141d91a3",
+        "unchangedFromGeneratedOutput": true
+      }
+    },
+    {
+      "number": 5,
+      "slug": "distress-beacon",
+      "name": "Distress beacon",
+      "master": "client/art-src/signals-v1/distress-beacon.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-48671ad8-2d5d-4e08-885f-1295ced494b4.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept.\nAsset type: a single cinematic science-fiction painting for the Signals card and report in Stellar Syndicates, one coherent series of thirteen discovery illustrations.\nInput image 1 is the SERIES STYLE reference only: the drifting-wreck painting. Match its realistic cinematic painting style, grounded materials, restrained detail, cold blue-black space, subtle warm illumination and quiet abandoned atmosphere. Paint the NEW subject specified below; the wreck itself does not belong in this painting.\nSeries environment: open space close to a young colony's home star, viewed from a nearby ship outside the picture. A small distant warm star low in one corner, very faint nebula haze and sparse stars. Light the subject gently from one side with the star and its own small lights. Dark quiet edges.\nFormat and framing: one opaque full-frame wide 16:9 landscape image, ideally native 1672 x 941. One clear focal group near the centre. Keep ALL essential subject details, appendages and small associated objects fully inside x=20–80% of the image width and y=27.5–72.5% of the image height. Leave ample space around the group. The distant camera composition must survive a central 21:9 banner crop and remain readable on a small card. Never enlarge the subject to fill the canvas. No collage or inset.\nConstraints: no text, writing, labels, numbers, logos, emblems, flags, skulls, watermark, borders, or interface. No people. No planet filling the frame. No observer ship, cockpit, or any other spacecraft besides the explicitly requested subject. No explosions, fire or weapons fire. Include only the objects specified for this painting; no added asteroid field.\nCamera distance is critical: the complete focal group should occupy only about ONE THIRD of the full canvas height, roughly 320 pixels on a 941-pixel-tall canvas, centred vertically. Keep all appendages within that distant compact silhouette. There must be much more surrounding space than subject.\nPainting 5 of 13: Distress beacon.\nSubject: A small emergency beacon pod pulsing slow red-orange light, tethered to a damaged civilian escape capsule. The capsule's small viewport glows warm from inside and frost covers part of its hull. No people visible; the lit interior implies survivors. Accent: pulsing red-orange. Mood: tense but hopeful. Keep the capsule, beacon and connecting tether together in the central safe area.\nFinal composition emphasis: show this from a distance. The complete group, including tether and beacon, occupies less than 40% of the full image height, centred in generous empty space.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/drifting-wreck.png"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-a6a9f8da-7221-4708-bea3-61533d54e61c.png"
+      },
+      "revisions": [
+        {
+          "prompt": "Edit the attached distress-beacon illustration while preserving its small central composition, cinematic painting style, lighting, beacon and tether.\nMake the escape capsule's pressure hull SEALED and survivable: damaged dented outer plating and exposed external wires are fine, but no torn-off open rear. Add convincing white frost over part of the capsule's cold hull and around the viewport.\nThe small viewport should show ONLY softly diffused warm interior light through frosted or fogged glass. Remove the visible human/head-shaped silhouette entirely. Absolutely no person, face, body, silhouette or figure visible anywhere. The warm light alone implies survivors.\nKeep the separate small emergency beacon attached by the existing tether, with its red-orange pulsing lamp. Tense but hopeful. Preserve the ample dark space, small warm background star, faint nebula and sparse stars. Keep every essential part within the middle 45% of image height and central 60% of width.\nOne opaque 1672 x 941 landscape painting. No text, symbols, labels, numbers, logos, flags, borders, interface, other ships, fire, explosions or people.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-a6a9f8da-7221-4708-bea3-61533d54e61c.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-fc6f5adc-7203-497e-89aa-1f924cc52cb7.png"
+        },
+        {
+          "prompt": "Make ONE precise change to the attached image: replace EVERYTHING INSIDE THE SMALL RECTANGULAR CAPSULE WINDOW with uniformly glowing frosted amber glass. The entire window interior must be a soft, even, opaque warm amber glow, with no shapes or circles visible through it. Remove the head-shaped bright oval and all interior silhouettes completely. The frosted glass is impossible to see through.\nKeep every other pixel, object, material, scale, composition, frost, starfield, tether and beacon as close as possible to the attached image. No people, figures, faces or silhouettes. One opaque 1672 x 941 painting.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-fc6f5adc-7203-497e-89aa-1f924cc52cb7.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-48671ad8-2d5d-4e08-885f-1295ced494b4.png"
+        }
+      ],
+      "file": {
+        "slug": "distress-beacon",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1743473,
+        "sha256": "9df8c05d384fdad77e89affccbeebdd810a1bf01f433d3795a591638b667b79f",
+        "unchangedFromGeneratedOutput": true
+      }
+    },
+    {
+      "number": 6,
+      "slug": "sensor-ghost",
+      "name": "Sensor ghost",
+      "master": "client/art-src/signals-v1/sensor-ghost.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-ac6007cc-5082-486e-ba18-0e7f6ae7fa32.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept.\nAsset type: a single cinematic science-fiction painting for the Signals card and report in Stellar Syndicates, one coherent series of thirteen discovery illustrations.\nInput image 1 is the SERIES STYLE reference only: the drifting-wreck painting. Match its realistic cinematic painting style, grounded materials, restrained detail, cold blue-black space, subtle warm illumination and quiet abandoned atmosphere. Paint the NEW subject specified below; the wreck itself does not belong in this painting.\nSeries environment: open space close to a young colony's home star, viewed from a nearby ship outside the picture. A small distant warm star low in one corner, very faint nebula haze and sparse stars. Light the subject gently from one side with the star and its own small lights. Dark quiet edges.\nFormat and framing: one opaque full-frame wide 16:9 landscape image, ideally native 1672 x 941. One clear focal group near the centre. Keep ALL essential subject details, appendages and small associated objects fully inside x=20–80% of the image width and y=27.5–72.5% of the image height. Leave ample space around the group. The distant camera composition must survive a central 21:9 banner crop and remain readable on a small card. Never enlarge the subject to fill the canvas. No collage or inset.\nConstraints: no text, writing, labels, numbers, logos, emblems, flags, skulls, watermark, borders, or interface. No people. No planet filling the frame. No observer ship, cockpit, or any other spacecraft besides the explicitly requested subject. No explosions, fire or weapons fire. Include only the objects specified for this painting; no added asteroid field.\nCamera distance is critical: the complete focal group should occupy only about ONE THIRD of the full canvas height, roughly 320 pixels on a 941-pixel-tall canvas, centred vertically. Keep all appendages within that distant compact silhouette. There must be much more surrounding space than subject.\nPainting 6 of 13: Sensor ghost.\nSubject: Almost nothing there: a faint ring-shaped distortion in empty space where starlight bends and doubles, with a few drifting ice motes catching light around it. Deliberately sparse and uncertain. Accent: pale cyan shimmer. Mood: mysterious, quiet. A barely visible optical distortion, not a solid ring, machine, bright portal or spacecraft.\nFinal emphasis: a restrained barely-there cyan optical shimmer forming an imperfect ring, less than 35% of canvas height, centred in otherwise empty space. No bright luminous portal or solid object.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/drifting-wreck.png"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-ac6007cc-5082-486e-ba18-0e7f6ae7fa32.png"
+      },
+      "revisions": [],
+      "file": {
+        "slug": "sensor-ghost",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1805756,
+        "sha256": "a79910447650f26d9368f72031748acd091d504d7baf97807f129784ce63e91b",
+        "unchangedFromGeneratedOutput": true
+      }
+    },
+    {
+      "number": 7,
+      "slug": "authority-courier",
+      "name": "Authority courier",
+      "master": "client/art-src/signals-v1/authority-courier.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-2e58c236-375e-4eed-8ba9-0964fa41fad1.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept.\nAsset type: a single cinematic science-fiction painting for the Signals card and report in Stellar Syndicates, one coherent series of thirteen discovery illustrations.\nInput image 1 is the SERIES STYLE reference only: the drifting-wreck painting. Match its realistic cinematic painting style, grounded materials, restrained detail, cold blue-black space, subtle warm illumination and quiet abandoned atmosphere. Paint the NEW subject specified below; the wreck itself does not belong in this painting.\nSeries environment: open space close to a young colony's home star, viewed from a nearby ship outside the picture. A small distant warm star low in one corner, very faint nebula haze and sparse stars. Light the subject gently from one side with the star and its own small lights. Dark quiet edges.\nFormat and framing: one opaque full-frame wide 16:9 landscape image, ideally native 1672 x 941. One clear focal group near the centre. Keep ALL essential subject details, appendages and small associated objects fully inside x=20–80% of the image width and y=27.5–72.5% of the image height. Leave ample space around the group. The distant camera composition must survive a central 21:9 banner crop and remain readable on a small card. Never enlarge the subject to fill the canvas. No collage or inset.\nConstraints: no text, writing, labels, numbers, logos, emblems, flags, skulls, watermark, borders, or interface. No people. No planet filling the frame. No observer ship, cockpit, or any other spacecraft besides the explicitly requested subject. No explosions, fire or weapons fire. Include only the objects specified for this painting; no added asteroid field.\nCamera distance is critical: the complete focal group should occupy only about ONE THIRD of the full canvas height, roughly 320 pixels on a 941-pixel-tall canvas, centred vertically. Keep all appendages within that distant compact silhouette. There must be much more surrounding space than subject.\nInput image 2: Use the Authority freighter for steel-blue-and-white livery and clean institutional design language only, on a much smaller courier drone. Do not reproduce the freighter or any text or insignia. Ignore its reference-sheet layout, text, large cargo banks and four-engine layout.\nPainting 7 of 13: Authority courier.\nSubject: A small, neat courier drone in steel-blue and white with clean official lines, engine dark, one hatch slightly open with a sealed document canister visible inside. Much smaller than the Authority freighter in the design reference. Accent: cool blue-white running lights. Mood: orderly, stranded.\nFinal emphasis: a single small compact autonomous courier drone, only about one-third of canvas height, with a clearly readable small ajar hatch and sealed document canister. No additional ships or crates.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/drifting-wreck.png",
+          "/Users/peter/projects/stellar-syndicates/client/art-src/authority-freighter-reference-v1/authority-freighter-reference.png"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-2e58c236-375e-4eed-8ba9-0964fa41fad1.png"
+      },
+      "revisions": [],
+      "file": {
+        "slug": "authority-courier",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1857398,
+        "sha256": "45c92a9d72adfa47b7af124dfb150e7345febe87560d272f4b6bc8f9ed5cc027",
+        "unchangedFromGeneratedOutput": true
+      }
+    },
+    {
+      "number": 8,
+      "slug": "abandoned-outpost",
+      "name": "Abandoned outpost",
+      "master": "client/art-src/signals-v1/abandoned-outpost.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-b93807e8-f88a-4146-9963-666fa1d0ae7a.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept.\nAsset type: a single cinematic science-fiction painting for the Signals card and report in Stellar Syndicates, one coherent series of thirteen discovery illustrations.\nInput image 1 is the SERIES STYLE reference only: the drifting-wreck painting. Match its realistic cinematic painting style, grounded materials, restrained detail, cold blue-black space, subtle warm illumination and quiet abandoned atmosphere. Paint the NEW subject specified below; the wreck itself does not belong in this painting.\nSeries environment: open space close to a young colony's home star, viewed from a nearby ship outside the picture. A small distant warm star low in one corner, very faint nebula haze and sparse stars. Light the subject gently from one side with the star and its own small lights. Dark quiet edges.\nFormat and framing: one opaque full-frame wide 16:9 landscape image, ideally native 1672 x 941. One clear focal group near the centre. Keep ALL essential subject details, appendages and small associated objects fully inside x=20–80% of the image width and y=27.5–72.5% of the image height. Leave ample space around the group. The distant camera composition must survive a central 21:9 banner crop and remain readable on a small card. Never enlarge the subject to fill the canvas. No collage or inset.\nConstraints: no text, writing, labels, numbers, logos, emblems, flags, skulls, watermark, borders, or interface. No people. No planet filling the frame. No observer ship, cockpit, or any other spacecraft besides the explicitly requested subject. No explosions, fire or weapons fire. Include only the objects specified for this painting; no added asteroid field.\nCamera distance is critical: the complete focal group should occupy only about ONE THIRD of the full canvas height, roughly 320 pixels on a 941-pixel-tall canvas, centred vertically. Keep all appendages within that distant compact silhouette. There must be much more surrounding space than subject.\nInput image 2: Subject reference only: reinterpret the station sprite as a fully painted compact abandoned outpost in the series style. Use its modular construction and worn materials, adapting them to stacked modules and a compact open lattice with folded solar panels. Lights are mostly OFF; orange reactor glow is the accent, not the reference sprite's cyan light strips.\nPainting 8 of 13: Abandoned outpost.\nSubject: A compact station of stacked modules on an open lattice frame, two folded solar wings, most windows dark, its reactor housing glowing unstable orange through cracked shielding, thin venting plumes drifting from it. Accent: unstable orange glow. Mood: uneasy, dangerous. Keep the entire station and folded wings inside the central safe area.\nFinal composition emphasis: show the entire outpost at a distance, compact in the central band, with its antenna and folded panels contained within the middle 40% of canvas height.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/drifting-wreck.png",
+          "/Users/peter/projects/stellar-syndicates/client/art-src/exploration/station.png"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-3f0445c2-9f23-4ad0-a73b-373d048ea783.png"
+      },
+      "revisions": [
+        {
+          "prompt": "Edit the station subject in this painting. Preserve the cinematic painted materials, dark blue-black space, warm side lighting, small corner star and faint nebula.\nReplace the large ring layout with a COMPACT STACK OF INDUSTRIAL MODULES mounted inside an OPEN RECTANGULAR LATTICE FRAME. The subject is an abandoned outpost made of stacked modules, not a wheel-shaped station.\nIt has exactly TWO SOLAR WINGS, both FOLDED INWARD and tucked close to the frame. Most windows are black. A cracked reactor shielding housing near the centre leaks an unstable ORANGE GLOW through its cracks. A few thin venting plumes drift from it. No fire or explosion.\nShow the entire station much farther away: the full silhouette including solar wings and antennas fits within the central 60% of width and between y=30% and y=70% of canvas height. The dark empty space dominates the frame. One central focal group.\nKeep one full-frame opaque 1672 x 941 landscape painting. No text, logos, markings, people, other ships, border or interface.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-3f0445c2-9f23-4ad0-a73b-373d048ea783.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-b93807e8-f88a-4146-9963-666fa1d0ae7a.png"
+        }
+      ],
+      "file": {
+        "slug": "abandoned-outpost",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1854188,
+        "sha256": "b00e508b27e2a941ea8486fea4096a6f83a3e9aba9830fc101653217b237f3dd",
+        "unchangedFromGeneratedOutput": true
+      }
+    },
+    {
+      "number": 9,
+      "slug": "pirate-stash",
+      "name": "Pirate stash",
+      "master": "client/art-src/signals-v1/pirate-stash.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-a59823ed-3edc-4640-9032-d8d93ca9150a.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept.\nAsset type: a single cinematic science-fiction painting for the Signals card and report in Stellar Syndicates, one coherent series of thirteen discovery illustrations.\nInput image 1 is the SERIES STYLE reference only: the drifting-wreck painting. Match its realistic cinematic painting style, grounded materials, restrained detail, cold blue-black space, subtle warm illumination and quiet abandoned atmosphere. Paint the NEW subject specified below; the wreck itself does not belong in this painting.\nSeries environment: open space close to a young colony's home star, viewed from a nearby ship outside the picture. A small distant warm star low in one corner, very faint nebula haze and sparse stars. Light the subject gently from one side with the star and its own small lights. Dark quiet edges.\nFormat and framing: one opaque full-frame wide 16:9 landscape image, ideally native 1672 x 941. One clear focal group near the centre. Keep ALL essential subject details, appendages and small associated objects fully inside x=20–80% of the image width and y=27.5–72.5% of the image height. Leave ample space around the group. The distant camera composition must survive a central 21:9 banner crop and remain readable on a small card. Never enlarge the subject to fill the canvas. No collage or inset.\nConstraints: no text, writing, labels, numbers, logos, emblems, flags, skulls, watermark, borders, or interface. No people. No planet filling the frame. No observer ship, cockpit, or any other spacecraft besides the explicitly requested subject. No explosions, fire or weapons fire. Include only the objects specified for this painting; no added asteroid field.\nCamera distance is critical: the complete focal group should occupy only about ONE THIRD of the full canvas height, roughly 320 pixels on a 941-pixel-tall canvas, centred vertically. Keep all appendages within that distant compact silhouette. There must be much more surrounding space than subject.\nInput image 2: Use the privateer ship only for its patched orange-and-yellow armour colours on the crates. Do not show the ship or any markings. The only thing to borrow is weathered orange-and-yellow patched paint, not the ship's shape or parts.\nPainting 9 of 13: Pirate stash.\nSubject: Crates and fuel drums strapped together under patched netting in the shadow of a small asteroid, ringed by exactly three small drifting proximity mines with blinking red sensor eyes. Patched orange and yellow armour plating on the crates. Accent: blinking red. Mood: hidden, threatening. No ship. The small asteroid, stash and all three mines must form one compact group in the central safe area.\nFinal emphasis: an asteroid sheltering a tightly netted bundle of crates and cylindrical fuel drums, with EXACTLY THREE separate small proximity mines, each with one red sensor eye. No spacecraft, ship hull, wings or engines. Show the entire arrangement as one small, distant central cluster, only about one-third of the frame height.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/drifting-wreck.png",
+          "/Users/peter/projects/stellar-syndicates/client/art-src/privateer-raider-reference-v1/privateer-raider-reference.png"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-a59823ed-3edc-4640-9032-d8d93ca9150a.png"
+      },
+      "revisions": [],
+      "file": {
+        "slug": "pirate-stash",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1922846,
+        "sha256": "e66d30a03b1a6ae36905ee44ea8c4fec9526d100f39c4131d28acf5be773c96c",
+        "unchangedFromGeneratedOutput": true
+      }
+    },
+    {
+      "number": 10,
+      "slug": "ghost-ship",
+      "name": "Ghost ship",
+      "master": "client/art-src/signals-v1/ghost-ship.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-24ed4fbf-f632-4977-92bf-61cfffb14fa7.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept.\nAsset type: a single cinematic science-fiction painting for the Signals card and report in Stellar Syndicates, one coherent series of thirteen discovery illustrations.\nInput image 1 is the SERIES STYLE reference only: the drifting-wreck painting. Match its realistic cinematic painting style, grounded materials, restrained detail, cold blue-black space, subtle warm illumination and quiet abandoned atmosphere. Paint the NEW subject specified below; the wreck itself does not belong in this painting.\nSeries environment: open space close to a young colony's home star, viewed from a nearby ship outside the picture. A small distant warm star low in one corner, very faint nebula haze and sparse stars. Light the subject gently from one side with the star and its own small lights. Dark quiet edges.\nFormat and framing: one opaque full-frame wide 16:9 landscape image, ideally native 1672 x 941. One clear focal group near the centre. Keep ALL essential subject details, appendages and small associated objects fully inside x=20–80% of the image width and y=27.5–72.5% of the image height. Leave ample space around the group. The distant camera composition must survive a central 21:9 banner crop and remain readable on a small card. Never enlarge the subject to fill the canvas. No collage or inset.\nConstraints: no text, writing, labels, numbers, logos, emblems, flags, skulls, watermark, borders, or interface. No people. No planet filling the frame. No observer ship, cockpit, or any other spacecraft besides the explicitly requested subject. No explosions, fire or weapons fire. Include only the objects specified for this painting; no added asteroid field.\nCamera distance is critical: the complete focal group should occupy only about ONE THIRD of the full canvas height, roughly 320 pixels on a 941-pixel-tall canvas, centred vertically. Keep all appendages within that distant compact silhouette. There must be much more surrounding space than subject.\nInput image 2: Hull-family reference only. Preserve the corvette family resemblance while painting an older, battle-scarred predecessor with changed details. Reference sheet labels and layout do not belong in the new painting. Retain a recognizable broad-shouldered angular hull and twin rear propulsion housings, but this is an earlier worn variant with substantial age and damage.\nPainting 10 of 13: Ghost ship.\nSubject: A mid-sized military hull drifting dark, deep battle scars and missing armour plates, one turret slowly turning on its own, a few systems flickering pale blue, small debris orbiting it. Paint an older battle-scarred warship of the reference corvette hull family, not the exact ship. Accent: flickering pale blue. Mood: eerie, dangerous. Engines dark, no weapon discharge.\nFinal composition emphasis: a distant, dark military derelict on a shallow diagonal. All hull extremities and debris stay in the central band. Only a few small pale-blue system lights remain on; no bright engine glow.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/drifting-wreck.png",
+          "/Users/peter/projects/stellar-syndicates/client/art-src/corvette-reference-v1/corvette-reference.png"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-072a1339-4042-49f7-9bde-ff4ae74299fa.png"
+      },
+      "revisions": [
+        {
+          "prompt": "Use case: stylized-concept. Painting 10 of 13: GHOST SHIP for Stellar Syndicates.\nINPUT IMAGE 1 DEFINES THE HULL FAMILY: the CORVETTE reference sheet. Build the new subject from this hull design: pointed angular bow, broad flat swept diamond-shaped shoulders, a narrow aft spine, twin separated rear engine nacelles, and low mounted turrets. Preserve this distinctive broad-winged angular corvette silhouette. Paint an OLDER BATTLE-SCARRED predecessor, with changed armour panels and older mechanical details.\nINPUT IMAGE 2 defines ONLY the realistic cinematic painting style, materials, dark-space environment and warm side lighting. Its freighter shape must not be used for this military hull.\n\nSubject: a mid-sized military corvette-family warship drifting dark. Deep battle scars, missing armour plates exposing dark internal structure, one surviving turret turned to one side on its own, a few small systems flickering pale blue, small torn metal debris orbiting close to it. Engines completely dark. Eerie, dangerous, silent. No active combat, explosions or weapons fire.\nView it from a three-quarter angle slightly above, on a shallow horizontal diagonal, so the corvette's broad swept shoulders and two rear nacelles remain readable. Camera far enough away that the WHOLE ship and all nearby debris fit within the central 60% of image width and middle 40% of image height. Generous quiet dark space above, below and beside it.\nCold blue-black open space, a very faint nebula haze, sparse stars, a small distant warm star low in one corner. Restrained light on one side of the ship, pale-blue system lights as the accent.\nOne full-frame opaque wide 16:9 painting, native 1672 x 941. No text, labels, numbers, logos, emblems, flags, skulls, watermarks, border, interface, reference sheet, collage, planet, people or any other spacecraft.",
+          "references": [
+            "/Users/peter/projects/stellar-syndicates/client/art-src/corvette-reference-v1/corvette-reference.png",
+            "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/drifting-wreck.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-6c2dce36-8692-4d0c-91db-cfe67667ca58.png"
+        },
+        {
+          "prompt": "Change only the camera distance in this painting. Preserve the exact broad-shouldered angular corvette-family military hull, twin rear nacelles, ruined armour, exposed dark mechanisms, surviving turret, small pale-blue system lights, drifting metal debris, painterly materials, warm side lighting and dark space background.\nSHRINK THE COMPLETE SHIP-AND-DEBRIS GROUP TO 65% OF ITS CURRENT SIZE. Place the smaller group at the exact centre of the existing canvas, with every part of the hull and debris between y=30% and y=70% of the full image height and inside the central 60% of the width. Fill the new space naturally with the same dark starfield. More distant view, ample quiet space all around.\nKeep the same opaque 1672 x 941 landscape canvas. No cropping, no added objects, no new lights, no text, labels, symbols, border or interface.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-6c2dce36-8692-4d0c-91db-cfe67667ca58.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-24ed4fbf-f632-4977-92bf-61cfffb14fa7.png"
+        }
+      ],
+      "file": {
+        "slug": "ghost-ship",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1898346,
+        "sha256": "72ecb90a946dab5e8761a7fbe13d76492c8e0fff86f33648921efcd661e758db",
+        "unchangedFromGeneratedOutput": true
+      }
+    },
+    {
+      "number": 11,
+      "slug": "precursor-fragment",
+      "name": "Precursor fragment",
+      "master": "client/art-src/signals-v1/precursor-fragment.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-a1f5e5ad-3a1b-488e-ab72-72c0ae913b9b.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept.\nAsset type: a single cinematic science-fiction painting for the Signals card and report in Stellar Syndicates, one coherent series of thirteen discovery illustrations.\nInput image 1 is the SERIES STYLE reference only: the drifting-wreck painting. Match its realistic cinematic painting style, grounded materials, restrained detail, cold blue-black space, subtle warm illumination and quiet abandoned atmosphere. Paint the NEW subject specified below; the wreck itself does not belong in this painting.\nSeries environment: open space close to a young colony's home star, viewed from a nearby ship outside the picture. A small distant warm star low in one corner, very faint nebula haze and sparse stars. Light the subject gently from one side with the star and its own small lights. Dark quiet edges.\nFormat and framing: one opaque full-frame wide 16:9 landscape image, ideally native 1672 x 941. One clear focal group near the centre. Keep ALL essential subject details, appendages and small associated objects fully inside x=20–80% of the image width and y=27.5–72.5% of the image height. Leave ample space around the group. The distant camera composition must survive a central 21:9 banner crop and remain readable on a small card. Never enlarge the subject to fill the canvas. No collage or inset.\nConstraints: no text, writing, labels, numbers, logos, emblems, flags, skulls, watermark, borders, or interface. No people. No planet filling the frame. No observer ship, cockpit, or any other spacecraft besides the explicitly requested subject. No explosions, fire or weapons fire. Include only the objects specified for this painting; no added asteroid field.\nCamera distance is critical: the complete focal group should occupy only about ONE THIRD of the full canvas height, roughly 320 pixels on a 941-pixel-tall canvas, centred vertically. Keep all appendages within that distant compact silhouette. There must be much more surrounding space than subject.\nInput image 2: Use this nebula for colour only, not its composition, density, brightness or subject matter. Borrow only subdued hints of cold violet and teal in the dark material and surrounding faint haze. The SHARD'S only emitted light is FAINT GOLD in geometric channels.\nPainting 11 of 13: Precursor fragment.\nSubject: A tall angular shard of an ancient, non-human installation: dark glassy material carved with fine geometric channels glowing faint gold, slowly turning, tiny fragments orbiting it. Clearly not made by people. Accent: faint gold. Mood: ancient, awe-inspiring. The shard's tall proportions should remain clear, but show it at a distance so its complete top and bottom and orbiting fragments stay inside the middle 45% of image height. The channels are abstract geometric forms, never letters, numbers or glyph-like writing.\nFinal composition emphasis: a narrow angular dark-glass shard with unmistakably non-human construction, shown from a distant camera. Its complete tall silhouette and floating splinters occupy only about one-third of the canvas height. Its two tips stay comfortably inside the central band. Fine abstract golden channels, no readable or pseudo-readable text.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/drifting-wreck.png",
+          "/Users/peter/projects/stellar-syndicates/client/art-src/nebulas/precursor_cloud.png"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-0631da80-2c18-4846-9392-8c6d0599d6e2.png"
+      },
+      "revisions": [
+        {
+          "prompt": "Change only the scale and placement of the central shard and orbiting splinters in this painting. Preserve the exact tall angular dark-glass alien design, fine faint-gold geometric channels, subtle cold violet reflections, materials, illumination, star and background.\nSHRINK THE ENTIRE SHARD-AND-SPLINTERS GROUP TO 55% OF ITS CURRENT SIZE. Center that smaller group at the exact centre of the existing wide image. Its complete top and bottom tips and every orbiting splinter must lie between y=30% and y=70% of the canvas height. Keep the original tall narrow proportions; pull the camera farther away rather than shortening the shard.\nFill the vacated space with the same very dark blue-black space and faint haze. Preserve the opaque full-frame 1672 x 941 canvas. Add nothing. No text, glyphs, numbers, symbols, border or interface.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-0631da80-2c18-4846-9392-8c6d0599d6e2.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-a1f5e5ad-3a1b-488e-ab72-72c0ae913b9b.png"
+        }
+      ],
+      "file": {
+        "slug": "precursor-fragment",
+        "width": 1671,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1779444,
+        "sha256": "cbb2a62d9651ccec03e03e92a1f9e44b502d91e0094473ced18aebbbc66da173",
+        "unchangedFromGeneratedOutput": true
+      }
+    },
+    {
+      "number": 12,
+      "slug": "exotic-flare",
+      "name": "Exotic flare",
+      "master": "client/art-src/signals-v1/exotic-flare.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-008e103b-8e00-4dbc-a52f-c08151f3f4a2.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept.\nAsset type: a single cinematic science-fiction painting for the Signals card and report in Stellar Syndicates, one coherent series of thirteen discovery illustrations.\nInput image 1 is the SERIES STYLE reference only: the drifting-wreck painting. Match its realistic cinematic painting style, grounded materials, restrained detail, cold blue-black space, subtle warm illumination and quiet abandoned atmosphere. Paint the NEW subject specified below; the wreck itself does not belong in this painting.\nSeries environment: open space close to a young colony's home star, viewed from a nearby ship outside the picture. A small distant warm star low in one corner, very faint nebula haze and sparse stars. Light the subject gently from one side with the star and its own small lights. Dark quiet edges.\nFormat and framing: one opaque full-frame wide 16:9 landscape image, ideally native 1672 x 941. One clear focal group near the centre. Keep ALL essential subject details, appendages and small associated objects fully inside x=20–80% of the image width and y=27.5–72.5% of the image height. Leave ample space around the group. The distant camera composition must survive a central 21:9 banner crop and remain readable on a small card. Never enlarge the subject to fill the canvas. No collage or inset.\nConstraints: no text, writing, labels, numbers, logos, emblems, flags, skulls, watermark, borders, or interface. No people. No planet filling the frame. No observer ship, cockpit, or any other spacecraft besides the explicitly requested subject. No explosions, fire or weapons fire. Include only the objects specified for this painting; no added asteroid field.\nCamera distance is critical: the complete focal group should occupy only about ONE THIRD of the full canvas height, roughly 320 pixels on a 941-pixel-tall canvas, centred vertically. Keep all appendages within that distant compact silhouette. There must be much more surrounding space than subject.\nPainting 12 of 13: Exotic flare.\nSubject: A twisting ribbon of violet energy curling in from beyond the frame and crackling around small floating crystals that glow violet-white; the space around it slightly warped. Accent: violet. Mood: dangerous, beautiful. Keep the essential glowing crystals and strongest curled energy interaction as one focal group inside the central safe area. Only the thin nonessential trailing ribbon may extend gently beyond the frame as requested; edges remain mostly dark.\nFinal emphasis: no ship and no asteroid. A delicate twisting ribbon of violet energy, with small floating violet-white crystals and slight optical warping of the nearby starfield. The luminous focal curl and all crystals stay in the middle 40% of the image height. The faint, thin incoming tail may cross the dark outer margin.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/drifting-wreck.png"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-008e103b-8e00-4dbc-a52f-c08151f3f4a2.png"
+      },
+      "revisions": [],
+      "file": {
+        "slug": "exotic-flare",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 2009690,
+        "sha256": "80367603a0e0c7a952fbc1a168e7fab7edc538e1408941bfdd469cb9357cc9d3",
+        "unchangedFromGeneratedOutput": true
+      }
+    },
+    {
+      "number": 13,
+      "slug": "teos-lost-crate",
+      "name": "Teo's lost crate",
+      "master": "client/art-src/signals-v1/teos-lost-crate.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-2f0a30d2-9fad-407a-bb98-4580895f7589.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept.\nAsset type: a single cinematic science-fiction painting for the Signals card and report in Stellar Syndicates, one coherent series of thirteen discovery illustrations.\nInput image 1 is the SERIES STYLE reference only: the drifting-wreck painting. Match its realistic cinematic painting style, grounded materials, restrained detail, cold blue-black space, subtle warm illumination and quiet abandoned atmosphere. Paint the NEW subject specified below; the wreck itself does not belong in this painting.\nSeries environment: open space close to a young colony's home star, viewed from a nearby ship outside the picture. A small distant warm star low in one corner, very faint nebula haze and sparse stars. Light the subject gently from one side with the star and its own small lights. Dark quiet edges.\nFormat and framing: one opaque full-frame wide 16:9 landscape image, ideally native 1672 x 941. One clear focal group near the centre. Keep ALL essential subject details, appendages and small associated objects fully inside x=20–80% of the image width and y=27.5–72.5% of the image height. Leave ample space around the group. The distant camera composition must survive a central 21:9 banner crop and remain readable on a small card. Never enlarge the subject to fill the canvas. No collage or inset.\nConstraints: no text, writing, labels, numbers, logos, emblems, flags, skulls, watermark, borders, or interface. No people. No planet filling the frame. No observer ship, cockpit, or any other spacecraft besides the explicitly requested subject. No explosions, fire or weapons fire. Include only the objects specified for this painting; no added asteroid field.\nCamera distance is critical: the complete focal group should occupy only about ONE THIRD of the full canvas height, roughly 320 pixels on a 941-pixel-tall canvas, centred vertically. Keep all appendages within that distant compact silhouette. There must be much more surrounding space than subject.\nInput image 2: Use the trader ship for its purple-and-cream livery and brass fittings only. Do not show the ship or copy any text, logos or markings. Do not copy reference-sheet labels, shape, cockpit, engines or cyan lighting. Use the rich purple, warm cream paint and well-worn brass for a single trader's crate.\nPainting 13 of 13: Teo's lost crate.\nSubject: A sturdy, well-loved trader's crate drifting alone, painted purple and cream with brass corner fittings and a brass latch, a few rope bindings and patches, a small brass locator lamp glowing warm. No stencils or writing. Accent: warm brass. Mood: a little theatrical. No ship.\nFinal emphasis: a single closed sturdy rectangular cargo crate with purple and cream painted panels, brass corners, a brass latch and an attached small warm locator lamp. No ship, no exposed contents, no added crates. Show it small and centred in generous dark space, fully inside the middle 40% of canvas height.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/drifting-wreck.png",
+          "/Users/peter/projects/stellar-syndicates/client/art-src/free-trader-reference-v1/free-trader-reference.png"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a157c2-67c2-7412-8671-6de60527d9b4/exec-2f0a30d2-9fad-407a-bb98-4580895f7589.png"
+      },
+      "revisions": [],
+      "file": {
+        "slug": "teos-lost-crate",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1831395,
+        "sha256": "7510e86d94f7d698e11b8c33d3e3488ed3f7ae8c7397a3934c907af5c4e38411",
+        "unchangedFromGeneratedOutput": true
+      }
+    }
+  ],
+  "nativeDimensions": "Twelve masters are 1672 x 941; precursor-fragment is 1671 x 941. Native sizes retained.",
+  "verification": {
+    "masterCount": 13,
+    "uniqueImageCount": 13,
+    "allOpaque": true,
+    "allCopiesMatchGeneratedOutputs": true,
+    "totalBytes": 24244612,
+    "files": [
+      {
+        "slug": "drifting-wreck",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1984811,
+        "sha256": "df85b8901b110c44a3c6657d5d7d458c40abd09c26c563bbdc950959e6ed2abc",
+        "unchangedFromGeneratedOutput": true
+      },
+      {
+        "slug": "cargo-pod",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1849109,
+        "sha256": "614efe689ce58dfc1872c6794a7e92f927cd5fae381fed42cd81ff4dee81c5a3",
+        "unchangedFromGeneratedOutput": true
+      },
+      {
+        "slug": "ore-fragment",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1875123,
+        "sha256": "d599dbd19d1cebd5a7b649781640a004fa19b1b1c65c8ed0f6f2a63c9ad88e0f",
+        "unchangedFromGeneratedOutput": true
+      },
+      {
+        "slug": "silent-probe",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1833033,
+        "sha256": "ba6407b530b29654fa26de22b48ba40fc545d5f95e327c196b24d5de141d91a3",
+        "unchangedFromGeneratedOutput": true
+      },
+      {
+        "slug": "distress-beacon",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1743473,
+        "sha256": "9df8c05d384fdad77e89affccbeebdd810a1bf01f433d3795a591638b667b79f",
+        "unchangedFromGeneratedOutput": true
+      },
+      {
+        "slug": "sensor-ghost",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1805756,
+        "sha256": "a79910447650f26d9368f72031748acd091d504d7baf97807f129784ce63e91b",
+        "unchangedFromGeneratedOutput": true
+      },
+      {
+        "slug": "authority-courier",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1857398,
+        "sha256": "45c92a9d72adfa47b7af124dfb150e7345febe87560d272f4b6bc8f9ed5cc027",
+        "unchangedFromGeneratedOutput": true
+      },
+      {
+        "slug": "abandoned-outpost",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1854188,
+        "sha256": "b00e508b27e2a941ea8486fea4096a6f83a3e9aba9830fc101653217b237f3dd",
+        "unchangedFromGeneratedOutput": true
+      },
+      {
+        "slug": "pirate-stash",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1922846,
+        "sha256": "e66d30a03b1a6ae36905ee44ea8c4fec9526d100f39c4131d28acf5be773c96c",
+        "unchangedFromGeneratedOutput": true
+      },
+      {
+        "slug": "ghost-ship",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1898346,
+        "sha256": "72ecb90a946dab5e8761a7fbe13d76492c8e0fff86f33648921efcd661e758db",
+        "unchangedFromGeneratedOutput": true
+      },
+      {
+        "slug": "precursor-fragment",
+        "width": 1671,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1779444,
+        "sha256": "cbb2a62d9651ccec03e03e92a1f9e44b502d91e0094473ced18aebbbc66da173",
+        "unchangedFromGeneratedOutput": true
+      },
+      {
+        "slug": "exotic-flare",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 2009690,
+        "sha256": "80367603a0e0c7a952fbc1a168e7fab7edc538e1408941bfdd469cb9357cc9d3",
+        "unchangedFromGeneratedOutput": true
+      },
+      {
+        "slug": "teos-lost-crate",
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1831395,
+        "sha256": "7510e86d94f7d698e11b8c33d3e3488ed3f7ae8c7397a3934c907af5c4e38411",
+        "unchangedFromGeneratedOutput": true
+      }
+    ]
+  }
+}

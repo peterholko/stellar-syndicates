@@ -41,6 +41,8 @@ pub enum ExpeditionTask {
     /// Explicit choices: ordinary travel never opts into deep/risky work.
     Study,
     Extract,
+    /// §signals: a captained fleet sweeps one of its corporation's signals.
+    Signal,
 }
 
 impl ExpeditionTask {
@@ -51,6 +53,7 @@ impl ExpeditionTask {
             Self::Restore => RESTORE_SECONDS,
             Self::Study => DEEP_STUDY_SECONDS,
             Self::Extract => EXTRACTION_SECONDS,
+            Self::Signal => crate::signals::SIGNAL_SWEEP_S,
         }
     }
 }
@@ -206,3 +209,4 @@ impl Exploration {
             .collect()
     }
 }
+

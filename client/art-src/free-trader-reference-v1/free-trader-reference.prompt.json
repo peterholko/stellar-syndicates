@@ -1,0 +1,55 @@
+{
+  "id": "free-trader-reference",
+  "file": "free-trader-reference.png",
+  "prompt": "Use case: stylized-concept. Asset type: fully textured five-view 2D orthographic spaceship reference sheet for accurate 3D reconstruction in the Stellar Syndicates fleet.\nImage 1 is the authoritative ship design. Expand it to exactly FIVE physically consistent views of that SAME ship. Image 2 is only the fleet's reference-sheet presentation and material style; do not copy its ship silhouette.\nDESIGN:\nFREE TRADER: an independent merchant ship, unarmed. A sleek rounded streamlined bow with a wide wraparound cyan bridge canopy. Amidships, the widest part, a broad rounded-rectangle MARKET DECK roofed by a slightly domed segmented canopy of exactly EIGHT transverse panels in alternating cream and deep royal purple livery, with exactly FOUR small round docking collars on its edges, two to port and two to starboard, facing outward. A narrow waist behind it, and exactly TWO oversized cylindrical engines on short swept-back pylons, side by side at one height. Pale silver and titanium plates, charcoal gunmetal structure, polished brass trim, a few mismatched replacement panels, modest cyan lights, plated underside with cargo hatches beneath the market deck. No guns, turrets, cargo pods or extra engines.\nLAYOUT: wide 2:1 landscape white sheet, high native detail. Exactly two large vertical plan drawings on the left 58% of the canvas, TOP in first column and BOTTOM in second column, noses UP. Their silhouettes use identical length, width and station positions. Right 42%: FRONT at the top, BACK in the middle, SIDE at the bottom with nose LEFT. Clean charcoal title at upper left and a small uppercase view label beneath each of five drawings. Generous clear separation. No sixth drawing. The entire ship fits inside the sheet.\nPROJECTION: true orthographic, parallel projection, ZERO camera pitch on FRONT/BACK/SIDE. FRONT/BACK are shallow cross-sections, not compressed overhead plans. SIDE shows a flat profile, never a visible broad roof or far flank. TOP/BOTTOM have no perspective. Engines point backward; top/side show cylindrical walls and edge-on nozzle rims, NOT exhaust discs rotated toward the camera. Only BACK shows end-on circular exhausts. Keep the canopy panel, docking collar and engine counts consistent across every view; hidden far-side items naturally overlap in profile. Do not add unexplained extra engines, collars or guns.\nBOTTOM: fully detailed dedicated ventral plating with seams, cargo hatches, cooling grilles and keel texture, same outer shape and openings as TOP. No dorsal canopy stripes or bridge glass printed on the bottom. True holes remain blank white. Front/back/side must also have coherent plating textures, not empty gray blocks.\nSTYLE: precise colored hard-surface 2D technical concept illustration, clean contours, fine panel lines, pale silver/titanium plates, charcoal gunmetal structure, polished brass hardware, cream and deep purple canopy livery, small cyan lights. Mild wear, soft neutral illumination, no strong highlights or cast shadows. Match fleet reference style. No scenery, checkerboard, grid, dimensions, logos, docked shuttles, plumes or watermark.\nText exactly once each: \"FREE TRADER\", \"TOP\", \"BOTTOM\", \"FRONT\", \"BACK\", \"SIDE\".",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/free-trader-reference-v1/free-trader.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/construction-ship-reference-v1/construction-ship-reference.png"
+  ],
+  "transparent_background": false,
+  "output": "/Users/peter/projects/stellar-syndicates/client/art-src/free-trader-reference-v1/free-trader-reference.png",
+  "source_brief": "docs/free-trader-art-prompt.md",
+  "mode": "built-in image_gen",
+  "initial_generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-21840576-5a3c-437c-83f8-a18688d3af89.png",
+  "generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-12e9d380-9e81-4d20-b09b-7b90b2f1b096.png",
+  "edits": [
+    {
+      "prompt": "Use case: precise-object-edit. Image 1 is the EDIT TARGET, a five-view Free Trader reference sheet. Image 2 is the authoritative overhead ship shape. Correct ONLY the BACK drawing at middle right in Image 1; preserve the TOP, BOTTOM, FRONT and SIDE drawings and every text label, title, scale and sheet layout exactly. In the BACK view, move the two end-on circular engine nozzles much farther apart horizontally to match their physical positions in TOP and BOTTOM. The distance between engine centers should be about 62% of the full ship width measured between the outside docking collars, NOT the current cramped 32%. The nozzle diameters remain approximately unchanged. Both nozzles sit at the SAME height, face directly toward the viewer, and attach by short swept pylons to the narrow central waist. Keep exactly TWO engines; keep the central narrow hull visible between them and the wider market deck behind them. The four lateral docking collars naturally overlap into two visible side projections, at the ship's widest points; those collars remain just outside the engines' outer silhouette. BACK must be a true zero-pitch orthographic rear elevation with no visible broad roof. Preserve all materials, brass trim, cyan apertures, texture quality and the single BACK label below it. Do not edit other drawings or add any drawing, text, weapon, plume or object. Output the same wide 2:1 opaque white reference sheet at native resolution.",
+      "referenced_image_paths": [
+        "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-21840576-5a3c-437c-83f8-a18688d3af89.png",
+        "/Users/peter/projects/stellar-syndicates/client/art-src/free-trader-reference-v1/free-trader.png"
+      ]
+    }
+  ],
+  "verification": {
+    "size": [
+      1774,
+      887
+    ],
+    "mode": "RGB",
+    "aspectRatio": 2,
+    "opaque": true,
+    "sha256": "45453667cd90f24588732622d0cf492bdef697a620feccae44fd4d9397bb71be",
+    "nativeBytesPreserved": true,
+    "visualCheck": {
+      "views": [
+        "TOP",
+        "BOTTOM",
+        "FRONT",
+        "BACK",
+        "SIDE"
+      ],
+      "viewCount": 5,
+      "dedicatedVentralPlating": true,
+      "canopyPanels": 8,
+      "dockingCollars": 4,
+      "engines": 2,
+      "weapons": 0,
+      "title": "FREE TRADER"
+    }
+  },
+  "reference_sha256": {
+    "/Users/peter/projects/stellar-syndicates/client/art-src/free-trader-reference-v1/free-trader.png": "c73b5ec2469a40adae02667d4856a94235b976a9347fe669755ad270d6d0f1be",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/construction-ship-reference-v1/construction-ship-reference.png": "f7f2513e8541c2db135c1515a79ca021eed25eaaf129613f94ac4d6903317417"
+  }
+}

@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{cargo::Commodity, ids::EntityId};
+use crate::{build::StructureKind, cargo::Commodity, ids::EntityId, math::Vec2};
 
 /// Earliest point at which a corporation may deliberately end founder safety.
 pub const FOUNDER_PROTECTION_MIN_S: f64 = 30.0 * 60.0;
@@ -21,22 +21,37 @@ pub const FOUNDER_PROTECTION_AFTER_COMPLETE_S: f64 = 24.0 * 60.0 * 60.0;
 /// Founder safety is never permanent, even if the programme is abandoned.
 pub const FOUNDER_PROTECTION_MAX_S: f64 = 48.0 * 60.0 * 60.0;
 
-/// §founding R3: the local-opening Privateer appears this far ahead along the
-/// guarded Freighter's route (at most 60% of the leg) and this far to its side:
-/// inside ordinary sensors, so the approach is visible and the escort meets it.
-pub const LOCAL_PRIVATEER_AHEAD_SU: f64 = 9_000.0;
-pub const LOCAL_PRIVATEER_OFFSET_SU: f64 = 6_000.0;
+/// §charter-v5: the raid. The privateer sets out from beyond the colony's
+/// sensors on its den's side, this many sensor ranges out (never past the den
+/// itself), so it is seen within seconds of the mine coming online.
+pub const RAID_START_SENSOR_RANGES: f64 = 1.25;
+/// It is over the colony once inside its gravity well's edge, and loads this
+/// many units a second: what it takes visibly drains in a quarter-minute.
+pub const RAID_LOOT_PER_SEC: f64 = 4.0;
+/// What it takes: every unit of these in the home stockpile.
+pub const RAID_TAKES: [Commodity; 2] = [Commodity::Electronics, Commodity::Armaments];
+/// It never holds orbit longer than this, whatever stops it loading.
+pub const RAID_MAX_HOLD_S: f64 = 90.0;
+/// After unloading at its den, it lurks this share of the way from the den
+/// toward the colony: beyond the colony's sensors, but tracked.
+pub const RAID_LURK_FRACTION: f64 = 0.35;
 
 /// §founding R6: the Authority's small charter stipend for first reaching a
 /// charter milestone, named for the step just finished. Credits are money,
 /// never conjured goods; the physical economy stays the game. The Rogue
-/// Privateer pays its own bounty instead.
+/// Privateer pays its own bounty instead. §charter-v5: the stipends before the
+/// bounty leave the founder about 800 Cr short of buying back what the raid
+/// took (50 semiconductors and 15 Armaments at the trader's markup), so the
+/// ore has to be sold at the trader's discount.
 pub fn charter_stipend(stage: FoundingStage) -> Option<(&'static str, f64)> {
     Some(match stage {
-        FoundingStage::PrepareExport => ("Mine online", 300.0),
-        FoundingStage::DefeatPrivateer => ("First shipment under way", 500.0),
-        FoundingStage::FirstResearch => ("Shipyard staffed", 400.0),
-        FoundingStage::SurveyCandidates => ("Research under way", 300.0),
+        FoundingStage::BuildMine => ("Colony fed and housed", 300.0),
+        FoundingStage::PirateRaid => ("Mine online", 300.0),
+        FoundingStage::BuildInterceptor => ("Shipyard staffed", 400.0),
+        FoundingStage::DefeatPrivateer => ("Interceptor launched", 300.0),
+        FoundingStage::PrepareExport => ("Privateer den eliminated", 600.0),
+        FoundingStage::ExpandMining => ("Research under way", 300.0),
+        FoundingStage::SurveyCandidates => ("Mining expanded", 400.0),
         FoundingStage::BuildBarge => ("Nearby system charted", 500.0),
         FoundingStage::MineBelt => ("Mining Barge launched", 300.0),
         FoundingStage::HaulOre => ("Belt mining under way", 300.0),
@@ -44,6 +59,31 @@ pub fn charter_stipend(stage: FoundingStage) -> Option<(&'static str, f64)> {
         _ => return None,
     })
 }
+
+/// §charter-v5: the kit's semiconductors, all of which the raid takes. Tunable.
+pub const KIT_SEMICONDUCTORS: f64 = 40.0;
+/// §charter-v5: the kit's Armaments: one Interceptor's worth, which the raid
+/// takes too. Tunable.
+pub const KIT_ARMAMENTS: f64 = 15.0;
+/// §charter-v4: the kit's Provisions: about five and a half minutes of food
+/// for the 6,000 settlers while the farms go up, plus the Academy's 20. Tunable.
+pub const KIT_PROVISIONS: f64 = 100.0;
+
+/// §charter-v4: the privateer den. Its garrison flies the privateer's weak
+/// guns: three raiders at three-quarter hull are a real fight that one
+/// Interceptor wins (measured over eleven seeds: 27–54 s, at worst 45% hull
+/// left). It has no defense platforms; one platform tier kills a lone
+/// Interceptor. Tunable.
+pub const DEN_GARRISON_RAIDERS: u32 = 3;
+pub const DEN_GARRISON_HULL_FRAC: f64 = 0.75;
+/// Goods left at the den when it falls, for a Freighter to recover.
+pub const DEN_PLUNDER: [(crate::cargo::Commodity, u32); 2] =
+    [(crate::cargo::Commodity::Alloys, 40), (crate::cargo::Commodity::Electronics, 15)];
+/// The den's belt is rich: its rolled deposits times this. Tunable.
+pub const DEN_BELT_RICHNESS_MULT: f64 = 1.8;
+/// Destroying the privateer promotes the captain aboard the killing fleet: its
+/// experience is topped up to this level's (the kill alone earns 85 of 100).
+pub const PRIVATEER_PROMOTION_LEVEL: u8 = 2;
 
 /// The Academy does real work for the first programme, but the founding grant
 /// leaves only this much Tier-I throughput to fund. At the fast 4× playtest
@@ -82,17 +122,23 @@ pub const PRIVATEER_DAMAGE_MULT: f64 = 0.05;
 pub const RECOMMENDED_FIRST_RESEARCH: [&str; 3] =
     ["comp_shadow_iv_recon_suite", "prop_expedition_iii_extended_tanks", "mat_deep_bores"];
 
-/// The founding charter (v3), nine steps in three chapters:
-/// - Landfall: BuildMine → PrepareExport (the first escorted shipment) →
-///   DefeatPrivateer (it ambushes that shipment).
-/// - Industry: BuildShipyard → FirstResearch (research started at a staffed
-///   Academy) → SurveyCandidates (chart the local stop with a probe).
-/// - Reach: BuildBarge → MineBelt → HaulOre (the barge's ore delivered).
+/// The founding charter (v5, `docs/founding-charter.md`), eighteen steps in
+/// five chapters ([`FoundingStage::STEPS`]):
+/// - Landfall: BuildBioharvester → BuildHabitat → BuildAgroplex → BuildMine.
+/// - Raid: PirateRaid (the privateer takes the kit's semiconductors and
+///   Armaments) → SellOre (to the free trader, which docks after the raid) →
+///   PowerShipyard → BuildShipyard.
+/// - Pirates: BuildInterceptor → DefeatPrivateer → EliminateDen (its base at
+///   the local belt, holding what the raid took).
+/// - Expansion: PrepareExport (the first ore to the Market Hub, now the lane
+///   is safe) → FirstResearch → ExpandMining (a powered mine on another home
+///   world) → SurveyCandidates.
+/// - Reach: BuildBarge → MineBelt → HaulOre.
 ///
-/// BuildConvoy remains the lost-starter recovery step. Keep enum order stable
-/// for saved identities: later stages are appended, not inserted in play order.
-/// Retired stages (the Scout, the beacon, the investment choice, colonies)
-/// advance to their successors.
+/// Keep enum order stable for saved identities: later stages are appended,
+/// not inserted in play order. Retired stages (the Scout, the beacon, the
+/// investment choice, colonies, the counterfeit, the Freighter export) advance
+/// to their successors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FoundingStage {
@@ -122,6 +168,8 @@ pub enum FoundingStage {
     GrowBusiness,
     /// Version-two opening: a short, local recovery before the Hub voyage.
     LocalRecovery,
+    /// §charter-v5: "Export your ore", after the den: done when the report of
+    /// the first Ferrite Ore leaving for the Market Hub reaches command.
     PrepareExport,
     /// §belts: build a Mining Barge, once the surveys have charted a belt.
     BuildBarge,
@@ -131,12 +179,119 @@ pub enum FoundingStage {
     /// §charter v3: bring the barge's ore home and unload it, or sell it at
     /// the Hub; done when command hears it was delivered.
     HaulOre,
+    /// §charter-v4: build and staff the first Bioharvester.
+    BuildBioharvester,
+    /// §charter-v4: build the first Habitat.
+    BuildHabitat,
+    /// §charter-v4: build and staff the first Agroplex.
+    BuildAgroplex,
+    /// §charter-v4: the Shipyard needs more than the Command Center's reactor:
+    /// build a Solar Array.
+    PowerShipyard,
+    /// Retired (§charter-v5): the counterfeit's "buy real semiconductors".
+    BuySemiconductors,
+    /// Retired (§charter-v5): the first Freighter.
+    BuildFreighter,
+    /// §charter-v4: build an Interceptor (at Shipyard II).
+    BuildInterceptor,
+    /// §charter-v4: a powered, staffed mine on another world of the home system.
+    ExpandMining,
+    /// §charter-v4: the dead privateer's log named its den, a pirate base at
+    /// the home's local belt; done when the report of its clearance reaches
+    /// command.
+    EliminateDen,
+    /// §charter-v5: the privateer raids the colony as the mine comes online;
+    /// done when the report of what it took reaches command.
+    PirateRaid,
+    /// §charter-v5: sell Ferrite Ore to the free trader (or it has gone).
+    SellOre,
+}
+
+impl FoundingStage {
+    /// §charter-v5: the charter's steps in play order (Complete follows).
+    pub const STEPS: [FoundingStage; 18] = [
+        Self::BuildBioharvester,
+        Self::BuildHabitat,
+        Self::BuildAgroplex,
+        Self::BuildMine,
+        Self::PirateRaid,
+        Self::SellOre,
+        Self::PowerShipyard,
+        Self::BuildShipyard,
+        Self::BuildInterceptor,
+        Self::DefeatPrivateer,
+        Self::EliminateDen,
+        Self::PrepareExport,
+        Self::FirstResearch,
+        Self::ExpandMining,
+        Self::SurveyCandidates,
+        Self::BuildBarge,
+        Self::MineBelt,
+        Self::HaulOre,
+    ];
+
+    /// The 1-based step, 19 for Complete; retired stages count as the step
+    /// they hand on to.
+    pub fn step(self) -> usize {
+        let live = match self {
+            Self::Complete | Self::BuildColony | Self::EstablishColony => return Self::STEPS.len() + 1,
+            Self::BuySemiconductors => Self::PowerShipyard,
+            Self::BuildFreighter | Self::BuildConvoy => Self::BuildInterceptor,
+            Self::LocalRecovery | Self::ExportProduction => Self::PrepareExport,
+            Self::CompleteExport | Self::GrowBusiness | Self::BuildSecondFreighter => Self::BuildShipyard,
+            Self::BuildAcademy => Self::FirstResearch,
+            Self::BuildScout => Self::SurveyCandidates,
+            other => other,
+        };
+        Self::STEPS.iter().position(|s| *s == live).map_or(Self::STEPS.len() + 1, |i| i + 1)
+    }
 }
 
 impl Default for FoundingStage {
     fn default() -> Self {
         Self::Complete
     }
+}
+
+/// §first-session (Oct 15 2026): the charter's opening buildings rise in
+/// [`OPENING_BUILD_SECS`] while the charter runs: level I of each on the
+/// landing world (the home's Command Center world), whatever its construction
+/// speed, so the first session isn't spent waiting on them. Tunable.
+pub const OPENING_BUILD_SECS: f64 = 10.0;
+pub const OPENING_BUILDS: [StructureKind; 5] = [StructureKind::MiningComplex, StructureKind::Bioharvester,
+    StructureKind::Habitat, StructureKind::Agroplex, StructureKind::PowerPlant];
+
+/// §charter-v5: where the raiding privateer is in its raid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RaidPhase {
+    /// Flying in on the colony.
+    Inbound,
+    /// Over the colony, loading what it takes.
+    Looting,
+    /// Flying home to its den with the loot.
+    Returning,
+    /// Unloaded; lurking between its den and the colony.
+    Lurking,
+}
+
+/// §charter-v5: the privateer's one raid on a founder's colony. Persisted, so
+/// a reload neither repeats it nor refills what it may take.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FoundingRaid {
+    pub phase: RaidPhase,
+    /// Where it heads home to: its den, or its starting point without one.
+    pub base: Vec2,
+    /// Where it lurks once home.
+    pub lurk: Vec2,
+    pub arrived_at: Option<f64>,
+    /// What it may still take, frozen when it arrives over the colony.
+    #[serde(default)]
+    pub allowance: BTreeMap<Commodity, u32>,
+    #[serde(default)]
+    pub stolen: BTreeMap<Commodity, u32>,
+    #[serde(default)]
+    pub loading_credit: f64,
 }
 
 /// Persistent per-corporation progress. `Default` is deliberately complete and
@@ -243,6 +398,29 @@ pub struct FoundingProgram {
     /// stockpile or the Market warehouse) reaches the command center.
     #[serde(default)]
     pub haul_report_at: Option<f64>,
+    /// §merchant: the founding merchant has been called (once per charter).
+    #[serde(default)]
+    pub merchant_called: bool,
+    /// §charter-v5: the privateer's raid on the colony, once launched.
+    #[serde(default)]
+    pub raid: Option<FoundingRaid>,
+    /// §charter-v5: when command first sees the raiding privateer; from then
+    /// on the colony tracks it.
+    #[serde(default)]
+    pub raid_seen_at: Option<f64>,
+    /// §charter-v5: when the report of what the raid took reaches command.
+    #[serde(default)]
+    pub raid_report_at: Option<f64>,
+    /// §charter-v5: Ferrite Ore sold to the free trader.
+    #[serde(default)]
+    pub ore_sold: u32,
+    /// §charter-v4: the system of this corporation's privateer den, once the
+    /// privateer has appeared (its den with it).
+    #[serde(default)]
+    pub den: Option<EntityId>,
+    /// §charter-v4: when the report that the den fell reaches command.
+    #[serde(default)]
+    pub den_report_at: Option<f64>,
 }
 
 impl Default for FoundingProgram {
@@ -281,6 +459,13 @@ impl Default for FoundingProgram {
             belt_target: None,
             belt_report_at: None,
             haul_report_at: None,
+            merchant_called: false,
+            raid: None,
+            raid_seen_at: None,
+            raid_report_at: None,
+            ore_sold: 0,
+            den: None,
+            den_report_at: None,
         }
     }
 }
@@ -292,8 +477,9 @@ impl FoundingProgram {
         initial_owned_systems: usize,
         survey_candidates: Vec<EntityId>,
     ) -> Self {
+        let first = FoundingStage::STEPS[0];
         let mut programme = Self {
-            stage: FoundingStage::BuildMine,
+            stage: first,
             enabled: true,
             started_at: now,
             initial_surveyed,
@@ -301,10 +487,23 @@ impl FoundingProgram {
             survey_candidates,
             ..Self::default()
         };
+        programme.milestones.insert(first, now);
         programme
-            .milestones
-            .insert(FoundingStage::BuildMine, now);
-        programme
+    }
+
+    /// §charter-v4: the charter's land grant covers only the landing world
+    /// until "Expand mining operations" opens the rest of the home system.
+    pub fn land_grant_open(&self) -> bool {
+        !self.enabled || !self.local_opening || self.stage.step() >= FoundingStage::ExpandMining.step()
+    }
+
+    /// The stipend this programme earns on first reaching `stage`
+    /// ([`charter_stipend`]); a home without a privateer den earns none for one.
+    pub fn stipend(&self, stage: FoundingStage) -> Option<(&'static str, f64)> {
+        if stage == FoundingStage::PrepareExport && self.den.is_none() {
+            return None;
+        }
+        charter_stipend(stage)
     }
 
     /// Advance once and stamp the fact. Keeping this mutation in one helper is
@@ -350,11 +549,13 @@ impl FoundingProgram {
         }
     }
 
-    /// §founding R8: the Landfall chapter, from settling until the first
-    /// guarded export leaves home. Contract offers stay few and patient here.
+    /// §founding R8: the Landfall chapter, from settling until the raid's
+    /// report (§charter-v5; before it, the first export) reaches command.
+    /// Contract offers stay few and patient here.
     pub fn landfall_focus(&self) -> bool {
         self.enabled
             && self.local_opening
+            && self.raid_report_at.is_none()
             && self.export_dispatched_at.is_none()
             && self.stage != FoundingStage::Complete
     }

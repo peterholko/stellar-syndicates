@@ -110,6 +110,8 @@ impl Bot {
                 continue;
             }
             if self.returns.contains_key(&guard.id) { continue; }
+            // §charter-v4: the den step takes the Interceptor off escort duty.
+            if p.den.is_some() { continue; }
             // Preserve assignments when a different formation merges or is
             // lost. Enumeration indices are not stable identities for escorts.
             if guard.guard_target.is_some_and(|id| freighters.iter().any(|f| f.id == id))
@@ -158,11 +160,9 @@ impl Bot {
             let fleet = &planned;
             let limit = p.safe_load(fleet, p.home.system.pos, p.hub);
             let mut exports = p.exports(wanted, limit);
-            // §charter v3: the first shipment counts only if an escorted
-            // Freighter carries Ferrite Ore, so the ore goes first.
-            if p.founding_stage == sim::FoundingStage::PrepareExport && at_home
-                && p.own().any(|g| g.guard_target == Some(fleet.id))
-            {
+            // §charter-v5: until the charter's "Export your ore" is done, a Hub
+            // run carries Ferrite Ore first.
+            if at_home && p.local_opening && p.founding_stage.step() <= sim::FoundingStage::PrepareExport.step() {
                 let ore = (p.home.system.free_stock(C::MetallicOre).floor().max(0.0) as u32).min(limit);
                 if ore > 0 && !exports.contains_key(&C::MetallicOre) {
                     let mut room = limit - ore;
@@ -211,17 +211,14 @@ impl Bot {
                 if budget > 0.0 { shopping = Some(budget); }
             }
             let escort = p.own().find(|g| g.guard_target == Some(fleet.id));
-            let first_export = !p.exported && self.trade_cycles == 0
-                && p.own().find(|g| g.kind.is_player_freighter()).is_some_and(|g| g.id == fleet.id);
             // §fuel: with nothing worth selling, a home short of Fuel still
             // sends a hull, unless the holds already bound for the Hub cover it.
-            // The charter's first shipment keeps its Freighter at home.
-            let fuel_run = at_home && !first_export && self.ready("fuel-run", p.now) && {
+            let fuel_run = at_home && self.ready("fuel-run", p.now) && {
                 let lacking: u32 = FUELS.into_iter().map(|fuel| self.fuel_lacking(p, wanted, fuel)).sum();
                 lacking >= 10 && lacking > p.hub_bound_room()
             };
             let profitable = p.route_margin(fleet, &exports, &imports, escort) > 0.0;
-            if at_home && !fuel_run && (!profitable && !first_export || exports.values().sum::<u32>() < 10) {
+            if at_home && !fuel_run && (!profitable || exports.values().sum::<u32>() < 10) {
                 if run.is_some() {
                     self.wait(key, p, fleet.pos);
                     return Some(Command::SetFreightRoute { player_id: p.owner, fleet_id: fleet.id, route: None });
@@ -242,7 +239,6 @@ impl Bot {
                     let (fuel, mult) = p.escort_burn(g, on_uranium(fleet));
                     fuel < p.fuel_per_mass(fleet.pos, dest) * hull_mass(g) * mult + p.arrival_reserve(g)
                 }) { continue; }
-            if first_export && escort.is_none() { continue; }
             if at_home && self.cash(p) < p.operating_reserve() { continue; }
             // Unload only export goods at the hub; imported build materials must
             // never be mistaken for sale cargo after a blocked-route revision.
@@ -335,6 +331,9 @@ impl Bot {
             !project_short(**c), **c));
         for (&good, &target) in goods {
             let essential = FUELS.contains(&good) || good == C::Provisions;
+            // §charter-v5: the docked trader covers the project at once; a
+            // Hub import of the same goods only waits on the freight.
+            if !essential && project_short(good) && p.trader_stocks(good) { continue; }
             let in_hold = p.carried_home(good);
             let pipeline = p.stock(good) + in_hold as f64 + p.inbound(good) as f64 + self.expected_supply(p, good) as f64;
             let project_need = project_costs.get(&good).copied().unwrap_or(0.0);
@@ -370,31 +369,76 @@ impl Bot {
         self.export_surplus(p, wanted, false)
     }
 
+    /// §merchant: a docked merchant covers the current project's shortfall
+    /// rather than waiting a Hub round trip. It is a last resort at its
+    /// markup: the project's own goods only, never buffers, from spare cash.
+    pub(super) fn merchant(&mut self, p: &Observation, project: Option<Project>, wanted: &BTreeMap<C, f64>) -> Option<Command> {
+        let visit = p.merchant.as_ref().filter(|v| v.phase == sim::merchant::MerchantPhase::Docked
+            && v.system == p.home.system.id)?;
+        if !self.ready("merchant", p.now) { return None; }
+        let buys: BTreeMap<C, u32> = p.project_costs(project?).into_iter().filter_map(|(c, n)| {
+            let short = (n - p.stock(c) - p.inbound(c) as f64 - p.carried_home(c) as f64).ceil().max(0.0) as u32;
+            let units = short.min(visit.stock.get(&c).copied().unwrap_or(0));
+            (units > 0 && visit.sell_price(c).is_some()).then_some((c, units))
+        }).collect();
+        if buys.is_empty() { return None; }
+        let spendable = self.spendable(p, false);
+        // §charter-v5: short of cash, sell the trader just enough ore to
+        // cover the gap (ore the home wants stays); short of ore too, buy
+        // what the cash covers, selling what ore there is toward the rest.
+        let mut buys = buys;
+        let mut sells = BTreeMap::new();
+        let cost = visit.quote(&buys, &BTreeMap::new()).ok()?.cost;
+        if cost > spendable && let Some(price) = visit.buy_price(C::MetallicOre).filter(|p| *p > 0.0) {
+            let keep = wanted.get(&C::MetallicOre).copied().unwrap_or(0.0);
+            let spare = ((p.home.system.free_stock(C::MetallicOre) - keep).floor().max(0.0) as u32).min(visit.ore_room());
+            let need = ((cost - spendable) / price).ceil() as u32;
+            let sold = if need <= spare { need } else if spare >= 20 { spare } else { 0 };
+            if sold > 0 { sells.insert(C::MetallicOre, sold); }
+            let mut budget = spendable + sold as f64 * price;
+            if need > spare {
+                for (c, n) in buys.iter_mut() {
+                    let unit = visit.sell_price(*c).unwrap_or(f64::INFINITY);
+                    *n = (*n).min((budget / unit).floor().max(0.0) as u32);
+                    budget -= *n as f64 * unit;
+                }
+                buys.retain(|_, n| *n > 0);
+                if buys.is_empty() && sells.is_empty() { return None; }
+            }
+        }
+        let quote = visit.quote(&buys, &sells).ok()?;
+        let net = quote.cost - quote.revenue;
+        if net > spendable || quote.net_units as f64 > p.home.system.storage_headroom() {
+            return None;
+        }
+        self.spend(p, net.max(0.0));
+        self.wait("merchant".into(), p, p.home.system.pos);
+        self.status = if sells.is_empty() { "buying the project's shortfall from the merchant" }
+            else if buys.is_empty() { "selling ore to the merchant toward the project's shortfall" }
+            else { "selling ore to the merchant for the project's shortfall" }.into();
+        Some(Command::MerchantTrade { player_id: p.owner, buys, sells })
+    }
+
     pub(super) fn export_surplus(&mut self, p: &Observation, wanted: &BTreeMap<C, f64>, clear_space: bool) -> Option<Command> {
         // Authority is a genuine bulk/overflow alternative, not the first
-        // consumer of every ore unit. Keep one load for a viable owned circuit.
-        // §charter v3: the first shipment must be an owned, guarded Freighter
-        // carrying Ferrite Ore. Once that trip's reserve is affordable the ore
-        // waits for it; until then (a home whose Hub leg crosses many wells
-        // can't pay for its Freighter's round trip yet) Authority exports keep
-        // the colony earning.
-        let first_export = matches!(p.founding_stage, sim::FoundingStage::BuildMine | sim::FoundingStage::LocalRecovery
-            | sim::FoundingStage::PrepareExport | sim::FoundingStage::ExportProduction)
-            && self.cash(p) >= p.operating_reserve();
+        // consumer of every ore unit.
+        // §charter-v5: until the trader has bought its first ore, the ore
+        // waits for it.
+        let ore_for_trader = p.local_opening
+            && p.founding_stage.step() <= sim::FoundingStage::SellOre.step();
         // §fuel: clearing room, the biggest pile goes first. Fifty-unit ore lots
         // never caught up with a full Agroplex, and they took the market slots
         // the fuel needed.
         let mut piles: Vec<(C, f64)> = p.home.system.stockpile.iter().map(|(&c, &n)| (c, n)).collect();
         if clear_space { piles.sort_by(|a, b| b.1.total_cmp(&a.1)); }
         for (good, stock) in piles {
-            // Full storage still wins: imports bounce off a full colony. Then
-            // only one Freighter load stays back for the first shipment.
-            let charter_hold = if first_export && good == C::MetallicOre {
-                if !clear_space { continue; }
-                p.own().filter(|f| f.kind.is_player_freighter()).map(capacity).max().unwrap_or(50) as f64
-            } else { 0.0 };
+            // §charter-v4: until the Agroplex runs, the kit's Provisions are
+            // the colony's only food; never ship them out.
+            if good == C::Provisions && p.local_opening
+                && p.founding_stage.step() <= sim::FoundingStage::BuildAgroplex.step() { continue; }
+            // Full storage still wins: imports bounce off a full colony.
+            if ore_for_trader && good == C::MetallicOre && !clear_space { continue; }
             let Some(reserve) = p.export_reserve(good, wanted) else { continue; };
-            let reserve = reserve.max(charter_hold);
             let held = if clear_space { 0 } else { p.own().filter(|f|
                 f.kind.is_player_freighter() && f.industry.is_some() && p.uses_local_port(f)).map(capacity).sum::<u32>() };
             let fee_per_unit = sim::tca::freight_fee(1, p.price(good), p.home.system.pos.distance(p.hub)) * 1.2;

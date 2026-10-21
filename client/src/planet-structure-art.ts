@@ -1,7 +1,7 @@
 import { structureImage } from "./icons";
 import type { BuildState } from "./protocol";
 import type { PlanetSurface } from "./planet-surfaces";
-import { SURFACE_GROUND_LAYERS, SURFACE_STRUCTURE_TIERS } from "./planet-surface-structure-art.generated";
+import { SURFACE_GROUND_LAYERS, SURFACE_ORBITAL_ART, SURFACE_STRUCTURE_TIERS } from "./planet-surface-structure-art.generated";
 
 const ORBITAL_HULLS = new Set(["large_freighter", "heavy_freighter", "bulk_freighter", "destroyer", "cruiser", "battleship"]);
 const LEGACY_ORBITAL_HULLS = new Set(["destroyer", "cruiser", "battleship"]);
@@ -21,11 +21,11 @@ const sceneImage = (base: string, sizes: string, className: string) =>
 
 /** Scene-only sprites. Menus and inventory deliberately keep the established
  * icon set. Terrain is a separate, reusable layer, never baked into each tier.
- * Null surface means a gas giant/globe; space yards and attachments never draw
- * terrain. The Service Berth shares its parent Warehouse's ground. */
-export function planetStructureImage(key: string, tier: number, sizes: string, occupied = false, surface: PlanetSurface | null = null): string {
-  // §power: stand-in — the Fuel Refinery's scene art until the plant's own lands.
-  if (key === "power_plant") key = "fuel_refinery";
+ * Null surface means a world with no ground (a gas giant or belt), where a
+ * family with a floating look draws it; no surface (a menu) draws the ground
+ * building without terrain. Space yards and attachments never draw terrain.
+ * The Service Berth shares its parent Warehouse's ground. */
+export function planetStructureImage(key: string, tier: number, sizes: string, occupied = false, surface?: PlanetSurface | null): string {
   // §fuel-overhaul: stand-ins until their own art lands.
   if (key === "uranium_mill") key = "fuel_refinery";
   if (key === "antimatter_plant") key = "fuel_refinery";
@@ -41,7 +41,11 @@ export function planetStructureImage(key: string, tier: number, sizes: string, o
   }
   const level = Number.isFinite(tier) ? Math.min(maxTier, Math.max(1, Math.floor(tier))) : 1;
   const variant = key === "naval_drydock" && occupied ? "-occupied" : "";
+  // §power: the Power Plant floats over a belt or gas giant, solar for I–II and
+  // fusion for III–VI.
+  const orbital = surface === null ? SURFACE_ORBITAL_ART[key]?.[String(level)] : undefined;
   const base = shipyard ? `/art/derived/planet-shipyards/v1/${key}/tier-${level}${variant}`
+    : orbital ? `${SURFACE_BASE}/buildings/${key}/orbital-${orbital}`
     : `${SURFACE_BASE}/buildings/${key}/tier-${level}`;
   const ground = surface && SURFACE_GROUND_LAYERS.includes(surface) && !isOrbitalYard(key) && key !== "service_berth"
     ? sceneImage(`${SURFACE_BASE}/grounds/${surface}`, sizes, "planet-structure-ground") : "";

@@ -10,7 +10,7 @@
 //! * `PORT`         — HTTP/WS listen port (default 8080)
 //! * `BIND_ADDR`    — HTTP/WS bind IP (default 0.0.0.0)
 //! * `GALAXY_SEED`  — u64 seed for deterministic generation (default 0xC0FFEE)
-//! * `MAX_PLAYERS`  — sizes the galaxy (default 4)
+//! * `MAX_PLAYERS`  — sizes the galaxy (default 20: one wormhole hub's homes)
 //! * `BOT_PLAYERS`  — optional headless corporations, fresh galaxies only;
 //!                   saved bots resume automatically when this is unset
 //! * `HOME_RING_SU`  — optional absolute home-ring radius override
@@ -127,7 +127,7 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|value| value.parse::<IpAddr>().ok())
         .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     let seed = env_u64("GALAXY_SEED", 0xC0FFEE);
-    let max_players = env_u64("MAX_PLAYERS", 4) as u32;
+    let max_players = env_u64("MAX_PLAYERS", 20) as u32;
     let requested_bots = std::env::var("BOT_PLAYERS").ok()
         .map(|value| value.parse::<u32>()).transpose()
         .map_err(|_| anyhow::anyhow!("BOT_PLAYERS must be a non-negative integer"))?;

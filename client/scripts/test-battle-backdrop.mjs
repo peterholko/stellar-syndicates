@@ -201,4 +201,10 @@ assert.doesNotMatch(JSON.stringify(plan), /Freya|metallic_ore|shipyard|999/, "no
 const later = backdrop.battleBackdropPlan({ id: "battle-over-Freya", system: "8", pos: { x: 20_150, y: 40 }, started_at: 5_000 }, state);
 assert.notEqual(later.starBearing, plan.starBearing, "the star's direction follows the world's pose when the fight began");
 assert.equal(backdrop.battleBackdropPlan({ id: "deep", system: null }, state), null, "deep space has no place plan");
+// The backdrop drifts against the camera, below the fight: still at the
+// overview, a share of the battlefield's motion when following a hull.
+assert.deepEqual({ ...backdrop.backdropDrift({ x: 534, y: 336 }, 1068, 672) }, { x: 0, y: 0 }, "the overview keeps the composed backdrop");
+const followed = backdrop.backdropDrift({ x: 534 - 600, y: 336 + 200 }, 1068, 672);
+assert.ok(followed.x < 0 && followed.y > 0, "it moves the way the battlefield moves");
+assert.ok(Math.abs(followed.x) < 600 && Math.abs(followed.x) > 0, "slower than the hulls, never riding with them");
 console.log("Battle backdrop: shared astronomy, served-only snapshot, no management UI, deep-space fallback, resize/reopen caching and late-art safety pass.");

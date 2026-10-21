@@ -7,6 +7,12 @@ use crate::rng::Rng;
 use std::collections::BTreeSet;
 
 const STAR_SPACING_SU: f64 = 12_000.0;
+/// §hub-district: each home's three doorstep stars, a few minutes out (a Tiny
+/// Freighter takes 1:54–2:18 at full speed). Rings tried in order; the last is
+/// the fallback when the doorstep is crowded.
+const DOORSTEP_SU: [f64; 5] = [15_000.0, 16_700.0, 18_300.0, 20_000.0, 22_000.0];
+/// Doorstep stars per home: the den system, the icy stop and a prospect.
+pub(crate) const DOORSTEP_STARS: usize = 3;
 const EMPTY_PROSPECT_FRACTION: f64 = 0.20;
 const STRONG_PROSPECT_FRACTION: f64 = 0.10;
 
@@ -24,8 +30,9 @@ impl World {
         let taken: BTreeSet<_> = self.systems.iter().map(|s| s.name.clone()).collect();
         let mut names_rng = Rng::keyed(self.config.seed, "exploration-star-names-v1");
         let names = crate::galaxy::shuffled_system_names(&mut names_rng, taken.len() + count);
-        // Local survey stops reuse two extra-star slots per home. The original
-        // garden/mineral colony prospects remain untouched and optional.
+        // §hub-district: each home's doorstep stars reuse three extra-star
+        // slots. The original garden/mineral colony prospects remain
+        // untouched and optional.
         let home_clearance: Vec<_> = self
             .home_slots
             .iter()
@@ -52,17 +59,27 @@ impl World {
             .take(count)
             .enumerate()
         {
-            let local = self.home_slots.get(i / 2).map(|h| h.pos);
+            let local = self.home_slots.get(i / DOORSTEP_STARS).map(|h| h.pos);
             let safe = |pos: Vec2| pos.distance(self.hub) > STAR_SPACING_SU
                 && pos.length() <= self.config.galaxy_radius
                 && self.systems.iter().all(|s| pos.distance(s.pos) >= STAR_SPACING_SU)
                 && self.exploration.sites.values().all(|s| pos.distance(s.pos) > 3_000.0);
-            let nearby = local.and_then(|home| (0..512).find_map(|attempt| {
-                let radius = 18_000.0 + (attempt / 128) as f64 * 5_000.0;
+            let nearby = local.and_then(|home| (0..DOORSTEP_SU.len() * 128).find_map(|attempt| {
+                let radius = DOORSTEP_SU[attempt / 128];
                 let pos = home + Vec2::from_polar((attempt % 128) as f64 * TAU / 128.0 + i as f64, radius);
                 safe(pos).then_some(pos)
             }));
-            let pos = nearby.unwrap_or_else(|| (0..4096)
+            // §hub-district: the next few go between the hub and the homes.
+            let first_gap = self.home_slots.len() * DOORSTEP_STARS;
+            let gap = (first_gap..first_gap + crate::galaxy::HUB_GAP_STARS as usize).contains(&i);
+            let between = gap.then(|| (0..4096).find_map(|_| {
+                let (lo, hi) = crate::galaxy::HUB_GAP_SU;
+                let pos = Vec2::from_polar(rng.range(0.0, TAU), (lo * lo + (hi * hi - lo * lo) * rng.next_f64()).sqrt());
+                (safe(pos) && self.home_slots.iter()
+                    .all(|h| h.pos.distance(pos) >= crate::galaxy::FRONTIER_HOME_CLEARANCE_SU))
+                    .then_some(pos)
+            })).flatten();
+            let pos = nearby.or(between).unwrap_or_else(|| (0..4096)
                 .find_map(|_| {
                     let r = self.config.galaxy_radius * (0.12 + 0.84 * rng.next_f64().sqrt());
                     let pos = Vec2::from_polar(rng.range(0.0, TAU), r);
@@ -90,16 +107,18 @@ impl World {
             // scarce ores holds for every star in the chart.
             let frontier = ((pos.distance(self.hub) / self.config.galaxy_radius - 0.12) / 0.84)
                 .clamp(0.0, 1.0);
-            let bodies = if nearby.is_some() {
-                let icy = i % 2 == 1;
-                let mut b = sparse_body(0, format!("{name} I"), if icy { BodyKind::Ice } else { BodyKind::Rocky }, None);
-                b.deposits.push(Deposit { resource: if icy { Commodity::Volatiles } else { Commodity::MetallicOre },
+            let bodies = if nearby.is_some() && i % DOORSTEP_STARS == 0 {
+                // §charter-v4: the rocky stop is the founder's den system: only
+                // its rich belt (added below), where the privateer den stands.
+                Vec::new()
+            } else if nearby.is_some() && i % DOORSTEP_STARS == 1 {
+                let mut b = sparse_body(0, format!("{name} I"), BodyKind::Ice, None);
+                b.deposits.push(Deposit { resource: Commodity::Volatiles,
                     richness: DEPOSIT_BASE_RICHNESS * 0.65, reserves: None, accessibility: 0.75 });
                 b.ensure_profile(&id.0.to_string());
                 b.profile.environment = Environment::Uninhabitable;
                 b.profile.size = BodySize::Small;
-                if !icy { b.profile.special = Some(crate::body::BodySpecial::PrecursorRuins); }
-                if icy { local_ice.push(pos); }
+                local_ice.push(pos);
                 vec![b]
             } else { sparse_bodies(id, &name, &mut body_rng, frontier) };
             let deposits: Vec<_> = bodies
@@ -113,15 +132,23 @@ impl World {
                 bodies,
                 crate::galaxy::claim_cost_for(&deposits),
             ));
-            if nearby.is_some() && i % 2 == 0 {
+            if nearby.is_some() && i % DOORSTEP_STARS == 0 {
                 // §belts: the rocky local stop keeps a belt with ore. The
                 // founding charter's barge lesson mines it once the local
                 // surveys have charted it: close enough that a barge with a
                 // full hold comes home on one tank. Its own keyed stream.
                 let mut belt_rng = Rng::keyed_id(self.config.seed, "local-stop-belt-v1", i as u64);
                 let belt_frontier = crate::belts::frontier_at(pos, self.config.galaxy_radius);
-                let belt = crate::belts::prospect_belt(&mut belt_rng, belt_frontier);
-                crate::belts::add_belts(self.systems.last_mut().unwrap(), vec![belt]);
+                let mut belt = crate::belts::prospect_belt(&mut belt_rng, belt_frontier);
+                // §charter-v4: the belt the privateer den guards is rich.
+                for deposit in &mut belt.deposits {
+                    deposit.richness *= crate::founding::DEN_BELT_RICHNESS_MULT;
+                }
+                let system = self.systems.last_mut().unwrap();
+                crate::belts::add_belts(system, vec![belt]);
+                let deposits: Vec<_> = system.bodies.iter().flat_map(|b| b.deposits.iter().cloned()).collect();
+                system.claim_cost = crate::galaxy::claim_cost_for(&deposits);
+                self.home_slots[i / DOORSTEP_STARS].den_system = Some(id);
             }
             self.exploration_systems.insert(id);
             // Exotic-star rewards keep matching the public star artwork.
@@ -279,17 +306,31 @@ mod tests {
                     "seed {seed}, players {players}: existing systems must not change"
                 );
                 assert_eq!(habitable_count(&new), habitable_count(&old));
+                // §charter-v4: each home's rocky local stop is its den system.
+                let mut slots = new.home_slots.clone();
+                for slot in &mut slots {
+                    let den = slot.den_system.take().expect("a den system per home");
+                    assert!(new.exploration_systems.contains(&den));
+                }
                 assert_eq!(
-                    serde_json::to_value(&new.home_slots).unwrap(),
+                    serde_json::to_value(&slots).unwrap(),
                     serde_json::to_value(&old.home_slots).unwrap()
                 );
                 assert_eq!((new.band_lo, new.band_hi), (old.band_lo, old.band_hi));
                 for home in &new.home_slots {
+                    // §hub-district: three doorstep stars a few minutes out.
                     let nearby: Vec<_> = new.systems.iter().filter(|s| new.exploration_systems.contains(&s.id)
-                        && s.pos.distance(home.pos) <= 34_000.0).collect();
-                    assert!(nearby.len() >= 2, "seed {seed}, players {players}: two local survey destinations");
+                        && s.pos.distance(home.pos) <= DOORSTEP_SU[DOORSTEP_SU.len() - 1] + 1.0).collect();
+                    assert!(nearby.len() >= DOORSTEP_STARS, "seed {seed}, players {players}: three doorstep stars");
                     assert!(nearby.iter().all(|s| s.bodies.iter().all(|b| !b.habitable)));
                 }
+                // §hub-district: stars between the hub and the homes.
+                let (lo, hi) = crate::galaxy::HUB_GAP_SU;
+                let between = new.systems.iter().filter(|s| new.exploration_systems.contains(&s.id)
+                    && (lo..=hi).contains(&s.pos.length())
+                    && new.home_slots.iter().all(|h| h.pos.distance(s.pos) >= crate::galaxy::FRONTIER_HOME_CLEARANCE_SU)).count();
+                assert!(between >= crate::galaxy::HUB_GAP_STARS as usize,
+                    "seed {seed}, players {players}: {between} stars between the hub and the homes");
                 assert_eq!(
                     serde_json::to_value(new.rng).unwrap(),
                     serde_json::to_value(old.rng).unwrap(),
@@ -312,9 +353,12 @@ mod tests {
                 for s in &new.systems[old.systems.len()..] {
                     // §belts: sparse stars may also carry bare belts. Only a
                     // home's local survey stop keeps a belt with ore, for the
-                    // founding charter's barge lesson.
-                    assert!((1..=3).contains(&s.bodies.iter().filter(|b| !b.is_belt()).count()));
-                    let local = new.home_slots.iter().any(|h| h.pos.distance(s.pos) <= 34_000.0);
+                    // founding charter's barge lesson. §charter-v4: the den
+                    // system holds that belt and nothing else.
+                    let den = new.home_slots.iter().any(|h| h.den_system == Some(s.id));
+                    let worlds = s.bodies.iter().filter(|b| !b.is_belt()).count();
+                    assert!(if den { worlds == 0 } else { (1..=3).contains(&worlds) });
+                    let local = new.home_slots.iter().any(|h| h.pos.distance(s.pos) <= DOORSTEP_SU[DOORSTEP_SU.len() - 1] + 1.0);
                     assert!(local || s.bodies.iter().filter(|b| b.is_belt()).all(|b| b.deposits.is_empty()));
                     assert!(s.bodies.iter().filter(|b| !b.is_belt()).flat_map(|b| &b.deposits).count() <= 1);
                     assert!(s.all_deposits().all(|d| d.resource != Commodity::Biomass));

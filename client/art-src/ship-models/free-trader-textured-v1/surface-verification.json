@@ -1,0 +1,226 @@
+{
+  "triangles": 7872,
+  "components": 94,
+  "closedComponents": 94,
+  "dedicatedBottomTriangles": 1052,
+  "finiteAttributes": true,
+  "unitNormals": true,
+  "consistentWinding": true,
+  "nondegenerateTriangles": true,
+  "noncollapsedBottomUVs": true,
+  "positiveVolumes": {
+    "hull.streamlined-bow": 26.84068668,
+    "bridge.glazing": 2.78913071,
+    "hull.port.bridge-cheek": 0.78183986,
+    "hull.starboard.bridge-cheek": 0.78183986,
+    "hull.market-deck": 162.39579649,
+    "ventral.cargo-keel": 18.85578377,
+    "market.canopy-foundation": 20.57272001,
+    "canopy.panel.1": 2.5257213,
+    "canopy.panel.2": 2.59820332,
+    "canopy.panel.3": 2.5257207,
+    "canopy.panel.4": 2.67068511,
+    "canopy.panel.5": 2.59820277,
+    "canopy.panel.6": 2.67068515,
+    "canopy.panel.7": 2.59820269,
+    "canopy.panel.8": 1.94586228,
+    "market.port.armored-margin": 5.98675199,
+    "market.port.brass-canopy-rail": 0.04592366,
+    "market.port.rim-clamp.0": 0.00997228,
+    "market.port.rim-clamp.1": 0.0099723,
+    "market.port.rim-clamp.2": 0.00997229,
+    "market.port.rim-clamp.3": 0.0099723,
+    "market.port.rim-clamp.4": 0.00997229,
+    "market.port.ventral-rail": 0.04549991,
+    "docking.1.housing": 2.38418278,
+    "docking.1.brass-rim": 0.17960379,
+    "docking.1.recessed-door": 0.029594,
+    "docking.1.rim-fastener.0": 0.00031565,
+    "docking.1.rim-fastener.1": 0.00031566,
+    "docking.1.rim-fastener.2": 0.00031566,
+    "docking.1.rim-fastener.3": 0.00031565,
+    "docking.2.housing": 2.38418269,
+    "docking.2.brass-rim": 0.17960377,
+    "docking.2.recessed-door": 0.02959399,
+    "docking.2.rim-fastener.0": 0.00031566,
+    "docking.2.rim-fastener.1": 0.00031566,
+    "docking.2.rim-fastener.2": 0.00031566,
+    "docking.2.rim-fastener.3": 0.00031566,
+    "market.starboard.armored-margin": 5.98675199,
+    "market.starboard.brass-canopy-rail": 0.04592366,
+    "market.starboard.rim-clamp.0": 0.00997228,
+    "market.starboard.rim-clamp.1": 0.0099723,
+    "market.starboard.rim-clamp.2": 0.00997229,
+    "market.starboard.rim-clamp.3": 0.0099723,
+    "market.starboard.rim-clamp.4": 0.00997229,
+    "market.starboard.ventral-rail": 0.04549991,
+    "docking.3.housing": 2.38418278,
+    "docking.3.brass-rim": 0.17960379,
+    "docking.3.recessed-door": 0.029594,
+    "docking.3.rim-fastener.0": 0.00031565,
+    "docking.3.rim-fastener.1": 0.00031566,
+    "docking.3.rim-fastener.2": 0.00031566,
+    "docking.3.rim-fastener.3": 0.00031565,
+    "docking.4.housing": 2.38418269,
+    "docking.4.brass-rim": 0.17960377,
+    "docking.4.recessed-door": 0.02959399,
+    "docking.4.rim-fastener.0": 0.00031566,
+    "docking.4.rim-fastener.1": 0.00031566,
+    "docking.4.rim-fastener.2": 0.00031566,
+    "docking.4.rim-fastener.3": 0.00031566,
+    "hull.narrow-aft-waist": 14.74119748,
+    "hull.aft-dorsal-spine": 0.84299142,
+    "hull.port.swept-pylon": 2.99900611,
+    "hull.port.pylon-brass-brace": 0.05920703,
+    "machinery.port.coolant-reservoir": 0.30627561,
+    "machinery.port.pylon-conduit": 0.0958223,
+    "engine.port.housing": 18.47606186,
+    "engine.port.brass-band.0": 0.08204366,
+    "engine.port.brass-band.1": 0.08462769,
+    "engine.port.nozzle-rim": 0.34612265,
+    "engine.port.aperture": 0.0445832,
+    "engine.port.dorsal-service-plate": 0.15013533,
+    "engine.port.protection-bar.0": 0.01012504,
+    "engine.port.protection-bar.1": 0.01012501,
+    "hull.starboard.swept-pylon": 2.99900611,
+    "hull.starboard.pylon-brass-brace": 0.05920703,
+    "machinery.starboard.coolant-reservoir": 0.30627561,
+    "machinery.starboard.pylon-conduit": 0.09582229,
+    "engine.starboard.housing": 18.47606186,
+    "engine.starboard.brass-band.0": 0.08204366,
+    "engine.starboard.brass-band.1": 0.08462769,
+    "engine.starboard.nozzle-rim": 0.34612265,
+    "engine.starboard.aperture": 0.0445832,
+    "engine.starboard.dorsal-service-plate": 0.15013533,
+    "engine.starboard.protection-bar.0": 0.01012501,
+    "engine.starboard.protection-bar.1": 0.01012504,
+    "ventral.cargo-hatch.0": 1.41391859,
+    "ventral.cargo-hatch.1": 1.41391849,
+    "ventral.cargo-hatch.2": 1.41391849,
+    "ventral.bow-service-hatch": 0.3057193,
+    "ventral.aft-service-hatch": 0.3604251,
+    "market.frame-fastener.0": 0.002406,
+    "market.frame-fastener.1": 0.002406,
+    "market.frame-fastener.2": 0.002406,
+    "market.frame-fastener.3": 0.002406
+  },
+  "method": "Independent checks on exported GLB buffers; welded position topology per authored component",
+  "observedFeatureCounts": {
+    "canopyPanels": 8,
+    "dockingCollars": 4,
+    "mainEngines": 2,
+    "bridges": 1,
+    "guns": 0
+  },
+  "allPhysicalTrianglesTextured": true,
+  "allPhysicalTrianglesHaveAreaUVs": true,
+  "minimumUVTriangleArea": 8.043296020332491e-07,
+  "texturedDownwardTriangles": 1622,
+  "socketNodes": [
+    {
+      "name": "socket.docking.1",
+      "translation": [
+        -5.9652631578947375,
+        0.48,
+        -2.763157894736842
+      ],
+      "extras": {
+        "role": "customer-shuttle-docking",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ],
+        "side": "port",
+        "station": "forward"
+      }
+    },
+    {
+      "name": "socket.docking.2",
+      "translation": [
+        -5.9652631578947375,
+        0.48,
+        1.394736842105263
+      ],
+      "extras": {
+        "role": "customer-shuttle-docking",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ],
+        "side": "port",
+        "station": "aft"
+      }
+    },
+    {
+      "name": "socket.docking.3",
+      "translation": [
+        5.9652631578947375,
+        0.48,
+        -2.763157894736842
+      ],
+      "extras": {
+        "role": "customer-shuttle-docking",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "side": "starboard",
+        "station": "forward"
+      }
+    },
+    {
+      "name": "socket.docking.4",
+      "translation": [
+        5.9652631578947375,
+        0.48,
+        1.394736842105263
+      ],
+      "extras": {
+        "role": "customer-shuttle-docking",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "side": "starboard",
+        "station": "aft"
+      }
+    },
+    {
+      "name": "socket.engine.port",
+      "translation": [
+        -3.710526315789474,
+        0.26,
+        9.9
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.starboard",
+      "translation": [
+        3.710526315789474,
+        0.26,
+        9.9
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "purplePaintIsNonEmissive": true
+}

@@ -116,7 +116,7 @@ mod tests {
 
     fn reports_arrive(w: &mut World) {
         w.time = w.pending_operation_reports.iter().map(|r| r.arrive_at).fold(w.time, f64::max);
-        w.deliver_operation_reports();
+        w.deliver_operation_reports(&mut Vec::new());
     }
 
     #[test]
@@ -191,15 +191,15 @@ mod tests {
             && r.snapshot.state == OperationState::Completed).unwrap().arrive_at;
         assert!(arrival > w.time);
         w.time = arrival - 1e-4;
-        w.deliver_operation_reports();
+        w.deliver_operation_reports(&mut Vec::new());
         assert!(w.players[&p].research.recovered_data.is_empty());
         w.time = arrival;
-        w.deliver_operation_reports();
+        w.deliver_operation_reports(&mut Vec::new());
         let target = SitePrize::BreacherCache.programme();
         let credit = crate::research::cost_of(target) * SitePrize::DOSSIER_FRACTION;
         assert_eq!(w.players[&p].research.recovered_data[target], credit);
         assert_eq!(w.players[&p].research.progress, 17.0, "dossier cannot fund an unrelated programme");
-        w.deliver_operation_reports();
+        w.deliver_operation_reports(&mut Vec::new());
         assert_eq!(w.players[&p].research.recovered_data[target], credit);
 
         let r = &mut w.players.get_mut(&p).unwrap().research;

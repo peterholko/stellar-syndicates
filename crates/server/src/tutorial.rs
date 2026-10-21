@@ -31,11 +31,20 @@ pub const QUIET_AFTER_HOURS: i64 = 24;
 #[serde(rename_all = "snake_case")]
 pub enum Step {
     Founded,
+    Bioharvester,
+    Habitat,
+    Agroplex,
     Mine,
-    Shipment,
-    Privateer,
+    Raid,
+    SellOre,
+    Power,
     Shipyard,
+    Interceptor,
+    Privateer,
+    Den,
+    Shipment,
     Research,
+    Expansion,
     Survey,
     Barge,
     BeltMining,
@@ -43,13 +52,24 @@ pub enum Step {
 }
 
 impl Step {
-    pub const ALL: [Step; 10] = [
+    /// §charter-v5: Founded, then the charter's eighteen steps in play order
+    /// (`FoundingStage::STEPS`).
+    pub const ALL: [Step; 19] = [
         Step::Founded,
+        Step::Bioharvester,
+        Step::Habitat,
+        Step::Agroplex,
         Step::Mine,
-        Step::Shipment,
-        Step::Privateer,
+        Step::Raid,
+        Step::SellOre,
+        Step::Power,
         Step::Shipyard,
+        Step::Interceptor,
+        Step::Privateer,
+        Step::Den,
+        Step::Shipment,
         Step::Research,
+        Step::Expansion,
         Step::Survey,
         Step::Barge,
         Step::BeltMining,
@@ -59,11 +79,20 @@ impl Step {
     pub fn key(self) -> &'static str {
         match self {
             Step::Founded => "founded",
+            Step::Bioharvester => "bioharvester",
+            Step::Habitat => "habitat",
+            Step::Agroplex => "agroplex",
             Step::Mine => "mine",
-            Step::Shipment => "shipment",
-            Step::Privateer => "privateer",
+            Step::Raid => "raid",
+            Step::SellOre => "sell_ore",
+            Step::Power => "power",
             Step::Shipyard => "shipyard",
+            Step::Interceptor => "interceptor",
+            Step::Privateer => "privateer",
+            Step::Den => "den",
+            Step::Shipment => "shipment",
             Step::Research => "research",
+            Step::Expansion => "expansion",
             Step::Survey => "survey",
             Step::Barge => "barge",
             Step::BeltMining => "belt_mining",
@@ -81,11 +110,20 @@ impl Step {
     pub fn label(self) -> &'static str {
         match self {
             Step::Founded => "Found a colony",
+            Step::Bioharvester => "Harvest biomass",
+            Step::Habitat => "House the settlers",
+            Step::Agroplex => "Make provisions",
             Step::Mine => "Bring the mine online",
-            Step::Shipment => "Send your first shipment",
-            Step::Privateer => "Defeat the Rogue Privateer",
+            Step::Raid => "Pirates raid the colony",
+            Step::SellOre => "Sell ore to the trader",
+            Step::Power => "Power the Shipyard",
             Step::Shipyard => "Build a Shipyard",
+            Step::Interceptor => "Build an Interceptor",
+            Step::Privateer => "Destroy the privateer",
+            Step::Den => "Eliminate the privateer den",
+            Step::Shipment => "Export your ore",
             Step::Research => "Start research",
+            Step::Expansion => "Expand mining operations",
             Step::Survey => "Chart a nearby system",
             Step::Barge => "Build a Mining Barge",
             Step::BeltMining => "Mine the belt",
@@ -96,8 +134,10 @@ impl Step {
     pub fn chapter(self) -> &'static str {
         match self {
             Step::Founded => "Founding",
-            Step::Mine | Step::Shipment | Step::Privateer => "Landfall",
-            Step::Shipyard | Step::Research | Step::Survey => "Industry",
+            Step::Bioharvester | Step::Habitat | Step::Agroplex | Step::Mine => "Landfall",
+            Step::Raid | Step::SellOre | Step::Power | Step::Shipyard => "Raid",
+            Step::Interceptor | Step::Privateer | Step::Den => "Pirates",
+            Step::Shipment | Step::Research | Step::Expansion | Step::Survey => "Expansion",
             Step::Barge | Step::BeltMining | Step::Haul => "Reach",
         }
     }
@@ -106,36 +146,14 @@ impl Step {
     /// without this step, so a later stamp proves it even when its own fact
     /// was never recorded.
     fn gate(self) -> u8 {
-        match self {
-            Step::Founded => 0,
-            Step::Mine => 1,
-            Step::Shipment => 2,
-            Step::Privateer => 3,
-            Step::Shipyard => 4,
-            Step::Research => 5,
-            Step::Survey => 6,
-            Step::Barge => 7,
-            Step::BeltMining => 8,
-            Step::Haul => 9,
-        }
+        Step::ALL.iter().position(|s| *s == self).unwrap_or(0) as u8
     }
 }
 
-/// Where a founding stage sits in play order. Retired stages fold onto the
-/// step that replaced them.
+/// Where a founding stage sits in play order: its charter step, counted from
+/// zero, Complete last. Retired stages fold onto the step that replaced them.
 fn rank(stage: S) -> u8 {
-    match stage {
-        S::BuildMine => 0,
-        S::PrepareExport | S::LocalRecovery | S::ExportProduction | S::BuildConvoy => 1,
-        S::DefeatPrivateer => 2,
-        S::BuildShipyard | S::CompleteExport | S::GrowBusiness | S::BuildSecondFreighter => 3,
-        S::FirstResearch | S::BuildAcademy => 4,
-        S::SurveyCandidates | S::BuildScout => 5,
-        S::BuildBarge => 6,
-        S::MineBelt => 7,
-        S::HaulOre => 8,
-        S::BuildColony | S::EstablishColony | S::Complete => 9,
-    }
+    (stage.step() - 1) as u8
 }
 
 /// One corporation's charter as the game loop sees it now.
@@ -163,8 +181,10 @@ pub fn reached_steps(founding: &FoundingProgram, now: f64) -> Vec<(Step, Option<
         .filter_map(|step| {
             let own = match step {
                 Step::Founded => Some(founding.started_at),
-                Step::Shipment => arrived(founding.export_dispatched_at),
+                Step::Raid => arrived(founding.raid_report_at),
                 Step::Privateer => arrived(founding.privateer_report_at),
+                Step::Den => arrived(founding.den_report_at),
+                Step::Shipment => arrived(founding.export_dispatched_at),
                 Step::Haul => arrived(founding.haul_report_at),
                 _ => None,
             };

@@ -77,7 +77,7 @@ const keyOf = Object.fromEntries([...keyArms.matchAll(/Step::(\w+) => "(\w+)"/g)
 assert.deepEqual([...STAGE_KEYS], ["signed_up", "entered", ...variants.map(v => keyOf[v])]);
 assert.equal(tutorialRank(null), -1);
 assert.equal(tutorialRank({ next: "signed_up" }), 0);
-assert.equal(tutorialRank({ next: "privateer" }), 5);
+assert.equal(tutorialRank({ next: "privateer" }), 12);
 assert.equal(tutorialRank({ next: null }), STAGE_KEYS.length, "a fulfilled charter sorts past every step");
 
 // Every player-supplied string reaches the page as text, never as markup.
@@ -115,14 +115,19 @@ if (process.argv.includes("--serve")) {
     "Venture 5D02BB7E1C93", "Venture A7713F0C42E8"];
   const stageLabels = {
     signed_up: ["Sign up", "Arrival"], entered: ["Enter the game", "Arrival"], founded: ["Found a colony", "Founding"],
-    mine: ["Bring the mine online", "Landfall"], shipment: ["Send your first shipment", "Landfall"],
-    privateer: ["Defeat the Rogue Privateer", "Landfall"], shipyard: ["Build a Shipyard", "Industry"],
-    research: ["Start research", "Industry"], survey: ["Chart a nearby system", "Industry"],
+    bioharvester: ["Harvest biomass", "Landfall"], habitat: ["House the settlers", "Landfall"],
+    agroplex: ["Make provisions", "Landfall"], mine: ["Bring the mine online", "Landfall"],
+    power: ["Power the Shipyard", "Counterfeit"], semiconductors: ["Buy semiconductors", "Counterfeit"],
+    shipyard: ["Build a Shipyard", "Counterfeit"], freighter: ["Build a Freighter", "Pirates"],
+    shipment: ["Export your ore", "Pirates"], interceptor: ["Build an Interceptor", "Pirates"],
+    privateer: ["Destroy the privateer", "Pirates"], den: ["Eliminate the privateer den", "Pirates"],
+    research: ["Start research", "Expansion"],
+    expansion: ["Expand mining operations", "Expansion"], survey: ["Chart a nearby system", "Expansion"],
     barge: ["Build a Mining Barge", "Reach"], belt_mining: ["Mine the belt", "Reach"], haul: ["Bring the ore home", "Reach"],
   };
-  // The stage each sample player is on (12 = fulfilled): a cluster stuck on
+  // The stage each sample player is on (21 = fulfilled): a cluster stuck on
   // the privateer fight, two who never entered, one who never founded.
-  const nextStage = [9, 12, 5, 6, 12, 8, 3, 5, 10, 5, 2, 4, 1, 1];
+  const nextStage = [18, 21, 13, 9, 21, 17, 6, 13, 19, 13, 2, 11, 1, 1];
   const operatorIndex = 1;
   const stageTimes = (registered, index) => STAGE_KEYS.map((_, k) => k < index ? new Date(Date.parse(registered) + k * (12 + k * 3) * 60_000).toISOString() : null);
   const players = names.map((corporation, i) => {
@@ -149,7 +154,7 @@ if (process.argv.includes("--serve")) {
       game: founded ? { name: corporation, bot: false, home: ["Veles", "Freya", "Kharon", "Tessaly"][i % 4],
         systems: 1 + Math.floor(rand() * 6), worlds: 1 + Math.floor(rand() * 9), population: rand() * 4,
         fleets: 1 + Math.floor(rand() * 8), ships: 2 + Math.floor(rand() * 60), credits: rand() * 2_400_000, valuation: rand() * 9_000_000 } : null,
-      tutorial: { next, next_label: next ? stageLabels[next][0] : null, done: Math.max(0, Math.min(nextStage[i], 12) - 2), total: 10,
+      tutorial: { next, next_label: next ? stageLabels[next][0] : null, done: Math.max(0, Math.min(nextStage[i], 21) - 2), total: 19,
         since: next ? times.filter(Boolean).at(-1) : null },
       stageTimes: times,
       operator: i === operatorIndex, in_funnel: i !== operatorIndex, active,

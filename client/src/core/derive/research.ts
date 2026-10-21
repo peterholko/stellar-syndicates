@@ -1,6 +1,6 @@
 // Shared research derivations extracted from the desktop shell.
 
-import type { Commodity, ProgrammeView, ResearchDynView, ResearchView } from "../../protocol";
+import type { Commodity, NodeStateView, ProgrammeView, ResearchDynView, ResearchView } from "../../protocol";
 import type { Net } from "../../net";
 import { state } from "../../state";
 
@@ -49,6 +49,12 @@ export function nodeBonusDesc(slug: string): string {
     default:
       return "A tactical edge to whoever holds it.";
   }
+}
+
+/** §node: a node in a few words for the map hover and the system panels; the
+ * map itself draws only a dim ◈ unless the viewer holds the node. */
+export function nodeLabel(node: NodeStateView, mine: boolean): string {
+  return `◈ ${node.title}${!node.awakened ? " · dormant" : mine && !node.fed ? " · unfed" : ""}`;
 }
 
 

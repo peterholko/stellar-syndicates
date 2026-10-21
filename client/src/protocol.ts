@@ -1073,6 +1073,8 @@ export interface CaptainRosterView {
   assigned_fleet: EntityId | null;
   stationed_system: EntityId | null;
   recovering_until: number | null;
+  /** §signals: hurt on a Hazardous signal; sits signals out until then. */
+  hurt_until?: number;
   /** Null until the casualty report's light reaches command. */
   loss_fate: CaptainLossFate | null;
   /** Null until the assigned fleet's personnel light reaches command. */
@@ -1132,6 +1134,8 @@ export interface GhostView {
     phase: "rendezvous" | "waiting" | "transferring" | "complete" | "empty" | "unsafe" | "unavailable" } | null;
   /** This Authority hull is an Authority Astral Assistance rescue tender. */
   rescue_service?: boolean;
+  /** §merchant: this Authority hull is the traveling merchant (a free trader). */
+  merchant?: boolean;
   // Convoys broadcast a route (waypoints); raiders don't (null).
   route: Vec2[] | null;
   /// §course-plan: own fleets only — the remaining legs the sim is flying.
@@ -1288,6 +1292,8 @@ export type ClientMsg =
   | { type: "DefendSystem"; fleet_id: EntityId; system_id: EntityId; pursuit_radius: number }
   | { type: "RecallRaid"; raider_id: EntityId }
   | { type: "MarketBuy"; commodity: Commodity; units: number; max_unit_price?: number | null }
+  // §merchant: one exchange with the merchant docked at your home.
+  | { type: "MerchantTrade"; buys: Partial<Record<Commodity, number>>; sells: Partial<Record<Commodity, number>> }
   // §TCA: book Authority freight, and the player-convoy logistics verbs.
   | { type: "BookFreightOut"; system: EntityId; commodity: Commodity; units: number }
   | { type: "BookFreightIn"; system: EntityId; commodity: Commodity; units: number; sell_on_arrival: boolean }
@@ -1352,6 +1358,8 @@ export type ClientMsg =
   | { type: "SurveySystem"; fleet_id: EntityId; system_id: EntityId }
   | { type: "ExploreSite"; fleet_id: EntityId; site_id: EntityId; task: ExpeditionTask }
   | { type: "AnnotateExploration"; entry: ExplorationJournalEntry }
+  | { type: "AnswerSignal"; fleet_id: EntityId; signal_id: EntityId }
+  | { type: "DismissSignal"; signal_id: EntityId }
   // §offensive-orders — attack a rival fleet (destroy); set a fleet's posture.
   | { type: "AttackFleet"; fleet_id: EntityId; target_id: EntityId }
   | { type: "SetFleetPosture"; fleet_id: EntityId; posture: EngagementPosture }
@@ -1453,10 +1461,67 @@ export interface OperationView {
   joined: boolean;
   assigned_fleet?: EntityId | null;
   winner?: PlayerId | null;
+  /// §contract-board: the day this contract was posted on the board.
+  board_day?: number;
+}
+
+/// §contract-board: the corporation's board, as of what has reached command.
+export interface ContractBoardView {
+  day: number;
+  next_at: number;
+  done: number;
+  needed: number;
+  bonus_credits: number;
+  bonus_paid: boolean;
+}
+
+/// §signals: faint private contacts near home for captains to answer.
+export type SignalKind =
+  | "drifting_wreck" | "cargo_pod" | "ore_fragment" | "silent_probe" | "distress_beacon" | "sensor_ghost"
+  | "authority_courier" | "abandoned_outpost" | "pirate_stash" | "ghost_ship" | "precursor_fragment"
+  | "exotic_flare" | "teos_lost_crate";
+/// What a sweep found, as its report reads at command.
+export type SignalFind =
+  | { kind: "credits"; credits: number }
+  | { kind: "standing"; credits: number; standing: number }
+  | { kind: "cargo_aboard"; goods: [Commodity, number][] }
+  | { kind: "cache"; site: EntityId; goods: [Commodity, number][] }
+  | { kind: "module_aboard"; module: ModuleKind }
+  | { kind: "dossier"; programme: string }
+  | { kind: "blueprint"; module: ModuleKind }
+  | { kind: "captain"; name: string }
+  | { kind: "specialist"; specialist: "geologist" | "petrochemical_engineer" | "xenobiologist" | "industrial_engineer" | "naval_architect" };
+export interface SignalReportView {
+  at: number;
+  fleet: EntityId;
+  captain: string;
+  xp: number;
+  hurt_until?: number;
+  finds: SignalFind[];
+}
+export interface SignalView {
+  id: EntityId;
+  /** 1-based in order of detection: the first ten are scripted. */
+  number: number;
+  kind: SignalKind;
+  hazardous: boolean;
+  pos: Vec2;
+  detected_at: number;
+  xp: number;
+  /** Present once the report reached command. */
+  report?: SignalReportView;
+}
+export interface SignalsView {
+  /** Null while the open slots are full. */
+  next_at: number | null;
+  open_max: number;
+  first_ten: number;
+  first_ten_next?: string;
+  signals: SignalView[];
 }
 
 export type ExplorationKind = "derelict" | "station" | "asteroids" | "anomaly" | "precursor";
-export type ExpeditionTask = "investigate" | "recover" | "restore" | "study" | "extract";
+export type ExpeditionTask = "investigate" | "recover" | "restore" | "study" | "extract" | "signal";
 export interface ExplorationJournalEntry { id: EntityId; kind: "site" | "system"; pinned: boolean; note: string }
 export interface SiteOpportunity {
   task: "study" | "extract";
@@ -1626,6 +1691,16 @@ export interface RankingRow {
   intel_gathered: number;
   recovery: number;
   titles: string[];
+  /// §medals: weekly medals won, by category (absent from older servers).
+  medals?: MedalTally[];
+}
+
+/// §medals: a row's medals in one category (the category's slug).
+export interface MedalTally {
+  category: string;
+  gold: number;
+  silver: number;
+  bronze: number;
 }
 
 export type RaidOutcome =
@@ -1933,7 +2008,20 @@ export type FoundingStage =
   | "prepare_export"
   | "build_barge"
   | "mine_belt"
-  | "haul_ore";
+  | "haul_ore"
+  // §charter-v4: the bare landing and the counterfeit semiconductors.
+  | "build_bioharvester"
+  | "build_habitat"
+  | "build_agroplex"
+  | "power_shipyard"
+  | "buy_semiconductors"
+  | "build_freighter"
+  | "build_interceptor"
+  | "expand_mining"
+  | "eliminate_den"
+  // §charter-v5: the raid on the colony and the ore sale to the trader.
+  | "pirate_raid"
+  | "sell_ore";
 
 export interface FoundingView {
   stage: FoundingStage;
@@ -1960,12 +2048,41 @@ export interface FoundingView {
   turned_back?: EntityId | null;
   /** §belts: the charted belt the barge lesson points at. */
   belt_target?: { system: EntityId; body: number } | null;
+  /** §charter-v5: command has seen the raiding privateer (from then on the
+   * colony tracks it). */
+  raid_seen?: boolean;
+  /** §charter-v5: the report of what the raid took has reached command. */
+  raided?: boolean;
+  /** §charter-v4: "Expand mining operations" has opened the home's other
+   * worlds; until then only the landing world. */
+  land_grant_open?: boolean;
+  /** §charter-v4: the privateer den's system, named by the privateer's log
+   * once its kill report reached command. */
+  den?: EntityId | null;
+  /** §charter-v4: the report that the den fell has reached command. */
+  den_cleared?: boolean;
 }
 
 export type LedgerMetric = "syndicate" | "limit_orders" | "population" | "storage" | "refining"
   | "hulls" | "freighters" | "contracts" | "research" | "systems" | "tier_two" | "power_plants";
 
 /** The charter ledger: the next goals after founding, three at a time. */
+/** §merchant: the traveling merchant's stall at your home. Prices are fixed
+ * for the visit: the Hub mids when it set out, plus its markup. */
+export type MerchantPhase = "arriving" | "docked" | "leaving";
+export interface MerchantGoodView { commodity: Commodity; stock: number; price: number; hub_mid: number }
+export interface MerchantView {
+  fleet: EntityId;
+  system: EntityId;
+  phase: MerchantPhase;
+  leave_by: number;
+  markup: number;
+  goods: MerchantGoodView[];
+  /** What it pays for Ferrite Ore, and how much more it will take. */
+  ore_price: number;
+  ore_room: number;
+}
+
 export interface CharterLedgerView {
   done: number;
   total: number;
@@ -2023,6 +2140,8 @@ export type ServerMsg =
       founding: FoundingView;
       /** §founding R10: present once the charter ledger opens. */
       charter_ledger?: CharterLedgerView;
+      /** §merchant: the traveling merchant serving your home. Owner-only. */
+      merchant?: MerchantView;
       doctrine: FleetDoctrine;
       // §order-lifecycle — the player's own in-flight order timestamps (owner-only).
       pending_orders: PendingOrderView[];
@@ -2033,6 +2152,9 @@ export type ServerMsg =
       /// §syndicates Part 1: pending invitations the viewer may accept.
       syndicate_invites?: SyndicateInviteView[];
       operations?: OperationView[];
+      board?: ContractBoardView | null;
+      /// §signals: null until signals open (after the den).
+      signals?: SignalsView | null;
       exploration_sites?: ExplorationSiteView[];
       midgame_stage: MidgameStage;
       diplomacy?: DiplomacyView | null;

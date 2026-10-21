@@ -77,9 +77,8 @@ impl World {
         let target = self.fleets.values().filter(|t| !t.owner.is_pirate()
             && (!t.owner.is_tca() || self.pirate_campaign.missions.values().any(|m| m.evacuees == Some(t.id)))
             && t.pos.distance(anchor) <= radius
-            && crate::detection::detected(t.signature() * self.veil_factor_held(&held, t.owner, t.pos)
-                * self.nebula_signature_factor(t.pos)
-                * if t.loud_work() { crate::explore::SURVEY_SIGNATURE_FACTOR } else { 1.0 },
+            && crate::detection::detected(t.detection_signature() * self.veil_factor_held(&held, t.owner, t.pos)
+                * self.nebula_signature_factor(t.pos),
                 &[(p, self.config.sensor_range * self.nebula_sensor_factor(p))], t.pos)
             && !self.in_sovereign_zone(t.pos)
             && self.players.get(&t.owner).is_none_or(|c| !c.founding.protected(self.time)
@@ -448,7 +447,7 @@ mod tests {
         let brief = w.operations[&ids[0]].briefing.as_ref().unwrap().summary.clone();
         w.enclaves.get_mut(&base).unwrap().plunder.clear();
         let last = w.pending_operation_reports.iter().filter(|r| ids.contains(&r.operation)).map(|r| r.arrive_at).fold(0.0, f64::max);
-        w.time = last + 1e-6; w.deliver_operation_reports();
+        w.time = last + 1e-6; w.deliver_operation_reports(&mut Vec::new());
         for id in ids { assert!(w.operations[&id].is_visible_to(p)); assert!(!w.operations[&id].is_visible_to(PlayerId(123))); }
         assert!(w.operations.values().any(|o| o.briefing.as_ref().is_some_and(|b| b.summary == brief)));
     }
@@ -617,10 +616,10 @@ mod tests {
         assert_eq!(w.players[&p].credits, credits);
         assert!(!w.fleets.contains_key(&liner));
         let due = w.pending_operation_reports.iter().filter(|r| r.operation == id).map(|r| r.arrive_at).fold(0.0, f64::max);
-        w.time = due + 1e-6; w.deliver_operation_reports();
+        w.time = due + 1e-6; w.deliver_operation_reports(&mut Vec::new());
         let paid = w.players[&p].credits;
         assert!(paid > credits);
-        w.tick_combat_objectives(&mut vec![]); w.deliver_operation_reports();
+        w.tick_combat_objectives(&mut vec![]); w.deliver_operation_reports(&mut Vec::new());
         assert_eq!(w.players[&p].credits, paid);
     }
 

@@ -215,7 +215,7 @@ function commandLabel(command: FleetCommand, st: ViewState): string {
     case "CommitRaid": return `Raid fleet ${command.target_id}`;
     case "BlockadeSystem": return `Blockade ${system(command.system_id)}`;
     case "SurveySystem": return `Survey ${system(command.system_id)}`;
-    case "ExploreSite": return `${({ investigate: "Investigate", restore: "Restore", recover: "Recover", study: "Deep investigation", extract: "Prepared extraction" })[command.task]} → ${st.explorationSites.find(s => s.id === command.site_id)?.details?.name ?? "Unknown contact"}`;
+    case "ExploreSite": return `${({ investigate: "Investigate", restore: "Restore", recover: "Recover", study: "Deep investigation", extract: "Prepared extraction", signal: "Answer signal" })[command.task]} → ${st.explorationSites.find(s => s.id === command.site_id)?.details?.name ?? "Unknown contact"}`;
     case "AssignCaptain": return `Assign officer #${command.captain_id}`;
     case "ReserveCaptain": return `Return officer #${command.captain_id} to reserve`;
     case "TrainCaptain": return `Train officer #${command.captain_id}: ${label(command.attribute)}`;

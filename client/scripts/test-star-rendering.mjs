@@ -98,9 +98,10 @@ const pixi = { Container, Graphics, Sprite, Text, Texture: { EMPTY: {} },
 const planetArt = compile(source("planetart.ts"), { "./planet-art.generated": compile(source("planet-art.generated.ts")) });
 const layout = compile(source("systemlayout.ts"));
 const bodyFx = compile(source("systembodyfx.ts"), { "pixi.js": pixi, "./systemlayout": layout });
+const starFx = compile(source("systemstarfx.ts"), { "pixi.js": pixi, "./systembodyfx": bodyFx, "./systemlayout": layout });
 const systems = compile(source("systemview.ts"), { "./stars": stars, "./prng": prng, "./planetart": planetArt, "pixi.js": pixi,
   "./systemlayout": layout, "./systembodyfx": bodyFx,
-  "./systemstarfx": compile(source("systemstarfx.ts"), { "pixi.js": pixi, "./systembodyfx": bodyFx, "./systemlayout": layout }),
+  "./systemstarfx": starFx,
   "./systemtrafficlayer": compile(source("systemtrafficlayer.ts"), { "pixi.js": pixi, "./protocol": compile(source("protocol.ts")),
     "./systemlayout": layout, "./systembodyfx": bodyFx }),
   "./planet-structure-art": { hasOrbitalShipConstruction: () => false }, "./icons": { label: (s) => s } });
@@ -109,28 +110,23 @@ const renderSource = source("render.ts");
 const ast = ts.createSourceFile("render.ts", renderSource, ts.ScriptTarget.Latest, true);
 const owner = ast.statements.find(n => ts.isClassDeclaration(n) && n.name?.text === "Renderer");
 const method = name => owner.members.find(n => n.name?.getText(ast) === name);
-const constantNames = ["BAND_SIZE", "BODY_ZOOM_START", "ZOOM_MAX_FACTOR", "SYSTEM_ZOOM_FACTOR", "SHIP_NATIVE_ZOOM_START", "MACHINE_ZOOM_END", "BODY_HIT_CAP_PX"];
+const constantNames = ["BAND_SIZE", "BODY_ZOOM_START", "ZOOM_MAX_FACTOR", "SYSTEM_ZOOM_FACTOR", "SHIP_NATIVE_ZOOM_START", "MACHINE_ZOOM_END", "BODY_HIT_CAP_PX",
+  "APPROACH_HINT_START", "DISC_RESOLVE_FROM", "DISC_OPAQUE_AT"];
 const constants = ast.statements.filter(ts.isVariableStatement).flatMap(n => [...n.declarationList.declarations])
   .filter(n => constantNames.includes(n.name.getText(ast)));
 assert.equal(constants.length, constantNames.length);
-let loadedNode, drawNode;
-const visit = node => {
-  if (ts.isBlock(node)) {
-    const index = node.statements.findIndex(n => ts.isVariableStatement(n)
-      && n.declarationList.declarations.some(d => d.name.getText(ast) === "loaded"));
-    if (index >= 0) [loadedNode, drawNode] = [node.statements[index], node.statements[index + 1]];
-  }
-  ts.forEachChild(node, visit);
-};
-visit(method("drawSystems"));
-assert.ok(loadedNode && ts.isIfStatement(drawNode));
+// drawSystems hands each star to placeStarBody with the approach band's
+// smoothstep as its resolve; the real call is checked against that shape.
+assert.match(method("drawSystems").getText(ast),
+  /hintT \* hintT \* \(3 - 2 \* hintT\)[\s\S]*this\.placeStarBody\(sys\.id, st\.slug, s, rendered, owner !== null \? 1 : 0\.9, hintAlpha\)/);
+let now = 4321.5;
 const { Renderer } = compile(`${constants.map(n => `const ${n.getText(ast)};`).join("\n")}
  export class Renderer {
- ${["bodyFor", "starDiameters", "deepZoomPx", "systemHitRadius", "prepareSystemScene", "refreshSystemStar", "warmStarTextures"].map(n => method(n).getText(ast)).join("\n")}
+ ${["bodyFor", "placeStarBody", "spinStarDiscs", "starDiameters", "deepZoomPx", "systemHitRadius", "prepareSystemScene", "refreshSystemStar", "warmStarTextures"].map(n => method(n).getText(ast)).join("\n")}
  fitScale() { return 1; }
- drawStar(st, sys, s, rendered) { const owner = "mine"; ${loadedNode.getText(ast)} ${drawNode.getText(ast)} }
- }`, {}, { Sprite, starTypeFor: stars.starTypeFor, STAR_TYPES: stars.STAR_TYPES,
-  starArtwork: art.starArtwork, buildVisualSystem: systems.buildVisualSystem });
+ }`, {}, { Sprite, starTypeFor: stars.starTypeFor, STAR_TYPES: stars.STAR_TYPES, starSpinAngle: starFx.starSpinAngle,
+  performance: { now: () => now * 1000 }, starArtwork: art.starArtwork, buildVisualSystem: systems.buildVisualSystem });
+const resolveAt = zoom => { const t = Math.min(Math.max((zoom - 40) / (96 - 40), 0), 1); return t * t * (3 - 2 * t); };
 const ids = new Map();
 for (let i = 0; ids.size < 10 && i < 10000; i++) ids.set(stars.starTypeFor(String(i)).slug, String(i));
 assert.equal(ids.size, 10);
@@ -143,7 +139,7 @@ for (const [width, height, resolution] of [[390, 844, 2], [1366, 768, 1], [1920,
     renderer.app = { renderer: { resolution } };
     renderer.viewW = width; renderer.viewH = height;
     renderer.cameraRect = { x: 0, y: 0, w: width, h: height };
-    renderer.systemBodies = new Map(); renderer.bodyLayer = new Container();
+    renderer.systemBodies = new Map(); renderer.systemDiscs = new Map(); renderer.bodyLayer = new Container();
     renderer.starTextures = { get(family, slug, visible, density) {
       const definition = art.starArtwork(family, slug);
       const level = art.starArtLevel(definition, visible, density);
@@ -160,13 +156,39 @@ for (const [width, height, resolution] of [[390, 844, 2], [1366, 768, 1], [1920,
       const diameter = renderer.starDiameters(sys).rendered;
       assert.ok(diameter <= scene.starVisibleDiameterPx(), "galaxy never exceeds the system star's existing cap");
       if (zoom >= 96) close(diameter, scene.starVisibleDiameterPx(), "star still reaches its system-view size at 96×");
-      renderer.drawStar(st, sys, { x: 310, y: 270 }, diameter);
+      const resolve = resolveAt(zoom);
+      assert.equal(renderer.placeStarBody(sys.id, st.slug, { x: 310, y: 270 }, diameter, 1, resolve), true);
       const sprite = renderer.systemBodies.get(sys.id);
       const mapArt = art.starArtwork("galaxy", st.slug);
       close(sprite.texture.width * sprite.scale.x * mapArt.visualRatio, diameter, "map visible footprint independent of source resolution");
       assert.deepEqual(plain(sprite.anchor), { x: mapArt.anchor[0], y: mapArt.anchor[1] });
       assert.equal(sprite.position.x, 310); assert.equal(sprite.position.y, 270);
       assert.ok(sprite.scale.x * resolution <= 1, "no texture upscaling at supported viewport/zoom/DPR");
+      // §system-approach: through the final dive the flare resolves into the
+      // System View's own disc, which IS that star at the doorway: same art,
+      // visible size, anchor and turn.
+      close(sprite.alpha, 1 - resolve, "the flare fades as the disc resolves");
+      assert.equal(sprite.visible, resolve < 1);
+      const disc = renderer.systemDiscs.get(sys.id)?.sprite;
+      if (resolve === 0) {
+        assert.ok(!disc || !disc.visible, "no disc before the approach band");
+      } else {
+        const discArt = art.starArtwork("system", st.slug);
+        assert.ok(disc.visible);
+        close(disc.texture.width * disc.scale.x * discArt.visualRatio, diameter * (.25 + .75 * resolve), "the disc opens from the flare's core");
+        close(disc.alpha, Math.min(1, resolve / .4), "opaque early in the band");
+        assert.deepEqual(plain(disc.anchor), { x: discArt.anchor[0], y: discArt.anchor[1] });
+        assert.equal(disc.position.x, 310); assert.equal(disc.position.y, 270);
+        close(disc.rotation, starFx.starSpinAngle(st.slug, now), "turns with the System View's star");
+      }
+      if (zoom >= 96) {
+        close(disc.texture.width * disc.scale.x * art.starArtwork("system", st.slug).visualRatio, scene.starVisibleDiameterPx(),
+          "at the doorway the disc is the System View's star, size for size");
+        assert.equal(disc.alpha, 1); assert.equal(sprite.visible, false);
+        // Idle chart frames still turn it in step (drawSystems skips them).
+        now += 37.25; renderer.spinStarDiscs();
+        close(disc.rotation, starFx.starSpinAngle(st.slug, now), "an idle frame keeps the turn in step");
+      }
       cases++;
     }
     // Late upgrade during a handoff keeps selection, planet picks and the star
@@ -189,4 +211,4 @@ for (const [width, height, resolution] of [[390, 844, 2], [1366, 768, 1], [1920,
 }
 assert.match(source("shell/deck/empire.ts"), /starArtSrcset\("system", star.slug\)/);
 assert.doesNotMatch(renderSource, /load\(starIconUrl/);
-console.log(`Star rendering: ${cases} viewport/type/zoom cases; DPR-aware tiers, mipmaps, async races/failures, stable anchors/hit targets, and selection-preserving system upgrades passed.`);
+console.log(`Star rendering: ${cases} viewport/type/zoom cases; DPR-aware tiers, mipmaps, async races/failures, stable anchors/hit targets, the flare resolving into the System View's turning disc by the doorway, and selection-preserving system upgrades passed.`);

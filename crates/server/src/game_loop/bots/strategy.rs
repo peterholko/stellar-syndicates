@@ -169,15 +169,37 @@ impl Bot {
     pub(super) fn strategic_project(&self, p: &Observation) -> Option<Project> {
         // Preserve the short, understandable opening; beyond these necessities
         // select a benefit/cost goal, not a finite list ending at tier two.
+        let in_charter = p.local_opening && p.founding_stage != sim::FoundingStage::Complete;
         if p.home.system.id == p.capital {
-            // §fuel-overhaul: the Uranium Mill right after the mine.
-            for project in [p.structure(K::MiningComplex, 1), p.structure(K::UraniumMill, 1), p.structure(K::Shipyard, 1),
-                (p.own().all(|f| !f.kind.is_player_freighter())).then(|| p.ship(H::TinyFreighter, 1)).flatten(),
-                p.structure(K::Academy, 1),
+            // §charter-v5: the landing's own buildings in the guide's order;
+            // then, once the raid has struck and the ore is sold, the Solar
+            // Array the Shipyard needs, the Interceptor for the privateer, a
+            // Freighter for Hub trade and the expansion's mine. The Uranium
+            // Mill (the home's slow-freight fuel) follows the Academy: the kit
+            // carries the charter's goods, not the mill's.
+            for project in [p.structure(K::Bioharvester, 1), p.structure(K::Habitat, 1),
+                p.structure(K::Agroplex, 1), p.structure(K::MiningComplex, 1)] {
+                if project.is_some() { return project; }
+            }
+            if self.raid_pending(p) { return None; }
+            // §charter-v5: the Freighter waits for the privateer's bounty, so
+            // its Hub-trip reserve never starves the Interceptor.
+            let freight = !in_charter || p.founding_stage.step() > sim::FoundingStage::DefeatPrivateer.step();
+            for project in [self.landing_plant(p), p.structure(K::Shipyard, 1),
+                self.charter_escort(p),
+                (freight && p.own().all(|f| !f.kind.is_player_freighter())).then(|| p.ship(H::TinyFreighter, 1)).flatten(),
+                // §charter-v4: the Academy waits for its step; until then the
+                // trader's semiconductors go to the Interceptor.
+                (!in_charter || p.founding_stage.step() >= sim::FoundingStage::FirstResearch.step())
+                    .then(|| p.structure(K::Academy, 1)).flatten(),
+                self.charter_expansion(p),
+                p.structure(K::UraniumMill, 1),
                 // §charter v3: the survey step's stop is the Survey Probe's job,
                 // one probe per outstanding stop until its report lands.
                 self.charter_probe_due(p).and_then(|_| p.ship(H::SurveyProbe, 1)),
-                p.ship(H::Scout, 1),
+                // §charter-v4: the kit's Warp Cores are the charter's; a Scout
+                // waits until it is fulfilled.
+                (!in_charter).then(|| p.ship(H::Scout, 1)).flatten(),
                 // §belts: the charter's barge lesson, once the surveys are in.
                 p.belt_lesson.and_then(|_| p.ship(H::MiningBarge, 1))] {
                 if project.is_some() { return project; }
@@ -191,12 +213,17 @@ impl Bot {
             choices.push((160.0 + 10.0 * short, project));
         }
         for kind in K::ALL {
+            // §charter-v4: the kit is the charter's; while it runs, optional
+            // works wait, except storage.
+            if in_charter && kind != K::Warehouse { continue; }
             if let Some(project) = p.structure(kind, p.home.system.tier(kind) + 1) {
                 choices.push((self.structure_value(p, kind), project));
             }
         }
         // Each developed port may construct its own relief carriers/escorts.
-        for (kind, desired, value) in self.fleet_needs(p) {
+        // §charter-v4: not during the charter, whose kit holds its own hulls'
+        // Warp Cores.
+        for (kind, desired, value) in if in_charter { Vec::new() } else { self.fleet_needs(p) } {
             if desired <= p.count(kind) { continue; }
             if let Some(project) = p.ship(kind, desired) {
                 let supplies = self.desired_stock(p, None).values().sum::<f64>();
@@ -211,7 +238,13 @@ impl Bot {
                 if let Some(project) = self.yard_project(p, yard, tier) { choices.push((value + 10.0, project)); }
             }
         }
+        // §charter-v5: from the trader's last call on, optional works use only
+        // what the charter's builds ahead leave; nothing nearby replaces it.
+        let reserve = p.charter_reserve();
         choices.into_iter().filter(|(_, project)| {
+            !in_charter || p.project_costs(*project).iter()
+                .all(|(c, n)| p.stock(*c) - n + 1e-9 >= reserve.get(c).copied().unwrap_or(0.0))
+        }).filter(|(_, project)| {
             let cost = p.project_costs(*project).iter().map(|(&c, n)| n * p.price(c)).sum::<f64>();
             // Commit only what can be financed, including goods already local.
             let shortfall = p.project_costs(*project).iter().map(|(&c, n)| (n - p.stock(c)).max(0.0) * p.price(c) * 1.3).sum::<f64>();

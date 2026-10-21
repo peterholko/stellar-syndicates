@@ -112,7 +112,7 @@ mod tests {
 
     fn arrive(w: &mut World) {
         w.time = w.pending_operation_reports.iter().map(|r| r.arrive_at).fold(w.time, f64::max);
-        w.deliver_operation_reports();
+        w.deliver_operation_reports(&mut Vec::new());
     }
 
     fn stage(w: &World, follow_up: FollowUpKind) -> OperationId {
@@ -181,7 +181,7 @@ mod tests {
         arrive(&mut w);
         assert_eq!(w.players[&player].credits, credits + w.operations[&assault].reward.credits);
         let paid = w.players[&player].credits;
-        w.deliver_operation_reports();
+        w.deliver_operation_reports(&mut Vec::new());
         assert_eq!(w.players[&player].credits, paid);
         let electronics = *loot.iter().find(|id| matches!(w.operations[id].kind,
             OperationKind::RescueSalvage { commodity: Commodity::Electronics, .. })).unwrap();

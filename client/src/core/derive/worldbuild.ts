@@ -1,7 +1,8 @@
 import { label } from "../../icons";
 import type { BodyView, BuildState, Commodity, SystemStateView } from "../../protocol";
 import { buildProgress } from "./construction";
-import { POOL_OF, SHIP_YARD, structureBuildSeconds, structureLevel, YARD_PREREQ, YARD_TITLE, type BuildOpt } from "./market";
+import { fmtBuildDur } from "./format";
+import { openingBuild, POOL_OF, SHIP_YARD, structureBuildSeconds, structureLevel, YARD_PREREQ, YARD_TITLE, type BuildOpt } from "./market";
 
 /** §construction: each world builds one structure at a time, in the order the
  * orders arrived; hulls, modules and courses use their own facilities. This is
@@ -47,7 +48,8 @@ export interface StructureJob {
   readyIn: number | null;
   /** 0–100 for an active job with a known clock. */
   progress: number | null;
-  /** A waiting structure that no later order for the same structure builds on. */
+  /** A structure order, waiting or building, that no later order for the
+   * same structure builds on (the sim's `cancel_build` rule). */
   cancellable: boolean;
 }
 
@@ -73,7 +75,8 @@ export function structureQueue(report: SystemStateView, body: BodyView, catalog:
       free = free === null || readyIn === null ? null : Math.max(free, readyIn);
     } else {
       const option = catalog.find(entry => entry.key === job.key);
-      const seconds = project ? PROJECT_SECONDS[job.key] * mult : option ? structureBuildSeconds(structureLevel(option, tier), body) : null;
+      const seconds = project ? PROJECT_SECONDS[job.key] * mult
+        : option ? structureBuildSeconds(structureLevel(option, tier), body, openingBuild(job.key, tier, report.id, body)) : null;
       startsIn = free;
       readyIn = free === null || seconds === null ? null : free + seconds;
       free = readyIn;
@@ -82,7 +85,7 @@ export function structureQueue(report: SystemStateView, body: BodyView, catalog:
       progress: active ? buildProgress(job, now) : null, cancellable: false };
   });
   for (const entry of line) {
-    entry.cancellable = !entry.active && !entry.project && entry.job.id !== undefined
+    entry.cancellable = !entry.project && entry.job.id !== undefined
       && !line.some(other => other.key === entry.key && other.position > entry.position);
   }
   return line;
@@ -93,6 +96,32 @@ export function hullJobs(report: SystemStateView, body: BodyView): BuildState[] 
   return report.builds.filter(job => job.body_id === body.id && isHullJob(job.key));
 }
 
+/** A structure order's name: the building and the level it builds. */
+export const jobTitle = (job: StructureJob): string => job.project ? label(job.key) : `${label(job.key)} ${romanTier(job.tier)}`;
+
+/** §construction: one order, one bar. Only the world's Construction card
+ * draws an order's bar and time; the planet, the structure list, the build
+ * sheet and the system view name its place in line with one word: Building,
+ * Starting (first in line, not yet reported started), #N while it waits, and
+ * SENDING while the order is still on its way. */
+export const jobTag = (job: StructureJob): string => job.active ? "Building" : job.position === 1 ? "Starting" : `#${job.position}`;
+export const SENDING = "Sending";
+
+/** A world's work slot in one line, for the top bar and the system view. */
+export function slotLine(head: StructureJob | null, waiting: number): string {
+  if (!head) return "Build slot idle";
+  const left = !head.active ? "starting" : head.readyIn === null ? "—" : head.readyIn <= 0.5 ? "completing" : fmtBuildDur(head.readyIn);
+  return `${jobTitle(head)} · ${left}${waiting > 0 ? ` · +${waiting} queued` : ""}`;
+}
+
+/** A hull or module on its yard, which never waits for the structure slot. */
+export function yardStatus(job: BuildState, now: number): string {
+  if (job.queued) return isHullJob(job.key) ? "waiting for a slip" : "queued";
+  if (job.complete_time == null) return "paused · needs workforce";
+  const left = Math.max(0, job.complete_time - now);
+  return left <= 0.5 ? "completing" : fmtBuildDur(left);
+}
+
 // §build-sheet: the figures the build sheet quotes, mirrored from the sim.
 /** production::TIER_THROUGHPUT: a level's output against level I, fully crewed. */
 export const TIER_THROUGHPUT: readonly number[] = [0, 1, 2.2, 3.8, 6, 8.6, 11.5];
@@ -100,20 +129,24 @@ export const TIER_THROUGHPUT: readonly number[] = [0, 1, 2.2, 3.8, 6, 8.6, 11.5]
  * level, before the world's habitat multiplier. */
 const HOUSING_PER_LEVEL: Readonly<Record<string, number>> = { habitat: 25_000, living_terraces: 20_000 };
 /** build::STORAGE_WAREHOUSE_INITIAL, STORAGE_PER_WAREHOUSE_TIER and
- * STORAGE_PER_ORBITAL_WAREHOUSE_TIER. A Founding Camp's Warehouse holds 250
- * until its Storehouse project is done. */
-const WAREHOUSE_FIRST = 700, WAREHOUSE_PER_LEVEL = 400, ORBITAL_STORAGE_PER_LEVEL = 2_000, CAMP_STORAGE = 250;
+ * STORAGE_PER_ORBITAL_WAREHOUSE_TIER. §charter-v4: a Warehouse holds its full
+ * amount on a camp world too; the Storehouse project enlarges the colony
+ * ship's holds instead. */
+const WAREHOUSE_FIRST = 700, WAREHOUSE_PER_LEVEL = 400, ORBITAL_STORAGE_PER_LEVEL = 2_000;
 const EXTRACTORS: ReadonlySet<string> = new Set(["mining_complex", "volatile_harvester", "bioharvester"]);
 
-/** §power (sim::power): what draws power, each planet's free base, and a
- * plant's output. Food, housing, storage, defence and sensors never draw. */
+/** §power (sim::power): what draws power, each planet's base, and a plant's
+ * output. Food, housing, storage, defence and sensors never draw. */
 export const POWERED_STRUCTURES: ReadonlySet<string> = new Set([
   "mining_complex", "volatile_harvester", "smelter", "electronics_fabricator", "chemical_works", "fuel_refinery",
   "machine_works", "armaments_complex", "composite_works", "hull_fabricator", "precision_works", "drive_works",
   "uranium_mill", "antimatter_plant",
   "shipyard", "naval_drydock", "capital_slipway", "ordnance_foundry", "academy",
 ]);
-export const POWER_BASE_MW = 3;
+/** §charter-v4: no planet has free power; a Command Center's reactor gives its
+ * own planet 1 MW (power::COMMAND_CENTER_MW). */
+export const COMMAND_CENTER_MW = 1;
+export const baseMW = (body: BodyView): number => (body.structures.command_center ?? 0) > 0 ? COMMAND_CENTER_MW : 0;
 /** §fuel-overhaul: I–II Solar Array (burns nothing), III–IV Fusion Plant on
  * Deuterium, V–VI on Helium-3. */
 export const FUSION_CORE_TIER = 3;
@@ -142,7 +175,8 @@ export function gridLine(body: BodyView): { text: string; short: boolean; tip: s
   const short = grid.power < 0.999;
   const fuel = grid.fuel ? label(grid.fuel) : "fuel";
   const text = `⚡ ${mw(grid.demand)} / ${mw(grid.supply)} MW${short ? ` · Power ${Math.round(grid.power * 100)}%` : ""}`;
-  const tip = `Demand / supply. ${POWER_BASE_MW} MW base${body.structures.power_plant > 0 ? ` + plant` : ""}.`
+  const base = baseMW(body);
+  const tip = `Demand / supply.${base > 0 ? ` ${mw(base)} MW Command Center reactor${body.structures.power_plant > 0 ? " + plant" : ""}.` : body.structures.power_plant > 0 ? " Plant only." : " No power source."}`
     + (grid.burn > 0 ? ` Burning ${mw(grid.burn * 3600)} ${fuel}/h.` : "")
     + (grid.no_fuel ? ` Plant out of ${fuel}.` : "");
   return { text, short, tip };
@@ -180,15 +214,17 @@ export function structureFacts(option: BuildOpt, from: number, to: number, body:
   if (key === "power_plant") {
     facts.push({ label: "Supplies", from: was(`${mw(plantMW(from))} MW`), to: `${mw(plantMW(to))} MW` });
     const burns = (tier: number) => { const fuel = plantFuel(tier);
-      return fuel ? `${label(fuel)} past ${mw(POWER_BASE_MW + solarMW(tier))} MW` : "Nothing (solar)"; };
+      return fuel ? `${label(fuel)} past ${mw(baseMW(body) + solarMW(tier))} MW` : "Nothing (solar)"; };
     facts.push({ label: "Burns", from: from > 0 && burns(from) !== burns(to) ? burns(from) : null, to: burns(to) });
   }
-  if (grid && (POWERED_STRUCTURES.has(key) || key === "power_plant")) {
-    const demand = grid.demand + drawMW(key, to) - drawMW(key, from);
-    const supply = key === "power_plant" ? POWER_BASE_MW + plantMW(to)
-      : grid.no_fuel ? grid.supply : POWER_BASE_MW + plantMW(body.structures.power_plant ?? 0);
+  // §charter-v4: a planet with no report yet has no grid: no plant, and a
+  // reactor only beside a Command Center. Its preview shows the shortfall.
+  if (POWERED_STRUCTURES.has(key) || key === "power_plant") {
+    const demand = (grid?.demand ?? 0) + drawMW(key, to) - drawMW(key, from);
+    const supply = key === "power_plant" ? baseMW(body) + plantMW(to)
+      : grid?.no_fuel ? grid.supply : baseMW(body) + plantMW(body.structures.power_plant ?? 0);
     const share = demand > 1e-9 ? Math.min(1, supply / demand) : 1;
-    facts.push({ label: "Grid", from: was(`${mw(grid.demand)} / ${mw(grid.supply)} MW`),
+    facts.push({ label: "Grid", from: grid ? was(`${mw(grid.demand)} / ${mw(grid.supply)} MW`) : null,
       to: `${mw(demand)} / ${mw(supply)} MW${share < 0.999 ? ` · ${Math.floor(share * 100)}%` : ""}` });
   }
   const housing = HOUSING_PER_LEVEL[key];
@@ -200,8 +236,7 @@ export function structureFacts(option: BuildOpt, from: number, to: number, body:
     facts.push({ label: "Houses", from: was(num(camp ?? housing * mult * from)), to: num(housing * mult * to) });
   }
   if (key === "warehouse") {
-    const camp = !!body.founding_camp && !body.founding_camp.completed.includes("storehouse");
-    const cap = (tier: number) => tier === 1 && camp ? CAMP_STORAGE : WAREHOUSE_FIRST + WAREHOUSE_PER_LEVEL * (tier - 1);
+    const cap = (tier: number) => WAREHOUSE_FIRST + WAREHOUSE_PER_LEVEL * (tier - 1);
     facts.push({ label: "Storage", from: was(num(cap(from))), to: num(cap(to)) });
   }
   if (key === "orbital_warehouse") facts.push({ label: "Storage", from: was(num(ORBITAL_STORAGE_PER_LEVEL * from)), to: num(ORBITAL_STORAGE_PER_LEVEL * to) });

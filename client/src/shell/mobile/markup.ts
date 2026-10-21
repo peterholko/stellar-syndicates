@@ -19,6 +19,7 @@ export const mobileMarkup = String.raw`
         <span class="m-stat"><small>Reserved by orders</small><strong id="m-reserved-credits">—</strong></span>
         <p class="m-status-help">Credits above are spendable. Market buy orders reserve their maximum protected cost until execution or cancellation.</p>
         <button id="m-profile-open" type="button">Profile</button>
+        <button id="m-corp-card" type="button">Corporation card</button>
       </div>
     </header>
 

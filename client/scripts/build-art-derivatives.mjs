@@ -13,7 +13,8 @@ import { buildStationArt } from "./build-station-art.mjs";
 import { buildCommandCenterArt } from "./build-command-center-art.mjs";
 import { buildPlanetShipyardArt } from "./build-planet-shipyard-art.mjs";
 import { buildPlanetSurfaceStructureArt } from "./build-planet-surface-structure-art.mjs";
-import { buildFoundingStoryArt } from "./build-founding-story-art.mjs";
+import { buildFoundingStoryArt, buildStoryEventArt, buildTraderPortraitArt } from "./build-founding-story-art.mjs";
+import { buildSignalArt } from "./build-signal-art.mjs";
 
 const clientRoot = fileURLToPath(new URL("..", import.meta.url));
 const publicArt = path.join(clientRoot, "public", "art");
@@ -237,7 +238,7 @@ async function buildNebulas() {
   return { sources: sources.length, written };
 }
 
-const [captains, lore, pwa, structures, nebulas, login, resources, stars, ships, planets, planetWorkbench, structureTiers, foundingStory, authority, commandCenters, planetShipyards, surfaceStructures, stations, hub, glyphs, beltChunks] = await Promise.all([
+const [captains, lore, pwa, structures, nebulas, login, resources, stars, ships, planets, planetWorkbench, structureTiers, foundingStory, authority, commandCenters, planetShipyards, surfaceStructures, stations, hub, glyphs, beltChunks, storyEvents, traderPortraits, signals] = await Promise.all([
   buildCaptains(), buildLore(), buildPwaIcons(), buildStructureIcons(), buildNebulas(), buildLoginBackgrounds(),
   buildResourceIcons(), buildStarDerivatives(), buildShipDerivatives(), buildPlanetDerivatives(),
   buildPlanetWorkbenchArt(), buildStructureTierArt(), buildFoundingStoryArt(), buildAuthoritySeal(),
@@ -248,6 +249,9 @@ const [captains, lore, pwa, structures, nebulas, login, resources, stars, ships,
   buildHubModelAssets(),
   buildMapGlyphs(),
   buildBeltChunks(),
+  buildStoryEventArt(),
+  buildTraderPortraitArt(),
+  buildSignalArt(),
 ]);
 console.log(
   `art derivatives: ${captains.sources} captain portraits (${captains.written} written), ` +
@@ -267,6 +271,9 @@ console.log(
   `${planets.sources} planet masters / ${planets.variants} sizes (${planets.written} written), ` +
   `planet workbench (${planetWorkbench.written} written), ` +
   `${foundingStory.sources} founding story scenes (${foundingStory.written} written), ` +
+  `${storyEvents.sources} story events, ${storyEvents.pending} awaiting art (${storyEvents.written} written), ` +
+  `${traderPortraits.sources} trader portraits, ${traderPortraits.pending} awaiting art (${traderPortraits.written} written), ` +
+  `${signals.sources} signal paintings, ${signals.pending} awaiting art (${signals.written} written), ` +
   `${authority.sources} Authority seal (${authority.written} written), ` +
   `hub station ${(hub.glbBytes / 1e6).toFixed(2)} MB (${hub.written} written), ` +
   `${glyphs.glyphs} map glyphs (${glyphs.written} written), ` +

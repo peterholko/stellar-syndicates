@@ -84,6 +84,7 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       st.rankings = [];
       st.link = "online";
       st.awaySet = false;
+      st.storyTold = new Set();
       events.push({ kind: "Welcomed", playerId: msg.player_id, name: msg.name });
       return events;
     }
@@ -134,12 +135,15 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       st.charter = msg.charter;
       st.founding = msg.founding;
       st.charterLedger = msg.charter_ledger ?? null;
+      st.merchant = msg.merchant ?? null;
       if (msg.founding?.privateer) st.lastFoundingPrivateer = msg.founding.privateer;
       st.doctrine = msg.doctrine;
       st.battles = msg.battles;
       st.syndicate = msg.syndicate ?? null;
       st.syndicateInvites = msg.syndicate_invites ?? [];
       st.operations = msg.operations ?? [];
+      st.board = msg.board ?? null;
+      st.signals = msg.signals ?? null;
       st.explorationSites = msg.exploration_sites ?? [];
       st.midgameStage = msg.midgame_stage;
       st.diplomacy = msg.diplomacy ?? null;
@@ -333,6 +337,14 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       const previous = new Set(st.timeline.map((entry) => `${entry.at_time}:${entry.severity}:${entry.text}`));
       const hadTimeline = st.awaySet;
       st.timeline = msg.entries;
+      // §charter-v4: turns whose news predates this session were told then
+      // (or met in the inbox while away): no pop-up, and nothing withheld.
+      if (!hadTimeline && msg.entries.some((entry) => entry.text.startsWith("A free trader docked at "))) {
+        st.storyTold.add("free_trader");
+      }
+      if (!hadTimeline && msg.entries.some((entry) => entry.text.startsWith("Pirates raided "))) {
+        st.storyTold.add("pirates");
+      }
       if (!st.awaySet) {
         st.awaySince = msg.away_since;
         st.awaySet = true;
@@ -356,9 +368,22 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
         .map((entry): CoreEvent | null => {
           const reward = /^Charter milestone · (.+) · the Authority paid ([\d,.]+) Cr\.$/.exec(entry.text);
           if (reward) return { kind: "CharterMilestone", title: "Charter milestone", message: `${reward[1]} · +${Number(reward[2].replace(/,/g, "")).toLocaleString()} Cr` };
-          if (entry.text.startsWith("The Terran Charter Authority chartered a replacement")) {
-            return { kind: "CharterMilestone", title: "Replacement Freighter", message: entry.text };
+          // §charter-v5: the raid's report is a story pop-up, not a toast.
+          const raid = /^Pirates raided .+ and took (.+)\.$/.exec(entry.text);
+          if (raid) {
+            const took = (good: string) => Number(new RegExp(`([\\d,]+) ${good}`).exec(raid[1])?.[1]?.replace(/,/g, "") ?? 0);
+            return { kind: "StoryEvent", story: "pirates", semiconductors: took("semiconductors"), armaments: took("armaments") };
           }
+          // The trader's docking is the first the founder hears of it.
+          if (entry.text.startsWith("A free trader docked at ")) return { kind: "StoryEvent", story: "free_trader" };
+          // §signals: a new signal near home, and each report.
+          const signal = /^New signal · (.+)\.$/.exec(entry.text);
+          if (signal) return { kind: "SignalNews", title: "New signal", message: signal[1], tone: "quiet" };
+          const find = /^(First find \d+\/\d+|Report in) · (.+)\.$/.exec(entry.text);
+          if (find) return { kind: "SignalNews", title: find[1], message: find[2], tone: "good" };
+          // §medals: rewards are moments too.
+          const medal = /^Week (\d+) · (Gold|Silver|Bronze) medal · (.+)\.$/.exec(entry.text);
+          if (medal) return { kind: "CharterMilestone", title: `${medal[2]} medal`, message: `Week ${medal[1]} · ${medal[3]}` };
           return null;
         })
         .filter((event): event is CoreEvent => event !== null) : [];

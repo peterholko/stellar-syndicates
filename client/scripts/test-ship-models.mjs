@@ -4,7 +4,7 @@ import { readFile, readdir } from "node:fs/promises";
 import vm from "node:vm";
 import ts from "typescript";
 import sharp from "sharp";
-import { SHIP_MODELS } from "./ship-model-catalog.mjs";
+import { ART_VARIANTS, SHIP_MODELS } from "./ship-model-catalog.mjs";
 import { buildShipModelAssets } from "./build-ship-model-assets.mjs";
 
 const client = new URL("../", import.meta.url);
@@ -18,7 +18,7 @@ const compile = text => {
 const { SHIP_MODELS: catalog } = compile((await read("src/ship-models.generated.ts")).toString());
 const protocol = ts.createSourceFile("protocol.ts", (await read("src/protocol.ts")).toString(), ts.ScriptTarget.Latest, true);
 const kinds = protocol.statements.find(s => ts.isTypeAliasDeclaration(s) && s.name.text === "ShipKind").type.types.map(t => t.literal.text);
-assert.deepEqual(Object.keys(catalog).sort(), kinds.sort(), "Every real game hull has a model");
+assert.deepEqual(Object.keys(catalog).sort(), [...kinds, ...Object.keys(ART_VARIANTS)].sort(), "Every real game hull, and every art variant, has a model");
 const baked = JSON.parse(await read("art-src/ship-models/game-ready-v1/bake-manifest.json"));
 const art = JSON.parse(await read("public/art/derived/ships/models-v1/manifest.json"));
 let totalBytes = 0;
@@ -43,6 +43,16 @@ for (const { kind, id } of SHIP_MODELS) {
     assert.deepEqual(sockets.map(node => node.name).sort(), ["socket.engine.port", "socket.engine.starboard", "socket.mining.port", "socket.mining.starboard"]);
     for (const socket of sockets) assert.deepEqual(socket.extras.direction,
       [0, 0, socket.name.startsWith("socket.engine.") ? 1 : -1], `${socket.name}: authored facing`);
+  }
+  if (kind === "free_trader") {
+    assert.ok(triangles >= 4000 && triangles <= 5000, "Free Trader keeps its silhouette within the LOD2 budget");
+    const sockets = gltf.nodes.filter(node => node.name?.startsWith("socket."));
+    const directions = {
+      "socket.docking.1": [-1, 0, 0], "socket.docking.2": [-1, 0, 0], "socket.docking.3": [1, 0, 0], "socket.docking.4": [1, 0, 0],
+      "socket.engine.port": [0, 0, 1], "socket.engine.starboard": [0, 0, 1],
+    };
+    assert.deepEqual(sockets.map(node => node.name).sort(), Object.keys(directions).sort());
+    for (const socket of sockets) assert.deepEqual(socket.extras.direction.map(v => v + 0), directions[socket.name], `${socket.name}: authored facing`);
   }
   if (kind === "mining_belt_station") {
     assert.ok(triangles >= 7000 && triangles <= 8500, "Station fits the LOD2 budget");
@@ -70,7 +80,7 @@ for (const { kind, id } of SHIP_MODELS) {
   totalBytes += bytes.length;
 }
 const shipped = await readdir(new URL("public/art/derived/ship-models/v1/", client));
-assert.equal(shipped.filter(f => f.endsWith(".glb")).length, 20);
+assert.equal(shipped.filter(f => f.endsWith(".glb")).length, 21);
 assert.ok(shipped.every(f => !/-lod[01]|original/.test(f)), "No higher-detail model payloads shipped");
 assert.equal((await buildShipModelAssets()).written, 0, "Production copy is idempotent");
 console.log(`Ship models: all ${kinds.length} game kinds, exact LOD2 bytes/textures, triangle counts, ${SHIP_MODELS.length * 3} verified model renders, posters and reproducible packaging passed (${(totalBytes / 1048576).toFixed(1)} MiB; individual lazy model payloads).`);

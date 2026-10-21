@@ -999,6 +999,16 @@ impl GameLoop {
                         self.pending.push(Command::AnnotateExploration { player_id, entry });
                     }
                 }
+                ClientMsg::AnswerSignal { fleet_id, signal_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::AnswerSignal { player_id, fleet_id, signal_id });
+                    }
+                }
+                ClientMsg::DismissSignal { signal_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::DismissSignal { player_id, signal_id });
+                    }
+                }
                 ClientMsg::SurveySystem {
                     fleet_id,
                     system_id,
@@ -1319,6 +1329,11 @@ impl GameLoop {
                             units,
                             max_unit_price,
                         });
+                    }
+                }
+                ClientMsg::MerchantTrade { buys, sells } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::MerchantTrade { player_id, buys, sells });
                     }
                 }
                 ClientMsg::HubLoad {
@@ -2026,6 +2041,11 @@ impl GameLoop {
             // The viewer's standing SENSOR-ARRAY bubbles (§buildings step 2b) join
             // their coverage — same shared source of truth as the sim's pickets.
             let arrays = self.world.known_sensor_sources(player_id);
+            // §sensors: weapons fire is loud, but like any signal it drowns in
+            // the galaxy's noise past the horizon from this viewer's receivers.
+            let receivers: Vec<sim::Vec2> =
+                std::iter::once(cc).chain(arrays.iter().map(|(pos, _)| *pos)).collect();
+            let battle_heard = |pos: sim::Vec2, own: bool| own || sim::detection::heard(receivers.iter().copied(), pos);
             // BATTLES (§battles-take-time), STRICTLY light-gated: a battle (and its
             // participants, revealed by weapons fire) appears only once the light
             // of its start has reached THIS player's command center. Subsequent
@@ -2035,7 +2055,9 @@ impl GameLoop {
                 std::collections::BTreeSet::new();
             for b in self.world.active_battles() {
                 let delay = sim::transit::delay(b.pos, cc, c);
-                if now >= b.started_at + delay {
+                if now >= b.started_at + delay
+                    && battle_heard(b.pos, player_id == b.a_owner || player_id == b.d_owner)
+                {
                     let participants = view::battle_participants_at(
                         self.world.battle_records.get(&b.id), &b.participants, now, delay);
                     battle_reveal.extend(participants.iter().copied());
@@ -2058,7 +2080,9 @@ impl GameLoop {
             // means a viewer whose START light never arrived (battle began and ended
             // faster than its light could reach them) still never sees a phantom icon.
             for cb in &self.concluded_battles {
-                if cb.shows_in_progress(cc, c, now) {
+                if cb.shows_in_progress(cc, c, now)
+                    && battle_heard(cb.pos, player_id == cb.a_owner || player_id == cb.d_owner)
+                {
                     let delay = sim::transit::delay(cb.pos, cc, c);
                     let participants = view::battle_participants_at(
                         self.world.battle_records.get(&cb.id), &cb.participants, now, delay);
@@ -2073,6 +2097,7 @@ impl GameLoop {
                     });
                 }
             }
+            battle_reveal.extend(view::tracked_contacts(&self.world, player_id, now));
             // §node: this viewer's regional dark-fleet effects (Veil quiets its
             // holders' dark fleets; Deep Scan resolves exact composition in-region).
             let (veil_regions, deep_scan_regions) = self.world.known_node_regions(player_id);
@@ -2438,6 +2463,7 @@ impl GameLoop {
                         winner: (known.state == sim::OperationState::Completed)
                             .then_some(operation.winner)
                             .flatten(),
+                        board_day: operation.board_day,
                     })
                 })
                 .collect();
@@ -2557,6 +2583,7 @@ impl GameLoop {
                             captain.stationed_system
                         },
                         recovering_until: casualty_known.then_some(captain.recover_at).flatten(),
+                        hurt_until: captain.hurt_until.filter(|until| *until > now),
                         loss_fate: casualty_known.then_some(captain.loss_fate).flatten(),
                         report: served_captains
                             .get(&captain.id)
@@ -2657,6 +2684,11 @@ impl GameLoop {
                     .founding
                     .belt_target
                     .map(|(system, body)| crate::protocol::BeltTargetView { system, body }),
+                raid_seen: corp.founding.raid_seen_at.is_some_and(|at| at <= now),
+                raided: corp.founding.raid_report_at.is_some_and(|at| at <= now),
+                land_grant_open: corp.founding.land_grant_open(),
+                den: corp.founding.den.filter(|_| corp.founding.privateer_report_at.is_some_and(|at| at <= now)),
+                den_cleared: corp.founding.den_report_at.is_some_and(|at| at <= now),
             };
             let charter_ledger = sim::charter::ledger_open(&corp.founding)
                 .then(|| corp.ledger.opened)
@@ -2815,6 +2847,10 @@ impl GameLoop {
                     charter,
                     founding,
                     charter_ledger,
+                    // §merchant: its stall is at the home, beside the command
+                    // center, so the served catalogue is its truth.
+                    merchant: self.world.merchants.values().find(|v| v.customer == player_id)
+                        .map(crate::protocol::MerchantView::of),
                     freight,
                     // The player's own fleet doctrine (fresh private policy).
                     doctrine: corp.doctrine,
@@ -2830,6 +2866,15 @@ impl GameLoop {
                     syndicate,
                     syndicate_invites,
                     operations,
+                    board: corp.board.day.map(|day| crate::protocol::ContractBoardView {
+                        day,
+                        next_at: (day + 1) as f64 * sim::operation::BOARD_DAY_S,
+                        done: corp.board.done.get(&day).copied().unwrap_or(0),
+                        needed: sim::operation::BOARD_BONUS_AFTER,
+                        bonus_credits: sim::operation::BOARD_BONUS_CREDITS,
+                        bonus_paid: corp.board.bonus_days.contains(&day),
+                    }),
+                    signals: corp.signals.opened_at.map(|_| signals_view(&corp.signals)),
                     exploration_sites: self.world.exploration.reports_for(player_id),
                     midgame_stage: corp.midgame_stage,
                     diplomacy,
@@ -3189,6 +3234,35 @@ fn send_ground_deltas(
 /// The public star chart as SystemInfo rows — the Welcome galaxy's `systems`
 /// and every GalaxyUpdate re-broadcast share this one mapper, so the two can
 /// never drift.
+/// §signals: open signals and kept reports. What a signal holds goes on the
+/// wire only with its report.
+fn signals_view(book: &sim::signals::SignalBook) -> crate::protocol::SignalsView {
+    let full = book.open_count() >= sim::signals::SIGNAL_OPEN_MAX;
+    crate::protocol::SignalsView {
+        next_at: (!full).then_some(book.next_at),
+        open_max: sim::signals::SIGNAL_OPEN_MAX as u32,
+        first_ten: book.first_ten_reported.len() as u32,
+        first_ten_next: book.first_ten_next(),
+        signals: book.signals.iter().map(|s| crate::protocol::SignalView {
+            id: s.id,
+            number: s.number,
+            kind: s.kind,
+            hazardous: s.hazardous,
+            pos: s.pos,
+            detected_at: s.detected_at,
+            xp: s.xp,
+            report: s.reported_at.zip(s.outcome.as_ref()).map(|(at, o)| crate::protocol::SignalReportView {
+                at,
+                fleet: o.fleet,
+                captain: o.captain_name.clone(),
+                xp: o.xp,
+                hurt_until: o.hurt.then_some(o.swept_at + sim::signals::SIGNAL_HURT_S),
+                finds: o.finds.clone(),
+            }),
+        }).collect(),
+    }
+}
+
 fn system_infos(world: &sim::World) -> Vec<SystemInfo> {
     world
         .systems
@@ -3399,7 +3473,7 @@ fn build_options() -> Vec<BuildOptionView> {
                             research_prerequisite: (tier == 3).then_some("mat_prefab_construction"),
                             requires: None,
                             description: match tier {
-                                1 => "Your corporation's landing administration. Included free when a colony is settled, with a Solar Array I. No workforce or extra building slot.",
+                                1 => "The landed colony ship. Its reactor gives this planet 1 MW and its holds store 1,000 goods. No workforce or building slot.",
                                 2 => "Permanent local administration: +1 Infrastructure slot and 10% shorter structure construction on this world. No workforce or extra building slot.",
                                 _ => "Corporate headquarters: +2 Infrastructure slots and 20% shorter structure construction on this world (total bonuses, not cumulative). No workforce or extra building slot.",
                             }.into(),
@@ -3705,6 +3779,15 @@ pub(crate) async fn binary_protocol_fixtures() -> Vec<ServerMsg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §charter-v4: founders land with no ships. A test that needs one brings
+    /// it, parked at the owner's home, with an id far past any the run makes.
+    fn test_ship(world: &mut World, owner: PlayerId, kind: sim::ship::ShipKind) -> sim::EntityId {
+        let id = sim::EntityId(9_200_000_000 + owner.0 % 1_000_000);
+        let home = world.players[&owner].home;
+        world.fleets.insert(id, sim::ship::Fleet::single(id, owner, kind, home, sim::ship::FleetOrder::Idle, None));
+        id
+    }
     use sim::Vec2;
 
     #[test]
@@ -3854,7 +3937,8 @@ mod tests {
         let corp = snapshot.corporations.iter().find(|c| c.player_id == owner).expect("founded corporation");
         assert!(!corp.bot);
         assert_eq!(corp.name, "Charter");
-        assert!(corp.systems >= 1 && corp.fleets >= 1 && corp.ships >= corp.fleets);
+        // §charter-v4: a founder lands with its Command Center and no ships.
+        assert!(corp.systems >= 1 && corp.fleets == 0 && corp.ships == 0);
         let charter = corp.tutorial.as_ref().expect("a new corporation starts the charter");
         assert_eq!(charter.reached.first(), Some(&(crate::tutorial::Step::Founded,
             Some(game.world.players[&owner].founding.started_at))));
@@ -4024,7 +4108,8 @@ mod tests {
         let owner = PlayerId(801);
         world.step(&[Command::AddPlayer { id: owner, name: "Checkpoint".into() }]);
         let cc = world.players[&owner].command_center;
-        let fleet = *world.fleets.iter().find(|(_, f)| f.owner == owner).unwrap().0;
+        // §charter-v4: founders land with no ships; bring one.
+        let fleet = test_ship(&mut world, owner, sim::ship::ShipKind::Raider);
         let pos = cc + Vec2::new(20_000.0, 0.0);
         let start = world.time;
         let leg = sim::transit::delay(pos, cc, world.config.c);
@@ -4168,12 +4253,7 @@ mod tests {
             id: owner,
             name: "Presumption".into(),
         }]);
-        let fleet = *world
-            .fleets
-            .iter()
-            .find(|(_, fleet)| fleet.owner == owner)
-            .unwrap()
-            .0;
+        let fleet = test_ship(&mut world, owner, sim::ship::ShipKind::Raider);
         let pos = world.players[&owner].command_center + Vec2::new(50_000.0, 0.0);
         {
             let ship = world.fleets.get_mut(&fleet).unwrap();
@@ -4233,12 +4313,7 @@ mod tests {
             name: "Queue Test".into(),
         }]);
         let cc = world.players[&owner].command_center;
-        let fleet = *world
-            .fleets
-            .iter()
-            .find(|(_, f)| f.owner == owner)
-            .map(|(id, _)| id)
-            .expect("the player starts with a fleet");
+        let fleet = test_ship(&mut world, owner, sim::ship::ShipKind::Raider);
         let pos = cc + Vec2::new(120_000.0, 40_000.0);
         {
             let f = world.fleets.get_mut(&fleet).unwrap();

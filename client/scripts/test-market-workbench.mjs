@@ -186,11 +186,11 @@ assert.doesNotMatch(root.innerHTML, /Account report pending|data-deck-act="marke
 assert.match(root.innerHTML, /data-market-input="trade-quantity"[^>]+value="12"/);
 marketDocument.activeElement = null;
 const css = src("styles/deck.css");
-assert.match(css, /\.deck-build-workbench, \.deck-workspace:is\(\[data-route="market"\], \[data-route="logistics"\]\).*var\(--deck-build-workbench-max\)/,
-  "Market and Build share the same floating size rule");
+assert.match(css, /\.deck-build-workbench, \.deck-workspace:is\(\[data-route="market"\], \[data-route="logistics"\], \[data-route="merchant"\]\).*var\(--deck-build-workbench-max\)/,
+  "Market, the merchant and Build share the same floating size rule");
 assert.match(css, /\.deck-workspace\[data-route="logistics"\] \{ width: min\(var\(--deck-workspace-wide\)/,
   "Logistics floats in the same frame, wider for its route planner");
-assert.match(src("shell/deck/workspace.ts"), /POPOUTS: ReadonlySet<DeckRoute\["name"\]> = new Set\(\["market", "logistics"\]\)/,
+assert.match(src("shell/deck/workspace.ts"), /POPOUTS: ReadonlySet<DeckRoute\["name"\]> = new Set\(\["market", "logistics", "merchant"\]\)/,
   "pop-out routes never reserve a right rail from the map camera");
 const deckMarkup = src("shell/deck/markup.ts");
 assert.match(deckMarkup, /navButton\("fleets", "Fleets"\)\}\n\s*\$\{navButton\("logistics", "Logistics"\)\}/, "Logistics sits beside Fleets in the top bar");

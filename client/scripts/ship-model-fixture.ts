@@ -7,6 +7,7 @@ import "../src/ship-model-preview";
 import { renderer } from "../src/render";
 import { state } from "../src/state";
 import { SHIP_MODELS } from "../src/ship-models.generated";
+import { fleetArtKind, type ShipArtKind } from "../src/shipart";
 import { DeckEmpireRoutes } from "../src/shell/deck/empire";
 import { MobileParitySurfaces } from "../src/shell/mobile/parity";
 import { installPressGuard, setHtml } from "../src/shell/dom";
@@ -32,7 +33,12 @@ style.textContent = `
 `;
 document.head.append(style);
 const $ = (id: string) => document.getElementById(id)!;
-const kinds = Object.keys(SHIP_MODELS) as ShipKind[];
+const kinds = Object.keys(SHIP_MODELS) as ShipArtKind[];
+/** A map fleet showing this art: an art variant flies as another hull in the
+ * sim (§merchant: the free trader is a flagged Authority Freighter). */
+const fleetOf = (kind: ShipArtKind) => kind === "free_trader"
+  ? { kind: "freighter" as ShipKind, tca: true, merchant: true, composition: [{ kind: "freighter" as ShipKind, count: 1 }] }
+  : { kind, composition: [{ kind, count: 1 }] };
 const mobile = new URLSearchParams(location.search).has("mobile");
 const body = { id: 0, name: "Aster Prime", kind: "rocky", environment: "habitable", size: "large", geology: "metal_rich",
   structures: { shipyard: 6, naval_drydock: 6, capital_slipway: 6, garrison: 1, warehouse: 4 },
@@ -48,7 +54,7 @@ state.galaxy = { hub: { x: 5000, y: 5000 }, radius: 10000, nebulas: [], c: 1000,
   jump_range: 2000, jump_spool_s: 10, hyperlimit: 10, scout_sensor_mult: 1, convoy_sensor_mult: 1,
   sensor_array_base: 0, sensor_array_per_tier: 0, defense_platform_radius: 0,
   systems: [{ id: system.id, name: "Aster", pos: { x: 2000, y: 3000 }, band: "rich", body_count: 1 }],
-  build_options: kinds.map((kind, i) => ({ key: kind, label: SHIP_MODELS[kind].title, build_secs: 60 + i * 15,
+  build_options: kinds.filter(kind => kind !== "free_trader").map((kind, i) => ({ key: kind, label: SHIP_MODELS[kind].title, build_secs: 60 + i * 15,
     costs: [{ commodity: "alloys", units: 40 + i * 10 }, { commodity: "electronics", units: 20 }] })),
 } as any;
 state.research = { programmes: ["prop_freight_frames", "prop_heavy_lifters", "prop_line_express_charters", "prop_line_bulk_charters", "prop_line_autonomous_freight", "hull_line_iv_destroyer", "hull_line_v_cruiser", "hull_line_vi_battleship", "hull_line_vii_dreadnought", "hull_line_viii_titan"].map(id => ({ id, state: "completed" })) } as any;
@@ -79,10 +85,9 @@ function arrange(count = kinds.length, shownKinds = kinds): void {
   const columns = count === 3 ? 3 : count > kinds.length ? 25 : 6, rows = Math.ceil(count / columns);
   const top = mobile ? 130 : 130, width = window.innerWidth, height = window.innerHeight - top - 80;
   state.ghosts = Array.from({ length: count }, (_, i) => ({
-    id: `preview-${i}`, owner: "preview", own: true, kind: shownKinds[i % shownKinds.length],
+    id: `preview-${i}`, owner: "preview", own: true, ...fleetOf(shownKinds[i % shownKinds.length]),
     pos: renderer.screenToWorld(width * ((i % columns) + .5) / columns, top + height * (Math.floor(i / columns) + .5) / rows),
-    vel: { x: 0, y: -.001 }, age: 0, jumped: false, route: null, count_class: "one",
-    composition: [{ kind: shownKinds[i % shownKinds.length], count: 1 }], cargo: null, docked: null,
+    vel: { x: 0, y: -.001 }, age: 0, jumped: false, route: null, count_class: "one", cargo: null, docked: null,
   })) as any;
   renderer.stateVersion++;
 }
@@ -94,7 +99,7 @@ function drawLabels(): void {
   if (renderer.viewMode.type === "system" || state.ghosts.length > kinds.length) { labels.innerHTML = ""; return; }
   setHtml(labels, state.ghosts.map(ghost => {
     const p = renderer.fleetScreenPosition(ghost);
-    return `<span style="position:absolute;left:${p.x}px;top:${p.y + 58}px;transform:translateX(-50%);white-space:nowrap">${SHIP_MODELS[ghost.kind].title}</span>`;
+    return `<span style="position:absolute;left:${p.x}px;top:${p.y + 58}px;transform:translateX(-50%);white-space:nowrap">${SHIP_MODELS[fleetArtKind(ghost)].title}</span>`;
   }).join(""));
 }
 function closePanels(): void {
@@ -146,11 +151,11 @@ function closeup(): void {
   closePanels(); moving = false;
   state.battles = [];
   renderer.zoomByFactor(24 / renderer.zoomFactor());
-  const kind = ($("fixture-map-kind") as HTMLSelectElement).value as ShipKind;
-  state.ghosts = [{ id: `closeup-${kind}`, owner: "preview", own: true, kind,
+  const kind = ($("fixture-map-kind") as HTMLSelectElement).value as ShipArtKind;
+  state.ghosts = [{ id: `closeup-${kind}`, owner: "preview", own: true, ...fleetOf(kind),
     pos: renderer.screenToWorld(window.innerWidth / 2, window.innerHeight / 2 - 20),
     vel: { x: .6, y: -.8 }, age: 0, jumped: false, route: null, count_class: "one",
-    composition: [{ kind, count: 1 }], cargo: null, docked: null }] as any;
+    cargo: null, docked: null }] as any;
   state.selectedShipId = state.ghosts[0].id;
   renderer.stateVersion++;
 }

@@ -41,7 +41,7 @@ impl World {
                     let age = crate::transit::delay(source, other.pos, self.config.c)
                         + crate::transit::delay(source, fleet.pos, self.config.c);
                     let seen = other.pos - other.vel * age;
-                    let signature = other.signature() * self.veil_factor_held(&held, other.owner, seen)
+                    let signature = other.detection_signature() * self.veil_factor_held(&held, other.owner, seen)
                         * self.nebula_signature_factor(seen);
                     let detected = if other.broadcasts() { source.distance(seen) <= range }
                         else { crate::detection::detected(signature, &[(source, range)], seen) };
@@ -121,6 +121,10 @@ mod tests {
         w.fleets.clear();
         w.enclaves.clear();
         w.players.get_mut(&owner).unwrap().founding.enabled = false;
+        // §sensors: a bare Command Center sees a holding Raider only inside
+        // 1,340 su; the post's own Sensor Array II (30k) finds one 4k out.
+        w.systems.iter_mut().find(|s| s.id == system).unwrap()
+            .set_tier(crate::build::StructureKind::SensorArray, 2);
         let post = SystemDefense { system, station, radius: SYSTEM_DEFENSE_RADIUS };
         (w, owner, post)
     }

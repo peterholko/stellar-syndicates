@@ -2356,12 +2356,45 @@ impl Fleet {
         self.max_speed() * throttle
     }
 
-    /// The fleet's detection SIGNATURE (§Part 4) at its CURRENT velocity — the
-    /// authoritative-side value (the View recomputes the same from retarded
-    /// samples). Dark fleets only; a broadcaster's is unused.
+    /// §sensors: what the core is doing right now. Under way is read off the
+    /// motion itself (at its transit mode's throttle), as the View reads it; in
+    /// place, machinery runs while mining, prospecting, surveying, building or
+    /// tearing down, and always at an anchored belt depot; otherwise it holds.
+    pub fn core_state(&self) -> crate::detection::CoreState {
+        use crate::detection::CoreState;
+        if self.vel.length() > crate::detection::UNDER_WAY_SU_S {
+            let mode = if self.transit == TransitMode::Slow && !self.can_slow() {
+                TransitMode::Full
+            } else { self.transit };
+            return CoreState::UnderWay(mode);
+        }
+        let building = matches!(self.order,
+            FleetOrder::Construct { started: Some(_), .. } | FleetOrder::Demolish { started: Some(_), .. });
+        if self.loud_work() || building || self.contains(ShipKind::MiningBeltStation) {
+            CoreState::Working
+        } else {
+            CoreState::Holding
+        }
+    }
+
+    /// §sensors: the core's output — mass × rated speed × state — in Raiders
+    /// at full throttle. Recorded with every served sample, so the View judges
+    /// it in the retarded frame exactly as the sim's own sensors do.
+    pub fn core_output(&self) -> f64 {
+        crate::detection::core_output(self.mass(), self.max_speed(), self.core_state())
+    }
+
+    /// The fleet's detection SIGNATURE (§sensors) at its CURRENT state: √ of
+    /// its core output. Dark fleets are found by it; a broadcaster is also
+    /// heard by its transponder.
     pub fn signature(&self) -> f64 {
-        crate::detection::signature(&self.composition, self.vel.length(), self.max_speed())
-            * crate::detection::transit_quiet(self.transit)
+        crate::detection::signature(self.core_output())
+    }
+
+    /// The signature every sensor reads: an active survey sweep adds its ×1.5
+    /// (`explore::SURVEY_SIGNATURE_FACTOR`) on top of the work it costs the core.
+    pub fn detection_signature(&self) -> f64 {
+        self.signature() * if self.surveying() { crate::explore::SURVEY_SIGNATURE_FACTOR } else { 1.0 }
     }
 
     /// FORMATION speed (GDD §14.2): the SLOWEST member sets the pace — the

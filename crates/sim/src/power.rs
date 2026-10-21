@@ -18,8 +18,20 @@ use serde::{Deserialize, Serialize};
 use crate::build::StructureKind;
 use crate::cargo::Commodity;
 
-/// Every planet's own supply, free and fuel-free (MW).
-pub const BASE_MW: f64 = 3.0;
+/// §charter-v4: no planet has free power (Peter, Oct 14 2026: "No planet
+/// should have free power, they should require a power source"). A Command
+/// Center's reactor, the landed colony ship's, powers its own planet with
+/// this much: enough for a Mining Complex I, not a Shipyard beside it.
+/// Everything else needs a plant. Tunable.
+pub const COMMAND_CENTER_MW: f64 = 1.0;
+/// The free supply every planet had before v4. Only the legacy mechanics
+/// sandbox still runs on it (`World::legacy_free_power`).
+pub const LEGACY_BASE_MW: f64 = 3.0;
+
+/// A planet's own supply before any plant: its Command Center's reactor.
+pub fn base_mw(command_center_tier: u32) -> f64 {
+    if command_center_tier > 0 { COMMAND_CENTER_MW } else { 0.0 }
+}
 /// A Power Plant's output per unit of its tier throughput (MW).
 pub const PLANT_MW_PER_THROUGHPUT: f64 = 8.0;
 /// Deuterium a Fusion Plant (III–IV) burns per MW-second it supplies above the
@@ -147,17 +159,18 @@ pub struct Grid {
 
 impl Default for Grid {
     fn default() -> Self {
-        Self { demand: 0.0, supply: BASE_MW, power: 1.0, burn: 0.0, no_fuel: false, brownout: false }
+        Self { demand: 0.0, supply: 0.0, power: 1.0, burn: 0.0, no_fuel: false, brownout: false }
     }
 }
 
-/// The grid's arithmetic. `demand` is the planet's draw this tick,
-/// `plant_tier` its Power Plant, `fuel_stock` the system's free stock of that
-/// plant's fuel and `dt` the tick. Returns the grid and the units burned.
-pub fn settle(demand: f64, plant_tier: u32, fuel_stock: f64, dt: f64) -> (Grid, f64) {
+/// The grid's arithmetic. `demand` is the planet's draw this tick, `base` its
+/// own supply (`base_mw`), `plant_tier` its Power Plant, `fuel_stock` the
+/// system's free stock of that plant's fuel and `dt` the tick. Returns the
+/// grid and the units burned.
+pub fn settle(demand: f64, base: f64, plant_tier: u32, fuel_stock: f64, dt: f64) -> (Grid, f64) {
     let capacity = plant_mw(plant_tier);
     let solar = solar_mw(plant_tier);
-    let load = (demand - BASE_MW).clamp(0.0, capacity);
+    let load = (demand - base).clamp(0.0, capacity);
     let per_mw = burn_per_mw_s(plant_tier) * dt;
     let need = (load - solar).max(0.0) * per_mw;
     let (supplied, burned, no_fuel) = if need <= fuel_stock.max(0.0) + 1e-12 {
@@ -166,10 +179,10 @@ pub fn settle(demand: f64, plant_tier: u32, fuel_stock: f64, dt: f64) -> (Grid, 
         let burned = fuel_stock.max(0.0);
         (solar.min(load) + if per_mw > 0.0 { burned / per_mw } else { 0.0 }, burned, true)
     };
-    let supply = BASE_MW + if no_fuel { supplied } else { capacity };
+    let supply = base + if no_fuel { supplied } else { capacity };
     // Whole percent, rounded down: what the panels show, and steady enough
     // that a yard's work rate doesn't change every tick.
-    let power = if demand <= 1e-12 { 1.0 } else { (((BASE_MW + supplied) / demand).min(1.0) * 100.0).floor() / 100.0 };
+    let power = if demand <= 1e-12 { 1.0 } else { (((base + supplied) / demand).min(1.0) * 100.0).floor() / 100.0 };
     (Grid { demand, supply, power, burn: if dt > 0.0 { burned / dt } else { 0.0 }, no_fuel, brownout: false }, burned)
 }
 
@@ -184,31 +197,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_base_covers_light_work_and_solar_burns_nothing() {
-        let (g, burned) = settle(2.0, 0, 0.0, 1.0);
-        assert_eq!((g.power, burned), (1.0, 0.0), "tier I work runs on the base");
-        let (g, _) = settle(4.4, 0, 100.0, 1.0);
-        assert_eq!(g.power, 0.68, "no plant: the base's share, in whole percent");
-        let (g, burned) = settle(4.4, 1, 0.0, 1.0);
+    fn only_a_command_center_powers_a_planet_without_a_plant() {
+        assert_eq!((base_mw(0), base_mw(1), base_mw(3)), (0.0, COMMAND_CENTER_MW, COMMAND_CENTER_MW));
+        let (g, burned) = settle(1.0, base_mw(1), 0, 0.0, 1.0);
+        assert_eq!((g.power, burned), (1.0, 0.0), "the reactor runs a Mining Complex I");
+        let (g, _) = settle(2.0, base_mw(1), 0, 100.0, 1.0);
+        assert_eq!(g.power, 0.5, "a Shipyard beside it needs a plant");
+        let (g, _) = settle(1.0, base_mw(0), 0, 100.0, 1.0);
+        assert_eq!(g.power, 0.0, "no Command Center and no plant: nothing powered runs");
+        let (g, burned) = settle(2.0, base_mw(1), 1, 0.0, 1.0);
         assert_eq!((g.power, burned, g.no_fuel), (1.0, 0.0, false), "a Solar Array needs no fuel");
-        assert!((g.supply - (BASE_MW + 8.0)).abs() < 1e-12);
+        assert!((g.supply - (COMMAND_CENTER_MW + 8.0)).abs() < 1e-12);
         assert_eq!(plant_fuel(2), None);
     }
 
     #[test]
     fn fusion_burns_deuterium_then_helium3_and_short_fuel_supplies_what_it_covers() {
-        let (g, burned) = settle(33.4, 3, 100.0, 1.0);
+        let (g, burned) = settle(33.4, LEGACY_BASE_MW, 3, 100.0, 1.0);
         assert_eq!(g.power, 1.0);
         assert!((burned - (30.4 - 17.6) * FUEL_PER_MW_S).abs() < 1e-12,
             "burn follows the load above the base and the kept solar fields");
         assert_eq!(plant_fuel(3), Some(Commodity::Deuterium));
-        let (g, burned) = settle(40.0, 3, 0.02, 1.0);
+        let (g, burned) = settle(40.0, LEGACY_BASE_MW, 3, 0.02, 1.0);
         assert!(g.no_fuel && (burned - 0.02).abs() < 1e-12);
         assert_eq!(g.power, 0.61, "(3 + 17.6 solar + 4 fuelled) / 40, rounded down");
-        let (g, _) = settle(100.0, 4, 1e9, 1.0);
+        let (g, _) = settle(100.0, LEGACY_BASE_MW, 4, 1e9, 1.0);
         assert_eq!(g.power, 0.51, "Deuterium tops out at a tier IV plant");
         assert_eq!(plant_fuel(5), Some(Commodity::Helium3));
-        let (g, burned) = settle(60.0, 5, 1e9, 1.0);
+        let (g, burned) = settle(60.0, LEGACY_BASE_MW, 5, 1e9, 1.0);
         assert_eq!(g.power, 1.0);
         assert!((burned - (57.0 - 17.6) * FUEL_PER_MW_S / crate::fuel::HELIUM3_FUEL_EQUIV).abs() < 1e-12);
     }
@@ -218,12 +234,12 @@ mod tests {
         // A 20 MW planet runs free on Solar II. On Fusion III the same load
         // still runs free — the reactor burns only above the solar fields —
         // and a dry reactor falls back to them, not to the base.
-        let (solar, burned) = settle(20.0, 2, 0.0, 1.0);
+        let (solar, burned) = settle(20.0, LEGACY_BASE_MW, 2, 0.0, 1.0);
         assert_eq!((solar.power, burned), (1.0, 0.0));
-        let (fusion, burned) = settle(20.0, 3, 0.0, 1.0);
+        let (fusion, burned) = settle(20.0, LEGACY_BASE_MW, 3, 0.0, 1.0);
         assert_eq!((fusion.power, burned, fusion.no_fuel), (1.0, 0.0, false));
-        let (dry, _) = settle(30.0, 3, 0.0, 1.0);
-        assert!(dry.no_fuel && (dry.supply - (BASE_MW + solar_mw(3))).abs() < 1e-12);
+        let (dry, _) = settle(30.0, LEGACY_BASE_MW, 3, 0.0, 1.0);
+        assert!(dry.no_fuel && (dry.supply - (LEGACY_BASE_MW + solar_mw(3))).abs() < 1e-12);
         assert_eq!(dry.power, 0.68, "(3 + 17.6) / 30, rounded down");
         for tier in 3..=6 {
             assert!((solar_mw(tier) - plant_mw(2)).abs() < 1e-12);

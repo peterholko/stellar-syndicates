@@ -158,6 +158,7 @@ pub(crate) async fn run(
     })
     .await??;
     game.configure_bots(requested_bots)?;
+    game.configure_dev_start_ships()?;
 
     // Persist a new galaxy/import before accepting players. Loading an existing
     // save does not need another write and must not churn its backup generations.

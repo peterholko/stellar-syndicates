@@ -29,8 +29,15 @@ export type CoreEvent =
   | { kind: "ResearchCompleted"; programmeId: string; programmeName: string }
   | { kind: "CommandRejected"; message: string }
   | { kind: "PirateRaidWarning"; message: string }
-  /** §founding R6: an Authority stipend, bounty, or replacement hull arrived. */
-  | { kind: "CharterMilestone"; title: string; message: string }
+  /** §signals: a signal detected near home, or a sweep's report in. */
+  | { kind: "SignalNews"; title: string; message: string; tone: "good" | "quiet" }
+  /** §founding R6: an Authority stipend or bounty arrived. */
+  | { kind: "CharterMilestone"; title: string; message: string; tone?: "good" | "bad" }
+  /** §charter-v5: a story turn shown as an illustrated pop-up (boot.ts):
+   * the raid's report, with what it took. */
+  | { kind: "StoryEvent"; story: "pirates"; semiconductors: number; armaments: number }
+  /** §charter-v4: the free trader docked at home (the server's arrival line). */
+  | { kind: "StoryEvent"; story: "free_trader" }
   | { kind: "ReportArrived"; report: RaidReport }
   | { kind: "BattleConcluded"; recordId: EntityId; outcome: RaidOutcome }
   | { kind: "EstimateReady"; estimate: EngagementEstimate }

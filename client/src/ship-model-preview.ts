@@ -1,5 +1,5 @@
 import { SHIP_MODELS } from "./ship-models.generated";
-import type { ShipKind } from "./protocol";
+import type { ShipArtKind } from "./shipart";
 import type { ModelPreview } from "./ship-model-preview-runtime";
 
 /** A shadow root lets the live panel morph retain its canvas, camera and
@@ -53,9 +53,9 @@ class ShipModelPreview extends HTMLElement {
     if (kind && this.engine) void this.engine.setKind(kind);
   }
 
-  private get kind(): ShipKind | null {
+  private get kind(): ShipArtKind | null {
     const value = this.getAttribute("kind") ?? "";
-    return Object.hasOwn(SHIP_MODELS, value) ? value as ShipKind : null;
+    return Object.hasOwn(SHIP_MODELS, value) ? value as ShipArtKind : null;
   }
 
   private createView(): void {

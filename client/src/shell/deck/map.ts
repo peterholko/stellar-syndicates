@@ -2,6 +2,7 @@ import { shipKindLabel } from "../../core/derive/fleet";
 import { contactBrief, contractBrief } from "../../core/derive/map-markers";
 import { liveSimTime } from "../../state";
 import { nebulaEffect } from "../../core/derive/nebula";
+import { nodeLabel } from "../../core/derive/research";
 import { type MapClickResult, type SelectTarget, resolveMapClick, resolveSystemClick } from "../../core/mapclick";
 import type { GhostView, SystemInfo } from "../../protocol";
 import { SYSTEM_ZOOM_MAX } from "../../systemview";
@@ -85,8 +86,17 @@ export class DeckMapInteraction {
 
   zoomIn(): void {
     const renderer = this.ctx.renderer;
-    if (renderer.viewMode.type === "galaxy") renderer.zoomByFactor(1.3);
-    else if (renderer.viewMode.type === "system" && !renderer.isSystemScrubbing()) {
+    if (renderer.isSystemScrubbing()) {
+      renderer.adjustSystemScrub(SYSTEM_SCRUB_STEP);
+      return;
+    }
+    if (renderer.viewMode.type === "galaxy") {
+      // At the doorway the step goes into the star the map is centred on (or
+      // the selected one, while it is on screen).
+      const system = renderer.atSystemZoomThreshold() ? this.doorwaySystem() : null;
+      if (system && this.beginScrubIn(system)) return;
+      renderer.zoomByFactor(1.3);
+    } else if (renderer.viewMode.type === "system") {
       // The orrery camera zooms about the map's centre (the wheel aims it).
       const rect = renderer.cameraRect;
       renderer.systemZoomAt(rect.x + rect.w / 2, rect.y + rect.h / 2, 1.3);
@@ -100,7 +110,9 @@ export class DeckMapInteraction {
       return;
     }
     if (renderer.viewMode.type === "system") {
-      if (renderer.systemZoomFactor() > 1.02) {
+      // The orrery returns to rest before the handoff, so the star leaves at
+      // the size and place the galaxy's preview holds for it.
+      if (!renderer.systemAtRest()) {
         const rect = renderer.cameraRect;
         renderer.systemZoomAt(rect.x + rect.w / 2, rect.y + rect.h / 2, 1 / 1.3);
         return;
@@ -207,7 +219,7 @@ export class DeckMapInteraction {
         return;
       }
       this.worldPushes = 0;
-      if (renderer.systemZoomFactor() > 1.02) {
+      if (!renderer.systemAtRest()) {
         renderer.systemZoomAt(event.clientX, event.clientY, factor);
         return;
       }
@@ -223,16 +235,36 @@ export class DeckMapInteraction {
         return;
       }
     }
+    // At the doorway, anywhere on a star's orbit preview goes in. A visible
+    // hull keeps the camera for inspection, until the camera can go no deeper.
     if (event.deltaY < 0 && renderer.atSystemZoomThreshold()
-      && !renderer.fleetUnderPoint(event.clientX, event.clientY)) {
-      const system = this.systemUnderPoint(event.clientX, event.clientY);
-      const bodies = system ? this.ctx.state.systems.find((entry) => entry.id === system.id)?.bodies ?? [] : [];
-      if (system && renderer.beginSystemScrubIn(system, bodies)) {
-        renderer.adjustSystemScrub(SYSTEM_SCRUB_STEP);
-        return;
-      }
+      && (renderer.atMaxZoom() || !renderer.fleetUnderPoint(event.clientX, event.clientY))) {
+      const system = this.systemUnderPoint(event.clientX, event.clientY)
+        ?? renderer.approachSystemAt(event.clientX, event.clientY);
+      if (system && this.beginScrubIn(system)) return;
     }
     renderer.zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * 0.0016));
+  }
+
+  private beginScrubIn(system: SystemInfo): boolean {
+    const bodies = this.ctx.state.systems.find((entry) => entry.id === system.id)?.bodies ?? [];
+    if (!this.ctx.renderer.beginSystemScrubIn(system, bodies)) return false;
+    this.ctx.renderer.adjustSystemScrub(SYSTEM_SCRUB_STEP);
+    return true;
+  }
+
+  /// The star a zoom step enters at the doorway: the one under the map's
+  /// centre, else the selected one while its star is on screen.
+  private doorwaySystem(): SystemInfo | null {
+    const renderer = this.ctx.renderer;
+    const rect = renderer.cameraRect;
+    const centred = renderer.approachSystemAt(rect.x + rect.w / 2, rect.y + rect.h / 2);
+    if (centred) return centred;
+    const selected = this.ctx.state.selectedSystemId ? this.systemById(this.ctx.state.selectedSystemId) : undefined;
+    if (!selected) return null;
+    const star = renderer.worldToScreen(selected.pos);
+    const onScreen = star.x >= rect.x && star.x <= rect.x + rect.w && star.y >= rect.y && star.y <= rect.y + rect.h;
+    return onScreen ? selected : null;
   }
 
   private inspect(event: MouseEvent): void {
@@ -472,9 +504,12 @@ export class DeckMapInteraction {
         const point = renderer.worldToScreen(system.pos);
         const distance = Math.hypot(point.x - clientX, point.y - clientY);
         if (distance >= Math.max(15, renderer.systemHitRadius(system))) continue;
+        // §node: the map shows only a dim ◈; the hover names it.
+        const dynamic = state.systems.find((entry) => entry.id === system.id);
+        const node = dynamic?.node ? ` · ${nodeLabel(dynamic.node, dynamic.owner === state.playerId)}` : "";
         consider(1, distance, selected
-          ? `Move ${shipKindLabel(selected.kind)} to ${system.name}`
-          : `Open ${system.name}`);
+          ? `Move ${shipKindLabel(selected.kind)} to ${system.name}${node}`
+          : `Open ${system.name}${node}`);
       }
       const hub = renderer.worldToScreen(state.galaxy.hub);
       const distance = Math.hypot(hub.x - clientX, hub.y - clientY);

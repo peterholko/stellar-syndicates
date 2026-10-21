@@ -1,139 +1,114 @@
-//! Speed-signature detection (§Part 4).
+//! Core-output detection (§sensors, Oct 16 2026; replaces §Part 4's hull-size ×
+//! speed curve).
 //!
-//! Replaces binary dark-ship visibility with a unified, four-factor model shared
-//! by BOTH the server's View gating and the sim's picket/platform sensing (one
-//! function, so they can never disagree — there's a parity test):
+//! A ship is found by what its CORE puts out — the drive work its reactor is
+//! doing — and that light falls off with the square of distance. One function
+//! serves BOTH the server's View gating and the sim's own sensing (pickets,
+//! defenders, hunters, research observation), so they can never disagree:
 //!
 //! ```text
-//! detected  ⇔  distance ≤ sensor_capability(observer) × signature(target)
+//! detected    ⇔  distance ≤ min(sensor_capability(observer) × signature, NOISE_HORIZON_SU)
+//! signature   =  √(core_output) × cloak_mult
+//! core_output =  mass × rated speed / (Raider mass × Raider speed) × state
 //! ```
 //!
-//! * `signature(fleet) = size_mult × speed_mult × cloak_mult`
-//!   - **size** — per-kind `SIG_SIZE` summed over the composition, with detection
-//!     range scaling as √(signal): a big dark pack is seen farther, but
-//!     SUB-linearly (flux × inverse-square).
-//!   - **speed** — a fleet creeping at the stealth fraction is quietest; ramping
-//!     to `SPEED_SIG_MAX×` louder at full formation speed ("flank speed lights
-//!     you up").
-//!   - **cloak** — a research STUB returning 1.0 (the future cloak-tech hook).
-//! * `sensor_capability(range) = bubble_range × SENSOR_TECH_MULT` — the second
-//!   research STUB at 1.0.
+//! * **mass × rated speed** — the fuel model's own per-second burn
+//!   (`fuel::fuel_tick`): hull plus cargo, at the formation's rated speed. It is
+//!   the same on thrusters as in warp (warp only covers more ground per
+//!   engine-second). It is read off the DRIVE, never the tank: pirates and the
+//!   Authority burn nothing in the sim, and fuel research or a captain's thrift
+//!   must not double as stealth.
+//! * **state** — what the core is doing ([`CoreState`]): full throttle 1.0,
+//!   work in place 0.5, Slow warp 0.125, Stealth 0.075, holding on standby 0.05.
+//! * **√** — inverse square: four times the output is seen at twice the range.
 //!
-//! NORMALIZATION ANCHOR (migration-gentle): a SINGLE RAIDER AT FULL SPEED has a
-//! total multiplier of exactly **1.0**, so its detection radius is the plain
-//! bubble range — today's behavior, byte-for-byte. Scouts (smaller) run quieter,
-//! multi-ship dark packs louder, stealth transit quieter.
+//! NORMALIZATION ANCHOR: one Raider at full throttle has a signature of exactly
+//! **1.0**, so a bubble's quoted range is the distance at which it sees that
+//! Raider. A Titan under way is seen about six times as far; anything holding
+//! still, at under a quarter of the range.
 //!
-//! Applies to DARK fleets only (raiders/scouts); broadcasters stay galaxy-visible
-//! through the bucket ladder, own fleets exact.
-
-use std::collections::BTreeMap;
+//! The NOISE HORIZON caps everything: past 200,000 su even a declared
+//! transponder drowns in the galaxy's noise, and so does any drive.
 
 use crate::math::Vec2;
-use crate::ship::ShipKind;
+use crate::ship::{ShipKind, TransitMode};
 
 // --- TUNABLE DETECTION BLOCK ---------------------------------------------
-/// Fraction of full formation speed a fleet moves at under STEALTH transit — and
-/// the speed at/below which its signature is quietest. Suggest 0.5 (→ 2× trip).
+/// Nothing is detected farther than this from its observer, however loud: the
+/// galaxy's background noise. Declared transponders are heard out to exactly
+/// this range from a corporation's receivers (Command Center, Sensor Arrays,
+/// deep-space sensors).
+pub const NOISE_HORIZON_SU: f64 = 200_000.0;
+/// Fraction of full formation speed a fleet moves at under STEALTH transit.
 pub const STEALTH_FRACTION: f64 = 0.5;
-/// How much LOUDER a fleet at full speed is than one at/below the stealth
-/// fraction — the full:stealth signature ratio. "Flank speed lights you up."
-pub const SPEED_SIG_MAX: f64 = 2.5;
-/// §fuel-overhaul: STEALTH runs dark on top of its slow speed — dampened drive
-/// and emissions. Slow (Uranium) is merely slow, so it gets the speed term
-/// only: Full 1.0 · Slow 0.4 · Stealth 0.24. Tunable.
+/// §fuel-overhaul: STEALTH runs dark on top of its slow speed — a dampened
+/// drive. Its core output is Slow warp's, times this. Tunable.
 pub const STEALTH_QUIET: f64 = 0.6;
-
-/// The transit mode's own factor on a fleet's signature, beyond its speed.
-pub fn transit_quiet(mode: crate::ship::TransitMode) -> f64 {
-    if mode == crate::ship::TransitMode::Stealth { STEALTH_QUIET } else { 1.0 }
-}
+/// Core on standby: life support and station-keeping, no drive.
+pub const HOLD_OUTPUT: f64 = 0.05;
+/// Machinery running in place: mining, prospecting, building, tearing down,
+/// an active survey sweep, an anchored belt depot.
+pub const WORK_OUTPUT: f64 = 0.5;
+/// Slow warp on the fission store: half speed on a quarter of the energy per
+/// distance — an eighth of the full burn per second.
+pub const SLOW_OUTPUT: f64 = crate::fuel::SLOW_SPEED_FRACTION * crate::fuel::SLOW_FUEL_MULT;
+/// Stealth: Slow warp's output, dampened.
+pub const STEALTH_OUTPUT: f64 = SLOW_OUTPUT * STEALTH_QUIET;
+/// A fleet moving faster than this is under way; slower, its core holds.
+pub const UNDER_WAY_SU_S: f64 = 1.0;
 /// Research STUB (§Part 4): the observer's sensor-tech multiplier on capability.
 /// A real no-op at 1.0 today; the future sensor-upgrade hook.
 pub const SENSOR_TECH_MULT: f64 = 1.0;
 
-/// Per-kind SIZE SIGNAL (hull-size/mass proxy): scout smallest … colony largest.
-/// The RAIDER is the reference (1.0), so a single raider's `size_mult` is exactly
-/// 1.0 — the normalization anchor. Tunable.
-pub fn sig_size(kind: ShipKind) -> f64 {
-    match kind {
-        ShipKind::Builder => 2.5, // a lit worksite — cranes, floods, welding arcs
-        ShipKind::Scout => 0.5,
-        ShipKind::SurveyProbe => 0.3, // §charting: smaller than any crewed hull
-        ShipKind::MiningBarge => 3.0, // §belts: a Small Freighter's bulk
-        // §belts: a lit depot of silos and cradles — a big, still target.
-        ShipKind::MiningBeltStation => 8.0,
-        ShipKind::Raider => 1.0, // the reference
-        ShipKind::Corvette => 2.0,
-        ShipKind::Convoy => 4.0,
-        ShipKind::TinyFreighter => 2.0,
-        ShipKind::SmallFreighter => 3.0,
-        ShipKind::LargeFreighter => 5.0,
-        ShipKind::HeavyFreighter => 7.0,
-        ShipKind::BulkFreighter => 10.0,
-        ShipKind::Colony => 5.0,
-        // §ladder: capitals light sensors from far off — the size proxy tracks
-        // the mass ladder (a Titan is unmistakable long before it arrives).
-        // A corporation's capitals broadcast anyway; a pirate's run dark and
-        // are found by these sizes.
-        ShipKind::Destroyer => 3.0,
-        ShipKind::Cruiser => 4.5,
-        ShipKind::Battleship => 6.5,
-        ShipKind::Dreadnought => 9.0,
-        ShipKind::Titan => 13.0,
-        // §ground: a trooper is bulky and loud (moot in practice — it broadcasts).
-        ShipKind::Transport => 5.5,
-        ShipKind::Freighter => 5.0, // a fat bulk carrier (moot: it broadcasts anyway)
+/// What a fleet's core is doing right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoreState {
+    /// Station-keeping on standby.
+    Holding,
+    /// Holding position with machinery running.
+    Working,
+    /// Moving at its transit mode's throttle.
+    UnderWay(TransitMode),
+}
+
+impl CoreState {
+    /// This state's share of the hull's full-throttle output.
+    pub fn factor(self) -> f64 {
+        match self {
+            CoreState::Holding => HOLD_OUTPUT,
+            CoreState::Working => WORK_OUTPUT,
+            CoreState::UnderWay(TransitMode::Full) => 1.0,
+            CoreState::UnderWay(TransitMode::Slow) => SLOW_OUTPUT,
+            CoreState::UnderWay(TransitMode::Stealth) => STEALTH_OUTPUT,
+        }
     }
 }
 
-/// The reference signal (a single raider) — the `size_mult` normaliser.
-const SIG_REF: f64 = 1.0;
+/// The reference output: one Raider at full throttle.
+fn output_ref() -> f64 {
+    ShipKind::Raider.hull_mass() * ShipKind::Raider.max_speed()
+}
+
+/// A formation's full-throttle output (mass × rated speed), in Raiders.
+pub fn full_output(mass: f64, rated_speed: f64) -> f64 {
+    mass.max(0.0) * rated_speed.max(0.0) / output_ref()
+}
+
+/// What a formation's core puts out in `state`, in Raiders at full throttle.
+pub fn core_output(mass: f64, rated_speed: f64, state: CoreState) -> f64 {
+    full_output(mass, rated_speed) * state.factor()
+}
 
 /// Research STUB (§Part 4): the target's cloak multiplier on its signature. A
-/// real no-op at 1.0 today; the future cloak-tech hook. Kept as a function (not
-/// a const) so the hook is a drop-in.
-pub fn cloak_mult(_composition: &BTreeMap<ShipKind, u32>) -> f64 {
+/// real no-op at 1.0 today; the future cloak-tech hook.
+pub fn cloak_mult() -> f64 {
     1.0
 }
 
-/// Total SIZE SIGNAL of a fleet = Σ `sig_size(kind) × count`.
-pub fn size_signal(composition: &BTreeMap<ShipKind, u32>) -> f64 {
-    composition
-        .iter()
-        .map(|(k, n)| sig_size(*k) * *n as f64)
-        .sum()
-}
-
-/// The SIZE multiplier: √(signal / reference), so range scales as the root of the
-/// signal — a single raider = 1.0, six raiders = √6 ≈ 2.45 (farther, but not 6×).
-pub fn size_mult(composition: &BTreeMap<ShipKind, u32>) -> f64 {
-    (size_signal(composition) / SIG_REF).max(0.0).sqrt()
-}
-
-/// The SPEED multiplier from the speed FRACTION `f = speed / max_formation_speed`
-/// (evaluated from the retarded SAMPLE's velocity — a fleet that sprinted then
-/// coasted is caught by its old flare). Quietest (= `1/SPEED_SIG_MAX`) at/below
-/// the stealth fraction, ramping continuously to 1.0 at full speed. Normalised so
-/// FULL speed is the 1.0 anchor and the full:stealth ratio is `SPEED_SIG_MAX`.
-pub fn speed_mult(speed: f64, max_speed: f64) -> f64 {
-    let f = if max_speed > 1e-9 {
-        (speed / max_speed).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    let quiet = 1.0 / SPEED_SIG_MAX;
-    if f <= STEALTH_FRACTION {
-        quiet
-    } else {
-        quiet + (1.0 - quiet) * (f - STEALTH_FRACTION) / (1.0 - STEALTH_FRACTION)
-    }
-}
-
-/// The full four-factor SIGNATURE of a dark fleet, from its composition (size +
-/// cloak) and its retarded speed fraction. A single raider at full speed = 1.0.
-pub fn signature(composition: &BTreeMap<ShipKind, u32>, speed: f64, max_speed: f64) -> f64 {
-    size_mult(composition) * speed_mult(speed, max_speed) * cloak_mult(composition)
+/// The SIGNATURE of a core putting out `output`: inverse square, so detection
+/// reaches `range × √output`. One Raider at full throttle = 1.0.
+pub fn signature(output: f64) -> f64 {
+    output.max(0.0).sqrt() * cloak_mult()
 }
 
 /// The observer's SENSOR CAPABILITY for a bubble of `range` — `range ×
@@ -144,94 +119,87 @@ pub fn sensor_capability(range: f64) -> f64 {
 }
 
 /// THE detection rule (shared by the View and the sim): a target of `signature`
-/// is detected if any coverage source `(center, range)` reaches it —
-/// `distance ≤ sensor_capability(range) × signature`.
+/// is detected if any coverage source `(center, range)` reaches it, never past
+/// the noise horizon.
 pub fn detected(signature: f64, sources: &[(Vec2, f64)], pos: Vec2) -> bool {
-    sources
-        .iter()
-        .any(|(center, range)| pos.distance(*center) <= sensor_capability(*range) * signature)
+    sources.iter().any(|(center, range)| {
+        pos.distance(*center) <= (sensor_capability(*range) * signature).min(NOISE_HORIZON_SU)
+    })
+}
+
+/// Can a declared transponder at `pos` be heard by any of these receivers?
+pub fn heard(receivers: impl IntoIterator<Item = Vec2>, pos: Vec2) -> bool {
+    receivers.into_iter().any(|receiver| receiver.distance(pos) <= NOISE_HORIZON_SU)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn comp(items: &[(ShipKind, u32)]) -> BTreeMap<ShipKind, u32> {
-        items.iter().copied().collect()
+    fn raider_full() -> f64 {
+        core_output(ShipKind::Raider.hull_mass(), ShipKind::Raider.max_speed(), CoreState::UnderWay(TransitMode::Full))
     }
 
     #[test]
-    fn single_raider_at_full_speed_is_the_anchor_exactly_one() {
-        let c = comp(&[(ShipKind::Raider, 1)]);
-        let max = ShipKind::Raider.max_speed();
-        let sig = signature(&c, max, max); // moving at full formation speed
-        assert!(
-            (sig - 1.0).abs() < 1e-12,
-            "the anchor case must be exactly 1.0 (got {sig})"
-        );
+    fn single_raider_at_full_throttle_is_the_anchor_exactly_one() {
+        let sig = signature(raider_full());
+        assert!((sig - 1.0).abs() < 1e-12, "the anchor case must be exactly 1.0 (got {sig})");
     }
 
     #[test]
     fn stubs_are_provable_no_ops() {
         assert_eq!(SENSOR_TECH_MULT, 1.0);
-        assert_eq!(cloak_mult(&comp(&[(ShipKind::Raider, 3)])), 1.0);
+        assert_eq!(cloak_mult(), 1.0);
         assert_eq!(sensor_capability(2200.0), 2200.0);
     }
 
     #[test]
-    fn stealth_is_quieter_than_full_by_the_speed_ratio() {
-        let c = comp(&[(ShipKind::Raider, 1)]);
-        let max = ShipKind::Raider.max_speed();
-        let full = signature(&c, max, max);
-        let stealth = signature(&c, max * STEALTH_FRACTION, max);
-        assert!(
-            (full / stealth - SPEED_SIG_MAX).abs() < 1e-9,
-            "full is SPEED_SIG_MAX× the stealth signature"
-        );
+    fn the_core_states_order_full_work_slow_stealth_holding() {
+        let raider = |state| core_output(ShipKind::Raider.hull_mass(), ShipKind::Raider.max_speed(), state);
+        let states = [
+            CoreState::UnderWay(TransitMode::Full),
+            CoreState::Working,
+            CoreState::UnderWay(TransitMode::Slow),
+            CoreState::UnderWay(TransitMode::Stealth),
+            CoreState::Holding,
+        ];
+        let outputs: Vec<f64> = states.iter().map(|s| raider(*s)).collect();
+        assert!(outputs.windows(2).all(|w| w[0] > w[1]), "{outputs:?}");
+        assert!((outputs[2] - 0.125).abs() < 1e-12, "Slow: half speed on a quarter of the energy");
+        assert!((outputs[3] - 0.125 * STEALTH_QUIET).abs() < 1e-12, "Stealth: Slow's output, dampened");
+        assert!((signature(outputs[4]) - 0.05_f64.sqrt()).abs() < 1e-12, "a holding Raider is seen at √0.05");
     }
 
     #[test]
-    fn scout_runs_quieter_than_a_raider() {
-        let max = ShipKind::Raider.max_speed();
-        let raider = signature(&comp(&[(ShipKind::Raider, 1)]), max, max);
-        let scout = signature(&comp(&[(ShipKind::Scout, 1)]), max, max);
-        assert!(
-            scout < raider,
-            "a scout is smaller → quieter ({scout} < {raider})"
-        );
-    }
-
-    #[test]
-    fn size_aggregates_as_root_signal() {
-        // 6 raiders seen farther than 1, but LESS than 6× (√6 ≈ 2.45).
-        let six = size_mult(&comp(&[(ShipKind::Raider, 6)]));
-        let one = size_mult(&comp(&[(ShipKind::Raider, 1)]));
-        assert!(six > one, "a bigger pack is louder");
-        assert!((six - 6.0_f64.sqrt()).abs() < 1e-9, "√-aggregation");
-        assert!(six < 6.0 * one, "but sub-linearly (not 6×)");
+    fn output_follows_mass_and_rated_speed() {
+        let full = CoreState::UnderWay(TransitMode::Full);
+        let scout = core_output(ShipKind::Scout.hull_mass(), ShipKind::Scout.max_speed(), full);
+        let titan = core_output(ShipKind::Titan.hull_mass(), ShipKind::Titan.max_speed(), full);
+        assert!(scout < 1.0, "a scout is lighter → quieter ({scout})");
+        assert!(signature(titan) > 6.0, "a Titan under way is seen six times as far");
+        let two = core_output(2.0 * ShipKind::Raider.hull_mass(), ShipKind::Raider.max_speed(), full);
+        assert!((signature(two) - 2.0_f64.sqrt()).abs() < 1e-12, "two Raiders: √2, not 2×");
+        let laden = core_output(ShipKind::Raider.hull_mass() + 200.0, ShipKind::Raider.max_speed(), full);
+        assert!(laden > raider_full(), "cargo is mass: a laden hull runs louder");
     }
 
     #[test]
     fn detection_range_scales_with_signature() {
-        // A loud fleet is detected from farther than the plain bubble; a quiet one
-        // must be closer.
         let sources = [(Vec2::ZERO, 1000.0)];
-        let max = ShipKind::Raider.max_speed();
-        let loud = comp(&[(ShipKind::Raider, 6)]);
-        let sig_loud = signature(&loud, max, max); // ≈ 2.45
-        assert!(
-            detected(sig_loud, &sources, Vec2::new(2000.0, 0.0)),
-            "a loud pack is seen well past the bubble"
-        );
-        let one = comp(&[(ShipKind::Raider, 1)]);
-        let sig_stealth = signature(&one, max * STEALTH_FRACTION, max); // 0.4
-        assert!(
-            !detected(sig_stealth, &sources, Vec2::new(500.0, 0.0)),
-            "a creeping raider stays hidden inside 500 su (0.4×1000=400)"
-        );
-        assert!(
-            detected(sig_stealth, &sources, Vec2::new(399.0, 0.0)),
-            "…but is caught once inside 0.4× the bubble"
-        );
+        let loud = signature(6.0); // ≈ 2.45
+        assert!(detected(loud, &sources, Vec2::new(2000.0, 0.0)), "a loud pack is seen well past the bubble");
+        let holding = signature(HOLD_OUTPUT * raider_full()); // ≈ 0.224
+        assert!(!detected(holding, &sources, Vec2::new(300.0, 0.0)), "a holding Raider hides at 300 su");
+        assert!(detected(holding, &sources, Vec2::new(220.0, 0.0)), "…but is caught inside 0.224× the bubble");
+    }
+
+    #[test]
+    fn nothing_is_detected_past_the_noise_horizon() {
+        let sources = [(Vec2::ZERO, 70_000.0)];
+        let titan = signature(40.0);
+        assert!(detected(titan, &sources, Vec2::new(NOISE_HORIZON_SU - 1.0, 0.0)));
+        assert!(!detected(titan, &sources, Vec2::new(NOISE_HORIZON_SU + 1.0, 0.0)), "lost in the noise");
+        assert!(heard([Vec2::ZERO], Vec2::new(NOISE_HORIZON_SU, 0.0)));
+        assert!(!heard([Vec2::ZERO, Vec2::new(-1.0, 0.0)], Vec2::new(NOISE_HORIZON_SU + 1.0, 0.0)));
     }
 }

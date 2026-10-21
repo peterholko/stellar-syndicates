@@ -66,8 +66,11 @@ impl World {
                 .range(NEIGHBOURHOOD_INNER_SU.powi(2), NEIGHBOURHOOD_OUTER_SU.powi(2))
                 .sqrt();
             let pos = home + Vec2::from_polar(angle, r);
+            // §hub-district: on this home's own side, nearer it than any
+            // other home.
             (pos.length() >= hub_margin
                 && pos.length() <= rim
+                && self.home_slots.iter().all(|h| h.pos.distance(pos) >= r - 1.0)
                 && self.systems.iter().all(|s| s.pos.distance(pos) >= NEIGHBOUR_SPACING_SU))
                 .then_some(pos)
         })
@@ -125,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn every_home_has_a_neighbourhood_a_third_habitable_inside_its_sensors() {
+    fn every_home_has_a_neighbourhood_a_third_habitable_around_it() {
         let (mut rings, mut habitable_rings) = (0usize, 0usize);
         for seed in [0xC0FFEE, 971, 4242, 0x5EED] {
             for players in [2, 4, 8] {
@@ -139,7 +142,9 @@ mod tests {
                         let d = system.pos.distance(home.pos);
                         assert!((NEIGHBOURHOOD_INNER_SU - 1.0..=NEIGHBOURHOOD_OUTER_SU + 1.0).contains(&d),
                             "seed {seed} players {players}: neighbour at {d:.0} su");
-                        assert!(d < w.config.sensor_range, "inside the command center's sensors");
+                        // §hub-district: on its own home's side.
+                        assert!(w.home_slots.iter().all(|h| h.pos.distance(system.pos) >= d - 1.0),
+                            "seed {seed} players {players}: a neighbour nearer another home");
                     }
                     // A ring whose stars hold no other terrestrial or ocean world
                     // keeps one habitable system; rocky worlds are never turned.
@@ -192,10 +197,12 @@ mod tests {
             }
             assert!(w.enclaves.keys().all(|id| !w.home_neighbours.contains(id)),
                 "seed {seed}: no pirate base on a home's doorstep");
+            // A ring with only one terrestrial or ocean world keeps one
+            // habitable system (`deal_habitability`); rocky ones never turn.
             let per_home: Vec<usize> = w.home_slots.iter().map(|home| w.systems.iter()
                 .filter(|s| w.home_neighbours.contains(&s.id) && habitable(s)
                     && s.pos.distance(home.pos) <= NEIGHBOURHOOD_OUTER_SU + 1.0).count()).collect();
-            assert!(per_home.iter().all(|n| *n >= HOME_NEIGHBOURS_HABITABLE), "seed {seed}: {per_home:?}");
+            assert!(per_home.iter().all(|n| (1..=HOME_NEIGHBOURS_HABITABLE).contains(n)), "seed {seed}: {per_home:?}");
         }
     }
 }

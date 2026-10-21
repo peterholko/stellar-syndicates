@@ -1,0 +1,12 @@
+{
+  "threeRevision": "180",
+  "triangles": 7872,
+  "meshes": 2,
+  "embeddedTexturesLoaded": 3,
+  "dockingSockets": 4,
+  "engineSockets": 2,
+  "weaponSockets": 0,
+  "allSocketTransformsFollowModel": true,
+  "dimensionsMatch": true,
+  "method": "Node GLTFLoader scene graph and texture-header loading; independent software previews inspect real texture pixels. Browser preview is checked separately."
+}

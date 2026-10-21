@@ -1414,6 +1414,8 @@ mod tests {
         let home = w.players[&owner].home_system.unwrap();
         w.hub = Vec2::new(10_000.0, 0.0);
         w.players.get_mut(&owner).unwrap().command_center = Vec2::ZERO;
+        // Routes and industry, not the charter: no land grant, no fakes.
+        w.players.get_mut(&owner).unwrap().founding.enabled = false;
         let s = site_mut(&mut w, home);
         s.pos = Vec2::ZERO;
         s.stockpile.clear();
@@ -2322,6 +2324,7 @@ mod tests {
             let s = site_mut(w, home);
             s.stockpile = [(C::Provisions, 50.0)].into();
             let b = s.bodies.iter_mut().find(|b| b.id == belt_id).unwrap();
+            b.set_tier(crate::StructureKind::PowerPlant, 1); // §charter-v4: no free power
             b.set_tier(crate::StructureKind::MiningComplex, 1);
             b.assignments.insert(crate::StructureKind::MiningComplex, crate::production::Assignment::crew(1));
             w.accrue_production(&mut Vec::new());

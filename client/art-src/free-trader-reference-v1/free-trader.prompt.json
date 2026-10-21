@@ -1,0 +1,57 @@
+{
+  "id": "free-trader",
+  "file": "free-trader.png",
+  "prompt": "Use case: stylized-concept.\nAsset type: one production-quality transparent raster spaceship hull sprite for Stellar Syndicates, a premium space strategy game.\nInput image: Image 1 is an existing Stellar Syndicates hull, attached ONLY as the fleet's style, material and finish reference. Do not copy its silhouette.\nPrimary request: design a NEW hull as a fresh, distinctive, professionally art-directed hard-surface spaceship. It must read clearly both as a 48\u2013100 pixel galaxy-map sprite and in a closer view.\nComposition: strict orthographic TOP-DOWN plan view, camera directly overhead at 90 degrees; the ship's nose points exactly UP (12 o'clock), its engines point DOWN. One complete centered ship on a square canvas. Its length spans about 90% of the canvas height, with about 5% clear space above the nose and below the engines, centered left to right, matching the existing fleet sprites. No perspective tilt, no side view. The outer silhouette should be purposeful and unmistakable.\nVisual style: clean high-end rendered hard-surface game art; crisp machined geometry, readable large forms with restrained secondary panel detail. Brushed titanium, cool gunmetal, pale silver panels, tiny cyan running lights and compact cyan engine apertures; polished warm brass hardware. Consistent soft upper-left illumination and good value separation for a dark navy map. Neutral lights, no team-color wash; the purple is paint on the canopy stripes only, never light or glow.\nBackground: genuinely transparent PNG with real RGBA alpha, including gaps between hull parts. No ground plane, black rectangle, painted checkerboard, smoke, outer halo, scene or starfield. Only tiny engine-aperture glow, no long exhaust plumes. No docked shuttles, loose cargo, beams or effects.\nConstraints: exactly one ship, no text, numbers, labels, logos, watermark, border, circular badge or UI. No painterly brush marks, crayon edges, excessive micro-greeble noise, organic shapes, toy appearance or recognizable franchise ship. Maximize real native detail without artificially upscaling.\n\nSubject and distinguishing silhouette (takes priority):\nA FREE TRADER, an independent merchant ship that sells goods in orbit at frontier colonies: privately owned, prosperous and well travelled. NOT an Authority container barge, NOT a corporate pod freighter, NOT a warship, NOT a saucer or disc. Three readable parts: a sleek rounded streamlined bow with a wide wraparound cyan bridge canopy; amidships, the widest part of the ship, a broad rounded-rectangle MARKET DECK roofed by a segmented canopy of exactly EIGHT transverse panels striped in alternating cream and deep royal purple livery, with exactly FOUR small round docking collars on its edges, two to port and two to starboard, for customers' shuttles; behind it a narrow waist and exactly TWO oversized cylindrical engines on short swept-back pylons, set wide apart, the engines of a fast runner. About 0.62 width-to-length ratio. Pale silver and gunmetal with noticeably more polished brass trim than fleet ships, a few slightly mismatched replacement panels and tidy wear, never grime. Unarmed: no guns or turrets. The silhouette must say travelling merchant at a glance.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/ships-2026-09-08/construction_ship.png"
+  ],
+  "transparent_background": true,
+  "output": "/Users/peter/projects/stellar-syndicates/client/art-src/free-trader-reference-v1/free-trader.png",
+  "source_brief": "docs/free-trader-art-prompt.md",
+  "mode": "built-in image_gen",
+  "initial_generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-464dd797-37e8-42ae-80c5-e5792f1beb2d.png",
+  "generated_source": "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-fef799d9-1b27-494b-be37-d39011f3b16f.png",
+  "edits": [
+    {
+      "prompt": "Use case: precise-object-edit. Refine this FREE TRADER top-down hull sprite while preserving its exact design family, materials, colors, eight canopy panels, bow, wear and brass trim. Make the broad rounded-rectangle MIDSHIP MARKET DECK the unmistakably WIDEST part of the ship: widen its canopy and supporting deck horizontally so the complete hull has width-to-length ratio about 0.62. Keep the same ship length. The deck's two side edges including its docking collars must extend slightly beyond the outer edges of the two rear engines. Preserve exactly EIGHT transverse canopy panels from nose to tail, alternating cream, deep royal purple, cream, purple, cream, purple, cream, purple. Preserve exactly FOUR small round docking collars, two per side, facing outward to port and starboard. Keep the narrow rear waist, the same two oversized cylindrical engines on swept-back pylons and the streamlined bow. Fix the projection to a strict overhead orthographic plan: engine axes point straight DOWN the canvas, and their nozzle openings are only thin cyan slivers at the aft rims, never visible circular exhaust discs tilted toward the overhead camera. Collars project outward from the side walls, not upward from the roof. No extra engine, weapon, pod, craft or object. Nose exactly UP. One fully visible centered ship, 90% canvas height, 5% clear space above and below. Keep all other styling, upper-left soft lighting and real transparent alpha. Square native-resolution RGBA PNG, no text or background.",
+      "referenced_image_paths": [
+        "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-464dd797-37e8-42ae-80c5-e5792f1beb2d.png"
+      ]
+    },
+    {
+      "prompt": "Use case: precise-object-edit. Correct ONLY the broad central market deck of this ship. Keep the bow, bridge, rear waist and two engines exactly as they are. Widen the market deck horizontally until its total width is about 0.62 of the complete ship length. Make the striped canopy itself much broader: it should occupy about three quarters of this deck's width, with narrow armored margins, so it reads as ONE broad market roof rather than a narrow cargo strip. Preserve exactly EIGHT connected transverse roof panels alternating cream and deep royal purple, four of each, with brass seams. Correct the FOUR docking collars: replace the four upward-facing circular discs with four short horizontal cylindrical docking necks projecting OUT of the port and starboard walls, two per side. Their coupling mouths face exactly LEFT and RIGHT in this overhead plan, so we see cylindrical side walls and thin edge-on circular rims, NOT round discs facing the overhead camera. Keep all four at the same existing fore-and-aft locations along the market deck. The deck including collars is clearly wider than the engine span. Preserve materials, tidy wear, brass trim and cyan lights, upper-left lighting, true overhead orthographic view, nose up, full-length centered framing and genuine transparent alpha. No extra part, text, gun, ship or background. One native-resolution square RGBA PNG.",
+      "referenced_image_paths": [
+        "/Users/peter/.codex/generated_images/01a0ee2d-ea60-75d3-b329-15b3aab8b494/exec-6c8e1f32-8ad0-4757-82c2-bc2c2b5b66c3.png"
+      ]
+    }
+  ],
+  "verification": {
+    "size": [
+      1254,
+      1254
+    ],
+    "mode": "RGBA",
+    "fullyTransparentPixels": 1007080,
+    "partiallyTransparentPixels": 564922,
+    "solidBounds": [
+      277,
+      36,
+      977,
+      1207
+    ],
+    "lengthFraction": 0.9338,
+    "widthToLengthRatio": 0.5978,
+    "sha256": "c73b5ec2469a40adae02667d4856a94235b976a9347fe669755ad270d6d0f1be",
+    "nativeBytesPreserved": true,
+    "visualCheck": {
+      "canopyPanels": 8,
+      "dockingCollars": 4,
+      "engines": 2,
+      "weapons": 0
+    }
+  },
+  "reference_sha256": {
+    "/Users/peter/projects/stellar-syndicates/client/art-src/ships-2026-09-08/construction_ship.png": "034b261bfac341c810c7ac63e0db41c1006a2971eaa51818f37d980803b8d495",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/construction-ship-reference-v1/construction-ship-reference.png": "f7f2513e8541c2db135c1515a79ca021eed25eaaf129613f94ac4d6903317417"
+  }
+}

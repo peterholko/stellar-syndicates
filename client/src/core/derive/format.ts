@@ -99,7 +99,7 @@ export function operationCopy(o: import("../../protocol").OperationView): string
     case "strategic_control": return "Capture and continuously supply the node through the published hold interval.";
     case "regional_mandate": return "Survey, trade, and suppress piracy inside the region. Highest contribution wins at close.";
     case "syndicate_megaproject": {
-      const good = k.stage === 0 ? "Alloys" : k.stage === 1 ? "Electronics" : "Machinery";
+      const good = k.stage === 0 ? "Alloys" : k.stage === 1 ? "Semiconductors" : "Machinery";
       return `Stage ${k.stage + 1}/3 · freight ${good} to the project system; arrivals are consumed and credited to their sender. The host may also commit its local stock.`;
     }
   }

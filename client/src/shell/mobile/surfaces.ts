@@ -27,7 +27,7 @@ import { fleetReadiness, dispatchWarnings } from "../../core/derive/readiness";
 import { pirateSite } from "../../core/derive/pirates";
 import { foundingHomeSystemId } from "../../core/derive/geo";
 import { postVictoryHandoff } from "../../core/derive/handoff";
-import { bestMineBody, FOUNDING_STEP, FOUNDING_TOTAL, foundingBusinessGoals, foundingCommands, foundingPlan, foundingScoutGoal, foundingLocalGoals, shieldStatus, type FoundingPlan } from "../../core/derive/founding";
+import { expansionBody, FOUNDING_STEP, FOUNDING_TOTAL, foundingBuildTarget, foundingBusinessGoals, foundingCommands, foundingPlan, foundingScoutGoal, foundingLocalGoals, fuelRoom, landingBody, shieldStatus, type FoundingPlan } from "../../core/derive/founding";
 import { coach } from "../coach";
 import { jumpRangeAt } from "../../core/derive/nebula";
 import {
@@ -43,6 +43,9 @@ import {
   type TradeEvent,
 } from "../../protocol";
 import { liveSimTime } from "../../state";
+import { fmtDur } from "../../core/derive/format";
+import { dockedMerchant, isMerchantErrand, isMerchantTarget, merchantErrand, merchantLeavesIn, merchantQuote, merchantShortfall, oreAtHome, type MerchantGoods } from "../../core/derive/merchant";
+import { DEAL_LINE, refusalLine, TRADER, traderLine, traderPortrait, traderResult, type TraderLine } from "../../core/derive/trader";
 import { renderDeferred, setHtml } from "../dom";
 import type { CoreContext } from "../types";
 import type { SheetEntry, SheetView } from "./sheets";
@@ -85,7 +88,7 @@ const esc = (value: string): string => value.replace(
   /[&<>\"]/g,
   (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '\"': "&quot;" })[character]!,
 );
-const human = (value: string): string => value === "metallic_ore" ? "Ferrite Ore" : value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+const human = (value: string): string => value === "metallic_ore" ? "Ferrite Ore" : value === "electronics" ? "Semiconductors" : value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 const safeId = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/g, "_");
 const fmt = (value: number, digits = 0): string => Number.isFinite(value)
   ? value.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits })
@@ -100,6 +103,13 @@ export class MobileSurfaces {
   private readonly stationDraft = new Map<string, StationDraft>();
   private readonly renderSignatures = new Map<SheetEntry["id"], string>();
   private marketTab: MarketTab = "exchange";
+  /** §merchant: the free trader sheet's amounts and the build it was opened
+   * for; typing is read from the inputs, never re-rendered over. */
+  private merchantBuys: MerchantGoods = {};
+  private merchantSells: MerchantGoods = {};
+  private merchantFor = "";
+  /** When the last deal was sent (sim time): Teo's word is on it until then. */
+  private merchantSentAt: number | null = null;
   private marketCommodity: Commodity = "deuterium";
   private marketSide: Side = "buy";
   private readonly dismissedDecisions = new Set<string>();
@@ -129,6 +139,7 @@ export class MobileSurfaces {
       case "ship": view = this.renderShip(entry); break;
       case "system": view = this.renderSystem(entry); break;
       case "market": view = this.renderMarket(); break;
+      case "merchant": view = this.renderMerchant(entry); break;
       case "log": view = this.renderCheckin(); break;
       case "battle": view = this.renderBattle(entry); break;
       default: return null;
@@ -416,6 +427,9 @@ export class MobileSurfaces {
       case "market-submit":
         this.submitMarketOrder();
         break;
+      case "merchant-submit":
+        this.submitMerchant();
+        break;
       case "market-cancel": {
         const id = Number(button.dataset.id);
         if (Number.isFinite(id)) this.ctx.send({ type: "CancelLimitOrder", order_id: id });
@@ -656,6 +670,11 @@ export class MobileSurfaces {
           state.market, state.wallet, state.freight, state.systems, state.ghosts.filter((fleet) => fleet.own && fleet.docked === "hub"),
           marketReservations, recentMarketOrders, state.transactions,
         ]);
+      case "merchant": {
+        const home = state.systems.find((system) => system.id === state.merchant?.system);
+        return sheetFingerprint([clock, props, state.merchant, state.wallet, home?.stockpile, home?.storage_used,
+          home?.storage_cap, this.merchantBuys, this.merchantSells, this.merchantSentAt, state.timeline.length]);
+      }
       case "log":
         return sheetFingerprint([
           clock, state.timeline, state.founding, state.diplomacy, state.syndicateInvites, state.operations, state.battles,
@@ -750,7 +769,7 @@ export class MobileSurfaces {
       fleet.docked === fixed.id || (!fleet.docked && Math.hypot(fleet.pos.x - fixed.pos.x, fleet.pos.y - fixed.pos.y) <= (this.ctx.state.galaxy?.hyperlimit ?? 900))
     ));
     const fleetRows = nearby.map((fleet) => this.fleetRow(fleet)).join("");
-    const pirate = pirateSite(dynamic?.intel?.enclave_tier ?? 0);
+    const pirate = pirateSite(dynamic?.intel?.enclave_tier ?? 0, this.ctx.state.founding?.den === fixed.id);
     return {
       title: fixed.name,
       eyebrow: `${fixed.band.toUpperCase()} band · ${mine ? "your holding" : dynamic?.owner ? "rival holding" : "unclaimed"}`,
@@ -940,6 +959,125 @@ export class MobileSurfaces {
     };
   }
 
+  private merchantHome() {
+    const system = this.ctx.state.merchant?.system;
+    return system ? this.ctx.state.systems.find((entry) => entry.id === system) : undefined;
+  }
+
+  /** §merchant: the free trader's stall, a negotiation with Teo Brannick.
+   * Amounts are read from the inputs; Teo's word on the offer updates in place
+   * as you type (`handleMerchantInput`), so typing is never re-rendered over. */
+  private renderMerchant(entry: SheetEntry): SheetView {
+    const merchant = this.ctx.state.merchant;
+    const target = propsOf<{ for: string }>(entry).for ?? "";
+    const docked = dockedMerchant(this.ctx.state);
+    if (target !== this.merchantFor) {
+      this.merchantFor = target;
+      if (docked && isMerchantErrand(target)) {
+        ({ buys: this.merchantBuys, sells: this.merchantSells } = merchantErrand(target, this.merchantHome(), docked, fuelRoom(this.ctx.state)));
+        this.merchantSentAt = null;
+      } else if (docked && isMerchantTarget(target)) {
+        this.merchantBuys = merchantShortfall(this.ctx.state, this.merchantHome(), target, docked);
+        this.merchantSells = {};
+        this.merchantSentAt = null;
+      }
+    }
+    if (!merchant) return { title: "Free Trader", html: `<div class="m-empty">No merchant at your home.</div>` };
+    const status = merchant.phase === "docked" ? `Leaves in ${fmtDur(merchantLeavesIn(merchant, liveSimTime()))}`
+      : merchant.phase === "arriving" ? "Arriving" : "Leaving";
+    const input = (side: "buy" | "sell", commodity: string, value: number, max: number) =>
+      `<input type="number" inputmode="numeric" min="0" max="${max}" value="${value || ""}" placeholder="0" data-merchant-${side}="${commodity}" aria-label="${esc(`${side === "buy" ? "Buy" : "Sell"} ${human(commodity)}`)}" ${docked ? "" : "disabled"}>`;
+    const get = merchant.goods.map((good) => `<div class="m-merchant-row"><span><b>${esc(human(good.commodity))}</b><small>${fmt(good.price, 1)} cr · ${good.stock} left</small></span>`
+      + `${input("buy", good.commodity, this.merchantBuys[good.commodity] ?? 0, good.stock)}</div>`).join("");
+    const held = oreAtHome(this.merchantHome());
+    const give = `<div class="m-merchant-row"><span><b>Ferrite Ore</b><small>${fmt(merchant.ore_price, 1)} cr · takes ${merchant.ore_room} more</small><small class="m-merchant-held"><b>${fmt(held)}</b> at home</small></span>`
+      + `${input("sell", "metallic_ore", this.merchantSells.metallic_ore ?? 0, Math.min(merchant.ore_room, held))}</div>`;
+    const { line, terms, ready } = this.merchantTerms(this.merchantBuys, this.merchantSells);
+    const portrait = traderPortrait(line.mood, () => this.sheets.refresh());
+    return {
+      title: "Free Trader",
+      eyebrow: status,
+      html: `<header class="m-merchant-trader" data-merchant-trader data-mood="${line.mood}">`
+        + `<img class="m-merchant-portrait${portrait.painted ? "" : " is-interim"}" src="${esc(portrait.src)}" alt="${esc(portrait.alt)}" width="72" height="72">`
+        + `<div class="m-merchant-who"><b>${esc(TRADER.name)}</b><small>${esc(TRADER.ship)}</small></div>`
+        + `<p class="m-merchant-says" data-merchant-says role="status">“${esc(line.text)}”</p></header>`
+        + `<section class="m-section m-merchant-side"><h3>You give</h3>${give}</section>`
+        + `<section class="m-section m-merchant-side"><h3>You get</h3>${get}</section>`
+        + `<div class="m-merchant-dock"><div class="m-merchant-terms" data-merchant-terms>${terms}</div>`
+        + `<button type="button" class="m-primary" data-mobile-act="merchant-submit" ${ready ? "" : "disabled"}>Shake on it</button></div>`,
+    };
+  }
+
+  /** Teo's word, the terms and whether the handshake is open, for an offer. */
+  private merchantTerms(buys: MerchantGoods, sells: MerchantGoods): { line: TraderLine; terms: string; ready: boolean } {
+    const state = this.ctx.state;
+    const merchant = state.merchant!;
+    const wallet = state.wallet;
+    const quote = merchantQuote(merchant, buys, sells, this.merchantHome(), wallet && !wallet.report_pending ? spendableMarketCredits() : undefined);
+    const empty = !quote.cost && !quote.revenue;
+    const dealt = state.timeline.some((e) => e.text.startsWith("Free trader: ") && !e.text.startsWith("Free trader: trade refused"));
+    let line: TraderLine;
+    if (this.merchantSentAt !== null && empty) {
+      const result = traderResult(state.timeline, this.merchantSentAt);
+      line = result && !result.ok ? refusalLine(result.reason) : DEAL_LINE;
+    } else {
+      line = traderLine(merchant, buys, sells, quote, dealt, !!this.ctx.state.founding?.bounty_received);
+    }
+    const net = quote.cost - quote.revenue;
+    const terms = empty ? "Name your terms."
+      : `${net > 0 ? `You pay <b>${fmt(net)} cr</b>` : net < 0 ? `You receive <b>${fmt(-net)} cr</b>` : "Even trade"}`
+        + `${quote.netUnits ? ` · storage ${quote.netUnits > 0 ? "+" : ""}${quote.netUnits}` : ""}`;
+    return { line, terms, ready: merchant.phase === "docked" && !empty && !quote.error };
+  }
+
+  /** The amounts on the table now, read from the inputs. */
+  private merchantOffer(): { buys: MerchantGoods; sells: MerchantGoods } {
+    const read = (side: "buy" | "sell"): MerchantGoods => Object.fromEntries([...document.querySelectorAll<HTMLInputElement>(`[data-merchant-${side}]`)]
+      .map((input) => [input.dataset[side === "buy" ? "merchantBuy" : "merchantSell"] ?? "", Math.max(0, Math.floor(Number(input.value) || 0))])
+      .filter(([commodity, units]) => commodity && (units as number) > 0));
+    return { buys: read("buy"), sells: read("sell") };
+  }
+
+  /** Typing an amount: Teo's word, the terms and the handshake update in
+   * place; the inputs are left alone. */
+  handleMerchantInput(target: HTMLInputElement): boolean {
+    if (!target.matches("[data-merchant-buy], [data-merchant-sell]") || !this.ctx.state.merchant) return false;
+    const { buys, sells } = this.merchantOffer();
+    this.merchantSentAt = null;
+    const { line, terms, ready } = this.merchantTerms(buys, sells);
+    const trader = document.querySelector<HTMLElement>("[data-merchant-trader]");
+    if (trader) trader.dataset.mood = line.mood;
+    const portrait = trader?.querySelector<HTMLImageElement>("img");
+    const art = traderPortrait(line.mood);
+    if (portrait && art.painted && !portrait.src.endsWith(art.src)) portrait.src = art.src;
+    const says = document.querySelector<HTMLElement>("[data-merchant-says]");
+    if (says) says.textContent = `“${line.text}”`;
+    const shown = document.querySelector<HTMLElement>("[data-merchant-terms]");
+    if (shown) shown.innerHTML = terms;
+    const shake = document.querySelector<HTMLButtonElement>("[data-mobile-act=\"merchant-submit\"]");
+    if (shake) shake.disabled = !ready;
+    return true;
+  }
+
+  private submitMerchant(): void {
+    const merchant = dockedMerchant(this.ctx.state);
+    if (!merchant) return;
+    const { buys, sells } = this.merchantOffer();
+    const wallet = this.ctx.state.wallet;
+    const quote = merchantQuote(merchant, buys, sells, this.merchantHome(), wallet && !wallet.report_pending ? spendableMarketCredits() : undefined);
+    this.merchantBuys = buys;
+    this.merchantSells = sells;
+    if (!quote.error) {
+      this.ctx.send({ type: "MerchantTrade", buys, sells });
+      const net = quote.cost - quote.revenue;
+      this.hooks.notice(`Deal sent · ${net >= 0 ? `you pay ${fmt(net)} cr` : `you receive ${fmt(-net)} cr`}.`);
+      this.merchantSentAt = this.ctx.state.simTime;
+      this.merchantBuys = {};
+      this.merchantSells = {};
+    }
+    this.sheets.refresh();
+  }
+
   private submitMarketOrder(): void {
     const qty = Math.max(1, Math.floor(Number(element<HTMLInputElement>("m-market-qty")?.value) || 0));
     const quote = this.ctx.state.market?.prices.find((row) => row.commodity === this.marketCommodity);
@@ -1015,12 +1153,16 @@ export class MobileSurfaces {
     }
     if (action === "opening-imports") {
       this.hooks.openSheet({ id: "logistics" });
-      coach("send-shipment", "Check the basket and spending cap, then send it. The Interceptor guards the trip.");
+      coach("send-shipment", founding.stage === "defeat_privateer" ? "Check the basket and spending cap, then send it. The Interceptor guards the trip." : "Check the basket and spending cap, then send it.");
       return;
     }
     if (action === "market") {
       this.marketTab = "warehouse";
       this.hooks.openSheet({ id: "market" });
+      return;
+    }
+    if (action.startsWith("merchant-")) {
+      this.hooks.openSheet({ id: "merchant", props: { for: action.slice("merchant-".length) } });
       return;
     }
     if (action === "research" || action === "research-enrichment") {
@@ -1038,6 +1180,10 @@ export class MobileSurfaces {
     }
     if (action === "privateer" && founding.privateer) {
       this.hooks.focusFleet(founding.privateer);
+      return;
+    }
+    if (action === "den" && founding.den) {
+      this.hooks.focusSystem(founding.den);
       return;
     }
     if (action === "shipment-trip") {
@@ -1063,16 +1209,18 @@ export class MobileSurfaces {
       return;
     }
     if (action.startsWith("build-")) {
-      const structure = action.slice(6).replaceAll("-", "_");
-      const ships = ["convoy", "scout", "barge", "probe"].includes(structure);
-      const body = structure === "service_berth" ? home.bodies.find(b => (b.structures.warehouse ?? 0) > 0) : ships ? home.bodies.find(b => (b.structures.shipyard ?? 0) > 0)
-        : structure === "mine" ? bestMineBody(home)
-        : [...home.bodies].sort((a,b) => (structure === "academy" ? (b.infrastructure_slots ?? 0) - (a.infrastructure_slots ?? 0) : (b.industrial_slots ?? 0) - (a.industrial_slots ?? 0)))[0];
-      if (body) this.hooks.openSheet({ id: ships ? "shipyard" : "build", props: { systemId: home.id, bodyId: body.id } });
+      // §charter-v4: the land grant keeps builds on the landing world until expansion.
+      const target = foundingBuildTarget(action, this.ctx.state, home);
+      const body = action === "build-service-berth" ? home.bodies.find(b => (b.structures.warehouse ?? 0) > 0)
+        : target?.body ?? [...home.bodies].sort((a,b) => (b.industrial_slots ?? 0) - (a.industrial_slots ?? 0))[0];
+      if (body) this.hooks.openSheet({ id: target?.mode === "ships" ? "shipyard" : "build", props: { systemId: home.id, bodyId: body.id } });
       coach("queue-build", "Queue the build here.");
-    } else if (["mine", "academy", "shipyard", "smelter"].includes(action)) {
-      const structure = action === "mine" ? "mining_complex" : action;
-      const body = home.bodies.find(b => (b.structures[structure] ?? 0) > 0);
+    } else if (action === "home-world") {
+      const body = landingBody(home);
+      if (body) this.hooks.openSheet({ id: "planet", props: { systemId: home.id, bodyId: body.id } });
+    } else if (MOBILE_STAFF[action] || action === "expansion-mine") {
+      const structure = MOBILE_STAFF[action] ?? "mining_complex";
+      const body = action === "expansion-mine" ? expansionBody(home) : home.bodies.find(b => (b.structures[structure] ?? 0) > 0);
       if (body) this.hooks.openSheet({ id: "planet", props: { systemId: home.id, bodyId: body.id } });
       coach("staff-plus", "Add one workforce here, then review and confirm.");
     } else this.hooks.focusSystem(home.id);
@@ -1130,25 +1278,43 @@ function foundingPlanHtml(plan: FoundingPlan): string {
   const waiting = plan.waiting.length
     ? `<div class="m-founding__waiting"><small>While you wait</small>${plan.waiting.map(item => button(item.action, item.label)).join("")}</div>`
     : "";
-  return progress + next + waiting;
+  const goal = plan.goal
+    ? `<div class="m-founding__goal"><small>Long-term goal</small><b>${esc(plan.goal.title)}</b><p>${esc(plan.goal.copy)}</p>${button(plan.goal.action, plan.goal.label)}</div>`
+    : "";
+  return progress + next + goal + waiting;
 }
 
+/** The guide's staffing actions and the structure each opens. */
+const MOBILE_STAFF: Record<string, string> = {
+  mine: "mining_complex", academy: "academy", shipyard: "shipyard", smelter: "smelter", bioharvester: "bioharvester", agroplex: "agroplex",
+};
+
 function foundingCopy(stage: keyof typeof FOUNDING_STEP): { title: string; copy: string; action: string; label: string } {
-  if (stage === "local_recovery" || stage === "prepare_export") return { title: "Send your first shipment", copy: "Dispatch your guarded export, then leave the voyage to your fleet. No need to wait online.", action: "opening-imports", label: "Plan export & return" };
+  if (stage === "local_recovery" || stage === "prepare_export" || stage === "export_production") return { title: "Export your ore", copy: "Load Ferrite Ore and send the Freighter to the Market Hub.", action: "opening-imports", label: "Plan the shipment" };
   switch (stage) {
+    case "build_bioharvester": return { title: "Build a Bioharvester", copy: "It harvests Biomass. Staff it when it stands.", action: "build-bioharvester", label: "Build Bioharvester" };
+    case "build_habitat": return { title: "Build a Habitat", copy: "Your settlers move out of the colony ship.", action: "build-habitat", label: "Build Habitat" };
+    case "build_agroplex": return { title: "Build an Agroplex", copy: "It turns Biomass into Provisions. Staff it when it stands.", action: "build-agroplex", label: "Build Agroplex" };
+    case "build_mine": return { title: "Build and staff a Mining Complex", copy: "Mine Ferrite Ore on your landing world, then assign workforce.", action: "build-mine", label: "Build Mining Complex" };
+    case "pirate_raid": return { title: "The mine is running", copy: "Ferrite Ore is coming in.", action: "mine", label: "Open the mine" };
+    case "sell_ore": return { title: "Find semiconductors", copy: "The Solar Array needs them.", action: "market", label: "Open Market" };
+    case "power_shipyard":
+    case "buy_semiconductors": return { title: "Build a Solar Array", copy: "A Shipyard needs more than the Command Center's 1 MW.", action: "build-power", label: "Build Solar Array" };
     case "grow_business": return { title: "Grow your business", copy: "Expand exports or start refining. Either advances the tutorial; both remain open.", action: "home", label: "Open home" };
-    case "build_shipyard": return { title: "Build Shipyard I", copy: "Import Alloys, Machinery and Electronics with your export earnings.", action: "home", label: "Open home" };
-    case "build_mine": return { title: "Build and staff a Mining Complex", copy: "Mine Ferrite Ore on the designated world, then assign workforce.", action: "home", label: "Open home" };
-    case "build_convoy": return { title: "Prepare a Freighter", copy: "Assign workforce to the Shipyard, then build a Tiny Freighter.", action: "home", label: "Open home" };
+    case "build_shipyard": return { title: "Build a Shipyard", copy: "40 Alloys, 20 Machinery and 15 Semiconductors, then staff it.", action: "build-shipyard", label: "Build Shipyard" };
+    case "build_convoy": return { title: "Build a Tiny Freighter", copy: "It carries your ore to the Market Hub.", action: "build-convoy", label: "Build Tiny Freighter" };
     case "build_second_freighter": return { title: "Build a second Tiny Freighter", copy: "Import its materials and staff the Shipyard to expand your trade capacity.", action: "home", label: "Open home" };
-    case "export_production": return { title: "Dispatch the opening export", copy: "Load Ferrite Ore, then send the Freighter.", action: "freighter", label: "Select Freighter" };
-    case "defeat_privateer": return { title: "Guard the Freighter", copy: "Intercept the Rogue Privateer before it reaches the civilian hull.", action: "privateer", label: "Select Privateer" };
+    case "build_freighter":
+    case "build_interceptor": return { title: "Build an Interceptor", copy: "Shipyard II, then the Interceptor. It hunts the privateer.", action: "build-interceptor", label: "Build Interceptor" };
+    case "defeat_privateer": return { title: "Destroy the privateer", copy: "Send your Interceptor after it.", action: "attack-privateer", label: "Attack" };
+    case "eliminate_den": return { title: "Eliminate the privateer den", copy: "Send your Interceptor to the den its log named.", action: "assault-den", label: "Send Interceptor" };
     case "complete_export": return { title: "Complete the export", copy: "Sell Ferrite Ore at the Market Hub.", action: "freighter", label: "Select Freighter" };
-    case "build_academy": return { title: "Establish and staff Academy I", copy: "Import its kit, build it at home, and assign workforce.", action: "market", label: "Open Warehouse" };
+    case "build_academy": return { title: "Establish and staff Academy I", copy: "Build it at home and assign workforce.", action: "build-academy", label: "Build Academy" };
     case "first_research": return { title: "Start research", copy: "Build and staff an Academy, then start any Tier I programme.", action: "research", label: "Open Research" };
+    case "expand_mining": return { title: "Expand mining operations", copy: "A Solar Array and a Mining Complex on another world of your system.", action: "build-expansion-power", label: "Build Solar Array" };
     case "build_scout": return { title: "Build a Scout", copy: "Import its kit and construct the exploration hull.", action: "market", label: "Open Warehouse" };
     case "survey_candidates": return { title: "Chart a nearby system", copy: "Build a Survey Probe and send it to the assigned stop; its report charts a belt for your first Mining Barge.", action: "build-probe", label: "Open Shipyard" };
-    case "build_barge": return { title: "Build a Mining Barge", copy: "Import its kit and build it at your Shipyard.", action: "build-barge", label: "Open Shipyard" };
+    case "build_barge": return { title: "Build a Mining Barge", copy: "Build it at your Shipyard.", action: "build-barge", label: "Open Shipyard" };
     case "mine_belt": return { title: "Send the barge to the belt", copy: "Mine the belt your survey charted. This step completes when command hears it cutting ore.", action: "mine-belt", label: "Send Mining Barge" };
     case "haul_ore": return { title: "Bring the ore home", copy: "Send the barge home and unload its ore, or sell it at the Market Hub.", action: "barge-home", label: "Send the barge home" };
     case "build_colony":

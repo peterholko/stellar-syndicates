@@ -4,7 +4,7 @@ import { DECK_ROUTES, type DeckCrumb, type DeckRoute, type DeckWidth } from "./r
 
 const WIDTH_KEY = "stellarSyndicates.deck.width.";
 /** Routes that float over the map as a centred panel instead of a right rail. */
-const POPOUTS: ReadonlySet<DeckRoute["name"]> = new Set(["market", "logistics"]);
+const POPOUTS: ReadonlySet<DeckRoute["name"]> = new Set(["market", "logistics", "merchant", "signals"]);
 export const isPopoutRoute = (route: DeckRoute | null): boolean => !!route && POPOUTS.has(route.name);
 
 export class DeckWorkspace {

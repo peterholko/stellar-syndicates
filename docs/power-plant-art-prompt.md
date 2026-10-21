@@ -17,7 +17,7 @@ fuel for power below fusion any more.
 Both follow the existing v2 planet-surface sets in
 `client/art-src/planet-surface-structures-v2/`, so they match every other
 building in camera, light, scale and finish. Until they land, the game draws
-the Fuel Refinery's art for the plant.
+the Fuel Refinery's art for the plant. (Landed: see the end.)
 
 **Framing:** this brief uses the measured v2 framing, not the original prompts'
 numbers (see `docs/living-terraces-art-prompt.md`): the building about 94% of
@@ -96,11 +96,17 @@ Output exactly one structure, genuine transparent PNG.
   shielded core block, with frosted cryogenic tanks clustered at its hub and
   wide pale radiator wings.
 
-## When it lands
+## Landed (generated Oct 12, wired in Oct 14 2026)
 
-- The derive step adds `power_plant` to the v2 family manifest. The plant's
-  menus use its scene sprites, as the Living Terraces' do.
-- The Fuel Refinery stand-in comes out of `icons.ts` and
-  `planet-structure-art.ts`.
-- Belts and gas giants draw the orbital pair: solar for I–II, fusion for
-  III–VI.
+- The six tiers and the orbital pair are in
+  `client/art-src/planet-surface-structures-v2/buildings/power_plant/`, listed
+  in `additions-manifest.json` (the tiers under `buildings`, the pair under
+  `orbitals`). They needed no reframing: like the approved set, they fill about
+  96–99% of the canvas width.
+- `scripts/build-planet-surface-structure-art.mjs` derives them and generates
+  `SURFACE_ORBITAL_ART` (family → tier → look).
+- The Fuel Refinery stand-in is gone from `icons.ts` and
+  `planet-structure-art.ts`. Menus use the scene sprites, as the Living
+  Terraces' do.
+- A world with no ground (a belt or gas giant) draws the orbital pair: solar
+  for I–II, fusion for III–VI.

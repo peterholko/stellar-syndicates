@@ -50,7 +50,8 @@ const starFx = load("systemstarfx.ts", { "pixi.js": pixi, "./systembodyfx": body
 const history = load("battlehistory.ts");
 const blockadeModule = load("core/derive/blockade.ts", { "./format": { fmtDur: secs => `${Math.round(secs)}s` } });
 const traffic = load("systemtraffic.ts", { "./battlehistory": history, "./systemlayout": layout, "./core/derive/blockade": blockadeModule });
-const trafficLayer = load("systemtrafficlayer.ts", { "pixi.js": pixi, "./protocol": protocol, "./systemlayout": layout, "./systembodyfx": bodyFx });
+const shipart = load("shipart.ts", { "./ship-art.generated": load("ship-art.generated.ts") });
+const trafficLayer = load("systemtrafficlayer.ts", { "pixi.js": pixi, "./protocol": protocol, "./systemlayout": layout, "./systembodyfx": bodyFx, "./shipart": shipart });
 const systems = load("systemview.ts", { "pixi.js": pixi, "./prng": prng, "./stars": stars, "./planetart": planetArt,
   "./systemlayout": layout, "./systembodyfx": bodyFx, "./systemstarfx": starFx, "./systemtrafficlayer": trafficLayer,
   "./planet-structure-art": { hasOrbitalShipConstruction: (builds, body) => builds.some((b) => b.body_id === body && b.key === "cruiser") },
@@ -99,6 +100,11 @@ assert.equal(layout.defendedWorld(roster), 3, "a fight at the star is drawn at t
 const rivalRoster = roster.map((b) => ({ ...b, population: 0, structures: {} }));
 assert.equal(layout.berthAnchor("cruiser", rivalRoster), 1, "fogged rival structures fall back to public geography");
 assert.equal(layout.mainWorld([]), null);
+// §merchant: the free trader berths beside the home it serves, not a depot.
+const depotRoster = [body(1, { habitable: true, kind: "terrestrial", population: 1.2, structures: { command_center: 1 } }),
+  body(2, { kind: "gas_giant", size: "large", structures: { orbital_warehouse: 1 } })];
+assert.equal(layout.fleetBerth({ kind: "convoy" }, depotRoster), 2, "a freighter parks at the orbital warehouse");
+assert.equal(layout.fleetBerth({ kind: "convoy", merchant: true }, depotRoster), 1, "the free trader orbits the home world");
 
 // --- Picture derivation ------------------------------------------------------
 const star = { x: 10_000, y: 0 };
@@ -147,6 +153,9 @@ const picture = traffic.deriveSystemPicture(input({
 const placement = (id) => picture.fleets.find((f) => f.id === id)?.placement ?? null;
 assert.deepEqual(plain(placement("f1")), { mode: "berth", body: 2, slot: 0, slots: 1 }, "a berthed cruiser parks at its yard world");
 assert.equal(placement("f2"), null, "berthed elsewhere is not at this star");
+const trader = ghost("t1", "convoy", { own: false, owner: "tca", tca: true, merchant: true, docked: "E9" });
+assert.deepEqual(plain(traffic.deriveSystemPicture(input({ dynamic: { ...report, bodies: depotRoster.map(wireBody) }, ghosts: [trader] }))
+  .fleets[0].placement), { mode: "berth", body: 1, slot: 0, slots: 1 }, "the docked free trader orbits the home world, not the star");
 assert.equal(placement("f3"), null, "the Hub's berths are not this star's");
 assert.equal(placement("r1").mode, "near");
 close(placement("r1").distance, 1000, "the near zone keeps the true distance");
@@ -390,21 +399,24 @@ assert.equal(scenery.markers.children.length, 0);
   const rast = ts.createSourceFile("render.ts", renderSource, ts.ScriptTarget.Latest, true);
   const owner = rast.statements.find((n) => ts.isClassDeclaration(n) && n.name?.text === "Renderer");
   const hintMethod = owner.members.find((n) => n.name?.getText(rast) === "drawApproachHint");
+  const growthMethod = owner.members.find((n) => n.name?.getText(rast) === "approachGrowth");
   const constant = (name) => rast.statements.filter(ts.isVariableStatement).flatMap((n) => [...n.declarationList.declarations])
     .find((d) => d.name.getText(rast) === name).getText(rast);
   const exportsHint = {};
   vm.runInNewContext(ts.transpileModule(`const ${constant("SCHEMATIC_GROW_FROM")}; const ${constant("SYSTEM_ZOOM_FACTOR")};
-    exports.HintRenderer = class { approachVisuals = new Map(); galaxy = { c: 100 };
+    exports.HintRenderer = class { approachVisuals = new Map(); galaxy = { c: 100 }; handoffGrowth = null;
       constructor(scene) { this.systemScene = scene; }
+      ${growthMethod.getText(rast)}
       ${hintMethod.getText(rast)} }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText,
   { exports: exportsHint, Sprite, Texture: pixi.Texture, buildVisualSystem: systems.buildVisualSystem, liveSimTime: () => 0,
     orbitalAngle: layout.orbitalAngle, planetPeriod: layout.planetPeriod, ORBIT_TILT: layout.ORBIT_TILT,
     terminatorTexture: () => ({ width: 128 }), towardStarRotation: bodyFx.towardStarRotation, planetArtwork: planetArt.planetArtwork });
   let artLoaded = true;
   const baseScale = 300;
-  const scene = { starVisibleDiameterPx: () => 0.17 * baseScale, planetTexture: (kind) => artLoaded ? { width: 512, kind } : null };
+  const scene = { starVisibleDiameterPx: () => 0.17 * baseScale, restScale: () => baseScale,
+    planetTexture: (kind) => artLoaded ? { width: 512, kind } : null };
   const hint = new exportsHint.HintRenderer(scene);
-  const preview = { worlds: [], worldsBack: new Container(), worldsFront: new Container() };
+  const preview = { worlds: [], orbits: new Graphics(), worldsBack: new Container(), worldsFront: new Container() };
   const star = { x: 500, y: 400 };
   const planets = systems.buildVisualSystem(system, bodiesWire).planets;
   const drawn = new Graphics();
@@ -424,11 +436,100 @@ assert.equal(scenery.markers.children.length, 0);
     close(world.art.rotation, bodyFx.towardStarRotation(toStar), `${planet.name}: lit from its star`);
     close(world.shade.rotation, toStar + Math.PI, `${planet.name}: night side away from the star`);
   });
+  // Past the doorway the preview keeps growing with the camera, up to the
+  // System View's own fit; mid-handoff it rides the schematic's scale.
+  const outer = planets.reduce((a, p) => (p.orbitRadius > a.orbitRadius ? p : a));
+  const outerRx = (zoom) => {
+    const g = new Graphics();
+    hint.drawApproachHint(g, preview, system, bodiesWire, star, 1, zoom, { commandCenter: null });
+    assert.equal(g.commands.filter(([op]) => op === "ellipse").length, 0, "orbits never cross the star's face");
+    return preview.orbits.commands.filter(([op]) => op === "ellipse").map(([, , , rx]) => rx).reduce((a, b) => Math.max(a, b), 0);
+  };
+  close(outerRx(96), outer.orbitRadius * k, "doorway: the schematic's grow-in start");
+  close(outerRx(192), outer.orbitRadius * k * 2, "past the doorway the preview grows with the camera");
+  close(outerRx(384), outer.orbitRadius * baseScale, "…never past the System View's own fit");
+  hint.handoffGrowth = { id: system.id, scale: 0.7 };
+  close(outerRx(153.6), outer.orbitRadius * baseScale * 0.7, "mid-handoff: the schematic's own scale");
+  hint.handoffGrowth = { id: "elsewhere", scale: 0.7 };
+  close(outerRx(96), outer.orbitRadius * k, "other stars keep their own preview");
+  hint.handoffGrowth = null;
   artLoaded = false;
   const before = new Graphics();
   hint.drawApproachHint(before, preview, system, bodiesWire, star, 1, 96, { commandCenter: null });
   assert.equal(before.commands.filter(([op]) => op === "circle").length, planets.length, "grey dots until the art loads");
   assert.ok(preview.worlds.every((w) => !w.art.visible) && !preview.worldsFront.visible, "and no stale art");
+}
+
+// --- Travelling hulls near a star sit where the System View will draw them --
+// The real placement from render.ts, compiled alone: over the 40→96× dive a
+// hull in a star's near zone slides from its true position onto the System
+// View's band (just outside the outermost orbit, tilted, true bearing), so it
+// doesn't jump at the handoff; farther out it eases back to true.
+{
+  const renderSource = source("render.ts");
+  const rast = ts.createSourceFile("render.ts", renderSource, ts.ScriptTarget.Latest, true);
+  const owner = rast.statements.find((n) => ts.isClassDeclaration(n) && n.name?.text === "Renderer");
+  const method = (name) => owner.members.find((n) => n.name?.getText(rast) === name).getText(rast);
+  const constant = (name) => rast.statements.filter(ts.isVariableStatement).flatMap((n) => [...n.declarationList.declarations])
+    .find((d) => d.name.getText(rast) === name).getText(rast);
+  const exportsPlace = {};
+  vm.runInNewContext(ts.transpileModule(`${["clamp01", "smooth01", "SCHEMATIC_GROW_FROM", "SYSTEM_ZOOM_FACTOR",
+    "APPROACH_HINT_START", "SHIP_SYSTEM_CLEAR_SU"].map((name) => `const ${constant(name)};`).join(" ")}
+    exports.PlaceRenderer = class { handoffGrowth = null; cx = 40; cy = -30; scale = 1;
+      constructor(scene, galaxy) { this.systemScene = scene; this.galaxy = galaxy; }
+      fitScale() { return 0.001; }
+      worldToScreen(p) { return { x: this.cx + p.x * this.scale, y: this.cy + p.y * this.scale }; }
+      ${method("approachGrowth")}
+      ${method("nearStarPlacement")}
+      ${method("shipScreen")}
+      ${method("routeScreen")} }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText,
+  { exports: exportsPlace, NEAR_ZONE_SU: layout.NEAR_ZONE_SU, NEAR_INNER: layout.NEAR_INNER, ORBIT_TILT: layout.ORBIT_TILT,
+    DOCK_RADIUS_SU: layout.DOCK_RADIUS_SU, nearRadius: layout.nearRadius });
+  const baseScale = 300, outer = 1.4;
+  const starPos = { x: 100_000, y: 50_000 };
+  const r = new exportsPlace.PlaceRenderer({ restScale: () => baseScale, nearOuterRadius: () => outer },
+    { systems: [{ id: "far", pos: { x: -200_000, y: 0 } }, { id: system.id, pos: starPos }] });
+  const at = (zoom) => { r.scale = 0.001 * zoom; };
+  const point = (d, bearing) => ({ x: starPos.x + Math.cos(bearing) * d, y: starPos.y + Math.sin(bearing) * d });
+  const truth = (p) => r.worldToScreen(p);
+  // The System View's own placement (systemtrafficlayer planeToScreen) about
+  // the star, at the preview's scale.
+  const systemView = (d, bearing, k) => {
+    const star = truth(starPos);
+    const radius = layout.nearRadius(d, layout.NEAR_INNER, outer) * k;
+    return { x: star.x + Math.cos(bearing) * radius, y: star.y + Math.sin(bearing) * radius * layout.ORBIT_TILT };
+  };
+  const same = (a, b, label) => { close(a.x, b.x, `${label} x`, 1e-6); close(a.y, b.y, `${label} y`, 1e-6); };
+
+  at(30);
+  same(r.shipScreen(point(800, 0.7)), truth(point(800, 0.7)), "below 40× every hull is drawn true");
+  assert.equal(r.shipScreen(point(800, 0.7)).tilt, 0);
+  at(96);
+  const k = baseScale * 0.35;
+  for (const [d, bearing] of [[260, 0.3], [800, 0.7], [1_300, -2.1], [1_000, Math.PI / 2]]) {
+    same(r.shipScreen(point(d, bearing)), systemView(d, bearing, k), `at the doorway, ${d} su: where the System View draws it`);
+  }
+  same(r.shipScreen(point(120, 1.1)), systemView(120, 1.1, k), "inside the docking radius: on the band's inner edge, like the System View");
+  assert.equal(r.shipScreen(point(800, 0.7)).tilt, 1, "the heading takes the plane's foreshortening");
+  same(r.routeScreen(starPos), truth(starPos), "a route's end at the star stays at the star");
+  const clear = Math.max(layout.NEAR_ZONE_SU * 4, (2 * outer * k) / r.scale);
+  same(r.shipScreen(point(clear + 1, 2.5)), truth(point(clear + 1, 2.5)), "far out: true");
+  assert.equal(r.shipScreen(point(clear + 1, 2.5)).tilt, 0);
+  // Continuous at the band's edge and outward from the star along a bearing.
+  const radial = (d) => { const p = r.shipScreen(point(d, 0)); return Math.hypot(p.x - truth(starPos).x, p.y - truth(starPos).y); };
+  close(radial(1_300), radial(1_300.001), "no seam at the band's edge", 1e-3);
+  close(radial(clear - 0.001), radial(clear), "no seam where it rejoins the true map", 1e-3);
+  for (let d = 300; d < clear; d += 100) assert.ok(radial(d + 100) > radial(d), `outward stays outward (${d} su)`);
+  // Mid-handoff it rides the schematic's own scale, so the pictures coincide.
+  at(150);
+  r.handoffGrowth = { id: system.id, scale: 0.7 };
+  same(r.shipScreen(point(900, -0.4)), systemView(900, -0.4, baseScale * 0.7), "mid-handoff: the schematic's scale");
+  r.handoffGrowth = null;
+  // Halfway through the dive it is halfway there.
+  at(68);
+  const half = r.shipScreen(point(800, 0.7));
+  const t = truth(point(800, 0.7)), v = systemView(800, 0.7, baseScale * 0.35 * 68 / 96);
+  same(half, { x: t.x + (v.x - t.x) * 0.5, y: t.y + (v.y - t.y) * 0.5 }, "halfway through the dive");
 }
 
 // §orbital-defense: a world's station is drawn once in orbit, larger and a

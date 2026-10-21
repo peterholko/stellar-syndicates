@@ -89,12 +89,12 @@ function siteDetail(st: ViewState, site: ExplorationSiteView): string {
     const canRestore = stock("machinery") >= 12 && stock("electronics") >= 8;
     const assignment = f.expedition?.site === site.id ? f.expedition : null;
     const activity = assignment && (f.survey_progress == null ? "Under way" :
-      `${({ investigate: "Investigating", recover: "Recovering", restore: "Restoring", study: "Studying", extract: "Extracting" })[assignment.task]} · ${Math.round(f.survey_progress * 100)}%`);
+      `${({ investigate: "Investigating", recover: "Recovering", restore: "Restoring", study: "Studying", extract: "Extracting", signal: "Sweeping" })[assignment.task]} · ${Math.round(f.survey_progress * 100)}%`);
     return `<div class="exploration-fleet"><b>${esc(shipKindLabel(f.kind))} · ${esc(f.id)}</b><div>
       ${activity ? `<span>${activity}</span>` : ""}
       ${!d || hasCargo ? `<button type="button" ${attrs(task, site.id, f.id)} data-coach="travel-here" ${assignment?.task === task ? "disabled" : ""}>Travel here</button>` : ""}
       ${d?.kind === "station" && !d.restored_by ? `<button type="button" ${attrs("restore", site.id, f.id)} ${canRestore && assignment?.task !== "restore" ? "" : "disabled"}>Restore · 60s</button>` : ""}
-      </div>${d?.kind === "station" && !d.restored_by && !canRestore ? `<small>Carry 12 Machinery + 8 Electronics to restore.</small>` : ""}</div>`;
+      </div>${d?.kind === "station" && !d.restored_by && !canRestore ? `<small>Carry 12 Machinery + 8 Semiconductors to restore.</small>` : ""}</div>`;
   }).join("");
   return `<section class="exploration-panel"><div class="exploration-actions"><button type="button" ${attrs("back")}>← Contacts</button><button type="button" ${attrs("center", site.id)}>Center on map</button></div>
     <header class="exploration-hero">${art(site)}<div><small>${esc(siteStatus(site))}</small><h3>${esc(siteTitle(site))}</h3>

@@ -167,7 +167,9 @@ assert.match(src("shell/mobile/map.ts"), /case "operation":/);
 console.log(`Map markers: ${names.length} provenance-checked white glyphs, contact badges and state pips, contract tags for all ${kinds.length} kinds in issuer colours (hollow/filled/progress, beside stars, stacked, picked) and hover/click wiring passed.`);
 
 // --serve: the real renderer over a canned region with every kind of contact
-// and contract, an own Interceptor and a rival. ?zoom=N&x=&y= frames it.
+// and contract, an own Interceptor and a rival. ?zoom=N&x=&y= frames it;
+// ?nodes=1 adds exotic nodes in each state; ?charted=1 charts Freya (four
+// worlds, a moon and a belt) for the orbit preview and the System View handoff.
 // No game server.
 if (process.argv.includes("--serve")) {
   const { createServer } = await import("node:http");
@@ -215,13 +217,42 @@ if (process.argv.includes("--serve")) {
       state.ghosts = [ghost("F1", "raider", 74000, 14000, true), ghost("F2", "corvette", 106000, 2000, false),
         // An own Scout cruising in warp: its wake must trail past the hull at every zoom.
         ghost("F3", "scout", 90000, 10000, true, { vel: { x: 0.8, y: -0.6 }, drive: { cruising: "warp" } })];
+      // ?nodes=1: exotic nodes: yours (awake), an unclaimed one, a rival's, a dormant one.
+      if (params.get("nodes")) {
+        const node = (bonus, title, awakened, extra = {}) => ({ bonus, title, awakened, fed: true, region_radius: 0, ...extra });
+        const dyn = (id, owner, n) => ({ id, owner, bodies: [], builds: [], blockade: null, node: n });
+        state.systems = [dyn("1", "me", node("deep_scan", "Deep Scan", true, { region_radius: 1800 })),
+          dyn("2", null, node("deep_scan", "Deep Scan", true)), dyn("3", "rival", node("relay_anchor", "Relay Anchor", true)),
+          dyn("4", null, node("veil", "Veil", false))];
+      }
+      if (params.get("charted")) {
+        const world = (id, kind, size, extra = {}) => ({ id, name: "Freya " + id, kind, parent: null, habitable: kind === "terrestrial", size,
+          environment: kind === "terrestrial" ? "terran" : "uninhabitable", geology: null, special: null, special_effect: null,
+          habitat_capacity_mult: 1, population_growth_mult: 1, provisions_mult: 1, construction_time_mult: 1, mineral_extraction_mult: null,
+          resource_slots: null, industrial_slots: null, infrastructure_slots: null, ship_build_time_mult: null, deposits: null,
+          migration_policy: "closed", inbound_migrants: 0, population: 0, structures: {}, ...extra });
+        state.systems = [...state.systems.filter((entry) => entry.id !== "1"), { id: "1", owner: null, builds: [], blockade: null, bodies: [
+          world(11, "lava", "small"), world(12, "terrestrial", "medium"), world(13, "gas_giant", "huge"),
+          world(14, "rocky", "tiny", { parent: 13 }), world(15, "ice", "medium"),
+          world(16, "asteroid_belt", "large", { belt: { kind: "stony", radius: 0.5, width: 0.05 } })] }];
+      }
       await renderer.init(document.getElementById("app"));
       renderer.setGalaxy(state.galaxy);
       const zoom = Number(params.get("zoom") ?? 4);
       const focus = { x: Number(params.get("x") ?? 90000), y: Number(params.get("y") ?? 10000) };
       const apply = () => { renderer.zoomByFactor(zoom / renderer.zoomFactor()); renderer.centerOnWorld(focus, 0); };
       let settling = 40;
-      window.__r = renderer; window.__focus = focus;
+      window.__r = renderer; window.__focus = focus; window.__state = state;
+      // The embedded pane pauses rAF: pump frames by hand, mirror the canvas.
+      window.__pump = (n = 1) => { for (let i = 0; i < n; i++) renderer.update(state); renderer.app.render(); };
+      window.__snap = () => { renderer.app.render(); const img = document.getElementById("__snap") ?? document.body.appendChild(Object.assign(document.createElement("img"), { id: "__snap" }));
+        img.style.cssText = "position:fixed;inset:0;width:100%;height:100%;z-index:9;pointer-events:none"; img.src = renderer.app.canvas.toDataURL(); return img.src.length; };
+      // __crop(cx, cy, w, h): mirror one region of the canvas, magnified to fill the pane.
+      window.__crop = (cx, cy, w, h) => { renderer.app.render(); const src = renderer.app.canvas; const res = src.width / renderer.viewW;
+        const c = Object.assign(document.createElement("canvas"), { width: Math.round(w * res), height: Math.round(h * res) });
+        c.getContext("2d").drawImage(src, (cx - w / 2) * res, (cy - h / 2) * res, w * res, h * res, 0, 0, c.width, c.height);
+        const img = document.getElementById("__snap") ?? document.body.appendChild(Object.assign(document.createElement("img"), { id: "__snap" }));
+        img.style.cssText = "position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:9;pointer-events:none"; img.src = c.toDataURL(); return [c.width, c.height]; };
       renderer.stateVersion++;
       const frame = () => { if (settling-- > 0) apply(); renderer.update(state); document.documentElement.dataset.zoom = renderer.zoomFactor().toFixed(2); requestAnimationFrame(frame); };
       requestAnimationFrame(frame);

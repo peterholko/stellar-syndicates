@@ -181,6 +181,8 @@ fn existing_unresearched_industry_survives_a_save_and_keeps_producing() {
     let s = site_mut(&mut w, home);
     s.set_tier(K::Smelter, 1);
     s.assign(K::Smelter, Assignment::crew(1));
+    // §charter-v4: the reload drops the sandbox's free power; give it a plant.
+    s.bodies.iter_mut().find(|b| b.tier(K::Smelter) > 0).unwrap().set_tier(K::PowerPlant, 1);
     s.stockpile.insert(C::MetallicOre, 100.0);
     s.stockpile.insert(C::Deuterium, 100.0);
     w = serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();

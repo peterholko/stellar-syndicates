@@ -16,17 +16,3 @@ export function buildProgress(job: BuildState, now: number): number | null {
   return start != null && Number.isFinite(start) && Number.isFinite(total) && total > 0
     ? Math.max(0, Math.min(100, (now - start) / total * 100)) : null;
 }
-
-/** One visible group per planet. The server orders waiting jobs by receipt;
- * preserve that order and never turn a queued job active from a client estimate. */
-export function buildsByPlanet(builds: BuildState[]): { bodyId: number; jobs: BuildState[] }[] {
-  const groups = new Map<number, BuildState[]>();
-  for (const job of builds) {
-    const jobs = groups.get(job.body_id) ?? [];
-    jobs.push(job);
-    groups.set(job.body_id, jobs);
-  }
-  return [...groups].sort(([a], [b]) => a - b).map(([bodyId, jobs]) => ({
-    bodyId, jobs: jobs.sort((a, b) => Number(!!a.queued) - Number(!!b.queued)),
-  }));
-}

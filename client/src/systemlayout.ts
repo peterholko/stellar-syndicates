@@ -193,6 +193,12 @@ export function berthAnchor(kind: string, bodies: readonly AnchorBody[]): number
   return mainWorld(bodies);
 }
 
+/** The world a berthed ghost parks beside: the free trader at the home it
+ * serves (the main world), every other fleet by its role's facilities. */
+export function fleetBerth(g: { kind: string; merchant?: boolean }, bodies: readonly AnchorBody[]): number | null {
+  return g.merchant ? mainWorld(bodies) : berthAnchor(g.kind, bodies);
+}
+
 /** The world a siege is visibly fought over. */
 export function siegeTarget(bodies: readonly AnchorBody[]): number | null {
   return mainWorld(bodies);

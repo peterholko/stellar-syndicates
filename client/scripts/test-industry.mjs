@@ -23,7 +23,13 @@ deps["../../core/derive/format"] = { fmtBuildDur: seconds => `${seconds}s`, fmtE
 const market = deps["../../core/derive/market"] = compile("core/derive/market.ts");
 const colony = compile("core/derive/colony.ts");
 const { DeckEmpireRoutes } = compile("shell/deck/empire.ts");
+deps["./market"] = market;
+deps["./construction"] = compile("core/derive/construction.ts");
+deps["./format"] = deps["../../core/derive/format"];
+deps["../../core/derive/worldbuild"] = compile("core/derive/worldbuild.ts");
 const { MobileParitySurfaces } = compile("shell/mobile/parity.ts");
+// The mobile builder reads the served line for an order's Cancel.
+const mobileThis = () => Object.assign(Object.create(MobileParitySurfaces.prototype), { ctx: { state }, cancelSent: new Set(), cancelArmed: null });
 const fixtures = [
   ["composite_works", "composites", "mat_prefab_construction", .3, [["alloys", 1], ["polymers", .75], ["silicates", .5]]],
   ["hull_fabricator", "hull_sections", "mat_prefab_construction", .18, [["composites", 1.2], ["machinery", .5], ["titanium", .6]]],
@@ -52,7 +58,7 @@ for (const [key, output, research, rate, inputs] of fixtures) {
   system.builds.push({ body_id: body.id, key });
   for (const preview of [
     DeckEmpireRoutes.prototype.structureDetail.call({}, system, body, opt, pools),
-    MobileParitySurfaces.prototype.structureDetail.call({}, system.id, system, body, opt, pools),
+    MobileParitySurfaces.prototype.structureDetail.call(mobileThis(), system.id, system, body, opt, pools),
   ]) assert.ok(preview.includes(`${key}/tier-4-128.webp`), "both builders preview the target after the queued upgrade");
   delete body.structures[key];
   system.builds.length = 0;
@@ -283,7 +289,7 @@ const commandBody = { id: 1, kind: "terrestrial", population: .002, structures: 
 const commandSystem = { id: "home", structures: {}, builds: [], bodies: [commandBody], stockpile: [] };
 const commandDetail = () => [
   DeckEmpireRoutes.prototype.structureDetail.call({}, commandSystem, commandBody, commandCenter, market.bodyPoolUsage(commandBody, commandSystem)),
-  MobileParitySurfaces.prototype.structureDetail.call({}, "home", commandSystem, commandBody, commandCenter, market.bodyPoolUsage(commandBody, commandSystem)),
+  MobileParitySurfaces.prototype.structureDetail.call(mobileThis(), "home", commandSystem, commandBody, commandCenter, market.bodyPoolUsage(commandBody, commandSystem)),
 ];
 for (const html of commandDetail()) {
   assert.match(html, /Colony Command Center/);
@@ -305,3 +311,49 @@ for (const html of commandDetail()) {
   assert.doesNotMatch(html, /[Tt]ier 4|Queue build|Construction requirements|need 120/);
 }
 console.log("Command Center desktop/mobile panels: exact next-level identity, duration, materials, research gate and no fictitious fourth upgrade pass.");
+
+// §construction: one order, one bar, on mobile too. A world's list draws the
+// bar on the order building now and lists the rest by place; the system sheet
+// reads one line per world, its yard work beneath.
+{
+  const body = { id: 0, name: "Freya I", structures: { mining_complex: 1 }, construction_time_mult: 1,
+    resource_slots: 2, industrial_slots: 2, infrastructure_slots: 2 };
+  const system = { id: "home", owner: "1", structures: {}, bodies: [body], stockpile: [], assignments: [],
+    builds: [{ id: 7, key: "mining_complex", body_id: 0, start_time: -20, complete_time: 40 },
+      { id: 8, key: "habitat", body_id: 0, queued: true, complete_time: null },
+      { id: 9, key: "tiny_freighter", body_id: 0, complete_time: null }] };
+  const mobile = mobileThis();
+  const world = mobile.planetInfrastructure("home", system, body);
+  assert.equal(world.match(/class="m-progress"/g)?.length, 1, "one bar: the order building now");
+  assert.match(world, /m-order--head"><span><b>Mining Complex II<\/b><div class="m-progress"><i style="width:33\.3%"><\/i><\/div><\/span><span>40s<\/span><button type="button" data-mobile-act="build-cancel" data-job="7">Cancel</);
+  assert.match(world, /<b>#2 Habitat I<\/b><\/span><span>starts in 40s<\/span>/);
+  assert.match(world, /<b>Tiny Freighter<\/b><\/span><span>paused · needs workforce<\/span>/);
+  const sheet = mobile.systemConstruction("home", system);
+  assert.match(sheet, /<b>Freya I<\/b><small>Mining Complex II · 40s · \+1 queued<\/small><small>Tiny Freighter · paused · needs workforce<\/small>/);
+  assert.doesNotMatch(sheet, /m-progress/, "the system sheet draws no bar");
+}
+console.log("Mobile construction: one bar on the order building now, places for the rest, one line per world.");
+
+// §first-session: while the charter runs, the opening buildings rise in ten
+// seconds on the landing world (mirror of the sim's founding::OPENING_BUILDS).
+{
+  const land = { id: 0, structures: { command_center: 1 }, construction_time_mult: 1 };
+  const moon = { id: 1, structures: {}, construction_time_mult: 1 };
+  Object.assign(state, { founding: { stage: "build_bioharvester" }, commandCenter: { x: 10, y: 20 },
+    galaxy: { ...(state.galaxy ?? {}), systems: [{ id: "home", pos: { x: 10, y: 20 } }, { id: "far", pos: { x: 900, y: 0 } }] } });
+  const mine = { key: "mining_complex", build_secs: 18, costs: [] };
+  for (const key of ["mining_complex", "bioharvester", "habitat", "agroplex", "power_plant"]) {
+    assert.equal(market.openingBuild(key, 1, "home", land), true, key);
+  }
+  assert.equal(market.structureBuildSeconds(mine, land, market.openingBuild("mining_complex", 1, "home", land)), 10);
+  assert.equal(market.structureBuildSeconds(mine, land), 18);
+  assert.equal(market.openingBuild("mining_complex", 2, "home", land), false, "level II keeps its time");
+  assert.equal(market.openingBuild("smelter", 1, "home", land), false, "only the five opening buildings");
+  assert.equal(market.openingBuild("mining_complex", 1, "home", moon), false, "only the Command Center's world");
+  assert.equal(market.openingBuild("mining_complex", 1, "far", land), false, "only at home");
+  state.founding.stage = "complete";
+  assert.equal(market.openingBuild("mining_complex", 1, "home", land), false, "after the charter, the normal time");
+  delete state.founding;
+  delete state.commandCenter;
+}
+console.log("Opening builds: ten seconds for level I of the five on the landing world while the charter runs.");

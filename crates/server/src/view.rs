@@ -77,10 +77,11 @@ struct Sample {
     /// Rides the per-sample history so the loudness is judged in the RETARDED
     /// frame — exactly like velocity — and can never leak or lag FTL.
     loud: bool,
-    /// §fuel-overhaul: was the fleet running DARK under Stealth transit at
-    /// this sample? Read in the retarded frame like `loud`, so the View applies
-    /// the same `detection::STEALTH_QUIET` the sim's pickets do.
-    quiet: bool,
+    /// §sensors: the fleet's CORE OUTPUT at this sample (`Fleet::core_output`,
+    /// in Raiders at full throttle) — what its drive and machinery were putting
+    /// out, judged in the retarded frame like `loud`.
+    #[serde(default)]
+    output: f64,
     /// What the drives were doing at this sample — cruising,
     /// spinning up, or shutting down. The regime is read off it rather than
     /// stored alongside, so the badge and the phase cannot disagree.
@@ -108,7 +109,7 @@ impl Sample {
             jump_spool: older.jump_spool,
             captain: older.captain,
             loud: older.loud,
-            quiet: older.quiet,
+            output: older.output,
             drive: older.drive,
         }
     }
@@ -213,8 +214,7 @@ struct Track {
     projects_sensor: bool,
     /// The best sensor bubble the fleet projects (max member `sensor_mult`).
     sensor_mult: f64,
-    /// Formation cruise cap (min member `max_speed`) — scales the detection
-    /// SIGNATURE (a hull near its own top speed is loud).
+    /// Formation cruise cap (min member `max_speed`).
     max_speed: f64,
     /// The estimated-size bucket a fog observer sees.
     count_class: CountClass,
@@ -284,6 +284,10 @@ struct Track {
     migrant: bool,
     /// Stable role identity for an Authority Astral Assistance tender.
     rescue_service: bool,
+    /// §merchant: stable role identity for the traveling merchant's ship.
+    /// Defaulted so a checkpoint saved before the merchant still loads.
+    #[serde(default)]
+    merchant: bool,
 }
 
 /// §node regional effects for the DARK-fleet view — computed by the game loop
@@ -520,6 +524,7 @@ impl PositionHistory {
                     gone: None,
                     migrant: world.migrant_runs.contains_key(id),
                     rescue_service: world.fuel_rescues.contains_key(id),
+                    merchant: world.merchants.contains_key(id),
                     damage_frac: 0.0,
                     bunkers: VecDeque::new(),
                     docks: VecDeque::new(),
@@ -534,6 +539,7 @@ impl PositionHistory {
             track.owner = ship.owner;
             track.migrant |= world.migrant_runs.contains_key(id);
             track.rescue_service |= world.fuel_rescues.contains_key(id);
+            track.merchant |= world.merchants.contains_key(id);
             let captain = world
                 .players
                 .get(&ship.owner)
@@ -575,7 +581,8 @@ impl PositionHistory {
             while track.bunkers.len() > 1 && track.bunkers[1].at <= now - self.horizon {
                 track.bunkers.pop_front();
             }
-            let docked = world.dock_of(*id);
+            // §merchant: the trader reads as berthed at the home it serves.
+            let docked = world.dock_of(*id).or_else(|| world.merchant_berth(*id));
             if track.docks.back().is_none_or(|(_, previous)| *previous != docked) {
                 track.docks.push_back((now, docked));
             }
@@ -853,10 +860,10 @@ impl PositionHistory {
                 jump_departed: false,
                 jump_spool,
                 captain: captain.map(sim::Captain::sighting),
-                // §belts: survey dwells, mining and prospecting — the sim's
-                // own loud-work test, so pickets and the View agree.
-                loud: ship.loud_work(),
-                quiet: ship.transit == sim::ship::TransitMode::Stealth,
+                // §sensors: the survey sweep's extra signal and the core's
+                // output — the sim's own values, so pickets and the View agree.
+                loud: ship.surveying(),
+                output: ship.core_output(),
                 drive: ship.drive_state,
             };
             track.samples.push_back(current);
@@ -1062,7 +1069,6 @@ impl PositionHistory {
             captain_portrait: Option<sim::CaptainPortrait>,
             flagship: ShipKind,
             broadcasts: bool,
-            max_speed: f64,
             count_class: CountClass,
             /// §roster: aggregate damage fraction, gated like `composition`.
             damage_frac: f64,
@@ -1091,6 +1097,7 @@ impl PositionHistory {
             destroyed_detected: bool,
             migrant: bool,
             rescue_service: bool,
+            merchant: bool,
         }
         let mut pre = Vec::new();
         // Coverage as (center, radius) sources: the command center + own Raider
@@ -1154,7 +1161,8 @@ impl PositionHistory {
             // post-kill break-off.
             let destroyed_detected = track.gone.is_some()
                 && !track.broadcasts
-                && self.detected_at_retarded_time(viewer, cc, sample.pos, sample.time, arrays);
+                && self.detected_at_retarded_time(viewer, cc, sample.pos, sample.time, arrays,
+                    sample_signature(&sample));
             pre.push(Pre {
                 facts,
                 id: *id,
@@ -1165,7 +1173,6 @@ impl PositionHistory {
                 captain_portrait: facts.captain_portrait,
                 flagship: facts.flagship,
                 broadcasts: facts.broadcasts,
-                max_speed: facts.max_speed,
                 count_class: facts.count_class,
                 damage_frac: facts.damage_frac,
                 bunker: track
@@ -1206,48 +1213,34 @@ impl PositionHistory {
                 destroyed_detected,
                 migrant: track.migrant,
                 rescue_service: track.rescue_service,
+                merchant: track.merchant,
             });
         }
 
         // Pass 2: apply the two-tier visibility rules using the coverage.
+        let receivers: Vec<Vec2> = std::iter::once(cc).chain(arrays.iter().map(|(pos, _)| *pos)).collect();
         let mut ghosts = Vec::new();
         let mut jump_departures = Vec::new();
         for p in pre {
             let own = p.owner == viewer;
-            // SPEED-SIGNATURE DETECTION (§Part 4): a dark fleet's presence is
-            // decided by `distance ≤ capability × signature`, where the signature
-            // is computed from the RETARDED sample's velocity (its old flare) and
-            // composition — the SAME shared function the sim's pickets use. A big
-            // pack at flank speed is seen far past the plain bubble; one creeping
-            // at stealth must be nearly inside it. Broadcasters keep plain-coverage
-            // gating (signature scope is dark fleets only).
-            let signature = if p.broadcasts {
-                1.0
+            // CORE-OUTPUT DETECTION (§sensors): every fleet's presence is decided
+            // by `distance ≤ capability × √output`, where the output is the
+            // RETARDED sample's (what its core was doing then) — the SAME shared
+            // function the sim's pickets use. A heavy hull under way is seen far
+            // past the plain bubble; one holding still must be nearly inside it.
+            // §node Veil: a dark fleet in its OWNER's active magnetar region is
+            // quieter — the SAME factor the sim pickets scale, kept in one place
+            // so concealment never desyncs between the two detection paths.
+            let veil = if !p.broadcasts && nodes.veil.iter().any(|(o, c)| {
+                *o == p.owner && c.distance(p.sample.pos) <= sim::NODE_REGION_RADIUS
+            }) {
+                sim::node::VEIL_SIGNATURE_MULT
             } else {
-                // §node Veil: a dark fleet in its OWNER's active magnetar region is
-                // quieter — the SAME `signature` the sim pickets scale, kept in one
-                // place so concealment never desyncs between the two detection paths.
-                let veil = if nodes.veil.iter().any(|(o, c)| {
-                    *o == p.owner && c.distance(p.sample.pos) <= sim::NODE_REGION_RADIUS
-                }) {
-                    sim::node::VEIL_SIGNATURE_MULT
-                } else {
-                    1.0
-                };
-                // §explore Part 2: ACTIVE SENSING IS LOUD — a fleet surveying at
-                // the retarded sample carries the survey multiplier, exactly the
-                // same factor the sim's pickets apply (parity, one seam).
-                let survey = if p.sample.loud {
-                    sim::explore::SURVEY_SIGNATURE_FACTOR
-                } else {
-                    1.0
-                };
-                sim::detection::signature(p.composition, p.sample.vel.length(), p.max_speed)
-                    * if p.sample.quiet { sim::detection::STEALTH_QUIET } else { 1.0 }
-                    * veil
-                    * sim::nebula::signature_factor_at(&self.nebulas, p.sample.pos)
-                    * survey
+                1.0
             };
+            let signature = sample_signature(&p.sample)
+                * veil
+                * sim::nebula::signature_factor_at(&self.nebulas, p.sample.pos);
             let in_coverage = within_coverage(&coverage, p.sample.pos);
             // Weapons fire is LOUD: a battle participant whose battle-light has
             // reached the viewer is revealed at the site even if dark and out of
@@ -1257,11 +1250,15 @@ impl PositionHistory {
                 || at_battle
                 || p.destroyed_detected
                 || sim::detection::detected(signature, &coverage, p.sample.pos);
+            // §sensors: a declared transponder is HEARD out to the noise horizon
+            // from the viewer's receivers (command center, arrays, deep space
+            // sensors); past it, a broadcaster is found only like any other hull.
+            let heard = p.broadcasts && sim::detection::heard(receivers.iter().copied(), p.sample.pos);
 
-            // A DARK fleet (raiders/scouts only) is present ONLY when detected;
-            // omitted entirely otherwise — never sent-and-hidden. A seen dark fleet
-            // always shows its full composition (consistent — no half-seen fleet).
-            if !p.broadcasts && !dark_detected {
+            // A fleet neither detected nor heard is omitted entirely — never
+            // sent-and-hidden. A seen dark fleet always shows its full
+            // composition (consistent — no half-seen fleet).
+            if !dark_detected && !heard {
                 continue;
             }
             if p.sample.jump_departed {
@@ -1440,6 +1437,7 @@ impl PositionHistory {
                 rescue_inbound: own && p.facts.rescue_inbound,
                 fuel_transfer: own.then_some(p.facts.fuel_transfer).flatten(),
                 rescue_service: p.rescue_service,
+                merchant: p.merchant,
                 id: p.id,
                 owner: p.owner,
                 kind: p.flagship,
@@ -1581,19 +1579,14 @@ impl PositionHistory {
         ghost_pos: Vec2,
         t_r: f64,
         arrays: &[(Vec2, f64)],
+        signature: f64,
     ) -> bool {
-        // The command center is a fixed sensor asset.
-        let target = sim::nebula::signature_factor_at(&self.nebulas, ghost_pos);
-        if ghost_pos.distance(cc)
-            <= self.sensor_range * sim::nebula::sensor_factor_at(&self.nebulas, cc) * target
-        {
-            return true;
-        }
-        // Only arrived infrastructure reports are supplied by the caller.
-        if arrays.iter().any(|(p, r)| {
-            ghost_pos.distance(*p)
-                <= *r * sim::nebula::sensor_factor_at(&self.nebulas, *p) * target
-        }) {
+        let target = sim::nebula::signature_factor_at(&self.nebulas, ghost_pos) * signature;
+        // The command center is a fixed sensor asset; only arrived
+        // infrastructure reports are supplied by the caller.
+        let mut sources = vec![(cc, self.sensor_range * sim::nebula::sensor_factor_at(&self.nebulas, cc))];
+        sources.extend(arrays.iter().map(|(p, r)| (*p, *r * sim::nebula::sensor_factor_at(&self.nebulas, *p))));
+        if sim::detection::detected(target, &sources, ghost_pos) {
             return true;
         }
         for track in self.tracks.values() {
@@ -1608,11 +1601,9 @@ impl PositionHistory {
                 continue;
             }
             if let Some(s) = sample_at(&track.samples, t_r)
-                && s.pos.distance(ghost_pos)
-                    <= self.sensor_range
-                        * facts.sensor_mult
-                        * sim::nebula::sensor_factor_at(&self.nebulas, s.pos)
-                        * target
+                && sim::detection::detected(target, &[(s.pos, self.sensor_range
+                    * facts.sensor_mult
+                    * sim::nebula::sensor_factor_at(&self.nebulas, s.pos))], ghost_pos)
             {
                 return true;
             }
@@ -2941,6 +2932,25 @@ pub(crate) fn within_coverage(sources: &[(Vec2, f64)], p: Vec2) -> bool {
         .any(|(center, radius)| p.distance(*center) <= *radius)
 }
 
+/// §sensors: contacts a viewer TRACKS without seeing them. The founder's
+/// privateer is one from the moment the colony's first sighting of its raid
+/// reaches command (§charter-v5): it carries its loot home and lurks on
+/// standby, far quieter than any early sensor can see.
+pub(crate) fn tracked_contacts(world: &World, viewer: PlayerId, now: f64) -> BTreeSet<EntityId> {
+    world.players.get(&viewer).map(|corp| &corp.founding)
+        .filter(|founding| founding.raid_seen_at.is_some_and(|at| now >= at))
+        .and_then(|founding| founding.privateer)
+        .into_iter()
+        .collect()
+}
+
+/// §sensors: a recorded sample's detection signature — √ of its core output,
+/// with the survey sweep's extra signal when it was surveying.
+fn sample_signature(sample: &Sample) -> f64 {
+    sim::detection::signature(sample.output)
+        * if sample.loud { sim::explore::SURVEY_SIGNATURE_FACTOR } else { 1.0 }
+}
+
 /// The broadcast route (waypoints) implied by a ship's current order, if any.
 fn route_of(order: &FleetOrder) -> Option<Vec<Vec2>> {
     match order {
@@ -3305,22 +3315,60 @@ mod tests {
         let far = cc + Vec2::new(range * 2.5, 0.0);
         // Well inside the command center's bubble, idling at its quietest.
         let near = cc + Vec2::new(range * 0.2, 0.0);
+        // §sensors: past the noise horizon even a transponder is lost.
+        let beyond = cc + Vec2::new(sim::detection::NOISE_HORIZON_SU + 10_000.0, 0.0);
         let (declared, far_pirate, near_pirate) = (EntityId(900_010), EntityId(900_011), EntityId(900_012));
+        let lost = EntityId(900_013);
         for (id, owner, pos) in [
             (declared, rival, far + Vec2::new(0.0, 500.0)),
             (far_pirate, PlayerId::PIRATE, far),
             (near_pirate, PlayerId::PIRATE, near),
+            (lost, rival, beyond),
         ] {
             world.fleets.insert(id, Fleet::single(id, owner, ShipKind::Corvette, pos, FleetOrder::Idle, None));
         }
         world.time = 0.0;
         let mut history = PositionHistory::for_world(&world);
         history.record(&world);
-        let now = sim::transit::delay(far, cc, world.config.c) + 1.0;
+        let now = sim::transit::delay(beyond, cc, world.config.c) + 1.0;
         let seen: Vec<EntityId> = history.view_for(viewer, cc, world.config.c, now).iter().map(|g| g.id).collect();
-        assert!(seen.contains(&declared), "a corporation's Corvette broadcasts galaxy-wide");
+        assert!(seen.contains(&declared), "a corporation's Corvette is heard by its transponder");
+        assert!(!seen.contains(&lost), "…but not past the noise horizon");
         assert!(!seen.contains(&far_pirate), "a pirate Corvette outside sensors is not shown");
         assert!(seen.contains(&near_pirate), "inside coverage it is detected like any dark fleet");
+    }
+
+    /// §sensors: the founder's privateer waits on standby ~11,600 su out, far
+    /// below what the 6,000 su Command Center sees; from the moment its raid's
+    /// first sighting reaches command it is a tracked contact, and not before.
+    #[test]
+    fn the_founders_privateer_is_tracked_once_its_raid_is_seen() {
+        use sim::{Command, Fleet, FleetOrder, SimConfig};
+        let mut world = World::new(SimConfig::for_players(123, 4));
+        let founder = PlayerId(906);
+        world.step(&[Command::AddPlayer { id: founder, name: "Founder".into() }]);
+        world.fleets.clear();
+        world.nebulas.clear();
+        let cc = world.players[&founder].command_center;
+        let lurk = cc + Vec2::new(9_900.0, 6_000.0);
+        let privateer = EntityId(900_020);
+        world.fleets.insert(privateer, Fleet::single(privateer, PlayerId::PIRATE, ShipKind::Raider, lurk, FleetOrder::Idle, None));
+        world.time = 0.0;
+        let mut history = PositionHistory::for_world(&world);
+        history.record(&world);
+        let now = sim::transit::delay(lurk, cc, world.config.c) + 1.0;
+        let report = now - 0.5;
+        let seen = |world: &World, now: f64| history
+            .view_for_with_arrays(founder, cc, world.config.c, now, &[], &tracked_contacts(world, founder, now),
+                NodeEffects { veil: &[], deep_scan: &[] })
+            .iter().any(|g| g.id == privateer);
+        assert!(!seen(&world, now), "a holding Raider 11.6k out is beneath the Command Center's notice");
+        let founding = &mut world.players.get_mut(&founder).unwrap().founding;
+        founding.privateer = Some(privateer);
+        founding.raid_seen_at = Some(report);
+        assert!(!seen(&world, report - 0.1), "not before the sighting reaches command");
+        assert!(seen(&world, now), "then the founder tracks it");
+        assert!(tracked_contacts(&world, PlayerId(907), now).is_empty(), "nobody else does");
     }
 
     #[test]
@@ -3352,12 +3400,14 @@ mod tests {
         assert_eq!(old.fuel_capacity, Some(cap));
         let range = |now| history.coverage_for(owner, cc, world.config.c, now, &[])
             .into_iter().filter(|(p, _)| p.distance(pos) < 1e-6).map(|(_, r)| r).fold(0.0_f64, f64::max);
-        assert_eq!(range(delay + 0.5), 20_000.0, "only the old Freighter sensors have arrived");
+        assert_eq!(range(delay + 0.5), world.config.sensor_range * sim::ship::CONVOY_SENSOR_MULT,
+            "only the old Freighter sensors have arrived");
         let after = history.view_for(owner, cc, world.config.c, delay + 1.0);
         let new = after.iter().find(|g| g.id == convoy).unwrap();
         assert!((new.fuel_capacity.unwrap() - cap * 1.75).abs() < 1e-9);
         assert_eq!(new.fuel, Some(fuel), "a larger reported tank never creates fuel");
-        assert_eq!(range(delay + 1.0), 40_000.0, "Recon lights its own bubble only on the report wavefront");
+        assert_eq!(range(delay + 1.0), world.config.sensor_range * 0.5,
+            "Recon lights its own bubble only on the report wavefront");
         let raw = &history.tracks[&scout];
         assert!(!raw.facts_at(0.5).unwrap().projects_sensor);
         assert!(raw.facts_at(1.0).unwrap().projects_sensor);
@@ -3683,6 +3733,19 @@ mod tests {
         c / sim::transit::WARP_FACTOR
     }
 
+    /// §sensors: the core output a sample of `comp` moving at `speed` records —
+    /// the sim's own formula: holding when still, full throttle under way.
+    fn output_of(comp: &[(ShipKind, u32)], speed: f64) -> f64 {
+        let mass: f64 = comp.iter().map(|(kind, n)| kind.hull_mass() * *n as f64).sum();
+        let rated = comp.iter().map(|(kind, _)| kind.max_speed()).fold(f64::INFINITY, f64::min);
+        let state = if speed > sim::detection::UNDER_WAY_SU_S {
+            sim::detection::CoreState::UnderWay(sim::ship::TransitMode::Full)
+        } else {
+            sim::detection::CoreState::Holding
+        };
+        sim::detection::core_output(mass, rated, state)
+    }
+
     #[test]
     fn straight_warp_light_is_the_only_gate() {
         let sample = Sample {
@@ -3696,7 +3759,7 @@ mod tests {
             jump_spool: None,
             captain: None,
             loud: false,
-            quiet: false,
+            output: 1.0,
             drive: sim::ship::DriveState::default(),
         };
         let samples = VecDeque::from([sample]);
@@ -3751,6 +3814,7 @@ mod tests {
             gone: None,
             migrant: false,
             rescue_service: false,
+            merchant: false,
         };
         record_fixture_facts(&mut track);
         track
@@ -3776,7 +3840,7 @@ mod tests {
                 jump_spool: None,
                 captain: None,
                 loud: false,
-                quiet: false,
+                output: output_of(&[(kind, 1)], vel.length()),
                 drive: sim::ship::DriveState::Thrusters,
             });
             t += 0.1;
@@ -3825,7 +3889,7 @@ mod tests {
                 },
             }),
             loud: false,
-            quiet: false,
+            output: 1.0,
             drive: sim::ship::DriveState::Thrusters,
         };
         let owner = PlayerId(7);
@@ -3861,7 +3925,7 @@ mod tests {
             jump_spool: None,
             captain: None,
             loud: false,
-            quiet: false,
+            output: 1.0,
             drive: sim::ship::DriveState::Thrusters,
         };
         let mut track = track_from(vec![sample(0.0), sample(10.0)], owner, ShipKind::Convoy);
@@ -3917,7 +3981,7 @@ mod tests {
                 jump_spool: None,
                 captain: None,
                 loud: false,
-                quiet: false,
+                output: 1.0,
                 drive: sim::ship::DriveState::Thrusters,
             });
             t += 0.1;
@@ -3973,12 +4037,12 @@ mod tests {
             id: owner,
             name: "Jumper".into(),
         }]);
-        let fleet = world
-            .fleets
-            .iter()
-            .find(|(_, fleet)| fleet.owner == owner && fleet.can_jump())
-            .map(|(id, _)| *id)
-            .expect("opening jump hull");
+        // §charter-v4: founders land with no ships; bring a jump hull.
+        let fleet = EntityId(9_400_000_007);
+        let home = world.players[&owner].home;
+        world.fleets.insert(fleet, sim::ship::Fleet::single(fleet, owner, sim::ship::ShipKind::Raider, home,
+            sim::ship::FleetOrder::Idle, None));
+        assert!(world.fleets[&fleet].can_jump());
         let cc = world.players[&owner].command_center;
         let clear = |pos: Vec2| {
             pos.distance(world.hub) >= sim::transit::HYPERLIMIT
@@ -4174,7 +4238,7 @@ mod tests {
                 jump_spool: None,
                 captain: None,
                 loud: false,
-                quiet: false,
+                output: 1.0,
             drive: sim::ship::DriveState::Thrusters,
         };
 
@@ -4272,7 +4336,7 @@ mod tests {
             jump_spool: Some((3.0, false, sim::transit::JUMP_SPOOL_S)),
             captain: None,
             loud: false,
-            quiet: false,
+            output: 1.0,
             drive: sim::ship::DriveState::Thrusters,
         };
         let history = history_with(track_from(vec![sample], PlayerId(7), ShipKind::Raider));
@@ -4308,7 +4372,7 @@ mod tests {
                 jump_spool: None,
                 captain: None,
                 loud: false,
-                quiet: false,
+                output: 1.0,
                 drive: sim::ship::DriveState::Thrusters,
             });
             t += 0.1;
@@ -4353,7 +4417,7 @@ mod tests {
                 jump_spool: None,
                 captain: None,
                 loud: false,
-                quiet: false,
+                output: 1.0,
                 drive: sim::ship::DriveState::Thrusters,
             });
             t += 0.1;
@@ -4388,6 +4452,7 @@ mod tests {
                 claimed_at: Some(0.0),
                 system: None,
                 founding_opportunities: Vec::new(),
+                den_system: None,
             },
             // Rival's anchor, 6000 units away → 20 s of light.
             HomeSlot {
@@ -4396,6 +4461,7 @@ mod tests {
                 claimed_at: Some(0.0),
                 system: None,
                 founding_opportunities: Vec::new(),
+                den_system: None,
             },
             HomeSlot {
                 pos: Vec2::new(0.0, 3000.0),
@@ -4403,6 +4469,7 @@ mod tests {
                 claimed_at: None,
                 system: None,
                 founding_opportunities: Vec::new(),
+                den_system: None,
             },
         ];
 
@@ -4473,6 +4540,7 @@ mod tests {
             legacy_population: 0.0,
             legacy_assignments: Default::default(),
             specialists: Default::default(),
+            landing_holds: 0.0,
         };
         let mut systems = vec![
             mk(
@@ -4862,6 +4930,7 @@ mod tests {
             legacy_population: 0.0,
             legacy_assignments: Default::default(),
             specialists: Default::default(),
+            landing_holds: 0.0,
         };
         let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), Some(me)), // mine (never explicitly surveyed)
@@ -5168,6 +5237,7 @@ mod tests {
             legacy_population: 0.0,
             legacy_assignments: Default::default(),
             specialists: Default::default(),
+            landing_holds: 0.0,
         };
         // Two standing tiers on the habitable body — 50 marines to take it.
         sys.bodies.push(sim::Body {
@@ -5384,6 +5454,7 @@ mod tests {
                 legacy_population: 0.0,
                 legacy_assignments: Default::default(),
                 specialists: Default::default(),
+                landing_holds: 0.0,
             };
             sys.bodies.push(sim::Body {
                 founding_camp: None,
@@ -5479,6 +5550,7 @@ mod tests {
             legacy_population: 0.0,
             legacy_assignments: Default::default(),
             specialists: Default::default(),
+            landing_holds: 0.0,
         };
         // The blockaded system sits 6000 su (20 s of light) from every viewer's
         // command center at the origin — so the owner's onset light lands at t=120.
@@ -5568,6 +5640,7 @@ mod tests {
             legacy_population: 0.0,
             legacy_assignments: Default::default(),
             specialists: Default::default(),
+            landing_holds: 0.0,
         }];
         let mut intel = BTreeMap::new();
         intel.insert(
@@ -5695,6 +5768,7 @@ mod tests {
             legacy_population: 0.0,
             legacy_assignments: Default::default(),
             specialists: Default::default(),
+            landing_holds: 0.0,
         }]
     }
 
@@ -5884,7 +5958,7 @@ mod tests {
                 jump_spool: None,
                 captain: None,
                 loud: false,
-                quiet: false,
+                output: output_of(&[(kind, 1)], 0.0),
                 drive: sim::ship::DriveState::Thrusters,
             });
             t += 0.1;
@@ -6079,7 +6153,7 @@ mod tests {
                 jump_spool: None,
                 captain: None,
                 loud: false,
-                quiet: false,
+                output: output_of(comp, speed),
                 drive: sim::ship::DriveState::Thrusters,
             });
             t += 0.1;
@@ -6089,26 +6163,23 @@ mod tests {
     }
 
     /// The ANCHOR + throttle: a lone raider at FULL speed is detected out to the
-    /// plain bubble edge (signature 1.0 — pre-signature behavior); the SAME raider
-    /// creeping at STEALTH must get far closer (signature 0.4) — at 700 su it's
-    /// seen at flank speed but hidden at stealth.
+    /// plain bubble edge (signature 1.0); the SAME raider creeping under STEALTH
+    /// must get far closer (√0.075 ≈ 0.27) — at 700 su it's seen at flank speed
+    /// but hidden at stealth.
     #[test]
     fn dark_fleet_detected_at_full_speed_but_hidden_at_stealth() {
         let full = ShipKind::Raider.max_speed();
-        let pos = Vec2::new(700.0, 0.0); // inside 1000, outside 0.4×1000 = 400
+        let pos = Vec2::new(700.0, 0.0); // inside 1000, outside 0.27×1000 = 274
         let hist_full = history_of(
             vec![dark_track(RIVAL, pos, full, &[(ShipKind::Raider, 1)])],
             1000.0,
         );
-        let hist_creep = history_of(
-            vec![dark_track(
-                RIVAL,
-                pos,
-                full * sim::detection::STEALTH_FRACTION,
-                &[(ShipKind::Raider, 1)],
-            )],
-            1000.0,
-        );
+        // The sim records a Stealth core at Slow warp's output, dampened.
+        let mut creep = dark_track(RIVAL, pos, full * sim::detection::STEALTH_FRACTION, &[(ShipKind::Raider, 1)]);
+        for sample in creep.1.samples.iter_mut() {
+            sample.output *= sim::detection::STEALTH_OUTPUT;
+        }
+        let hist_creep = history_of(vec![creep], 1000.0);
         assert_eq!(
             hist_full
                 .view_for(VIEWER, Vec2::ZERO, df(300.0), 90.0)
@@ -6154,7 +6225,7 @@ mod tests {
                 jump_spool: None,
                 captain: None,
                 loud: false,
-                quiet: false,
+                output: output_of(&[(ShipKind::Raider, 1)], vel.length()),
                 drive: sim::ship::DriveState::Thrusters,
             });
             t += 0.1;
@@ -6224,8 +6295,6 @@ mod tests {
     #[test]
     fn view_matches_the_shared_detection_function() {
         let full = ShipKind::Raider.max_speed();
-        let comp: std::collections::BTreeMap<ShipKind, u32> =
-            [(ShipKind::Raider, 3)].into_iter().collect();
         for dist in [300.0, 700.0, 1200.0, 2500.0] {
             let pos = Vec2::new(dist, 0.0);
             let hist = history_of(
@@ -6236,7 +6305,7 @@ mod tests {
                 .view_for(VIEWER, Vec2::ZERO, df(300.0), 90.0)
                 .is_empty();
             // The sim's shared function, same coverage (just the CC bubble here).
-            let sig = sim::detection::signature(&comp, full, ShipKind::Raider.max_speed());
+            let sig = sim::detection::signature(output_of(&[(ShipKind::Raider, 3)], full));
             let sim_sees = sim::detection::detected(sig, &[(Vec2::ZERO, 1000.0)], pos);
             assert_eq!(view_sees, sim_sees, "View and sim agree at dist {dist}");
         }
@@ -6348,8 +6417,7 @@ mod tests {
     #[test]
     fn veil_shrinks_a_dark_fleets_detection_range() {
         let full = ShipKind::Raider.max_speed();
-        let comp: BTreeMap<ShipKind, u32> = [(ShipKind::Raider, 3)].into_iter().collect();
-        let sig = sim::detection::signature(&comp, full, full);
+        let sig = sim::detection::signature(output_of(&[(ShipKind::Raider, 3)], full));
         let sensor = 3000.0;
         // Just inside the full-sig radius (seen), but outside the halved one (hidden).
         let d = 0.75 * sensor * sig;
@@ -6409,9 +6477,7 @@ mod tests {
     /// risk price of knowledge), and only while the sample is loud.
     #[test]
     fn survey_loudness_extends_detection_in_the_retarded_frame() {
-        let full = ShipKind::Scout.max_speed();
-        let comp: BTreeMap<ShipKind, u32> = [(ShipKind::Scout, 1)].into_iter().collect();
-        let sig = sim::detection::signature(&comp, 0.0, full); // holding still (stealth-quiet)
+        let sig = sim::detection::signature(output_of(&[(ShipKind::Scout, 1)], 0.0)); // holding still
         let sensor = 3000.0;
         // Between the quiet radius and the loud radius: hidden quiet, seen loud.
         let d = sensor * sig * (1.0 + sim::explore::SURVEY_SIGNATURE_FACTOR) / 2.0;
@@ -6436,28 +6502,29 @@ mod tests {
         );
     }
 
-    /// §fuel-overhaul — STEALTH RUNS DARK: a fleet whose retarded sample was
-    /// under Stealth is detected nearer than the same fleet merely slow, by
-    /// the sim's own `STEALTH_QUIET`, so the View and the pickets agree.
+    /// §sensors — STEALTH RUNS DARK: a sample recorded under Stealth carries
+    /// Slow warp's output dampened by `STEALTH_QUIET`, so it is detected nearer
+    /// than the same fleet merely slow — the sim's own outputs, judged in the
+    /// retarded frame, so the View and the pickets agree.
     #[test]
     fn stealth_samples_are_quieter_than_slow_ones() {
-        let full = ShipKind::Scout.max_speed();
-        let comp: BTreeMap<ShipKind, u32> = [(ShipKind::Scout, 1)].into_iter().collect();
-        let sig = sim::detection::signature(&comp, 0.0, full);
+        let comp = [(ShipKind::Scout, 1)];
+        let full = output_of(&comp, ShipKind::Scout.max_speed());
+        let (slow, stealth) = (full * sim::detection::SLOW_OUTPUT, full * sim::detection::STEALTH_OUTPUT);
         let sensor = 3000.0;
         // Between the stealth radius and the slow radius: hidden dark, seen slow.
-        let d = sensor * sig * (1.0 + sim::detection::STEALTH_QUIET) / 2.0;
+        let d = sensor * (sim::detection::signature(slow) + sim::detection::signature(stealth)) / 2.0;
         let pos = Vec2::new(d, 0.0);
-        let mk = |quiet: bool| {
-            let mut track = fleet_track(RIVAL, pos, &[(ShipKind::Scout, 1)]);
+        let mk = |output: f64| {
+            let mut track = fleet_track(RIVAL, pos, &comp);
             for s in track.samples.iter_mut() {
-                s.quiet = quiet;
+                s.output = output;
             }
             history_of(vec![(EntityId(1), track)], sensor)
         };
-        assert_eq!(mk(false).view_for(VIEWER, Vec2::ZERO, df(300.0), 60.0).len(), 1,
+        assert_eq!(mk(slow).view_for(VIEWER, Vec2::ZERO, df(300.0), 60.0).len(), 1,
             "a slow scout at d is seen");
-        assert!(mk(true).view_for(VIEWER, Vec2::ZERO, df(300.0), 60.0).is_empty(),
+        assert!(mk(stealth).view_for(VIEWER, Vec2::ZERO, df(300.0), 60.0).is_empty(),
             "the same scout under Stealth stays dark");
     }
 
@@ -6478,7 +6545,7 @@ mod tests {
                 jump_spool: None,
                 captain: None,
                 loud: false,
-                quiet: false,
+                output: output_of(comp, 0.0),
                 drive: sim::ship::DriveState::Thrusters,
             });
             t += 0.1;
@@ -6520,6 +6587,7 @@ mod tests {
             gone: None,
             migrant: false,
             rescue_service: false,
+            merchant: false,
         };
         record_fixture_facts(&mut track);
         track
@@ -6929,7 +6997,7 @@ mod tests {
                 jump_spool: None,
                 captain: None,
                 loud: false,
-                quiet: false,
+                output: 1.0,
                 drive: sim::ship::DriveState::Thrusters,
             });
             t += 0.1;
@@ -6995,7 +7063,7 @@ mod tests {
                 jump_spool: None,
                 captain: None,
                 loud: false,
-                quiet: false,
+                output: 1.0,
                 drive: sim::ship::DriveState::Thrusters,
             });
             t += 0.1;
@@ -7172,7 +7240,7 @@ mod tests {
                 jump_spool: None,
                 captain: None,
                 loud: false,
-                quiet: false,
+                output: 1.0,
                 drive: sim::ship::DriveState::Thrusters,
             });
             t += 0.1;
@@ -7203,7 +7271,7 @@ mod tests {
                 jump_spool: None,
                 captain: None,
                 loud: false,
-                quiet: false,
+                output: 1.0,
                 drive: sim::ship::DriveState::Thrusters,
             });
             t += 0.1;
