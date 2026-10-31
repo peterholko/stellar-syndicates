@@ -291,8 +291,9 @@ mod tests {
             assert!(b.has_deposit_for(K::Bioharvester));
             assert_eq!(w.players[&owner].credits, 2000.0);
             assert_eq!(w.fleets.values().filter(|f| f.owner == owner).count(), 0);
-            assert_eq!(sys.stockpile[&C::Alloys], 410.0);
-            assert_eq!(sys.stockpile[&C::Machinery], 163.0);
+            // §charter-crates: the Landfall crate; the rest come chapter by chapter.
+            assert_eq!(sys.stockpile[&C::Alloys], 110.0);
+            assert_eq!(sys.stockpile[&C::Machinery], 47.0);
         }
     }
     #[test]
@@ -449,7 +450,7 @@ mod tests {
         );
         assert_eq!(
             w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&C::Alloys],
-            405.0
+            105.0
         );
         let slots = body(&w, home, id).infrastructure_slots();
         finish(&mut w);
@@ -483,6 +484,8 @@ mod tests {
         queue(&mut w, owner, home, id, P::SurfaceWorkings);
         assert!(w.build_queue.is_empty());
         queue(&mut w, owner, home, id, P::Prospect);
+        // §charter-gates: the mine's step.
+        w.players.get_mut(&owner).unwrap().founding.set_stage(crate::founding::FoundingStage::BuildMine, w.time);
         w.apply_now(
             &Command::DevelopSystem {
                 player_id: owner,

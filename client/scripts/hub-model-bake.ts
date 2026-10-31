@@ -1,12 +1,12 @@
-// Renders the Authority Nexus from the approved, full-resolution GLB with the
-// live map's lighting, camera and still vortex phase, and posts the PNGs to the
+// Renders the Wormhole Hub from the approved, full-resolution GLB with the live
+// map's lighting, camera and still portal phase, and posts the PNGs to the
 // loopback baker (scripts/bake-hub-model-art.mjs).
 import * as THREE from "three";
 import { modelLighting } from "../src/ship-model-stage";
 import { hubCamera, loadHubStation } from "../src/hub-model-stage";
 import { HUB_HERO_ELEVATION, HUB_SPRITE_FIELD, HUB_VORTEX_STILL_TIME } from "../src/hub-model-policy";
 
-const SOURCE = "/art-src/ship-models/authority-nexus-textured-v1/authority-nexus.glb";
+const SOURCE = "/art-src/ship-models/wormhole-hub-textured-v1/wormhole-hub.glb";
 const HERO_FILL = .9;
 
 const canvas = document.querySelector("canvas")!;
@@ -53,7 +53,7 @@ function heroCamera(station: THREE.Object3D, width: number, height: number): THR
 }
 
 try {
-  status.textContent = "Rendering the Authority Nexus…";
+  status.textContent = "Rendering the Wormhole Hub…";
   const station = await loadHubStation(SOURCE, { playing: false, time: HUB_VORTEX_STILL_TIME });
   lighting.scene.add(station.root);
   renderer.setSize(1254, 1254, false);
@@ -70,7 +70,7 @@ try {
   station.dispose();
   const response = await fetch("/__hub-bake/done", { method: "POST" });
   if (!response.ok) throw new Error(await response.text());
-  status.textContent = `Authority Nexus baked and web assets built. ${JSON.stringify(await response.json())}`;
+  status.textContent = `Wormhole Hub baked and web assets built. ${JSON.stringify(await response.json())}`;
   document.documentElement.dataset.ready = "true";
 } catch (error) {
   status.textContent = `Bake failed: ${error}`;

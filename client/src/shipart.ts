@@ -1,14 +1,15 @@
-import type { GhostView, ShipKind } from "./protocol";
+import { traderShipArt, type GhostView, type ShipKind, type TraderShipArt } from "./protocol";
 import { SHIP_ART } from "./ship-art.generated";
 
 /** A hull's art: its ship kind, or a hull that flies in the sim as another
- * kind. §merchant: the free trader flies the Authority Freighter's hull. */
-export type ShipArtKind = ShipKind | "free_trader";
+ * kind. §merchant: the free trader flies the Authority Freighter's hull.
+ * §traders: so do the other three traders' own ships. */
+export type ShipArtKind = ShipKind | TraderShipArt;
 
-/** The art a fleet wears: the free trader its own, a migrant run the colony
- * ship's passenger silhouette, every other fleet its hull's. */
-export const fleetArtKind = (g: Pick<GhostView, "kind" | "merchant" | "migrant">): ShipArtKind =>
-  g.merchant ? "free_trader" : g.migrant ? "colony" : g.kind;
+/** The art a fleet wears: a free trader its trader's own ship, a migrant run
+ * the colony ship's passenger silhouette, every other fleet its hull's. */
+export const fleetArtKind = (g: Pick<GhostView, "kind" | "merchant" | "migrant" | "trader">): ShipArtKind =>
+  g.merchant ? traderShipArt(g.trader) : g.migrant ? "colony" : g.kind;
 
 /** Approved visible nose-to-tail hierarchy, shared by map close-ups and the
  * battle theater. This is presentation only, never hull mass/range/collision. */

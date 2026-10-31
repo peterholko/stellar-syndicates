@@ -1,11 +1,15 @@
 //! §orbital-defense: THE STATION LADDER. Every system can raise one orbital
-//! defense station, level by level, from a Defense Platform to a Star
-//! Fortress (the `OrbitalDefense` structure; its tier is the level). Each
-//! level is its own construction project, gated by research and by the
-//! system's yards, and the station keeps fighting at its old level while the
-//! next one builds.
+//! defense station, level by level, from a Gun Platform to a Star Fortress
+//! (the `OrbitalDefense` structure; its tier is the level). Each level is its
+//! own construction project, gated by research (all but the Gun Platform) and
+//! by the system's yards, and the station keeps fighting at its old level
+//! while the next one builds.
 //!
-//! A station fights through its HARDPOINTS: one at level 1, six at level 5.
+//! §gun-platform (Peter, Oct 30 2026): the founding charter's defense, built
+//! straight after the first pirate raid from kit Alloys and Machinery: one
+//! salvaged gun, half a Defense Platform, needing no research.
+//!
+//! A station fights through its HARDPOINTS: one at levels 1–2, six at level 6.
 //! Each is a stationary battery in battle with its own hull and its own fit
 //! (beam by default; drivers, torpedoes, armour or a web from module crates
 //! at an Ordnance Foundry). A station whose hardpoints are all knocked out is
@@ -34,7 +38,7 @@ use crate::cargo::Commodity;
 use crate::module::{Loadout, ModuleKind};
 
 /// The highest station level: the Star Fortress.
-pub const MAX_LEVEL: u32 = 5;
+pub const MAX_LEVEL: u32 = 6;
 
 /// A hardpoint's fitting budget: three slots and eight fitting points, a
 /// destroyer's.
@@ -64,7 +68,8 @@ pub struct Level {
     pub aw: f64,
     /// Weapon reach multiple of every hardpoint (ships run 0.6–1.2).
     pub reach: f64,
-    /// The research that unlocks raising a station to this level.
+    /// The research that unlocks raising a station to this level ("" for
+    /// none: the Gun Platform).
     pub research: &'static str,
     /// A yard the system must already hold, at this tier or better.
     pub yard: Option<(StructureKind, u32)>,
@@ -73,9 +78,24 @@ pub struct Level {
     pub description: &'static str,
 }
 
-pub const LEVELS: [Level; 5] = [
+pub const LEVELS: [Level; 6] = [
     Level {
         level: 1,
+        name: "Gun Platform",
+        hardpoints: 1,
+        hull: 300.0,
+        aw: 1.5,
+        reach: 1.0,
+        research: "",
+        yard: None,
+        recipe: Recipe {
+            costs: &[(Commodity::Alloys, 25.0), (Commodity::Machinery, 10.0)],
+            build_ticks: 20 * HZ,
+        },
+        description: "One salvaged gun in orbit. Joins every battle within 1,300 su of the system; pirate raiders leave its worlds alone.",
+    },
+    Level {
+        level: 2,
         name: "Defense Platform",
         hardpoints: 1,
         hull: 2_400.0,
@@ -90,7 +110,7 @@ pub const LEVELS: [Level; 5] = [
         description: "One beam battery in orbit. Joins every battle within 1,300 su of the system and keeps a blockade contested while it fires.",
     },
     Level {
-        level: 2,
+        level: 3,
         name: "Orbital Battery",
         hardpoints: 2,
         hull: 2_000.0,
@@ -110,7 +130,7 @@ pub const LEVELS: [Level; 5] = [
         description: "Two hardpoints, each fitted with its own battery at an Ordnance Foundry.",
     },
     Level {
-        level: 3,
+        level: 4,
         name: "Defense Station",
         hardpoints: 3,
         hull: 3_000.0,
@@ -132,7 +152,7 @@ pub const LEVELS: [Level; 5] = [
         description: "Three armed arms around the core. Needs an Ordnance Foundry in the system.",
     },
     Level {
-        level: 4,
+        level: 5,
         name: "Citadel",
         hardpoints: 4,
         hull: 12_000.0,
@@ -155,7 +175,7 @@ pub const LEVELS: [Level; 5] = [
         description: "A star fort: four heavy batteries behind an armored wall, a Titan's hull for a dreadnought's goods. Needs an Orbital Shipyard in the system.",
     },
     Level {
-        level: 5,
+        level: 6,
         name: "Star Fortress",
         hardpoints: 6,
         hull: 32_000.0,
@@ -181,7 +201,7 @@ pub const LEVELS: [Level; 5] = [
     },
 ];
 
-/// The ladder entry for `level` (1–5).
+/// The ladder entry for `level` (1–6).
 pub fn level(level: u32) -> Option<&'static Level> {
     LEVELS.get((level as usize).checked_sub(1)?)
 }
@@ -328,7 +348,7 @@ mod tests {
             assert!(w[1].recipe.build_ticks > w[0].recipe.build_ticks);
         }
         let titan = 32_000.0; // a Titan's hull in battle (tactical::rules_v1::hull_mass)
-        let fortress = &LEVELS[4];
+        let fortress = LEVELS.last().unwrap();
         assert!(total(fortress) >= 3.0 * titan, "three Titans of hull");
         assert!(fire(fortress) >= 2.0 * crate::ship::ShipKind::Titan.attack_weight(), "two Titans of guns");
         let cumulative: f64 = LEVELS.iter().map(value).sum();
@@ -359,7 +379,7 @@ mod tests {
             Mount { fit: "mass_driver".into(), health: 0.5, offline: false },
             Mount { fit: String::new(), health: 0.4, offline: true },
         ];
-        let specs = mount_specs(2, &mounts);
+        let specs = mount_specs(3, &mounts); // the Orbital Battery
         assert_eq!(specs.len(), 1);
         assert_eq!((specs[0].index, specs[0].stack.as_str()), (0, "mass_driver"));
         assert!((specs[0].hp - 1_000.0).abs() < 1e-9 && specs[0].max_hp == 2_000.0);

@@ -1,0 +1,9 @@
+{
+  "samples": 9009,
+  "simulatedHours": 24,
+  "maximumRadialTwistRadians": 0.19999985498217487,
+  "maximumAngularGradient": 0.7999978666683727,
+  "seamlessTimeWrap": true,
+  "fixedRim": true,
+  "method": "Sample the actual GLSL angular and brightness expressions from zero through 24 hours"
+}

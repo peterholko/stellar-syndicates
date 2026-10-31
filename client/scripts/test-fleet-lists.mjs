@@ -109,7 +109,8 @@ for (const width of ["standard", "wide"]) {
   assert.equal(workspace.storedWidth({ name: "fleets" }), workspace.storedWidth({ name: "system" }), "old independent roster preference cannot cause mismatched widths");
 }
 const css = src("styles/deck.css");
-assert.match(css, /\.deck-workspace:is\([^\n]*\[data-route="fleets"\][^\n]*var\(--deck-workspace-system\)/);
+assert.match(css, /\.deck-workspace:is\([^\n]*\[data-route="fleets"\][^\n]*var\(--deck-system-rail\)/);
+assert.match(src("styles/tokens.css"), /--deck-system-rail: min\(var\(--deck-workspace-system\)/);
 assert.match(css, /\.deck-fleet-list-row__art > \.icon[^\n]*width: calc\(var\(--space-6\) \* 2\); height: calc\(var\(--space-6\) \* 2\); object-fit: contain/);
 assert.match(src("styles/tokens.css"), /--space-6: 24px/);
 assert.match(src("styles/tokens.css"), /--deck-workspace-system: 552px/);

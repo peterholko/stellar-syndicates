@@ -1,0 +1,20 @@
+{
+  "size": [
+    1254,
+    1254
+  ],
+  "mode": "RGBA",
+  "alphaRange": [
+    0,
+    255
+  ],
+  "visibleBounds": [
+    314,
+    26,
+    941,
+    1209
+  ],
+  "heightFill": 0.9434,
+  "widthToLength": 0.53,
+  "cornersTransparent": true
+}

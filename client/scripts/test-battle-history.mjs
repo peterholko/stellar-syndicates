@@ -80,6 +80,7 @@ assert.ok(reloaded.battleDismissed.has(battleRecordMarkKey(a.id)), "memory-only 
 const sessionSource = readFileSync(new URL("../src/core/session.ts", import.meta.url), "utf8");
 const deps = {
   "../battlehistory": { loadBattleMarks: (st) => loadBattleMarks(st, storage) },
+  "../stars": { chartStars() {} },
   "../state": { syncRenderClock() {} },
   "./derive/market": { marketReservations: [], recentMarketOrders: [] },
   "./derive/transactions": compile(readFileSync(new URL("../src/core/derive/transactions.ts", import.meta.url), "utf8"), { require: () => ({}) }),

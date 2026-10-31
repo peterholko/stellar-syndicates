@@ -326,6 +326,8 @@ pub struct InformationHistory {
     facts: BTreeMap<u64, Vec<(PlayerId, LearnedFact)>>,
     fleet_assets: BTreeMap<EntityId, Reports<FleetAssets>>,
     rankings: VecDeque<(f64, Vec<crate::rankings::RankingRow>)>,
+    /// §syndicate-projects (R6): the syndicates' table, published alongside.
+    syndicate_rankings: VecDeque<(f64, Vec<crate::rankings::SyndicateRankingRow>)>,
     /// Compact completion receipts, queried only by fleet id; never traversed
     /// by record() or fleet_assets(). Keep the original emission/position so an
     /// old standing-order latch still resolves after cleanup/load, without
@@ -425,6 +427,14 @@ impl InformationHistory {
         end.checked_sub(1)
             .map_or(&[], |i| self.rankings[i].1.as_slice())
     }
+    /// §syndicate-projects (R6): the syndicates' table whose light from the
+    /// hub has reached `cc`.
+    pub fn syndicate_rankings(&self, cc: Vec2, hub: Vec2, c: f64, now: f64) -> &[crate::rankings::SyndicateRankingRow] {
+        let emission = now - crate::transit::delay(hub, cc, c);
+        let end = self.syndicate_rankings.partition_point(|(at, _)| *at <= emission + 1e-9);
+        end.checked_sub(1).map_or(&[], |i| self.syndicate_rankings[i].1.as_slice())
+    }
+
     pub fn intel(
         &self,
         owner: PlayerId,
@@ -584,6 +594,12 @@ impl InformationHistory {
         }
         while self.rankings.len() > 1 && self.rankings[1].0 < world.time - horizon {
             self.rankings.pop_front();
+        }
+        if self.syndicate_rankings.back().is_none_or(|(_, rows)| *rows != world.syndicate_rankings) {
+            self.syndicate_rankings.push_back((world.time, world.syndicate_rankings.clone()));
+        }
+        while self.syndicate_rankings.len() > 1 && self.syndicate_rankings[1].0 < world.time - horizon {
+            self.syndicate_rankings.pop_front();
         }
         // One pass over the operations table, in its own order, instead of one
         // filtered scan of it per fleet per tick.
@@ -911,6 +927,8 @@ fn site_system_matches(stored: &StarSystem, live: &StarSystem) -> bool {
         legacy_assignments,
         specialists,
         landing_holds,
+        storage_mult,
+        twin_campuses,
     } = stored;
     *id == live.id
         && *pos == live.pos
@@ -944,6 +962,8 @@ fn site_system_matches(stored: &StarSystem, live: &StarSystem) -> bool {
         && *legacy_assignments == live.legacy_assignments
         && *specialists == live.specialists
         && *landing_holds == live.landing_holds
+        && *storage_mult == live.storage_mult
+        && *twin_campuses == live.twin_campuses
 }
 
 /// Station hardpoints match when their fits do and their health is in the

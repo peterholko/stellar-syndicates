@@ -96,7 +96,9 @@ export type ShipKind =
   | "survey_probe"
   | "mining_barge"
   // §belts: the barges' anchored ore depot.
-  | "mining_belt_station";
+  | "mining_belt_station"
+  // §holds: the raiding freighter — its hold takes only loot.
+  | "combat_freighter";
 
 // Mirrors ShipKind::cargo_units. "convoy" is the save-compatible Medium hull;
 // "freighter" is Authority-only and never belongs to this player cargo family.
@@ -107,7 +109,14 @@ export const cargoUnitsPerHull = (kind: ShipKind): number => ({
   large_freighter: 1000, heavy_freighter: 2500, bulk_freighter: 6000,
   mining_barge: 150, // §belts: an ore hopper, not a freighter
   mining_belt_station: 3000, // §belts: six ore silos
+  combat_freighter: 80, // §holds: loot only
 } as Partial<Record<ShipKind, number>>)[kind] ?? 0;
+/** §holds: a hold that takes only plunder, seized cargo and finds — never a
+ * dock's, a market's or a route's goods (mirrors ShipKind::is_loot_only). */
+export const isLootOnly = (kind: ShipKind): boolean => kind === "combat_freighter";
+/** A trade freighter or a Combat Freighter: raided for its hold, and its berth
+ * takes a utility, never a hardpoint (mirrors ShipKind::is_freighter_hull). */
+export const isFreighterHull = (kind: ShipKind): boolean => isPlayerFreighter(kind) || isLootOnly(kind);
 
 // A resource deposit on a system. §explore: NO LONGER public — the exact geology
 // is CORP KNOWLEDGE (surveyed-or-owner), delivered per-player in
@@ -134,6 +143,9 @@ export interface SystemInfo {
   /// DEPRECATED (§ships part 3): claiming is physical (colony ships) — no
   /// longer charged or displayed; kept for wire compatibility.
   claim_cost: number;
+  /// §node: the star is exotic. The server decides (a home never is); the
+  /// star art follows it (`chartStars` in stars.ts).
+  exotic: boolean;
 }
 
 // One commodity in a system's stockpile (whole units), shown only to its owner.
@@ -181,6 +193,10 @@ export interface BodyView {
   /// §belts: an asteroid belt's type and picture. Belts arrive only once the
   /// viewer has surveyed (charted) the system.
   belt?: { kind: "stony" | "metallic" | "icy" | "shattered"; radius: number; width: number } | null;
+  /// §real-coordinates: where it goes round (System View units, 1 =
+  /// SYSTEM_UNIT_SU): about its star, or its planet for a moon. Angle at sim
+  /// time 0, seconds per turn (0 for a belt).
+  orbit?: { radius: number; angle: number; period: number };
   habitable: boolean;
   size: "tiny" | "small" | "medium" | "large" | "huge";
   environment: "gaia" | "terran" | "marginal" | "hostile" | "uninhabitable";
@@ -198,6 +214,8 @@ export interface BodyView {
   resource_slots: number | null;
   industrial_slots: number | null;
   infrastructure_slots: number | null;
+  /** §research-wiring Xenoacclimation: a Marginal world that counts as habitable for its owner. */
+  acclimated?: boolean;
   ship_build_time_mult: number | null;
   deposits: Deposit[] | null;
   /// §pockets: the hidden pockets of this belt YOUR corporation has found
@@ -266,6 +284,8 @@ export interface AssignmentView {
   power?: number;
   site: number;
   recovery?: number;
+  /** §research-wiring: the input basket's multiple (Autoforges, crops). */
+  input_mult?: number;
   /// (commodity, units/s) at the factors above.
   outputs: [Commodity, number][];
 }
@@ -281,6 +301,7 @@ export interface ConverterStatusView {
   rated_output?: number;
   site?: number;
   recovery?: number;
+  input_mult?: number;
 }
 
 export interface RefiningSiteView {
@@ -314,8 +335,9 @@ export type FleetIndustry =
    *  full, depleted, unsafe or claimed. `pocket`: a found pocket of the ore. */
   | { kind: "mine"; system: EntityId; body: number; ore: Commodity; pocket?: boolean; to_station?: boolean; mined: number; fraction: number; status: string }
   /** §pockets: a Scout or barge prospecting a belt. status: travelling,
-   *  prospecting or unsafe; `dwell` counts toward PROSPECT_SECS. */
-  | { kind: "prospect"; system: EntityId; body: number; dwell: number; status: string };
+   *  prospecting or unsafe; `dwell` counts toward `need` (PROSPECT_SECS,
+   *  shortened by Survey Protocols). */
+  | { kind: "prospect"; system: EntityId; body: number; dwell: number; need?: number; status: string };
 /** §belts: a station's anchor. phase: approaching (flying to the star),
  *  anchoring (60 s), anchored, or unanchoring (60 s). `since` is sim time. */
 export interface StationAnchor { system: EntityId; body: number; phase: "approaching" | "anchoring" | "anchored" | "unanchoring"; since: number }
@@ -329,6 +351,13 @@ export interface SystemStateView {
   industry?: SiteIndustry | null;
   owner: PlayerId | null;
   stockpile: StockSlot[] | null;
+  /** §vault (v73): owner-only — units of each good raiders can't reach (the
+   * settlers' rations and what the Vaults hold). Absent for rivals. */
+  vault?: StockSlot[];
+  /** §scouting (v74): what the viewer's own Scouts last saw of this RIVAL
+   * system's stores — goods in raiders' reach (dearest first) and the Vault's
+   * room — once that light reached command. Absent on your own systems. */
+  scouted_stores?: { reach: StockSlot[]; vault: number; observed_at: number } | null;
   /// Owner-only in-progress build (§step1) — null for rivals (never leaks).
   /// The SOONEST job; `builds` carries the full queue.
   build: BuildState | null;
@@ -434,6 +463,12 @@ export interface SystemStateView {
   /// Storage capacity + current fill, whole units (§buildings step 2) — owner-only;
   /// rivals see 0/0. `storage_used` may exceed the cap (grandfathered stockpile).
   storage_cap: number;
+  /** §research-wiring Bulk Storage: the warehouse multiple. */
+  storage_mult?: number;
+  /** §research-wiring Flash Forges: structures each world builds at once. */
+  structure_slots?: number;
+  /** §research-wiring: specialists the system houses (Habitat tiers × 2, × 3 with Twin Campuses). */
+  specialist_housing?: number;
   storage_used: number;
   /// OUR scout-intel snapshot of this (rival) system, if any (§scout part 2) —
   /// delivered only once its light reached our command center. A SNAPSHOT: it
@@ -512,6 +547,8 @@ export interface BuildOption {
   description?: string;
   conversion?: ConversionRecipe;
   refining_recipes?: ConversionRecipe[];
+  /** §asteroid-quarry: what one tier eats a second, all or nothing. */
+  upkeep?: [Commodity, number][];
 }
 
 export interface StructureTierOption {
@@ -718,7 +755,40 @@ export interface CharterView {
   /// Exchange penalty fee now applied, as a fraction of trade value (0 when lawful).
   market_penalty_frac: number;
   reinstate_cost_per_point: number;
+  /** §standing-ladder (R3): full standing (buying back stops here); grades
+   * lie above it, up to `max_standing`. */
+  full_standing: number;
+  grade: CharterGrade;
+  grade_title: string;
+  next_grade: { title: string; at: number } | null;
+  /** Standing earned past full today, against `earn_per_day`. */
+  earned_today: number;
+  earn_per_day: number;
+  /** Units per destination per departure the Authority lifts at this grade. */
+  shipment_cap: number;
+  /** §season (v75): the levy on this corporation's Hub trades, on top of
+   * `market_penalty_frac`, and the squeeze it has heard of. */
+  levy_frac?: number;
+  squeeze?: SqueezeView;
 }
+
+/** §season (v75): the Authority's demands on one corporation, as heard. */
+export interface SqueezeView {
+  /** The base levy at the grip heard. */
+  base: number;
+  rise: { points: number; commodity: Commodity; trade: number; due: number; arrears: number } | null;
+  embargoes: { commodity: Commodity; arrears: number; since: number }[];
+  requisitions: { id: number; demand: Demand; due: number }[];
+  /** Requisitions refused this season (three bring a squadron). */
+  refusals: number;
+  levy_paid: number;
+  enforced_until: number | null;
+  /** §season phase 3: this corporation's Resolve (0–1); loyal below 20%. */
+  resolve?: number;
+  loyal?: boolean;
+}
+export type Demand = { kind: "goods"; commodity: Commodity; units: number } | { kind: "credits"; amount: number };
+export type CharterGrade = "chartered" | "trusted" | "preferred" | "commissioned";
 
 export interface FreightView {
   next_departure: number; // sim-time of the next scheduled departure
@@ -882,6 +952,62 @@ export interface TimelineEntry {
   at_time: number; // sim-time the news became observable to this player
   severity: TimelineSeverity;
   text: string;
+  /** §log (v71): stable per entry; absent on entries saved before. */
+  id?: number;
+  /** §log: what the entry is about (filters, glyphs, reports). */
+  kind?: LogKind | null;
+  /** §log: entries about one thing (a raid on a home, a blockade, a build)
+   * share a group; an episode ends at a terminal phase. */
+  group?: string | null;
+  phase?: LogPhase | null;
+  refs?: LogRefs;
+  data?: LogData | null;
+}
+
+/** §log (v71): mirrors protocol.rs `LogKind`. */
+export type LogKind = "raid" | "blockade" | "battle" | "capture" | "trade" | "freight" | "trader" | "build"
+  | "production" | "research" | "survey" | "signal" | "territory" | "operation" | "diplomacy" | "syndicate"
+  | "fleet" | "refusal" | "charter" | "vendetta" | "medal" | "admin";
+/** §log: where an entry's episode stands; ended/lifted/completed/failed/expired/done end it. */
+export type LogPhase = "inbound" | "attacking" | "raiding" | "ended" | "contested" | "held" | "lifted"
+  | "offered" | "active" | "completed" | "failed" | "expired" | "started" | "done";
+export interface LogRefs {
+  system?: EntityId;
+  fleet?: EntityId;
+  operation?: OperationId;
+  /** The battle record a combat line reports. */
+  battle?: EntityId;
+}
+export interface LogData {
+  /** Goods the event moved for this player: negative is lost. */
+  goods?: Partial<Record<Commodity, number>>;
+  ships?: number;
+  credits?: number;
+  /** How many like events this entry stands for. */
+  count?: number;
+  ids?: string[];
+  /** Sim-time something is expected to arrive. */
+  eta?: number;
+  /** Seconds it lasted. */
+  duration?: number;
+}
+
+/** §welcome (R9): where a report line or action leads. */
+export type WelcomeGo =
+  | { kind: "system"; id: EntityId }
+  | { kind: "shipyard"; system: EntityId; body: number }
+  | { kind: "signals" | "operations" | "research" | "comms" | "market" | "rankings" | "syndicate" | "log" };
+
+export interface WelcomeLine { severity: TimelineSeverity; text: string; go?: WelcomeGo }
+export interface WelcomeAction { label: string; go: WelcomeGo }
+
+/** §welcome (R9): the server's report on return (ten minutes or more away). */
+export interface WelcomeBackView {
+  away: number;
+  happened: WelcomeLine[];
+  waiting: WelcomeLine[];
+  /** At most three, most urgent first. */
+  next: WelcomeAction[];
 }
 
 // A ship as the player perceives it — a delayed "ghost" (§6). `pos` is where
@@ -903,6 +1029,15 @@ export type CountClass =
   | "thirty_one_plus";
 
 // The human-facing bucket label ("est. 4–7 ships").
+/** §research-wiring: a fleet's size estimate — its finer or coarser range when
+ * research reshaped it, else its bucket. */
+export function fleetCountLabel(g: { count_class: CountClass; count_range?: [number, number | null] | null }): string {
+  const range = g.count_range;
+  if (!range) return countClassLabel(g.count_class);
+  const [lo, hi] = range;
+  return hi === null ? `${lo}+` : lo === hi ? String(lo) : `${lo}–${hi}`;
+}
+
 export function countClassLabel(c: CountClass): string {
   switch (c) {
     case "one": return "1";
@@ -939,7 +1074,8 @@ export type ModuleKind =
   | "stasis_web"
   | "warp_stabilizer"
   | "interdiction_field"
-  | "jump_drive";
+  | "jump_drive"
+  | "lance_array";
 
 // §modules Part B: one FITTED stack of a fleet — `n` ships of `kind` all carrying
 // `modules` (sorted; never empty). Revealed under the same rule as CompCount.
@@ -1125,6 +1261,10 @@ export interface GhostView {
   /** The antimatter bottle on jump-capable hulls. */
   antimatter?: number | null;
   antimatter_capacity?: number | null;
+  /** §syndicate-projects (R6): owner-only Freight bonus on player freighter holds. */
+  cargo_mult?: number | null;
+  /** §holds: owner-only Prize Holds bonus on Combat Freighter holds. */
+  prize_mult?: number | null;
   /** Owner-only: the served fleet picture is held for lack of carried fuel. */
   stalled?: boolean;
   /** AAA has accepted this fleet's callout and its tender is outbound. */
@@ -1136,6 +1276,8 @@ export interface GhostView {
   rescue_service?: boolean;
   /** §merchant: this Authority hull is the traveling merchant (a free trader). */
   merchant?: boolean;
+  /** §traders: which free trader flies it, so the map draws their own ship. */
+  trader?: TraderSlug | null;
   // Convoys broadcast a route (waypoints); raiders don't (null).
   route: Vec2[] | null;
   /// §course-plan: own fleets only — the remaining legs the sim is flying.
@@ -1158,6 +1300,17 @@ export interface GhostView {
   cargo_manifest?: CargoView[];
   // Estimated-size bucket — always present on a visible fleet.
   count_class: CountClass;
+  /** §research-wiring Signal Libraries / ECM Emitters: the estimate one step
+   * finer or coarser than `count_class` ([low, high]; high null: open-ended). */
+  count_range?: [number, number | null] | null;
+  /** §research-wiring Traffic Analysis: an unrevealed freighter's cargo kind. */
+  manifest_class?: "goods" | "personnel" | "modules" | "empty" | null;
+  /** §research-wiring Wake Analysis: tank in quarters, and the bearing (radians) it came from. */
+  wake?: { fuel: number; from: number | null } | null;
+  /** §research-wiring Standing Watch: a lost contact's dead-reckoned track — seconds since its last fix. */
+  tracked?: number | null;
+  /** §research-wiring Predictive Plots: where a moving rival is now if it held course. */
+  projected?: Vec2 | null;
   // Exact composition — present only in coverage or for your own fleet.
   composition: CompCount[] | null;
   /// §roster: how BEATEN UP the fleet is — 0 pristine … 1 every hull spent. An
@@ -1221,6 +1374,11 @@ export interface GhostView {
   run_blockades?: boolean | null;
   /** Owner-only: the system whose held blockade this delivery waits outside. */
   held_outside?: EntityId | null;
+  /** §raid-order: owner-only — this blockade is a RAID; it brings its loot
+   * home when its holds fill. */
+  raiding?: boolean | null;
+  /** §player-styles (v80): a repeating raid's trip. Owner-only. */
+  raid_trip?: number | null;
   /** Owner-only transit setting carried by this served fleet report. */
   transit?: TransitMode | null;
 }
@@ -1261,7 +1419,12 @@ export function formatId(id: PlayerId): string {
 export type FoundingProfile = "mineral_highlands" | "verdant_lowlands" | "coastal_plains";
 export type SettlementProject = "prospect" | "surface_workings" | "storehouse" | "quarters";
 export type ClientMsg =
-  | { type: "FoundColony"; profile: FoundingProfile }
+  /** §founding: land on the home world the server dealt. */
+  | { type: "FoundColony" }
+  /** §gun-platform (v78): found the corporation again once its colony fell. */
+  | { type: "RestartCorporation" }
+  /** §charter-crates: collect a released charter crate into the home stockpile. */
+  | { type: "CollectCharterCrate"; charter_crate: CharterCrateId }
   | { type: "DevelopSettlement"; system_id: EntityId; body_id: number; project: SettlementProject }
   | { type: "SetFreightRoute"; fleet_id: EntityId; route: FreightRoute | null }
   | { type: "SetRefiningReserve"; system_id: EntityId; ore: number; fuel: number }
@@ -1311,6 +1474,13 @@ export type ClientMsg =
   | { type: "SetRunBlockades"; fleet_id: EntityId; on: boolean }
   | { type: "FitStation"; system_id: EntityId; mount: number; fit: ModuleKind[] }
   | { type: "PayReinstatement"; points: number }
+  /** §season (v75): answer a levy rise, pay arrears, answer a requisition. */
+  | { type: "AnswerLevy"; accept: boolean }
+  | { type: "PayArrears"; commodity: Commodity }
+  | { type: "AnswerRequisition"; id: number; pay: boolean }
+  /** §season (v75): feed the Keystone; Gate Step a fleet. */
+  | { type: "FeedKeystone"; system_id: EntityId; commodity: Commodity; units: number }
+  | { type: "GateStep"; fleet_id: EntityId; system_id: EntityId }
   | { type: "MarketSell"; commodity: Commodity; units: number; min_unit_price?: number | null }
   | { type: "PlaceLimitOrder"; side: Side; commodity: Commodity; units: number; limit_price: number }
   | { type: "CancelLimitOrder"; order_id: number }
@@ -1353,7 +1523,7 @@ export type ClientMsg =
   | { type: "MergeFleets"; into: EntityId; from: EntityId }
   | { type: "SplitFleet"; fleet_id: EntityId; counts: Record<ShipKind, number> | Partial<Record<ShipKind, number>> }
   // §contestable-territory Part 1 — order a raider fleet to blockade a rival system.
-  | { type: "BlockadeSystem"; fleet_id: EntityId; system_id: EntityId }
+  | { type: "BlockadeSystem"; fleet_id: EntityId; system_id: EntityId; raid?: boolean; repeat?: boolean }
   // §explore Part 2 — order a scout-carrying fleet to SURVEY a system's geology.
   | { type: "SurveySystem"; fleet_id: EntityId; system_id: EntityId }
   | { type: "ExploreSite"; fleet_id: EntityId; site_id: EntityId; task: ExpeditionTask }
@@ -1382,6 +1552,9 @@ export type ClientMsg =
   | { type: "RecoverOperation"; operation_id: OperationId; fleet_id: EntityId }
   | { type: "ContributeOperationCargo"; operation_id: OperationId; commodity: Commodity; units: number }
   | { type: "CreateSyndicateOperation"; system_id: EntityId }
+  // §syndicate-projects (R6)
+  | { type: "ContributeSyndicateProject"; system_id: EntityId; commodity: Commodity; units: number }
+  | { type: "RaiseSyndicateBonus"; bonus: SyndicateBonus }
   | { type: "ProposeTreaty"; target_name: string; treaty: TreatyKind }
   | { type: "RespondTreaty"; proposal_id: number; accept: boolean }
   | { type: "DeclareWar"; target_name: string }
@@ -1391,6 +1564,21 @@ export type ClientMsg =
   | { type: "SaveFit"; name: string; ship: ShipKind; loadout: ModuleKind[] }
   | { type: "DeleteFit"; name: string }
   | { type: "NameFlagship"; name: string }
+  /** §leave (R4): go on leave or come back. */
+  | { type: "SetLeave"; on: boolean }
+  /** §research-grant (R3): buy one research-hour for the active programme. */
+  | { type: "FundResearch" }
+  | { type: "SetDesignation"; cap: DesignationCap; target: DesignationTarget }
+  | { type: "SyndicateSay"; text: string }
+  | { type: "SendMail"; to: string; subject: string; body: string }
+  | { type: "MarkMailRead"; id: number }
+  | { type: "DeleteMail"; id: number }
+  | { type: "MuteCorp"; player: PlayerId; mute: boolean }
+  | { type: "ReportMessage"; kind: "chat" | "mail"; id: number; reason: string }
+  // §settle-near-friends (R7): invite links that hold a home near the sender.
+  | { type: "CreateInvite" }
+  | { type: "RevokeInvite"; code: string }
+  | { type: "RedeemInvite"; code: string }
   | { type: "RequestTransactions"; before: number | null; request_id: number }
   | { type: "Ping" };
 
@@ -1411,6 +1599,41 @@ export interface SyndicateView {
   // §ladder B4: the christened name of the syndicate's Titan (owner-only).
   flagship_name?: string | null;
   my_role: SyndicateRole;
+  /** §syndicate-projects (R6): the week's ladder and the bonuses. */
+  projects?: SyndicateProjectsView;
+}
+
+/** §syndicate-projects (R6): lasting syndicate bonuses. */
+export type SyndicateBonus = "freight" | "research" | "migration";
+
+export interface SyndicateProjectsView {
+  week: number;
+  /** Seconds until the week closes. */
+  week_ends_in: number;
+  /** The rung in progress (0-based); `rungs.length` once the ladder is done. */
+  rung: number;
+  progress: number;
+  rungs: { goods: Commodity; goal: number; points: number }[];
+  points: number;
+  week_points: number;
+  /** `mine`: the level that has reached you; `next_in`: seconds until your next one. */
+  bonuses: { bonus: SyndicateBonus; level: number; mine: number; per_level: number; next_cost: number | null; next_in: number | null }[];
+  /** Goods each member gave this week, most first. */
+  given: [string, number][];
+  /** Gold, silver, bronze. */
+  medals: [number, number, number];
+  may_raise: boolean;
+}
+
+/** §syndicate-projects (R6): one syndicate in the published table. */
+export interface SyndicateRankingRow {
+  id: SyndicateId;
+  name: string;
+  members: number;
+  valuation: number;
+  week_points: number;
+  levels: number;
+  medals: [number, number, number];
 }
 
 export type OperationState = "offered" | "active" | "completed" | "failed" | "expired" | "abandoned";
@@ -1471,7 +1694,10 @@ export interface ContractBoardView {
   next_at: number;
   done: number;
   needed: number;
-  bonus_credits: number;
+  /** §standing-ladder (R3): the bonus pays standing and a dossier (a
+   * fraction of a programme), not credits. */
+  bonus_standing: number;
+  bonus_dossier: number;
   bonus_paid: boolean;
 }
 
@@ -1604,7 +1830,25 @@ export interface ResearchView {
   stalled: boolean;
   academies: AcademyRow[];
   programmes: ProgrammeView[];
+  /** §research-grant (R3): buying research-hours with credits. */
+  grant?: ResearchGrantView;
+  /** §designations (R2): where each researched capability points. */
+  designations?: DesignationView[];
+  /** §unlocks (v72): the highest level of each structure (by key) this
+   * corporation may build now; 0 = not unlocked. */
+  structure_tiers?: Record<string, number>;
 }
+/** §designations (R2): the capabilities that take a target, and the target. */
+export type DesignationCap = "crown_vein" | "crown_project" | "mass_streams" | "signature_mimicry";
+export type DesignationTarget =
+  | { body: { system: EntityId; body: number } }
+  | { system_pair: [EntityId, EntityId] }
+  | { fleet: EntityId };
+/** `live`: its target is still held. `locked_until`: when it may move. */
+export interface DesignationView { cap: DesignationCap; target: DesignationTarget; live: boolean; locked_until: number | null }
+/** §research-grant: one grant's price for the active programme (null with
+ * nothing running), its research seconds, and how many are left today. */
+export interface ResearchGrantView { price: number | null; secs: number; left: number; per_day: number }
 
 // §perf Part B: the wire's research payload — dynamic slice only. The client
 // joins `programmes` onto the static catalog (Welcome's research_catalog) by id.
@@ -1616,6 +1860,10 @@ export interface ResearchDynView {
   stalled: boolean;
   academies: AcademyRow[];
   programmes: { id: string; state: string; gate?: GateProgressView | null; recovered_data?: number }[];
+  grant?: ResearchGrantView;
+  designations?: DesignationView[];
+  /** §unlocks (v72): see ResearchView.structure_tiers. */
+  structure_tiers?: Record<string, number>;
 }
 
 // §perf Part B: one programme's STATIC catalog entry (Welcome.research_catalog).
@@ -1789,7 +2037,8 @@ export interface BattleView {
 // "participant" (full detail, own posture only) or "bucket" (a third party who
 // covers the site — CountClass only, no dealt, joins/mutual-disengage beats).
 // A viewer with no access to a battle simply receives no entry for it.
-export type BattleFidelity = "participant" | "bucket";
+/** "archive": a third party with Battle Archives (bucketed losses too). */
+export type BattleFidelity = "participant" | "bucket" | "archive";
 // One (kind, strength) entry. `exact` is present only at participant fidelity;
 // `class` (the CountClass bucket) is always present.
 export interface RecordCount {
@@ -2021,7 +2270,52 @@ export type FoundingStage =
   | "eliminate_den"
   // §charter-v5: the raid on the colony and the ore sale to the trader.
   | "pirate_raid"
-  | "sell_ore";
+  | "sell_ore"
+  // §vendetta: the privateer's uncle comes for the colony (step 21).
+  | "vendetta"
+  // §refining + §den-pocket (v76): the Smelter (step 14) and the prospecting
+  // pass over the den's belt (step 18).
+  | "build_smelter"
+  | "prospect_belt"
+  /** §gun-platform (v78): step 6, a Gun Platform after the raid. */
+  | "build_gun_platform"
+  /** §charter-crates (v79): step 22, a Warehouse and a Vault before the uncle. */
+  | "secure_stores";
+
+/** §player-styles (v80): what raids and blockades took from you over the last
+ * day; `cap` is the day's limit, null while none applies (three days without
+ * an order). */
+export interface RaidLossView {
+  taken: number;
+  cap: number | null;
+}
+
+/** §charter-crates (v79): the charter's supplies, sealed by the Authority and
+ * released a chapter at a time (sim `founding::CharterCrate`). */
+export type CharterCrateId = "landfall" | "raid" | "pirates" | "expansion" | "reach" | "vendetta";
+
+/** A crate still sealed: `released` ones wait to be collected; the rest are
+ * what the builds ahead can count on. */
+export interface CharterCrateView {
+  id: CharterCrateId;
+  released: boolean;
+  /** The charter step that releases it. */
+  step: number;
+  goods: Partial<Record<Commodity, number>>;
+}
+
+/** §leave (R4): the owner's leave, current or last, and its fixed terms
+ * (sim seconds). */
+export interface LeaveView {
+  on: boolean;
+  until: number | null;
+  earliest_return: number | null;
+  /** When a new leave may start (0 if never taken). */
+  next_start: number;
+  min_secs: number;
+  max_secs: number;
+  cooldown_secs: number;
+}
 
 export interface FoundingView {
   stage: FoundingStage;
@@ -2056,11 +2350,83 @@ export interface FoundingView {
   /** §charter-v4: "Expand mining operations" has opened the home's other
    * worlds; until then only the landing world. */
   land_grant_open?: boolean;
+  /** §charter-gates: structures the charter has yet to open, by the step that
+   * opens each (sim `founding::charter_step`). Absent once all are open. */
+  charter_gates?: Record<string, number>;
   /** §charter-v4: the privateer den's system, named by the privateer's log
    * once its kill report reached command. */
   den?: EntityId | null;
   /** §charter-v4: the report that the den fell has reached command. */
   den_cleared?: boolean;
+  /** §vendetta: the pirate family this founder crossed. */
+  pirates?: PirateFamilyView | null;
+  /** §vendetta: the uncle's revenge, once his oath has reached command. */
+  vendetta?: VendettaView | null;
+  /** §charter-crates: the crates still sealed, in charter order. */
+  crates?: CharterCrateView[];
+  /** §traders: who flies this founder's free trader. */
+  trader?: TraderSlug;
+  /** §privateer-hunt: where the privateer went to ground, from the raid's
+   * report until its kill's report. */
+  privateer_last_seen?: Vec2 | null;
+}
+
+/** §traders: the four free traders (`core/derive/trader.ts`). */
+export type TraderSlug = "teo" | "ines" | "mags" | "rafi";
+/** §traders: each free trader's own ship art (Teo's Long Odds is the original
+ * free trader). Art kinds, not ship kinds: all fly an Authority Freighter hull. */
+export const TRADER_SHIP_ART = { teo: "free_trader", ines: "clean_slate", mags: "second_wind", rafi: "small_fortune" } as const satisfies Record<TraderSlug, string>;
+export type TraderShipArt = (typeof TRADER_SHIP_ART)[TraderSlug];
+/** A merchant ship's art: its trader's ship, Teo's until the server names one. */
+export const traderShipArt = (trader?: TraderSlug | null): TraderShipArt => TRADER_SHIP_ART[trader ?? "teo"] ?? "free_trader";
+
+/** §vendetta: a founder's pirate family (`docs/pirate-vendetta.md`). The
+ * family's personality picks its portraits and lines; names are full names. */
+export type PirateFamilySlug = "showboat" | "hothead" | "collector" | "scrapper" | "fatalist";
+export interface PirateFamilyView {
+  family: PirateFamilySlug;
+  surname: string;
+  nephew: string;
+  uncle: string;
+  brother: string;
+}
+
+/** §vendetta: the uncle's revenge as command knows it. */
+export interface VendettaView {
+  /** When his pack sets out for the colony, once it is raised (step 19). */
+  depart_at: number | null;
+  /** His pack, once it is in this viewer's picture. */
+  fleet: EntityId | null;
+  /** He is over the colony. */
+  arrived: boolean;
+  /** How it ended, once its report reached command: true when he died. */
+  won: boolean | null;
+  /** §gun-platform (v78): he sacked the colony: game over until a restart. */
+  fallen?: boolean;
+  /** §vendetta-campaign (v77): the latest he sets out, online or not (his
+   * countdown runs only while the founder is online). */
+  deadline_at: number | null;
+  /** §vendetta-campaign: his strikes on the founder's expanded mining. */
+  strikes: StrikeView[];
+}
+
+/** §vendetta-campaign: one strike as command knows it: the second mine's
+ * world, or the barge's belt. */
+export interface StrikeView {
+  /** §gun-platform (v78): `freighter`, a freighter hunted near home. */
+  kind: "mine" | "barge" | "freighter";
+  system: EntityId;
+  body: number;
+  /** Its raiders, once they are in this viewer's picture. */
+  fleet: EntityId | null;
+  /** Over the mine's world, on the light of it. */
+  over: boolean;
+  /** Gone home, called off, or killed. */
+  done: boolean;
+  /** §gun-platform (v78): the freighter a freighter strike hunts. */
+  target?: EntityId | null;
+  /** §gun-platform (v78): what a mine strike wrecked, in order (structure slugs). */
+  wrecked?: string[];
 }
 
 export type LedgerMetric = "syndicate" | "limit_orders" | "population" | "storage" | "refining"
@@ -2086,12 +2452,15 @@ export interface MerchantView {
 export interface CharterLedgerView {
   done: number;
   total: number;
-  goals: { id: string; title: string; detail: string; metric: LedgerMetric; progress: number; target: number; reward: number }[];
+  /** §standing-ladder (R3): each goal pays `standing` and a research dossier
+   * of `research` (a fraction of a programme). */
+  goals: { id: string; title: string; detail: string; metric: LedgerMetric; progress: number; target: number; standing: number; research: number }[];
 }
 
 // Server → client.
 export type ServerMsg =
-  | { type: "FoundingOffer" }
+  /** §founding: `profile` is the home world this account has been dealt. */
+  | { type: "FoundingOffer"; profile: FoundingProfile }
   | {
       /// §over-capacity homes: the star chart grew after Welcome (a join past
       /// the slot pool minted a new home system). Replaces galaxy.systems.
@@ -2112,6 +2481,8 @@ export type ServerMsg =
       galaxy: GalaxyInfo;
       // §perf Part B: static tables, sent once (were inside every 10 Hz View).
       charter_ladder: [string, number][];
+      /** §standing-ladder (R3): the grades above full standing. */
+      grade_ladder?: [string, number][];
       research_catalog: ProgrammeInfo[];
     }
   | {
@@ -2140,6 +2511,10 @@ export type ServerMsg =
       founding: FoundingView;
       /** §founding R10: present once the charter ledger opens. */
       charter_ledger?: CharterLedgerView;
+      /** §leave (R4): the viewer's own leave. */
+      leave?: LeaveView;
+      /** §player-styles: what raids took today against the daily loot cap. */
+      raid_losses?: RaidLossView;
       /** §merchant: the traveling merchant serving your home. Owner-only. */
       merchant?: MerchantView;
       doctrine: FleetDoctrine;
@@ -2176,6 +2551,11 @@ export type ServerMsg =
       battle_reports?: BattleReportView[];
       capture_reports?: CaptureReportView[];
       rankings?: RankingRow[];
+      syndicate_rankings?: SyndicateRankingRow[];
+      /** §social (R5): the syndicate channel, mail and member presence. */
+      social?: SocialView;
+      /** §season (v75): the season as this corporation has heard it. */
+      season?: SeasonView;
     }
   | {
       // §perf Part A: incremental battle-record delivery on the reliable lane —
@@ -2194,7 +2574,7 @@ export type ServerMsg =
       removed?: EntityId[];
     }
   | { type: "Report"; report: RaidReport }
-  | { type: "Timeline"; entries: TimelineEntry[]; away_since: number }
+  | { type: "Timeline"; entries: TimelineEntry[]; away_since: number; welcome?: WelcomeBackView }
   | { type: "Trade"; trade: TradeEvent }
   | { type: "Transactions"; player_id: PlayerId; request_id: number; before: number | null; entries: TransactionEntry[]; next_before: number | null; since: number }
   | { type: "TransactionRecorded"; player_id: PlayerId; entry: TransactionEntry }
@@ -2224,4 +2604,108 @@ export type ServerMsg =
     }
   | { type: "OrderConfirmed"; order_id: number; ship_id: EntityId; kind: OrderKind }
   | ({ type: "EngagementEstimate" } & EngagementEstimate)
-  | { type: "Error"; message: string };
+  | { type: "Error"; message: string }
+  // §settle-near-friends (R7): the answer to RedeemInvite.
+  | { type: "InviteStatus"; ok: boolean; from?: string; syndicate?: string; near?: string; message?: string };
+
+// §social (R5): the syndicate channel, mail between corporations, and who in
+// the syndicate is online. Times are wall-clock Unix seconds.
+export interface ChatLine { id: number; author: PlayerId; author_name: string; text: string; at: number }
+export interface MailItem { id: number; from: PlayerId; from_name: string; to: PlayerId; to_name: string; subject: string; body: string; at: number; read: boolean }
+export interface MemberPresence { player: PlayerId; name: string; online: boolean; last_seen: number | null }
+/** §settle-near-friends (R7): one of the caller's open invite links. */
+export interface InviteView {
+  code: string;
+  /** Sim time the held home slot is released. */
+  until: number;
+  /** The held home system. */
+  near: string;
+}
+
+export interface SocialView { channel: ChatLine[]; inbox: MailItem[]; sent: MailItem[]; unread: number; members: MemberPresence[]; muted: PlayerId[]; invites?: InviteView[] }
+
+/** §season (v75): the Authority's grip on the charters (docs/endgame-keystone.md). */
+export type Grip = "charter" | "levies" | "inspections" | "martial";
+export type NewsSource = "gnn" | "free_signal";
+export type NewsKind = "decree" | "crackdown" | "wanted" | "war" | "keystone" | "battle" | "capture"
+  | "relic" | "market" | "medal" | "corporation" | "retraction" | "resolve";
+
+/** §season (v75): one Galactic News Network (or Free Signal) item, as heard. */
+export interface NewsView {
+  id: number;
+  /** When its light reached this command center. */
+  heard_at: number;
+  source: NewsSource;
+  kind: NewsKind;
+  headline: string;
+  /** The story names the viewer's corporation. */
+  about_you: boolean;
+  system?: EntityId;
+  fleet?: EntityId;
+}
+
+/** §season (v75): maturity and grip from the census heard, and the news. */
+export interface SeasonView {
+  /** Galaxy maturity, 0–1. */
+  maturity: number;
+  grip: Grip;
+  census_at: number;
+  /** Newest first. */
+  news: NewsView[];
+  /** §season phase 3: the galaxy's Resolve and the Authority's war fleet (hulls). */
+  galaxy_resolve: number;
+  war_fleet: number;
+  /** Crackdowns heard, in force or with evidence still to find. */
+  crackdowns: CrackdownView[];
+  /** §season phase 4: relics awake (with your resonance on yours). */
+  relics: { system: EntityId; awake_at: number; resonance?: number; drawn: boolean }[];
+  /** Bearings you and your syndicate drew. */
+  bearings: BearingView[];
+  /** Sealed worlds your circle found, and every one landed on. */
+  precursors: { system: EntityId; body: number; found_at: number | null; landed_by: string | null; guarded: boolean }[];
+  /** The spy's leak: the Authority knows then. */
+  war_at: number | null;
+  /** At war with the Authority since then. */
+  rebel_since: number | null;
+  rebels: string[];
+  /** The race began then. */
+  race_since: number | null;
+  /** §season phase 5: every Keystone's level and holder (public). */
+  keystones: { system: EntityId; holder: string | null; holder_name: string | null; level: number; seal_at: number | null }[];
+  /** Your syndicate's Keystone: the next level's goods [good, needed, paid] and its powers. */
+  keystone: { system: EntityId; level: number; basket: [Commodity, number, number][]; relics_needed: number; relics_held: number;
+    powers: boolean; gates: EntityId[] } | null;
+  /** The season ends then if no Seal fires. */
+  ends_at: number | null;
+  ending: { kind: "sovereign" | "charter_holds"; at: number; holder: string | null; system: EntityId | null; winners: string[]; won: boolean } | null;
+}
+
+/** §season phase 4: a bearing from a relic; a sealed world lies within
+ * `spread` radians either side of `angle`. */
+export interface BearingView {
+  relic: EntityId;
+  from: Vec2;
+  angle: number;
+  spread: number;
+  by: string;
+  at: number;
+}
+
+/** `keystone`: a Keystone reaching level 3, 6 or 9 brings enforcement on its holder's circle. */
+export type CrackdownKind = "sabotage" | "massacre" | "quarantine" | "relic_seizure" | "keystone";
+
+/** §season phase 3: a crackdown as heard (whether staged is never served). */
+export interface CrackdownView {
+  id: number;
+  kind: CrackdownKind;
+  at: number;
+  until: number;
+  pos: Vec2;
+  system?: EntityId;
+  target?: string;
+  /** Evidence at the scene until then (0: none). */
+  evidence_until: number;
+  exposed: boolean;
+  /** Your Scouts already read it. */
+  read: boolean;
+}

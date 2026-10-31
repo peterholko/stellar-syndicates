@@ -37,6 +37,16 @@ for (const { kind, id } of SHIP_MODELS) {
   assert.equal(triangles, baked.ships[kind].triangles);
   assert.ok(gltf.images.length >= 3, `${kind}: color, roughness and emissive textures`);
   assert.ok(gltf.images.every(image => image.bufferView !== undefined && !image.uri), `${kind}: self-contained textures`);
+  if (kind === "combat_freighter") {
+    assert.ok(triangles >= 4000 && triangles <= 5000, "Combat Freighter preserves its claws and circular nozzles within the LOD2 budget");
+    const sockets = gltf.nodes.filter(node => node.name?.startsWith("socket."));
+    assert.deepEqual(sockets.map(node => node.name).sort(),
+      ["socket.engine.centre", "socket.engine.port", "socket.engine.starboard"], "Three engines, no weapon sockets");
+    for (const socket of sockets) {
+      assert.deepEqual(socket.extras.direction, [0, 0, 1], `${socket.name}: aft-facing exhaust`);
+      assert.equal(socket.translation[1], 0, `${socket.name}: engines share one height`);
+    }
+  }
   if (kind === "mining_barge") {
     assert.ok(triangles >= 4000 && triangles <= 5000, "Barge retains its silhouette within the LOD2 budget");
     const sockets = gltf.nodes.filter(node => node.name?.startsWith("socket."));
@@ -80,7 +90,7 @@ for (const { kind, id } of SHIP_MODELS) {
   totalBytes += bytes.length;
 }
 const shipped = await readdir(new URL("public/art/derived/ship-models/v1/", client));
-assert.equal(shipped.filter(f => f.endsWith(".glb")).length, 21);
+assert.equal(shipped.filter(f => f.endsWith(".glb")).length, SHIP_MODELS.length);
 assert.ok(shipped.every(f => !/-lod[01]|original/.test(f)), "No higher-detail model payloads shipped");
 assert.equal((await buildShipModelAssets()).written, 0, "Production copy is idempotent");
 console.log(`Ship models: all ${kinds.length} game kinds, exact LOD2 bytes/textures, triangle counts, ${SHIP_MODELS.length * 3} verified model renders, posters and reproducible packaging passed (${(totalBytes / 1048576).toFixed(1)} MiB; individual lazy model payloads).`);

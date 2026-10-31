@@ -29,10 +29,17 @@ export function planetStructureImage(key: string, tier: number, sizes: string, o
   // §fuel-overhaul: stand-ins until their own art lands.
   if (key === "uranium_mill") key = "fuel_refinery";
   if (key === "antimatter_plant") key = "fuel_refinery";
+  // §asteroid-quarry: its own rock in the belt's foreground, the machinery
+  // growing with its tier (a wide painting, not a square sprite).
+  if (key === "asteroid_quarry") {
+    const level = Number.isFinite(tier) ? Math.min(6, Math.max(1, Math.floor(tier))) : 1;
+    const base = `/art/derived/asteroid-quarry/v2/tier-${level}`;
+    return `<img class="icon planet-structure-art is-quarry-art" src="${base}-1280.webp" srcset="${base}-640.webp 640w, ${base}-1280.webp 1280w, ${base}-1672.webp 1672w" sizes="${escapeAttribute(sizes)}" alt="" draggable="false" decoding="async">`;
+  }
   // §orbital-defense: the station hangs in the sky as its level's art.
   if (key === "orbital_defense") {
-    const level = Number.isFinite(tier) ? Math.min(5, Math.max(1, Math.floor(tier))) : 1;
-    return sceneImage(`/art/derived/stations/v1/level-${level}`, sizes, "icon planet-structure-art");
+    const level = Number.isFinite(tier) ? Math.min(6, Math.max(1, Math.floor(tier))) : 1;
+    return sceneImage(`/art/derived/stations/v2/level-${level}`, sizes, "icon planet-structure-art");
   }
   const shipyard = ["shipyard", "naval_drydock", "capital_slipway"].includes(key);
   const maxTier = shipyard ? 6 : Object.hasOwn(SURFACE_STRUCTURE_TIERS, key) ? SURFACE_STRUCTURE_TIERS[key] : 0;
@@ -43,7 +50,9 @@ export function planetStructureImage(key: string, tier: number, sizes: string, o
   const variant = key === "naval_drydock" && occupied ? "-occupied" : "";
   // §power: the Power Plant floats over a belt or gas giant, solar for I–II and
   // fusion for III–VI.
-  const orbital = surface === null ? SURFACE_ORBITAL_ART[key]?.[String(level)] : undefined;
+  // §belt-view: a painted belt field (BELT_SURFACES, "<kind>-belt") has no
+  // ground either, so it keeps the floating look and draws no ground plates.
+  const orbital = surface === null || surface?.endsWith("-belt") ? SURFACE_ORBITAL_ART[key]?.[String(level)] : undefined;
   const base = shipyard ? `/art/derived/planet-shipyards/v1/${key}/tier-${level}${variant}`
     : orbital ? `${SURFACE_BASE}/buildings/${key}/orbital-${orbital}`
     : `${SURFACE_BASE}/buildings/${key}/tier-${level}`;
@@ -67,7 +76,7 @@ export function orbitalYardAddress(key: string, tier = 1, painted = false): { x:
   if (!isOrbitalYard(key)) return undefined;
   // §orbital-defense: the station grows with its level (planet-panel.css) and
   // hangs a little lower as it does, clear of the sky's top edge.
-  const level = Math.min(5, Math.max(1, Math.floor(tier)));
+  const level = Math.min(6, Math.max(1, Math.floor(tier)));
   if (key === "orbital_defense") return { x: 50, y: (painted ? -16 : 6) + level, scale: 1 };
   return { x: key === "naval_drydock" ? 26 : 74, y: painted ? -12 : 7, scale: 1 };
 }

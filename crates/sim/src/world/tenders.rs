@@ -7,6 +7,10 @@ use std::collections::BTreeSet;
 /// Tunables: hoses connect only at a stationary, close-range rendezvous.
 pub(super) const TRANSFER_RANGE_SU: f64 = 200.0;
 const TRANSFER_UNITS_PER_S: f64 = 5.0;
+/// §research-wiring Underway Refit: hull points a tender mends per second per
+/// rigged hull (a tier-I yard's pace), and per Alloy carried.
+pub const FIELD_REPAIR_HP_PER_SEC_PER_RIG: f64 = 6.0;
+pub const FIELD_REPAIR_HP_PER_ALLOY: f64 = 80.0;
 
 pub(super) fn hold(fleet: &mut Fleet) {
     fleet.vel = Vec2::ZERO;
@@ -328,6 +332,60 @@ impl World {
             }
         }
         receivers
+    }
+
+    /// §research-wiring Underway Refit: a fuel tender at rest mends its
+    /// owner's hulls at rest beside it, outside combat, paying in Alloys it
+    /// carries — [`FIELD_REPAIR_HP_PER_ALLOY`] a unit, dearer than a yard.
+    pub(super) fn field_repairs(&mut self) {
+        let engaged: BTreeSet<_> = self.engagements.values()
+            .flat_map(|e| e.attackers.iter().chain(&e.defenders).copied()).collect();
+        let tenders: Vec<(EntityId, PlayerId, Vec2, f64)> = self.fleets.iter()
+            .filter(|(id, f)| fitted(f) && f.vel.length() <= 0.5 && !engaged.contains(id)
+                && self.research_flag(f.owner, crate::research::Cap::UnderwayRefit))
+            .map(|(&id, f)| {
+                let rigs = f.ships.iter().filter(|s| s.hp > 0.0
+                    && s.loadout.modules().contains(&crate::module::ModuleKind::FuelTransferRig)).count();
+                (id, f.owner, f.pos, FIELD_REPAIR_HP_PER_SEC_PER_RIG * rigs as f64 * DT)
+            })
+            .collect();
+        for (tender, owner, pos, mut budget) in tenders {
+            let patients: Vec<EntityId> = self.fleets.iter()
+                .filter(|(id, f)| f.owner == owner && !f.disposable && f.vel.length() <= 0.5
+                    && !engaged.contains(id) && f.pos.distance(pos) <= TRANSFER_RANGE_SU
+                    && f.ships.iter().any(|s| s.deficit() > 0.0))
+                .map(|(&id, _)| id).collect();
+            for id in patients {
+                while budget > 1e-9 {
+                    let credit = self.field_repair_credit.get(&tender).copied().unwrap_or(0.0);
+                    let need: f64 = self.fleets[&id].ships.iter().map(|s| s.deficit().max(0.0)).sum();
+                    if need <= 1e-9 {
+                        break;
+                    }
+                    if credit <= 1e-9 {
+                        if self.fleets.get_mut(&tender).unwrap().remove_cargo(crate::Commodity::Alloys, 1) == 0 {
+                            break;
+                        }
+                        self.field_repair_credit.insert(tender, FIELD_REPAIR_HP_PER_ALLOY);
+                        continue;
+                    }
+                    let mut heal = budget.min(credit);
+                    budget -= heal;
+                    let spent = heal;
+                    for sh in self.fleets.get_mut(&id).unwrap().ships.iter_mut() {
+                        let mend = sh.deficit().max(0.0).min(heal);
+                        sh.hp += mend;
+                        heal -= mend;
+                    }
+                    budget += heal; // unspent: the patient is whole
+                    self.field_repair_credit.insert(tender, credit - (spent - heal));
+                    if heal > 1e-9 {
+                        break;
+                    }
+                }
+            }
+        }
+        self.field_repair_credit.retain(|id, credit| *credit > 1e-9 && self.fleets.contains_key(id));
     }
 
     pub(super) fn resolve_tender_transfers(&mut self) {

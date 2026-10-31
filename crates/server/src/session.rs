@@ -71,6 +71,18 @@ pub struct AdminSnapshot {
     /// Game seconds per wall second.
     pub pacing: f64,
     pub corporations: Vec<CorporationStats>,
+    /// §season: the galaxy's ending, once the season is over.
+    pub ending: Option<HallEntry>,
+}
+
+/// §season: a galaxy's line in the hall of fame.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HallEntry {
+    /// "sovereign" or "charter_holds".
+    pub ending: String,
+    pub holder: Option<String>,
+    pub world: Option<String>,
+    pub winners: Vec<String>,
 }
 
 /// Per-connection identifier, unique for the lifetime of the process.
@@ -119,6 +131,10 @@ pub struct ConnSentState {
     pub rankings_sig: Option<u64>,
     /// Private annotations change only on edits, not on simulation ticks.
     pub exploration_journal_version: Option<u64>,
+    /// §social: signature of the channel/mail/presence section as last sent.
+    pub social_sig: Option<u64>,
+    /// §season: signature of the season section as last sent.
+    pub season_sig: Option<u64>,
 }
 
 /// Everything the loop needs to know about one live connection.
@@ -176,6 +192,10 @@ pub enum GameInput {
     Intent { conn_id: ConnId, msg: ClientMsg },
     /// The operator dashboard asks for every corporation's holdings.
     AdminStats { reply: oneshot::Sender<AdminSnapshot> },
+    /// §notifications (R8): the alerts for offline players since the last ask.
+    TakeAlerts { reply: oneshot::Sender<Vec<crate::notify::Alert>> },
+    /// §notifications: `player`'s report on a long absence, for the digest.
+    Digest { player: PlayerId, reply: oneshot::Sender<Option<crate::welcome::WelcomeBackView>> },
 }
 
 /// The connection registry, owned exclusively by the game loop.
@@ -221,6 +241,11 @@ impl Sessions {
             self.by_player.remove(&info.player_id);
         }
         Some(info.player_id)
+    }
+
+    /// §social: does `player` have a live connection?
+    pub fn is_online(&self, player: PlayerId) -> bool {
+        self.by_player.contains_key(&player)
     }
 
     /// Number of distinct players with at least one live connection.
@@ -331,6 +356,21 @@ impl GameHandle {
             .await
             .ok()?
             .ok()
+    }
+
+    /// §notifications (R8): alerts buffered for offline players.
+    pub async fn take_alerts(&self) -> Vec<crate::notify::Alert> {
+        let (reply, answer) = oneshot::channel();
+        self.send(GameInput::TakeAlerts { reply });
+        tokio::time::timeout(std::time::Duration::from_secs(3), answer).await
+            .ok().and_then(Result::ok).unwrap_or_default()
+    }
+
+    /// §notifications: a player's digest, if they have been away long enough.
+    pub async fn digest(&self, player: PlayerId) -> Option<crate::welcome::WelcomeBackView> {
+        let (reply, answer) = oneshot::channel();
+        self.send(GameInput::Digest { player, reply });
+        tokio::time::timeout(std::time::Duration::from_secs(3), answer).await.ok()?.ok()?
     }
 }
 

@@ -69,8 +69,8 @@ fn the_first_research_grant_funds_the_programme_started_at_the_research_step() {
     site_mut(&mut w,home).set_tier(K::Academy,1);
     site_mut(&mut w,home).assign(K::Academy,Assignment::crew(1));
     w.advance_founding_programs(&[]);
-    assert_eq!(w.players[&owner].founding.stage, S::ExpandMining,
-        "a programme under way at a staffed Academy completes the step");
+    assert_eq!(w.players[&owner].founding.stage, S::BuildSmelter,
+        "Enrichment under way at a staffed Academy completes the step");
     // The grant is one-time, whatever the player does next.
     let corp = w.players.get_mut(&owner).unwrap();
     corp.research.progress = 1.0;
@@ -256,7 +256,8 @@ fn loading_a_snapshot_from_the_old_ore_ladder_rebases_prices_and_refunds_stale_o
     assert_eq!(loaded.book.len(), 1, "only the Alloys order still rests");
     assert_eq!(loaded.book[0].commodity, C::Alloys);
     assert_eq!(loaded.players[&owner].warehouse.get(&C::RareMetalOre).copied().unwrap_or(0), 10, "sell escrow returned");
-    assert!((loaded.players[&owner].credits - (credits_after_escrow + 4.0 * 20.0)).abs() < 1e-9, "buy escrow returned");
+    let banked = loaded.players[&owner].credits + loaded.players[&owner].incoming();
+    assert!((banked - (credits_after_escrow + 4.0 * 20.0)).abs() < 1e-9, "buy escrow returned (§treasury: travelling home)");
 
     // A second load finds nothing to rebase and touches nothing.
     let price = loaded.market.price(C::RareMetalOre);

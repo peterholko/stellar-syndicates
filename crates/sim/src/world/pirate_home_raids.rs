@@ -9,6 +9,7 @@ impl World {
     fn home_raid_eligible(&self, owner: PlayerId) -> bool {
         self.players.get(&owner).is_some_and(|corp|
             !corp.founding.protected(self.time)
+            && !corp.leave.active(self.time)
             && self.time - corp.joined_tick as f64 * DT >= pirate::HOME_RAID_GRACE_S)
     }
 
@@ -34,8 +35,9 @@ impl World {
                 || self.pirate_home_raids.values().any(|r| r.owner == owner) { return None; }
             let sys = self.systems.iter().find(|s| Some(s.id) == corp.home_system
                 && s.owner == Some(owner) && s.blockade.is_none())?;
-            if self.in_sovereign_zone(sys.pos) || !sys.stockpile.values()
-                .any(|stock| (*stock - PLUNDER_FLOOR_UNITS).min(*stock * pirate::HOME_RAID_STOCK_FRAC) >= 1.0)
+            let reserve = raid_reserve(sys);
+            if self.in_sovereign_zone(sys.pos) || !sys.stockpile.iter().any(|(c, stock)|
+                raid_exposed(sys, &reserve, *c).min(*stock * pirate::HOME_RAID_STOCK_FRAC) >= 1.0)
             { return None; }
             Some((owner, sys.id, sys.pos, self.pirate_home_raid_after.get(&owner).copied().unwrap_or(0.0)))
         }).min_by(|a, b| a.3.total_cmp(&b.3)
@@ -107,13 +109,17 @@ impl World {
             }
             if self.time < raid.depart_at { continue; }
             if let Some(pack) = self.fleets.get_mut(&fleet) {
-                pack.order = FleetOrder::Blockade { system: raid.system, station: raid.pos };
+                pack.order = FleetOrder::Blockade { system: raid.system, station: raid.pos, raid: false, repeat: false };
             }
-            let at_home = self.fleets[&fleet].pos.distance(raid.pos) <= BLOCKADE_STATION_RADIUS;
+            // §real-coordinates: over the home's main world.
+            let at_home = self.systems.iter().find(|s| s.id == raid.system).is_some_and(|s| {
+                self.besieged_distance(s, self.fleets[&fleet].pos) <= BLOCKADE_STATION_RADIUS
+            });
             if at_home && raid.arrived_at.is_none() {
-                let stock = &self.systems.iter().find(|s| s.id == raid.system).unwrap().stockpile;
-                let allowance = stock.iter().map(|(&c, &n)| (c, (n * pirate::HOME_RAID_STOCK_FRAC)
-                    .min(n - PLUNDER_FLOOR_UNITS).max(0.0).floor() as u32)).collect();
+                let sys = self.systems.iter().find(|s| s.id == raid.system).unwrap();
+                let reserve = raid_reserve(sys);
+                let allowance = sys.stockpile.iter().map(|(&c, &n)| (c, (n * pirate::HOME_RAID_STOCK_FRAC)
+                    .min(raid_exposed(sys, &reserve, c)).max(0.0).floor() as u32)).collect();
                 let r = self.pirate_home_raids.get_mut(&fleet).unwrap();
                 r.arrived_at = Some(self.time);
                 r.allowance = allowance;
@@ -127,7 +133,7 @@ impl World {
         }
     }
 
-    fn end_home_raid(&mut self, fleet: EntityId, events: &mut Vec<Event>) {
+    pub(super) fn end_home_raid(&mut self, fleet: EntityId, events: &mut Vec<Event>) {
         let Some(raid) = self.pirate_home_raids.get_mut(&fleet) else { return; };
         if !raid.returning {
             raid.returning = true;
@@ -164,7 +170,12 @@ impl World {
 
     pub(super) fn home_raid_battle_ended(&mut self, e: &Engagement, events: &mut Vec<Event>) {
         for (side, members) in [(0, &e.attackers), (1, &e.defenders)] {
-            for &fleet in members {
+            // A pack whose mission withdrawal took it out of the battle is no
+            // longer on its side but still fled: it must end the raid, or the
+            // next tick's blockade reopens the same fight (Oct 24 2026, dozens
+            // of two-second battles at one home).
+            let fleets: std::collections::BTreeSet<EntityId> = members.iter().chain(e.departed[side].keys()).copied().collect();
+            for fleet in fleets {
                 if !self.pirate_home_raids.contains_key(&fleet) { continue; }
                 let withdrew = if side == 0 { e.a_fled } else { e.d_fled };
                 let opponents_live = if side == 0 {
@@ -192,17 +203,23 @@ impl World {
             || self.fleets.values().any(|f| f.owner == raid.owner && f.is_combatant()
                 && f.pos.distance(sys.pos) <= crate::build::DEFENSE_PLATFORM_RADIUS) { return; }
         let room = pirate::HOME_RAID_MAX_LOOT.saturating_sub(self.fleets[&fleet].cargo_units());
+        // §vault: only the units under the reserve's line are in reach; taking
+        // them never moves the line, so it is read once.
+        let reserve = raid_reserve(sys);
+        let mut exposed: BTreeMap<crate::cargo::Commodity, f64> = sys.stockpile.keys()
+            .map(|c| (*c, raid_exposed(sys, &reserve, *c))).collect();
         let raid = self.pirate_home_raids.get_mut(&fleet).unwrap();
         raid.loading_credit += PLUNDER_UNITS_PER_SEC * DT;
         let mut remaining = (raid.loading_credit.floor() as u32).min(room);
         while remaining > 0 {
             let sys = self.systems.iter_mut().find(|s| s.id == raid.system).unwrap();
             let good = raid.allowance.iter().filter(|(c, n)| **n > 0
-                && sys.stockpile.get(c).copied().unwrap_or(0.0) >= PLUNDER_FLOOR_UNITS + 1.0)
+                && exposed.get(c).copied().unwrap_or(0.0) >= 1.0 && sys.stockpile.get(c).copied().unwrap_or(0.0) >= 1.0)
                 .max_by(|a, b| crate::market::base_price(*a.0).total_cmp(&crate::market::base_price(*b.0))
                     .then(b.0.cmp(a.0))).map(|(c, _)| *c);
             let Some(good) = good else { break; };
             *sys.stockpile.get_mut(&good).unwrap() -= 1.0;
+            *exposed.get_mut(&good).unwrap() -= 1.0;
             *raid.allowance.get_mut(&good).unwrap() -= 1;
             *raid.stolen.entry(good).or_default() += 1;
             raid.loading_credit -= 1.0;
@@ -212,7 +229,7 @@ impl World {
                 by: PlayerId::PIRATE, owner: raid.owner, system: raid.system,
                 commodity: good, units: 1, pos: raid.pos }));
         }
-        // No banked loading bursts if stock was spent below its protected floor.
+        // No banked loading bursts if stock was spent into the Vault's reach.
         raid.loading_credit = raid.loading_credit.fract();
     }
 }
@@ -276,6 +293,11 @@ mod tests {
         corp.joined_tick = w.tick;
         assert!(!w.try_launch_home_raid(base, fleet, &mut Vec::new()), "legacy/new joins get a grace clock too");
         w.players.get_mut(&owner).unwrap().joined_tick = 0;
+        // §leave (R4): pirates pass a corporation on leave by.
+        let now = w.time;
+        w.players.get_mut(&owner).unwrap().leave.start(now);
+        assert!(!w.try_launch_home_raid(base, fleet, &mut Vec::new()), "no home raids while on leave");
+        w.players.get_mut(&owner).unwrap().leave = Default::default();
         launch(&mut w, base, fleet);
         // Give another hideout a real separate pack. Even after its cooldown
         // would allow a launch, the still-live mission reserves this victim.
@@ -320,7 +342,9 @@ mod tests {
         let stock = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Electronics];
         while w.time + DT < w.pirate_home_raids[&fleet].depart_at {
             w.step(&[]);
-            assert_eq!(w.fleets[&fleet].pos, from, "real attackers stage before departure");
+            // §real-coordinates: staging is at rest at the base's world.
+            assert!(w.fleets[&fleet].vel.length() < 1e-9 && w.fleets[&fleet].pos.distance(from) < crate::transit::HYPERLIMIT,
+                "real attackers stage before departure");
             assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Electronics], stock);
         }
         reach_home(&mut w, fleet);
@@ -361,6 +385,31 @@ mod tests {
     }
 
     #[test]
+    fn a_pack_that_withdraws_ends_its_raid_instead_of_reopening_the_fight() {
+        // A Rift pack below its withdrawal line retreats as soon as a battle
+        // opens. Its raid must end with that battle; before the fix the
+        // blockade reopened it every tick until the hold ran out.
+        let (mut w, owner, _home, base, fleet) = scene();
+        let pos = w.players[&owner].home;
+        let guard = w.alloc_entity_id();
+        let mut g = Fleet::single(guard, owner, ShipKind::Raider, pos, FleetOrder::Idle, None);
+        g.reset_to(ShipKind::Raider, 1);
+        w.fleets.insert(guard, g);
+        {
+            let pack = w.fleets.get_mut(&fleet).unwrap();
+            pack.reset_to(ShipKind::Raider, 1);
+            pack.mission_profile.withdrawal = crate::doctrine::DamageWithdrawal::Hull50;
+            for ship in &mut pack.ships { ship.hp = ship.max_hp() * 0.25; }
+        }
+        launch(&mut w, base, fleet);
+        for _ in 0..(900 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        assert_eq!(w.battle_records.len(), 1, "one battle, not a fresh one every tick");
+        assert!(w.pirate_home_raids.get(&fleet).is_none_or(|r| r.returning), "the raid broke off");
+    }
+
+    #[test]
     fn home_raid_cannot_loot_during_defense_and_a_garrison_can_repel_it() {
         let (mut w, owner, home, base, fleet) = scene();
         let pos = w.players[&owner].home;
@@ -391,13 +440,37 @@ mod tests {
         assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().owner, Some(owner));
     }
 
+    /// §vault (Peter, Oct 28 2026): a home raid's share never reaches into the
+    /// Vault, which holds the dearest goods first.
     #[test]
-    fn home_raid_freezes_per_good_allowance_protects_floor_and_survives_save_load() {
+    fn home_raid_allowance_stops_at_the_vault() {
+        let (mut w, _, home, base, fleet) = scene();
+        launch(&mut w, base, fleet);
+        w.time = w.pirate_home_raids[&fleet].depart_at;
+        let main = w.systems.iter().find(|s| s.id == home).unwrap().main_world().unwrap();
+        w.park_at(fleet, home, main);
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            s.set_tier(StructureKind::Vault, 1);
+            s.stockpile = BTreeMap::from([(Commodity::Electronics, 150.0), (Commodity::Alloys, 100.0),
+                (Commodity::MetallicOre, 300.0)]);
+        }
+        w.tick_pirate_home_raids(&mut Vec::new());
+        let allowance = &w.pirate_home_raids[&fleet].allowance;
+        assert_eq!(allowance.get(&Commodity::Electronics).copied().unwrap_or(0), 0, "the Vault holds all 150");
+        assert_eq!(allowance[&Commodity::Alloys], 10, "a tenth: 50 of the Alloys lie outside the Vault");
+        assert_eq!(allowance[&Commodity::MetallicOre], 30, "the bulk ore, a tenth");
+    }
+
+    #[test]
+    fn home_raid_freezes_per_good_allowance_and_survives_save_load() {
         let (mut w, _, home, base, fleet) = scene();
         launch(&mut w, base, fleet);
         // Isolate loading arithmetic; the separate full-step test covers travel.
         w.time = w.pirate_home_raids[&fleet].depart_at;
-        w.fleets.get_mut(&fleet).unwrap().pos = w.pirate_home_raids[&fleet].pos;
+        // §real-coordinates: arrived over the home's main world.
+        let main = w.systems.iter().find(|s| s.id == home).unwrap().main_world().unwrap();
+        w.park_at(fleet, home, main);
         w.systems.iter_mut().find(|s| s.id == home).unwrap().stockpile
             = BTreeMap::from([(Commodity::Electronics, 50.0), (Commodity::MetallicOre, 41.0), (Commodity::Deuterium, 40.0)]);
         w.tick_pirate_home_raids(&mut Vec::new());
@@ -413,10 +486,12 @@ mod tests {
             w.plunder_home_raid(fleet, &mut Vec::new());
             resumed.plunder_home_raid(fleet, &mut Vec::new());
         }
-        assert_eq!(w.fleets[&fleet].cargo_units(), 6);
+        // §vault: 335 loading calls at 0.5 units a second lift five units,
+        // the dearest good's frozen allowance.
+        assert_eq!(w.fleets[&fleet].cargo_units(), 5);
         let stock = &w.systems.iter().find(|s| s.id == home).unwrap().stockpile;
         assert_eq!(stock[&Commodity::Deuterium], 40.0);
-        assert_eq!(stock[&Commodity::MetallicOre], 40.0);
+        assert_eq!(stock[&Commodity::MetallicOre], 41.0);
         assert_eq!(stock[&Commodity::Electronics], 495.0);
         assert_eq!(serde_json::to_value(&w.pirate_home_raids).unwrap(), serde_json::to_value(&resumed.pirate_home_raids).unwrap());
         assert_eq!(w.pirate_home_raid_after, resumed.pirate_home_raid_after);
@@ -465,7 +540,7 @@ mod tests {
         let away = from + Vec2::new(2000.0, 0.0);
         w.fleets.get_mut(&fleet).unwrap().pos = away;
         w.fleets.get_mut(&fleet).unwrap().order = FleetOrder::Blockade {
-            system: w.pirate_home_raids[&fleet].system, station: w.pirate_home_raids[&fleet].pos };
+            system: w.pirate_home_raids[&fleet].system, station: w.pirate_home_raids[&fleet].pos, raid: false, repeat: false };
         w.systems.iter_mut().find(|s| s.id == base).unwrap().set_tier(StructureKind::DefensePlatform, 0);
         let victor = w.alloc_entity_id();
         w.fleets.insert(victor, Fleet::single(victor, owner, ShipKind::Cruiser, from, FleetOrder::Idle, None));

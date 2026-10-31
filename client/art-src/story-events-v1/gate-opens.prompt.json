@@ -1,0 +1,24 @@
+{
+  "id": "gate-opens",
+  "category": "story",
+  "destination": "client/art-src/story-events-v1/gate-opens.png",
+  "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. Strong readable focal point, essential subjects within the central 75% of the frame, comfortable edges for responsive display. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: the finished Authority jump gate opens for the first time, near the galaxy's central market hub, ending the season.\nScene/backdrop: deep space near the Authority Nexus: a violet wormhole held in a slim ivory ring sits small in the far background. In the middle distance, several other jump gates stand unfinished at different stages (bare truss arcs, half-clad rings) in a loose field.\nSubject: in the foreground, the finished gate, a large ring of eight ivory-and-brass armored segments with cyan field emitters (as in the Gate lineup, stage 5). Its aperture erupts into a blazing white-gold vortex with a bright core. A broad crowd of starships from many corporations hangs back in a respectful arc, small silhouettes catching the gold light: freighters, escorts and a few heavy warships. The gate's light washes over their hulls.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: awe and triumph; the white-gold aperture is the only strong light, against cool blue darkness.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nREFERENCE ROLES: Image 1 is the painting STYLE reference only, not this scene. Image 2 is the authoritative GATE DESIGN and progression lineup: use its OPEN rightmost stage for the large foreground gate and its unfinished stages for the distant construction field. Give the gate believable dimensional depth and perspective within the cinematic scene. Preserve four external diagonal pylons, eight ivory-and-brass segments, cyan emitters and white-gold aperture. The small distant Nexus alone is violet. Do not reproduce lineup labels or white sheet.",
+  "references": [
+    "client/art-src/founding-intro-v1/first-landing.png",
+    "client/art-src/season-gate-v1/gate-lineup.png"
+  ],
+  "transparent": false,
+  "expectedSize": [
+    1672,
+    941
+  ],
+  "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-56028959-8e55-4987-b044-ca4efe010143.png",
+  "inspection": {
+    "width": 1672,
+    "height": 941,
+    "mode": "RGB",
+    "sha256": "99073ef0b8e50a71e65615ff51204e6b2fb3005119792c63baad3c55b979f8e9"
+  },
+  "tool": "image_gen.imagegen",
+  "generatedAt": "2026-10-22"
+}

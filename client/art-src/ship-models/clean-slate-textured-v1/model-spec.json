@@ -1,0 +1,161 @@
+{
+  "name": "Clean Slate",
+  "owner": "Ines Varga",
+  "center": [
+    246,
+    436
+  ],
+  "regions": {
+    "top": [
+      22,
+      58,
+      470,
+      815
+    ],
+    "bottom": [
+      513,
+      58,
+      953,
+      815
+    ],
+    "front": [
+      1057,
+      71,
+      1662,
+      277
+    ],
+    "back": [
+      1052,
+      352,
+      1670,
+      545
+    ],
+    "side": [
+      958,
+      618,
+      1754,
+      815
+    ]
+  },
+  "sideBaseline": 755,
+  "sideHeightScale": 44,
+  "sideRegistration": [
+    [
+      58,
+      435,
+      815
+    ],
+    [
+      965,
+      1363,
+      1750
+    ]
+  ],
+  "frontBaseline": 228,
+  "backBaseline": 490,
+  "elevationScale": 46,
+  "paintCrop": [
+    140,
+    275,
+    204,
+    363
+  ],
+  "accentCrop": [
+    403,
+    293,
+    412,
+    345
+  ],
+  "glassCrop": [
+    179,
+    145,
+    191,
+    155
+  ],
+  "cyanCrop": [
+    1222,
+    476,
+    1241,
+    481
+  ],
+  "engineWallCrop": [
+    1551,
+    710,
+    1700,
+    755
+  ],
+  "counts": {
+    "cargoBays": 6,
+    "dockingCollars": 2,
+    "mainEngines": 2,
+    "bridges": 1,
+    "cranes": 0,
+    "guns": 0
+  },
+  "id": "clean-slate",
+  "pixelsPerUnit": [
+    38,
+    38
+  ],
+  "reference": "clean-slate-reference-v1/clean-slate-reference.png",
+  "triangleBudget": [
+    3500,
+    11000
+  ],
+  "patches": {
+    "silver": [
+      552,
+      968,
+      792,
+      1208
+    ],
+    "dark": [
+      824,
+      968,
+      1064,
+      1208
+    ],
+    "brass": [
+      1096,
+      968,
+      1336,
+      1208
+    ],
+    "paint": [
+      8,
+      968,
+      504,
+      1208
+    ],
+    "accent": [
+      8,
+      1232,
+      504,
+      1456
+    ],
+    "glass": [
+      8,
+      1500,
+      504,
+      1666
+    ],
+    "service": [
+      552,
+      1332,
+      1048,
+      1420
+    ],
+    "enginewall": [
+      8,
+      968,
+      504,
+      1208
+    ],
+    "cyan": [
+      544.5,
+      1264.5,
+      562.5,
+      1268.5
+    ]
+  }
+}

@@ -37,7 +37,13 @@ state.operations = [
   op("43", { kind: "market_delivery", commodity: "metallic_ore", units: 30 } as OperationView["kind"], "completed", 30, 30, 240, 1, true),
   op("44", { kind: "survey_expedition", system: "s2" } as OperationView["kind"], "completed", 1, 1, 400, 2, true),
 ];
-state.board = { day: 8, next_at: 9 * DAY, done: 2, needed: 3, bonus_credits: 1_000, bonus_paid: false };
+state.board = { day: 8, next_at: 9 * DAY, done: 2, needed: 3, bonus_standing: 3, bonus_dossier: 0.05, bonus_paid: false };
+// §standing-ladder (R3): a Trusted corporation part-way through its day.
+state.charter = { standing: 131, max_standing: 200, full_standing: 100, status: "good_standing", title: "Good Standing",
+  tariff_mult: 0.85, market_penalty_frac: 0, reinstate_cost_per_point: 2_000, grade: "trusted", grade_title: "Trusted",
+  next_grade: { title: "Preferred", at: 150 }, earned_today: 5, earn_per_day: 8, shipment_cap: 500 } as typeof state.charter;
+state.charterLadder = [["Good Standing", 100], ["Sanctioned", 100], ["Suspended", 60], ["Revoked", 20], ["Proscribed", -20]];
+state.gradeLadder = [["Chartered", 100], ["Trusted", 125], ["Preferred", 150], ["Commissioned", 175]];
 state.galaxy = { hub: { x: 0, y: 0 }, systems: [{ id: "s1", name: "Tarn", pos: { x: 9_000, y: 0 } },
   { id: "s2", name: "Sif", pos: { x: 0, y: 12_000 } }] } as unknown as typeof state.galaxy;
 state.explorationSites = [];

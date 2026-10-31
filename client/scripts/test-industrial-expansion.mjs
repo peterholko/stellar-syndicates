@@ -13,6 +13,7 @@ function compile(file,deps={}) {
 const plain = x => JSON.parse(JSON.stringify(x));
 const fleets={mineCapable:g=>g.composition?g.composition.some(c=>c.kind==="mining_barge"&&c.count>0):g.kind==="mining_barge",
   fleetCargoCapacity:g=>g.kind==="convoy"?250:g.kind==="mining_belt_station"?3000:0,fleetFuelCapacity:()=>160,fleetBaseSpeed:()=>40,
+  fleetTradeCapacity:g=>g.kind==="convoy"?250:g.kind==="mining_belt_station"?3000:0,
   slowCapable:g=>g.kind==="convoy",transitSpeedMultiplier:g=>g.transit==="slow"?.5:g.transit==="stealth"?.5:1,
   transitLabel:(m="full")=>m==="slow"?"Slow":m==="stealth"?"Stealth":"Full speed",
   regimeStore:g=>({fuel:g.transit==="slow"?"uranium":"deuterium",have:g.fuel??0,capacity:160}),
@@ -27,7 +28,7 @@ const shell=compile("shell/industry.ts",{"../core/derive/fleet":fleets,"../core/
   "../core/derive/founding":compile("core/derive/founding.ts"),
   "../core/derive/geo":{foundingHomeSystemId:()=>"home"},"../planetart":{planetArtwork:()=>({}),planetArtUrl:k=>`/planet/${k}.png`},
   "../hub-model.generated":{HUB_MODEL:{hero:"/hub.webp"}},
-  "../protocol":protocol,"../core/derive/market":{COMMODITIES:["metallic_ore","deuterium","alloys","biomass","uranium"]}});
+  "../protocol":protocol,"../core/derive/market":{COMMODITIES:["metallic_ore","deuterium","alloys","biomass","uranium"],MINERAL_DEPOSITS:["metallic_ore"]}});
 const beltsDerive=compile("core/derive/belts.ts",{"../../icons":icons,"./fleet":fleets,"../../protocol":protocol});
 const commands=compile("core/fleetorders.ts",{"./derive/industry":derive,"./derive/fleet":fleets,"../icons":icons,
   "./derive/format":{fmtDur:n=>`${Math.round(n)}s`},"./derive/belts":beltsDerive});
@@ -69,7 +70,7 @@ assert.equal(derive.freightRouteReason(state,state.ghosts[0],route),null);
 let bad=structuredClone(route); bad.stops[0].load.metallic_ore=300;
 assert.match(derive.freightRouteReason(state,state.ghosts[0],bad),/capacity/);
 bad=structuredClone(route); bad.stops.push(structuredClone(bad.stops[0]));
-assert.match(derive.freightRouteReason(state,state.ghosts[0],bad),/Autonomous Freight/);
+assert.match(derive.freightRouteReason(state,state.ghosts[0],bad),/Three stops end at the first port/);
 state.research.programmes.push({id:"prop_line_autonomous_freight",state:"completed"});
 assert.equal(derive.freightRouteReason(state,state.ghosts[0],bad),null);
 bad.fuel_reserve=200; assert.match(derive.freightRouteReason(state,state.ghosts[0],bad),/tank/);
@@ -109,12 +110,21 @@ shell.handleIndustryAction({dataset:{industryAct:"copy",fleet:"f"}},ctx);
 assert.notEqual(shell.industryUiSignature(state).route,state.ghosts[0].industry.run.route);
 shell.handleIndustryAction({dataset:{industryAct:"close-editor"}},ctx);
 const trip=shell.industryHtml(state);
+// §unlocks (Peter, Oct 28 2026): what research hasn't unlocked isn't shown.
+assert.doesNotMatch(trip,/data-tab="harvesting"/,"no Harvesting tab before the Ramscoop");
+state.research.programmes.push({id:"prop_expedition_v_ramscoop",state:"completed"});
+assert.match(shell.industryHtml(state),/data-tab="harvesting"/);
+state.research.programmes.pop();
+shell.handleIndustryAction({dataset:{industryAct:"tab",tab:"projects"}},ctx);
+assert.doesNotMatch(shell.industryHtml(state),/Orbital assembly complex|<b>Cruiser<\/b>/,"no Orbital Assembly before Fusion Reactors, no Cruiser reserve before its hull");
 assert.match(trip,/Loading at Market Hub/,"a running route shows where its Freighter is");
 assert.match(trip,/Stop route…/);assert.doesNotMatch(trip,/Assign route/,"no editor over a running route until asked");
 
 site.stockpile.push({commodity:"alloys",units:50});
 assert.match(derive.colonyProjectReason(state,site,0,"orbital_assembly","metallic_ore"),/Fusion Reactors/,"its Warp Cores wait for Fusion Reactors");
 state.research.programmes.push({id:"mat_foundry_iv_fusion_reactors",state:"completed"});
+assert.match(shell.industryHtml(state),/Orbital assembly complex/,"Fusion Reactors opens it");
+shell.handleIndustryAction({dataset:{industryAct:"tab",tab:"routes"}},ctx);
 assert.equal(derive.colonyProjectReason(state,site,0,"orbital_assembly","metallic_ore"),null);
 site.industry.reservations.push({target:{kind:"cruiser"},goods:{alloys:50}});
 assert.match(derive.colonyProjectReason(state,site,0,"orbital_assembly","metallic_ore"),/Deliver/);
@@ -152,7 +162,7 @@ assert.equal(draft.shopping_budget,3000);assert.equal(draft.repeat,false);
 assert.equal(draft.stops.length,3);assert.equal(draft.stops[1].sell,true);
 assert.equal(derive.freightRouteReason(state,state.ghosts[0],draft),null,"one-off home/Hub/home needs no automation research");
 const repeated=structuredClone(draft);repeated.repeat=true;
-assert.match(derive.freightRouteReason(state,state.ghosts[0],repeated),/Autonomous Freight/);
+assert.match(derive.freightRouteReason(state,state.ghosts[0],repeated),/Three stops end at the first port/);
 const invalidCap=structuredClone(draft);invalidCap.shopping_budget=-1;
 assert.match(derive.freightRouteReason(state,state.ghosts[0],invalidCap),/shopping cap/);
 shell.handleIndustryAction({dataset:{industryAct:"assign"}},ctx);
@@ -168,7 +178,7 @@ let card=shell.industryHtml(state);
 assert.match(card,/Send your first shipment/);
 assert.match(card,/data-coach="send-shipment"/,"the guide's coach ring has a target");
 assert.match(card,/Covers all 35 Academy goods you lack/,"coverage counts the home deficit for the Academy, which comes next");
-assert.match(card,/Charter · step 12/,"the guide's own step number");
+assert.match(card,/Charter · step 13/,"the guide's own step number");
 assert.match(card,/<dt>Escort<\/dt><dd><img/,"the Interceptor rides along when one is ready");
 assert.match(card,/Waits for 50 ore · 0 in stock/,"the load waits for ore it does not have yet");
 assert.match(card,/Prices arrive with the next Hub report/,"no money estimate before a price report");
@@ -176,10 +186,10 @@ const basketBefore=plain(derive.openingImportPlan(state,site,"transport").manife
 assert.match(card,/data-good="uranium"/,"the basket offers Uranium for the home stockpile");
 shell.handleIndustryAction({dataset:{industryAct:"basket",good:"uranium",step:"1"}},ctx);
 assert.equal(shell.industryUiSignature(state).basket.uranium,(basketBefore.uranium??0)+1,"steppers edit the return basket");
-const holdOf=fleets.fleetCargoCapacity;fleets.fleetCargoCapacity=g=>g.kind==="convoy"?47:0;
+const holdOf=fleets.fleetTradeCapacity;fleets.fleetTradeCapacity=g=>g.kind==="convoy"?47:0;
 for(let i=0;i<15;i++)shell.handleIndustryAction({dataset:{industryAct:"basket",good:"machinery",step:"1"}},ctx);
 assert.equal(Object.values(shell.industryUiSignature(state).basket).reduce((n,v)=>n+v,0),47,"the basket never outgrows the hold");
-fleets.fleetCargoCapacity=holdOf;
+fleets.fleetTradeCapacity=holdOf;
 const shipped=staged.length;
 shell.handleIndustryAction({dataset:{industryAct:"send-shipment"}},ctx);
 assert.equal(sent.length,sentBefore,"sending never bypasses fleet confirmation");

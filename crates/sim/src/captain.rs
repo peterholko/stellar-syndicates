@@ -80,6 +80,7 @@ pub fn command_weight(kind: ShipKind) -> u32 {
         ShipKind::SurveyProbe => 1,
         ShipKind::MiningBarge => 1,
         ShipKind::MiningBeltStation => 4,
+        ShipKind::CombatFreighter => 1,
         ShipKind::TinyFreighter | ShipKind::SmallFreighter => 1,
         ShipKind::LargeFreighter => 2,
         ShipKind::HeavyFreighter => 4,
@@ -183,13 +184,87 @@ pub struct CaptainAttributes {
     pub logistics: u8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptainAttribute {
     Command,
     Navigation,
     Fieldcraft,
     Logistics,
+}
+
+impl CaptainAttribute {
+    pub const ALL: [CaptainAttribute; 4] = [Self::Command, Self::Navigation, Self::Fieldcraft, Self::Logistics];
+}
+
+// ─── §captain-gear (R14) ────────────────────────────────────────────────────
+// Kit a captain carries, found in Signal crates and pirate caches and kept in
+// the corporation's armory until worn. Each piece raises one attribute past
+// what training reaches.
+
+/// Gear slots a captain has.
+pub const GEAR_SLOTS: usize = 2;
+/// Gear lifts an attribute to at most this; training stops at
+/// [`CAPTAIN_ATTRIBUTE_MAX`].
+pub const CAPTAIN_ATTRIBUTE_GEARED_MAX: u8 = 7;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GearGrade {
+    /// +1.
+    Field,
+    /// +2.
+    Relic,
+}
+
+impl GearGrade {
+    pub fn bonus(self) -> u8 {
+        match self {
+            Self::Field => 1,
+            Self::Relic => 2,
+        }
+    }
+}
+
+/// One piece of gear: the attribute it raises and by how much.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct Gear {
+    pub attribute: CaptainAttribute,
+    pub grade: GearGrade,
+}
+
+impl Gear {
+    pub fn name(self) -> &'static str {
+        use CaptainAttribute as A;
+        use GearGrade as G;
+        match (self.attribute, self.grade) {
+            (A::Command, G::Field) => "Tactical Datacore",
+            (A::Command, G::Relic) => "Admiral's Datacore",
+            (A::Navigation, G::Field) => "Astrogation Suite",
+            (A::Navigation, G::Relic) => "Pathfinder's Astrolabe",
+            (A::Fieldcraft, G::Field) => "Survey Kit",
+            (A::Fieldcraft, G::Relic) => "Precursor Lens",
+            (A::Logistics, G::Field) => "Quartermaster's Ledger",
+            (A::Logistics, G::Relic) => "Chandler's Seal",
+        }
+    }
+
+    /// A piece chosen by `pick` (any number), of `grade`.
+    pub fn pick(pick: u64, grade: GearGrade) -> Self {
+        Gear { attribute: CaptainAttribute::ALL[(pick % 4) as usize], grade }
+    }
+}
+
+/// §captain-gear (R14): a captain's service record, shown on the corporation
+/// card.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaptainRecord {
+    /// Battles the captain's formation came out of.
+    pub battles: u32,
+    pub wins: u32,
+    /// Enemy hulls their side destroyed in those battles.
+    pub kills: u32,
+    pub signals: u32,
 }
 
 /// The fate fixed when an officer's entire formation is lost. It is truth at
@@ -255,6 +330,11 @@ pub struct CaptainSighting {
     pub next_level_xp: u32,
     pub unspent: u8,
     pub attributes: CaptainAttributes,
+    /// §captain-gear (R14): what the captain wears, and their record.
+    #[serde(default)]
+    pub gear: [Option<Gear>; GEAR_SLOTS],
+    #[serde(default)]
+    pub record: CaptainRecord,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -289,6 +369,11 @@ pub struct Captain {
     pub xp: u32,
     pub unspent: u8,
     pub attributes: CaptainAttributes,
+    /// §captain-gear (R14): worn kit, raising attributes past training.
+    #[serde(default)]
+    pub gear: [Option<Gear>; GEAR_SLOTS],
+    #[serde(default)]
+    pub record: CaptainRecord,
 }
 
 impl Captain {
@@ -423,6 +508,8 @@ impl Captain {
                 fieldcraft: 1,
                 logistics: 1,
             },
+            gear: [None; GEAR_SLOTS],
+            record: CaptainRecord::default(),
         };
         out.raise(focus);
         out
@@ -459,7 +546,25 @@ impl Captain {
             next_level_xp: xp_for_level(self.level.saturating_add(1)),
             unspent: self.unspent,
             attributes: self.attributes,
+            gear: self.gear,
+            record: self.record,
         }
+    }
+
+    /// Trained attributes plus worn gear, each at most
+    /// [`CAPTAIN_ATTRIBUTE_GEARED_MAX`]. Every effect reads these.
+    pub fn effective(&self) -> CaptainAttributes {
+        let mut out = self.attributes;
+        for gear in self.gear.iter().flatten() {
+            let value = match gear.attribute {
+                CaptainAttribute::Command => &mut out.command,
+                CaptainAttribute::Navigation => &mut out.navigation,
+                CaptainAttribute::Fieldcraft => &mut out.fieldcraft,
+                CaptainAttribute::Logistics => &mut out.logistics,
+            };
+            *value = value.saturating_add(gear.grade.bonus()).min(CAPTAIN_ATTRIBUTE_GEARED_MAX);
+        }
+        out
     }
 
     pub fn grant_xp(&mut self, amount: u32) {
@@ -489,20 +594,37 @@ impl Captain {
         command_load(composition) <= self.command_capacity()
     }
 
+    // Effects grow a step per point above 1, through gear to the geared max.
     pub fn command_damage_mult(&self) -> f64 {
-        1.0 + (self.attributes.command.saturating_sub(1) as f64 * 0.02).min(0.10)
+        1.0 + (self.effective().command.saturating_sub(1) as f64 * 0.02).min(0.12)
     }
 
     pub fn navigation_spool_mult(&self) -> f64 {
-        1.0 - (self.attributes.navigation.saturating_sub(1) as f64 * 0.02).min(0.10)
+        1.0 - (self.effective().navigation.saturating_sub(1) as f64 * 0.02).min(0.12)
     }
 
     pub fn fieldcraft_survey_mult(&self) -> f64 {
-        1.0 - (self.attributes.fieldcraft.saturating_sub(1) as f64 * 0.03).min(0.15)
+        1.0 - (self.effective().fieldcraft.saturating_sub(1) as f64 * 0.03).min(0.18)
     }
 
     pub fn logistics_fuel_mult(&self) -> f64 {
-        1.0 - (self.attributes.logistics.saturating_sub(1) as f64 * 0.02).min(0.10)
+        1.0 - (self.effective().logistics.saturating_sub(1) as f64 * 0.02).min(0.12)
+    }
+
+    /// §captain-gear (R14): wear `gear` in the first free slot.
+    pub fn equip(&mut self, gear: Gear) -> bool {
+        match self.gear.iter_mut().find(|slot| slot.is_none()) {
+            Some(slot) => {
+                *slot = Some(gear);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Take off what slot `slot` holds.
+    pub fn unequip(&mut self, slot: usize) -> Option<Gear> {
+        self.gear.get_mut(slot).and_then(Option::take)
     }
 
     fn attribute(&self, attribute: CaptainAttribute) -> u8 {

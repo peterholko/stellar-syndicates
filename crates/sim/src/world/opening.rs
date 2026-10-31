@@ -180,6 +180,11 @@ impl World {
                     self.promote_privateer_hunter(owner, fleet);
                 }
                 self.reveal_founding_den(owner, at, pos);
+                // §vendetta: his last words name his uncle.
+                if !owner.is_bot() {
+                    out.push(Event::new(at, EventPayload::Vendetta {
+                        owner, beat: crate::founding::VendettaBeat::Kill, pos, stolen: BTreeMap::new(), wreck: None }));
+                }
             }
         }
         let arrived = self.players[&owner]
@@ -187,6 +192,8 @@ impl World {
             .privateer_report_at
             .is_some_and(|at| at <= self.time);
         if arrived && !founding.reward_granted {
+            let title = self.pirate_family(owner)
+                .map_or_else(|| "Rogue Privateer destroyed · bounty".to_string(), |p| format!("{} destroyed · bounty", p.nephew_name()));
             let corp = self.players.get_mut(&owner).unwrap();
             corp.credits += crate::founding::PRIVATEER_CREDIT_BOUNTY;
             corp.founding.reward_granted = true;
@@ -195,8 +202,10 @@ impl World {
                 self.time,
                 EventPayload::CharterStipend {
                     owner,
-                    title: "Rogue Privateer destroyed · bounty".into(),
+                    title,
                     credits: crate::founding::PRIVATEER_CREDIT_BOUNTY,
+                    standing: 0.0,
+                    dossier: None,
                 },
             ));
         }
@@ -222,7 +231,6 @@ impl World {
                 })
             })
         };
-        let owns = |kind: ShipKind| self.fleets.values().any(|g| g.owner == owner && g.contains(kind));
         // The trader has left without a sale: nothing to wait for.
         let trader_gone = founding.merchant_called && !self.merchants.values().any(|v| v.customer == owner);
         let f = &self.players[&owner].founding;
@@ -232,11 +240,21 @@ impl World {
             S::BuildAgroplex => home_has(K::Agroplex, true).then_some(S::BuildMine),
             S::BuildMine => mine.then_some(S::PirateRaid),
             // The report of what the raid took reaching command.
-            S::PirateRaid => f.raid_report_at.is_some_and(|at| at <= self.time).then_some(S::SellOre),
+            S::PirateRaid => f.raid_report_at.is_some_and(|at| at <= self.time).then_some(S::BuildGunPlatform),
+            // §gun-platform: a station over the home, at any level.
+            S::BuildGunPlatform => home_id.and_then(|id| self.systems.iter().find(|s| s.id == id))
+                .is_some_and(|s| s.station_level() >= 1).then_some(S::SellOre),
             S::SellOre => (f.ore_sold > 0 || trader_gone).then_some(S::PowerShipyard),
             S::PowerShipyard => home_has(K::PowerPlant, false).then_some(S::BuildShipyard),
             S::BuildShipyard => home_has(K::Shipyard, true).then_some(S::BuildInterceptor),
-            S::BuildInterceptor => owns(ShipKind::Raider).then_some(S::DefeatPrivateer),
+            // Peter (Oct 30 2026): its captain isn't optional. Done once a
+            // captain commands it, or when none is free to.
+            S::BuildInterceptor => {
+                let free = self.players[&owner].captains.values().any(|c| c.available_in_reserve() && !c.missing());
+                self.fleets.values().any(|g| g.owner == owner && g.contains(ShipKind::Raider)
+                    && (!free || self.captain_assigned_to(owner, g.id).is_some()))
+                    .then_some(S::DefeatPrivateer)
+            }
             // The privateer's log names its den; homes without one skip it.
             S::DefeatPrivateer => f.reward_granted
                 .then_some(if f.den.is_some() { S::EliminateDen } else { S::PrepareExport }),
@@ -285,7 +303,8 @@ mod tests {
         let home = w.players[&owner].home;
         let (&id, fleet) = w.fleets.iter().find(|(_, f)| f.owner == owner && f.contains(ShipKind::Raider))
             .expect("an Interceptor at home");
-        assert!(fleet.pos.distance(home) < 1.0);
+        assert!(fleet.at_world.is_some_and(|a| Some(a.system) == w.players[&owner].home_system), "berthed at a home world");
+        assert!(fleet.pos.distance(home) < crate::transit::HYPERLIMIT);
         assert!(w.players[&owner].captains.values().all(|c| c.assigned_fleet.is_none()), "no captain: the charter assigns one");
         let dest = home + Vec2::new(4_000.0, 0.0);
         w.step(&[Command::MoveShip { player_id: owner, ship_id: id, dest }]);
@@ -359,6 +378,9 @@ mod tests {
         let (mut w, owner, home) = scene();
         let land = landing(&w, home);
         stocked(&mut w, owner, home);
+        // §charter-gates: step 7 has opened all five. (Step 4's mine takes the
+        // privateer's flight instead: `founding_raid`.)
+        w.players.get_mut(&owner).unwrap().founding.stage = S::PowerShipyard;
         for kind in crate::founding::OPENING_BUILDS {
             order(&mut w, owner, home, land, kind);
             assert_eq!(required(&w, kind), ten, "{kind:?} I takes ten seconds");
@@ -393,13 +415,15 @@ mod tests {
         }
         assert_eq!(s.storage_cap(), crate::build::LANDING_HOLDS, "its holds are the storage");
         assert!(s.bodies.iter().find(|b| b.id == land).unwrap().habitable);
-        for (c, n) in crate::galaxy::charter_kit() {
-            // The settlers have eaten a tick's Provisions; the fuel seed tops
-            // up the kit's Uranium.
-            let seed = if c == crate::fuel::FISSION_FUEL { crate::fuel::URANIUM_HOME_SEED } else { 0.0 };
-            assert!((stock(&w, home, c) - n - seed).abs() < 0.1, "{c:?}");
+        // §charter-crates: the holds carry the Landfall crate, and the
+        // Authority releases the rest a chapter at a time.
+        for (c, n) in crate::founding::CharterCrate::Landfall.stock() {
+            // The settlers have eaten a tick's Provisions.
+            assert!((stock(&w, home, c) - n).abs() < 0.1, "{c:?}");
         }
-        assert!(stock(&w, home, crate::fuel::FISSION_FUEL) >= 52.5 + 1.4, "the first Freighter and the probe fill up");
+        assert_eq!(stock(&w, home, crate::fuel::FISSION_FUEL), crate::fuel::URANIUM_HOME_SEED, "only the home's seed");
+        assert!(crate::founding::charter_supplies()[&crate::fuel::FISSION_FUEL] + crate::fuel::URANIUM_HOME_SEED >= 52.5 + 1.4,
+            "the first Freighter and the probe fill up");
         // No free power anywhere: only the Command Center's reactor.
         w.step(&[]);
         let s = w.systems.iter().find(|s| s.id == home).unwrap();
@@ -453,7 +477,12 @@ mod tests {
         let now = w.time;
         w.players.get_mut(&owner).unwrap().founding.raid_report_at = Some(now);
         w.advance_founding_programs(&[]);
-        assert_eq!(stage(&w, owner), S::SellOre, "the report hands on to the ore sale");
+        assert_eq!(stage(&w, owner), S::BuildGunPlatform, "the report hands on to the home's defense");
+        w.advance_founding_programs(&[]);
+        assert_eq!(stage(&w, owner), S::BuildGunPlatform, "no station yet");
+        place(&mut w, home, land, K::OrbitalDefense);
+        w.advance_founding_programs(&[]);
+        assert_eq!(stage(&w, owner), S::SellOre, "the Gun Platform hands on to the ore sale");
         w.step(&[]);
         assert_eq!(stage(&w, owner), S::SellOre, "the trader is in orbit, waiting for ore");
         w.players.get_mut(&owner).unwrap().founding.ore_sold = 12;
@@ -471,9 +500,25 @@ mod tests {
             EventPayload::CharterStipend { title, .. } if title == "Shipyard staffed")));
         assert_eq!(w.players[&owner].credits, before + 400.0);
         let at_home = w.players[&owner].home;
-        add_ship(&mut w, owner, ShipKind::Raider, at_home);
+        let interceptor = add_ship(&mut w, owner, ShipKind::Raider, at_home);
         w.advance_founding_programs(&[]);
-        assert_eq!(stage(&w, owner), S::DefeatPrivateer, "an Interceptor launched");
+        assert_eq!(stage(&w, owner), S::BuildInterceptor, "Peter: the captain is not optional");
+        let captain = *w.players[&owner].captains.keys().next().unwrap();
+        w.apply_now(&Command::AssignCaptain { player_id: owner, captain_id: captain, fleet_id: interceptor }, &mut Vec::new());
+        w.advance_founding_programs(&[]);
+        assert_eq!(stage(&w, owner), S::DefeatPrivateer, "an Interceptor launched under its captain");
+    }
+
+    #[test]
+    fn with_no_captain_free_the_interceptor_alone_completes_its_step() {
+        let (mut w, owner, _) = scene();
+        w.players.get_mut(&owner).unwrap().founding.set_stage(S::BuildInterceptor, w.time);
+        let home = w.players[&owner].home;
+        add_ship(&mut w, owner, ShipKind::Raider, home);
+        let other = add_ship(&mut w, owner, ShipKind::Raider, home + Vec2::new(5_000.0, 0.0));
+        for c in w.players.get_mut(&owner).unwrap().captains.values_mut() { c.assigned_fleet = Some(other); c.stationed_system = None; }
+        w.advance_founding_programs(&[]);
+        assert_eq!(stage(&w, owner), S::DefeatPrivateer, "never a dead end");
     }
 
     #[test]
@@ -527,16 +572,17 @@ mod tests {
         let privateer = w.players[&owner].founding.privateer.expect("the raid set out");
         w.players.get_mut(&owner).unwrap().founding.set_stage(S::BuildInterceptor, w.time);
         let guard = add_ship(&mut w, owner, ShipKind::Raider, home);
+        let captain = {
+            let c = w.players.get_mut(&owner).unwrap().captains.values_mut().next().unwrap();
+            c.assigned_fleet = Some(guard);
+            c.stationed_system = None;
+            c.id
+        };
         w.advance_founding_programs(&[]);
         assert_eq!(stage(&w, owner), S::DefeatPrivateer, "an Interceptor launched");
         let before = w.players[&owner].credits;
         let at = w.time;
         let pos = w.fleets[&privateer].pos;
-        let captain = {
-            let c = w.players.get_mut(&owner).unwrap().captains.values_mut().next().unwrap();
-            c.assigned_fleet = Some(guard);
-            c.id
-        };
         let kill = Event::new(at, EventPayload::RaidResolved {
             battle_id: None, aftermath: None,
             attacker: owner, defender: PlayerId::PIRATE, attacker_ship: guard, target_ship: privateer,
@@ -561,7 +607,7 @@ mod tests {
         // Its fall reaches command: the den's light, not the kill's.
         let den_pos = w.systems.iter().find(|s| s.id == den).unwrap().pos;
         let cleared = Event::new(w.time, EventPayload::PirateEnclaveCleared {
-            owner, system: den, pos: den_pos, plunder: Default::default() });
+            owner, system: den, pos: den_pos, plunder: Default::default(), personal: false });
         w.advance_founding_programs(&[cleared]);
         assert_eq!(stage(&w, owner), S::EliminateDen);
         w.time = w.players[&owner].founding.den_report_at.unwrap();
@@ -620,7 +666,7 @@ mod tests {
         let notices = w.advance_founding_programs(&[]);
         assert_eq!(w.players[&owner].credits, before + 300.0);
         assert!(notices.iter().any(|e| matches!(&e.payload,
-            EventPayload::CharterStipend { owner: o, credits, title } if *o == owner && *credits == 300.0 && title == "Mine online")));
+            EventPayload::CharterStipend { owner: o, credits, title, .. } if *o == owner && *credits == 300.0 && title == "Mine online")));
         w.time += 1.0;
         assert!(w.advance_founding_programs(&[]).iter().all(|e| !matches!(e.payload, EventPayload::CharterStipend { .. })));
         assert_eq!(w.players[&owner].credits, before + 300.0, "paid once");
@@ -629,17 +675,61 @@ mod tests {
         w.advance_founding_programs(&[]);
         assert_eq!(w.players[&owner].credits, before + 300.0);
         // Before the Interceptor, the stipends leave the founder short of
-        // buying back what the raid took (the Solar Array's, the Shipyard's,
-        // Shipyard II's and the Interceptor's 50 semiconductors and its 15
-        // Armaments): the ore sale makes up the rest, inside the trader's cap.
+        // buying back what the raid took (the Solar Array's, the Shipyard's
+        // and the Interceptor's 35 semiconductors and its 15 Armaments): the
+        // ore sale makes up the rest, inside the trader's cap.
         let early: f64 = [S::BuildMine, S::PirateRaid, S::BuildInterceptor]
             .into_iter().filter_map(crate::founding::charter_stipend).map(|(_, c)| c).sum();
         let price = |c: C| crate::market::base_price(c) * (1.0 + crate::merchant::FOUNDING_MARKUP);
-        let short = 50.0 * price(C::Electronics) + crate::founding::KIT_ARMAMENTS * price(C::Armaments)
+        let short = 35.0 * price(C::Electronics) + crate::founding::KIT_ARMAMENTS * price(C::Armaments)
             - (before + early);
         let ore = short / (crate::market::base_price(C::MetallicOre) * crate::merchant::ORE_PRICE_SHARE);
         assert!(short > 0.0, "the ore sale is needed");
         assert!(ore <= crate::merchant::ORE_CAP as f64 * 0.8, "and fits the trader's cap: {ore:.0} ore");
+    }
+
+    /// §vendetta (Oct 29 2026): the kit and the trader's stock supply every
+    /// charter build, the second Interceptor the uncle's fight needs too, and
+    /// the privateer's bounty pays for the last call's stock-up.
+    #[test]
+    fn the_kit_and_the_trader_supply_every_charter_build_and_the_bounty_pays_the_last_call() {
+        use crate::build::{recipe_for, BuildKind as B};
+        let need = |builds: &[B]| {
+            let mut goods: BTreeMap<C, f64> = BTreeMap::new();
+            for &what in builds {
+                for &(c, n) in recipe_for(what).costs {
+                    *goods.entry(c).or_default() += n;
+                }
+            }
+            *goods.entry(C::Electronics).or_default() += crate::merchant::RESEARCH_RESERVE;
+            goods
+        };
+        let up = |k: K| B::Upgrade { upgrade: k };
+        let ship = |s: ShipKind| B::Ship { ship: s };
+        // After the den: the Academy, the Smelter, the expansion's Solar Array
+        // and mine, the probe, the barge and the second Interceptor (the
+        // client's `AHEAD`).
+        let ahead = [up(K::Academy), up(K::Smelter), up(K::PowerPlant), up(K::MiningComplex), ship(ShipKind::SurveyProbe),
+            ship(ShipKind::MiningBarge), ship(ShipKind::Raider), ship(ShipKind::Raider)];
+        let before = [up(K::Bioharvester), up(K::Habitat), up(K::Agroplex), up(K::MiningComplex), up(K::OrbitalDefense),
+            up(K::PowerPlant), up(K::Shipyard), ship(ShipKind::Raider), ship(ShipKind::TinyFreighter)];
+        let kit = crate::founding::charter_supplies();
+        let trader: BTreeMap<C, u32> = crate::merchant::FOUNDING_STOCK.into_iter().collect();
+        for (c, n) in need(&[&before[..], &ahead[..]].concat()) {
+            // The raid takes the kit's semiconductors and Armaments; the trader sells them back.
+            let kept = if crate::founding::RAID_TAKES.contains(&c) { 0.0 } else { kit.get(&c).copied().unwrap_or(0.0) };
+            let sold = trader.get(&c).copied().unwrap_or(0) as f64;
+            assert!(kept + sold >= n, "{c:?}: the charter needs {n}, the kit keeps {kept} and the trader sells {sold}");
+        }
+        assert_eq!(kit[&C::WarpCore], 5.0, "the Tiny Freighter, three Interceptors and the barge");
+        // The last call buys what the raid took for the builds ahead, and the
+        // Interceptor's tank (30 Deuterium) besides.
+        let price = |c: C| crate::market::base_price(c) * (1.0 + crate::merchant::FOUNDING_MARKUP);
+        let ahead = need(&ahead);
+        let stock_up: f64 = crate::founding::RAID_TAKES.iter().map(|c| ahead.get(c).copied().unwrap_or(0.0) * price(*c)).sum::<f64>()
+            + 30.0 * price(C::Deuterium);
+        let paid = crate::founding::PRIVATEER_CREDIT_BOUNTY + crate::founding::charter_stipend(S::DefeatPrivateer).unwrap().1;
+        assert!(paid >= stock_up + 1_000.0, "the bounty buys the stock-up with room to spare: {paid} vs {stock_up:.0}");
     }
 
     #[test]

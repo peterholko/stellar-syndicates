@@ -1,4 +1,4 @@
-import { isPlayerFreighter } from "../../protocol";
+import { fleetCountLabel, isPlayerFreighter, traderShipArt } from "../../protocol";
 import { blockadeStatus, heldOutsideStatus, runBlockadesCopy } from "../../core/derive/blockade";
 import { FIELD_FUEL, FIELD_RADIUS_SU, FIELD_SECONDS, interdictionReason, interdictorCapable } from "../../core/derive/interdiction";
 import { captainTitle, captainXpFloor, fleetCommandLoad } from "../../core/derive/captains";
@@ -6,7 +6,7 @@ import { missionCommand, missionHtml, pirateFactionHtml } from "../mission";
 import { fleetIndustryHtml } from "../industry";
 import { anchorStatus, isStation } from "../../core/derive/belts";
 import { dispatchWarnings, fleetReadiness } from "../../core/derive/readiness";
-import {
+import { contactIntel,
   AAA_SERVICE_FEE,
   aaaEstimate,
   coLocatedOwnFleet,
@@ -17,6 +17,7 @@ import {
   slowCapable,
   fleetBaseSpeed,
   fleetCargoCapacity,
+  fleetTradeCapacity,
   FUEL_PER_MASS_DISTANCE,
   fleetUraniumCapacity,
   guardCapable,
@@ -34,8 +35,10 @@ import { fmt, fmtEta, informationDelay } from "../../core/derive/format";
 import { emplacementLabel, gravityWellAt, nearestKnownDock, systemName } from "../../core/derive/geo";
 import { fitLegal, kitAffordable, kitCostLabel, maxCargoRefitCount, MODULE_SLOTS, moduleLedgerAt, ownedHaulDestinations, refitCargoBlocked, refitFuelBlocked, refitPreview } from "../../core/derive/market";
 import { MODULES, utilityChange } from "../../core/derive/equipment";
-import { utilityWorkshop } from "../../core/derive/market";
+import { PAYMENT_MARGIN, utilityWorkshop } from "../../core/derive/market";
 import { tenderStatus } from "../../core/derive/tenders";
+import { TRADERS, traderPortrait } from "../../core/derive/trader";
+import { dockedMerchant } from "../../core/derive/merchant";
 import { fuelTransferHtml } from "../fueltransfer";
 import { orderEtaRange, orderObject, orderPoint, SHIP_STATS } from "../../core/derive/orders";
 import { jumpRangeAt } from "../../core/derive/nebula";
@@ -56,7 +59,7 @@ import {
   type TransitMode,
   type Vec2,
 } from "../../protocol";
-import { liveSimTime } from "../../state";
+import { liveSimTime, state } from "../../state";
 import { captainPortrait } from "../art";
 import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
@@ -81,6 +84,22 @@ const POSTURES: { key: EngagementPosture; label: string; copy: string }[] = [
 /** The routed fleet command surface. Everything here is built from the served
  * ghost and the player's own command records: route geometry, fuel, docking,
  * cargo, officers and order phases never consult server truth. */
+/** §designations Signature Mimicry: disguise an own fleet as a freighter. */
+function mimicHtml(g: GhostView): string {
+  if (!g.own || !state.research?.programmes.some(p => p.id === "comp_shadow_v_signature_mimicry" && p.state === "completed")) return "";
+  const current = state.research.designations?.find(d => d.cap === "signature_mimicry");
+  const here = !!current && "fleet" in current.target && current.target.fleet === g.id;
+  return `<div class="deck-subhead"><b>Signature Mimicry</b><span>${here ? "Reads as a freighter until it fights" : "Read as a freighter"}</span></div>${here ? "" : `<button type="button" data-deck-act="fleet-mimic">Disguise this fleet</button>`}`;
+}
+
+/** §research-wiring: what intel research read off a rival contact — Traffic
+ * Analysis' cargo kind, Wake Analysis' tank and heading. */
+function intelHtml(g: GhostView): string {
+  const intel = contactIntel(g);
+  const rows = [intel.carrying && `<span><b>Carrying</b> ${esc(intel.carrying)}</span>`, intel.wake && `<span><b>Wake</b> ${esc(intel.wake)}</span>`].filter(Boolean);
+  return rows.length ? `<div class="deck-fleet-intel">${rows.join("")}</div>` : "";
+}
+
 export class DeckFleetRoutes {
   private signature = "";
   private readonly requestedTransit = new Map<string, TransitMode>();
@@ -199,6 +218,10 @@ export class DeckFleetRoutes {
 
   handleAction(button: HTMLButtonElement, route: DeckRoute | null): boolean {
     if (route?.name !== "fleet") return false;
+    if (button.dataset.deckAct === "fleet-trade") {
+      this.hooks.go({ name: "merchant" });
+      return true;
+    }
     if (button.dataset.deckAct === "fleet-logistics" && button.dataset.fleet) {
       this.hooks.go({ name: "logistics", query: { fleet: button.dataset.fleet } });
       return true;
@@ -268,6 +291,9 @@ export class DeckFleetRoutes {
     } else if (command === "split" && fleet.own) {
       const kind = button.dataset.kind as ShipKind;
       if (kind) this.ctx.intent.beginFleetCommand({ type: "SplitFleet", fleet_id: fleet.id, counts: { [kind]: 1 } });
+    } else if (command === "mimic" && fleet.own) {
+      // §designations Signature Mimicry: disguise this fleet as a freighter.
+      this.ctx.send({ type: "SetDesignation", cap: "signature_mimicry", target: { fleet: fleet.id } });
     } else if (command === "merge" && fleet.own && button.dataset.from) {
       this.ctx.intent.beginFleetCommand({ type: "MergeFleets", into: fleet.id, from: button.dataset.from });
     } else if (command === "posture" && fleet.own) {
@@ -385,14 +411,14 @@ export class DeckFleetRoutes {
   private fleetHtml(g: GhostView): string {
     const delaySeconds = g.jump_presumed?.information_delay ?? g.age;
     const title = fleetTitle(g);
-    const role = g.own ? "Your fleet" : g.tca ? "Terran Charter Authority" : g.pirate ? "Pirate contact" : "Rival contact";
+    const role = g.own ? "Your fleet" : g.merchant ? `Free trader · ${traderFor(g).name}` : g.tca ? "Terran Charter Authority" : g.pirate ? "Pirate contact" : "Rival contact";
     const stats = [
       stat("Report", informationDelay(delaySeconds), delaySeconds >= 0.5 ? "stale" : ""),
       stat("Drive", driveLabel(g)),
       stat("Speed", `${Math.round(Math.hypot(g.vel.x, g.vel.y)).toLocaleString()} su/s`),
       stat(g.docked ? "Docked at" : "Position", g.docked ? g.docked === "hub" ? "Market Hub" : systemName(normalizeDock(g.docked)) : `${fmt(g.pos.x)} · ${fmt(g.pos.y)}`),
     ].join("");
-    return `<section class="deck-page deck-fleet"><header class="deck-page__lead"><span>${esc(role)}</span><h2>${icon(fleetHeaderIcon(g), "md")} ${esc(title)}</h2>${g.own ? "" : "<p>Only information carried by arrived light is shown.</p>"}</header><div class="deck-stat-grid deck-fleet__stats">${stats}</div>${g.own ? this.ownHtml(g) : this.rivalHtml(g)}</section>`;
+    return `<section class="deck-page deck-fleet"><header class="deck-page__lead"><span>${esc(role)}</span><h2>${icon(fleetHeaderIcon(g), "md")} ${esc(title)}</h2>${g.own ? "" : "<p>Only information carried by arrived light is shown.</p>"}</header><div class="deck-stat-grid deck-fleet__stats">${stats}</div>${g.own ? this.ownHtml(g) : g.merchant ? this.traderHtml(g) : this.rivalHtml(g)}</section>`;
   }
 
   /** The everyday panel: what the fleet is doing, the commands players reach
@@ -417,9 +443,9 @@ export class DeckFleetRoutes {
       ? `<button type="button" data-deck-act="fleet-unanchor" ${pending ? "disabled" : ""}>${a.phase === "approaching" ? "Stop anchoring" : "Unanchor"}</button>` : "";
     // A freighter of yours beside the station takes its largest stack.
     const top = [...held].sort((x, y) => y.units - x.units)[0];
-    const loads = top ? st.ghosts.filter((f) => f.own && !f.tca && f.id !== g.id && !isStation(f) && fleetCargoCapacity(f) > 0
+    const loads = top ? st.ghosts.filter((f) => f.own && !f.tca && f.id !== g.id && !isStation(f) && fleetTradeCapacity(f) > 0
       && Math.hypot(f.pos.x - g.pos.x, f.pos.y - g.pos.y) <= 260).slice(0, 3).map((f) => {
-      const room = fleetCargoCapacity(f) - fleetCargoManifest(f).reduce((n, c) => n + c.units, 0);
+      const room = fleetTradeCapacity(f) - fleetCargoManifest(f).reduce((n, c) => n + c.units, 0);
       const n = Math.min(room, top.units);
       return n > 0 ? `<button type="button" data-deck-act="fleet-station-load" data-into="${esc(f.id)}" data-commodity="${top.commodity}" data-units="${n}" ${pending ? "disabled" : ""}>Load ${fmt(n)} ${esc(label(top.commodity))} into ${esc(shipKindLabel(f.kind))} ${esc(f.id)}</button>` : "";
     }).join("") : "";
@@ -453,7 +479,7 @@ export class DeckFleetRoutes {
       ? `<div class="deck-fleet-details__hulls" role="group" aria-label="Hulls in this fleet">${stacks.map((entry) => `<button type="button" data-deck-act="fleet-hull" data-kind="${entry.kind}" aria-pressed="${entry.kind === hull}">${icon(shipKindIcon(entry.kind), "sm")}<span>${esc(shipKindLabel(entry.kind))}</span><em>×${entry.count}</em></button>`).join("")}</div>`
       : "";
     const spec = `<div class="deck-fleet-details__spec"><div><small>${stacks.length > 1 ? "On show" : "Hull"}</small><h3>${esc(shipKindLabel(hull))}</h3><p>${esc(stats?.role ?? "Fleet hull")}</p></div>${stats ? `<div class="deck-hull-stats">${stat("Impulse", `${fmt(stats.speed)} su/s`)}${stat("Hull", fmt(stats.hull))}${stat("Attack", fmt(stats.atk))}${stat("Defense", fmt(stats.def))}</div>` : ""}</div>`;
-    const fleet = `<section class="deck-section deck-fleet-details__wide"><header><h3>Fleet</h3></header>${this.compositionHtml(g)}${this.refitHtml(g)}${this.mergeHtml(g)}</section>`;
+    const fleet = `<section class="deck-section deck-fleet-details__wide"><header><h3>Fleet</h3></header>${this.compositionHtml(g)}${this.refitHtml(g)}${this.mergeHtml(g)}${mimicHtml(g)}</section>`;
     const mission = missionHtml(g, this.ctx.state.pendingOrders.get(g.id) ?? []);
     return `<div class="deck-fleet deck-fleet-details"><div class="deck-fleet-details__hero"><ship-model-preview class="is-hero" kind="${hull}" turntable></ship-model-preview>${hulls}</div>${spec}<div class="deck-fleet-details__grid">${this.readinessHtml(g)}${this.captainHtml(g)}${fleet}${this.moreCommandsHtml(g)}${this.policyHtml(g)}${mission ? `<div class="deck-fleet-details__wide">${mission}</div>` : ""}</div></div>`;
   }
@@ -552,7 +578,12 @@ export class DeckFleetRoutes {
     // (the only order that carries engage_freight) lifts it by coming home;
     // that recall is the same light-delayed order.
     const blockading = g.engage_freight !== null && g.engage_freight !== undefined;
-    if (blockading) {
+    if (g.raid_trip && !(blockading && g.raiding)) {
+      // §player-styles: a repeating raid between trips.
+      items.push(commandButton("fleet-recall", "Stop raids", "Keep the fleet home after this trip.", "is-danger", pending("recall") ? "Recall already in flight." : ""));
+    } else if (blockading && g.raiding) {
+      items.push(commandButton("fleet-recall", g.raid_trip ? "Stop raids" : "Lift raid", "Break off and bring the fleet home with what it holds.", "is-danger", pending("recall") ? "Recall already in flight." : ""));
+    } else if (blockading) {
       items.push(commandButton("fleet-recall", "Lift blockade", "Break off and bring the fleet home when this signal arrives; the blockade ends when it leaves station.", "is-danger", pending("recall") ? "Recall already in flight." : ""));
     } else if (this.ctx.state.raids[g.id] || pending("recall")) {
       items.push(commandButton("fleet-recall", "Recall raid", "Break pursuit and return toward home.", "is-danger", pending("recall") ? "Recall already in flight." : ""));
@@ -621,7 +652,7 @@ export class DeckFleetRoutes {
     const canTrain = captain.unspent > 0 && !!home && dockedAtSystem(g, home);
     const attributes = (["command", "navigation", "fieldcraft", "logistics"] as const).map((attribute) => `<div><span>${label(attribute)}</span><b>${captain.attributes[attribute]}</b>${captain.unspent > 0 ? `<button type="button" data-deck-act="fleet-train" data-attribute="${attribute}" ${canTrain ? "" : "disabled"}>+</button>` : ""}</div>`).join("");
     const titled = `${captainTitle(captain.title)} ${captain.name}`;
-    return `<section class="deck-section deck-captain"><header><div><h3>Officer</h3><p>Physical assignment · ${esc(informationDelay(g.age))}.</p></div><button type="button" data-deck-act="fleet-officers">Manage</button></header><div class="deck-captain__body">${captainPortrait(captain.portrait, captain.portrait_age, `Portrait of ${titled}`, "deck-captain__portrait", false)}<div><b>${esc(titled)}</b><small>Level ${captain.level} · authority ${fleetCommandLoad(g)} / ${captain.command_capacity}</small><div class="deck-meter"><i style="width:${progress.toFixed(1)}%"></i></div><small>${captain.level >= 10 ? "Maximum level" : `${captain.xp.toLocaleString()} / ${captain.next_level_xp.toLocaleString()} XP`}</small><div class="deck-captain__stats">${attributes}</div></div></div></section>`;
+    return `<section class="deck-section deck-captain"><header><div><h3>Officer</h3><p>Physical assignment · ${esc(informationDelay(g.age))}.</p></div><button type="button" data-deck-act="fleet-officers">Manage</button></header><div class="deck-captain__body">${captainPortrait(captain.portrait, captain.portrait_age, `Portrait of ${titled}`, "deck-captain__portrait", false)}<div><b>${esc(titled)}</b><small>Level ${captain.level}</small><div class="deck-meter"><i style="width:${progress.toFixed(1)}%"></i></div><small>${captain.level >= 10 ? "Maximum level" : `${captain.xp.toLocaleString()} / ${captain.next_level_xp.toLocaleString()} XP`}</small><div class="deck-captain__stats">${attributes}</div></div></div></section>`;
   }
 
   private refitHtml(g: GhostView): string {
@@ -671,7 +702,7 @@ export class DeckFleetRoutes {
     const stocks = dockLoadStock(g).filter(([, units]) => units > 0);
     const selected = stocks.some(([commodity]) => commodity === this.loadCommodity.get(g.id)) ? this.loadCommodity.get(g.id)! : stocks[0]?.[0];
     if (selected) this.loadCommodity.set(g.id, selected);
-    const free = Math.max(0, fleetCargoCapacity(g) - fleetCargoUnits(g));
+    const free = Math.max(0, fleetTradeCapacity(g) - fleetCargoUnits(g));
     const qty = Math.max(1, Math.min(free || 1, this.loadQuantity.get(g.id) ?? Math.min(50, free || 1)));
     this.loadQuantity.set(g.id, qty);
     const manifest = fleetCargoManifest(g);
@@ -726,13 +757,25 @@ export class DeckFleetRoutes {
     return `<div class="deck-subhead"><b>Fleet management</b><span>Co-located formation available</span></div><button type="button" data-deck-act="fleet-merge" data-from="${escAttr(other.id)}" ${two || over || pending ? "disabled" : ""}>${pending ? "Reorganization signal in flight" : two ? "Reserve one officer to merge" : over ? `Requires ${load} command points` : `Merge ${shipKindLabel(other.kind)} fleet into this fleet`}</button>`;
   }
 
+  /** §traders (Peter, Oct 28 2026): the free trader who flies it, not an
+   * Authority manifest: portrait, name, ship and who they are, and Trade
+   * while they're docked at your home. */
+  private traderHtml(g: GhostView): string {
+    const trader = traderFor(g);
+    const portrait = traderPortrait(trader, "neutral", () => this.invalidate());
+    const docked = dockedMerchant(this.ctx.state)?.fleet === g.id;
+    return `<section class="deck-section deck-fleet-trader"><img src="${escAttr(portrait.src)}" alt="${escAttr(portrait.alt)}" width="72" height="72">`
+      + `<div><b>${esc(trader.name)}</b><small>${esc(trader.ship)} · free trader</small><p>${esc(trader.about)}</p>`
+      + `${docked ? `<button type="button" class="is-primary" data-deck-act="fleet-trade">Trade</button>` : ""}</div></section>`;
+  }
+
   private rivalHtml(g: GhostView): string {
-    const parts: string[] = [pirateFactionHtml(g), this.rivalComposition(g), this.rivalPayload(g), this.estimateHtml(g)];
+    const parts: string[] = [pirateFactionHtml(g), this.rivalComposition(g), this.rivalPayload(g), intelHtml(g), this.estimateHtml(g)];
     return `<section class="deck-section"><header><div><h3>Observed contact</h3><p>Fog removes internal state, intent, fuel and unarrived cargo reports.</p></div></header>${parts.join("")}</section>`;
   }
 
   private rivalComposition(g: GhostView): string {
-    if (!g.composition?.length) return `<div class="deck-alert"><b>Estimated ${esc(label(g.count_class))} formation</b><span>Exact composition remains outside sensor coverage.</span></div>`;
+    if (!g.composition?.length) return `<div class="deck-alert"><b>${g.tracked != null ? `Tracked · last fix ${Math.round(g.tracked)}s ago` : `Estimated ${esc(fleetCountLabel(g))}-ship formation`}</b><span>${g.tracked != null ? "Dead-reckoned from its last sighting." : "Exact composition remains outside sensor coverage."}</span></div>`;
     return `<div class="deck-subhead"><b>Composition</b><span>${fleetExactCount(g)} ships</span></div><div class="deck-fleet-stacks">${g.composition.map((entry) => `<div class="deck-fleet-stack"><span>${icon(shipKindIcon(entry.kind), "sm")}<b>${esc(shipKindLabel(entry.kind))}</b></span><em>×${entry.count}</em></div>`).join("")}</div>`;
   }
 
@@ -770,7 +813,8 @@ export class DeckFleetRoutes {
   private rescueHtml(g: GhostView): string {
     if (g.rescue_inbound) return `<div class="deck-command-block"><b>AAA rescue active</b><small>Physical tender dispatched from the Market Hub.</small></div>`;
     const quote = aaaEstimate(g);
-    const affordable = (this.ctx.state.wallet?.credits ?? 0) + 1e-6 >= quote.cost;
+    // §treasury: the call carries its payment, the estimate + 10%.
+    const affordable = (this.ctx.state.credits ?? 0) + 1e-6 >= quote.cost * (1 + PAYMENT_MARGIN);
     const hint = `${affordable ? "" : "Not enough credits. "}${fmt(quote.fuel)} ${label(regimeStore(g).fuel)} at 3× market + ${fmt(AAA_SERVICE_FEE)} Cr callout.`;
     return `<div class="deck-command-block" title="${escAttr(hint)}"><b>Out of fuel</b><button type="button" data-deck-act="fleet-fuel-rescue" title="${escAttr(hint)}" ${affordable ? "" : "disabled"}>Call AAA · ~${fmt(quote.cost)} Cr</button></div>`;
   }
@@ -823,7 +867,7 @@ export class DeckFleetRoutes {
   private load(g: GhostView): void {
     const commodity = this.loadCommodity.get(g.id);
     if (!commodity) return;
-    const free = Math.max(0, fleetCargoCapacity(g) - fleetCargoUnits(g));
+    const free = Math.max(0, fleetTradeCapacity(g) - fleetCargoUnits(g));
     const available = dockLoadStock(g).find(([entry]) => entry === commodity)?.[1] ?? 0;
     const units = Math.max(1, Math.min(free, available, this.loadQuantity.get(g.id) ?? 1));
     if (g.docked === "hub") this.ctx.intent.beginFleetCommand({ type: "HubLoad", fleet_id: g.id, commodity, units });
@@ -1000,7 +1044,11 @@ function driveLabel(g: GhostView): string {
   return "Impulse";
 }
 
+/** §traders: the free trader a merchant ship carries. */
+const traderFor = (g: GhostView) => TRADERS[g.trader ?? "teo"] ?? TRADERS.teo;
+
 function fleetTitle(g: GhostView): string {
+  if (g.merchant) return traderFor(g).ship;
   if (g.tca && g.kind === "freighter") return g.merchant ? "Free Trader" : g.rescue_service ? "AAA Rescue Tender" : g.migrant ? "Authority Migrant Liner" : "Authority Freighter";
   if (g.tca) return "Authority Enforcement";
   if (g.pirate && g.kind === "raider") return "Pirate Interceptor";
@@ -1008,7 +1056,7 @@ function fleetTitle(g: GhostView): string {
 }
 
 function fleetHeaderIcon(g: GhostView): IconKey {
-  if (g.merchant) return "free_trader";
+  if (g.merchant) return traderShipArt(g.trader);
   if (fleetExactCount(g) !== 1) return "fleet";
   const onlyShip = g.composition?.find((entry) => entry.count === 1)?.kind ?? g.kind;
   return shipKindIcon(onlyShip);

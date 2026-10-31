@@ -1,6 +1,6 @@
 // Real UI helpers/controllers with received-report fixtures. No running galaxy.
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 import sharp from "sharp";
@@ -33,6 +33,7 @@ deps["./planet-sites"] = compile("shell/deck/planet-sites.ts");
 // §build-sheet: the world panel's Upgrade row reads levels and build times.
 deps["../../core/derive/format"] = compile("core/derive/format.ts");
 deps["./format"] = deps["../../core/derive/format"];
+deps["./station"] ??= compile("core/derive/station.ts");
 deps["../../core/derive/worldbuild"] = compile("core/derive/worldbuild.ts");
 delete deps["./format"];
 const { PlanetPanel, planetStructures } = compile("shell/deck/planet.ts");
@@ -56,19 +57,35 @@ assert.equal(market.assignedRecipe(smelter,"cuprite_ore"),cuprite);
 assert.deepEqual(plain(market.recipeOutputs(cuprite)),[["conductive_metals",1],["alloys",.15]]);
 assert.match(market.commodityPurpose("cuprite_ore",[smelter]),/Sell raw.*Conductive Metals.*Alloys/);
 
-for (const name of ["ferrite_ore","cuprite_ore","titanium_ore","crystalline_ore","rare_metal_ore","conductive_metals","titanium",
-  "olivine_ore","bornite_ore","ilmenite_ore","iridium_ore","helium3_ice","void_crystal","iridium","helium3","exotic_matter"]) {
+// §goods-icons: one set. Every master in the goods folders is listed in
+// GOODS_ICONS (new art can't land unwired), and every listed icon is derived,
+// transparent and trimmed to the same fill, so a stockpile reads as one set.
+const masters = ["ores-2026-09-16","fuel-goods-2026-10-12","goods-2026-10-24"].flatMap((folder) => {
+  const dir = new URL(`../art-src/${folder}/`,import.meta.url);
+  return existsSync(dir) ? readdirSync(dir).filter((n) => n.endsWith(".png")).map((n) => n.slice(0, -4)) : [];
+});
+assert.deepEqual([...icons.GOODS_ICONS].sort(),[...new Set(masters)].sort(),"GOODS_ICONS names exactly the goods with masters");
+for (const name of icons.GOODS_ICONS) {
   for (const size of [64,128]) {
-    const path = new URL(`../public/art/ui_icons/resource/ores-2026-09-16/${name}-${size}.png`,import.meta.url);
-    assert.ok(existsSync(path));
+    const path = new URL(`../public/art/ui_icons/resource/goods-v1/${name}-${size}.png`,import.meta.url);
+    assert.ok(existsSync(path),`${name}-${size} is derived`);
     const image = sharp(readFileSync(path)), meta = await image.metadata();
     assert.equal(meta.width,size); assert.equal(meta.height,size);
     assert.equal(meta.hasAlpha,true); assert.equal((await image.stats()).isOpaque,false);
+    const { data } = await sharp(readFileSync(path)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    let x0 = size, x1 = -1, y0 = size, y1 = -1;
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (data[(y * size + x) * 4 + 3] > 8) {
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }
+    const fill = Math.max(x1 - x0 + 1, y1 - y0 + 1) / size;
+    assert.ok(Math.abs(fill - .9) <= 2 / size, `${name}-${size}: one fill for every good (${(fill * 100).toFixed(0)}%)`);
   }
-  const markup = icons.commodityIcon(name === "ferrite_ore" ? "metallic_ore" : name);
-  assert.match(markup,/srcset=.*128.png 2x/);
-  assert.ok(markup.includes(`title="${icons.label(name === "ferrite_ore" ? "metallic_ore" : name)}"`));
+  const commodity = name === "ferrite_ore" ? "metallic_ore" : name;
+  const markup = icons.commodityIcon(commodity);
+  assert.ok(markup.includes(`/goods-v1/${name}-64.png`) && /srcset=.*128.png 2x/.test(markup), `${name} uses its goods icon`);
+  assert.ok(markup.includes(`title="${icons.label(commodity)}"`));
 }
+for (const key of ["uranium","antimatter","fusionCore"]) assert.equal(icons.isPlaceholder(key),false,`${key} has art`);
 
 const body = { id: 1, name: "Freya II", environment: "uninhabitable", size: "medium", structures: { smelter: 1 }, deposits: [], industrial_slots: 3, resource_slots: 1, infrastructure_slots: 2 };
 const assignment = { body_id: 1, structure: "smelter", title: "Smelter", tier: 1,
@@ -113,6 +130,15 @@ const panel = new PlanetPanel(), commands = [];
 const act = data => panel.handleAction({deckAct:data.action,...data},model,c => commands.push(plain(c)));
 panel.focus("smelter");
 assert.match(panel.render(model),/Raw versus refined estimate.*Estimate · 50 Ferrite Ore/s);
+// §unlocks (Peter, Oct 28 2026): with no Smelter standing and no Enrichment,
+// there is no refining to plan, so no estimate.
+{
+  const refiningUi = deps["../refining"], bare = { ...report, bodies: [{ ...body, structures: {} }] };
+  assert.equal(refiningUi.refiningComparison(state, bare, 1, ferrite), "", "no Smelter, no Enrichment: nothing to compare");
+  state.research.programmes.push({ id: "mat_enrichment", state: "completed" });
+  assert.notEqual(refiningUi.refiningComparison(state, bare, 1, ferrite), "", "Enrichment opens it");
+  state.research.programmes.pop();
+}
 const prior = plain(planetStructures(model)[0].outputs);
 act({action:"planet-ore",ore:"cuprite_ore"});
 assert.equal(commands.length,0,"selecting a recipe is only a draft");

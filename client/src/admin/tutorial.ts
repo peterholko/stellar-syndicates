@@ -5,10 +5,11 @@ export const STAGE_KEYS = [
   "signed_up", "entered",
   "founded",
   "bioharvester", "habitat", "agroplex", "mine",
-  "raid", "sell_ore", "power", "shipyard",
+  "raid", "gun_platform", "sell_ore", "power", "shipyard",
   "interceptor", "privateer", "den", "shipment",
-  "research", "expansion", "survey",
-  "barge", "belt_mining", "haul",
+  "research", "smelter", "expansion", "survey",
+  "barge", "prospect", "belt_mining", "haul", "stores",
+  "vendetta",
 ] as const;
 
 /** How far along a player is, for sorting: the next stage's place in the

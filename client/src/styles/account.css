@@ -14,6 +14,11 @@
   font-size: 13px;
   pointer-events: auto;
 }
+/* The game's logo above the sign-in card; the two centre together in the
+   overlay, and the card's scroll height leaves room for the logo. */
+.account-stage { --account-logo-height: clamp(48px, 14dvh, 148px); display: grid; justify-items: center; gap: 16px; width: min(100%, 480px); }
+.account-logo { display: block; width: 100%; height: auto; max-height: var(--account-logo-height); object-fit: contain; user-select: none; -webkit-user-drag: none; }
+.account-stage .account-card { width: 100%; max-height: calc(100dvh - 64px - var(--account-logo-height) - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
 .account-card [hidden] { display: none !important; }
 .account-heading { display: grid; gap: 12px; padding: 28px 28px 22px; border-bottom: 1px solid #223647; }
 .account-authority { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 16px; }
@@ -44,13 +49,14 @@ form.account-card[data-busy="true"] button:disabled { cursor: wait; }
 form.account-card .account-fields :is(input, button):focus-visible { outline: 2px solid #a9deef; outline-offset: 3px; }
 @media (max-width: 700px) {
   .account-card { max-height: calc(100dvh - 36px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+  .account-stage .account-card { max-height: calc(100dvh - 52px - var(--account-logo-height) - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
   .account-heading { padding: 24px 20px 20px; }
   .account-authority { grid-template-columns: 48px minmax(0, 1fr); gap: 12px; }
   .account-authority__seal { width: 72px; height: 72px; }
   .account-heading small { font-size: 10px; letter-spacing: .12em; }
   .account-fields { padding: 20px; gap: 16px; }
 }
-.account-profile { width: min(440px, calc(100vw - var(--space-4) * 2)); max-height: calc(100dvh - var(--space-4) * 2); margin: auto; padding: var(--space-6); overflow-y: auto; border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel); color: var(--ink); box-shadow: var(--panel-shadow); font-size: var(--fs-body); pointer-events: auto; }
+.account-profile { width: min(600px, calc(100vw - var(--space-4) * 2)); max-height: calc(100dvh - var(--space-4) * 2); margin: auto; padding: var(--space-6); overflow-y: auto; border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel); color: var(--ink); box-shadow: var(--panel-shadow); font-size: var(--fs-body); pointer-events: auto; }
 .account-profile::backdrop { background: rgba(3, 6, 12, .82); }
 .account-profile header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .account-profile h2 { margin: 0; font-size: var(--fs-page); }
@@ -61,6 +67,7 @@ form.account-card .account-fields :is(input, button):focus-visible { outline: 2p
 .account-profile label { color: var(--dim); font-size: var(--fs-fine); }
 .account-profile input, .account-profile button { min-height: 44px; padding: var(--space-2) var(--space-3); border: 1px solid var(--field-bd); border-radius: var(--deck-radius); color: var(--ink); font: inherit; }
 .account-profile input { min-width: 0; width: 100%; background: var(--field-bg); }
+.account-profile input[type="checkbox"] { appearance: auto; width: 18px; height: 18px; min-width: 18px; min-height: 18px; padding: 0; margin: 0; flex: 0 0 18px; accent-color: #9ed8e8; cursor: pointer; }
 .account-profile button { cursor: pointer; background: var(--btn-bg); }
 .account-profile button:hover { background: var(--btn-bg-hover); }
 .account-profile button:disabled { opacity: .6; cursor: default; }
@@ -100,3 +107,15 @@ dialog.account-charter__terms .account-charter__close:focus-visible { outline: 2
   dialog.account-charter__terms > header { gap: 12px; padding: 16px; }
   .account-charter__body { padding: 16px; }
 }
+
+/* §leave (R4): vacation mode in Profile. */
+.account-leave { display: grid; gap: 6px; margin-block: 12px; padding-top: 10px; border-top: 1px solid rgb(127 160 180 / 0.25); }
+.account-leave h3 { margin: 0; font-size: 0.95rem; }
+.account-leave p { margin: 0; }
+.account-leave__confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.account-notify { display: grid; gap: 6px; margin-block: 12px; padding-top: 10px; border-top: 1px solid rgb(127 160 180 / 0.25); }
+.account-notify h3 { margin: 0; font-size: 0.95rem; }
+.account-notify p { margin: 0; opacity: 0.8; }
+.account-notify__kinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px 12px; }
+.account-notify label { display: flex; align-items: center; gap: 8px; min-height: 32px; color: var(--ink); font-size: var(--fs-body); cursor: pointer; }
+.account-notify input[type="email"] { min-width: 0; }

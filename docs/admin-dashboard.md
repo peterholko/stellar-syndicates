@@ -7,11 +7,17 @@ player sent, and each corporation's holdings. It is read-only.
 ## Access
 
 - Set `ADMIN_LOGINS` to a comma-separated list of account logins, for example
-  `ADMIN_LOGINS=peter`. Sign in to the game in the same browser, then open
-  `/admin.html`.
+  `ADMIN_LOGINS=peter`. Open `/admin.html` and sign in with the operator's login
+  and passphrase. The page uses the game's account API, so the game in that
+  browser is signed in too. It shows the same form to a browser signed in as a
+  guest or a non-operator; signing in there switches the browser's account.
 - Without `ADMIN_LOGINS` the dashboard is off (`404`). The audit trail is
   recorded either way, so turning the dashboard on later shows the history.
 - Guests, disabled accounts and logins not on the list get `403`.
+- **Forgotten passphrase:** run `server reset-passphrase <login>` with the
+  server's `ACCOUNTS_DATABASE_URL`. It asks for the new passphrase twice with
+  the typing hidden, stores its hash and ends that account's sign-in. The game
+  server doesn't need to stop.
 
 ## What is recorded
 

@@ -30,11 +30,23 @@ assert.equal(Object.keys(manifest.assets).length, 163, "148 ground buildings + 1
 const empire = await source("shell/deck/empire.ts");
 const descriptions = empire.slice(empire.indexOf("const STRUCTURE_DESCRIPTION"), empire.indexOf("import { MODULES"));
 const catalogue = [...descriptions.matchAll(/^  (\w+): "/gm)].map(match => match[1]);
-const allFamilies = { ...families, shipyard: 6, naval_drydock: 6, capital_slipway: 6 };
+// §asteroid-quarry: like the shipyards, the quarry has its own pipeline
+// (build-asteroid-quarry-art.mjs): its rock, wide, in the belt's foreground.
+const allFamilies = { ...families, shipyard: 6, naval_drydock: 6, capital_slipway: 6, asteroid_quarry: 6 };
 // §fuel-overhaul: the Uranium Mill and the Antimatter Plant draw the Fuel
 // Refinery's scene art until their own lands.
 const standIns = ["uranium_mill", "antimatter_plant"];
-assert.deepEqual(Object.keys(allFamilies).sort(), catalogue.filter(key => !standIns.includes(key)).sort(), "every live structure kind has dedicated scene art");
+// §vault: underground — listed in the world's column, never drawn on the ground.
+assert.deepEqual(Object.keys(allFamilies).sort(), catalogue.filter(key => !standIns.includes(key) && key !== "vault" && key !== "assembly_hall").sort(), "every live structure kind has dedicated scene art");
+for (let tier = 1; tier <= 6; tier++) {
+  const html = planetStructureImage("asteroid_quarry", tier, "52cqw");
+  for (const size of [640, 1280, 1672]) assert.ok(html.includes(`/art/derived/asteroid-quarry/v2/tier-${tier}-${size}.webp ${size}w`), `quarry ${tier} at ${size}`);
+  for (const size of [640, 1280, 1672]) await stat(new URL(`public/art/derived/asteroid-quarry/v2/tier-${tier}-${size}.webp`, client));
+  for (const biome of [...biomes, null]) assert.doesNotMatch(planetStructureImage("asteroid_quarry", tier, "52cqw", false, biome), /planet-structure-ground/, "the quarry is its own ground");
+}
+for (const invalid of [NaN, undefined, -5, 0, Infinity]) assert.match(planetStructureImage("asteroid_quarry", invalid, "52cqw"), /\/tier-1-/);
+assert.match(planetStructureImage("asteroid_quarry", 999, "52cqw"), /\/tier-6-/);
+assert.match(planetStructureImage("asteroid_quarry", 2.9, "52cqw"), /\/tier-2-/);
 for (const key of standIns) assert.equal(planetStructureImage(key, 2, "64px", false, "temperate-basin"), planetStructureImage("fuel_refinery", 2, "64px", false, "temperate-basin"));
 // §power: the Power Plant draws its own six tiers on the ground: Solar Arrays,
 // then Fusion Plants. Over a belt or gas giant (no ground) it floats: the
@@ -62,7 +74,7 @@ for (const tier of [4, 5, 6]) {
   assert.equal(manifest.assets[`buildings/agroplex/tier-${tier}`].source, `${masters}/tier-${tier}-v2.png`);
   assert.ok((await stat(new URL(`${masters}/tier-${tier}.png`, client))).size > 0, `original Agroplex ${tier} kept`);
 }
-assert.equal(Object.values(allFamilies).reduce((sum, count) => sum + count, 0), 166);
+assert.equal(Object.values(allFamilies).reduce((sum, count) => sum + count, 0), 172);
 const { HABITABLE_SURFACES } = await compile("planet-surfaces.ts");
 assert.deepEqual([...biomes].sort(), [...HABITABLE_SURFACES, "terrestrial", "desert", "ocean", "ice", "lava", "barren", "marginal"].sort(), "every painted surface has its ground");
 
@@ -119,7 +131,8 @@ for (let tier = 1; tier <= 6; tier++) {
   assert.ok(terraces.top > .02, `terraces ${tier}: the roofline stays inside the canvas`);
 }
 
-for (const [family, maxTier] of Object.entries(allFamilies)) {
+// The quarry is its own ground (checked above); every other family is a sprite.
+for (const [family, maxTier] of Object.entries(allFamilies).filter(([family]) => family !== "asteroid_quarry")) {
   for (let tier = 1; tier <= maxTier; tier++) {
     const oldIcon = deps["./icons"].structureImage(family, tier);
     for (const biome of [...biomes, null]) {

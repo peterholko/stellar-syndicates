@@ -1,0 +1,198 @@
+{
+  "triangles": 6216,
+  "components": 104,
+  "closedComponents": 104,
+  "dedicatedBottomTriangles": 652,
+  "finiteAttributes": true,
+  "unitNormals": true,
+  "consistentWinding": true,
+  "nondegenerateTriangles": true,
+  "noncollapsedBottomUVs": true,
+  "positiveVolumes": {
+    "hull.chisel-bow": 60.39476795,
+    "hull.enclosed-freight-body": 255.48501879,
+    "hull.integrated-stern": 53.66930142,
+    "hull.stern-center-post": 2.2655332,
+    "bridge.glazing": 5.24482924,
+    "bridge.roof": 0.53298943,
+    "cargo.bay.1.coaming": 2.26959195,
+    "cargo.bay.1.lid": 1.86017772,
+    "cargo.bay.1.hinge.0": 0.00537281,
+    "cargo.bay.1.hinge.1": 0.0053728,
+    "cargo.bay.1.fastener.0": 0.0005387,
+    "cargo.bay.1.fastener.1": 0.0005387,
+    "cargo.bay.1.fastener.2": 0.0005387,
+    "cargo.bay.1.fastener.3": 0.0005387,
+    "cargo.bay.2.coaming": 2.26959199,
+    "cargo.bay.2.lid": 1.86017774,
+    "cargo.bay.2.hinge.0": 0.0053728,
+    "cargo.bay.2.hinge.1": 0.0053728,
+    "cargo.bay.2.fastener.0": 0.0005387,
+    "cargo.bay.2.fastener.1": 0.0005387,
+    "cargo.bay.2.fastener.2": 0.0005387,
+    "cargo.bay.2.fastener.3": 0.0005387,
+    "cargo.bay.3.coaming": 2.26959193,
+    "cargo.bay.3.lid": 1.86017776,
+    "cargo.bay.3.hinge.0": 0.0053728,
+    "cargo.bay.3.hinge.1": 0.0053728,
+    "cargo.bay.3.fastener.0": 0.0005387,
+    "cargo.bay.3.fastener.1": 0.0005387,
+    "cargo.bay.3.fastener.2": 0.0005387,
+    "cargo.bay.3.fastener.3": 0.0005387,
+    "cargo.bay.4.coaming": 2.26959203,
+    "cargo.bay.4.lid": 1.86017769,
+    "cargo.bay.4.hinge.0": 0.00537281,
+    "cargo.bay.4.hinge.1": 0.00537281,
+    "cargo.bay.4.fastener.0": 0.0005387,
+    "cargo.bay.4.fastener.1": 0.0005387,
+    "cargo.bay.4.fastener.2": 0.0005387,
+    "cargo.bay.4.fastener.3": 0.0005387,
+    "cargo.bay.5.coaming": 2.26959207,
+    "cargo.bay.5.lid": 1.86017771,
+    "cargo.bay.5.hinge.0": 0.00537281,
+    "cargo.bay.5.hinge.1": 0.00537281,
+    "cargo.bay.5.fastener.0": 0.0005387,
+    "cargo.bay.5.fastener.1": 0.0005387,
+    "cargo.bay.5.fastener.2": 0.0005387,
+    "cargo.bay.5.fastener.3": 0.0005387,
+    "cargo.bay.6.coaming": 2.26959201,
+    "cargo.bay.6.lid": 1.86017773,
+    "cargo.bay.6.hinge.0": 0.00537281,
+    "cargo.bay.6.hinge.1": 0.0053728,
+    "cargo.bay.6.fastener.0": 0.0005387,
+    "cargo.bay.6.fastener.1": 0.0005387,
+    "cargo.bay.6.fastener.2": 0.0005387,
+    "cargo.bay.6.fastener.3": 0.0005387,
+    "machinery.central-spine": 3.89829604,
+    "armor.port.shoulder": 3.82599106,
+    "docking.port.housing": 2.09576445,
+    "docking.port.rim": 0.1953085,
+    "docking.port.door": 0.03980392,
+    "docking.port.latch.0": 0.00097015,
+    "docking.port.latch.1": 0.00097015,
+    "docking.port.latch.2": 0.00097015,
+    "docking.port.latch.3": 0.00097015,
+    "armor.port.edge-clamp.0": 0.09516425,
+    "armor.port.edge-clamp.1": 0.09516426,
+    "armor.port.edge-clamp.2": 0.09516422,
+    "engine.port.housing": 9.93653155,
+    "engine.port.frame.top": 0.35141658,
+    "engine.port.frame.bottom": 0.35141661,
+    "engine.port.frame.left": 0.10651774,
+    "engine.port.frame.right": 0.10651769,
+    "engine.port.aperture": 0.04255996,
+    "engine.port.service-cover": 0.26477706,
+    "armor.starboard.shoulder": 3.82599106,
+    "docking.starboard.housing": 2.09576445,
+    "docking.starboard.rim": 0.1953085,
+    "docking.starboard.door": 0.03980392,
+    "docking.starboard.latch.0": 0.00097015,
+    "docking.starboard.latch.1": 0.00097015,
+    "docking.starboard.latch.2": 0.00097015,
+    "docking.starboard.latch.3": 0.00097015,
+    "armor.starboard.edge-clamp.0": 0.09516425,
+    "armor.starboard.edge-clamp.1": 0.09516426,
+    "armor.starboard.edge-clamp.2": 0.09516422,
+    "engine.starboard.housing": 9.93653155,
+    "engine.starboard.frame.top": 0.35141658,
+    "engine.starboard.frame.bottom": 0.35141661,
+    "engine.starboard.frame.left": 0.10651769,
+    "engine.starboard.frame.right": 0.10651774,
+    "engine.starboard.aperture": 0.04255996,
+    "engine.starboard.service-cover": 0.26477701,
+    "ventral.freight-elevator": 16.35157219,
+    "ventral.elevator-lock.0": 0.01226499,
+    "ventral.elevator-lock.1": 0.01226499,
+    "ventral.elevator-lock.2": 0.01226498,
+    "ventral.elevator-lock.3": 0.01226498,
+    "machinery.spine-access.0": 0.07277706,
+    "machinery.spine-access.1": 0.07277705,
+    "machinery.spine-access.2": 0.07277705,
+    "machinery.spine-access.3": 0.07277706,
+    "machinery.coolant.-1.0": 0.06844736,
+    "machinery.coolant.-1.1": 0.06844736,
+    "machinery.coolant.1.0": 0.06844736,
+    "machinery.coolant.1.1": 0.06844736
+  },
+  "method": "Independent checks on exported GLB buffers; welded position topology per authored component",
+  "observedFeatureCounts": {
+    "cargoBays": 6,
+    "dockingCollars": 2,
+    "mainEngines": 2,
+    "bridges": 1,
+    "cranes": 0,
+    "guns": 0
+  },
+  "allPhysicalTrianglesTextured": true,
+  "allPhysicalTrianglesHaveAreaUVs": true,
+  "minimumUVTriangleArea": 7.378657755907625e-07,
+  "texturedDownwardTriangles": 1748,
+  "socketNodes": [
+    {
+      "name": "socket.docking.port",
+      "translation": [
+        -5.9068421052631574,
+        0.05,
+        -0.02631578947368421
+      ],
+      "extras": {
+        "role": "customer-shuttle-docking",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.port",
+      "translation": [
+        -2.3947368421052633,
+        0.015,
+        9.894736842105264
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.docking.starboard",
+      "translation": [
+        5.9068421052631574,
+        0.05,
+        -0.02631578947368421
+      ],
+      "extras": {
+        "role": "customer-shuttle-docking",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.starboard",
+      "translation": [
+        2.3947368421052633,
+        0.015,
+        9.894736842105264
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "clearOpenings": [],
+  "sourceReferencesUnchanged": true
+}

@@ -1,0 +1,14 @@
+{
+  "ship": "clean-slate",
+  "textureRevision": 2,
+  "checkedAt": "2026-10-28T04:21:47.216213+00:00",
+  "modelSHA256": "18e364d067209deeca0c12824479dfbdec4a727937dd143fd0c5a4fc27e5af0d",
+  "url": "http://127.0.0.1:8789/clean-slate-textured-v1/viewer.html",
+  "method": "Live in-app-browser WebGL orbit screenshot and console inspection; nine additional unlit software views inspect the actual exported GLB.",
+  "trianglesDisplayed": 6250,
+  "drawCallsDisplayed": 2,
+  "consoleErrors": 0,
+  "consoleWarnings": 0,
+  "screenshot": "previews/webgl-preview.png",
+  "softwareAudit": "../trader-fleet-v1/texture-audit-v1/after/clean-slate/nine-view-audit.png"
+}

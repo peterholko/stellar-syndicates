@@ -119,6 +119,20 @@ globalThis.location = new URL("https://stellar.example/?server=wss://evil.exampl
 const pinnedOrigin = new Net(authHandlers);
 assert.equal(pinnedOrigin.url, "wss://stellar.example/ws", "URL overrides cannot redirect authenticated traffic");
 pinnedOrigin.disconnect();
+// §front-door: the account service names the game host; only this site's own.
+globalThis.location = new URL("https://stellar.example/");
+const front = new Net(authHandlers);
+front.useServer("wss://play.stellar.example/ws");
+assert.equal(front.url, "wss://play.stellar.example/ws", "the account service names the game host");
+for (const bad of ["wss://evil.example/ws", "ws://play.stellar.example/ws", "wss://play.stellar.example/other",
+  "wss://stellar.example.evil/ws", "wss://user@play.stellar.example/ws", "wss://play.stellar.example/ws?x=1", "not a url"]) {
+  front.useServer(bad);
+  assert.equal(front.url, "wss://stellar.example/ws", `refused: ${bad}`);
+}
+front.useServer("wss://play.stellar.example/ws");
+front.useServer(undefined);
+assert.equal(front.url, "wss://stellar.example/ws", "no game host: the page's own");
+front.disconnect();
 globalThis.location = new URL("http://localhost:5173/");
 const development = new Net(authHandlers);
 assert.equal(development.url, "ws://localhost:5173/ws", "Vite keeps account cookies same-origin");

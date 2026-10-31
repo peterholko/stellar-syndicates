@@ -158,6 +158,11 @@ struct FleetFacts {
     run_blockades: Option<bool>,
     #[serde(default)]
     held_outside: Option<EntityId>,
+    #[serde(default)]
+    raiding: Option<bool>,
+    /// §player-styles: a repeating raid's trip, this one included.
+    #[serde(default)]
+    raid_trip: Option<u32>,
     garrison_host: Option<EntityId>,
     garrison_fed: bool,
     supplied: bool,
@@ -172,6 +177,9 @@ struct FleetFacts {
     /// ready, or no generator).
     #[serde(default)]
     interdiction_ready: Option<f64>,
+    /// §research-wiring: what the owner's research hides.
+    #[serde(default)]
+    intel: FactsIntel,
 }
 
 /// §fuel-overhaul: one emission of a fleet's stores — the fusion tank (with its
@@ -288,6 +296,10 @@ struct Track {
     /// Defaulted so a checkpoint saved before the merchant still loads.
     #[serde(default)]
     merchant: bool,
+    /// §traders: the free trader flying it (`teo`, `ines`, `mags`, `rafi`),
+    /// latched with `merchant`. Defaulted for older checkpoints.
+    #[serde(default)]
+    trader: Option<String>,
 }
 
 /// §node regional effects for the DARK-fleet view — computed by the game loop
@@ -307,6 +319,84 @@ struct Track {
 pub struct NodeEffects<'a> {
     pub veil: &'a [(PlayerId, Vec2)],
     pub deep_scan: &'a [Vec2],
+    /// §research-wiring: the viewer's own intel research.
+    pub intel: ViewerIntel,
+}
+
+/// §research-wiring (R2): what a viewer's Computation research reads off the
+/// fleets it sees — Signal Libraries' finer size buckets, Traffic Analysis'
+/// manifest class, Wake Analysis' fuel and heading, Standing Watch's tracks.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct ViewerIntel {
+    pub fineness: u8,
+    pub traffic: bool,
+    pub wake: bool,
+    pub watch: bool,
+    /// Predictive Plots: project moving contacts to now.
+    pub predictive: bool,
+    /// §season: Network Sight — a completed Keystone sees every fleet live,
+    /// without light delay or stealth. Fleets only.
+    pub network_sight: bool,
+}
+
+impl ViewerIntel {
+    pub fn of(world: &World, viewer: PlayerId) -> Self {
+        use sim::research::{Cap, ModKey};
+        Self {
+            fineness: world.research_mod(viewer, ModKey::BucketFineness).round().max(0.0) as u8,
+            traffic: world.research_flag(viewer, Cap::TrafficAnalysis),
+            wake: world.research_flag(viewer, Cap::WakeAnalysis),
+            watch: world.research_flag(viewer, Cap::StandingWatch),
+            predictive: world.research_flag(viewer, Cap::PredictivePlots),
+            network_sight: world.keystone_powers(viewer),
+        }
+    }
+}
+
+/// §research-wiring: what a fleet's owner's research hides, stamped with its
+/// facts — ECM's coarser bucket, Counter-Intelligence, a Signature Mimicry
+/// disguise (the designated fleet, while it isn't fighting).
+#[derive(Clone, Copy, Default, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct FactsIntel {
+    coarse: u8,
+    counter_intel: bool,
+    mimic: bool,
+}
+
+/// §research-wiring Standing Watch: how long a lost contact stays tracked.
+pub const STANDING_WATCH_SECS: f64 = 600.0;
+
+/// A contact's last detection, for Standing Watch's dead reckoning.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+struct WatchFix {
+    time: f64,
+    pos: Vec2,
+    vel: Vec2,
+    kind: ShipKind,
+    count_class: CountClass,
+}
+
+/// §research-wiring Signal Libraries / ECM Emitters: a size bucket one step
+/// finer (`shift` > 0) or coarser (< 0) than [`CountClass`], as (low, high;
+/// None = open-ended).
+fn count_range(n: u32, shift: i32) -> (u32, Option<u32>) {
+    const FINE: [(u32, Option<u32>); 11] = [(1, Some(1)), (2, Some(2)), (3, Some(3)), (4, Some(5)), (6, Some(7)),
+        (8, Some(11)), (12, Some(15)), (16, Some(23)), (24, Some(30)), (31, Some(62)), (63, None)];
+    const COARSE: [(u32, Option<u32>); 3] = [(1, Some(3)), (4, Some(15)), (16, None)];
+    let table: &[(u32, Option<u32>)] = if shift > 0 { &FINE } else { &COARSE };
+    let n = n.max(1);
+    *table.iter().find(|(lo, hi)| n >= *lo && hi.is_none_or(|h| n <= h)).unwrap_or(&table[table.len() - 1])
+}
+
+/// §research-wiring Signature Mimicry: the bucket one class smaller.
+fn class_smaller(c: CountClass) -> CountClass {
+    match c {
+        CountClass::One | CountClass::TwoToThree => CountClass::One,
+        CountClass::FourToSeven => CountClass::TwoToThree,
+        CountClass::EightToFifteen => CountClass::FourToSeven,
+        CountClass::SixteenToThirty => CountClass::EightToFifteen,
+        CountClass::ThirtyOnePlus => CountClass::SixteenToThirty,
+    }
 }
 
 /// Everything the fleet filter learned for one viewer on this wavefront. Jump
@@ -429,8 +519,13 @@ struct FrontierCursor {
     pending_by_arrival: BinaryHeap<Reverse<PendingArrival>>,
     pending_by_emission: BTreeMap<u64, ScheduledCopy>,
     #[cfg(test)]
+    #[serde(default)] // a test build can read a real checkpoint
     scheduled_evaluations: usize,
     endpoint: Option<(Vec2, f64)>,
+    /// §research-wiring Standing Watch: this viewer's last detection of the
+    /// fleet.
+    #[serde(default)]
+    last_fix: Option<WatchFix>,
 }
 
 #[derive(Clone, Default)]
@@ -451,6 +546,11 @@ mod frontier_checkpoint {
         let pairs = Vec::<(FrontierKey, FrontierCursor)>::deserialize(deserializer)?;
         Ok(RefCell::new(FrontierCache { cursors: pairs.into_iter().collect() }))
     }
+}
+
+/// §traders: the free trader flying this merchant ship, if it is one.
+fn merchant_trader(world: &World, id: &EntityId) -> Option<String> {
+    world.merchants.get(id).map(|visit| world.free_trader(visit.customer).slug.to_string())
 }
 
 /// The complete player-known kinematic picture used to aim an outbound order.
@@ -484,6 +584,19 @@ impl PositionHistory {
         // One pass over the rescue runs instead of one scan per fleet per tick.
         let rescue_customers: std::collections::BTreeSet<EntityId> =
             world.fuel_rescues.values().map(|run| run.customer).collect();
+        // §research-wiring: each owner's hiding research, once per record —
+        // (ECM classes, Counter-Intelligence, the Signature Mimicry fleet).
+        let owner_intel: BTreeMap<PlayerId, (u8, bool, Option<EntityId>)> = world.players.keys().map(|&o| {
+            use sim::research::{Cap, DesignationTarget, ModKey};
+            let mimic = match world.designation(o, Cap::SignatureMimicry) {
+                Some(DesignationTarget::Fleet(id)) => Some(id),
+                _ => None,
+            };
+            (o, (world.research_mod(o, ModKey::BucketCoarseness).round().max(0.0) as u8,
+                world.research_flag(o, Cap::CounterIntel), mimic))
+        }).collect();
+        let engaged: BTreeSet<EntityId> = world.engagements.values()
+            .flat_map(|e| e.attackers.iter().chain(e.defenders.iter()).copied()).collect();
         let owner_name = |owner: PlayerId| {
             if owner == PlayerId::PIRATE {
                 "Pirates".to_string()
@@ -525,6 +638,7 @@ impl PositionHistory {
                     migrant: world.migrant_runs.contains_key(id),
                     rescue_service: world.fuel_rescues.contains_key(id),
                     merchant: world.merchants.contains_key(id),
+                    trader: merchant_trader(world, id),
                     damage_frac: 0.0,
                     bunkers: VecDeque::new(),
                     docks: VecDeque::new(),
@@ -540,6 +654,9 @@ impl PositionHistory {
             track.migrant |= world.migrant_runs.contains_key(id);
             track.rescue_service |= world.fuel_rescues.contains_key(id);
             track.merchant |= world.merchants.contains_key(id);
+            if track.trader.is_none() {
+                track.trader = merchant_trader(world, id);
+            }
             let captain = world
                 .players
                 .get(&ship.owner)
@@ -674,6 +791,9 @@ impl PositionHistory {
             // Only a freighter fleet runs blockades.
             let run_blockades = (ship.has_freighter() && !ship.is_combatant()).then_some(ship.run_blockades);
             let held_outside = ship.held_outside;
+            // §raid-order: a blockade that comes home with its loot.
+            let raiding = matches!(ship.order, FleetOrder::Blockade { raid: true, .. }).then_some(true);
+            let raid_trip = ship.raid_repeat.map(|r| r.trip);
             let garrison_host = world.garrison_host_of(*id);
             let rescue_inbound = rescue_customers.contains(id);
             let fuel_transfer = match ship.order {
@@ -682,7 +802,7 @@ impl PositionHistory {
             };
             let survey_progress = match ship.order {
                 FleetOrder::Survey { dwell_since: Some(since), .. } =>
-                    Some(((now - since) / sim::explore::SURVEY_SECS).clamp(0.0, 1.0)),
+                    Some(((now - since) / world.survey_secs_for(*id)).clamp(0.0, 1.0)),
                 FleetOrder::Expedition { dwell_since: Some(since), task, .. } =>
                     Some(((now - since) / task.seconds()).clamp(0.0, 1.0)),
                 _ => None,
@@ -693,6 +813,10 @@ impl PositionHistory {
             };
             let freight_run = world.freight_runs.get(id);
             let interdiction_ready = world.interdiction_ready_at(*id);
+            let intel = {
+                let (coarse, counter_intel, mimic) = owner_intel.get(&ship.owner).copied().unwrap_or_default();
+                FactsIntel { coarse, counter_intel, mimic: mimic == Some(*id) && !engaged.contains(id) }
+            };
             // Compare against the retained facts before assembling a copy: an
             // unchanged fleet costs a read, not fifteen clones per tick. The
             // destructuring is deliberately exhaustive so a new field cannot be
@@ -730,6 +854,8 @@ impl PositionHistory {
                     engage_freight: prev_engage_freight,
                     run_blockades: prev_run_blockades,
                     held_outside: prev_held_outside,
+                    raiding: prev_raiding,
+                    raid_trip: prev_raid_trip,
                     garrison_host: prev_garrison_host,
                     garrison_fed,
                     supplied,
@@ -739,6 +865,7 @@ impl PositionHistory {
                     expedition: prev_expedition,
                     freight_run: prev_freight_run,
                     interdiction_ready: prev_interdiction_ready,
+                    intel: prev_intel,
                 } = previous;
                 *prev_defend_system == defend_system
                     && *owner == track.owner
@@ -771,6 +898,8 @@ impl PositionHistory {
                     && *prev_engage_freight == engage_freight
                     && *prev_run_blockades == run_blockades
                     && *prev_held_outside == held_outside
+                    && *prev_raiding == raiding
+                    && *prev_raid_trip == raid_trip
                     && *prev_garrison_host == garrison_host
                     && *garrison_fed == ship.garrison_fed
                     && *supplied == ship.supplied
@@ -780,6 +909,7 @@ impl PositionHistory {
                     && *prev_expedition == expedition
                     && prev_freight_run.as_ref() == freight_run
                     && *prev_interdiction_ready == interdiction_ready
+                    && *prev_intel == intel
             });
             if !unchanged {
                 let facts = FleetFacts {
@@ -814,6 +944,8 @@ impl PositionHistory {
                     engage_freight,
                     run_blockades,
                     held_outside,
+                    raiding,
+                    raid_trip,
                     garrison_host,
                     garrison_fed: ship.garrison_fed,
                     supplied: ship.supplied,
@@ -823,6 +955,7 @@ impl PositionHistory {
                     expedition,
                     freight_run: freight_run.cloned(),
                     interdiction_ready,
+                    intel,
                 };
                 track.facts.push_back((now, facts));
             }
@@ -1014,6 +1147,25 @@ impl PositionHistory {
         coverage
     }
 
+    /// §research-wiring Panopticon Catalog: a sensor bubble at every one of
+    /// the viewer's own fleets (as their light shows them) and at each of
+    /// `systems`, for cataloguing battles.
+    pub fn asset_coverage_for(&self, viewer: PlayerId, cc: Vec2, c: f64, now: f64,
+        systems: impl Iterator<Item = Vec2>) -> Vec<(Vec2, f64)> {
+        let mut out: Vec<(Vec2, f64)> = systems
+            .map(|pos| (pos, self.sensor_range * sim::nebula::sensor_factor_at(&self.nebulas, pos)))
+            .collect();
+        let mut frontiers = self.frontiers.borrow_mut();
+        let cursors = &mut frontiers.cursors;
+        for (id, track) in self.tracks.iter().filter(|(_, t)| t.owner == viewer) {
+            let cursor = cursors.entry(FrontierKey { viewer, track: *id, path: FrontierPath::DirectOwn }).or_default();
+            if let Some(s) = serve_track_cached(track, cc, c, now, cursor, true) {
+                out.push((s.pos, self.sensor_range * sim::nebula::sensor_factor_at(&self.nebulas, s.pos)));
+            }
+        }
+        out
+    }
+
     /// [`Self::view_for`] plus the viewer's SENSOR-ARRAY bubbles (§buildings
     /// step 2b): standing `(position, radius)` sources from the viewer's own
     /// array systems (`World::array_sensor_sources` — the shared coverage source
@@ -1098,6 +1250,9 @@ impl PositionHistory {
             migrant: bool,
             rescue_service: bool,
             merchant: bool,
+            trader: Option<String>,
+            /// §research-wiring Standing Watch: the viewer's last fix.
+            last_fix: Option<WatchFix>,
         }
         let mut pre = Vec::new();
         // Coverage as (center, radius) sources: the command center + own Raider
@@ -1112,12 +1267,15 @@ impl PositionHistory {
         }));
         let mut frontiers = self.frontiers.borrow_mut();
         let cursors = &mut frontiers.cursors;
+        // §season Network Sight: fleets are served at no light delay.
+        let sight = nodes.intel.network_sight;
+        let c_fleet = if sight { f64::INFINITY } else { c };
         for (id, track) in &self.tracks {
             // Destroyed ships: the player keeps seeing the ghost (flying along on
             // old light) until the destruction's light reaches their command
             // center; only THEN does it vanish. Before that, serve it normally.
             if let Some((dt, dpos)) = track.gone
-                && now >= dt + sim::transit::delay(dpos, cc, c)
+                && now >= dt + sim::transit::delay(dpos, cc, c_fleet)
             {
                 continue; // the destruction has been observed — it's gone
             }
@@ -1128,7 +1286,7 @@ impl PositionHistory {
                     path: FrontierPath::Composite,
                 })
                 .or_default();
-            let Some(sample) = serve_track_cached(track, cc, c, now, cursor, track.owner == viewer)
+            let Some(sample) = serve_track_cached(track, cc, c_fleet, now, cursor, track.owner == viewer)
             else {
                 continue; // dark — no light from this object has arrived yet
             };
@@ -1163,7 +1321,9 @@ impl PositionHistory {
                 && !track.broadcasts
                 && self.detected_at_retarded_time(viewer, cc, sample.pos, sample.time, arrays,
                     sample_signature(&sample));
+            let last_fix = cursor.last_fix;
             pre.push(Pre {
+                last_fix,
                 facts,
                 id: *id,
                 owner: facts.owner,
@@ -1214,6 +1374,7 @@ impl PositionHistory {
                 migrant: track.migrant,
                 rescue_service: track.rescue_service,
                 merchant: track.merchant,
+                trader: track.trader.clone(),
             });
         }
 
@@ -1247,6 +1408,7 @@ impl PositionHistory {
             // coverage — this overrides the quiet-when-slow detection rule.
             let at_battle = battle_reveal.contains(&p.id);
             let dark_detected = own
+                || sight
                 || at_battle
                 || p.destroyed_detected
                 || sim::detection::detected(signature, &coverage, p.sample.pos);
@@ -1255,10 +1417,22 @@ impl PositionHistory {
             // sensors); past it, a broadcaster is found only like any other hull.
             let heard = p.broadcasts && sim::detection::heard(receivers.iter().copied(), p.sample.pos);
 
+            // §research-wiring Standing Watch: every sighting is a fix; a
+            // contact that slips out of detection stays on the plot as a
+            // dead-reckoned track for a while.
+            if !own && (dark_detected || heard) && !p.sample.jump_departed
+                && let Some(cursor) = cursors.get_mut(&FrontierKey { viewer, track: p.id, path: FrontierPath::Composite })
+            {
+                cursor.last_fix = Some(WatchFix { time: p.sample.time, pos: p.sample.pos, vel: p.sample.vel,
+                    kind: p.flagship, count_class: p.count_class });
+            }
+            let watch = (!own && !dark_detected && !heard && nodes.intel.watch && !p.sample.jump_departed)
+                .then_some(p.last_fix).flatten()
+                .filter(|fix| p.sample.time >= fix.time && p.sample.time - fix.time <= STANDING_WATCH_SECS);
             // A fleet neither detected nor heard is omitted entirely — never
             // sent-and-hidden. A seen dark fleet always shows its full
             // composition (consistent — no half-seen fleet).
-            if !dark_detected && !heard {
+            if !dark_detected && !heard && watch.is_none() {
                 continue;
             }
             if p.sample.jump_departed {
@@ -1281,7 +1455,13 @@ impl PositionHistory {
             }
             // What the viewer may READ off it: a seen dark fleet reveals all; a
             // broadcaster reveals cargo/composition only inside plain coverage.
-            let reveal = if p.broadcasts {
+            // §research-wiring Signature Mimicry: a disguised fleet reads like
+            // a broadcaster until it fights. A Standing Watch track reveals
+            // nothing new.
+            let mimic = !own && p.facts.intel.mimic && !at_battle;
+            let reveal = if watch.is_some() {
+                false
+            } else if p.broadcasts || mimic {
                 own || in_coverage
             } else {
                 true
@@ -1334,10 +1514,46 @@ impl PositionHistory {
             // exact composition of any fleet ALREADY visible in its region — a
             // bucket→exact upgrade on a fleet that PASSED detection (never a new
             // reveal; an undetected dark fleet was already `continue`d above).
-            let deep = nodes
+            let deep = watch.is_none() && nodes
                 .deep_scan
                 .iter()
                 .any(|c| c.distance(p.sample.pos) <= sim::NODE_REGION_RADIUS);
+            // §research-wiring: the size estimate when the makeup stays hidden
+            // — a mimic's lie, else the viewer's Signal Libraries against the
+            // owner's ECM (Counter-Intelligence voids the libraries).
+            let (count_class, count_range) = if own || detected || deep {
+                (p.count_class, None)
+            } else if mimic {
+                (class_smaller(p.count_class), None)
+            } else {
+                let fine = if p.facts.intel.counter_intel { 0 } else { nodes.intel.fineness as i32 };
+                let shift = (fine - p.facts.intel.coarse as i32).clamp(-1, 1);
+                if shift == 0 {
+                    (p.count_class, None)
+                } else {
+                    let range = count_range(p.composition.values().sum(), shift);
+                    (if shift < 0 { CountClass::from_count(range.0) } else { p.count_class }, Some(range))
+                }
+            };
+            let shown_kind = if mimic && !(detected || deep) { ShipKind::Convoy } else { p.flagship };
+            // §research-wiring Traffic Analysis: an unrevealed freighter's
+            // manifest class (a mimic shows a cover manifest).
+            let shadowed = p.facts.intel.counter_intel;
+            let manifest_class = (!own && !detected && watch.is_none() && nodes.intel.traffic && !shadowed
+                && (mimic || p.flagship.is_freighter_hull() || p.facts.freight_run.is_some()))
+                .then(|| if mimic { "goods" }
+                    else if !p.passengers.is_empty() { "personnel" }
+                    else if !p.modules.is_empty() { "modules" }
+                    else if !p.cargo.is_empty() || p.facts.freight_run.is_some() { "goods" }
+                    else { "empty" }.to_string());
+            // §research-wiring Wake Analysis: a seen rival's tank and heading.
+            let wake = (!own && watch.is_none() && nodes.intel.wake && !shadowed).then(|| {
+                let fuel = if p.bunker.capacity > 0.0 { (p.bunker.fuel / p.bunker.capacity * 4.0).round() / 4.0 } else { 0.0 };
+                let step = std::f64::consts::PI / 8.0;
+                let from = (p.sample.vel.length() > 1.0)
+                    .then(|| ((-p.sample.vel.y).atan2(-p.sample.vel.x) / step).round() * step);
+                crate::protocol::WakeView { fuel, from }
+            });
             // The INTEL LADDER (§13.1): the size bucket is ALWAYS available on a
             // visible fleet; the exact composition ONLY to the owner or inside
             // sensor coverage (or a Deep-Scan region) — never leaking outside it.
@@ -1433,11 +1649,14 @@ impl PositionHistory {
                 uranium_capacity: own.then_some(p.bunker.uranium_capacity),
                 antimatter: (own && p.bunker.antimatter_capacity > 0.0).then_some(p.bunker.antimatter),
                 antimatter_capacity: (own && p.bunker.antimatter_capacity > 0.0).then_some(p.bunker.antimatter_capacity),
+                cargo_mult: None,
+                prize_mult: None,
                 stalled: own && p.bunker.stalled,
                 rescue_inbound: own && p.facts.rescue_inbound,
                 fuel_transfer: own.then_some(p.facts.fuel_transfer).flatten(),
                 rescue_service: p.rescue_service,
                 merchant: p.merchant,
+                trader: p.trader.clone(),
                 id: p.id,
                 owner: p.owner,
                 kind: p.flagship,
@@ -1469,7 +1688,7 @@ impl PositionHistory {
                 cargo,
                 cargo_manifest,
                 passengers,
-                count_class: p.count_class,
+                count_class,
                 composition,
                 damage,
                 loadouts,
@@ -1512,8 +1731,45 @@ impl PositionHistory {
                 engage_freight: own.then_some(p.facts.engage_freight).flatten(),
                 run_blockades: own.then_some(p.facts.run_blockades).flatten(),
                 held_outside: own.then_some(p.facts.held_outside).flatten(),
+                raiding: own.then_some(p.facts.raiding).flatten(),
+                raid_trip: own.then_some(p.facts.raid_trip).flatten(),
                 transit: own.then_some(p.facts.transit),
+                count_range,
+                manifest_class,
+                wake,
+                tracked: None,
+                projected: None,
             });
+            if mimic && !(detected || deep) && let Some(g) = ghosts.last_mut() {
+                g.kind = shown_kind;
+                g.signature = None; // reads as a transponder, not a warship's wake
+            }
+            // §research-wiring Standing Watch: the track is the last fix, dead
+            // reckoned to the light now arriving; nothing current rides along.
+            if let Some(fix) = watch && let Some(g) = ghosts.last_mut() {
+                let lost = p.sample.time - fix.time;
+                g.pos = fix.pos + fix.vel * lost;
+                g.vel = fix.vel;
+                g.speed = fix.vel.length();
+                g.kind = fix.kind;
+                g.count_class = fix.count_class;
+                g.count_range = None;
+                g.tracked = Some(lost);
+                g.drive = None;
+                g.jump_spool = None;
+                g.jumped = false;
+                g.docked = None;
+                g.damage = None;
+                g.signature = None;
+                g.route = None;
+            }
+            // §research-wiring Predictive Plots: where a moving contact is now,
+            // if it held course since the light left it.
+            if nodes.intel.predictive && !own && let Some(g) = ghosts.last_mut()
+                && g.vel.length() > 1.0 && g.age > 1.0
+            {
+                g.projected = Some(g.pos + g.vel * g.age);
+            }
         }
         // Deterministic ordering by id.
         ghosts.sort_by_key(|g| g.id.0);
@@ -1675,6 +1931,7 @@ pub struct AllyIntel<'a> {
 /// Privacy projection of ARRIVED site reports. The production caller must use
 /// InformationHistory::systems_for and its matching build jobs, never World
 /// truth. Ownership permits private fields; it does not waive their travel time.
+#[cfg(test)]
 pub fn filter_systems(
     systems: &[StarSystem],
     viewer: PlayerId,
@@ -1688,11 +1945,34 @@ pub fn filter_systems(
     allies: &[AllyIntel<'_>],
     surveyed: &BTreeSet<EntityId>,
 ) -> Vec<SystemStateView> {
+    filter_charted_systems(systems, viewer, cc, c, now, build_queue, tick, dt, intel, allies, surveyed, &BTreeSet::new())
+}
+
+/// [`filter_systems`] with §charting: `charted` (already light-gated by the
+/// caller) shows a system's worlds, moons and belts; its geology still needs
+/// `surveyed`.
+#[allow(clippy::too_many_arguments)]
+pub fn filter_charted_systems(
+    systems: &[StarSystem],
+    viewer: PlayerId,
+    cc: Vec2,
+    c: f64,
+    now: f64,
+    build_queue: &[sim::BuildJob],
+    tick: u64,
+    dt: f64,
+    intel: &BTreeMap<EntityId, sim::IntelSnapshot>,
+    allies: &[AllyIntel<'_>],
+    surveyed: &BTreeSet<EntityId>,
+    charted: &BTreeSet<EntityId>,
+) -> Vec<SystemStateView> {
     systems
         .iter()
         .map(|sys| {
             let own = sys.owner == Some(viewer);
             let surveyed_here = own || surveyed.contains(&sys.id);
+            // §charting: a fleet that has been there saw the bodies, not the rock.
+            let charted_here = surveyed_here || charted.contains(&sys.id);
             let owner = match (sys.owner, sys.claimed_at) {
                 (Some(owner), _) if owner == viewer => Some(owner),
                 (Some(owner), Some(claimed_at)) => {
@@ -1718,6 +1998,17 @@ pub fn filter_systems(
                     })
                     .collect()
             });
+            // §vault: what raiders can't reach, from the same report.
+            let vault: Vec<StockSlot> = if own {
+                sim::world::raid_reserve(sys).into_iter()
+                    .filter_map(|(commodity, amount)| {
+                        let units = amount.floor() as u32;
+                        (units >= 1).then_some(StockSlot { commodity, units })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             // Owner-only: ALL in-progress builds here, ordered by completion
             // (§build-progress). `build` stays the soonest for single-job
             // consumers; a rival gets None + an empty list — never a leak.
@@ -1833,6 +2124,7 @@ pub fn filter_systems(
                 industry: own.then(|| sys.industry.clone()),
                 owner,
                 stockpile,
+                vault,
                 build,
                 builds,
                 blockade,
@@ -1909,14 +2201,15 @@ pub fn filter_systems(
                 },
                 // §charting: a system's contents are unknown until the viewer
                 // surveys it (a Scout dwells there and its report comes home
-                // by light) or owns it. Until then the star stands alone: no
-                // planets, moons or belts, not even their count. Survey-gated
-                // fields below stay gated for the same reason; owner
-                // economies stay private.
+                // by light), owns it, or has had a fleet there (Oct 28 2026:
+                // charted). Until then the star stands alone: no planets, moons
+                // or belts, not even their count. Survey-gated fields below
+                // (geology, deposits) stay survey-only; owner economies stay
+                // private.
                 bodies: sys
                     .bodies
                     .iter()
-                    .filter(|_| surveyed_here)
+                    .filter(|_| charted_here)
                     .map(|b| {
                         crate::protocol::BodyView {
                             founding_camp: own.then(|| b.founding_camp.clone()).flatten(),
@@ -1929,6 +2222,11 @@ pub fn filter_systems(
                                 kind: shape.kind.slug().to_string(),
                                 radius: shape.radius,
                                 width: shape.width,
+                            }),
+                            orbit: b.orbit.map(|o| crate::protocol::OrbitView {
+                                radius: o.radius,
+                                angle: o.angle,
+                                period: o.period,
                             }),
                             habitable: b.habitable,
                             size: b.profile.size.slug().to_string(),
@@ -1950,6 +2248,7 @@ pub fn filter_systems(
                             resource_slots: own.then(|| b.resource_slots()),
                             industrial_slots: own.then(|| b.industrial_slots()),
                             infrastructure_slots: own.then(|| b.infrastructure_slots()),
+                            acclimated: own && b.acclimated,
                             ship_build_time_mult: surveyed_here.then(|| b.ship_build_time_mult()),
                             deposits: surveyed_here.then(|| {
                                 b.deposits
@@ -2043,6 +2342,9 @@ pub fn filter_systems(
                 // Storage (§buildings step 2) — owner-only like everything above.
                 // `used` is floored to whole units to match the stockpile readout.
                 storage_cap: if own { sys.storage_cap() as u32 } else { 0 },
+                storage_mult: if own { sys.storage_mult } else { 1.0 },
+                structure_slots: 1,
+                specialist_housing: if own { sys.specialist_housing() } else { 0 },
                 storage_used: if own {
                     sys.storage_used().floor() as u32
                 } else {
@@ -2099,6 +2401,8 @@ pub fn filter_systems(
                         best
                     })
                 },
+                // §scouting: injected by the game loop from the viewer's reports.
+                scouted_stores: None,
                 // §syndicates: ally tint (Part 1) + hosted-garrison indicator
                 // (Part 3) are injected by the game loop from authoritative state.
                 ally: false,
@@ -2173,10 +2477,12 @@ fn assignment_views(sys: &sim::StarSystem, mods: sim::production::ProductionMods
         .map(|(body, kind, asg)| {
             let kind = &kind;
             let tier = body.tier(*kind);
+            // §asteroid-quarry: a belt's quarry works every deposit on it.
+            let works = |d: &sim::galaxy::Deposit| *kind == sim::StructureKind::AsteroidQuarry && body.is_belt()
+                || sim::production::extraction_structure(d.resource) == Some(*kind);
             let deep_extraction = sys.trait_ == Some(sim::explore::SystemTrait::DeepDeposits)
-                && body.worked_deposits(sys.owner).any(|d| {
-                    sim::production::extraction_structure(d.resource) == Some(*kind)
-                });
+                && !mods.mantle_taps
+                && body.worked_deposits(sys.owner).any(|d| works(d));
             let mut throughput = if deep_extraction {
                 sim::production::tier_throughput(tier.saturating_sub(1).max(1))
             } else {
@@ -2184,7 +2490,8 @@ fn assignment_views(sys: &sim::StarSystem, mods: sim::production::ProductionMods
             };
             let staffing = sys.staffing_factor(body.id, *kind);
             let skill = sys.skill_factor(body.id, *kind);
-            let food = sim::production::food_factor(*kind, sys.food_state);
+            let food = if *kind == sim::StructureKind::AsteroidQuarry { 1.0 }
+                else { sim::production::food_factor_with(*kind, sys.food_state, mods.rationing) };
             // §power: the planet's grid, as the tick applies it.
             let power = if sim::power::powered(*kind) { body.grid.power } else { 1.0 };
             let mut outputs: Vec<(Commodity, f64)> = Vec::new();
@@ -2192,12 +2499,12 @@ fn assignment_views(sys: &sim::StarSystem, mods: sim::production::ProductionMods
             let site = if let Some(conv) = sim::production::assigned_converter(*kind, Some(asg)) {
                 throughput *= mods.processing;
                 let site = sim::explore::converter_site_mult(body, *kind, sys.trait_);
-                outputs.extend(conv.outputs().map(|(c, units)|
+                outputs.extend(conv.outputs().chain(mods.byproduct(*kind)).map(|(c, units)|
                     (c, units * conv.rate * throughput * staffing * skill * food * power * site * recovery)));
                 site
             } else {
                 // §pockets: the owner's found pockets join the mine's output.
-                if body.worked_deposits(sys.owner).any(|d| sim::production::extraction_structure(d.resource) == Some(*kind)) {
+                if body.worked_deposits(sys.owner).any(|d| works(d)) {
                     throughput *= mods.extraction;
                     // Strip Rigs: moons and asteroid belts.
                     if body.parent.is_some() || body.is_belt() {
@@ -2205,27 +2512,35 @@ fn assignment_views(sys: &sim::StarSystem, mods: sim::production::ProductionMods
                     }
                 }
                 let mut first_site = 1.0;
+                let geo = mods.geology(sys.id, body.id);
+                let mut trace = 0.0;
                 for d in body.worked_deposits(sys.owner) {
-                    if sim::production::extraction_structure(d.resource) == Some(*kind) {
-                        let dep_site = sim::explore::extraction_site_mult(
+                    if works(d) {
+                        let dep_site = sim::explore::extraction_site_mult_with(
                             body,
                             d.resource,
                             sys.trait_,
+                            geo,
                         );
                         if outputs.is_empty() {
                             first_site = dep_site;
                         }
-                        outputs.push((
-                            d.resource,
-                            sim::explore::natural_extraction_rate(body, d, sys.trait_)
-                                * sim::production::ore_bulk_ratio(d.resource)
-                                * throughput
-                                * staffing
-                                * skill
-                                * food
-                                * power,
-                        ));
+                        let rate = sim::explore::natural_extraction_rate_with(body, d, sys.trait_, geo)
+                            * sim::production::ore_bulk_ratio(d.resource)
+                            * throughput
+                            * staffing
+                            * skill
+                            * food
+                            * power;
+                        if matches!(*kind, sim::StructureKind::MiningComplex | sim::StructureKind::AsteroidQuarry) && mods.traces(d.resource) {
+                            trace += rate * sim::production::TRACE_RARE_PER_ORE;
+                        }
+                        outputs.push((d.resource, rate));
                     }
+                }
+                // §research-wiring Trace Refining.
+                if trace > 0.0 {
+                    outputs.push((Commodity::RareElements, trace));
                 }
                 first_site
             };
@@ -2245,6 +2560,7 @@ fn assignment_views(sys: &sim::StarSystem, mods: sim::production::ProductionMods
                 power,
                 site,
                 recovery,
+                input_mult: mods.input_mult(*kind),
                 outputs,
             }
         })
@@ -2287,10 +2603,11 @@ fn converter_statuses(sys: &sim::StarSystem, mods: sim::production::ProductionMo
                 tier,
                 status: status.to_string(),
                 rated_output: conv.rate * sim::production::tier_throughput(tier)
-                    * sys.skill_factor(b.id,kind) * sim::production::food_factor(kind,sys.food_state)
+                    * sys.skill_factor(b.id,kind) * sim::production::food_factor_with(kind,sys.food_state,mods.rationing)
                     * sim::explore::converter_site_mult(b,kind,sys.trait_) * mods.processing * mods.recovery(kind),
                 site: sim::explore::converter_site_mult(b,kind,sys.trait_),
                 recovery: mods.recovery(kind),
+                input_mult: mods.input_mult(kind),
             });
         }
     }
@@ -2312,6 +2629,7 @@ pub fn apply_production_report(view: &mut SystemStateView, report: &sim::informa
     }
     view.assignments = assignment_views(sys, mods);
     view.converters = converter_statuses(sys, mods);
+    view.structure_slots = if mods.flash_forges { 2 } else { 1 };
     view.refining_sites = sys.bodies.iter().map(|body| {
         let kind = sim::StructureKind::Smelter;
         let tier = body.tier(kind);
@@ -2319,7 +2637,7 @@ pub fn apply_production_report(view: &mut SystemStateView, report: &sim::informa
             body_id: body.id, tier: tier.max(1), built: tier > 0,
             recovery: sim::explore::converter_site_mult(body, kind, sys.trait_) * mods.recovery(kind),
             work_rate: sim::production::tier_throughput(tier.max(1)) * mods.processing
-                * sim::production::food_factor(kind, sys.food_state)
+                * sim::production::food_factor_with(kind, sys.food_state, mods.rationing)
                 * if tier > 0 { sys.skill_factor(body.id, kind) } else { 1.0 },
         }
     }).collect();
@@ -2369,17 +2687,19 @@ fn record_note(n: &sim::RoundNote, participant: bool) -> Option<RoundNoteView> {
     })
 }
 
-fn record_round(rr: &sim::RoundRecord, participant: bool) -> RoundRecordView {
+fn record_round(rr: &sim::RoundRecord, fidelity: BattleFidelity) -> RoundRecordView {
+    let participant = matches!(fidelity, BattleFidelity::Participant);
+    // §research-wiring Battle Archives: a bare bucket observer sees the
+    // forces, not each round's losses.
+    let kills = |side: usize| if matches!(fidelity, BattleFidelity::Bucket) { Vec::new() }
+        else { record_counts(&rr.kills[side], participant) };
     RoundRecordView {
         tick: rr.tick,
         counts: [
             record_counts(&rr.counts[0], participant),
             record_counts(&rr.counts[1], participant),
         ],
-        kills: [
-            record_counts(&rr.kills[0], participant),
-            record_counts(&rr.kills[1], participant),
-        ],
+        kills: [kills(0), kills(1)],
         dealt: participant.then_some(rr.dealt),
         notes: rr
             .notes
@@ -2706,8 +3026,9 @@ pub fn record_rounds_range(
     r: &sim::BattleRecord,
     from: usize,
     to: usize,
-    participant: bool,
+    fidelity: BattleFidelity,
 ) -> Vec<RoundRecordView> {
+    let participant = matches!(fidelity, BattleFidelity::Participant);
     let to = to.min(r.rounds.len());
     let from = from.min(to);
     // Reconstruct only AFTER visibility chose this arrived slice, and only for
@@ -2723,7 +3044,7 @@ pub fn record_rounds_range(
         }
     } else { None };
     r.rounds[from..to].iter().enumerate().map(|(index, rr)| {
-        let mut round = record_round(rr, participant);
+        let mut round = record_round(rr, fidelity);
         if let Some(frames) = &frames { round.frame = frames[index].clone(); }
         round
     }).collect()
@@ -2750,7 +3071,6 @@ pub fn battle_record_views_named(
         .into_iter()
         .filter_map(|spec| {
             let r = records.get(&spec.id)?;
-            let participant = matches!(spec.fidelity, BattleFidelity::Participant);
             let h = record_header(r, &spec);
             Some(BattleRecordView {
                 id: spec.id,
@@ -2761,7 +3081,7 @@ pub fn battle_record_views_named(
                 fidelity: h.fidelity,
                 own_side: h.own_side,
                 sides: h.sides,
-                rounds: record_rounds_range(r, 0, spec.arrived_len, participant),
+                rounds: record_rounds_range(r, 0, spec.arrived_len, spec.fidelity),
                 light_frontier_tick: spec.frontier_tick,
                 outcome: spec.outcome,
             })
@@ -2841,6 +3161,9 @@ pub fn build_key(what: sim::BuildKind) -> &'static str {
         sim::BuildKind::Ship {
             ship: sim::ShipKind::MiningBeltStation,
         } => "mining_belt_station",
+        sim::BuildKind::Ship {
+            ship: sim::ShipKind::CombatFreighter,
+        } => "combat_freighter",
         sim::BuildKind::Ship {
             ship: sim::ShipKind::Destroyer,
         } => "destroyer",
@@ -2933,15 +3256,31 @@ pub(crate) fn within_coverage(sources: &[(Vec2, f64)], p: Vec2) -> bool {
 }
 
 /// §sensors: contacts a viewer TRACKS without seeing them. The founder's
-/// privateer is one from the moment the colony's first sighting of its raid
-/// reaches command (§charter-v5): it carries its loot home and lurks on
-/// standby, far quieter than any early sensor can see.
+/// privateer is one through its raid (§charter-v5): from the moment the
+/// colony's first sighting reaches command until the raid's report does.
+/// §privateer-hunt (Oct 27 2026): after that the colony sees it only by its
+/// own sensors, and knows its hiding spot (`privateer_last_seen`).
 pub(crate) fn tracked_contacts(world: &World, viewer: PlayerId, now: f64) -> BTreeSet<EntityId> {
     world.players.get(&viewer).map(|corp| &corp.founding)
         .filter(|founding| founding.raid_seen_at.is_some_and(|at| now >= at))
+        .filter(|founding| founding.raid_report_at.is_none_or(|at| now < at))
         .and_then(|founding| founding.privateer)
         .into_iter()
         .collect()
+}
+
+/// §privateer-hunt (Peter, Oct 27 2026: "show up as a last known contact or
+/// something and the player moves their interceptor there and then the
+/// pirate appears"): where the founder's privateer went to ground, from the
+/// raid's report until its kill's report. It lies quiet just outside the
+/// colony's sensors on the side it left by.
+pub(crate) fn privateer_last_seen(world: &World, viewer: PlayerId, now: f64) -> Option<Vec2> {
+    let founding = &world.players.get(&viewer)?.founding;
+    let raid = founding.raid.as_ref()?;
+    (founding.raid_report_at.is_some_and(|at| now >= at)
+        && founding.privateer.is_some_and(|id| world.fleets.contains_key(&id))
+        && founding.privateer_report_at.is_none_or(|at| now < at))
+        .then_some(raid.lurk)
 }
 
 /// §sensors: a recorded sample's detection signature — √ of its core output,
@@ -3360,7 +3699,7 @@ mod tests {
         let report = now - 0.5;
         let seen = |world: &World, now: f64| history
             .view_for_with_arrays(founder, cc, world.config.c, now, &[], &tracked_contacts(world, founder, now),
-                NodeEffects { veil: &[], deep_scan: &[] })
+                NodeEffects { veil: &[], deep_scan: &[], ..Default::default() })
             .iter().any(|g| g.id == privateer);
         assert!(!seen(&world, now), "a holding Raider 11.6k out is beneath the Command Center's notice");
         let founding = &mut world.players.get_mut(&founder).unwrap().founding;
@@ -3369,6 +3708,59 @@ mod tests {
         assert!(!seen(&world, report - 0.1), "not before the sighting reaches command");
         assert!(seen(&world, now), "then the founder tracks it");
         assert!(tracked_contacts(&world, PlayerId(907), now).is_empty(), "nobody else does");
+        // §privateer-hunt (Oct 27 2026): only through its raid. Once the raid's
+        // report reaches command, the colony's own sensors are all it has, and
+        // the hiding spot is where to send a hunter.
+        assert_eq!(privateer_last_seen(&world, founder, now), None, "no raid on record");
+        let founding = &mut world.players.get_mut(&founder).unwrap().founding;
+        founding.raid_report_at = Some(now + 5.0);
+        founding.raid = Some(sim::founding::FoundingRaid {
+            phase: sim::founding::RaidPhase::Lurking, base: lurk, lurk, arrived_at: None,
+            allowance: Default::default(), stolen: Default::default(), loading_credit: 0.0,
+        });
+        assert!(seen(&world, now + 4.0), "tracked while the raid's report is on its way");
+        assert_eq!(privateer_last_seen(&world, founder, now + 4.0), None);
+        assert!(!seen(&world, now + 6.0), "not after: it lies quiet beyond the colony's sensors");
+        assert_eq!(privateer_last_seen(&world, founder, now + 6.0), Some(lurk), "where it went to ground");
+        world.players.get_mut(&founder).unwrap().founding.privateer_report_at = Some(now + 20.0);
+        assert_eq!(privateer_last_seen(&world, founder, now + 21.0), None, "gone with its kill's report");
+        world.players.get_mut(&founder).unwrap().founding.privateer_report_at = None;
+        world.fleets.remove(&privateer);
+        assert_eq!(privateer_last_seen(&world, founder, now + 6.0), None, "or with the ship");
+    }
+
+    /// §traders: a merchant's ghost names the trader flying it, so the map
+    /// draws that trader's own ship, and keeps the name once the visit ends.
+    #[test]
+    fn a_merchant_ghost_names_its_trader() {
+        use sim::{Command, Fleet, FleetOrder, SimConfig};
+        let mut world = World::new(SimConfig::for_players(123, 4));
+        let founder = PlayerId(908);
+        world.step(&[Command::AddPlayer { id: founder, name: "Customer".into() }]);
+        world.fleets.clear();
+        let cc = world.players[&founder].command_center;
+        let home = world.players[&founder].home_system.unwrap();
+        let ship = EntityId(900_030);
+        let at = cc + Vec2::new(300.0, 0.0);
+        world.fleets.insert(ship, Fleet::single(ship, PlayerId::TCA, ShipKind::Freighter, at, FleetOrder::Idle, None));
+        world.merchants.insert(ship, sim::merchant::MerchantVisit {
+            fleet: ship, customer: founder, system: home, phase: sim::merchant::MerchantPhase::Docked,
+            arrived_at: Some(0.0), leave_by: 10_000.0, mids: Default::default(), markup: 1.5,
+            stock: Default::default(), ore_bought: 0,
+        });
+        let dealt = world.free_trader(founder).slug;
+        let mut history = PositionHistory::for_world(&world);
+        history.record(&world);
+        let now = sim::transit::delay(at, cc, world.config.c) + 1.0;
+        let ghost = |history: &PositionHistory| history
+            .view_for_with_arrays(founder, cc, world.config.c, now, &[], &BTreeSet::new(), NodeEffects::default())
+            .into_iter().find(|g| g.id == ship).expect("the merchant is in sight");
+        let seen = ghost(&history);
+        assert!(seen.merchant);
+        assert_eq!(seen.trader.as_deref(), Some(dealt), "the trader the founder was dealt");
+        world.merchants.clear();
+        history.record(&world);
+        assert_eq!(ghost(&history).trader.as_deref(), Some(dealt), "latched with the merchant flag");
     }
 
     #[test]
@@ -3661,9 +4053,9 @@ mod tests {
             ships: Vec::new(), marines: 0,
             posture: sim::EngagementPosture::Passive,
             transit: sim::ship::TransitMode::Full,
-            engage_freight: None, run_blockades: None, held_outside: None, garrison_host: None, garrison_fed: false,
+            engage_freight: None, run_blockades: None, held_outside: None, raiding: None, raid_trip: None, garrison_host: None, garrison_fed: false,
             supplied: true, rescue_inbound: false, fuel_transfer: None, survey_progress: None, expedition: None, interdiction_ready: None,
-            freight_run: None,
+            freight_run: None, intel: FactsIntel::default(),
         };
         track.facts = VecDeque::from([(track.samples.front().map_or(0.0, |s| s.time), facts)]);
     }
@@ -3694,6 +4086,25 @@ mod tests {
         let belts: Vec<_> = charted.bodies.iter().filter(|b| b.kind == "asteroid_belt").collect();
         assert_eq!(belts.len(), sys.bodies.iter().filter(|b| b.is_belt()).count());
         assert!(belts.iter().all(|b| b.belt.is_some() && b.deposits.is_some()), "charted with type, picture and ores");
+    }
+
+    /// §charting (Oct 28 2026): a fleet that has been there shows the bodies,
+    /// with no geology: that still takes a survey.
+    #[test]
+    fn a_fleet_charts_a_systems_bodies_but_not_its_geology() {
+        let world = World::new(sim::SimConfig::for_players(7, 4));
+        let sys = world
+            .systems
+            .iter()
+            .find(|s| s.owner.is_none() && s.bodies.iter().any(|b| b.is_belt() && !b.deposits.is_empty()))
+            .expect("some unclaimed system has an ore belt")
+            .clone();
+        let seen = filter_charted_systems(std::slice::from_ref(&sys), PlayerId(5), Vec2::new(0.0, 0.0), df(300.0), 0.0,
+            &[], 0, sim::DT, &BTreeMap::new(), &[], &BTreeSet::new(), &BTreeSet::from([sys.id])).remove(0);
+        assert_eq!(seen.bodies.len(), sys.bodies.len(), "every world, moon and belt");
+        assert!(seen.bodies.iter().any(|b| b.kind == "asteroid_belt" && b.belt.is_some()), "the belt, drawn");
+        assert!(seen.bodies.iter().all(|b| b.geology.is_none() && b.deposits.is_none()), "no geology");
+        assert!(seen.deposits.is_none(), "nor the system's");
     }
 
     /// §pockets: a belt's hidden pockets reach only the corporation that found
@@ -3815,6 +4226,7 @@ mod tests {
             migrant: false,
             rescue_service: false,
             merchant: false,
+            trader: None,
         };
         record_fixture_facts(&mut track);
         track
@@ -3887,6 +4299,8 @@ mod tests {
                     fieldcraft: 1,
                     logistics: 1,
                 },
+                gear: Default::default(),
+                record: Default::default(),
             }),
             loud: false,
             output: 1.0,
@@ -4453,6 +4867,7 @@ mod tests {
                 system: None,
                 founding_opportunities: Vec::new(),
                 den_system: None,
+                reserved: None,
             },
             // Rival's anchor, 6000 units away → 20 s of light.
             HomeSlot {
@@ -4462,6 +4877,7 @@ mod tests {
                 system: None,
                 founding_opportunities: Vec::new(),
                 den_system: None,
+                reserved: None,
             },
             HomeSlot {
                 pos: Vec2::new(0.0, 3000.0),
@@ -4470,6 +4886,7 @@ mod tests {
                 system: None,
                 founding_opportunities: Vec::new(),
                 den_system: None,
+                reserved: None,
             },
         ];
 
@@ -4541,6 +4958,8 @@ mod tests {
             legacy_assignments: Default::default(),
             specialists: Default::default(),
             landing_holds: 0.0,
+            storage_mult: 1.0,
+            twin_campuses: false,
         };
         let mut systems = vec![
             mk(
@@ -4931,6 +5350,8 @@ mod tests {
             legacy_assignments: Default::default(),
             specialists: Default::default(),
             landing_holds: 0.0,
+            storage_mult: 1.0,
+            twin_campuses: false,
         };
         let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), Some(me)), // mine (never explicitly surveyed)
@@ -5238,15 +5659,21 @@ mod tests {
             legacy_assignments: Default::default(),
             specialists: Default::default(),
             landing_holds: 0.0,
+            storage_mult: 1.0,
+            twin_campuses: false,
         };
         // Two standing tiers on the habitable body — 50 marines to take it.
         sys.bodies.push(sim::Body {
             founding_camp: None,
+            crown_project: false,
+            acclimated: false,
+            orbital_habitat: false,
             id: 1,
             name: "S I".into(),
             kind: sim::BodyKind::Terrestrial,
             parent: None,
             belt: None,
+            orbit: None,
             habitable: true,
             profile: sim::PlanetaryProfile::default(),
             deposits: vec![],
@@ -5455,14 +5882,20 @@ mod tests {
                 legacy_assignments: Default::default(),
                 specialists: Default::default(),
                 landing_holds: 0.0,
+                storage_mult: 1.0,
+                twin_campuses: false,
             };
             sys.bodies.push(sim::Body {
                 founding_camp: None,
+                crown_project: false,
+                acclimated: false,
+                orbital_habitat: false,
                 id: 1,
                 name: "S I".into(),
                 kind: sim::BodyKind::Terrestrial,
                 parent: None,
                 belt: None,
+                orbit: None,
                 habitable: true,
                 profile: sim::PlanetaryProfile::default(),
                 deposits: vec![],
@@ -5551,6 +5984,8 @@ mod tests {
             legacy_assignments: Default::default(),
             specialists: Default::default(),
             landing_holds: 0.0,
+            storage_mult: 1.0,
+            twin_campuses: false,
         };
         // The blockaded system sits 6000 su (20 s of light) from every viewer's
         // command center at the origin — so the owner's onset light lands at t=120.
@@ -5641,6 +6076,8 @@ mod tests {
             legacy_assignments: Default::default(),
             specialists: Default::default(),
             landing_holds: 0.0,
+            storage_mult: 1.0,
+            twin_campuses: false,
         }];
         let mut intel = BTreeMap::new();
         intel.insert(
@@ -5769,6 +6206,8 @@ mod tests {
             legacy_assignments: Default::default(),
             specialists: Default::default(),
             landing_holds: 0.0,
+            storage_mult: 1.0,
+            twin_campuses: false,
         }]
     }
 
@@ -6376,6 +6815,7 @@ mod tests {
             NodeEffects {
                 veil: &[],
                 deep_scan: &deep,
+                ..Default::default()
             },
         );
         assert_eq!(scanned.len(), 1, "deep scan reveals no NEW fleet");
@@ -6403,6 +6843,7 @@ mod tests {
             NodeEffects {
                 veil: &[],
                 deep_scan: &deep,
+                ..Default::default()
             },
         );
         assert!(
@@ -6444,6 +6885,7 @@ mod tests {
             NodeEffects {
                 veil: &veil,
                 deep_scan: &[],
+                ..Default::default()
             },
         );
         assert!(
@@ -6463,6 +6905,7 @@ mod tests {
             NodeEffects {
                 veil: &wrong,
                 deep_scan: &[],
+                ..Default::default()
             },
         );
         assert!(
@@ -6588,6 +7031,7 @@ mod tests {
             migrant: false,
             rescue_service: false,
             merchant: false,
+            trader: None,
         };
         record_fixture_facts(&mut track);
         track
@@ -7142,7 +7586,7 @@ mod tests {
                 cid,
                 me,
                 ShipKind::Colony,
-                pos + Vec2::new(500.0, 0.0),
+                pos + Vec2::new(2_000.0, 0.0), // outside the well
                 sim::FleetOrder::Idle,
                 None,
             ),
@@ -7635,7 +8079,7 @@ mod tests {
                 let mut updates = Vec::new();
                 for spec in specs {
                     let participant = spec.own_side.is_some();
-                    let rounds = record_rounds_range(&cold[&id], sent, spec.arrived_len, participant);
+                    let rounds = record_rounds_range(&cold[&id], sent, spec.arrived_len, spec.fidelity);
                     assert!(rounds.iter().all(|round| round.tick as f64 * sim::DT + delay <= now));
                     if participant {
                         for frame in rounds.iter().filter_map(|round| round.frame.as_ref()) {
@@ -7760,5 +8204,61 @@ mod tests {
             out.is_empty(),
             "a third party who can't sense the site gets no replay"
         );
+    }
+
+    /// §research-wiring: Signal Libraries, ECM Emitters, Counter-Intelligence,
+    /// Traffic and Wake Analysis on a broadcaster outside coverage.
+    #[test]
+    fn intel_research_reshapes_what_a_far_contact_shows() {
+        assert_eq!(count_range(6, 1), (6, Some(7)));
+        assert_eq!(count_range(6, -1), (4, Some(15)));
+        assert_eq!(count_range(40, -1), (16, None));
+        assert_eq!(class_smaller(CountClass::FourToSeven), CountClass::TwoToThree);
+        let comp = [(ShipKind::Convoy, 3), (ShipKind::Corvette, 2), (ShipKind::Raider, 1)];
+        let picture = |intel: FactsIntel, viewer: ViewerIntel| {
+            let mut track = fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp);
+            track.facts.back_mut().unwrap().1.intel = intel;
+            let hist = history_of(vec![(EntityId(1), track)], 1000.0);
+            let nodes = NodeEffects { intel: viewer, ..Default::default() };
+            hist.picture_for_with_arrays(VIEWER, Vec2::new(0.0, 0.0), df(300.0), 60.0, &[], &BTreeSet::new(), nodes)
+                .ghosts.remove(0)
+        };
+        let libraries = ViewerIntel { fineness: 1, traffic: true, wake: true, watch: false, predictive: false, network_sight: false };
+        let g = picture(FactsIntel::default(), ViewerIntel::default());
+        assert!(g.count_range.is_none() && g.manifest_class.is_none() && g.wake.is_none(), "no research, no reading");
+        let g = picture(FactsIntel::default(), libraries);
+        assert_eq!(g.count_range, Some((6, Some(7))));
+        assert_eq!(g.manifest_class.as_deref(), Some("empty"));
+        assert!(g.wake.is_some_and(|w| w.from.is_none()), "holding still");
+        let ecm = FactsIntel { coarse: 1, ..Default::default() };
+        assert!(picture(ecm, libraries).count_range.is_none(), "ECM cancels the libraries");
+        let g = picture(ecm, ViewerIntel::default());
+        assert_eq!(g.count_range, Some((4, Some(15))));
+        assert_eq!(g.count_class, CountClass::from_count(4), "the true bucket never ships under ECM");
+        let shadow = FactsIntel { counter_intel: true, ..Default::default() };
+        let g = picture(shadow, libraries);
+        assert!(g.count_range.is_none() && g.manifest_class.is_none() && g.wake.is_none(), "Counter-Intelligence");
+        let g = picture(FactsIntel { mimic: true, ..Default::default() }, libraries);
+        assert_eq!(g.count_class, CountClass::TwoToThree, "a mimic reads one class smaller");
+        assert!(g.composition.is_none());
+    }
+
+    /// §research-wiring Predictive Plots: a moving contact's projection is its
+    /// sighting carried forward by its velocity over the light's age.
+    #[test]
+    fn predictive_plots_project_a_moving_contact_to_now() {
+        // Declared corvettes broadcast, so the wing is heard from afar.
+        let comp = [(ShipKind::Convoy, 3), (ShipKind::Corvette, 2), (ShipKind::Raider, 1)];
+        let mut track = fleet_track(RIVAL, Vec2::new(5000.0, 0.0), &comp);
+        for sample in track.samples.iter_mut() {
+            sample.vel = Vec2::new(12.0, 0.0);
+        }
+        let hist = history_of(vec![(EntityId(1), track)], 1000.0);
+        let picture = |predictive: bool| hist.picture_for_with_arrays(VIEWER, Vec2::new(0.0, 0.0), df(300.0), 60.0, &[],
+            &BTreeSet::new(), NodeEffects { intel: ViewerIntel { predictive, ..Default::default() }, ..Default::default() }).ghosts.remove(0);
+        assert!(picture(false).projected.is_none());
+        let g = picture(true);
+        let p = g.projected.expect("a moving contact is projected");
+        assert!((p - (g.pos + g.vel * g.age)).length() < 1e-9 && g.age > 1.0);
     }
 }

@@ -1,10 +1,13 @@
 // Shared orders derivations extracted from the desktop shell.
 
 import {
+  cargoUnitsPerHull,
+  isLootOnly,
   type BattleView,
   type GhostView,
   type GroundRecordView,
   type PendingOrderView,
+  type ShipKind,
   type SystemStateView,
   type Vec2,
 } from "../../protocol";
@@ -14,7 +17,8 @@ import { liveSimTime, state, type PendingIntent } from "../../state";
 import { emplacementLabel, systemName } from "./geo";
 import { projectedBand } from "./research";
 import { estimatedFuelForLeg, fleetBaseSpeed, jumpAntimatter, regimeStore, shipKindLabel, transitLabel, transitSpeedMultiplier, WARP_FACTOR } from "./fleet";
-import { SIGNAL_INFO } from "./signals";
+import { signalInfo } from "./signals";
+import { traderOf } from "./trader";
 import { doneAtLocal, fmt, fmtDur } from "./format";
 import { siegeClock } from "./blockade";
 import { fleetCommandSummary } from "../fleetorders";
@@ -35,7 +39,8 @@ export const SHIP_STATS: Record<string, { role: string; speed: number; hull: num
   scout: { role: "Discovers sites and surveys worlds. Fit a Recon Suite for mobile sensors.", speed: 115, hull: 80, atk: 0, def: 0, slots: 1, cap: "No cargo · 1 equipment slot" },
   survey_probe: { role: "Crewless one-way drone: flies to a system, charts its worlds and belts, and is spent.", speed: 120, hull: 40, atk: 0, def: 0, slots: 0, cap: "One survey · no crew, no cargo" },
   corvette: { role: "Armored escort/garrison — built to be shot at; too slow to chase raiders.", speed: 65, hull: 800, atk: 1, def: 4, slots: 2, cap: "No cargo · screens freighters" },
-  raider: { role: "Fast corporate interceptor — patrols, responds to threats, and can seize hostile cargo.", speed: 100, hull: 200, atk: 3, def: 2, slots: 2, cap: "No cargo · jump capable" },
+  raider: { role: "Fast corporate interceptor — patrols, answers threats and runs down freighters.", speed: 100, hull: 200, atk: 3, def: 2, slots: 2, cap: "No cargo · jump capable" },
+  combat_freighter: { role: "Raiding freighter — carries a raid's loot home. Its hold takes no trade.", speed: 70, hull: 2000, atk: 0, def: 2, slots: 1, cap: "80 loot · 1 utility slot" },
   tiny_freighter: { role: "Low-cost hauler for small shipments and backup routes.", speed: 40, hull: 1500, atk: 0, def: 1, slots: 1, cap: "50 cargo · 1 utility slot" },
   small_freighter: { role: "Three times a Tiny's cargo for growing trade routes.", speed: 40, hull: 2500, atk: 0, def: 1, slots: 1, cap: "150 cargo · 1 utility slot" },
   convoy: { role: "Mixed-manifest hauler for established supply lines.", speed: 40, hull: 4500, atk: 0, def: 1, slots: 1, cap: "400 cargo · 1 utility slot" },
@@ -43,12 +48,28 @@ export const SHIP_STATS: Record<string, { role: string; speed: number; hull: num
   heavy_freighter: { role: "High-volume transport for major colony projects.", speed: 34, hull: 14000, atk: 0, def: 1, slots: 1, cap: "2,500 cargo · 1 utility slot" },
   bulk_freighter: { role: "Maximum freight capacity; slow and costly to lose. Escort recommended.", speed: 30, hull: 24000, atk: 0, def: 1, slots: 1, cap: "6,000 cargo · 1 utility slot" },
   colony: { role: "Settlement ship — carries colonists to physically claim a system.", speed: 33, hull: 6000, atk: 0, def: 1, slots: 0, cap: "Carries a colony (one claim)" },
+  mining_barge: { role: "Cuts ore from an asteroid belt into its own hopper; no colony needed.", speed: 30, hull: 3500, atk: 0, def: 1, slots: 1, cap: "150 ore hopper · 1 utility slot" },
+  mining_belt_station: { role: "Anchors at a belt; barges unload into its silos.", speed: 15, hull: 12000, atk: 0, def: 6, slots: 0, cap: "3,000 ore silos · anchors at a belt" },
+  transport: { role: "Troop transport: carries marines to take a besieged system.", speed: 30, hull: 7000, atk: 0, def: 1, slots: 0, cap: "40 marines · no cargo" },
   destroyer: { role: "The first ship of the line — heavy beam broadsides (beam ×1.20).", speed: 55, hull: 2000, atk: 2.4, def: 2.6, slots: 3, cap: "Line IV research · 8 fit pts" },
   cruiser: { role: "The season's prestige warship — armored core (protection ×1.20); the efficiency peak.", speed: 45, hull: 4000, atk: 4.5, def: 5.5, slots: 4, cap: "Line V research · 12 fit pts" },
   battleship: { role: "The siege anchor — driver broadsides (driver ×1.20); accelerates a siege clock on station.", speed: 36, hull: 8000, atk: 8, def: 12, slots: 4, cap: "Line VI research · 18 fit pts" },
   dreadnought: { role: "The fleet screen — a PD fit screens the whole side at platform grade (interception ×1.30).", speed: 29, hull: 16000, atk: 15, def: 26, slots: 5, cap: "Line VII research · 28 fit pts" },
   titan: { role: "The flagship — broadly good at every weapon (×1.10), best at nothing; one per syndicate.", speed: 23, hull: 32000, atk: 24, def: 44, slots: 6, cap: "Line VIII research · 45 fit pts · singleton" },
 };
+
+/** §hull stats (Peter, Oct 27 2026: "shouldn't it display the stats of the
+ * ship below the 3d model?"): the figures under a 3D hull in the Shipyard and
+ * the ship builder, both shells. The base hull, before research and modules;
+ * Cargo only for a hull that carries any. */
+export function hullFigures(kind: string): [string, string][] {
+  const stats = SHIP_STATS[kind];
+  if (!stats) return [];
+  const weight = (n: number) => Number.isInteger(n) ? fmt(n) : n.toFixed(1);
+  const cargo = cargoUnitsPerHull(kind as ShipKind);
+  return [["Speed", fmt(stats.speed)], ["Hull", fmt(stats.hull)], ["Attack", weight(stats.atk)], ["Defense", weight(stats.def)],
+    ...cargo > 0 ? [[isLootOnly(kind as ShipKind) ? "Loot" : "Cargo", fmt(cargo)] as [string, string]] : []];
+}
 
 
 // Advance the OUTBOUND order signal each frame (the only traveling signal). This
@@ -131,7 +152,8 @@ export function intentSummary(intent: PendingIntent): string {
     case "raid": summary = `RAID ${target} — intercept and steal cargo · signal ~${signal}`; break;
     case "attack": summary = `ATTACK ${target} — full battle, destroys it · signal ~${signal}`; break;
     case "guard": summary = `GUARD ${target} — shadow and defend · signal ~${signal}`; break;
-    case "blockade": summary = `Blockade ${target} — disrupt its logistics · signal ~${signal}`; break;
+    case "blockade": summary = intent.raid ? `Raid ${target} — loot until full, then home · signal ~${signal}`
+      : `Blockade ${target} — disrupt its logistics · signal ~${signal}`; break;
     case "demolish": summary = `DEMOLISH ${target} — hold station until it falls · signal ~${signal}`; break;
     case "survey": summary = `SURVEY ${target} — active sensing, ~${SURVEY_SECS_UI}s on-site · signal ~${signal}`; break;
   }
@@ -199,7 +221,7 @@ export function orderObject(p: PendingOrderView): string {
       const site = state.explorationSites?.find(s => s.id === p.target_id);
       // §signals: answering one rides the survey order kind.
       const signal = state.signals?.signals.find(s => s.id === p.target_id);
-      if (signal) return `Signal → ${SIGNAL_INFO[signal.kind].name}`;
+      if (signal) return `Signal → ${signalInfo(signal.kind, traderOf(state.founding)).name}`;
       return site ? `Expedition → ${site.details?.name ?? "Unknown contact"}` : `Survey → ${p.target_id ? systemName(p.target_id) : "system"}`;
     }
     case "guard": return `Guard → ${target ? `your ${shipKindLabel(target.kind)} fleet` : "friendly fleet"}`;

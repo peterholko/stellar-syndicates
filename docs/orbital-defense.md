@@ -1,7 +1,8 @@
 # Orbital defense stations
 
 Every system can raise one orbital defense station, level by level, from a
-Defense Platform to a Star Fortress. A station is the `orbital_defense`
+Gun Platform to a Star Fortress (§gun-platform, Oct 30 2026: the founding
+charter's step-6 defense became the ladder's first level, so it has six). A station is the `orbital_defense`
 structure (`StructureKind::OrbitalDefense`), and its tier is its level. The
 ladder lives in `crates/sim/src/station.rs`, the battle rules in
 `crates/sim/src/tactical/v15.rs` (`docs/battle-rules-v15.md`), and every
@@ -11,42 +12,53 @@ client surface reads it through `client/src/core/derive/station.ts`.
 
 | Level | Name | Hardpoints | Hull each | Attack weight each | Reach | Research | Yard in the system | Build time |
 |---|---|---|---|---|---|---|---|---|
-| 1 | Defense Platform | 1 | 2,400 | 3 | 1.0 | Fire Control | none | 22 s |
-| 2 | Orbital Battery | 2 | 2,000 | 2 | 1.0 | Orbital Batteries (Weapons II) | none | 1 h |
-| 3 | Defense Station | 3 | 3,000 | 3 | 1.0 | Defense Stations (Combat Management III) | Ordnance Foundry | 6 h |
-| 4 | Citadel | 4 | 12,000 | 6.5 | 1.1 | Grand Batteries (Combat Management V) | Orbital Shipyard | 48 h |
-| 5 | Star Fortress | 6 | 32,000 | 22 | 1.2 | Star Fortress (Combat Management V) | Capital Slipway | 192 h |
+| 1 | Gun Platform | 1 | 300 | 1.5 | 1.0 | none | none | 20 s |
+| 2 | Defense Platform | 1 | 2,400 | 3 | 1.0 | Fire Control | none | 22 s |
+| 3 | Orbital Battery | 2 | 2,000 | 2 | 1.0 | Orbital Batteries (Weapons II) | none | 1 h |
+| 4 | Defense Station | 3 | 3,000 | 3 | 1.0 | Defense Stations (Combat Management III) | Ordnance Foundry | 6 h |
+| 5 | Citadel | 4 | 12,000 | 6.5 | 1.1 | Grand Batteries (Combat Management V) | Orbital Shipyard | 48 h |
+| 6 | Star Fortress | 6 | 32,000 | 22 | 1.2 | Star Fortress (Combat Management V) | Capital Slipway | 192 h |
+
+The Gun Platform is the crudest defense: one salvaged gun, worth about one
+Interceptor (an Interceptor has 200 hull and attack weight 3). It needs no
+research, and the charter opens it at step 6.
 
 For scale, a corvette's attack weight is 1 and a Titan's 24, and a Titan's
 hull is 32,000. A Star Fortress has six times a Titan's hull and more than
 five times its firepower, for about two and a half Titans' goods.
 
 Each level is paid for when it is raised. The goods below are for that level
-alone. At base prices the whole ladder costs about 279,000 credits:
+alone. At base prices the whole ladder costs about 280,000 credits:
 
 | Level | Goods | Base value |
 |---|---|---|
-| 1 | 35 Alloys, 15 Electronics, 15 Armaments | 2,260 |
-| 2 | 60 Alloys, 25 Electronics, 25 Armaments, 10 Machinery | 4,430 |
-| 3 | 90 Alloys, 40 Electronics, 50 Armaments, 20 Machinery, 20 Composites, 6 Precision Components | 9,292 |
-| 4 | 300 Alloys, 150 Electronics, 250 Armaments, 80 Machinery, 80 Composites, 60 Hull Sections, 20 Precision Components | 45,380 |
-| 5 | 1,200 Alloys, 600 Electronics, 1,000 Armaments, 300 Machinery, 400 Composites, 300 Hull Sections, 120 Precision Components, 200 Titanium, 100 Rare Elements | 217,640 |
+| 1 | 25 Alloys, 10 Machinery | 1,270 |
+| 2 | 35 Alloys, 15 Semiconductors, 15 Armaments | 2,260 |
+| 3 | 60 Alloys, 25 Semiconductors, 25 Armaments, 10 Machinery | 4,430 |
+| 4 | 90 Alloys, 40 Semiconductors, 50 Armaments, 20 Machinery, 20 Composites, 6 Precision Components | 9,292 |
+| 5 | 300 Alloys, 150 Semiconductors, 250 Armaments, 80 Machinery, 80 Composites, 60 Hull Sections, 20 Precision Components | 45,380 |
+| 6 | 1,200 Alloys, 600 Semiconductors, 1,000 Armaments, 300 Machinery, 400 Composites, 300 Hull Sections, 120 Precision Components, 200 Titanium, 100 Rare Elements | 217,640 |
 
 ## Raising a station
 
-- The station orbits one body of the system and takes an Infrastructure slot
-  there. The first level goes on the body chosen in the builder. An order
+- The station orbits one body of the system and takes no building site
+  (§gun-platform: the charter's Gun Platform must never cost a home its
+  Academy's site). The first level goes on the body chosen in the builder. An order
   that names no body goes to an uninhabited body with a free slot. Each later
   level is raised on the same body.
 - Each level is its own construction project. The station keeps fighting at
   its current level while the next one builds.
-- A level needs its research, completed (queued or active research never
-  counts), and Fire Control. It also needs its yard standing in the system.
+- A level above the Gun Platform needs its research, completed (queued or
+  active research never counts). It also needs its yard standing in the
+  system.
+- **Pirates avoid it.** A system with a firing station counts as covered, as
+  legacy platforms always did: pirate packs won't hunt targets within 1,300 su
+  of it.
 - **One station per system.** A second body can't start one while a station
   or a station job exists elsewhere in the system.
 - **One Star Fortress per corporation**, standing or rising: a Citadel
   already being raised elsewhere counts.
-- The builder lists the station's five levels with each level's goods, time,
+- The builder lists the station's six levels with each level's goods, time,
   research and yard. It says what blocks the next level. The sim checks every
   gate again when the order lands (`OneStationPerSystem`,
   `StarFortressLimit`, `NeedsYard`, `NeedsResearch`).
@@ -124,8 +136,11 @@ its fits or damage.
   level's art, and grows with each level.
 - **Defense section (desktop and mobile):** the station's art and level, how
   many hardpoints fire, and each hardpoint's fit, hull and repair. It also
-  holds the refit editor and the next level with what it needs, plus a
-  "Raise to …" button that opens the builder.
+  holds the refit editor and, once its research is done, the next level (its
+  description is a tooltip) with "Build a …" / "Raise to …", which opens the
+  builder; its card names any missing yard. A level research hasn't opened
+  isn't shown at all (Oct 28 2026; see docs/construction.md "Research
+  unlocks").
 - **Planet stage:** the station hangs in the sky above its world, between
   the yards. It grows with each level and hangs a little lower, so a Star
   Fortress is the largest thing in orbit. Its row in the world's structure

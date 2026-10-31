@@ -2,8 +2,12 @@
    Its scene covers the MAP AREA only — never the workspace, the command band or the
    toast lane — so orders, founding steps and toasts stay live while a world is open.
    Management for the same world is the `world` workspace route beside it. Only served
-   structures get footprints. */
-.deck-planet-stage { position: fixed; z-index: var(--z-planet); top: var(--deck-topbar-height); left: 0; right: var(--deck-workspace-inset, 0px); bottom: 0; display: grid; grid-template-rows: minmax(0, 1fr); min-width: 0; padding: var(--space-3) var(--space-4) calc(var(--deck-bottom-row-inset, 0px) + var(--space-3)); background: var(--bg); pointer-events: auto; }
+   structures get footprints.
+   The scene resizes only with the window (Peter, Oct 27 2026): every edge comes from
+   tokens and the viewport, never from a measured panel. It stops at the world
+   column's own width and keeps the bottom control row clear; the tutorial, and a
+   command strip taller than that row, overlap it. */
+.deck-planet-stage { position: fixed; z-index: var(--z-planet); top: var(--deck-topbar-height); left: 0; right: var(--deck-system-rail); bottom: 0; display: grid; grid-template-rows: minmax(0, 1fr); min-width: 0; padding: var(--space-3) var(--space-4) calc(var(--deck-control-height) + var(--space-3) * 2); background: var(--bg); pointer-events: auto; }
 @media (prefers-reduced-motion: no-preference) {
   .deck-planet-stage:not([hidden]) { animation: deck-planet-stage-in .28s ease-out; }
   @keyframes deck-planet-stage-in { from { opacity: 0; } }
@@ -12,8 +16,10 @@
    grid track so the artwork's container-size box stretches to the real remaining
    height instead of collapsing around its absolutely positioned canvas. */
 .deck-planet-stage__body { display: grid; grid-template-rows: minmax(0, 1fr); height: 100%; min-height: 0; min-width: 0; }
-.deck-planet-scene { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; min-width: 0; gap: var(--space-3); }
-.deck-planet__worlds { display: flex; align-items: center; gap: var(--space-2); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+/* The world strip's row is one control high: a scrollbar on a crowded strip hangs
+   into the gap below it rather than shrinking the scene. */
+.deck-planet-scene { display: grid; grid-template-rows: var(--deck-control-height) minmax(0, 1fr); min-height: 0; min-width: 0; gap: var(--space-3); }
+.deck-planet__worlds { align-self: start; display: flex; align-items: center; gap: var(--space-2); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
 .deck-planet__worlds > span { flex: 0 0 auto; margin-right: var(--space-1); color: var(--dim); font-size: var(--fs-fine); text-transform: uppercase; letter-spacing: .06em; }
 .deck-planet__worlds > button { flex: 0 0 auto; white-space: nowrap; }
 .deck-planet__worlds > button[aria-current="page"] { border-color: var(--accent); background: var(--field-bg); color: var(--accent); }
@@ -36,6 +42,9 @@
    sits half the band low, so ground and space fit the scene together. */
 .deck-planet__scene:not(.is-orbital) .deck-planet__canvas { width: min(100cqw, calc(100cqh * 1672 / 1181)); transform: translate(-50%, calc(-50% + 12.7524%)); }
 .deck-planet__scene:not(.is-orbital) .deck-planet__surface { top: -25.5048%; bottom: auto; height: 125.5048%; }
+/* §belt-view: a belt holds a handful of buildings on a wide field, so each
+   stands a third larger (its six hand-picked rock-top sites leave the room). */
+.deck-planet__scene.is-belt .deck-planet__canvas { --planet-building: clamp(48px, 10cqw, 172px); }
 .deck-planet__globe { position: absolute; width: 80%; height: 90%; left: 10%; top: 5%; object-fit: contain; pointer-events: none; opacity: .85; }
 /* Haze grows with distance: 0 at full scale, rising as a footprint recedes toward
    the limb. It is derived from the depth scale because both measure the same
@@ -118,6 +127,7 @@
 .deck-planet__rate { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
 .deck-planet__rate b, .deck-planet__good { color: var(--positive); font-variant-numeric: tabular-nums; }
 .deck-planet__rate small { color: var(--dim); font-size: var(--fs-fine); }
+.deck-planet__rate.is-upkeep b { color: var(--ink); }
 .deck-planet__resource { display: inline-flex; align-items: center; }
 .deck .deck-planet__resource > .icon { width: var(--deck-control-height); height: var(--deck-control-height); object-fit: contain; }
 
@@ -179,6 +189,14 @@
 }
 .deck-planet__refining { display: grid; gap: var(--space-2, 8px); }
 .deck-planet__ore-options { display: flex; flex-wrap: wrap; gap: var(--space-1, 4px); }
+/* §research-wiring Talent: a line's specialists and the Academy's courses. */
+.deck-planet__specialists { display: grid; gap: var(--space-1, 4px); }
+.deck-planet__specialists .deck-stepper { display: grid; grid-template-columns: var(--deck-control-height) minmax(calc(var(--deck-control-height) * 1.25), auto) var(--deck-control-height); align-items: center; text-align: center; font-variant-numeric: tabular-nums; }
+.deck-planet__courses { display: grid; gap: var(--space-1, 4px); }
+.deck-planet__course-options { display: flex; flex-wrap: wrap; gap: var(--space-1, 4px); }
+.deck-planet__courses ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.deck-planet__courses li { display: flex; justify-content: space-between; gap: var(--space-2); }
+.deck-planet__courses li small { color: var(--text-muted, #8aa0b2); }
 .deck-planet__ore-options button { display: flex; align-items: center; gap: 4px; }
 .deck-planet__ore-options button[aria-pressed="true"] { border-color: #8fe3a0; color: #8fe3a0; }
 
@@ -257,6 +275,8 @@
 .deck-construction__note-inline { margin: 0; color: var(--fg-stale); font-size: var(--fs-fine); }
 .deck-construction__hulls { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); padding-top: var(--space-1); border-top: 1px solid var(--border); font-size: var(--fs-fine); }
 .deck-construction__hulls small { color: var(--dim); }
+.deck-construction__hulls button { min-height: 0; padding: 0; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; text-decoration: underline dotted color-mix(in srgb, var(--ink) 40%, transparent); cursor: pointer; }
+.deck-construction__hulls button:hover { color: var(--accent); }
 
 /* Buildings still rising list beneath the built ones. */
 .deck .deck-planet__row.is-rising { border: 1px dashed var(--border); border-radius: var(--deck-radius); }
@@ -371,13 +391,15 @@
 /* The construction bar answers the sheet while it is open. */
 .deck-construction.is-building { border-color: color-mix(in srgb, var(--accent) 45%, var(--field-bd)); }
 /* A selected building's next level, opening the sheet on it. */
-.deck-planet__upgrade { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2); border-radius: var(--deck-radius); background: var(--field-bg); }
-.deck-planet__upgrade small { display: block; color: var(--dim); font-size: var(--fs-fine); }
+.deck-planet__upgrade { display: flex; align-items: center; gap: var(--space-2); }
+.deck-planet__upgrade > span { color: var(--dim); font-size: var(--fs-fine); }
 
 /* On the planet: where the work is (Building, #2, Sending), never how far it
    has got; the Construction card alone draws the bar and the time. */
 .deck-planet__pill { position: absolute; left: 50%; top: calc(50% + var(--planet-footprint) * .28); z-index: 2; transform: translateX(-50%); display: inline-flex; align-items: center; gap: var(--space-1); padding: 1px var(--space-2); border: 1px solid var(--field-bd); border-radius: 999px; background: rgba(7, 15, 26, .88); color: var(--ink); font-size: 11px; line-height: 16px; white-space: nowrap; pointer-events: none; }
 .deck-planet__pill.is-active { border-color: color-mix(in srgb, var(--positive) 60%, var(--field-bd)); color: var(--positive); }
+.deck-planet__pill-bar { position: absolute; left: var(--space-1); right: var(--space-1); bottom: calc(100% + 3px); height: 3px; overflow: hidden; border-radius: 2px; background: rgba(7, 15, 26, .88); box-shadow: 0 0 0 1px var(--field-bd); }
+.deck-planet__pill-bar > i { display: block; height: 100%; background: var(--positive); }
 .deck-planet__pill.is-waiting, .deck-planet__pill.is-sent { color: var(--dim); }
 .deck-planet__pill.is-sent { border-style: dashed; }
 .deck-planet__pill.is-ghost { border-color: var(--accent); }
@@ -390,3 +412,17 @@
 .deck .deck-planet__site.is-match { border-style: solid; color: var(--accent); box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 45%, transparent); }
 .deck .deck-planet__site.is-dim { opacity: .35; }
 .deck .deck-planet__building.is-build-pick::after { opacity: 1; border-color: var(--accent); }
+/* §designations: crown designations on the world header. */
+.deck-planet__crowns { display: flex; flex-wrap: wrap; gap: var(--space-1, 4px); }
+.deck-planet__crowns .is-on { color: #e8c76a; font-weight: 600; }
+
+/* §asteroid-quarry: the quarry's own rock fills the belt's near foreground,
+   about half the field's width, the same place at every tier. The art is a
+   wide painting with its machinery on the rock, so it keeps its aspect. */
+.deck-planet__scene.is-belt .deck-planet__canvas :is(.deck-planet__building, .deck-planet__site).is-quarry { --planet-footprint: 52cqw; }
+.deck .deck-planet__building.is-quarry { width: 46cqw; height: 24cqw; }
+.deck-planet__building.is-quarry > .icon,
+.deck-planet__site.is-construction.is-quarry > .icon { width: 52cqw; height: calc(52cqw * 941 / 1672); }
+.deck-planet__building.is-quarry::before { display: none; }
+.deck-planet__building.is-quarry::after { width: 44cqw; height: 20cqw; transform: translate(-50%, calc(-50% + 3cqw)); }
+.deck .deck-planet__site.is-free.is-quarry { width: 30cqw; height: 13cqw; }

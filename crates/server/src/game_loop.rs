@@ -47,6 +47,10 @@ fn broadcast_every_for(pacing_scale: f64) -> u64 {
 
 /// Full checkpoints are wall-time bookkeeping, independent of playtest pacing.
 pub const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(15 * 60);
+/// §notifications (R8): alerts held for the notifier, at most.
+const ALERTS_KEPT: usize = 1_000;
+/// §notifications: a digest only after this long away (sim seconds).
+const DIGEST_MIN_AWAY_S: f64 = 12.0 * 3_600.0;
 
 /// Build the straight warp-light clock for an outbound command aimed at the
 /// moving meeting point projected from the player's current ghost of a ship.
@@ -150,6 +154,9 @@ fn dispatch_chevron_targets(msg: &ClientMsg) -> Vec<DispatchChevronTarget> {
         | ClientMsg::RequestFuelRescue { .. }
         | ClientMsg::SetDepotRule { .. }
         | ClientMsg::PayReinstatement { .. }
+        | ClientMsg::AnswerLevy { .. }
+        | ClientMsg::PayArrears { .. }
+        | ClientMsg::AnswerRequisition { .. }
         | ClientMsg::PlaceLimitOrder { .. }
         | ClientMsg::CancelLimitOrder { .. }
         | ClientMsg::StockSystem { .. }
@@ -226,11 +233,11 @@ struct ConcludedBattle {
 
 /// The Market Hub account picture carried by light to one corporation. Only
 /// fields whose source is the hub live here; system Fuel remains a separate
-/// owner-local summary in `WalletView`.
+/// owner-local summary in `WalletView`. §treasury: credits don't; they sit
+/// at the command center (`Corporation::credits`), known at once.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 struct MarketAccountSample {
     standing: f64,
-    credits: f64,
     valuation: f64,
     warehouse: BTreeMap<sim::Commodity, u32>,
     orders: Vec<sim::market::LimitOrder>,
@@ -264,7 +271,6 @@ impl MarketAccountHistory {
         for (&player, corp) in &world.players {
             let sample = MarketAccountSample {
                 standing: corp.tca_standing,
-                credits: corp.credits,
                 valuation: corp.valuation,
                 warehouse: corp.warehouse.clone(),
                 orders: world
@@ -342,6 +348,9 @@ struct ReportingCheckpoint {
     timeline: Timeline,
     concluded_battles: Vec<ConcludedBattle>,
     observed_order_plans: Vec<(PlayerId, u64, ObservedOrderPlan)>,
+    /// §social (R5): channels, mail, mutes and presence.
+    #[serde(default)]
+    social: crate::social::Social,
 }
 
 struct GameLoop {
@@ -370,6 +379,16 @@ struct GameLoop {
     /// Per-player retained check-in timeline (§16, Layer 3) — what became
     /// observable, buffered across disconnects, for the "welcome back" digest.
     timeline: Timeline,
+    /// §social (R5): syndicate channels, mail, mutes and presence.
+    social: crate::social::Social,
+    /// §social: each player's last built view, by signature.
+    social_views: std::cell::RefCell<HashMap<PlayerId, (u64, std::sync::Arc<crate::social::SocialView>)>>,
+    /// §settle-near-friends (R7): invite codes newcomers redeemed, used by
+    /// their landing (not saved: the client redeems again on reconnect).
+    redeemed: HashMap<PlayerId, String>,
+    /// §notifications (R8): alerts for offline players, until the notifier
+    /// takes them (not saved; bounded).
+    alerts: std::collections::VecDeque<crate::notify::Alert>,
     /// Last journal revision sent; the retained length eventually stops growing.
     timeline_sent: HashMap<PlayerId, usize>,
     /// Battles that have concluded but whose conclusion light is still in flight
@@ -453,6 +472,10 @@ impl GameLoop {
             transactions: TransactionHistory::default(),
             reports: ReportScheduler::new(),
             timeline: Timeline::new(),
+            social: crate::social::Social::default(),
+            social_views: Default::default(),
+            redeemed: HashMap::new(),
+            alerts: Default::default(),
             timeline_sent: HashMap::new(),
             concluded_battles: Vec::new(),
             pending: Vec::new(),
@@ -477,6 +500,23 @@ impl GameLoop {
         }
         game.transactions.initialize(&game.world, &game.timeline);
         game
+    }
+
+    /// §season: the hall of fame's record of this galaxy's ending, once it ended.
+    fn hall_entry(&self) -> Option<crate::session::HallEntry> {
+        let name = |p: PlayerId| self.world.players.get(&p).map_or_else(|| p.to_string(), |c| c.name.clone());
+        self.world.season.ended.as_ref().map(|ending| match ending {
+            sim::season::Ending::Sovereign { holder, system, .. } => crate::session::HallEntry {
+                ending: "sovereign".into(),
+                holder: Some(name(*holder)),
+                world: self.world.systems.iter().find(|s| s.id == *system).map(|s| s.name.clone()),
+                winners: self.world.circle(*holder).into_iter().map(name).collect(),
+            },
+            sim::season::Ending::CharterHolds { winners, .. } => crate::session::HallEntry {
+                ending: "charter_holds".into(), holder: None, world: None,
+                winners: winners.iter().map(|w| name(*w)).collect(),
+            },
+        })
     }
 
     /// Send the issuing player the outbound command-signal feedback for an order
@@ -647,6 +687,20 @@ impl GameLoop {
 
     /// Every player corporation's holdings, for the operator dashboard only.
     /// One pass over systems and fleets, run when the dashboard asks.
+    /// §founding: the home world this account is dealt in this galaxy. The
+    /// three are close in value, so it isn't a choice: the same account draws
+    /// afresh in every galaxy (keyed by the galaxy instance, not the seed),
+    /// and keeps its draw across reconnects and restarts within one.
+    fn dealt_profile(&self, player: PlayerId) -> sim::settlement::FoundingProfile {
+        use sim::settlement::FoundingProfile as P;
+        let mut h: u32 = 2_166_136_261;
+        for byte in format!("{}:{}", self.galaxy_instance_id, player.0).bytes() {
+            h ^= byte as u32;
+            h = h.wrapping_mul(16_777_619);
+        }
+        [P::MineralHighlands, P::VerdantLowlands, P::CoastalPlains][(h % 3) as usize]
+    }
+
     fn corporation_stats(&self) -> Vec<CorporationStats> {
         let mut stats: BTreeMap<PlayerId, CorporationStats> = self.world.players.iter()
             .filter(|(id, _)| !id.is_sentinel())
@@ -728,6 +782,12 @@ impl GameLoop {
                         sent: Default::default(),
                     },
                 );
+                // §vendetta-campaign: the sim knows who is online (the uncle
+                // prefers to come while the founder is there). Not an order, so
+                // never queued or checkpointed.
+                if inserted.newly_online {
+                    self.world.online.insert(player_id);
+                }
                 // Greet this connection immediately with its identity, clock,
                 // and the static galaxy geography.
                 self.sessions.send_to_conn(
@@ -795,6 +855,7 @@ impl GameLoop {
                         // §perf Part B: the two static tables that used to ride
                         // every 10 Hz View — sent once here instead.
                         charter_ladder: sim::tca::status_ladder().to_vec(),
+                        grade_ladder: sim::tca::grade_ladder().to_vec(),
                         research_catalog: research_catalog(),
                     },
                 );
@@ -803,17 +864,27 @@ impl GameLoop {
                 // client can mark entries newer than it as "while you were away".
                 let (entries, away_since) = self.timeline.digest(player_id);
                 self.timeline_sent.insert(player_id, self.timeline.revision(player_id));
+                let welcome = crate::welcome::welcome_back(crate::welcome::WelcomeInputs {
+                    world: &self.world,
+                    player: player_id,
+                    since: away_since,
+                    tally: self.timeline.away_tally(player_id),
+                    history: &self.transactions,
+                    unread_mail: self.social.unread(player_id),
+                });
                 self.sessions.send_to_conn(
                     conn_id,
                     ServerMsg::Timeline {
                         entries,
                         away_since,
+                        welcome,
                     },
                 );
 
                 // Reading the intro consumes no supplies or founder protection.
                 if !self.world.players.contains_key(&player_id) {
-                    self.sessions.send_to_conn(conn_id, ServerMsg::FoundingOffer);
+                    let profile = self.dealt_profile(player_id);
+                    self.sessions.send_to_conn(conn_id, ServerMsg::FoundingOffer { profile });
                 }
                 info!(
                     %player_id, conn_id,
@@ -825,16 +896,40 @@ impl GameLoop {
                     "player connected"
                 );
             }
+            GameInput::TakeAlerts { reply } => {
+                let _ = reply.send(self.alerts.drain(..).collect());
+            }
+            GameInput::Digest { player, reply } => {
+                let (_, since) = self.timeline.digest(player);
+                let away = self.world.time - since;
+                let report = (!self.sessions.is_online(player) && away >= DIGEST_MIN_AWAY_S)
+                    .then(|| crate::welcome::welcome_back(crate::welcome::WelcomeInputs {
+                        world: &self.world,
+                        player,
+                        since,
+                        tally: self.timeline.away_tally(player),
+                        history: &self.transactions,
+                        unread_mail: self.social.unread(player),
+                    }))
+                    .flatten();
+                let _ = reply.send(report);
+            }
             GameInput::AdminStats { reply } => {
                 let _ = reply.send(AdminSnapshot {
                     galaxy_id: self.galaxy_instance_id.clone(),
                     sim_time: self.world.time,
                     pacing: self.pacing_scale,
                     corporations: self.corporation_stats(),
+                    ending: self.hall_entry(),
                 });
             }
             GameInput::Disconnect { conn_id } => {
                 if let Some(player_id) = self.sessions.remove(conn_id) {
+                    // §social: presence for the syndicate's member list.
+                    if !self.sessions.is_online(player_id) {
+                        self.social.last_seen.insert(player_id, chrono::Utc::now().timestamp());
+                        self.world.online.remove(&player_id);
+                    }
                     info!(
                         %player_id, conn_id,
                         online_players = self.sessions.online_player_count(),
@@ -843,12 +938,36 @@ impl GameLoop {
                 }
             }
             GameInput::Intent { conn_id, msg } => match {
-                if let ClientMsg::FoundColony { profile } = &msg {
+                if let ClientMsg::FoundColony = &msg {
+                    // §season: registration closes with the first sealed world found.
+                    if self.world.season.first_found_at.is_some()
+                        && self.sessions.player_of(conn_id).is_some_and(|id| !self.world.players.contains_key(&id))
+                    {
+                        self.sessions.send_to_conn(conn_id, ServerMsg::Error {
+                            message: "Registration is closed: the race for the sealed worlds has begun.".into(),
+                        });
+                        return;
+                    }
                     if let Some(id) = self.sessions.player_of(conn_id)
                         && !self.world.players.contains_key(&id)
                         && !self.pending.iter().any(|c| matches!(c, Command::FoundColony { id: pending, .. } if *pending == id))
                         && let Some(name) = self.sessions.name_of(conn_id) {
-                        self.pending.push(Command::FoundColony { id, name: name.to_owned(), profile: *profile });
+                        // §settle-near-friends (R7): a redeemed invite is used up
+                        // by the landing that takes its slot.
+                        if let Some(code) = self.redeemed.remove(&id)
+                            && let Some(invite) = self.social.take_invite(&code, None)
+                            && self.world.home_reservation(invite.key).is_some()
+                        {
+                            self.pending.push(Command::ClaimHomeInvite { player_id: id, key: invite.key });
+                        }
+                        let profile = self.dealt_profile(id);
+                        self.pending.push(Command::FoundColony { id, name: name.to_owned(), profile });
+                    }
+                    return;
+                }
+                if let ClientMsg::RedeemInvite { code } = &msg {
+                    if let Some(id) = self.sessions.player_of(conn_id) {
+                        self.redeem_invite(conn_id, id, code);
                     }
                     return;
                 }
@@ -868,7 +987,20 @@ impl GameLoop {
                 ClientMsg::Ping => {
                     debug!(conn_id, "ping");
                 }
-                ClientMsg::FoundColony { .. } => unreachable!("handled before normal intents"),
+                ClientMsg::FoundColony => unreachable!("handled before normal intents"),
+                ClientMsg::RestartCorporation => {
+                    // §gun-platform: on the account's dealt home world, as on
+                    // first join; the sim refuses it unless the colony fell.
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        let profile = self.dealt_profile(player_id);
+                        self.pending.push(Command::RestartCorporation { player_id, profile });
+                    }
+                }
+                ClientMsg::CollectCharterCrate { charter_crate } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::CollectCharterCrate { player_id, charter_crate });
+                    }
+                }
                 ClientMsg::DevelopSettlement { system_id, body_id, project } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::DevelopSettlement { player_id, system_id, body_id, project });
@@ -974,6 +1106,8 @@ impl GameLoop {
                 ClientMsg::BlockadeSystem {
                     fleet_id,
                     system_id,
+                    raid,
+                    repeat,
                 } => {
                     // §contestable-territory Part 1: light-delayed like a move.
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
@@ -981,6 +1115,8 @@ impl GameLoop {
                             player_id,
                             fleet_id,
                             system_id,
+                            raid,
+                            repeat,
                         });
                     }
                 }
@@ -1242,6 +1378,16 @@ impl GameLoop {
                         });
                     }
                 }
+                ClientMsg::ContributeSyndicateProject { system_id, commodity, units } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::ContributeSyndicateProject { player_id, system_id, commodity, units });
+                    }
+                }
+                ClientMsg::RaiseSyndicateBonus { bonus } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::RaiseSyndicateBonus { player_id, bonus });
+                    }
+                }
                 ClientMsg::ProposeTreaty {
                     target_name,
                     treaty,
@@ -1302,6 +1448,27 @@ impl GameLoop {
                 ClientMsg::DeleteFit { name } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::DeleteFit { player_id, name });
+                    }
+                }
+                ClientMsg::FundResearch => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::FundResearch { player_id });
+                    }
+                }
+                ClientMsg::RedeemInvite { .. } => unreachable!("handled before normal intents"),
+                social @ (ClientMsg::SyndicateSay { .. } | ClientMsg::SendMail { .. } | ClientMsg::MarkMailRead { .. }
+                    | ClientMsg::DeleteMail { .. } | ClientMsg::MuteCorp { .. } | ClientMsg::ReportMessage { .. }
+                    | ClientMsg::CreateInvite | ClientMsg::RevokeInvite { .. }) => {
+                    self.handle_social(conn_id, social);
+                }
+                ClientMsg::SetDesignation { cap, target } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetDesignation { player_id, cap, target });
+                    }
+                }
+                ClientMsg::SetLeave { on } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetLeave { player_id, on });
                     }
                 }
                 ClientMsg::NameFlagship { name } => {
@@ -1426,6 +1593,31 @@ impl GameLoop {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending
                             .push(Command::PayReinstatement { player_id, points });
+                    }
+                }
+                ClientMsg::AnswerLevy { accept } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::AnswerLevy { player_id, accept });
+                    }
+                }
+                ClientMsg::PayArrears { commodity } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::PayArrears { player_id, commodity });
+                    }
+                }
+                ClientMsg::AnswerRequisition { id, pay } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::AnswerRequisition { player_id, id, pay });
+                    }
+                }
+                ClientMsg::FeedKeystone { system_id, commodity, units } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::FeedKeystone { player_id, system_id, commodity, units });
+                    }
+                }
+                ClientMsg::GateStep { fleet_id, system_id } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::GateStep { player_id, fleet_id, system_id });
                     }
                 }
                 ClientMsg::SetEngageFreight { fleet_id, on } => {
@@ -1913,6 +2105,8 @@ impl GameLoop {
         self.history.record(&self.world);
         self.prices.record(&self.world);
         self.market_accounts.record(&self.world);
+        // §settle-near-friends (R7): an invite lapses with its hold.
+        self.social.prune_invites(self.world.time);
         // Queue any discrete events (raid outcomes) for delayed per-player
         // delivery.
         self.reports.ingest(&events);
@@ -1921,6 +2115,16 @@ impl GameLoop {
         // for ALL players, online or off (offline buffering is the whole point).
         self.timeline.ingest(&events, &self.world);
         self.timeline.promote(self.world.time);
+        // §notifications (R8): alerting news for a person who isn't connected.
+        for (player, kind, text) in self.timeline.take_alerts() {
+            if player.is_bot() || self.sessions.is_online(player) {
+                continue;
+            }
+            if self.alerts.len() >= ALERTS_KEPT {
+                self.alerts.pop_front();
+            }
+            self.alerts.push_back(crate::notify::Alert { player, kind, text });
+        }
         self.schedule_trade_reports(&events);
         self.deliver_trade_reports();
         for ev in &events {
@@ -2004,6 +2208,9 @@ impl GameLoop {
         let mut views: HashMap<PlayerId, ServerMsg> = HashMap::new();
         let mut reports: HashMap<PlayerId, Vec<ServerMsg>> = HashMap::new();
         let mut timelines: HashMap<PlayerId, ServerMsg> = HashMap::new();
+        // §log: the journal revision each Timeline above carries. It counts as
+        // sent only once every connection of that player has queued it.
+        let mut timeline_revs: HashMap<PlayerId, usize> = HashMap::new();
         // Ordinary order confirmation is derived from these exact own-ghost
         // pictures after every player's View has been materialized. Keeping the
         // emission clocks beside the View prevents a second response timer from
@@ -2111,9 +2318,24 @@ impl GameLoop {
                 view::NodeEffects {
                     veil: &veil_regions,
                     deep_scan: &deep_scan_regions,
+                    intel: view::ViewerIntel::of(&self.world, player_id),
                 },
             );
             let mut ghosts = picture.ghosts;
+            // §syndicate-projects (R6): the Freight bonus on own freighter holds.
+            let freight = self.world.syndicate_mult(player_id, sim::syndicate::SyndicateBonus::Freight);
+            if freight > 1.0 {
+                for ghost in ghosts.iter_mut().filter(|g| g.own) {
+                    ghost.cargo_mult = Some(freight);
+                }
+            }
+            // §holds: Prize Holds on own Combat Freighter holds.
+            let prize = self.world.research_mod(player_id, sim::research::ModKey::RaidSteal);
+            if prize > 1.0 {
+                for ghost in ghosts.iter_mut().filter(|g| g.own) {
+                    ghost.prize_mult = Some(prize);
+                }
+            }
             let jump_departures = picture.jump_departures;
             served_order_evidence.insert(
                 player_id,
@@ -2230,9 +2452,12 @@ impl GameLoop {
                     .collect::<Vec<_>>(),
                 &depot_rules,
             ));
+            let (social_sig, social) = self.social_section(player_id);
             sections.insert(
                 player_id,
                 SectionData {
+                    social,
+                    social_sig,
                     standing: known_standing,
                     depot_rules,
                     standing_sig,
@@ -2261,7 +2486,12 @@ impl GameLoop {
             let known_builds: Vec<_> = known_systems.iter().filter_map(|sys|
                 self.world.information.site(sys.id, cc, c, now))
                 .flat_map(|report| report.builds.iter().cloned()).collect();
-            let mut systems = view::filter_systems(
+            // §charting: systems a fleet of ours has been in, once that light is home.
+            let charted: std::collections::BTreeSet<sim::EntityId> = corp.charted.iter()
+                .filter(|(_, (at, pos))| at + sim::transit::delay(*pos, cc, c) <= now)
+                .map(|(system, _)| *system)
+                .collect();
+            let mut systems = view::filter_charted_systems(
                 &known_systems,
                 player_id,
                 cc,
@@ -2273,6 +2503,7 @@ impl GameLoop {
                 &own_intel,
                 &ally_intel,
                 &corp.surveyed,
+                &charted,
             );
             // §syndicates Part 1: friendly ALLY tint on systems whose (light-gated
             // known) owner is a syndicate member as THIS viewer knows it. Composes
@@ -2286,6 +2517,17 @@ impl GameLoop {
                 sv.ally = sv
                     .owner
                     .is_some_and(known_ally);
+                // §scouting: the viewer's own scouts' look at a rival's stores,
+                // once its light has reached the command center.
+                sv.scouted_stores = (sv.owner != Some(player_id))
+                    .then(|| corp.scouted_stores.get(&sv.id)).flatten()
+                    .filter(|s| s.observed_at + sim::transit::delay(s.pos, cc, c) <= now)
+                    .map(|s| crate::protocol::ScoutedStoresView {
+                        reach: s.reach.iter().map(|(commodity, units)|
+                            crate::protocol::StockSlot { commodity: *commodity, units: *units }).collect(),
+                        vault: s.vault,
+                        observed_at: s.observed_at,
+                    });
                 // The capture clock this blockade needs, from the arrived report
                 // of the system (garrison and battleship included), and whether
                 // it can be captured at all (a home never can).
@@ -2320,7 +2562,7 @@ impl GameLoop {
                     && sys.blockade.is_some_and(|b| b.by == player_id)
                 {
                     let marines: u32 = ghosts.iter()
-                        .filter(|g| g.own && g.pos.distance(sys.pos) <= sim::ship::COLONY_CLAIM_RADIUS)
+                        .filter(|g| g.own && g.pos.distance(sys.pos) <= sim::transit::HYPERLIMIT)
                         .map(|g| self.history.own_marines_at(player_id, g.id, now - g.age))
                         .sum();
                     if marines > 0 {
@@ -2414,6 +2656,7 @@ impl GameLoop {
                         my_role: s
                             .role_of(player_id)
                             .unwrap_or(sim::SyndicateRole::Member),
+                        projects: self.syndicate_projects_view(s, player_id),
                     })
                 });
             let syndicate_invites: Vec<crate::protocol::SyndicateInviteView> = known_syndicates.iter()
@@ -2621,7 +2864,7 @@ impl GameLoop {
             // §TCA Phase 2: the player's own charter standing. The BAND is always
             // derived (never stored), so this can't desync from the sim.
             let known_account = self.market_accounts.at(player_id, now - staleness);
-            let standing = known_account.map_or(sim::tca::TCA_STANDING_MAX, |a| a.standing);
+            let standing = known_account.map_or(sim::tca::TCA_STANDING_START, |a| a.standing);
             let charter = crate::protocol::CharterView {
                 standing,
                 max_standing: sim::tca::TCA_STANDING_MAX,
@@ -2631,6 +2874,16 @@ impl GameLoop {
                 tariff_mult: sim::tca::tariff_mult(standing),
                 market_penalty_frac: sim::tca::market_penalty_frac(standing),
                 reinstate_cost_per_point: sim::tca::TCA_REINSTATE_FEE_PER_POINT,
+                full_standing: sim::tca::TCA_STANDING_FULL,
+                grade: sim::tca::charter_grade(standing),
+                grade_title: sim::tca::charter_grade(standing).title(),
+                next_grade: sim::tca::grade_ladder().into_iter().find(|(_, at)| *at > standing)
+                    .map(|(title, at)| crate::protocol::NextGradeView { title, at }),
+                earned_today: if corp.standing_day == (now.max(0.0) / 86_400.0) as u64 { corp.standing_earned } else { 0.0 },
+                earn_per_day: sim::tca::TCA_GRADE_EARN_PER_DAY,
+                shipment_cap: self.world.shipment_cap(player_id),
+                levy_frac: self.world.levy_frac(player_id),
+                squeeze: crate::protocol::SqueezeView::heard(&self.world, player_id, corp.command_center),
             };
             // The programme may know an encounter has been assigned before the
             // privateer's own light reaches the CC. Do not put its true entity id
@@ -2687,8 +2940,56 @@ impl GameLoop {
                 raid_seen: corp.founding.raid_seen_at.is_some_and(|at| at <= now),
                 raided: corp.founding.raid_report_at.is_some_and(|at| at <= now),
                 land_grant_open: corp.founding.land_grant_open(),
+                charter_gates: sim::StructureKind::ALL.into_iter()
+                    .filter(|kind| !corp.founding.allows(*kind))
+                    .filter_map(|kind| Some((kind.slug(), sim::founding::charter_step(kind)?)))
+                    .collect(),
                 den: corp.founding.den.filter(|_| corp.founding.privateer_report_at.is_some_and(|at| at <= now)),
                 den_cleared: corp.founding.den_report_at.is_some_and(|at| at <= now),
+                pirates: self.world.pirate_family(player_id).filter(|_| corp.founding.local_opening)
+                    .map(|f| crate::protocol::PirateFamilyView {
+                        family: f.slug(),
+                        surname: f.surname(),
+                        nephew: f.nephew_name(),
+                        uncle: f.uncle_name(),
+                        brother: f.brother_name(),
+                    }),
+                trader: self.world.free_trader(player_id).slug,
+                privateer_last_seen: view::privateer_last_seen(&self.world, player_id, now),
+                vendetta: corp.founding.vendetta.as_ref().filter(|v| v.sworn_at <= now).map(|v| {
+                    crate::protocol::VendettaView {
+                        depart_at: v.depart_at,
+                        fleet: v.fleet.filter(|id| ghosts.iter().any(|ghost| ghost.id == *id)),
+                        arrived: v.raid.as_ref().and_then(|r| r.arrived_at).is_some_and(|at| at <= now),
+                        won: v.won.filter(|_| v.report_at.is_some_and(|at| at <= now)),
+                        fallen: corp.founding.fallen(now),
+                        deadline_at: v.deadline_at,
+                        strikes: v.strikes.iter().map(|s| crate::protocol::StrikeView {
+                            kind: s.kind,
+                            system: s.system,
+                            body: s.body,
+                            fleet: s.fleet.filter(|id| ghosts.iter().any(|ghost| ghost.id == *id)),
+                            over: s.over_since.is_some_and(|at| at + sim::transit::delay(
+                                s.last_pos.unwrap_or(corp.command_center), corp.command_center, self.world.config.c) <= now),
+                            done: s.done || s.killed_report_at.is_some_and(|at| at <= now),
+                            target: s.target,
+                            wrecked: s.wrecked.iter().map(|k| k.slug()).collect(),
+                        }).collect(),
+                    }
+                }),
+                crates: if corp.founding.enabled && corp.founding.local_opening {
+                    sim::CharterCrate::ALL.into_iter()
+                        .filter(|c| !corp.founding.crates_collected.contains(c))
+                        .map(|c| crate::protocol::CharterCrateView {
+                            id: c,
+                            released: corp.founding.crate_waiting(c),
+                            step: c.released_at().step(),
+                            goods: c.goods().iter().map(|&(good, n)| (good, n.round() as u32)).collect(),
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                },
             };
             let charter_ledger = sim::charter::ledger_open(&corp.founding)
                 .then(|| corp.ledger.opened)
@@ -2709,7 +3010,8 @@ impl GameLoop {
                                 metric: g.metric,
                                 progress: snapshot.value(g.metric).min(g.target),
                                 target: g.target,
-                                reward: g.reward,
+                                standing: sim::charter::LEDGER_STANDING,
+                                research: sim::charter::ledger_dossier(g),
                             })
                             .collect(),
                     }
@@ -2717,7 +3019,8 @@ impl GameLoop {
 
             let wallet = WalletView {
                 report_pending: known_account.is_none(),
-                credits: known_account.map_or(0.0, |account| account.credits),
+                // §treasury: the credits sit at the command center.
+                credits: corp.credits,
                 valuation: known_account.map_or(0.0, |account| account.valuation),
                 warehouse: known_account
                     .into_iter().flat_map(|account| account.warehouse.iter())
@@ -2757,12 +3060,19 @@ impl GameLoop {
             // §battle-records A2: the viewer's CURRENT sensor coverage (command
             // center + standing arrays + their Raider fleets' bubbles) gates a
             // third party's bucket access to a battle site.
-            let coverage = self.history.coverage_for(player_id, cc, c, now, &arrays);
+            let mut coverage = self.history.coverage_for(player_id, cc, c, now, &arrays);
+            // §research-wiring Panopticon Catalog: every owned system and fleet
+            // catalogs the battles in its sensor range, not only command and
+            // the sensor ships.
+            if self.world.research_flag(player_id, sim::research::Cap::PanopticonCatalog) {
+                coverage.extend(self.history.asset_coverage_for(player_id, cc, c, now,
+                    self.world.systems.iter().filter(|s| s.owner == Some(player_id)).map(|s| s.pos)));
+            }
             // §perf Part A: records no longer ride the View. Enumerate what this
             // player MAY see (cheap — no round materialization); the send loop
             // below diffs each of their connections' cursors against this and
             // ships only the increments, on the reliable discrete lane.
-            let specs = view::visible_record_specs(
+            let mut specs = view::visible_record_specs(
                 &self.world.battle_records,
                 player_id,
                 cc,
@@ -2775,6 +3085,15 @@ impl GameLoop {
                         .and_then(|s| s.flagship_name.clone())
                 },
             );
+            // §research-wiring Battle Archives: a third party's records carry
+            // the losses too.
+            if self.world.research_flag(player_id, sim::research::Cap::BattleArchives) {
+                for spec in &mut specs {
+                    if matches!(spec.fidelity, crate::protocol::BattleFidelity::Bucket) {
+                        spec.fidelity = crate::protocol::BattleFidelity::Archive;
+                    }
+                }
+            }
             record_specs.insert(player_id, specs);
             // §ground G2: which landings this player may see, at what fidelity.
             ground_specs.insert(
@@ -2804,7 +3123,7 @@ impl GameLoop {
                         crate::protocol::FreightTermsView {
                             system: s.id,
                             distance,
-                            cap: sim::tca::TCA_SHIPMENT_CAP,
+                            cap: self.world.shipment_cap(player_id),
                             secs_out,
                             secs_round: secs_out * 2.0,
                         }
@@ -2847,6 +3166,11 @@ impl GameLoop {
                     charter,
                     founding,
                     charter_ledger,
+                    leave: crate::protocol::LeaveView::of(&corp.leave, now),
+                    raid_losses: crate::protocol::RaidLossView {
+                        taken: corp.raid_losses.taken(now).floor() as u32,
+                        cap: self.world.raid_loss_cap(player_id).map(|cap| cap.floor() as u32),
+                    },
                     // §merchant: its stall is at the home, beside the command
                     // center, so the served catalogue is its truth.
                     merchant: self.world.merchants.values().find(|v| v.customer == player_id)
@@ -2871,7 +3195,8 @@ impl GameLoop {
                         next_at: (day + 1) as f64 * sim::operation::BOARD_DAY_S,
                         done: corp.board.done.get(&day).copied().unwrap_or(0),
                         needed: sim::operation::BOARD_BONUS_AFTER,
-                        bonus_credits: sim::operation::BOARD_BONUS_CREDITS,
+                        bonus_standing: sim::operation::BOARD_BONUS_STANDING,
+                        bonus_dossier: sim::operation::BOARD_BONUS_DOSSIER,
                         bonus_paid: corp.board.bonus_days.contains(&day),
                     }),
                     signals: corp.signals.opened_at.map(|_| signals_view(&corp.signals)),
@@ -2897,13 +3222,14 @@ impl GameLoop {
             self.timeline.mark_seen(player_id, now);
             let jlen = self.timeline.revision(player_id);
             if self.timeline_sent.get(&player_id).copied().unwrap_or(0) != jlen {
-                self.timeline_sent.insert(player_id, jlen);
+                timeline_revs.insert(player_id, jlen);
                 let (entries, away_since) = self.timeline.digest(player_id);
                 timelines.insert(
                     player_id,
                     ServerMsg::Timeline {
                         entries,
                         away_since,
+                        welcome: None,
                     },
                 );
             }
@@ -2951,13 +3277,14 @@ impl GameLoop {
             for owner in confirmed_by_owner.keys().copied() {
                 let jlen = self.timeline.revision(owner);
                 if self.timeline_sent.get(&owner).copied().unwrap_or(0) != jlen {
-                    self.timeline_sent.insert(owner, jlen);
+                    timeline_revs.insert(owner, jlen);
                     let (entries, away_since) = self.timeline.digest(owner);
                     timelines.insert(
                         owner,
                         ServerMsg::Timeline {
                             entries,
                             away_since,
+                            welcome: None,
                         },
                     );
                 }
@@ -2986,23 +3313,210 @@ impl GameLoop {
             if let Some(sec) = sections.get(&info.player_id) {
                 let cc = self.world.players[&info.player_id].command_center;
                 let rankings = self.world.information.rankings(cc, self.world.hub, self.world.config.c, self.world.time);
-                send_sections(sec, sig_of(&rankings), rankings, info);
+                let syndicate_rankings = self.world.information.syndicate_rankings(cc, self.world.hub, self.world.config.c, self.world.time);
+                let season = crate::protocol::SeasonView::heard(&self.world, info.player_id, cc);
+                send_sections(sec, sig_of(&(rankings, syndicate_rankings)), rankings, syndicate_rankings, &season, info);
             }
             if let Some(reps) = reports.get(&info.player_id) {
                 for r in reps {
                     let _ = info.outbound.try_send(r.clone());
                 }
             }
-            if let Some(tl) = timelines.get(&info.player_id) {
-                let _ = info.outbound.try_send(tl.clone());
+            // §log: a full outbound queue used to drop the update for good
+            // (it had already been marked sent); now it retries next broadcast.
+            if let Some(tl) = timelines.get(&info.player_id)
+                && info.outbound.try_send(tl.clone()).is_err()
+            {
+                timeline_revs.remove(&info.player_id);
             }
         }
+        self.timeline_sent.extend(timeline_revs);
+    }
+}
+
+impl GameLoop {
+    /// §social (R5): a channel line, a mail, a read mark, a deletion, a mute or
+    /// a report. A refusal comes back as an error notice.
+    fn handle_social(&mut self, conn_id: ConnId, msg: ClientMsg) {
+        let Some(player) = self.sessions.player_of(conn_id) else { return };
+        let Some(corp) = self.world.players.get(&player) else { return };
+        let (name, syndicate) = (corp.name.clone(), corp.syndicate);
+        let now = chrono::Utc::now().timestamp();
+        let result: Result<(), String> = match msg {
+            ClientMsg::SyndicateSay { text } => match syndicate {
+                Some(s) => self.social.say(s, player, &name, &text, now).map_err(str::to_string),
+                None => Err("join a syndicate first".into()),
+            },
+            ClientMsg::SendMail { to, subject, body } => {
+                let wanted = to.trim();
+                let target = self.world.players.iter()
+                    .find(|(id, c)| !id.is_sentinel() && c.name.eq_ignore_ascii_case(wanted))
+                    .map(|(id, c)| (*id, c.name.clone()));
+                match target {
+                    Some((to_id, to_name)) => self.social.send_mail(player, &name, to_id, &to_name, &subject, &body, now)
+                        .map(|_| ()).map_err(str::to_string),
+                    None => Err(format!("no corporation named {wanted}")),
+                }
+            }
+            ClientMsg::MarkMailRead { id } => {
+                self.social.mark_read(player, id);
+                Ok(())
+            }
+            ClientMsg::DeleteMail { id } => {
+                self.social.delete_mail(player, id);
+                Ok(())
+            }
+            ClientMsg::MuteCorp { player: target, mute } => {
+                self.social.mute(player, target, mute);
+                Ok(())
+            }
+            ClientMsg::ReportMessage { kind, id, reason } => {
+                let reported = self.social.report(player, syndicate, &kind, id, &reason, now);
+                if reported.is_ok() {
+                    tracing::warn!(%player, kind, id, "message reported");
+                }
+                reported.map_err(str::to_string)
+            }
+            ClientMsg::CreateInvite => {
+                let home = corp.home;
+                if self.world.home_reservations_of(player) >= sim::galaxy::HOME_RESERVATIONS_MAX {
+                    Err(format!("{} invites are open: revoke one first", sim::galaxy::HOME_RESERVATIONS_MAX))
+                } else if self.world.nearest_free_home_slot(home).is_none() {
+                    Err("no free home slot is left in this galaxy".into())
+                } else {
+                    let until = self.world.time + sim::galaxy::HOME_RESERVATION_S;
+                    let invite = self.social.create_invite(player, until);
+                    self.pending.push(Command::ReserveHomeSlot { player_id: player, key: invite.key });
+                    Ok(())
+                }
+            }
+            ClientMsg::RevokeInvite { code } => {
+                if let Some(invite) = self.social.take_invite(&code, Some(player)) {
+                    self.pending.push(Command::CancelHomeReservation { player_id: player, key: invite.key });
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        };
+        if let Err(message) = result {
+            self.sessions.send_to_conn(conn_id, ServerMsg::Error { message });
+        }
+    }
+
+    /// §syndicate-projects (R6): the ladder and bonuses as `player` reads them
+    /// from the arrived syndicate picture `s`, with the levels that have
+    /// reached it.
+    fn syndicate_projects_view(&self, s: &sim::syndicate::Syndicate, player: PlayerId) -> crate::protocol::SyndicateProjectsView {
+        use sim::syndicate::*;
+        let p = &s.projects;
+        let tenure = self.world.players.get(&player).map_or(0.0, |c| self.world.time - c.syndicate_since);
+        let mut given: Vec<(String, u32)> = p.given.iter()
+            .map(|(id, units)| (self.world.players.get(id).map_or_else(String::new, |c| c.name.clone()), *units))
+            .collect();
+        given.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let mut medals = [0u32; 3];
+        for &(_, place) in &p.medals {
+            if (1..=3).contains(&place) {
+                medals[place as usize - 1] += 1;
+            }
+        }
+        crate::protocol::SyndicateProjectsView {
+            week: p.week,
+            week_ends_in: (p.week as f64 * sim::rankings::MEDAL_WEEK_S as f64 - self.world.time).max(0.0),
+            rung: p.rung,
+            progress: p.progress,
+            rungs: (0..LADDER_GOALS.len()).map(|i| crate::protocol::RungView {
+                goods: rung_goods(p.week, i), goal: LADDER_GOALS[i], points: LADDER_POINTS[i],
+            }).collect(),
+            points: p.points,
+            week_points: p.week_points,
+            bonuses: SyndicateBonus::ALL.iter().map(|&bonus| {
+                let level = p.level(bonus);
+                let mine = level_reaching(level, tenure);
+                crate::protocol::BonusView {
+                    bonus,
+                    level,
+                    mine,
+                    per_level: bonus.per_level(),
+                    next_cost: p.next_cost(bonus),
+                    next_in: (mine < level).then(|| (BONUS_LEVEL_WAIT_S[mine as usize] - tenure).max(0.0)),
+                }
+            }).collect(),
+            given,
+            medals,
+            may_raise: s.may_manage_operations(player),
+        }
+    }
+
+    /// §settle-near-friends (R7): check a newcomer's invite and hold it for
+    /// their landing.
+    fn redeem_invite(&mut self, conn_id: ConnId, player: PlayerId, code: &str) {
+        let refuse = |message: &str| ServerMsg::InviteStatus { ok: false, from: None, syndicate: None, near: None,
+            message: Some(message.into()) };
+        let reply = if self.world.players.contains_key(&player) {
+            refuse("Your corporation has already landed.")
+        } else if let Some(invite) = self.social.invite(code).cloned()
+            && let Some(slot) = self.world.home_reservation(invite.key)
+            && let Some(inviter) = self.world.players.get(&invite.by)
+        {
+            let near = slot.system.and_then(|id| self.world.systems.iter().find(|s| s.id == id)).map(|s| s.name.clone());
+            let syndicate = inviter.syndicate.and_then(|sid| self.world.syndicates.get(&sid))
+                .filter(|s| self.world.syndicate_has_seat(s.id)).map(|s| s.name.clone());
+            self.redeemed.insert(player, invite.code.clone());
+            ServerMsg::InviteStatus { ok: true, from: Some(inviter.name.clone()), syndicate, near, message: None }
+        } else {
+            refuse("This invite has expired or been used.")
+        };
+        self.sessions.send_to_conn(conn_id, reply);
+    }
+
+    /// `player`'s open invites whose hold still stands.
+    fn invite_views(&self, player: PlayerId) -> Vec<crate::social::InviteView> {
+        self.social.invites.values().filter(|i| i.by == player).filter_map(|i| {
+            let slot = self.world.home_reservation(i.key)?;
+            let near = slot.system.and_then(|id| self.world.systems.iter().find(|s| s.id == id))
+                .map_or_else(String::new, |s| s.name.clone());
+            Some(crate::social::InviteView { code: i.code.clone(), until: i.until, near })
+        }).collect()
+    }
+
+    /// §social: `player`'s channel, mail and presence, rebuilt only when its
+    /// signature (the social version and the members' presence) changes.
+    fn social_section(&self, player: PlayerId) -> (u64, std::sync::Arc<crate::social::SocialView>) {
+        use std::hash::{Hash, Hasher};
+        let syndicate = self.world.players.get(&player).and_then(|c| c.syndicate);
+        let members: Vec<(PlayerId, String, bool)> = syndicate.and_then(|s| self.world.syndicates.get(&s))
+            .map(|s| s.members.iter().map(|m| (*m,
+                self.world.players.get(m).map_or_else(String::new, |c| c.name.clone()),
+                self.sessions.is_online(*m))).collect())
+            .unwrap_or_default();
+        let invites = self.invite_views(player);
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (self.social.version, syndicate.map(|s| s.0)).hash(&mut h);
+        for (id, name, online) in &members {
+            (id.0, name, online, self.social.last_seen.get(id)).hash(&mut h);
+        }
+        for invite in &invites {
+            (&invite.code, &invite.near).hash(&mut h);
+        }
+        let sig = h.finish();
+        if let Some((cached, view)) = self.social_views.borrow().get(&player) && *cached == sig {
+            return (sig, view.clone());
+        }
+        let mut view = self.social.view_for(player, syndicate, &members);
+        view.invites = invites;
+        let view = std::sync::Arc::new(view);
+        self.social_views.borrow_mut().insert(player, (sig, view.clone()));
+        (sig, view)
     }
 }
 
 /// §perf Part B: one player's slow-moving sections for this broadcast, with
 /// their content signatures (computed once per player, compared per connection).
 struct SectionData {
+    /// §social (R5): the channel, mail and presence, and their signature.
+    social: std::sync::Arc<crate::social::SocialView>,
+    social_sig: u64,
     standing: Vec<sim::StandingOrder>,
     depot_rules: Vec<sim::industry::DepotRule>,
     standing_sig: u64,
@@ -3032,15 +3546,20 @@ fn send_sections(
     sec: &SectionData,
     rankings_sig: u64,
     rankings: &[sim::RankingRow],
+    syndicate_rankings: &[sim::rankings::SyndicateRankingRow],
+    season: &crate::protocol::SeasonView,
     info: &mut ConnInfo,
 ) {
     let sent = &info.sent;
+    let season_sig = season.signature();
+    let send_season = sent.season_sig != Some(season_sig);
     let send_standing = sent.standing_sig != Some(sec.standing_sig);
     let send_reports = sent.reports_sig != Some(sec.reports_sig);
     let send_captures = sent.captures_sig != Some(sec.captures_sig);
     let send_ranks = sent.rankings_sig != Some(rankings_sig);
     let send_journal = sent.exploration_journal_version != Some(sec.exploration_journal_version);
-    if !(send_standing || send_reports || send_captures || send_ranks || send_journal) {
+    let send_social = sent.social_sig != Some(sec.social_sig);
+    if !(send_standing || send_reports || send_captures || send_ranks || send_journal || send_social || send_season) {
         return;
     }
     let msg = ServerMsg::Sections {
@@ -3049,7 +3568,10 @@ fn send_sections(
         battle_reports: send_reports.then(|| sec.reports.clone()),
         capture_reports: send_captures.then(|| sec.captures.clone()),
         rankings: send_ranks.then(|| rankings.to_vec()),
+        syndicate_rankings: send_ranks.then(|| syndicate_rankings.to_vec()),
         exploration_journal: send_journal.then(|| sec.exploration_journal.clone()),
+        social: send_social.then(|| (*sec.social).clone()),
+        season: send_season.then(|| season.clone()),
     };
     if info.outbound.try_send(msg).is_ok() {
         if send_standing {
@@ -3066,6 +3588,12 @@ fn send_sections(
         }
         if send_journal {
             info.sent.exploration_journal_version = Some(sec.exploration_journal_version);
+        }
+        if send_social {
+            info.sent.social_sig = Some(sec.social_sig);
+        }
+        if send_season {
+            info.sent.season_sig = Some(season_sig);
         }
     }
 }
@@ -3093,7 +3621,6 @@ fn send_record_deltas(
         let Some(r) = records.get(&spec.id) else {
             continue;
         };
-        let participant = matches!(spec.fidelity, crate::protocol::BattleFidelity::Participant);
         let cur = info.sent.records.get(&spec.id);
         let is_new = cur.is_none();
         let names_changed = cur.is_some_and(|c| c.names != spec.names);
@@ -3101,7 +3628,7 @@ fn send_record_deltas(
         // command center — arrival is strictly increasing), send nothing extra.
         let from = cur.map_or(0, |c| c.rounds_sent).min(spec.arrived_len);
         let new_rounds = if spec.arrived_len > from {
-            view::record_rounds_range(r, from, spec.arrived_len, participant)
+            view::record_rounds_range(r, from, spec.arrived_len, spec.fidelity)
         } else {
             Vec::new()
         };
@@ -3273,6 +3800,7 @@ fn system_infos(world: &sim::World) -> Vec<SystemInfo> {
             name: s.name.clone(),
             band: world.band_of(s).slug(),
             claim_cost: s.claim_cost,
+            exotic: world.exotic_bonus(s.id).is_some(),
         })
         .collect()
 }
@@ -3330,6 +3858,14 @@ fn build_options() -> Vec<BuildOptionView> {
             "Interceptor",
             BuildKind::Ship {
                 ship: ShipKind::Raider,
+            },
+        ),
+        // §holds: the raiding freighter — its hold takes only loot.
+        (
+            "combat_freighter",
+            "Combat Freighter",
+            BuildKind::Ship {
+                ship: ShipKind::CombatFreighter,
             },
         ),
         (
@@ -3506,7 +4042,8 @@ fn build_options() -> Vec<BuildOptionView> {
                         label: level.name.into(),
                         costs: level.recipe.costs.iter().map(|(c, n)| StockSlot { commodity: *c, units: *n as u32 }).collect(),
                         build_secs: level.recipe.build_ticks as f64 / TICK_HZ as f64,
-                        research_prerequisite: Some(level.research),
+                        // §gun-platform: the first level needs no research.
+                        research_prerequisite: (!level.research.is_empty()).then_some(level.research),
                         requires: level.yard.map(|(yard, tier)| crate::protocol::YardNeedView { yard: yard.slug(), tier }),
                         description: level.description.into(),
                     }).collect()
@@ -3550,6 +4087,10 @@ fn build_options() -> Vec<BuildOptionView> {
                         }).collect(),
                     _ => Vec::new(),
                 },
+                upkeep: match what {
+                    BuildKind::Upgrade { upgrade: StructureKind::AsteroidQuarry } => sim::build::QUARRY_UPKEEP_PER_TIER.to_vec(),
+                    _ => Vec::new(),
+                },
             }
         })
         .collect()
@@ -3565,17 +4106,18 @@ fn gate_progress(
     now: f64,
 ) -> Option<crate::protocol::GateProgressView> {
     use sim::research::Gate;
+    let scale = |label: &str| sim::research::gate_display_scale(label);
     match sim::research::tier_gate(p.field, p.school, p.tier) {
         Gate::None => None,
         Gate::Cumulative(v, t) => Some(crate::protocol::GateProgressView {
             label: v.label().to_string(),
-            current: rs.verb(v),
-            threshold: t,
+            current: rs.verb(v) * scale(v.label()),
+            threshold: t * scale(v.label()),
         }),
         Gate::State(m, t) => Some(crate::protocol::GateProgressView {
             label: m.label().to_string(),
-            current: metric(m),
-            threshold: t,
+            current: metric(m) * scale(m.label()),
+            threshold: t * scale(m.label()),
         }),
         Gate::Sustained(m, _t, secs) => {
             // The endurance clock: days held continuously vs the required window.
@@ -3707,6 +4249,27 @@ fn research_view(world: &sim::World, owner: sim::PlayerId) -> crate::protocol::R
         stalled: rs.stalled,
         academies,
         programmes,
+        grant: crate::protocol::ResearchGrantView {
+            price: rs.active.as_deref().and_then(sim::research::programme)
+                .map(|p| sim::research::grant_price(p.tier)),
+            secs: sim::research::RESEARCH_GRANT_SECS,
+            left: rs.grants_left(now),
+            per_day: sim::research::RESEARCH_GRANTS_PER_DAY,
+        },
+        structure_tiers: sim::StructureKind::ALL.iter()
+            .map(|&kind| (kind.slug().to_string(),
+                sim::build::max_buildable_tier(kind, sim::research::unlocked_structure_tier(rs, kind))))
+            .collect(),
+        designations: rs.designations.iter().map(|(&cap, &target)| {
+            let live = world.designation(owner, cap) == Some(target);
+            let until = rs.designated_at.get(&cap).map(|t| t + sim::research::DESIGNATION_LOCK_S);
+            crate::protocol::DesignationView {
+                cap,
+                target,
+                live,
+                locked_until: until.filter(|&u| live && cap != sim::research::Cap::SignatureMimicry && now < u),
+            }
+        }).collect(),
     }
 }
 
@@ -3729,8 +4292,7 @@ pub(crate) async fn binary_protocol_fixtures() -> Vec<ServerMsg> {
             outbound, view_tx, replace_tx, view_divisor: if index == 4 { 2 } else { 1 },
         });
         receivers.push((rx, view_rx));
-        game.handle_input(GameInput::Intent { conn_id: index, msg: ClientMsg::FoundColony {
-            profile: sim::settlement::FoundingProfile::MineralHighlands } });
+        game.handle_input(GameInput::Intent { conn_id: index, msg: ClientMsg::FoundColony });
     }
     let mut messages = Vec::new();
     for _ in 0..4 {
@@ -3764,7 +4326,7 @@ pub(crate) async fn binary_protocol_fixtures() -> Vec<ServerMsg> {
     messages.push(ServerMsg::BattleRecords {
         updates: vec![crate::protocol::BattleRecordUpdate {
             id: spec.id, header: Some(view::record_header(&records[&spec.id], &spec)),
-            new_rounds: view::record_rounds_range(&records[&spec.id], 0, spec.arrived_len, true),
+            new_rounds: view::record_rounds_range(&records[&spec.id], 0, spec.arrived_len, crate::protocol::BattleFidelity::Participant),
             light_frontier_tick: spec.frontier_tick, outcome: None,
         }], removed: Vec::new(),
     });
@@ -3844,31 +4406,68 @@ mod tests {
     }
 
     #[test]
+    fn only_the_quarry_serves_an_upkeep_and_it_is_the_sims() {
+        let options = build_options();
+        let quarry = options.iter().find(|o| o.key == "asteroid_quarry").unwrap();
+        assert_eq!(quarry.upkeep, sim::build::QUARRY_UPKEEP_PER_TIER.to_vec());
+        assert_eq!(quarry.consumes_slot, Some(true));
+        assert!(options.iter().filter(|o| o.key != "asteroid_quarry").all(|o| o.upkeep.is_empty()));
+    }
+
+    #[test]
     fn discovery_notes_retry_on_backpressure_and_only_resend_on_edit_or_reconnect() {
         let (tx, mut rx) = mpsc::channel(1);
         let (view_tx, _) = watch::channel(None);
         let (replace_tx, _) = watch::channel(false);
         let mut conn = ConnInfo { player_id: PlayerId(80), name: "Journal".into(), outbound: tx,
             view_tx, replace_tx, view_divisor: 1, last_view_broadcast: None, sent: Default::default() };
-        let mut section = SectionData { standing: vec![], depot_rules: vec![], standing_sig: 0, reports: vec![], reports_sig: 0,
+        let mut section = SectionData { social: Default::default(), social_sig: 0, standing: vec![], depot_rules: vec![], standing_sig: 0, reports: vec![], reports_sig: 0,
             captures: vec![], captures_sig: 0, exploration_journal_version: 1,
             exploration_journal: vec![sim::sites::JournalEntry { id: sim::EntityId(42),
                 kind: sim::sites::JournalKind::Site, pinned: true, note: "Return with escorts".into() }] };
         conn.outbound.try_send(ServerMsg::Error { message: "occupy queue".into() }).unwrap();
-        send_sections(&section, 0, &[], &mut conn);
+        send_sections(&section, 0, &[], &[], &Default::default(), &mut conn);
         assert!(conn.sent.exploration_journal_version.is_none(), "failed enqueue must retry");
         rx.try_recv().unwrap();
-        send_sections(&section, 0, &[], &mut conn);
+        send_sections(&section, 0, &[], &[], &Default::default(), &mut conn);
         assert!(matches!(rx.try_recv().unwrap(), ServerMsg::Sections { exploration_journal: Some(j), .. } if j == section.exploration_journal));
-        send_sections(&section, 0, &[], &mut conn);
+        send_sections(&section, 0, &[], &[], &Default::default(), &mut conn);
         assert!(rx.try_recv().is_err(), "never retransmit notes at 10 Hz");
         conn.sent = Default::default();
-        send_sections(&section, 0, &[], &mut conn);
+        send_sections(&section, 0, &[], &[], &Default::default(), &mut conn);
         assert!(matches!(rx.try_recv().unwrap(), ServerMsg::Sections { exploration_journal: Some(j), .. } if j.len() == 1));
         section.exploration_journal.clear(); section.exploration_journal_version += 1;
-        send_sections(&section, 0, &[], &mut conn);
+        send_sections(&section, 0, &[], &[], &Default::default(), &mut conn);
         assert!(matches!(rx.try_recv().unwrap(), ServerMsg::Sections { exploration_journal: Some(j), standing_orders: None, .. } if j.is_empty()),
             "clearing the journal sends an empty section, not an absent one");
+    }
+
+    /// §treasury: Peter, Oct 27 2026: "I swear I had enough credits". The
+    /// wallet is the treasury at the command center: an order to the Hub
+    /// shows its payment the moment it leaves, not a light delay later.
+    #[tokio::test]
+    async fn the_wallet_is_the_treasury_at_once() {
+        let mut game = reporting_game(World::new(sim::SimConfig::for_players(803, 2)));
+        let name = "Treasury".to_string();
+        let owner = crate::protocol::player_id_from_name(&name);
+        let (outbound, _rx) = mpsc::channel(256);
+        let (view_tx, mut view_rx) = watch::channel(None);
+        let (replace_tx, _) = watch::channel(false);
+        game.handle_input(GameInput::Connect { conn_id: 1, player_id: owner, name, outbound, view_tx, replace_tx, view_divisor: 1 });
+        game.handle_input(GameInput::Intent { conn_id: 1, msg: ClientMsg::FoundColony });
+        for _ in 0..3 { game.tick(); }
+        let treasury = game.world.players[&owner].credits;
+        game.handle_input(GameInput::Intent { conn_id: 1, msg: ClientMsg::MarketBuy {
+            commodity: sim::Commodity::Alloys, units: 10, max_unit_price: Some(100.0),
+        } });
+        // The next due broadcast (one in three ticks at 10 Hz).
+        for _ in 0..3 { game.tick(); }
+        game.broadcast();
+        assert!(view_rx.has_changed().unwrap(), "a fresh view");
+        let Some(ServerMsg::View { wallet, .. }) = view_rx.borrow_and_update().clone() else { panic!("a view") };
+        let paid = treasury - game.world.players[&owner].credits;
+        assert!(paid >= 1_000.0, "the payment left with the order: {paid}");
+        assert_eq!(wallet.credits, treasury - paid, "and the wallet shows it at once");
     }
 
     fn reporting_game(world: World) -> GameLoop {
@@ -3892,29 +4491,66 @@ mod tests {
         let mut rx = connect(&mut game, 7);
         assert!(matches!(rx.try_recv().unwrap(), ServerMsg::Welcome { .. }));
         assert!(matches!(rx.try_recv().unwrap(), ServerMsg::Timeline { .. }));
-        assert!(matches!(rx.try_recv().unwrap(), ServerMsg::FoundingOffer));
+        let ServerMsg::FoundingOffer { profile: dealt } = rx.try_recv().unwrap() else { panic!("a founding offer") };
         for _ in 0..5 { game.tick(); }
         assert!(!game.world.players.contains_key(&owner));
         assert!(game.pending.is_empty());
         game.handle_input(GameInput::Intent { conn_id: 7, msg: ClientMsg::Ping });
-        game.handle_input(GameInput::Intent { conn_id: 999, msg: ClientMsg::FoundColony {
-            profile: sim::settlement::FoundingProfile::CoastalPlains } });
+        game.handle_input(GameInput::Intent { conn_id: 999, msg: ClientMsg::FoundColony });
         assert!(game.pending.is_empty(), "unknown session cannot found a corporation");
-        for _ in 0..2 { game.handle_input(GameInput::Intent { conn_id: 7, msg: ClientMsg::FoundColony {
-            profile: sim::settlement::FoundingProfile::CoastalPlains } }); }
+        for _ in 0..2 { game.handle_input(GameInput::Intent { conn_id: 7, msg: ClientMsg::FoundColony }); }
         assert_eq!(game.pending.len(), 1);
         let before = game.world.time;
         game.tick();
         let corp = &game.world.players[&owner];
         assert_eq!(corp.name, "Auth name");
         assert!(corp.founding.started_at >= before);
+        let camp = game.world.systems.iter().filter(|s| s.owner == Some(owner))
+            .flat_map(|s| s.bodies.iter()).find_map(|b| b.founding_camp.as_ref()).expect("a founding camp");
+        assert_eq!(camp.profile, dealt, "§founding: it lands on the world it was dealt");
         let started = corp.founding.started_at;
         let mut returning = connect(&mut game, 8);
-        while let Ok(msg) = returning.try_recv() { assert!(!matches!(msg, ServerMsg::FoundingOffer)); }
-        game.handle_input(GameInput::Intent { conn_id: 8, msg: ClientMsg::FoundColony {
-            profile: sim::settlement::FoundingProfile::MineralHighlands } });
+        while let Ok(msg) = returning.try_recv() { assert!(!matches!(msg, ServerMsg::FoundingOffer { .. })); }
+        game.handle_input(GameInput::Intent { conn_id: 8, msg: ClientMsg::FoundColony });
         assert!(game.pending.is_empty());
         assert_eq!(game.world.players[&owner].founding.started_at, started);
+    }
+
+    /// §founding: the home world's type is dealt per account and galaxy:
+    /// fixed within one galaxy, all three come up, and a reset deals afresh.
+    #[tokio::test]
+    async fn the_research_view_serves_each_structures_ceiling() {
+        // §unlocks (v72): the client draws no level research hasn't opened.
+        let mut game = reporting_game(World::new(sim::SimConfig::for_players(811, 2)));
+        let name = "Ceilings".to_string();
+        let owner = crate::protocol::player_id_from_name(&name);
+        let (outbound, _rx) = mpsc::channel(256);
+        let (view_tx, _view_rx) = watch::channel(None);
+        let (replace_tx, _) = watch::channel(false);
+        game.handle_input(GameInput::Connect { conn_id: 1, player_id: owner, name, outbound, view_tx, replace_tx, view_divisor: 1 });
+        game.handle_input(GameInput::Intent { conn_id: 1, msg: ClientMsg::FoundColony });
+        for _ in 0..3 { game.tick(); }
+        let tiers = research_view(&game.world, owner).structure_tiers;
+        assert_eq!(tiers.len(), sim::StructureKind::ALL.len());
+        assert_eq!(tiers["habitat"], 4, "levels V and VI wait for research");
+        assert_eq!(tiers["orbital_defense"], 1, "the Gun Platform is free; the Defense Platform waits for Fire Control");
+        assert_eq!(tiers["smelter"], 0, "the Smelter waits for Enrichment");
+        assert_eq!(tiers["command_center"], 2);
+    }
+
+    #[test]
+    fn home_worlds_are_dealt_not_chosen() {
+        use sim::settlement::FoundingProfile as P;
+        let game = reporting_game(World::new(sim::SimConfig::for_players(973, 2)));
+        let dealt: Vec<P> = (1..=60).map(|id| game.dealt_profile(PlayerId(id))).collect();
+        for profile in [P::MineralHighlands, P::VerdantLowlands, P::CoastalPlains] {
+            assert!(dealt.contains(&profile), "{profile:?} is dealt to someone");
+        }
+        assert_eq!(game.dealt_profile(PlayerId(7)), game.dealt_profile(PlayerId(7)), "the same draw on reconnect");
+        let mut next = reporting_game(World::new(sim::SimConfig::for_players(973, 2)));
+        next.galaxy_instance_id = format!("{}-reset", game.galaxy_instance_id);
+        assert!((1..=60).any(|id| next.dealt_profile(PlayerId(id)) != game.dealt_profile(PlayerId(id))),
+            "a new galaxy deals afresh, even from the same seed");
     }
 
     #[test]
@@ -3926,8 +4562,7 @@ mod tests {
         let (replace_tx, _) = watch::channel(false);
         game.handle_input(GameInput::Connect { conn_id: 1, player_id: owner, name: "Charter".into(),
             outbound, view_tx, replace_tx, view_divisor: 1 });
-        game.handle_input(GameInput::Intent { conn_id: 1, msg: ClientMsg::FoundColony {
-            profile: sim::settlement::FoundingProfile::CoastalPlains } });
+        game.handle_input(GameInput::Intent { conn_id: 1, msg: ClientMsg::FoundColony });
         game.tick();
         let (reply, mut answer) = tokio::sync::oneshot::channel();
         game.handle_input(GameInput::AdminStats { reply });
@@ -4012,6 +4647,162 @@ mod tests {
         game.handle_input(GameInput::Intent { conn_id: 999,
             msg: ClientMsg::RequestTransactions { before: None, request_id: 8 } });
         assert!(rx.try_recv().is_err(), "no client-selected owner or unauthenticated page");
+    }
+
+    /// §notifications (R8): alerting news is held for an offline player only,
+    /// and a digest needs a long absence.
+    #[tokio::test]
+    async fn alerts_wait_for_offline_players_only() {
+        let (away, here) = (PlayerId(841), PlayerId(842));
+        let mut world = World::new(sim::SimConfig::for_players(841, 2));
+        world.step(&[Command::AddPlayer { id: away, name: "Away".into() }, Command::AddPlayer { id: here, name: "Here".into() }]);
+        let mut game = reporting_game(world);
+        let (outbound, _rx) = mpsc::channel(64);
+        let (view_tx, _) = watch::channel(None);
+        let (replace_tx, _) = watch::channel(false);
+        game.handle_input(GameInput::Connect { conn_id: 1, player_id: here, name: "Here".into(), outbound, view_tx, replace_tx, view_divisor: 1 });
+        let now = game.world.time;
+        let done = |owner| sim::Event::new(now, sim::EventPayload::ResearchCompleted { owner, programme: "hull_i".into() });
+        game.timeline.ingest(&[done(away), done(here)], &game.world);
+        game.tick();
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        game.handle_input(GameInput::TakeAlerts { reply });
+        let alerts = answer.await.unwrap();
+        assert_eq!(alerts.iter().map(|a| (a.player, a.kind)).collect::<Vec<_>>(), [(away, crate::notify::AlertKind::Research)]);
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        game.handle_input(GameInput::TakeAlerts { reply });
+        assert!(answer.await.unwrap().is_empty(), "taken once");
+        // A digest needs twelve hours away.
+        game.timeline.mark_seen(away, game.world.time);
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        game.handle_input(GameInput::Digest { player: away, reply });
+        assert!(answer.await.unwrap().is_none());
+    }
+
+    /// §settle-near-friends (R7): an invite holds a home near its sender; the
+    /// friend who redeems it lands there and joins the sender's syndicate; a
+    /// used code is refused.
+    #[tokio::test]
+    async fn an_invite_settles_a_friend_nearby() {
+        let (host, friend, late) = (PlayerId(831), PlayerId(832), PlayerId(833));
+        let mut world = World::new(sim::SimConfig::for_players(831, 4));
+        world.step(&[Command::AddPlayer { id: host, name: "Harbor".into() }]);
+        world.step(&[Command::CreateSyndicate { player_id: host, name: "Pact".into() }]);
+        let sid = world.players[&host].syndicate.unwrap();
+        let mut game = reporting_game(world);
+        let connect = |game: &mut GameLoop, conn_id, player: PlayerId| {
+            let (outbound, rx) = mpsc::channel(64);
+            let (view_tx, _) = watch::channel(None);
+            let (replace_tx, _) = watch::channel(false);
+            game.handle_input(GameInput::Connect { conn_id, player_id: player, name: format!("Corp {conn_id}"), outbound, view_tx, replace_tx, view_divisor: 1 });
+            rx
+        };
+        let status = |rx: &mut mpsc::Receiver<ServerMsg>| std::iter::from_fn(|| rx.try_recv().ok())
+            .find_map(|m| if let ServerMsg::InviteStatus { ok, from, syndicate, .. } = m { Some((ok, from, syndicate)) } else { None });
+        let _host_rx = connect(&mut game, 1, host);
+        game.handle_input(GameInput::Intent { conn_id: 1, msg: ClientMsg::CreateInvite });
+        game.tick();
+        let invites = game.social_section(host).1.invites.clone();
+        assert_eq!(invites.len(), 1, "the hold stands");
+        let code = invites[0].code.clone();
+        let held = game.world.home_slots.iter().find(|s| s.reserved.is_some()).unwrap().pos;
+        let mut friend_rx = connect(&mut game, 2, friend);
+        game.handle_input(GameInput::Intent { conn_id: 2, msg: ClientMsg::RedeemInvite { code: code.to_lowercase() } });
+        assert_eq!(status(&mut friend_rx), Some((true, Some("Harbor".into()), Some("Pact".into()))));
+        game.handle_input(GameInput::Intent { conn_id: 2, msg: ClientMsg::FoundColony });
+        game.tick();
+        assert_eq!(game.world.players[&friend].home, held, "lands on the held slot");
+        assert_eq!(game.world.players[&friend].syndicate, Some(sid));
+        assert!(game.social_section(host).1.invites.is_empty(), "used up");
+        let mut late_rx = connect(&mut game, 3, late);
+        game.handle_input(GameInput::Intent { conn_id: 3, msg: ClientMsg::RedeemInvite { code } });
+        assert_eq!(status(&mut late_rx).map(|s| s.0), Some(false));
+    }
+
+    /// §welcome (R9): a return after ten minutes or more carries the server's
+    /// report: what reached command while away, what waits, the next actions.
+    #[tokio::test]
+    async fn a_return_carries_the_welcome_report() {
+        let (owner, friend) = (PlayerId(821), PlayerId(822));
+        let mut world = World::new(sim::SimConfig::for_players(821, 2));
+        world.step(&[Command::AddPlayer { id: owner, name: "Halcyon".into() }, Command::AddPlayer { id: friend, name: "Ember".into() }]);
+        let mut game = reporting_game(world);
+        let connect = |game: &mut GameLoop, conn_id, player: PlayerId| {
+            let (outbound, rx) = mpsc::channel(64);
+            let (view_tx, _) = watch::channel(None);
+            let (replace_tx, _) = watch::channel(false);
+            game.handle_input(GameInput::Connect { conn_id, player_id: player, name: "x".into(), outbound, view_tx, replace_tx, view_divisor: 1 });
+            rx
+        };
+        let welcome_of = |rx: &mut mpsc::Receiver<ServerMsg>| std::iter::from_fn(|| rx.try_recv().ok())
+            .find_map(|m| if let ServerMsg::Timeline { welcome, .. } = m { Some(welcome) } else { None }).unwrap();
+        let left = game.world.time;
+        game.timeline.mark_seen(owner, left);
+        // Five minutes is a tab switch.
+        game.world.time = left + 300.0;
+        let mut rx = connect(&mut game, 1, owner);
+        assert!(welcome_of(&mut rx).is_none());
+        game.handle_input(GameInput::Disconnect { conn_id: 1 });
+        // An hour away: research lands, ore sells, a mail arrives.
+        game.world.time = left + 3_600.0;
+        let now = game.world.time;
+        game.timeline.ingest(&[sim::Event::new(now, sim::EventPayload::ResearchCompleted {
+            owner, programme: "hull_i".into() })], &game.world);
+        game.timeline.promote(now + 1.0);
+        game.transactions.record(owner, Some(now), now, TransactionDetails::Trade {
+            trade: sim::TradeEvent::Sold { player: owner, commodity: sim::Commodity::MetallicOre, units: 40, unit_price: 10.0, penalty: 0.0 } });
+        game.social.send_mail(friend, "Ember", owner, "Halcyon", "Hi", "Ore?", 1).unwrap();
+        let mut rx = connect(&mut game, 2, owner);
+        let report = welcome_of(&mut rx).expect("an hour away");
+        assert!((report.away - 3_600.0).abs() < 1e-6);
+        let happened: Vec<&str> = report.happened.iter().map(|l| l.text.as_str()).collect();
+        assert!(happened.contains(&"Sold 40 ferrite ore · +400 Cr"), "{happened:?}");
+        assert!(happened.iter().any(|t| t.contains("Research complete") || t.contains("hull_i") || t.contains("Hull")), "{happened:?}");
+        assert!(report.waiting.iter().any(|l| l.text == "1 unread mail"));
+        assert!(report.next.iter().any(|a| a.label == "Read mail" && a.go == crate::welcome::WelcomeGo::Comms));
+        assert!(report.next.len() <= 3);
+        // The tally clears once the corporation is back on.
+        game.timeline.mark_seen(owner, now);
+        assert!(game.timeline.away_tally(owner).is_none());
+    }
+
+    /// §social (R5): a syndicate's line reaches its members, mail reaches a
+    /// corporation by name, and a refusal comes back as an error.
+    #[tokio::test]
+    async fn the_syndicate_channel_and_mail_reach_their_readers() {
+        let (a, b) = (PlayerId(811), PlayerId(812));
+        let mut world = World::new(sim::SimConfig::for_players(811, 2));
+        world.step(&[Command::AddPlayer { id: a, name: "Aurora".into() }, Command::AddPlayer { id: b, name: "Borealis".into() }]);
+        world.step(&[Command::CreateSyndicate { player_id: a, name: "Pact".into() }]);
+        let sid = world.players[&a].syndicate.unwrap();
+        // Invites travel light-delayed; seat the second member directly.
+        world.syndicates.get_mut(&sid).unwrap().members.insert(b);
+        world.players.get_mut(&b).unwrap().syndicate = Some(sid);
+        let mut game = reporting_game(world);
+        let mut rxs = Vec::new();
+        for (conn_id, id, name) in [(1, a, "Aurora"), (2, b, "Borealis")] {
+            let (outbound, rx) = mpsc::channel(64);
+            let (view_tx, _) = watch::channel(None);
+            let (replace_tx, _) = watch::channel(false);
+            game.handle_input(GameInput::Connect { conn_id, player_id: id, name: name.into(), outbound, view_tx, replace_tx, view_divisor: 1 });
+            rxs.push(rx);
+        }
+        game.handle_input(GameInput::Intent { conn_id: 1, msg: ClientMsg::SyndicateSay { text: "Convoy at dawn.".into() } });
+        game.handle_input(GameInput::Intent { conn_id: 1, msg: ClientMsg::SendMail { to: "borealis".into(),
+            subject: "Ore".into(), body: "Spare 200?".into() } });
+        game.handle_input(GameInput::Intent { conn_id: 1, msg: ClientMsg::SendMail { to: "Nobody".into(),
+            subject: "".into(), body: "x".into() } });
+        let errors: Vec<String> = std::iter::from_fn(|| rxs[0].try_recv().ok())
+            .filter_map(|m| if let ServerMsg::Error { message } = m { Some(message) } else { None }).collect();
+        assert_eq!(errors, ["no corporation named Nobody"]);
+        let (_, view) = game.social_section(b);
+        assert_eq!(view.channel.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["Convoy at dawn."]);
+        assert_eq!((view.unread, view.inbox[0].from_name.as_str()), (1, "Aurora"));
+        assert!(view.members.iter().all(|m| m.online), "both connected");
+        game.handle_input(GameInput::Disconnect { conn_id: 1 });
+        let (_, view) = game.social_section(b);
+        let aurora = view.members.iter().find(|m| m.player == a).unwrap();
+        assert!(!aurora.online && aurora.last_seen.is_some(), "presence follows the socket");
     }
 
     #[tokio::test]
@@ -4125,7 +4916,7 @@ mod tests {
         let mut game = reporting_game(world);
         game.history.record(&game.world);
         game.prices.record(&game.world);
-        let old_credits = game.world.players[&owner].credits;
+        let old_valuation = game.world.players[&owner].valuation;
         game.world.time = start + 5.0;
         {
             let f = game.world.fleets.get_mut(&fleet).unwrap();
@@ -4134,7 +4925,7 @@ mod tests {
             f.posture = sim::EngagementPosture::Defensive;
             f.ships[0].hp *= 0.5;
         }
-        game.world.players.get_mut(&owner).unwrap().credits += 77.0;
+        game.world.players.get_mut(&owner).unwrap().valuation += 77.0;
         game.history.record(&game.world);
         game.market_accounts.record(&game.world);
         game.timeline.ingest(&[sim::Event::new(game.world.time, sim::EventPayload::OrderRejected {
@@ -4147,8 +4938,8 @@ mod tests {
         let mut restored = reporting_game(restored_world);
         assert_eq!(restored.observed_order_plans[&(owner, 42)].response_at, start + 20.0);
         assert!(restored.market_accounts.at(owner, start - 0.001).is_none(), "never backfill old light from newest truth");
-        assert_eq!(restored.market_accounts.at(owner, start + 4.999).unwrap().credits, old_credits);
-        assert_eq!(restored.market_accounts.at(owner, start + 5.0).unwrap().credits, old_credits + 77.0);
+        assert_eq!(restored.market_accounts.at(owner, start + 4.999).unwrap().valuation, old_valuation);
+        assert_eq!(restored.market_accounts.at(owner, start + 5.0).unwrap().valuation, old_valuation + 77.0);
         let picture = |g: &GameLoop, now| g.history.view_for(owner, cc, g.world.config.c, now)
             .into_iter().find(|f| f.id == fleet).unwrap();
         let before = picture(&restored, start + leg + 4.0);

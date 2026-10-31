@@ -164,7 +164,7 @@ one planet.
 | --- | --- | --- | --- | --- |
 | Charter done: Mining I and Shipyard I on one body | 2 MW | none (base 3) | 0 | 0 |
 | First upgrades there: Mining II, Shipyard II | 4.4 MW | Plant I, 8 MW (Power 68% without) | 1.4 MW | 25 Fuel/h |
-| Industrial planet: Mining III, Smelter III, Machine Works II, Electronics II, Fuel Refinery II | 14.2 MW | Plant II, 17.6 MW | 11.2 MW | 202 Fuel/h (2.8k Cr/h) |
+| Industrial planet: Mining III, Smelter III, Machine Works II, Semiconductor Fab II, Fuel Refinery II | 14.2 MW | Plant II, 17.6 MW | 11.2 MW | 202 Fuel/h (2.8k Cr/h) |
 | Fuel's ceiling | 51 MW | Plant IV, 48 MW | 48 MW | 864 Fuel/h (12k Cr/h) |
 | Prize world: eight tier VI structures | 92 MW | Plant VI, fusion, 92 MW | 89 MW | 267 Helium-3/h (20k Cr/h) |
 

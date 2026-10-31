@@ -2,6 +2,7 @@ import { slowCapable, guardCapable, jumpCapable, shipKindLabel } from "../../cor
 import { gravityWellAt, nearestKnownDock } from "../../core/derive/geo";
 import { intentSummary } from "../../core/derive/orders";
 import { intentReadinessWarnings } from "../../core/derive/readiness";
+import { raidableIntent } from "../../core/derive/blockade";
 import { informationDelay } from "../../core/derive/format";
 import { jumpRangeAt } from "../../core/derive/nebula";
 import type { GhostView, TransitMode } from "../../protocol";
@@ -117,6 +118,15 @@ export class DeckCommandStrip {
     const fleet = fleetId ? this.ctx.state.ghosts.find((entry) => entry.id === fleetId && entry.own) : undefined;
     if (action === "confirm") {
       this.ctx.intent.confirmPendingIntent();
+    } else if (action === "confirm-raid" || action === "confirm-raid-repeat") {
+      // §raid-order: the same blockade, marked to come home when full;
+      // §player-styles: and to set out again after each trip.
+      const pending = this.ctx.state.pendingIntent;
+      if (pending?.verb === "blockade") {
+        pending.raid = true;
+        pending.repeat = action === "confirm-raid-repeat";
+        this.ctx.intent.confirmPendingIntent();
+      }
     } else if (action === "cancel-intent") {
       this.ctx.intent.clearPendingIntent();
     } else if (action === "cancel-armed") {
@@ -159,13 +169,20 @@ export class DeckCommandStrip {
   }
 
   private intentHtml(summary: string): string {
-    const warnings = this.ctx.state.pendingIntent ? intentReadinessWarnings(this.ctx.state, this.ctx.state.pendingIntent) : [];
+    const intent = this.ctx.state.pendingIntent;
+    const warnings = intent ? intentReadinessWarnings(this.ctx.state, intent) : [];
+    // §raid-order: a fleet with a hold may raid instead: loot until full, then
+    // home. Without a war a raid is the only choice (`intent.raid` preset).
+    const raidOnly = intent?.verb === "blockade" && intent.raid === true;
+    const raidable = !raidOnly && intent ? raidableIntent(this.ctx.state, intent) : false;
     return `<div class="deck-command-strip__frame deck-command-strip__frame--intent">` +
       `<div class="deck-command-strip__mode">ORDER PREVIEW</div>` +
       `<div class="deck-command-strip__summary">${esc(summary)}</div>` +
       (warnings.length ? `<div class="deck-dispatch-warning" role="status">${warnings.map(esc).join("<br>")}</div>` : "") +
       `<div class="deck-command-strip__actions">` +
-        `<button type="button" class="is-primary" data-deck-command="confirm" data-coach="confirm-order">Confirm <kbd>Enter</kbd></button>` +
+        `<button type="button" class="is-primary" data-deck-command="confirm" data-coach="confirm-order">${raidOnly ? "Raid" : raidable ? "Blockade" : "Confirm"} <kbd>Enter</kbd></button>` +
+        (raidable ? `<button type="button" data-deck-command="confirm-raid" title="Loot until the holds are full, then bring it home.">Raid</button>` : "") +
+        (raidable || raidOnly ? `<button type="button" data-deck-command="confirm-raid-repeat" title="Raid, then go again after each trip home, until a trip comes home empty or loses a ship.">Raid ↻</button>` : "") +
         `<button type="button" data-deck-command="cancel-intent">Cancel <kbd>Esc</kbd></button>` +
       `</div></div>`;
   }

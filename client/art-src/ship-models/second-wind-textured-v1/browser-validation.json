@@ -1,0 +1,14 @@
+{
+  "ship": "second-wind",
+  "textureRevision": 2,
+  "checkedAt": "2026-10-28T05:08:34.922315+00:00",
+  "modelSHA256": "fb63a78718a05f6cee1006a933dc851776030a827c1a2ca2d439467047d3fe2a",
+  "url": "http://127.0.0.1:8789/second-wind-textured-v1/viewer.html",
+  "method": "Live in-app-browser WebGL inspection from opposite quarters, screenshot and zero console warnings/errors. Four isolated cabin views and exported window-landmark checks verify roof/windscreen alignment.",
+  "trianglesDisplayed": 7778,
+  "drawCallsDisplayed": 2,
+  "consoleErrors": 0,
+  "consoleWarnings": 0,
+  "screenshot": "webgl-preview.png",
+  "softwareAudit": "../trader-fleet-v1/texture-audit-v1/after/second-wind/nine-view-audit.png"
+}

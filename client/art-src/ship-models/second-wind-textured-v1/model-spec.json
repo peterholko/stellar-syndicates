@@ -1,0 +1,175 @@
+{
+  "name": "Second Wind",
+  "owner": "Mags Halloran",
+  "center": [
+    278,
+    437
+  ],
+  "regions": {
+    "top": [
+      30,
+      56,
+      533,
+      819
+    ],
+    "bottom": [
+      550,
+      55,
+      979,
+      820
+    ],
+    "front": [
+      1105,
+      24,
+      1715,
+      271
+    ],
+    "back": [
+      1124,
+      290,
+      1712,
+      543
+    ],
+    "side": [
+      1021,
+      571,
+      1750,
+      815
+    ]
+  },
+  "sideBaseline": 748,
+  "sideHeightScale": 42,
+  "sideRegistration": [
+    [
+      56,
+      275,
+      443,
+      819
+    ],
+    [
+      1030,
+      1147,
+      1225,
+      1745
+    ]
+  ],
+  "frontBaseline": 219,
+  "backBaseline": 475,
+  "elevationScale": 42,
+  "starboardSide": [
+    1284,
+    680,
+    1592,
+    793
+  ],
+  "engineSide": [
+    1607,
+    666,
+    1748,
+    802
+  ],
+  "paintCrop": [
+    236,
+    273,
+    295,
+    325
+  ],
+  "accentCrop": [
+    232,
+    373,
+    240,
+    425
+  ],
+  "glassCrop": [
+    125,
+    297,
+    137,
+    307
+  ],
+  "cyanCrop": [
+    1224,
+    467,
+    1241,
+    481
+  ],
+  "engineWallCrop": [
+    1449,
+    703,
+    1585,
+    756
+  ],
+  "counts": {
+    "cargoBays": 1,
+    "dockingCollars": 1,
+    "mainEngines": 2,
+    "bridges": 1,
+    "cranes": 1,
+    "guns": 0
+  },
+  "id": "second-wind",
+  "pixelsPerUnit": [
+    38,
+    38
+  ],
+  "reference": "second-wind-reference-v1/second-wind-reference.png",
+  "triangleBudget": [
+    3500,
+    11000
+  ],
+  "patches": {
+    "silver": [
+      552,
+      968,
+      792,
+      1208
+    ],
+    "dark": [
+      824,
+      968,
+      1064,
+      1208
+    ],
+    "brass": [
+      1096,
+      968,
+      1336,
+      1208
+    ],
+    "paint": [
+      8,
+      968,
+      504,
+      1208
+    ],
+    "accent": [
+      8,
+      1232,
+      504,
+      1456
+    ],
+    "glass": [
+      8,
+      1500,
+      504,
+      1666
+    ],
+    "service": [
+      552,
+      1332,
+      1048,
+      1420
+    ],
+    "enginewall": [
+      8,
+      968,
+      504,
+      1208
+    ],
+    "cyan": [
+      544.5,
+      1264.5,
+      560.5,
+      1277.5
+    ]
+  }
+}

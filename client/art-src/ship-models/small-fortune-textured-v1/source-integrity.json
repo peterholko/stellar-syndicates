@@ -1,0 +1,17 @@
+{
+  "sources": [
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/small-fortune-reference-v1/small-fortune-reference.png",
+      "sha256": "0e77b38257925975b7cd25cb6fc9e4f6a80a31e2d993959de5284394743e094f"
+    },
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/mining-fleet-v1/material-strip.png",
+      "sha256": "4aae3c2d5a5c996895db0ca7f608f518e59f66544d21ec45b887da45de0145e8"
+    },
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/trader-fleet-v1/material-trims-v2.png",
+      "sha256": "e25b3b35856a53f6e320d1ebdba721fd0293242db410b75e5d8e56df63c9c84e"
+    }
+  ],
+  "handling": "Read-only references; unchanged copy in textures/reference-sheet.png. Native reference and generated trim pixels packed into atlases. Material strip generation recorded in material-trims-v2.prompt.json."
+}

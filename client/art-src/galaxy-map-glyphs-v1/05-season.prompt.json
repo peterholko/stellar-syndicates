@@ -1,0 +1,24 @@
+{
+  "id": "05-season",
+  "category": "glyphs",
+  "destination": "client/art-src/galaxy-map-glyphs-v1/05-season.png",
+  "prompt": "Use case: precise-object-edit. Image 1 is a six-glyph atlas on black, 1536x1024. Preserve its dimensions, exact 3-column by 2-row grid, all six glyph centers, overall style and the other FIVE glyphs unchanged. Correct ONLY the TOP-LEFT construction-gate glyph: make its circular band exactly THREE equally long white arc segments, separated by exactly THREE black gaps at 2 o'clock, 6 o'clock and 10 o'clock. There is NO gap at 12 o'clock. The upper arc is one continuous smooth piece running across 12 o'clock from 10 to 2. The lower-right arc runs 2 to 6. The lower-left arc runs 6 to 10. A small blocky crane arm sits just outside at the upper-right gap. The crane does not cause a fourth break. No extra arc, spoke, pylon or marker.\nRest of atlas untouched: top-middle complete gate with black four-point star; top-right elongated orbiting crystal; bottom-left downward raider with 3 speed bars; bottom-middle cracked dome and bent antenna; bottom-right ring and laurel. Use only PURE WHITE #FFFFFF and PURE BLACK #000000, flat binary stencil art without grey, textures, gradients, shading, antialiasing, text or grid. Opaque background.",
+  "references": [
+    "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-5dedc4a7-6c36-4250-bd35-a7373f60fdf7.png"
+  ],
+  "transparent": false,
+  "expectedSize": [
+    1536,
+    1024
+  ],
+  "revisionNote": "Correct construction glyph from four ring breaks to three equal arcs.",
+  "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-6ea18705-6c5d-4e4d-987f-97050bea2bdd.png",
+  "inspection": {
+    "width": 1536,
+    "height": 1024,
+    "mode": "RGB",
+    "sha256": "4a638429379a3369b26f0efe292dc67549b8f968d3ce6707a03b593bfab2849f"
+  },
+  "tool": "image_gen.imagegen",
+  "generatedAt": "2026-10-22"
+}

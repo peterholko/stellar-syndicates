@@ -25,8 +25,8 @@ export type IconKey =
   | "structureCompositeWorks" | "structureHullFabricator" | "structurePrecisionWorks" | "structureDriveWorks"
   | "structureShipyard" | "structureNavalDrydock" | "structureCapitalSlipway" | "structureOrdnanceFoundry"
   | "structureHabitat" | "structureWarehouse" | "structureOrbitalWarehouse" | "structureSensorArray" | "structureDefensePlatform" | "structureOrbitalDefense" | "structureCommandCenter"
-  | "structureAcademy" | "structureGarrison" | "structureLivingTerraces" | "structurePowerPlant"
-  | "structureUraniumMill" | "structureAntimatterPlant"
+  | "structureAcademy" | "structureGarrison" | "structureLivingTerraces" | "structurePowerPlant" | "structureAsteroidQuarry"
+  | "structureUraniumMill" | "structureAntimatterPlant" | "structureVault" | "structureAssemblyHall"
   // planetary profile / colony identity
   | "planetHabitable" | "planetHostile" | "planetUninhabitable"
   | "geologyPoor" | "geologyRich" | "geologyUltraRich"
@@ -35,7 +35,7 @@ export type IconKey =
   // fleets / ship kinds
   | "fleet" | "scout" | "raider" | "corvette" | "convoy" | "colony" | "builder" | "transport"
   | "tiny_freighter" | "small_freighter" | "large_freighter" | "heavy_freighter" | "bulk_freighter" | "mining_barge" | "mining_belt_station"
-  | "free_trader"
+  | "combat_freighter" | "free_trader" | "clean_slate" | "second_wind" | "small_fortune"
   | "destroyer" | "cruiser" | "battleship" | "dreadnought" | "titan"
   // verbs / orders
   | "move" | "attack" | "raid" | "withdraw" | "reinforce" | "recall" | "blockade" | "siege"
@@ -110,19 +110,19 @@ const P = (glyph: string, tip: string): IconDef => ({ glyph, tip, placeholder: t
 export const ICONS: Record<IconKey, IconDef> = {
   // resources — dedicated downscaled PNG art (source-of-truth 1254px; UI loads 64px)
   fuel: R("fuel", "Fuel"),
-  ore: R("ores-2026-09-16/ferrite_ore-128", "Ferrite Ore"),
+  ore: R("goods-v1/ferrite_ore-128", "Ferrite Ore"),
   alloys: R("alloys", "Alloys"),
   provisions: R("provisions", "Provisions"),
   volatiles: R("volatiles", "Volatiles"),
   credits: R("credits", "Credits"),
   biomass: N("resource-biomass", "Biomass"),
   // §fuel-overhaul: Deuterium keeps the old Fuel art and the Warp Core the Drive
-  // Assemblies art; Uranium, Antimatter and the Fusion Core await their own.
+  // Assemblies art until their goods icons arrive (docs/resource-icon-prompts.md).
   deuterium: R("fuel", "Deuterium"),
-  uranium: P("☢", "Uranium"),
-  antimatter: P("✴", "Antimatter"),
+  uranium: R("goods-v1/uranium-128", "Uranium"),
+  antimatter: R("goods-v1/antimatter-128", "Antimatter"),
   warpCore: R("drive_assemblies", "Warp Core"),
-  fusionCore: P("⚛", "Fusion Core"),
+  fusionCore: R("goods-v1/fusion_core-128", "Fusion Core"),
   // economy / structures
   storage: N("concept-stockpile", "Storage / stockpile capacity"),
   slots: N("status-development-slots", "Development slots (used / total)"),
@@ -150,6 +150,7 @@ export const ICONS: Record<IconKey, IconDef> = {
   structureFuelRefinery: S("fuel_refinery", "Fuel Refinery"),
   structureAgroplex: S("agroplex", "Agroplex"),
   structureLivingTerraces: S("living_terraces", "Living Terraces"),
+  structureAsteroidQuarry: S("asteroid_quarry", "Asteroid Quarry"),
   structureMachineWorks: S("machine_works", "Machine Works"),
   structureArmamentsComplex: S("armaments_complex", "Armaments Complex"),
   structureCompositeWorks: S("composite_works", "Composite Works"),
@@ -174,6 +175,10 @@ export const ICONS: Record<IconKey, IconDef> = {
   // §fuel-overhaul: stand-ins until their own art lands.
   structureUraniumMill: S("fuel_refinery", "Uranium Mill"),
   structureAntimatterPlant: S("fuel_refinery", "Antimatter Plant"),
+  // §vault: stand-in — the Garrison's dug-in art until the Vault's own lands.
+  structureVault: S("garrison", "Vault"),
+  // §season: the Habitat stands in until the Assembly Hall's own art lands.
+  structureAssemblyHall: S("habitat", "Assembly Hall"),
   // planetary profile / colony identity
   planetHabitable: N("planet-habitable", "Habitable world"),
   planetHostile: N("planet-hostile", "Hostile world"),
@@ -204,7 +209,13 @@ export const ICONS: Record<IconKey, IconDef> = {
   bulk_freighter: H("bulk_freighter", "Bulk Freighter"),
   mining_barge: H("mining_barge", "Mining Barge"),
   mining_belt_station: H("mining_belt_station", "Mining Belt Station"),
+  // §holds: the Tiny Freighter's icon until the Combat Freighter's art lands.
+  combat_freighter: H("combat_freighter", "Combat Freighter"),
   free_trader: H("free_trader", "Free Trader"),
+  // §traders: the other three free traders' own ships.
+  clean_slate: H("clean_slate", "Clean Slate"),
+  second_wind: H("second_wind", "Second Wind"),
+  small_fortune: H("small_fortune", "Small Fortune"),
   colony: H("colony", "Colony ship"),
   builder: H("builder", "Construction Ship"),
   transport: H("transport", "Troop Transport"),
@@ -343,9 +354,11 @@ export function icon(key: IconKey, size: IconSize = "sm", tip?: string, cls = ""
     // §gaia: Living Terraces have no separate menu set; menus show their scene sprites.
     // These families have no separate menu icon set: menus use the scene sprites.
     const sceneOnly = def.structure === "living_terraces" || def.structure === "power_plant";
-    const tier = Number.isFinite(structureTier) ? Math.max(1, Math.min(command ? 3 : station ? 5 : 6, Math.floor(structureTier))) : 1;
+    const tier = Number.isFinite(structureTier) ? Math.max(1, Math.min(command ? 3 : 6, Math.floor(structureTier))) : 1;
     const base = command ? `/art/derived/command-center/v1/tier-${tier}`
-      : station ? `/art/derived/stations/v1/level-${tier}`
+      : station ? `/art/derived/stations/v2/level-${tier}`
+      // §asteroid-quarry: its rock and machinery, framed square for menus.
+      : def.structure === "asteroid_quarry" ? `/art/derived/asteroid-quarry/v2/icon-tier-${tier}`
       : sceneOnly ? `/art/derived/planet-surface-structures/v2/buildings/${def.structure}/tier-${tier}` : `${STRUCTURE_BASE}${def.structure}/tier-${tier}`;
     return `<img class="${c}" src="${base}-128.webp" srcset="${base}-128.webp 128w, ${base}-256.webp 256w, ${base}-512.webp 512w" sizes="${escAttr(sizes ?? "48px")}" alt="" title="${t}" />`;
   }
@@ -361,14 +374,23 @@ export function structureImage(key: string, tier: number, size: IconSize = "sm",
   return icon(structureIcon(key), size, tip, cls, sizes, tier);
 }
 
+/** §goods-icons: goods whose goods-v1 icon exists, all from one style of
+ * master trimmed to one fill (docs/resource-icon-prompts.md). The ore-economy
+ * test keeps this in step with the masters in art-src. */
+export const GOODS_ICONS: ReadonlySet<string> = new Set([
+  "antimatter", "bornite_ore", "conductive_metals", "crystalline_ore", "cuprite_ore", "exotic_matter", "ferrite_ore",
+  "fusion_core", "helium3", "helium3_ice", "ilmenite_ore", "iridium", "iridium_ore", "olivine_ore", "rare_metal_ore",
+  "titanium", "titanium_ore", "uranium", "void_crystal",
+]);
+
 /** Commodity wire slugs are not always asset filenames: metallic_ore uses ore,
- * and biomass has panel art. Keep every cargo/stockpile panel on the same map. */
+ * and biomass has panel art. Keep every cargo/stockpile panel on the same map.
+ * §goods-icons: a good with a goods-v1 icon (one style, one fill) uses it; the
+ * rest keep their older art until their masters arrive. */
 export function commodityIcon(commodity: Commodity): string {
-  const oreArt = commodity === "metallic_ore" ? "ferrite_ore" : commodity;
-  if (["ferrite_ore", "cuprite_ore", "titanium_ore", "crystalline_ore", "rare_metal_ore", "conductive_metals", "titanium",
-    "olivine_ore", "bornite_ore", "ilmenite_ore",
-    "iridium_ore", "helium3_ice", "void_crystal", "iridium", "helium3", "exotic_matter"].includes(oreArt)) {
-    const src = `${PNG_BASE}ores-2026-09-16/${oreArt}`;
+  const slug = commodity === "metallic_ore" ? "ferrite_ore" : commodity;
+  if (GOODS_ICONS.has(slug)) {
+    const src = `${PNG_BASE}goods-v1/${slug}`;
     return `<img class="icon icon--resource" src="${src}-64.png" srcset="${src}-128.png 2x" alt="${escAttr(label(commodity))}" title="${escAttr(label(commodity))}">`;
   }
   const keys: Partial<Record<Commodity, IconKey>> = {
@@ -414,6 +436,7 @@ export function structureIcon(key: string): IconKey {
     fuel_refinery: "structureFuelRefinery",
     agroplex: "structureAgroplex",
     living_terraces: "structureLivingTerraces",
+    asteroid_quarry: "structureAsteroidQuarry",
     machine_works: "structureMachineWorks",
     armaments_complex: "structureArmamentsComplex",
     composite_works: "structureCompositeWorks",
@@ -437,6 +460,8 @@ export function structureIcon(key: string): IconKey {
     power_plant: "structurePowerPlant",
     uranium_mill: "structureUraniumMill",
     antimatter_plant: "structureAntimatterPlant",
+    vault: "structureVault",
+    assembly_hall: "structureAssemblyHall",
   };
   return icons[key] ?? "build";
 }

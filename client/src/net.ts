@@ -35,6 +35,24 @@ function resolveServerUrl(): string {
   return override === url ? override : url;
 }
 
+/** §front-door: the game socket on its own host, as the account service names
+ * it (docs/front-door.md). Only the page's scheme, this site's host or one of
+ * its subdomains, and /ws; anything else keeps the page's own host. */
+function gameServerUrl(served: string | undefined): string {
+  const own = resolveServerUrl();
+  if (!served) return own;
+  try {
+    const url = new URL(served);
+    const host = location.hostname;
+    const ours = url.hostname === host || url.hostname.endsWith(`.${host}`);
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    return url.protocol === proto && ours && url.pathname === "/ws" && !url.search && !url.hash && !url.username && !url.password
+      ? url.href : own;
+  } catch {
+    return own;
+  }
+}
+
 export class Net {
   private ws: WebSocket | null = null;
   private reconnectTimer: number | null = null;
@@ -43,11 +61,16 @@ export class Net {
   private opening = false;
   private generation = 0;
   private viewHz: ViewHz = 10;
-  readonly url: string;
+  url: string;
 
   constructor(private handlers: NetHandlers) {
     this.url = resolveServerUrl();
     document.addEventListener("visibilitychange", this.handleVisibilityChange);
+  }
+
+  /** §front-door: where the next socket goes, as the account service said. */
+  useServer(served: string | undefined): void {
+    this.url = gameServerUrl(served);
   }
 
   connect(): void {

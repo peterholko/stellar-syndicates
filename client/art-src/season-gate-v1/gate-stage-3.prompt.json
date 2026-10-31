@@ -1,0 +1,50 @@
+{
+  "id": "gate-stage-3",
+  "category": "gate",
+  "destination": "client/art-src/season-gate-v1/gate-stage-3.png",
+  "prompt": "Use case: precise-object-edit. Image 1 is the same gate's angled concept view. CHANGE THE CAMERA to a STRICT VERTICAL ORTHOGRAPHIC PLAN VIEW suitable for a galaxy-map sprite. Look straight DOWN along the ring axis, perpendicular to the ring plane, at 90 degrees. The outer ring and inner aperture must be PERFECT CIRCLES, not ellipses. No perspective, no isometric tilt, no front-versus-back size difference. The four tall diagonal pylons must be seen from their TOPS ONLY, as small triangular cross-sections on footings; absolutely no long upright tower sides or upright tower silhouettes. This camera requirement has highest priority.\nPreserve the same ivory-and-brass eight-segment ring design, four diagonal anchor pylon footings with short struts, eight dark cylindrical emitters around its inner edge and mild wear. Emitters inactive, tiny cyan running lights only. Center the perfect ring at (627,627) on a 1254 x1254 transparent RGBA square, entire footprint including four diagonal anchor footings fits within x=63..1191,y=63..1191. Truly transparent empty circular aperture and surrounding space. Soft upper-left light, crisp high-end hard-surface game sprite. No ground, shadow plane, outer glow, labels, text or other objects. One fully clad INACTIVE gate. Render its plan-view surfaces, never its concept-art elevation.",
+  "references": [
+    "client/art-src/season-gate-v1/gate-stage-3.png"
+  ],
+  "transparent": true,
+  "expectedSize": [
+    1254,
+    1254
+  ],
+  "dependsOn": "gate-lineup",
+  "stage": 3,
+  "revisionNote": "Correct concept-sheet perspective to strict overhead map view.",
+  "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-b7a04d81-ee03-4cf9-ad28-0c45c99e0863.png",
+  "inspection": {
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "sha256": "c11baedcfd6da772036a8c31ea6bca33ee181f90598eb82fbe5bce22e0d8ae41",
+    "alphaExtrema": [
+      0,
+      255
+    ],
+    "alphaBounds": [
+      13,
+      23,
+      1241,
+      1254
+    ],
+    "transparentPixelFraction": 0.5733,
+    "solidBoundsAtAlpha128": [
+      71,
+      73,
+      1182,
+      1163
+    ],
+    "centerAlpha": 0
+  },
+  "tool": "image_gen.imagegen",
+  "generatedAt": "2026-10-22",
+  "referenceSnapshots": [
+    {
+      "usedPath": "client/art-src/season-gate-v1/gate-stage-3.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-dc9a63c7-bd2d-4f7d-acdd-bce90e3944dc.png"
+    }
+  ]
+}

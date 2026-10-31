@@ -33,6 +33,7 @@ impl World {
             let id = self.alloc_entity_id();
             let mut garrison = Fleet::single(id, PlayerId::PIRATE, ShipKind::Raider, pos, FleetOrder::Idle, None);
             garrison.reset_to(ShipKind::Raider, crate::founding::DEN_GARRISON_RAIDERS);
+            garrison.fill_stores();
             // The privateer's crew: its weak guns and slow hulls.
             garrison.founding_privateer = true;
             for ship in &mut garrison.ships {
@@ -54,6 +55,7 @@ impl World {
                 pack: Some(id),
                 cleared: false,
                 founder_den: true,
+                for_player: None,
             });
         }
         self.players.get_mut(&owner).unwrap().founding.den = Some(den);
@@ -131,9 +133,28 @@ mod tests {
             let sys = w.systems.iter().find(|s| s.id == den).unwrap();
             assert_eq!(sys.bodies.len(), 1, "only the belt");
             assert!(sys.bodies[0].is_belt() && !sys.bodies[0].deposits.is_empty(), "a belt with ore");
+            // §den-pocket (Peter, Oct 30 2026): and hides what the den guarded.
+            assert_eq!(sys.bodies[0].pockets.iter().map(|p| &p.deposit).collect::<Vec<_>>(),
+                [&crate::founding::den_pocket()], "the den's Titanium pocket");
             assert!(sys.pos.distance(slot.pos) <= 22_001.0, "on the doorstep, a few minutes out");
             assert!(w.exploration_systems.contains(&den));
         }
+    }
+
+    /// §den (Oct 29 2026): the den's fights stand in its asteroid field, with
+    /// no world in the arena; a home's keep theirs.
+    #[test]
+    fn a_dens_battle_has_no_world_to_fight_beside() {
+        let (mut w, owner) = founder();
+        w.ensure_founding_den(owner);
+        w.step(&[]);
+        let den = w.players[&owner].founding.den.unwrap();
+        let garrison = w.fleets[&w.enclaves[&den].pack.unwrap()].pos;
+        let star = w.systems.iter().find(|s| s.id == den).unwrap().pos;
+        assert_eq!(w.battle_world_side(garrison, owner, PlayerId::PIRATE), None, "on its belt");
+        assert_eq!(w.battle_world_side(star, owner, PlayerId::PIRATE), None, "at its star");
+        let home = w.players[&owner].command_center;
+        assert_eq!(w.battle_world_side(home, PlayerId::PIRATE, owner), Some(1), "a home fights beside its world");
     }
 
     #[test]
@@ -150,6 +171,12 @@ mod tests {
         assert!(garrison.founding_privateer);
         assert_eq!(garrison.ships.len(), crate::founding::DEN_GARRISON_RAIDERS as usize);
         assert_eq!(w.systems.iter().find(|s| s.id == den).unwrap().tier(crate::build::StructureKind::DefensePlatform), 0);
+        // §real-coordinates: it takes its place on the den's belt, then holds.
+        w.step(&[]);
+        let garrison = &w.fleets[&w.enclaves[&den].pack.unwrap()];
+        let sys = w.systems.iter().find(|s| s.id == den).unwrap();
+        let ring = sys.bodies[0].belt.unwrap().radius * crate::body::SYSTEM_UNIT_SU;
+        assert!((garrison.pos.distance(sys.pos) - ring).abs() < 1.0, "on the belt, not at the star");
         let pos = garrison.pos;
         for _ in 0..(120 * crate::config::TICK_HZ) {
             w.step(&[]);

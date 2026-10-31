@@ -25,18 +25,20 @@ function compile(path, extra = {}) {
   return exports;
 }
 const protocol = deps["../../protocol"] = compile("protocol.ts");
+deps["./vendetta"] = compile("core/derive/vendetta.ts");
 const founding = deps["../../core/derive/founding"] = compile("core/derive/founding.ts");
-assert.equal(founding.FOUNDING_TOTAL, 18);
-assert.deepEqual(["build_bioharvester", "build_habitat", "build_agroplex", "build_mine", "pirate_raid", "sell_ore", "power_shipyard",
-  "build_shipyard", "build_interceptor", "defeat_privateer", "eliminate_den", "prepare_export", "first_research",
-  "expand_mining", "survey_candidates", "build_barge", "mine_belt", "haul_ore"].map(stage => founding.FOUNDING_STEP[stage]),
-  [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
-assert.equal(founding.FOUNDING_STEP.complete, 18);
+assert.equal(founding.FOUNDING_TOTAL, 23);
+assert.deepEqual(["build_bioharvester", "build_habitat", "build_agroplex", "build_mine", "pirate_raid", "build_gun_platform", "sell_ore",
+  "power_shipyard", "build_shipyard", "build_interceptor", "defeat_privateer", "eliminate_den", "prepare_export", "first_research",
+  "build_smelter", "expand_mining", "survey_candidates", "build_barge", "prospect_belt", "mine_belt", "haul_ore", "secure_stores",
+  "vendetta"].map(stage => founding.FOUNDING_STEP[stage]),
+  [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]);
+assert.equal(founding.FOUNDING_STEP.complete, 23);
 assert.deepEqual(["local_recovery", "export_production", "build_convoy", "complete_export", "grow_business", "build_second_freighter",
   "build_academy", "build_scout", "buy_semiconductors", "build_freighter"].map(stage => founding.FOUNDING_STEP[stage]),
-  [12, 12, 9, 8, 8, 8, 13, 15, 7, 9], "a retired stage sits on the step that replaced it");
+  [13, 13, 10, 9, 9, 9, 14, 17, 8, 10], "a retired stage sits on the step that replaced it");
 assert.deepEqual([...founding.FOUNDING_CHAPTERS.map(([name, steps]) => `${name} ${steps.length}`)],
-  ["Landfall 4", "Raid 4", "Pirates 3", "Expansion 4", "Reach 3"], "eighteen steps in five chapters");
+  ["Landfall 4", "Raid 5", "Pirates 3", "Expansion 5", "Reach 4", "Vendetta 2"], "twenty-three steps in six chapters");
 {
   const st = { research: { programmes: [] } };
   const home = { bodies: [{id:1,structures:{}}], assignments:[] };
@@ -144,10 +146,12 @@ deps["./market"] = deps["../../core/derive/market"] = compile("core/derive/marke
   const foundingFormat = deps["./format"];
   deps["./format"] = deps["../../core/derive/format"];
   deps["./construction"] = deps["../../core/derive/construction"];
+  deps["./station"] ??= compile("core/derive/station.ts");
   deps["../../core/derive/worldbuild"] = compile("core/derive/worldbuild.ts");
   deps["./format"] = foundingFormat;
 }
 deps["./colony"] = colony;
+deps["../../settlement"] = { SETTLEMENT_PROJECTS: ["prospect", "surface_workings", "storehouse", "quarters"].map(id => ({ id, title: id })) };
 const handoff = deps["../../core/derive/handoff"] = compile("core/derive/handoff.ts");
 const handoffUi = deps["./handoff"] = compile("shell/deck/handoff.ts");
 // §medals and §contract-board: the real helpers, with the real formatter.
@@ -310,9 +314,10 @@ const fleetUi = new DeckFleetRoutes(root, ctx, { go() {}, notice() {} });
   state.operations.pop();
   const research = compile("core/derive/research.ts");
   const merged = research.mergeResearch({ active: null, queue: [], rate: 0, stalled: false, academies: [],
-    programmes: [{ id: "cruiser", state: "locked", recovered_data: 300 }] },
+    programmes: [{ id: "cruiser", state: "locked", recovered_data: 300 }], structure_tiers: { habitat: 4 } },
     { researchCatalog: [{ id: "cruiser", name: "Cruiser Hull", cost: 1000 }] });
   assert.equal(merged.programmes[0].recovered_data, 300, "catalog merging must retain arrived, earmarked data");
+  assert.deepEqual({ ...merged.structure_tiers }, { habitat: 4 }, "§unlocks: the served ceilings survive the merge");
 }
 assert.match(fleetUi.readinessHtml(guard), /Guarding Medium Freighter/);
 assert.match(fleetUi.readinessHtml(guard), /26%/);
@@ -392,6 +397,44 @@ renderNow = 6010;
 assert.match(empire.queueHtml(slotWorld(startedStructure)), /Mining Complex I · 10s/);
 assert.doesNotMatch(empire.queueHtml(slotWorld(startedStructure)), /progressbar|deck-queue-progress/,
   "the system view draws no bar: an order's one bar is its world's");
+// §live-progress (Peter, Oct 27 2026: the bar looked "laggy/jittery"): a bar
+// carries its job's line, and each frame redraws it from the render clock, so
+// it glides between its panel's whole-second redraws instead of jumping on them.
+{
+  const construction = deps["../../core/derive/construction"];
+  const attr = (line) => construction.liveProgressAttr(line).match(/^ data-live-progress="([^"]*)"$/)?.[1];
+  for (const job of [{ start_time: 60, complete_time: 69.6 }, pausedJob, resumedJob, waitingStructure, startedStructure]) {
+    const line = construction.progressLine(job);
+    assert.deepEqual(construction.readLiveProgress(attr(line)), line, "a bar's line survives its attribute");
+    for (const now of [0, 60, 64.8, 71.2, 6010]) assert.equal(construction.progressAt(line, now), buildProgress(job, now));
+  }
+  assert.deepEqual(JSON.parse(JSON.stringify(construction.progressLine(startedStructure))), { at: 6000, base: 0, slope: 5 },
+    "5% a second from its report");
+  assert.equal(construction.progressLine(pausedJob).slope, 0, "a paused job's bar holds");
+  assert.equal(construction.progressLine(waitingStructure).slope, 0, "so does a waiting one's");
+  assert.equal(construction.liveProgressAttr(construction.progressLine({ start_time: 70, complete_time: 70 })), "", "no clock, no live bar");
+  for (const value of [undefined, "", "1 2", "a b c", "1 2 Infinity"]) assert.equal(construction.readLiveProgress(value), null);
+  deps["../core/derive/construction"] = construction;
+  const { tickLiveProgress } = compile("shell/liveprogress.ts");
+  const bar = (value, fill = { style: { width: "12.0%" } }) => ({ dataset: { liveProgress: value }, firstElementChild: fill });
+  const live = bar(attr(construction.progressLine(startedStructure)));
+  const broken = bar("not a line");
+  const empty = bar(attr(construction.progressLine(startedStructure)), null);
+  const root = { querySelectorAll: (selector) => selector === "[data-live-progress]" ? [live, broken, empty] : [] };
+  tickLiveProgress(root, 6004.5);
+  assert.equal(live.firstElementChild.style.width, "22.50%", "each frame: its line's percent now");
+  tickLiveProgress(root, 6004.6);
+  assert.equal(live.firstElementChild.style.width, "23.00%", "a tenth of a second later, a little further");
+  assert.equal(broken.firstElementChild.style.width, "12.0%", "a bar without a line keeps what its panel drew");
+  for (const [file, call] of [["shell/deck/index.ts", "tickLiveProgress(document, liveSimTime());"],
+    ["shell/mobile/index.ts", "tickLiveProgress(document, liveSimTime());"]]) {
+    const tick = src(file).slice(src(file).indexOf("onViewTick(): void {"), src(file).indexOf("framePolicy() {"));
+    assert.ok(tick.includes(call), `${file}: every frame`);
+  }
+  for (const [file, count] of [["shell/deck/empire.ts", 1], ["shell/deck/planet.ts", 1], ["shell/deck/shipyard.ts", 1], ["shell/mobile/parity.ts", 2]]) {
+    assert.equal(src(file).match(/\$\{liveProgressAttr\(job\.line\)\}/g)?.length, count, `${file}: its construction bars are live`);
+  }
+}
 const queueWorld = { ...home,
   bodies: [{ id: 0, name: "Freya I", structures: {} }, { id: 1, name: "Freya II", structures: {} }],
   builds: [waitingStructure,
@@ -551,6 +594,16 @@ assert.equal(goal("upgrade").funding, null, "expired offers are not offered as a
 escort.expires_at = 900;
 assert.equal(goal("upgrade").funding.id, "11");
 
+// §camp: after the charter, the Founding Camp's projects are a goal until done.
+home.bodies[0].founding_camp = { completed: ["prospect"] };
+assert.deepEqual([...handoff.postVictoryHandoff().map(g => g.id)], ["colony", "upgrade", "camp"]);
+assert.equal(goal("camp").status, "1/4 projects");
+assert.deepEqual([...goal("camp").requirements.map(r => r.met)], [true, false, false, false]);
+assert.deepEqual(JSON.parse(JSON.stringify(goal("camp").action)), { kind: "world", system: "home", body: 4 });
+home.bodies[0].founding_camp.completed = ["prospect", "surface_workings", "storehouse", "quarters"];
+assert.equal(goal("camp").done, true);
+delete home.bodies[0].founding_camp;
+
 const routes = [], worlds = [], focused = [];
 const hooks = { go: r => routes.push(r), selectFleet: id => focused.push(id), openWorld: (...args) => worlds.push(args) };
 const navigate = (act, id) => handoffUi.handleHandoffAction({ dataset: { deckAct: act, goal: id } }, ctx, hooks);
@@ -588,6 +641,26 @@ assert.match(command.foundingContent({ ...state.founding, stage: "build_barge" }
 assert.equal(command.foundingContent({ ...state.founding, stage: "mine_belt" }).action, "mine-belt");
 assert.equal(command.foundingContent({ ...state.founding, stage: "haul_ore" }).action, "barge-home");
 assert.match(command.foundingContent({ ...state.founding, stage: "build_shipyard" }).copy, /15 Semiconductors/);
+// §founding copy (Peter, Oct 27 2026: "reduce the repetitive text in the
+// tutorial steps"): one line per fact on the desktop card itself.
+{
+  const shield = { label: "shield", detail: "" };
+  const parts = command.planHtml({ chapter: { name: "Raid", done: 2, total: 4 }, checklist: [], progress: [],
+    primary: { title: "Buy the Solar Array parts", copy: "8 Semiconductors", action: "merchant-power_plant", label: "Buy from trader", hint: "+8 MW.",
+      alternatives: [{ title: "Buy the Solar Array parts", copy: "8 Semiconductors", action: "merchant-power_plant", label: "Buy from trader" },
+        { title: "Build a Solar Array", copy: "30 Alloys", action: "build-power", label: "Build a Solar Array" }] },
+    waiting: [], goal: null, blocked: false }, shield, true, state.founding, "");
+  assert.doesNotMatch(parts, />Next</, "no eyebrow: the card is always next");
+  assert.match(parts, /<b title="\+8 MW\.">Buy the Solar Array parts<\/b>/, "why is on hover");
+  assert.equal(parts.match(/8 Semiconductors/g).length, 1, "the copy once, not again in its choice");
+  assert.match(parts, /class="is-primary"[^>]*>Buy from trader<\/button>/);
+  assert.match(parts, />Build a Solar Array<\/button>/, "a choice's button says the whole step");
+  const waiting = command.planHtml({ chapter: { name: "Landfall", done: 1, total: 5 }, checklist: [], progress: [],
+    primary: { title: "Bioharvester under construction", status: "Bioharvester under construction · 9s", copy: "", action: "home-world", label: "Open Sirius I" },
+    waiting: [], goal: null, blocked: false }, shield, true, state.founding, "");
+  assert.match(waiting, /<b>Bioharvester under construction · 9s<\/b>/, "a waiting card's title is its progress line");
+  assert.doesNotMatch(waiting, /<p>/, "no empty copy line");
+}
 // The raid and the trader are news only once told: the stages' own
 // fallbacks never name them.
 assert.equal(command.foundingContent({ ...state.founding, stage: "sell_ore" }).action, "market");
@@ -611,7 +684,7 @@ assert.equal(sent.length,beforeResearchNavigation,"business goals navigate; they
 state.founding.stage = "survey_candidates";
 command.renderFounding(true);
 assert.doesNotMatch(guide.innerHTML, /Next objectives &amp; rewards/, "the charter owns the guide until it is fulfilled");
-assert.match(guide.innerHTML, /Founding 15\/18/);
+assert.match(guide.innerHTML, /Founding 17\/23/);
 assert.match(guide.innerHTML, /Build Survey Probe/);
 assert.doesNotMatch(guide.innerHTML, /colony kit|Colony Ship/);
 state.founding.stage = "complete";
@@ -738,12 +811,65 @@ assert.equal(sent.length, sentBeforeNavigation, "mobile handoff is navigation-on
   // Landfall: the colony ship is the Command Center; the settlers build around it.
   let p = plan();
   assert.equal(p.chapter.name, "Landfall");
-  assert.deepEqual([...p.checklist.map(item => item.title)], ["Harvest biomass", "House the settlers", "Make provisions", "Bring the mine online"]);
+  assert.deepEqual([...p.checklist.map(item => item.title)],
+    ["Open your home system", "Open your home world", "Harvest biomass", "House the settlers", "Make provisions", "Bring the mine online"]);
+  // §home-step: first, open the home system (a client step before the server's eighteen).
+  state.galaxy.systems[0].name = "Freya";
+  p = plan();
+  assert.equal(p.primary.action, "open-home");
+  assert.equal(p.primary.copy, "Click Freya on the map.");
+  assert.equal(p.primary.label, "Open Freya");
+  assert.equal(p.waiting.length, 0, "nothing else asks for attention yet");
+  assert.equal(p.chapter.done, 0);
+  delete state.galaxy.systems[0].name;
+  state.systems = [home];
+  assert.equal(founding.homeStepSystem(state, "home"), "home", "a click on home flies in");
+  assert.equal(founding.homeStepSystem(state, null), null);
+  assert.equal(founding.noteHomeOpened(state, "elsewhere", "home"), false, "another system's view doesn't count");
+  assert.equal(founding.noteHomeOpened(state, "home", "home"), true, "home's System View does");
+  assert.equal(founding.noteHomeOpened(state, "home", "home"), false, "once");
+  assert.equal(founding.homeStepSystem(state, "home"), null, "done: clicks select again");
+  p = plan();
+  assert.equal(p.checklist[0].done, true);
+  // §home-world-step (Peter, Oct 28 2026): then one of home's worlds, to see the planet view.
+  assert.deepEqual([p.checklist[1].title, p.checklist[1].done], ["Open your home world", false]);
+  assert.deepEqual([p.primary.action, p.primary.copy, p.primary.label], ["home-world", "Click Freya I in the system.", "Open Freya I"]);
+  assert.equal(founding.noteHomeWorldOpened(state, "elsewhere", "home"), false, "another system's world doesn't count");
+  assert.equal(founding.noteHomeWorldOpened(state, "home", "home"), true, "a world of home does");
+  assert.equal(founding.noteHomeWorldOpened(state, "home", "home"), false, "once");
+  p = plan();
+  assert.equal(p.checklist[1].done, true);
+  assert.equal(p.primary.action, "build-bioharvester");
+  state.homeWorldOpened = false;
+  state.homeOpened = false;
+  home.builds = [{ key: "habitat", body_id: 1, complete_time: state.simTime + 30, queued: false }];
+  assert.equal(plan().primary.action, "build-bioharvester", "anything built or queued at home passes it too (a reload)");
+  home.builds = [];
+  state.homeOpened = true;
+  state.homeWorldOpened = true;
+  state.systems = [];
+  // §camp: the Founding Camp's projects wait for the charter's end.
+  landing.founding_camp.completed = [];
+  assert.ok(!plan().waiting.some(card => card.action === "home-development"), "no settlement card during the charter");
+  assert.equal(founding.campOpen(state), false);
+  assert.equal(founding.campOpen({ founding: { stage: "complete" } }), true);
+  assert.equal(founding.campOpen({ founding: null }), true);
+  landing.founding_camp.completed = ["a", "b", "c", "d"];
+  // Both shells latch the world step: the desktop world route, the phone planet sheet.
+  assert.match(src("shell/deck/index.ts"), /route\?\.name === "world" && !this\.ctx\.state\.homeWorldOpened/);
+  assert.match(src("shell/mobile/index.ts"), /sheet\?\.id === "planet" && !this\.ctx\.state\.homeWorldOpened/);
+  // Both shells fly in on that click (or tap) and on the guide's button.
+  assert.match(src("shell/deck/map.ts"), /if \(this\.hooks\.diveOnSelect\(result\.target\.id\)\) this\.flyInto\(result\.target\.id\);/);
+  assert.match(src("shell/mobile/map.ts"), /if \(this\.hooks\.diveOnSelect\(target\.id\) && this\.flyInto\(target\.id\)\) break;/);
+  assert.match(src("shell/deck/command.ts"), /action === "open-home" && homeId\) \{\n\s*this\.hooks\.flyIntoSystem\(homeId\);/);
+  assert.match(src("shell/mobile/surfaces.ts"), /if \(action === "open-home"\) \{\n\s*const id = this\.homeSystemId\(\);\n\s*if \(id\) this\.hooks\.flyIntoSystem\(id\);/);
+  assert.match(src("render.ts"), /flyIntoSystem\(sys: SystemInfo, bodies: BodyView\[\]\): boolean/);
+  p = plan();
   assert.equal(p.primary.action, "build-bioharvester");
   assert.match(p.primary.copy, /25 Alloys · 12 Machinery/, "the recipe comes from the served catalogue");
   landing.structures.bioharvester = 1;
   assert.equal(plan().primary.action, "bioharvester", "then staff it");
-  assert.match(plan().primary.copy, /Assign one workforce/);
+  assert.deepEqual([plan().primary.copy, plan().primary.label], ["", "Assign workforce"], "the button says it: no copy");
   // §workforce cap: with every worker posted, the + is off; the guide says where to find one.
   home.workforce = { units: 6, posted: 6 };
   assert.equal(plan().primary.copy, "No free workforce: take one off another building.");
@@ -752,12 +878,25 @@ assert.equal(sent.length, sentBeforeNavigation, "mobile handoff is navigation-on
   home.builds = [{ key: "habitat", body_id: 1, complete_time: state.simTime + 30, queued: false }];
   p = stage("build_habitat");
   assert.equal(p.primary.title, "Habitat under construction");
-  assert.ok(p.progress.includes("Habitat under construction · 30s"), p.progress.join(" | "));
+  // One line per fact (Peter, Oct 27 2026): a waiting card's progress line is its title.
+  assert.equal(p.primary.status, "Habitat under construction · 30s");
+  assert.equal(p.progress.length, 0, p.progress.join(" | "));
   assert.equal(p.checklist[0].done, true);
   home.builds = [];
   p = stage("build_mine");
   assert.equal(p.primary.action, "build-mine");
-  assert.match(p.primary.copy, /Freya I's Ferrite Ore\. The Command Center's 1 MW reactor runs it/);
+  assert.equal(p.primary.copy, "25 Alloys · 12 Machinery", "figures only");
+  assert.equal(p.primary.label, "Build", "the title names the thing");
+  assert.match(p.primary.hint, /Freya I's Ferrite Ore\. The Command Center's 1 MW reactor runs it/);
+  // §charter-gates: the privateer sets out as the mine starts. Once command
+  // sees it, its approach shows here, timed to the well edge (900 su), where
+  // the raid begins and the mine comes online: 2,100 su at its warp cruise
+  // is 8 s (11 s to the star itself).
+  Object.assign(state.founding, { raid_seen: true, privateer: "p" });
+  state.ghosts = [{ ...hull("p", "raider", { pos: { x: 3_000, y: 0 }, vel: { x: -200, y: 0 } }), own: false }];
+  assert.ok(plan().progress.includes("Raider closing on the colony · ETA 8s"), plan().progress.join(" | "));
+  Object.assign(state.founding, { raid_seen: false, privateer: null });
+  state.ghosts = [];
 
   // Raid: as the mine comes online, a privateer strikes. §no-spoilers: the
   // guide keeps it back until command sees it, then keeps to what happens.
@@ -770,18 +909,25 @@ assert.equal(sent.length, sentBeforeNavigation, "mobile handoff is navigation-on
   state.ghosts = [{ ...hull("p", "raider", { pos: { x: 5_000, y: 0 }, vel: { x: -200, y: 0 } }), own: false }];
   p = plan();
   assert.equal(p.chapter.name, "Raid", "seen, the chapter is told");
-  assert.deepEqual([...p.checklist.map(item => item.title)], ["Pirates raid the colony", "Power the Shipyard", "Build a Shipyard"]);
-  assert.equal(p.primary.title, "Raider inbound");
+  assert.deepEqual([...p.checklist.map(item => item.title)], ["Pirates raid the colony", "Build a Gun Platform", "Power the Shipyard", "Build a Shipyard"],
+    "§gun-platform: told with the raid");
+  assert.equal(p.primary.title, "Raider closing on the colony");
   assert.equal(p.blocked, true);
-  assert.ok(p.progress.some(line => line.startsWith("Raider closing on")), p.progress.join(" | "));
+  assert.match(p.primary.status, /^Raider closing on the colony · ETA /);
+  assert.equal(p.progress.length, 0, p.progress.join(" | "));
   state.ghosts[0].pos = { x: 600, y: 0 };
   assert.equal(plan().primary.title, "Raider over the colony");
   state.ghosts = [];
+  // §gun-platform (Peter, Oct 30 2026): the report hands on to the home's
+  // defense first, a Gun Platform over the landing world.
+  p = stage("build_gun_platform");
+  assert.deepEqual([p.primary.title, p.primary.action, p.primary.label], ["Build a Gun Platform", "build-gun-platform", "Build"]);
+  assert.equal(p.chapter.name, "Raid");
   // The raid's report hands on to the ore sale; the trader stays unnamed
   // until its own pop-up has told it.
   state.founding.raided = true;
   p = stage("sell_ore");
-  assert.deepEqual([...p.checklist.map(item => item.title)], ["Pirates raid the colony", "Power the Shipyard", "Build a Shipyard"]);
+  assert.deepEqual([...p.checklist.map(item => item.title)], ["Pirates raid the colony", "Build a Gun Platform", "Power the Shipyard", "Build a Shipyard"]);
   assert.equal(p.primary.title, "Find semiconductors");
   assert.match(p.primary.copy, /The Solar Array needs 8/);
   assert.doesNotMatch(JSON.stringify([p.primary, p.waiting, p.progress]), /trader|merchant/i);
@@ -794,11 +940,11 @@ assert.equal(sent.length, sentBeforeNavigation, "mobile handoff is navigation-on
   state.storyTold = new Set(["free_trader"]);
   p = plan();
   assert.equal(p.primary.title, "Sell ore to the trader");
-  assert.equal(p.primary.copy, "We'd better sell ore to the trader to buy semiconductors for our ships.");
+  assert.equal(p.primary.copy, "We need semiconductors for our ships.");
   assert.equal(p.primary.action, "merchant-ore");
-  assert.equal(p.primary.label, "Sell ore");
+  assert.equal(p.primary.label, "Sell");
   assert.deepEqual([...p.checklist.map(item => item.title)],
-    ["Pirates raid the colony", "Sell ore to the trader", "Power the Shipyard", "Build a Shipyard"]);
+    ["Pirates raid the colony", "Build a Gun Platform", "Sell ore to the trader", "Power the Shipyard", "Build a Shipyard"]);
   home.stockpile = [{ commodity: "metallic_ore", units: 412 }];
   assert.deepEqual(JSON.parse(JSON.stringify(deps["./merchant"].merchantErrand("ore", home, state.merchant))),
     { buys: {}, sells: { metallic_ore: 300 } }, "it fills in all the ore the trader will take");
@@ -815,15 +961,34 @@ assert.equal(sent.length, sentBeforeNavigation, "mobile handoff is navigation-on
   const trader = state.merchant;
   state.merchant = null;
 
-  // Pirates: Shipyard II, an Interceptor and the hunt for the lurking privateer.
+  // Pirates: an Interceptor from Shipyard I and the hunt for the lurking privateer.
   landing.structures.shipyard = 1;
   home.assignments.push(crew("shipyard"));
   p = stage("build_interceptor");
   assert.equal(p.chapter.name, "Pirates");
-  assert.equal(p.primary.action, "build-shipyard-2", "Interceptors need a level II yard");
-  assert.equal(p.primary.reason, "The privateer lurks nearby.");
-  landing.structures.shipyard = 2;
-  assert.equal(plan().primary.action, "build-interceptor");
+  assert.equal(p.primary.action, "build-interceptor", "Shipyard I builds Interceptors");
+  assert.equal(p.primary.hint, "The privateer lurks nearby.");
+  // Peter (Oct 30 2026): the Interceptor's captain is not optional.
+  state.ghosts.push(hull("i", "raider", { docked: "home", fuel: 7, fuel_capacity: 7 }));
+  state.captains = [{ id: 1, name: "Ada Voss", assigned_fleet: null, stationed_system: "home", recovering_until: null,
+    loss_fate: null, report: null }];
+  p = plan();
+  assert.deepEqual([p.primary.title, p.primary.copy, p.primary.action], ["Assign a captain", "Ada Voss → Interceptor", "assign-captain"]);
+  assert.equal(p.waiting.length, 0, "no way round it");
+  Object.assign(state.ghosts.find(g => g.id === "i"), { docked: null, pos: { x: 3_000, y: 0 } });
+  p = plan();
+  assert.deepEqual([p.primary.title, p.primary.action], ["Bring the Interceptor home", "interceptor-captain"], "the captain boards at the dock");
+  assert.deepEqual(JSON.parse(JSON.stringify(founding.foundingCommands("interceptor-captain", state, home))),
+    [{ type: "MoveShip", ship_id: "i", dest: { x: 0, y: 0 } }]);
+  Object.assign(state.ghosts.find(g => g.id === "i"), { docked: "home", pos: { x: 0, y: 0 }, defend_system: { system: "home", station: { x: 0, y: 0 }, radius: 20_000 } });
+  assert.equal(plan().primary.title, "Stand the Interceptor down", "a captain boards only a ship at rest");
+  state.ghosts.find(g => g.id === "i").defend_system = null;
+  state.captains[0].assigned_fleet = "i";
+  assert.equal(plan().primary.title, "Captain boarding", "until the step's report");
+  assert.equal(founding.foundingCommands("interceptor-captain", state, home), null);
+  state.captains = [];
+  assert.equal(plan().primary.action, "build-interceptor", "no captain free: the hull alone completes the step");
+  state.ghosts = state.ghosts.filter(g => g.id !== "i");
   p = stage("defeat_privateer");
   assert.equal(p.primary.title, "Interceptor lost");
   assert.equal(p.blocked, true);
@@ -831,19 +996,38 @@ assert.equal(sent.length, sentBeforeNavigation, "mobile handoff is navigation-on
   p = plan();
   assert.equal(p.primary.title, "Destroy the privateer");
   assert.equal(p.primary.action, "command", "out of sight, nothing to aim at");
-  // In sight (tracked since the raid): the reserve captain first (optional), then a one-click attack.
+  // §privateer-hunt (Peter, Oct 27 2026): after its raid it lies quiet where it
+  // went to ground; the Interceptor is sent there and finds it on arrival.
+  state.founding.privateer_last_seen = { x: 6_600, y: 0 };
+  p = plan();
+  assert.deepEqual([p.primary.title, p.primary.action, p.primary.label], ["Find the privateer", "hunt-privateer", "Hunt"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(founding.foundingCommands("hunt-privateer", state, home))),
+    [{ type: "MoveShip", ship_id: "i", dest: { x: 6_600, y: 0 } }]);
+  state.pendingOrders = new Map([["i", [{ kind: "move", dest: { x: 6_600, y: 0 } }]]]);
+  p = plan();
+  assert.equal(p.primary.title, "Interceptor hunting the privateer", "never offered twice while the order travels");
+  assert.equal(p.primary.action, "raider", "watching it means watching the Interceptor");
+  assert.match(p.primary.status, /^Interceptor hunting the privateer · ETA/);
+  state.pendingOrders = new Map();
+  const hunter = state.ghosts.find(g => g.id === "i");
+  Object.assign(hunter, { pos: { x: 6_200, y: 0 }, docked: null });
+  p = plan();
+  assert.equal(p.primary.title, "Interceptor lying in wait", "there before it, or before its light");
+  Object.assign(hunter, { pos: { x: 0, y: 0 }, docked: "home" });
+  // In sight (tracked since the raid): a replacement's reserve captain first, then a one-click attack.
   state.ghosts.push({ ...hull("p", "raider", { pos: { x: 9_000, y: 0 } }), own: false });
+  assert.equal(founding.foundingCommands("hunt-privateer", state, home), null, "in sight, it's an attack");
   state.captains = [{ id: 1, name: "Ada Voss", assigned_fleet: null, stationed_system: "home", recovering_until: null,
     loss_fate: null, report: null }];
   p = plan();
   assert.equal(p.primary.action, "assign-captain");
-  assert.match(p.primary.copy, /Ada Voss takes command of the Interceptor/);
-  assert.ok(p.waiting.some(step => step.action === "attack-privateer"), "the captain is optional");
+  assert.equal(p.primary.copy, "Ada Voss → Interceptor");
+  assert.ok(!p.waiting.some(step => ["attack-privateer", "hunt-privateer"].includes(step.action)), "Peter: the captain is not optional");
   assert.deepEqual(JSON.parse(JSON.stringify(founding.foundingCommands("assign-captain", state, home))), [{ type: "AssignCaptain", captain_id: 1, fleet_id: "i" }]);
   state.captains[0].assigned_fleet = "i";
   p = plan();
   assert.equal(p.primary.action, "attack-privateer");
-  assert.equal(p.primary.reason, "Bounty: 4,500 Cr.");
+  assert.equal(p.primary.reason, "Bounty: 8,300 Cr.");
   assert.deepEqual(JSON.parse(JSON.stringify(founding.foundingCommands("attack-privateer", state, home))), [{ type: "AttackFleet", fleet_id: "i", target_id: "p" }]);
   // An empty tank at home: the trader's Deuterium fills it.
   state.ghosts.find(g => g.id === "i").fuel = 0;
@@ -857,8 +1041,9 @@ assert.equal(sent.length, sentBeforeNavigation, "mobile handoff is navigation-on
   state.merchant = null; state.storyTold = new Set();
   state.pendingOrders = new Map([["i", [{ kind: "attack", target_id: "p" }]]]);
   p = plan();
-  assert.equal(p.primary.title, "The hunt is on", "never offered twice while the order travels");
-  assert.ok(p.progress.some(line => line.startsWith("Interceptor closing on the privateer")));
+  assert.equal(p.primary.title, "Interceptor closing on the privateer", "never offered twice while the order travels");
+  assert.match(p.primary.status, /^Interceptor closing on the privateer · ETA /);
+  assert.equal(p.progress.length, 0, p.progress.join(" | "));
   state.pendingOrders = new Map();
 
   // The privateer's log names its den: the Interceptor goes there next.
@@ -877,12 +1062,17 @@ assert.equal(sent.length, sentBeforeNavigation, "mobile handoff is navigation-on
   state.storyTold = new Set(["free_trader"]);
   p = plan();
   assert.equal(p.primary.title, "Stock up before the trader leaves");
-  assert.equal(p.primary.copy, "8 Semiconductors for the builds ahead.", "the catalogue's builds ahead, bounded by its stock");
+  assert.equal(p.primary.copy, "52 Semiconductors, 15 Armaments for the builds and research ahead.",
+    "the catalogue's builds ahead, the vendetta's second and third Interceptors and 20 for research");
   assert.equal(p.primary.action, "merchant-ahead");
   assert.deepEqual([...p.primary.alternatives.map(a => a.action)], ["merchant-ahead", "assault-den"]);
-  assert.ok(p.progress[0].startsWith("Trader leaves in "), p.progress.join(" | "));
-  assert.deepEqual(JSON.parse(JSON.stringify(deps["./merchant"].merchantShortfall(state, home, "ahead", state.merchant))), { electronics: 8 });
-  home.stockpile = [{ commodity: "electronics", units: 8 }];
+  assert.deepEqual([...p.primary.alternatives.map(a => a.label)], ["Buy from trader", "Destroy the den at Tarn"], "each choice says the whole step");
+  assert.match(p.primary.status, /^Stock up · trader leaves in /, "the countdown is its headline");
+  assert.equal(p.progress.length, 0, p.progress.join(" | "));
+  assert.deepEqual(JSON.parse(JSON.stringify(deps["./merchant"].merchantShortfall(state, home, "ahead", state.merchant))), { electronics: 52, armaments: 15 });
+  home.stockpile = [{ commodity: "electronics", units: 32 }, { commodity: "armaments", units: 30 }];
+  assert.equal(plan().primary.copy, "20 Semiconductors for the builds and research ahead.", "the builds' covered: research's reserve still short");
+  home.stockpile = [{ commodity: "electronics", units: 52 }, { commodity: "armaments", units: 30 }];
   p = plan();
   assert.equal(p.primary.action, "assault-den", "stocked up: back to the den");
   assert.ok(p.progress[0].startsWith("Trader leaves in "));
@@ -891,17 +1081,16 @@ assert.equal(sent.length, sentBeforeNavigation, "mobile handoff is navigation-on
   const interceptor = state.ghosts.find(g => g.id === "i");
   Object.assign(interceptor, { path: [{ pos: { x: 20_000, y: 0 } }], vel: { x: 100, y: 0 }, docked: undefined });
   p = plan();
-  assert.equal(p.primary.title, "Interceptor on its way");
-  assert.ok(p.progress.some(line => line.startsWith("Interceptor en route to Tarn")));
+  assert.equal(p.primary.title, "Interceptor en route to Tarn");
+  assert.match(p.primary.status, /^Interceptor en route to Tarn · ETA /);
   interceptor.pos = { x: 19_950, y: 0 };
-  assert.equal(plan().primary.title, "Assault under way");
+  assert.equal(plan().primary.status, "Interceptor at the den · Tarn");
   state.ghosts = state.ghosts.filter(g => g.id !== "i");
   p = plan();
   assert.equal(p.primary.title, "Interceptor lost");
-  assert.equal(p.goal, null, "the den still stands");
 
-  // §charter-v5: past the den, the rich belt it guarded is the long-term goal
-  // until the survey step takes it up.
+  // Past the den, nothing points at the belt it guarded before the survey
+  // step (Peter, Oct 29 2026: no long-term goal card).
   const candidates = state.founding.survey_candidates;
   state.founding.survey_candidates = ["den"];
 
@@ -911,12 +1100,13 @@ assert.equal(sent.length, sentBeforeNavigation, "mobile handoff is navigation-on
   p = stage("prepare_export");
   assert.equal(p.chapter.name, "Expansion");
   assert.deepEqual([...p.checklist.map(item => item.title)],
-    ["Export your ore", "Start research", "Expand mining operations", "Chart a nearby system"]);
+    ["Export your ore", "Research Enrichment", "Build a Smelter", "Expand mining operations", "Chart a nearby system"]);
   assert.equal(p.primary.title, "Build a Tiny Freighter");
   assert.equal(p.primary.action, "build-convoy");
-  assert.match(p.primary.copy, /^20 Alloys · 8 Machinery · 8 Polymers · 1 Warp Core\. It fuels with Uranium/);
+  assert.equal(p.primary.copy, "20 Alloys · 8 Machinery · 8 Polymers · 1 Warp Core");
+  assert.match(p.primary.hint, /It fuels with Uranium/);
   assert.equal(p.primary.reason, "The Market Hub buys ore.");
-  assert.equal(p.goal.title, "Survey the belt at Tarn", "the den's belt is already the long-term goal");
+  assert.ok(!("goal" in p), "no long-term goal card");
   state.market = { prices: [{ commodity: "metallic_ore", price: 8.04 }] };
   assert.equal(plan().primary.reason, "The Market Hub pays 8.0 Cr a unit.");
   home.builds = [{ key: "tiny_freighter", body_id: 1, complete_time: state.simTime + 12, queued: false }];
@@ -928,38 +1118,61 @@ assert.equal(sent.length, sentBeforeNavigation, "mobile handoff is navigation-on
   assert.equal(p.primary.action, "opening-imports");
   state.ghosts[state.ghosts.length - 1] = { ...onRoute("f"), pos: { x: 25_000, y: 0 }, vel: { x: 100, y: 0 } };
   p = plan();
-  assert.equal(p.primary.title, "Shipment under way");
+  assert.equal(p.primary.title, "Shipment heading to the Market Hub");
   assert.equal(p.primary.action, "shipment-trip");
-  assert.ok(p.progress.some(line => line.startsWith("Shipment heading to the Market Hub · ETA ")), p.progress.join(" | "));
+  assert.match(p.primary.status, /^Shipment heading to the Market Hub · ETA /);
+  assert.ok(!p.progress.some(line => line.startsWith("Shipment")), p.progress.join(" | "));
+  // Storage full while it's away: build a Warehouse (the camp's storehouse
+  // waits for the charter's end).
+  home.storage_used = 1_000;
+  p = plan();
+  assert.equal(p.primary.title, "Make room at home");
+  assert.equal(p.primary.action, "build-warehouse");
+  assert.equal(p.primary.label, "Build Warehouse");
+  assert.equal(founding.foundingBuildTarget("build-warehouse", state, home).select, "warehouse");
+  home.storage_used = 120;
   assert.ok(stage("first_research").progress[0].startsWith("Shipment heading to the Market Hub"), "its trip stays in view");
   state.ghosts.pop();
   state.market = null;
   p = stage("first_research");
-  assert.equal(p.goal.title, "Survey the belt at Tarn");
-  assert.match(p.goal.copy, /looks rich in minerals\. A Survey Probe charts it\./);
-  assert.equal(p.goal.action, "build-probe");
+  assert.ok(!("goal" in p), "no long-term goal card");
+  assert.ok(!p.progress.some(line => /Survey|Tarn/.test(line)), p.progress.join(" | "));
   state.ghosts.push(hull("probe", "survey_probe", { docked: "home" }));
-  assert.equal(stage("expand_mining").goal.action, "survey-stop", "a probe at hand: send it");
   assert.deepEqual(JSON.parse(JSON.stringify(founding.foundingCommands("survey-stop", state, home))),
-    [{ type: "SurveySystem", fleet_id: "probe", system_id: "den" }]);
-  Object.assign(state.ghosts.at(-1), { path: [{ pos: { x: 20_000, y: 0 } }], docked: undefined });
-  p = plan();
-  assert.equal(p.goal, null, "on its way");
-  assert.ok(p.progress.some(line => line.startsWith("Survey Probe en route to Tarn")), p.progress.join(" | "));
+    [{ type: "SurveySystem", fleet_id: "probe", system_id: "den" }], "the survey step's Send still targets the den");
   state.ghosts.pop();
-  const systems = state.systems;
-  state.systems = [{ id: "den", bodies: [{ id: 0, geology: "rich" }] }];
-  assert.equal(plan().goal, null, "charted: nothing left to suggest");
-  state.systems = systems;
-  assert.equal(stage("survey_candidates").goal, null, "the survey step takes it up");
   state.founding.survey_candidates = candidates;
   state.founding.den = null;
+
+  // §refining (Peter, Oct 30 2026): Enrichment, then the Smelter it unlocks.
+  landing.structures.academy = 1;
+  home.assignments.push(crew("academy"));
+  p = stage("first_research");
+  assert.deepEqual([p.primary.title, p.primary.action, p.primary.hint], ["Research Enrichment", "research", "It unlocks the Smelter."]);
+  const savedResearch = state.research;
+  state.research = { active: { id: "mat_enrichment", name: "Enrichment", progress: 10, cost: 190, eta_secs: 180 }, programmes: [] };
+  p = stage("build_smelter");
+  assert.equal(p.chapter.name, "Expansion");
+  assert.equal(p.primary.status, "Enrichment under way · 180s", "the Smelter waits on its research");
+  state.research = { active: null, programmes: [{ id: "mat_enrichment", state: "completed" }] };
+  p = plan();
+  assert.deepEqual([p.primary.title, p.primary.action], ["Build a Smelter", "build-smelter"]);
+  assert.equal(founding.foundingBuildTarget("build-smelter", state, home).body.id, 1, "the landing world's free industrial site");
+  landing.structures.smelter = 1;
+  assert.deepEqual([plan().primary.title, plan().primary.action], ["Staff the Smelter", "smelter"]);
+  delete landing.structures.smelter;
+  state.research = savedResearch;
 
   // Expansion: "Expand mining operations" opens the land grant.
   Object.assign(state.founding, { bounty_received: true, land_grant_open: true });
   p = stage("expand_mining");
   assert.equal(p.chapter.name, "Expansion");
-  assert.deepEqual([...p.checklist.map(item => item.title)], ["Export your ore", "Start research", "Expand mining operations", "Chart a nearby system"]);
+  // The Smelter's want of ore is what the second mine answers.
+  assert.equal(p.primary.reason, undefined);
+  home.converters = [{ body_id: 1, structure: "smelter", title: "Smelter", tier: 1, status: "no_inputs" }];
+  assert.equal(plan().primary.reason, "The Smelter is short of ore.");
+  delete home.converters;
+  assert.deepEqual([...p.checklist.map(item => item.title)], ["Export your ore", "Research Enrichment", "Build a Smelter", "Expand mining operations", "Chart a nearby system"]);
   assert.equal(founding.expansionBody(home).id, 3, "another world of the home system with ore");
   assert.equal(p.primary.action, "build-expansion-power");
   assert.equal(p.primary.title, "Power Freya III");
@@ -990,7 +1203,8 @@ assert.equal(sent.length, sentBeforeNavigation, "mobile handoff is navigation-on
     bodies: [{ id: 1, structures: { mining_complex: 1 } }], assignments: [] };
   state.galaxy = { ...state.galaxy, build_options: [{ key: "shipyard", costs: [{ commodity: "alloys", units: 40 },
     { commodity: "machinery", units: 20 }, { commodity: "electronics", units: 15 }] }] };
-  state.founding = { stage: "build_shipyard", local_opening: true, bounty_received: true, protected: true,
+  // Before the bounty: the trader's last call (its stock-up) is not this card.
+  state.founding = { stage: "build_shipyard", local_opening: true, bounty_received: false, protected: true,
     protection_min_until: 0, protection_max_until: 90_000, expansion_unlocked: false, opening_exports: [], survey_candidates: ["stop"] };
   state.merchant = null;
   assert.equal(founding.foundingPlan(state, home).primary.action, "build-shipyard");
@@ -1001,7 +1215,8 @@ assert.equal(sent.length, sentBeforeNavigation, "mobile handoff is navigation-on
   state.storyTold = new Set(["free_trader"]);
   const plan = founding.foundingPlan(state, home);
   assert.equal(plan.primary.action, "merchant-shipyard");
-  assert.match(plan.primary.copy, /15 Alloys, 13 Machinery, 15 Semiconductors/, plan.primary.copy);
+  assert.equal(plan.primary.copy, "15 Alloys · 13 Machinery · 15 Semiconductors");
+  assert.deepEqual([...plan.primary.alternatives.map(a => a.label)], ["Buy from trader", "Build a Shipyard"]);
   assert.deepEqual([...plan.primary.alternatives.map(a => a.action)], ["merchant-shipyard", "build-shipyard"], "the Hub route stays beside it");
   state.merchant.phase = "arriving";
   assert.equal(founding.foundingPlan(state, home).primary.action, "build-shipyard", "not until it docks");
@@ -1018,7 +1233,7 @@ assert.equal(sent.length, sentBeforeNavigation, "mobile handoff is navigation-on
   garden.resource_slots = 1;
   assert.equal(founding.bestMineBody(system).id, 3, "a full home planet falls back to the richest ore");
 }
-console.log("Progression fixtures: contracts, physical pirate prizes, banked dossiers, readiness, colony advice, build progress and post-victory navigation pass.");
+console.log("Progression fixtures: contracts, physical pirate prizes, banked dossiers, readiness, colony advice, build progress (live bars) and post-victory navigation pass.");
 
 if (process.argv.includes("--serve")) {
   const page = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

@@ -207,7 +207,9 @@ impl Bot {
                 self.economy_turn = index + 1;
                 return Some(command);
             }
-            if site.builds.is_empty() && self.ready(&key, p.now) {
+            // §charter: the kit's semiconductors are the charter's; training waits.
+            let in_charter = p.local_opening && p.founding_stage != sim::FoundingStage::Complete;
+            if site.builds.is_empty() && !in_charter && self.ready(&key, p.now) {
                 if let Some(specialist) = self.specialist_need(&local).filter(|_| sim::specialist::ACADEMY_TRAIN_COSTS.iter()
                     .all(|(c, n)| local.stock(*c) >= wanted.get(c).copied().unwrap_or(*n))) {
                     self.wait(key, p, site.system.pos);

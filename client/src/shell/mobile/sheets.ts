@@ -10,6 +10,7 @@ export type SheetId =
   | "officers"
   | "operations"
   | "syndicate"
+  | "comms"
   | "faction"
   | "rankings"
   | "logistics"
@@ -19,6 +20,7 @@ export type SheetId =
   | "planet"
   | "build"
   | "shipyard"
+  | "yard"
   | "hub"
   | "ship"
   | "battle"
@@ -44,7 +46,9 @@ export interface SheetView {
 export type SheetRenderer = (entry: SheetEntry) => SheetView;
 
 const HISTORY_KEY = "stellarSyndicatesMobileSheet";
-let nextSession = 1;
+// Numbered per page load, as the Deck's router: a reload keeps the tab's
+// history, and the last load's depths must not read as this one's.
+let nextSession = Date.now();
 let activeStack: SheetStack | null = null;
 
 export function activateSheetStack(stack: SheetStack | null): void {
@@ -107,6 +111,8 @@ export class SheetStack {
       [HISTORY_KEY]: { session: this.session, depth: this.entries.length },
     }, "");
     this.render();
+    // A sheet opened on top starts at its top, not at the scroll it covers.
+    this.body.scrollTop = 0;
   }
 
   pop(): void {

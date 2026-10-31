@@ -80,12 +80,15 @@ pub struct BaseNetwork {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Campaign {
     pub bases: std::collections::BTreeMap<crate::EntityId, BaseNetwork>,
-    /// Immutable mission actors survive expired contracts; renewal never clones them.
+    /// §contract-props: an accepted rescue contract's actors, staged on
+    /// acceptance and withdrawn when it ends; offers have none.
     pub missions: std::collections::BTreeMap<crate::OperationId, ObjectiveActors>,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ObjectiveActors {
     pub pirates: Vec<crate::EntityId>,
+    /// §evacuation: the stranded liner; launched, it flies on to Market even
+    /// if the contract lapses.
     pub evacuees: Option<crate::EntityId>,
     pub launched: bool,
     pub arrived: bool,
@@ -106,8 +109,10 @@ pub const HOME_RAID_GRACE_S: f64 = 30.0 * 60.0;
 pub const HOME_RAID_WARNING_S: f64 = 90.0;
 /// Per-victim rest between expeditions (also refreshed when a raid breaks off).
 pub const HOME_RAID_COOLDOWN_S: f64 = 15.0 * 60.0;
-/// A smash-and-grab cannot hold orbit indefinitely. Scales with battle pacing.
-pub const HOME_RAID_HOLD_BATTLE_MULT: f64 = 2.0;
+/// A smash-and-grab cannot hold orbit indefinitely. Scales with battle pacing:
+/// 3 minutes at 45 s battles, long enough to lift `HOME_RAID_MAX_LOOT` at the
+/// §vault loading rate (0.5 units/s) once the defense is beaten.
+pub const HOME_RAID_HOLD_BATTLE_MULT: f64 = 4.0;
 pub const HOME_RAID_MAX_LOOT: u32 = 60;
 pub const HOME_RAID_STOCK_FRAC: f64 = 0.10;
 
@@ -211,6 +216,9 @@ pub const PIRATE_DORMANCY: f64 = 600.0;
 /// Finite wreckage at an ambient hideout, even if its raid stole nothing.
 /// Created once at clearance, recovered physically; never a remote home payout.
 pub const HIDEOUT_WRECK_ALLOYS_PER_TIER: u32 = 8;
+/// §captain-gear (R14): chance (percent) a cleared hideout's cache holds
+/// field gear. Depots and strongholds always hold a relic.
+pub const HIDEOUT_GEAR_PERCENT: u64 = 30;
 
 /// Authored, finite equipment caches. These are useful combinations of real
 /// fittings, not a new rarity multiplier: a breacher still needs torpedo cover,
@@ -253,8 +261,10 @@ impl SitePrize {
     }
 }
 /// A player war-fleet stationed (Idle) within this of an ACTIVE enclave opens an
-/// assault on the base (the "attack the defended site" gesture).
-pub const PIRATE_ASSAULT_RADIUS: f64 = 220.0;
+/// assault on the base (the "attack the defended site" gesture). §real-coordinates:
+/// the base's whole gravity well; its pack holds the base's world and visitors
+/// come to the same world.
+pub const PIRATE_ASSAULT_RADIUS: f64 = crate::transit::HYPERLIMIT;
 
 /// The hunting radius at a given tier.
 pub fn hunt_radius(tier: u32) -> f64 {
@@ -301,6 +311,11 @@ pub struct Enclave {
     /// site (no raids, no growth) and it stays cleared once it falls.
     #[serde(default)]
     pub founder_den: bool,
+    /// §player-styles: a founder's personal hideout near home
+    /// (`world::personal_hideouts`): it hunts only that founder's ships and
+    /// stays cleared once it falls.
+    #[serde(default)]
+    pub for_player: Option<PlayerId>,
 }
 
 impl Enclave {

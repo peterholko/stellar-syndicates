@@ -11,6 +11,9 @@ never take that slot. Founding Camp projects do share it. Goods are paid when
 an order reaches the world, so the build list counts goods already promised to
 orders in flight as held.
 
+Since Oct 22 2026, upgrades from tier III cost more and take longer (the tier
+curve, docs/retention-p0.md).
+
 ## One order, one bar (Oct 15 2026)
 
 Peter: "the fact there are two progression bars feels wrong". One build
@@ -20,12 +23,30 @@ the system view's own queue with bars. After a clickable mockup
 (https://claude.ai/artifact/N6KuZvpK6oymghDR7byy3u) he said "implement it".
 
 - An order's bar and time exist only in its world's **Construction card**.
+  Exception (Peter, Oct 21 2026): on the planet, a small bar (no time) sits
+  over the active order's **Building** tag.
 - Everywhere else an order is one word (`jobTag`, `SENDING` in
   `core/derive/worldbuild.ts`): **Building** (holds the slot), **Starting**
   (first in line, start not yet reported), **#N** (its place in line),
   **Sending** (still on its way).
 - A world's slot in one line (`slotLine`), for the top-bar menu and the system
   view: "Mining Complex II · 38s · +1 queued", or "Build slot idle".
+- **Live bars (Oct 27 2026).** Peter: the bar looked "laggy/jittery".
+  - Cause: a bar only moved when its panel redrew. The deck's world panel
+    redraws on a whole-second heartbeat plus discrete changes (the
+    light-delayed market ticker and the like). Measured on localhost: about 4
+    redraws a second, 100–400 ms apart, moving a 15 s build's bar 1–3% each
+    time. The server's progress line only changes when its rate does.
+  - Fix: each construction bar carries its job's progress line
+    (`data-live-progress="at base slope"`, from `progressLine`). Every frame,
+    both shells' `onViewTick` sets its fill from the render clock
+    (`tickLiveProgress`, shell/liveprogress.ts).
+  - Measured after: the same build's bar updates every frame (≤0.14% a step,
+    never backwards). Panels keep their own redraw cadence.
+  - Bars covered: the Construction card, the planet's Building pill, the
+    deck shipyard pop-out, and mobile's construction head and yard.
+  - Not covered: the 3D hull filling in the shipyard view still follows its
+    panel's redraws.
 
 ## Desktop world view
 
@@ -59,7 +80,8 @@ the system view's own queue with bars. After a clickable mockup
   - Three ways in: **Build** (construction bar or the worlds strip), a free
     site on the planet (the sheet opens on that site's slot type, new buildings
     only), or **Upgrade to N** on a selected building (the sheet opens on its
-    next level).
+    next level). The building shows only that button; its costs and time are
+    on the sheet (Peter, Oct 28 2026).
   - Tabs are the slot types, each showing its used/total meter. A tab lists
     *Upgrade* (what stands), *New · N free sites*, and a folded *Can't build
     here (N)* with each reason ("No free Industrial site", "Needs Shipyard II",
@@ -139,6 +161,9 @@ steps could not be built from the UI.
 
 - **Queue model and words:** `client/src/core/derive/worldbuild.ts`
   (`structureQueue`, `jobTitle`, `jobTag`, `SENDING`, `slotLine`, `yardStatus`).
+- **Progress lines and live bars:** `client/src/core/derive/construction.ts`
+  (`progressLine`, `progressAt`, `buildProgress`, `liveProgressAttr`,
+  `readLiveProgress`); `client/src/shell/liveprogress.ts` (`tickLiveProgress`).
 - **Card, system section and build sheet:** `empire.ts` (`constructionModel`,
   `constructionBarHtml`, `queueHtml`, `worldSheetHtml`, `sheetCard`,
   `sheetDetailHtml`, `PendingBuild`).
@@ -153,3 +178,37 @@ steps could not be built from the UI.
   seeds a timed build, a waiting upgrade and a hull), `test-progression.mjs`
   (progress estimates, system lines), `test-industry.mjs` (mobile); the sim
   construction tests.
+
+## Research unlocks (Oct 28 2026)
+
+Peter: "Anything not available to the player until a research unlocks it
+should not be rendered in the UX." The Research screen is the one place that
+shows what is still locked.
+
+- **Structure levels:** the server sends each structure's ceiling,
+  `ResearchView.structure_tiers` (protocol v72, the sim's
+  `max_buildable_tier` on the corporation's research; 0 = not unlocked).
+  `structureCeiling` / `structureUnlocked` in `core/derive/market.ts`. A
+  building with no level open is not catalogued; a level above the ceiling is
+  `capped`: the build sheets leave the building out, the level ladder draws
+  only the open rungs, and the building's Upgrade button disappears. This
+  covers tiers V–VI, station levels and research-gated buildings.
+- **Defense card:** the station's next level appears once researched.
+- **Equipment forges:** modules whose programme isn't done are not listed
+  (`moduleResearched`).
+- **Logistics:** no Harvesting tab before Ramscoop Skimming; no Orbital
+  Assembly project before Fusion Reactors; no Cruiser reservation before its
+  hull; routes stop adding stops at three (a return trip) until Autonomous
+  Freight.
+- **Refining estimate:** shown only once a Smelter stands or Enrichment is done.
+- Already hidden before this: unresearched hulls, structures whose first
+  level needs research, the lance battery, Mass Streams, signature mimicry
+  and crown designations.
+
+## Vault (Oct 28 2026)
+
+The Vault is dug under a world's Command Center: no slot and no ground site,
+so it is listed in the world's column but never drawn on the painting. It
+needs a Command Center on that world ("Needs a Command Center") and stays
+unseen until the charter completes. Its art is a stand-in (the Garrison's)
+until its own lands. Rules: docs/blockades.md, "The Vault".

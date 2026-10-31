@@ -15,6 +15,7 @@ import {
   battleViewerTimers,
   clearBattleAftermathTimer,
   clearBattleCloseTimer,
+  shipKindLabel,
 } from "../../core/derive/fleet";
 import { fmtDur, informationDelay } from "../../core/derive/format";
 import { advanceLive, liveStart } from "../../core/derive/liveplay";
@@ -546,7 +547,7 @@ export class DeckTheaters {
       : `<div class="deck-theater-live is-complete"><i></i><b>COMPLETE</b><span>${esc(outcomeText(record))}</span></div>`;
     const counter = frontier < 0 ? "awaiting first round" : `Round ${this.battleRound + 1} of ${record.rounds.length}${running ? " +" : ""}`;
     const pirateId = this.ctx.state.galaxy?.pirate_id ?? null;
-    const forces = round ? `<div class="deck-theater-forces">${sideHtml(record, round.counts[0], 0, label0, pirateId)}<span>versus</span>${sideHtml(record, round.counts[1], 1, label1, pirateId)}</div>` : `<div class="deck-theater-empty">Awaiting the first round's light…</div>`;
+    const forces = round ? `<div class="deck-theater-forces">${sideHtml(record, round.counts[0], 0, label0, pirateId)}<span>versus</span>${sideHtml(record, round.counts[1], 1, label1, pirateId)}</div>${archiveLossesHtml(record, this.battleRound, label0, label1)}` : `<div class="deck-theater-empty">Awaiting the first round's light…</div>`;
     const notes = round?.notes.length ? `<div class="deck-theater-notes">${round.notes.map(noteHtml).join("")}</div>` : "";
     const hasFrames = record.rounds.some((entry) => entry.frame);
     const frame = round?.frame ?? null;
@@ -649,6 +650,20 @@ function shipCardHtml(info: TheaterShipInfo | null, record: BattleRecordView): s
     + `<div class="deck-theater-ship-hull${pct < 30 ? " is-critical" : pct < 60 ? " is-low" : ""}"><i><b style="width:${pct}%"></b></i><em>${pct}% hull</em></div>`
     + `<dl><dt>Fit</dt><dd>${esc(fit)}</dd>${reps}</dl>`
     + `<div class="deck-theater-ship-actions">${action}</div></section>`;
+}
+
+/** §research-wiring Battle Archives: a third party's tally of each side's
+ * losses so far, from the bucketed per-round kills. */
+function archiveLossesHtml(record: BattleRecordView, upTo: number, label0: string, label1: string): string {
+  if (record.fidelity !== "archive") return "";
+  const mid: Record<string, number> = { one: 1, two_to_three: 2.5, four_to_seven: 5.5, eight_to_fifteen: 11.5, sixteen_to_thirty: 23, thirty_one_plus: 31 };
+  const side = (s: 0 | 1, name: string) => {
+    const lost = new Map<string, number>();
+    for (const round of record.rounds.slice(0, upTo + 1)) for (const kill of round.kills[s]) lost.set(kill.kind, (lost.get(kill.kind) ?? 0) + (mid[kill.class] ?? 1));
+    return lost.size ? `<span><b>${esc(name)} lost</b> ${[...lost].map(([kind, n]) => `~${Math.round(n)} ${esc(shipKindLabel(kind as RecordCount["kind"]))}`).join(" · ")}</span>` : "";
+  };
+  const rows = side(0, label0) + side(1, label1);
+  return rows ? `<div class="deck-theater-losses">${rows}</div>` : "";
 }
 
 function sideHtml(record: BattleRecordView, current: RecordCount[], side: 0 | 1, heading: string, pirateId: PlayerId | null): string {

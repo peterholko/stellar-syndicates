@@ -1,0 +1,463 @@
+{
+  "title": "Stellar Syndicates",
+  "durationSeconds": 74,
+  "slideCount": 12,
+  "canvas": {
+    "width": 1920,
+    "height": 1080
+  },
+  "assets": [
+    {
+      "path": "client/public/art/derived/login/stellar-syndicates-banner-v1-1440.webp",
+      "bytes": 136918,
+      "sha256": "fd6004ec4088ce43967a6bfa6ef8144bee024fceca2fe6c73999700f103dfc30"
+    },
+    {
+      "path": "client/public/art/nebulas/molecular_cloud.png",
+      "bytes": 1664820,
+      "sha256": "d7121aa5d1b31fb64f9193999f9eb49f060ab32965021742c4a9b16a68c4a9df"
+    },
+    {
+      "path": "client/public/art/derived/story-events/v1/new-colony-1672.webp",
+      "bytes": 377356,
+      "sha256": "1d52d7f7b0a6b4f21ee054a1b3d621a8ecea3d50a59049993f367fa7cd108067"
+    },
+    {
+      "path": "client/public/art/derived/shipyard-interiors/v1/shipyard-ii-empty-bay-1672.webp",
+      "bytes": 300912,
+      "sha256": "b2e61c8b7cfd0c5d4d90d8995a3b32787d830d82eff983caf8f1c7fa0bfa3c4f"
+    },
+    {
+      "path": "client/public/art/derived/shipyard-interiors/v1/capital-slipway-empty-bay-1672.webp",
+      "bytes": 334432,
+      "sha256": "a2cae3d3cede7628352c97316ef1ed6d6526986cf60b5f27d1f9b715cee9b440"
+    },
+    {
+      "path": "client/public/art/derived/story-events/v1/relics-awaken-1672.webp",
+      "bytes": 349980,
+      "sha256": "5f4aa9de1cf76f53789a2eaeed69617c125b39a81580e8f16d90caadad6f4e2b"
+    },
+    {
+      "path": "client/public/art/derived/lore/rival_fleet_standoff-1280.webp",
+      "bytes": 76520,
+      "sha256": "19d217ae3496314ba0b8610c4c9b0783d811bd39a0c4b34a5ab1d506bce1089e"
+    },
+    {
+      "path": "client/public/art/derived/story-events/v1/sealed-world-found-1672.webp",
+      "bytes": 341186,
+      "sha256": "769b8df705b114c5a3fcbff4ec1ca45921cfbe797e5420b5770d8d2881251f5b"
+    },
+    {
+      "path": "client/art-src/promo-slideshow-v1/assets/star-system-orbits-poster.png",
+      "bytes": 202431,
+      "sha256": "e0fa20258c9298a4826c8d9373ebfe62fac7d64f9b47e5e16e63b7fa41cd0921"
+    },
+    {
+      "path": "client/art-src/promo-slideshow-v1/assets/planet-structures-screenshot.jpg",
+      "bytes": 138899,
+      "sha256": "0687866a39d02a39d4c291c62bbf12b3ec990e661c14514a9d6f774e17bf5aae"
+    },
+    {
+      "path": "client/art-src/promo-slideshow-v1/assets/fleet-combat-poster.png",
+      "bytes": 242784,
+      "sha256": "1b375dc353f314ef3cec7e99ef7954edf0937c4e1f2a1310ee53551aaeee8cb5"
+    },
+    {
+      "path": "client/art-src/ship-models/wormhole-hub-textured-v1/wormhole-hub.glb",
+      "bytes": 17232480,
+      "sha256": "449d7f2833c36325785b4f4878ad36e1443b291f52802ca0b66373d61b50fe08"
+    },
+    {
+      "path": "client/public/art/derived/ship-models/v1/interceptor-lod2.glb",
+      "bytes": 987548,
+      "sha256": "7870f44e505c28c83d60fcb92b5caacfa89febd5b3bd18bbd1034447325dbb4b"
+    },
+    {
+      "path": "client/public/art/derived/ship-models/v1/cruiser-lod2.glb",
+      "bytes": 1773208,
+      "sha256": "af03c35126bdd92501889e77c738d5c18123dfaf8a7b0817b2b808de2e308e38"
+    },
+    {
+      "path": "client/public/art/derived/ship-models/v1/titan-lod2.glb",
+      "bytes": 2402896,
+      "sha256": "2d189d512ce6d9b98b6b71515d2a812aac3daa066ecdb2c1de52caf5d350e8d7"
+    },
+    {
+      "path": "client/public/art/derived/ship-models/v1/medium-freighter-lod2.glb",
+      "bytes": 2149528,
+      "sha256": "1e8f612e3a95282769baa78c452100ff63b174c38dbfc1cb29e7b8a95be78c72"
+    },
+    {
+      "path": "client/public/art/derived/ship-models/v1/small-freighter-lod2.glb",
+      "bytes": 1876280,
+      "sha256": "21c051ba926e8daca3b68b9e1f1b11aa74c868dd3e980f11d21ad928a2609d25"
+    },
+    {
+      "path": "client/public/art/derived/ship-models/v1/tiny-freighter-lod2.glb",
+      "bytes": 1633140,
+      "sha256": "167b0775b5c3da34aa6eaea5cf071f4d83e70d56323251cb0af0f1b139d1821e"
+    },
+    {
+      "path": "client/art-src/promo-slideshow-v1/output/stellar-syndicates-star-system-orbits.mp4",
+      "bytes": 1516230,
+      "sha256": "6ab260d1d6cde37a66a3447c099046c755de3d4a22c21421bc7208eb16645ae5"
+    },
+    {
+      "path": "client/art-src/promo-slideshow-v1/output/stellar-syndicates-fleet-combat.mp4",
+      "bytes": 6349753,
+      "sha256": "7657588af8b7dc251387267e7fa681417d44d5a7704e8b031b6987bc014abb27"
+    },
+    {
+      "path": "client/public/dev/battles/mixed.json",
+      "bytes": 290780,
+      "sha256": "09245440d2b811c4cd401fcf06b77a5dd002f03c0a0d6aed3c4120cafd383c38",
+      "use": "Recorded combat engine evidence, rounds 45–69"
+    },
+    {
+      "path": "client/art-src/promo-slideshow-v1/world-demo.js",
+      "bytes": 1474,
+      "sha256": "7b4f40e09b682ff02f5b121534df176a6887e4037cf0d3fe4bf810e01edddf22",
+      "use": "Orbital time-lapse source, 12 seconds at 40x orbital time"
+    },
+    {
+      "path": "client/art-src/promo-slideshow-v1/orbits-capture.js",
+      "bytes": 4367,
+      "sha256": "5cc024fcb0db674f0e540e31f76a31f7825d720c425ae1f20b9deeb2769c4674",
+      "use": "Orbital time-lapse source, 12 seconds at 40x orbital time"
+    },
+    {
+      "path": "client/src/systemview.ts",
+      "bytes": 77558,
+      "sha256": "132cc30a62813ff175d4852cefcfb080effe8986f8d371c3b1e644c41cf1cd67",
+      "use": "Orbital time-lapse source, 12 seconds at 40x orbital time"
+    },
+    {
+      "path": "client/src/systemlayout.ts",
+      "bytes": 11657,
+      "sha256": "0225936459fa3d2fa51ece87c7dedb077bb1ddc7a9ed13539202eec3ed30e5c0",
+      "use": "Orbital time-lapse source, 12 seconds at 40x orbital time"
+    }
+  ],
+  "slides": [
+    {
+      "id": "stellar-syndicates",
+      "chapter": "The frontier",
+      "duration": 6,
+      "scene": "hub",
+      "art": "nebula",
+      "layout": "hero",
+      "brand": {
+        "art": "heroLogo",
+        "x": 120,
+        "width": 800,
+        "y": 420
+      },
+      "title": [
+        "STELLAR",
+        "SYNDICATES"
+      ],
+      "subtitle": [
+        "A living galaxy. A corporation of your own."
+      ],
+      "x": 120,
+      "y": 430,
+      "size": 112,
+      "leading": 124,
+      "bodyY": 718,
+      "accent": "#83d9ef",
+      "sources": [
+        "client/public/art/derived/login/stellar-syndicates-banner-v1-1440.webp",
+        "client/art-src/ship-models/wormhole-hub-textured-v1/wormhole-hub.glb",
+        "client/public/art/nebulas/molecular_cloud.png"
+      ]
+    },
+    {
+      "id": "first-foothold",
+      "chapter": "A new home",
+      "duration": 5,
+      "scene": "art",
+      "art": "colony",
+      "layout": "bottom",
+      "title": [
+        "Your first foothold"
+      ],
+      "subtitle": [
+        "One colony. The beginning of your corporation."
+      ],
+      "x": 120,
+      "y": 816,
+      "size": 100,
+      "leading": 108,
+      "bodyY": 950,
+      "accent": "#f0c48b",
+      "sources": [
+        "client/art-src/story-events-v1/new-colony.png",
+        "docs/founding-camp.md"
+      ]
+    },
+    {
+      "id": "star-system",
+      "chapter": "Star systems",
+      "duration": 8,
+      "scene": "system",
+      "art": "system",
+      "layout": "capture",
+      "title": [
+        "A living star system"
+      ],
+      "subtitle": [],
+      "kicker": "IN-GAME SYSTEM VIEW · TIME-LAPSE",
+      "x": 100,
+      "y": 90,
+      "size": 76,
+      "leading": 84,
+      "bodyY": 200,
+      "accent": "#83d9ef",
+      "sources": [
+        "client/art-src/promo-slideshow-v1/output/stellar-syndicates-star-system-orbits.mp4",
+        "client/src/systemview.ts",
+        "client/src/systemlayout.ts"
+      ],
+      "note": "8-second excerpt of a 12-second recording of the production system renderer with an isolated demonstration system: four planets and a moon. Orbital time runs at 40× speed (320 simulation seconds shown); the camera stays fixed. No live player session."
+    },
+    {
+      "id": "planet-structures",
+      "chapter": "A growing colony",
+      "duration": 5,
+      "scene": "screenshot",
+      "art": "planet",
+      "layout": "capture",
+      "title": [
+        "A growing colony"
+      ],
+      "subtitle": [],
+      "kicker": "IN-GAME PLANET VIEW",
+      "x": 100,
+      "y": 90,
+      "size": 76,
+      "leading": 84,
+      "bodyY": 200,
+      "accent": "#f0c48b",
+      "sources": [
+        "client/art-src/promo-slideshow-v1/assets/planet-structures-screenshot.jpg",
+        "client/src/shell/deck/planet.ts",
+        "client/src/styles/planet-panel.css"
+      ],
+      "note": "Screenshot of the production planet surface renderer with demonstration Tier II structures: command center, mine, smelter, shipyard, habitat, warehouse, agroplex, and power plant. No live player session."
+    },
+    {
+      "id": "industry",
+      "chapter": "The shipyard",
+      "duration": 6,
+      "scene": "shipyard",
+      "art": "shipyard",
+      "layout": "top",
+      "title": [
+        "Industry",
+        "takes flight"
+      ],
+      "subtitle": [
+        "Local resources become the ships",
+        "that carry your ambitions."
+      ],
+      "x": 120,
+      "y": 150,
+      "size": 100,
+      "leading": 108,
+      "bodyY": 404,
+      "accent": "#f0c48b",
+      "sources": [
+        "client/art-src/shipyard-interiors-v1/shipyard-ii-empty-bay.png",
+        "client/public/art/derived/ship-models/v1/interceptor-lod2.glb",
+        "docs/construction.md"
+      ]
+    },
+    {
+      "id": "trade",
+      "chapter": "Trade routes",
+      "duration": 6,
+      "scene": "freight",
+      "art": "nebula",
+      "layout": "left",
+      "title": [
+        "Trade across",
+        "the frontier"
+      ],
+      "subtitle": [
+        "Freighters connect your worlds",
+        "to the wider economy."
+      ],
+      "x": 120,
+      "y": 600,
+      "size": 100,
+      "leading": 108,
+      "bodyY": 854,
+      "accent": "#83d9ef",
+      "sources": [
+        "client/public/art/derived/ship-models/v1/medium-freighter-lod2.glb",
+        "docs/logistics.md"
+      ]
+    },
+    {
+      "id": "fleet",
+      "chapter": "Fleet command",
+      "duration": 6,
+      "scene": "fleet",
+      "art": "nebula",
+      "layout": "left",
+      "title": [
+        "A fleet",
+        "with purpose"
+      ],
+      "subtitle": [
+        "Escorts protect the routes.",
+        "Warships defend what you have built."
+      ],
+      "x": 120,
+      "y": 616,
+      "size": 100,
+      "leading": 108,
+      "bodyY": 870,
+      "accent": "#83d9ef",
+      "sources": [
+        "client/public/art/derived/ship-models/v1/cruiser-lod2.glb",
+        "client/public/art/derived/ship-models/v1/interceptor-lod2.glb",
+        "docs/fleet-panel.md"
+      ]
+    },
+    {
+      "id": "fleet-combat",
+      "chapter": "Fleet combat",
+      "duration": 10,
+      "scene": "combat",
+      "art": "combat",
+      "layout": "combat",
+      "title": [
+        "Fleet combat"
+      ],
+      "subtitle": [],
+      "x": 100,
+      "y": 90,
+      "size": 76,
+      "leading": 84,
+      "bodyY": 200,
+      "accent": "#83d9ef",
+      "sources": [
+        "client/public/dev/battles/mixed.json",
+        "client/src/battletheater.ts",
+        "client/src/battle-model-runtime.ts",
+        "client/art-src/promo-slideshow-v1/output/stellar-syndicates-fleet-combat.mp4"
+      ],
+      "note": "10-second excerpt of the actual game renderer replaying a recorded combat-engine fixture at 1.5 rounds per second, angled camera. The standalone MP4 contains the full 16-second clean footage, rounds 45–69."
+    },
+    {
+      "id": "capital",
+      "chapter": "Capital ambitions",
+      "duration": 6,
+      "scene": "capital",
+      "art": "slipway",
+      "layout": "top",
+      "title": [
+        "A larger",
+        "ambition"
+      ],
+      "subtitle": [
+        "Capital ships begin here."
+      ],
+      "x": 120,
+      "y": 150,
+      "size": 100,
+      "leading": 108,
+      "bodyY": 404,
+      "accent": "#f0c48b",
+      "sources": [
+        "client/art-src/shipyard-interiors-v1/capital-slipway-empty-bay.png",
+        "client/public/art/derived/ship-models/v1/titan-lod2.glb",
+        "docs/orbital-shipyards.md"
+      ]
+    },
+    {
+      "id": "unknown",
+      "chapter": "The unknown",
+      "duration": 5,
+      "scene": "art",
+      "art": "relics",
+      "layout": "left",
+      "title": [
+        "Beyond",
+        "the familiar"
+      ],
+      "subtitle": [
+        "Ancient ruins and pirate fleets",
+        "lie beyond your borders."
+      ],
+      "x": 120,
+      "y": 644,
+      "size": 100,
+      "leading": 108,
+      "bodyY": 898,
+      "accent": "#bfb1f2",
+      "sources": [
+        "client/art-src/story-events-v1/relics-awaken.png",
+        "docs/signals.md"
+      ]
+    },
+    {
+      "id": "syndicates",
+      "chapter": "Allies and rivals",
+      "duration": 5,
+      "scene": "art",
+      "art": "alliances",
+      "layout": "bottom",
+      "title": [
+        "Strength in a syndicate"
+      ],
+      "subtitle": [
+        "Every alliance changes the balance of power."
+      ],
+      "x": 120,
+      "y": 816,
+      "size": 96,
+      "leading": 108,
+      "bodyY": 950,
+      "accent": "#83d9ef",
+      "sources": [
+        "client/public/art/lore_illustrations/rival_fleet_standoff.png",
+        "crates/sim/src/syndicate.rs"
+      ]
+    },
+    {
+      "id": "among-the-stars",
+      "chapter": "Among the stars",
+      "duration": 6,
+      "scene": "art",
+      "art": "mystery",
+      "layout": "closing",
+      "brand": {
+        "art": "heroLogo",
+        "x": 120,
+        "width": 800,
+        "y": 628
+      },
+      "title": [
+        "STELLAR",
+        "SYNDICATES"
+      ],
+      "subtitle": [
+        "Some discoveries change",
+        "who holds the stars."
+      ],
+      "x": 120,
+      "y": 648,
+      "size": 102,
+      "leading": 114,
+      "bodyY": 919,
+      "accent": "#bfb1f2",
+      "sources": [
+        "client/public/art/derived/login/stellar-syndicates-banner-v1-1440.webp",
+        "client/public/art/derived/story-events/v1/sealed-world-found-1672.webp"
+      ],
+      "note": "An unexplained ancient ruin and distant ships suggest that the frontier holds a larger mystery. Some discoveries change who holds the stars."
+    }
+  ]
+}

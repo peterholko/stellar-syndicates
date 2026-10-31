@@ -15,7 +15,9 @@ export class PlanetSites {
   constructor(private storage?: Pick<Storage, "getItem" | "setItem">) {}
 
   private id(model: PlanetPanelModel): string {
-    return `stellar.planet-sites.v1:${JSON.stringify([model.report.owner, model.system.id, model.body.id, model.system.pos])}`;
+    // §belt-view: belts keep their own layouts (sites in order on a painted field).
+    const kind = model.body.kind === "asteroid_belt" ? "belt-sites" : "planet-sites";
+    return `stellar.${kind}.v1:${JSON.stringify([model.report.owner, model.system.id, model.body.id, model.system.pos])}`;
   }
 
   private load(model: PlanetPanelModel): Layout {
@@ -48,8 +50,11 @@ export class PlanetSites {
     if (!model.mine) return { occupied: [], free: [] };
     const layout = this.load(model), before = JSON.stringify(layout);
     const order = Object.keys(model.descriptions);
-    const jobs = model.report.builds.filter(job => job.body_id === model.body.id && job.key !== "service_berth" && isSitePool(POOL_OF[job.key]));
-    const known = new Set([...Object.keys(model.body.structures).filter(key => key !== "service_berth" && model.body.structures[key] > 0), ...jobs.map(job => job.key)]);
+    // An attachment, the underground Vault (§vault) and the Assembly Hall
+    // inside the Command Center (§season) take no ground site.
+    const offSite = (key: string) => key === "service_berth" || key === "vault" || key === "assembly_hall";
+    const jobs = model.report.builds.filter(job => job.body_id === model.body.id && !offSite(job.key) && isSitePool(POOL_OF[job.key]));
+    const known = new Set([...Object.keys(model.body.structures).filter(key => !offSite(key) && model.body.structures[key] > 0), ...jobs.map(job => job.key)]);
     // Orbital yards still consume their real industrial capacity, but must not
     // crowd out surface artwork. These virtual addresses are never persisted or
     // offered as empty terrain sites; the scene uses their starfield anchors.
@@ -80,7 +85,8 @@ export class PlanetSites {
     for (const key of known) {
       const pool = POOL_OF[key];
       if (!isSitePool(pool) || layout.sites.some(s => s.key === key)) continue;
-      const site = firstReport ? allocate(pool, order.indexOf(key), true)
+      // §belt-view: a belt's few sites fill in order, best rock first.
+      const site = firstReport ? allocate(pool, model.body.kind === "asteroid_belt" ? undefined : order.indexOf(key), true)
         : layout.sites.find(s => !s.key && s.pool === pool && s.slot === layout.preferred[key])
           ?? layout.sites.find(s => !s.key && s.pool === pool) ?? allocate(pool, undefined, true);
       if (site) site.key = key;

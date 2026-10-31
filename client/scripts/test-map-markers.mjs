@@ -164,13 +164,32 @@ assert.match(src("shell/deck/map.ts"), /contactBrief\(site,/, "and so do contact
 assert.match(src("shell/deck/index.ts"), /case "operation":\n\s*this\.router\.go\(\{ name: "operations", query: \{ contract: target\.id \} \}\);/, "a contract click opens its card");
 assert.match(src("shell/mobile/map.ts"), /case "operation":/);
 
-console.log(`Map markers: ${names.length} provenance-checked white glyphs, contact badges and state pips, contract tags for all ${kinds.length} kinds in issuer colours (hollow/filled/progress, beside stars, stacked, picked) and hover/click wiring passed.`);
+// §privateer-hunt (Peter, Oct 27 2026): the privateer's last known position
+// is an amber "?" contact with its name, on the galaxy map in both shells,
+// hidden whenever the privateer itself is in view. Oct 30 2026: ringed by its
+// hunting area, the guide's own lying-in-wait radius.
+{
+  const render = src("render.ts");
+  const draw = render.slice(render.indexOf("private drawPrivateerLastSeen("), render.indexOf("private drawProjections("));
+  assert.match(draw, /const show = !!f && !!at && !!f\.privateer && !state\.ghosts\.some\(\(ghost\) => ghost\.id === f\.privateer\);/,
+    "hidden while the privateer is in view");
+  assert.match(draw, /stroke\(\{ color: COL_PIRATE/, "in pirate amber");
+  assert.match(draw, /`Hunting area · \$\{names\.family \? names\.privateer : "Privateer"\}`/, "named for the nephew");
+  assert.match(draw, /const area = Math\.max\(PRIVATEER_HUNT_SU \* this\.scale, r \* 2\.5\);/, "the hunting area at true scale");
+  assert.match(draw, /dashedCircle\(g, p\.x, p\.y, area, segments\);/, "a dashed amber ring");
+  assert.match(src("core/derive/founding.ts"), /<= PRIVATEER_HUNT_SU\) \{\n\s*primary = waitOn\("Interceptor lying in wait"/,
+    "the ring is where the guide says it lies in wait");
+  assert.match(render, /this\.signalMarkers\.root, \/\/ §signals: private contacts near home\n\s*this\.lastSeenLayer, \/\/ §privateer-hunt/);
+  assert.match(render, /this\.lastSignals = state\.signals;\n\s*\}\n\s*this\.drawPrivateerLastSeen\(state\);/, "drawn every galaxy frame");
+}
+console.log(`Map markers: ${names.length} provenance-checked white glyphs, contact badges and state pips, contract tags for all ${kinds.length} kinds in issuer colours (hollow/filled/progress, beside stars, stacked, picked), the privateer's last known position and hover/click wiring passed.`);
 
 // --serve: the real renderer over a canned region with every kind of contact
 // and contract, an own Interceptor and a rival. ?zoom=N&x=&y= frames it;
 // ?nodes=1 adds exotic nodes in each state; ?charted=1 charts Freya (four
-// worlds, a moon and a belt) for the orbit preview and the System View handoff.
-// No game server.
+// worlds, a moon and a belt, with served orbits) for the orbit preview and the
+// System View handoff; ?ships=1 (with it) puts an own Interceptor at Freya 12
+// and another 600 su out, flying in (§real-coordinates). No game server.
 if (process.argv.includes("--serve")) {
   const { createServer } = await import("node:http");
   const { resolve, sep } = await import("node:path");
@@ -183,6 +202,8 @@ if (process.argv.includes("--serve")) {
       load: id => id === "\0markers-fixture" ? `
       import { renderer } from ${module("render.ts")};
       import { state } from ${module("state.ts")};
+      import { buildVisualSystem } from ${module("systemview.ts")};
+      import { moonPeriod, planetPeriod } from ${module("systemlayout.ts")};
       const params = new URLSearchParams(location.search);
       (async () => {
       state.playerId = "me"; state.link = "online";
@@ -235,6 +256,24 @@ if (process.argv.includes("--serve")) {
           world(11, "lava", "small"), world(12, "terrestrial", "medium"), world(13, "gas_giant", "huge"),
           world(14, "rocky", "tiny", { parent: 13 }), world(15, "ice", "medium"),
           world(16, "asteroid_belt", "large", { belt: { kind: "stony", radius: 0.5, width: 0.05 } })] }];
+        // §real-coordinates: served orbits, as the sim lays them out (the same draw).
+        const freya = state.systems.find((entry) => entry.id === "1");
+        const vis = buildVisualSystem(state.galaxy.systems[0], freya.bodies);
+        const orbitOf = (id, orbit) => { freya.bodies.find((b) => String(b.id) === String(id)).orbit = orbit; };
+        for (const p of vis.planets) {
+          orbitOf(p.id, { radius: p.orbitRadius, angle: p.angle, period: planetPeriod(p.orbitRadius) });
+          p.moons.forEach((m, i) => orbitOf(m.id, { radius: m.orbitRadius, angle: m.angle, period: moonPeriod(i) }));
+        }
+        for (const b of vis.asteroidBelts) orbitOf(b.id, { radius: b.radius, angle: 0, period: 0 });
+        if (params.get("ships")) {
+          const star = state.galaxy.systems[0].pos;
+          const p12 = vis.planets.find((p) => p.id === "12");
+          const at12 = { x: star.x + Math.cos(p12.angle) * p12.orbitRadius * 860, y: star.y + Math.sin(p12.angle) * p12.orbitRadius * 860 };
+          const inbound = { x: star.x + Math.cos(0.8) * 600, y: star.y + Math.sin(0.8) * 600 };
+          state.ghosts.push(ghost("F4", "raider", at12.x, at12.y, true, { vel: { x: 0, y: 0 } }),
+            ghost("F5", "raider", inbound.x, inbound.y, true, { vel: { x: -Math.cos(0.8) * 100, y: -Math.sin(0.8) * 100 } }));
+          window.__expect = { at12, inbound };
+        }
       }
       await renderer.init(document.getElementById("app"));
       renderer.setGalaxy(state.galaxy);

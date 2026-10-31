@@ -209,18 +209,31 @@ fn the_fusion_tiers_need_fusion_reactors_and_burn_helium3() {
 }
 
 #[test]
-fn a_plant_takes_no_slot_and_stands_on_belts_and_gas_giants() {
-    let (mut w, owner, home, _) = grid_home();
-    let belt = w.systems.iter().find(|s| s.id == home).unwrap().bodies.iter().find(|b| b.is_belt()).unwrap().id;
+fn a_plant_takes_no_slot_and_stands_on_gas_giants_but_not_belts() {
+    let (mut w, owner, home, solid) = grid_home();
+    let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+    let belt = sys.bodies.iter().find(|b| b.is_belt()).unwrap().id;
+    // §asteroid-quarry: a belt's power is its quarry's own.
+    let giant = match sys.bodies.iter().find(|b| b.kind == BodyKind::GasGiant) {
+        Some(b) => b.id,
+        None => {
+            body_mut(&mut w, home, solid[1]).kind = BodyKind::GasGiant;
+            solid[1]
+        }
+    };
     for (c, n) in [(C::Alloys, 100.0), (C::Machinery, 40.0), (C::Electronics, 40.0)] {
         set_stock(&mut w, home, c, n);
     }
-    let mut events = Vec::new();
-    w.apply_now(&Command::DevelopSystem { player_id: owner, system_id: home, body_id: Some(belt), upgrade: K::PowerPlant }, &mut events);
-    assert!(!events.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { .. } | EventPayload::IndustryRejected { .. })),
-        "{events:?}");
-    assert!(w.build_queue.iter().any(|j| j.body_id == belt
+    let develop = |w: &mut World, body| {
+        let mut events = Vec::new();
+        w.apply_now(&Command::DevelopSystem { player_id: owner, system_id: home, body_id: Some(body), upgrade: K::PowerPlant }, &mut events);
+        events.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected { .. } | EventPayload::IndustryRejected { .. }))
+    };
+    assert!(develop(&mut w, belt), "a belt refuses a plant");
+    assert!(!develop(&mut w, giant), "a gas giant takes one");
+    assert!(w.build_queue.iter().any(|j| j.body_id == giant
         && j.what == crate::build::BuildKind::Upgrade { upgrade: K::PowerPlant }));
+    assert!(!w.build_queue.iter().any(|j| j.body_id == belt));
     assert!(!K::PowerPlant.uses_slot());
 }
 

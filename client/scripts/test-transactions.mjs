@@ -25,6 +25,7 @@ const icons = dependencies["../icons"] = dependencies["../../icons"] = compile("
 dependencies["../../protocol"] = protocol;
 dependencies["../core/derive/format"] = dependencies["../../core/derive/format"] = compile("core/derive/format.ts");
 dependencies["../battlehistory"] = { loadBattleMarks() {} };
+dependencies["../stars"] = { chartStars() {} };
 dependencies["../wire.mjs"] = { PROTOCOL_VERSION: 32 };
 const market = dependencies["./derive/market"] = dependencies["../../core/derive/market"] = compile("core/derive/market.ts");
 const { applyServerMessage, applyLinkStatus } = compile("core/session.ts");
@@ -139,6 +140,7 @@ deck.handleAction({ dataset: { deckAct: "market-tab", tab: "transactions" } }, r
 assert.match(root.innerHTML, /data-tab="transactions" aria-selected="true"/, "a receipt's old route tab must not override the player's tab click");
 
 class FakeButton { constructor(dataset) { this.dataset = dataset; } closest() { return this; } }
+dependencies["./log"] = { MobileLog: class {} };
 const { MobileSurfaces } = compile("shell/mobile/surfaces.ts", { HTMLElement: FakeButton, HTMLButtonElement: FakeButton });
 const mobile = new MobileSurfaces(ctx, { refresh() {} }, {});
 mobile.handleClick({ target: new FakeButton({ mobileAct: "market-tab", tab: "transactions" }) });

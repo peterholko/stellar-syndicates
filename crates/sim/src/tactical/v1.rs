@@ -374,9 +374,86 @@ pub struct SideMods {
     /// while its own station fights).
     #[serde(default)]
     pub fortress: bool,
+    // §research-wiring (R2, Oct 22 2026): research in battle. Each reads 0 as
+    // 1, so a side without the research fights exactly as before and older
+    // recordings replay unchanged.
+    /// Fire Control, Magnetic Accelerators and Penetrator Slugs, Warhead
+    /// Yields: this side's beam, driver and torpedo damage.
+    #[serde(default)]
+    pub beam_dmg: f64,
+    #[serde(default)]
+    pub driver_dmg: f64,
+    #[serde(default)]
+    pub torp_dmg: f64,
+    /// Fire Discipline: this side's damage in the opening window.
+    #[serde(default)]
+    pub opening_dmg: f64,
+    /// §close-quarters (Peter, Oct 28 2026: the charter's first fights "fight
+    /// closer"): this side's weapon reach, holding band and rally scale by
+    /// this. 0 reads 1, so every other battle and older recordings replay
+    /// unchanged.
+    #[serde(default)]
+    pub range_scale: f64,
+    /// Ablative Refits, Spall Liners: how much of a hit this side's
+    /// Reflective and Whipple plating blunt, as a multiple of the base.
+    #[serde(default)]
+    pub reflect: f64,
+    #[serde(default)]
+    pub whipple: f64,
+    /// Reinforced Frames × Compartmentalization × Citadel Compartments: how
+    /// much more hitting this side's armed hulls take to sink.
+    #[serde(default)]
+    pub hull: f64,
+    /// Hardened Anchorage: damage this side takes while it fights at home.
+    #[serde(default)]
+    pub anchored: f64,
+    /// Fleet Escorts: damage this side's freighters take while a Corvette of
+    /// theirs still fights.
+    #[serde(default)]
+    pub escort: f64,
+    /// Wolfpack Doctrine: each further fleet with a Raider in this side's
+    /// pack adds this much (less 1) to every Raider's damage, to ×2.
+    #[serde(default)]
+    pub wolfpack: f64,
+    /// Slip Anchors: damage this side's Raiders take while withdrawing.
+    #[serde(default)]
+    pub slip: f64,
+    /// Overpressure Warheads: the share of a killing torpedo's damage that
+    /// splashes into the nearest live hull of the victim's stack (0: none).
+    #[serde(default)]
+    pub splash: f64,
+}
+
+/// §research-wiring Overpressure Warheads: a killing torpedo's splash share.
+pub const OVERPRESSURE_SPLASH: f64 = 0.10;
+
+/// §research-wiring Wolfpack Doctrine: a pack's damage never more than doubles.
+pub const WOLFPACK_CAP: f64 = 2.0;
+
+/// Reads an unset multiplier (0) as 1.
+#[inline(always)]
+fn or_one(x: f64) -> f64 {
+    if x <= 0.0 { 1.0 } else { x }
 }
 
 impl SideMods {
+    /// This side's research damage for one weapon family.
+    pub fn weapon(&self, family: DamageType) -> f64 {
+        or_one(match family {
+            DamageType::Beam => self.beam_dmg,
+            DamageType::Driver => self.driver_dmg,
+            DamageType::Torpedo => self.torp_dmg,
+        })
+    }
+    pub fn opening_dmg(&self) -> f64 { or_one(self.opening_dmg) }
+    pub fn reflect(&self) -> f64 { or_one(self.reflect) }
+    pub fn whipple(&self) -> f64 { or_one(self.whipple) }
+    pub fn hull(&self) -> f64 { or_one(self.hull) }
+    pub fn anchored(&self) -> f64 { or_one(self.anchored) }
+    pub fn escort(&self) -> f64 { or_one(self.escort) }
+    pub fn wolfpack(&self) -> f64 { or_one(self.wolfpack) }
+    pub fn slip(&self) -> f64 { or_one(self.slip) }
+
     pub fn flak(&self) -> f64 {
         if self.flak_mult <= 0.0 {
             1.0
@@ -442,6 +519,29 @@ pub struct TacticalState {
     /// v14 onward: the defended world, when the battle is fought at one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub world: Option<super::v14::WorldBody>,
+    /// §research-wiring: this step's research in battle, set as each step
+    /// begins (the recorder keeps the mods; this is never stored).
+    #[serde(skip)]
+    pub(super) research: StepResearch,
+}
+
+/// §research-wiring: each side's mods for the step, and what they make of the
+/// field as it stands: a Corvette still escorting, a pack's size. Recomputed
+/// as every step begins, so it is no part of a battle's saved state or of
+/// its equality.
+#[derive(Debug, Clone, Default)]
+pub(super) struct StepResearch {
+    pub mods: [SideMods; 2],
+    /// Fleet Escorts: a live Corvette fights on this side.
+    pub escorted: [bool; 2],
+    /// Wolfpack Doctrine: this side's Raider damage multiple.
+    pub pack: [f64; 2],
+}
+
+impl PartialEq for StepResearch {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
 }
 
 /// Derive the battle's own RNG stream from `(world_seed, battle_id)` — never
@@ -524,6 +624,7 @@ impl TacticalState {
             wrecks: Vec::new(),
             formations: BTreeMap::new(),
             world: None,
+            research: StepResearch::default(),
         };
         st.deploy_side(0, a);
         st.deploy_side(1, d);
@@ -837,6 +938,7 @@ impl TacticalState {
         self.step += 1;
         self.commit_waves();
         super::v6::update_retreats(self);
+        self.research = self.step_research(mods);
         let mut out = StepOutcome::default();
 
         // 1. MOVEMENT: seek/arrive toward each role's desired point.
@@ -1021,6 +1123,12 @@ impl TacticalState {
                     let dmg = t.dmg; // armor ignores torpedoes — no mitigation
                     let dealt = self.apply_damage(tid, dmg, &mut out, t.side);
                     out.torp_ends.push(t.end(crate::combat::TorpedoEnd::Hit, None, dealt));
+                    // §research-wiring Overpressure Warheads: a kill splashes
+                    // into the nearest live hull of the victim's stack.
+                    let splash = self.research.mods[t.side as usize].splash;
+                    if splash > 0.0 && let Some(next) = self.splash_target(tid) {
+                        self.apply_damage(next, dmg * splash, &mut out, t.side);
+                    }
                 } else {
                     out.torp_ends.push(t.end(crate::combat::TorpedoEnd::Miss, None, 0.0));
                 }
@@ -1085,7 +1193,7 @@ impl TacticalState {
             if aw <= 0.0 {
                 continue; // civilians carry no guns
             }
-            let reach = mount.map_or_else(|| self.reach_of(kind, plat), |m| m.reach);
+            let reach = mount.map_or_else(|| self.reach_of(kind, plat), |m| m.reach) * self.range_scale(side);
             let band = match family {
                 DamageType::Beam => BEAM_RANGE * reach,
                 DamageType::Driver => BEAM_RANGE * reach, // falloff shots allowed out to long
@@ -1114,7 +1222,7 @@ impl TacticalState {
             if v11 && !plat && super::v11::fires_batteries(kind, &lo, family) {
                 let opening = if self.step <= OPENING_STEPS && mods[side as usize].opening_bonus { OPENING_BONUS } else { 1.0 };
                 let base = mult * aw * HIT_DMG_CAL * hull_affinity(kind, crate::module::Family::Beam) * opening
-                    * if raid { RAID_DMG_MULT } else { 1.0 } * mods[side as usize].damage();
+                    * if raid { RAID_DMG_MULT } else { 1.0 } * (mods[side as usize].damage() * self.research_dealt(i, DamageType::Beam));
                 let reflect = if v12 { super::v12::REFLECT_BLUNT } else { super::rules_v1::REFLECT_BLUNT };
                 super::v11::battery_volley(self, i, &cands, base * fortunes[side as usize], reflect, &mut out);
                 self.combatants[i].cooldowns.beam = BEAM_COOLDOWN;
@@ -1128,11 +1236,12 @@ impl TacticalState {
                     aff: if plat { 1.0 } else { hull_affinity(kind, crate::module::weapon_family(family)) },
                     opening: if self.step <= OPENING_STEPS && mods[side as usize].opening_bonus { OPENING_BONUS } else { 1.0 },
                     raid: if raid { RAID_DMG_MULT } else { 1.0 },
-                    research: mods[side as usize].damage(),
+                    research: mods[side as usize].damage() * self.research_dealt(i, family),
                     reach, platform: plat, tracking, tackling: &tackling, fortune: fortunes[side as usize],
                     siege: if v15 && super::v15::siege_class(kind) { super::v15::SIEGE_BONUS } else { 1.0 },
                     vs_defenses: if v15 { mods[side as usize].vs_defenses() } else { 1.0 },
                     mount_armour: v15,
+                    lance: !plat && family == DamageType::Beam && lo.fires_lance_array(),
                 };
                 super::v12::volley(self, i, &cands, &volley, &mut out);
                 continue;
@@ -1370,7 +1479,9 @@ impl TacticalState {
     /// value; see call sites). Unarmed hulls take [`CIVILIAN_SOFT`] × the hit.
     /// Credits `dealt` to the firing side.
     pub(super) fn apply_damage(&mut self, cid: u32, dmg: f64, out: &mut StepOutcome, by_side: u8) -> f64 {
-        if let Some(c) = self.combatants.iter_mut().find(|c| c.cid == cid) {
+        if let Some(i) = self.combatants.iter().position(|c| c.cid == cid) {
+            let dmg = dmg * self.research_taken(i);
+            let c = &mut self.combatants[i];
             let soft = if !c.platform && attack_weight(c.kind) <= 0.0 {
                 CIVILIAN_SOFT
             } else {
@@ -1383,6 +1494,67 @@ impl TacticalState {
         } else {
             0.0
         }
+    }
+
+    /// §research-wiring Overpressure Warheads: if combatant `cid` just died,
+    /// the nearest live hull of its stack (same side, kind and fit; the lower
+    /// id on a tie).
+    fn splash_target(&self, cid: u32) -> Option<u32> {
+        let victim = self.combatants.iter().find(|c| c.cid == cid && c.hp <= 0.0)?;
+        self.combatants.iter()
+            .filter(|c| c.cid != cid && c.hp > 0.0 && !c.platform && c.side == victim.side
+                && c.kind == victim.kind && c.stack == victim.stack)
+            .min_by(|a, b| (a.pos - victim.pos).length().total_cmp(&(b.pos - victim.pos).length()).then(a.cid.cmp(&b.cid)))
+            .map(|c| c.cid)
+    }
+
+    /// §research-wiring: the step's research for `mods` on the field as it
+    /// stands.
+    fn step_research(&self, mods: [SideMods; 2]) -> StepResearch {
+        let mut research = StepResearch { mods, escorted: [false; 2], pack: [1.0; 2] };
+        for side in 0..2 {
+            let live = || self.combatants.iter().filter(move |c| c.side as usize == side && !c.platform && c.hp > 0.0);
+            research.escorted[side] = mods[side].escort > 0.0 && live().any(|c| c.kind == ShipKind::Corvette);
+            if mods[side].wolfpack > 0.0 {
+                let fleets: std::collections::BTreeSet<EntityId> = live()
+                    .filter(|c| c.kind == ShipKind::Raider).filter_map(|c| c.origin.map(|(fleet, _)| fleet)).collect();
+                let extra = fleets.len().saturating_sub(1) as f64;
+                research.pack[side] = (1.0 + (mods[side].wolfpack() - 1.0) * extra).min(WOLFPACK_CAP);
+            }
+        }
+        research
+    }
+
+    /// §research-wiring: the multiple of a hit combatant `i` takes from its
+    /// side's research (1 without any).
+    fn research_taken(&self, i: usize) -> f64 {
+        let c = &self.combatants[i];
+        let side = c.side as usize;
+        let m = &self.research.mods[side];
+        let mut taken = 1.0;
+        if !c.platform {
+            if attack_weight(c.kind) > 0.0 {
+                taken /= m.hull();
+            }
+            taken *= m.anchored();
+            if self.research.escorted[side] && c.kind.is_player_freighter() {
+                taken *= m.escort();
+            }
+            if c.kind == ShipKind::Raider && c.role == Role::Withdraw {
+                taken *= m.slip();
+            }
+        }
+        taken
+    }
+
+    /// §research-wiring: the research multiple on combatant `i`'s `family`
+    /// damage this step: its weapons, the opening window, its pack.
+    pub(super) fn research_dealt(&self, i: usize, family: DamageType) -> f64 {
+        let c = &self.combatants[i];
+        let m = &self.research.mods[c.side as usize];
+        m.weapon(family)
+            * if self.step <= OPENING_STEPS { m.opening_dmg() } else { 1.0 }
+            * if c.kind == ShipKind::Raider { self.research.pack[c.side as usize] } else { 1.0 }
     }
 
     /// The role script's desired point for combatant `i` (published rules).
@@ -1413,7 +1585,7 @@ impl TacticalState {
                 // Hold the line's center: defenders at the anchor, attackers at
                 // their rally (bearing standoff shrunk to the beam band).
                 let rally = if c.side == 0 {
-                    self.bearing * (BEAM_RANGE * 0.85)
+                    self.bearing * (BEAM_RANGE * 0.85 * self.range_scale(0))
                 } else {
                     Vec2::new(0.0, 0.0)
                 };
@@ -1506,8 +1678,24 @@ impl TacticalState {
         }
     }
 
+    /// §close-quarters: a side's range scale this step (`SideMods::range_scale`).
+    pub(super) fn range_scale(&self, side: u8) -> f64 {
+        let scale = self.research.mods[usize::from(side.min(1))].range_scale;
+        if scale > 0.0 { scale } else { 1.0 }
+    }
+
+    /// §close-quarters: open the fight at the same scale — both sides start
+    /// that much nearer the anchor. Platforms keep their ground.
+    pub fn close_quarters(&mut self, scale: f64) {
+        if scale > 0.0 && scale < 1.0 {
+            for c in self.combatants.iter_mut().filter(|c| !c.platform) {
+                c.pos = c.pos * scale;
+            }
+        }
+    }
+
     pub(super) fn preferred_band(&self, c: &Combatant) -> f64 {
-        let reach = self.reach_of(c.kind, c.platform);
+        let reach = self.reach_of(c.kind, c.platform) * self.range_scale(c.side);
         match offense(&Loadout::from_key(&c.stack)).0 {
             DamageType::Beam => BEAM_RANGE * 0.85 * reach,
             DamageType::Driver => DRIVER_RANGE * 0.85 * reach,
@@ -2516,5 +2704,65 @@ mod arena_discipline {
                 "seed {seed}: withdrawers cross the ring (got {out:.0})"
             );
         }
+    }
+
+    /// §research-wiring: research scales what a side deals and takes, and a
+    /// side without research reads exactly 1.
+    #[test]
+    fn research_scales_what_a_side_deals_and_takes() {
+        let fleet = |id: u64, list: &[(ShipKind, u32)]| -> Vec<(EntityId, Ship)> {
+            let mut out = Vec::new();
+            for (kind, n) in list {
+                for _ in 0..*n { out.push((EntityId(id), Ship::new(out.len() as u32, *kind, Loadout::default()))); }
+            }
+            out
+        };
+        let a = [fleet(1, &[(ShipKind::Raider, 2)]), fleet(3, &[(ShipKind::Raider, 1)])].concat();
+        let d = fleet(2, &[(ShipKind::Cruiser, 1), (ShipKind::SmallFreighter, 1), (ShipKind::Corvette, 1)]);
+        let mut st = TacticalState::open_current(1, 1, &a, &d, 0, 0.0, Vec2::new(1.0, 0.0));
+        st.research = st.step_research([SideMods::default(); 2]);
+        for i in 0..st.combatants.len() {
+            assert_eq!(st.research_taken(i), 1.0);
+            assert_eq!(st.research_dealt(i, DamageType::Beam), 1.0);
+        }
+        let pack = SideMods { wolfpack: 1.15, beam_dmg: 1.1, opening_dmg: 1.1, slip: 0.5, ..Default::default() };
+        let hold = SideMods { hull: 1.25, anchored: 0.85, escort: 0.75, ..Default::default() };
+        st.research = st.step_research([pack, hold]);
+        let find = |st: &TacticalState, side: u8, kind: ShipKind| st.combatants.iter().position(|c| c.side == side && c.kind == kind).unwrap();
+        let (cruiser, freighter) = (find(&st, 1, ShipKind::Cruiser), find(&st, 1, ShipKind::SmallFreighter));
+        assert!((st.research_taken(cruiser) - 0.85 / 1.25).abs() < 1e-12, "tougher at home");
+        assert!((st.research_taken(freighter) - 0.85 * 0.75).abs() < 1e-12, "escorted, not armed");
+        let raider = find(&st, 0, ShipKind::Raider);
+        assert!((st.research_dealt(raider, DamageType::Beam) - 1.1 * 1.1 * 1.15).abs() < 1e-12, "two fleets: one more in the pack");
+        assert_eq!(st.research_dealt(raider, DamageType::Driver), 1.1 * 1.15);
+        st.combatants[raider].role = Role::Withdraw;
+        assert_eq!(st.research_taken(raider), 0.5);
+        // The escort ends with its Corvette.
+        let corvette = find(&st, 1, ShipKind::Corvette);
+        st.combatants[corvette].hp = 0.0;
+        st.research = st.step_research([pack, hold]);
+        assert!((st.research_taken(freighter) - 0.85).abs() < 1e-12);
+    }
+
+    /// §research-wiring Overpressure Warheads: a kill splashes into the
+    /// nearest live hull of the victim's stack, and only of its stack.
+    #[test]
+    fn a_torpedo_kill_splashes_into_the_victims_stack() {
+        let fleet = |id: u64, list: &[(ShipKind, u32)]| -> Vec<(EntityId, Ship)> {
+            let mut out = Vec::new();
+            for (kind, n) in list {
+                for _ in 0..*n { out.push((EntityId(id), Ship::new(out.len() as u32, *kind, Loadout::default()))); }
+            }
+            out
+        };
+        let mut st = TacticalState::open_current(2, 2, &fleet(1, &[(ShipKind::Destroyer, 1)]),
+            &fleet(2, &[(ShipKind::Cruiser, 2), (ShipKind::Corvette, 1)]), 0, 0.0, Vec2::new(1.0, 0.0));
+        let cruisers: Vec<usize> = (0..st.combatants.len()).filter(|&i| st.combatants[i].kind == ShipKind::Cruiser).collect();
+        let (dead, other) = (st.combatants[cruisers[0]].cid, st.combatants[cruisers[1]].cid);
+        assert_eq!(st.splash_target(dead), None, "only a kill splashes");
+        st.combatants[cruisers[0]].hp = 0.0;
+        assert_eq!(st.splash_target(dead), Some(other), "the stack's other cruiser, not the corvette");
+        st.combatants[cruisers[1]].hp = 0.0;
+        assert_eq!(st.splash_target(dead), None, "an emptied stack takes no splash");
     }
 }

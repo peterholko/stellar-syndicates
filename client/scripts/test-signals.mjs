@@ -20,6 +20,7 @@ function compile(path) {
   return exports;
 }
 const copy = (value) => JSON.parse(JSON.stringify(value));
+const trader = deps["./trader"] = compile("core/derive/trader.ts");
 const signals = compile("core/derive/signals.ts");
 
 // Mirrors sim::signals::hurt_chance.
@@ -34,6 +35,14 @@ const art = signals.signalCardArt("ghost_ship");
 assert.equal(art.src, "/art/derived/signals/v1/ghost-ship-card-384.webp");
 assert.match(signals.signalFrameArt("teos_lost_crate").srcset, /teos-lost-crate-1280\.webp 1280w/);
 assert.equal(Object.keys(signals.SIGNAL_INFO).length, 13, "one entry per signal type");
+// §traders: the lost crate is the founder's own trader's, as the server names it.
+const crate = (slug) => copy(signals.signalInfo("teos_lost_crate", trader.TRADERS[slug]));
+assert.deepEqual([crate("teo").name, crate("ines").name, crate("mags").name, crate("rafi").name],
+  ["Teo's lost crate", "Ines's lost crate", "Mags's lost crate", "Rafi's lost crate"]);
+assert.equal(crate("mags").blurb, "A crate stencilled “Second Wind”.");
+assert.deepEqual(crate("ines").mayHold, ["Ines's goods", "A finder's fee"]);
+assert.equal(crate("ines").slug, "teos-lost-crate", "one painting for all three");
+assert.deepEqual(copy(signals.signalInfo("cargo_pod", trader.TRADERS.ines)), copy(signals.SIGNAL_INFO.cargo_pod), "the rest keep theirs");
 
 const now = 100_000;
 const view = {

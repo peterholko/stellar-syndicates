@@ -1,0 +1,86 @@
+{
+  "collection": "Independent trader ships",
+  "created": "2026-10-27",
+  "textureRevision": 2,
+  "format": "glTF 2.0 binary, self-contained embedded textures",
+  "axes": "Y up, -Z forward",
+  "units": "Relative model units; assign gameplay scale during integration",
+  "stage": "Textured static concept models",
+  "assets": [
+    {
+      "id": "clean-slate",
+      "name": "Clean Slate",
+      "owner": "Ines Varga",
+      "file": "clean-slate/clean-slate.glb",
+      "projectFile": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/clean-slate-textured-v1/clean-slate.glb",
+      "triangles": 6250,
+      "renderSections": 2,
+      "textureResolution": [
+        2048,
+        2048
+      ],
+      "dimensionsXYZ": [
+        11.9137,
+        2.91,
+        19.7368
+      ],
+      "bytes": 3664316,
+      "sha256": "18e364d067209deeca0c12824479dfbdec4a727937dd143fd0c5a4fc27e5af0d",
+      "reference": "/Users/peter/projects/stellar-syndicates/client/art-src/clean-slate-reference-v1/clean-slate-reference.png",
+      "referenceSHA256": "d7df449509c1eaa21ea96d9aa556d7b65385b9b9fb41daaa56bf58d2a7fe8309",
+      "gltfErrors": 0,
+      "gltfWarnings": 0,
+      "socketCount": 4
+    },
+    {
+      "id": "second-wind",
+      "name": "Second Wind",
+      "owner": "Mags Halloran",
+      "file": "second-wind/second-wind.glb",
+      "projectFile": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/second-wind-textured-v1/second-wind.glb",
+      "triangles": 7778,
+      "renderSections": 2,
+      "textureResolution": [
+        2048,
+        2048
+      ],
+      "dimensionsXYZ": [
+        12.7886,
+        4.63,
+        19.8158
+      ],
+      "bytes": 3903516,
+      "sha256": "fb63a78718a05f6cee1006a933dc851776030a827c1a2ca2d439467047d3fe2a",
+      "reference": "/Users/peter/projects/stellar-syndicates/client/art-src/second-wind-reference-v1/second-wind-reference.png",
+      "referenceSHA256": "1c5115efe0633adcd2387cf9c83edc223ccdc58b6b9ca527fd6956acca4576bb",
+      "gltfErrors": 0,
+      "gltfWarnings": 0,
+      "socketCount": 4
+    },
+    {
+      "id": "small-fortune",
+      "name": "Small Fortune",
+      "owner": "Rafi Mensah",
+      "file": "small-fortune/small-fortune.glb",
+      "projectFile": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/small-fortune-textured-v1/small-fortune.glb",
+      "triangles": 7764,
+      "renderSections": 2,
+      "textureResolution": [
+        2048,
+        2048
+      ],
+      "dimensionsXYZ": [
+        11.6778,
+        3.526,
+        19.9474
+      ],
+      "bytes": 3783848,
+      "sha256": "52b8c285669d214bba4f1a1e30430a43058967cf3ea7af082f51463393d79faf",
+      "reference": "/Users/peter/projects/stellar-syndicates/client/art-src/small-fortune-reference-v1/small-fortune-reference.png",
+      "referenceSHA256": "0e77b38257925975b7cd25cb6fc9e4f6a80a31e2d993959de5284394743e094f",
+      "gltfErrors": 0,
+      "gltfWarnings": 0,
+      "socketCount": 3
+    }
+  ]
+}

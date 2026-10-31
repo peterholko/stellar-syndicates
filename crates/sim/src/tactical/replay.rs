@@ -136,6 +136,7 @@ pub fn state_checksum(state: &TacticalState) -> u64 {
                 SurveyProbe => 18,
                 MiningBarge => 19,
                 MiningBeltStation => 20,
+                CombatFreighter => 21,
             });
         }
     }
@@ -831,7 +832,7 @@ mod tests {
         let fits = ["mass_driver+mass_driver+whipple_armor", "torpedo_rack+mass_driver+reflective_plating", "stasis_web", ""];
         let mounts: Vec<crate::station::Mount> =
             fits.iter().map(|fit| crate::station::Mount { fit: fit.to_string(), ..Default::default() }).collect();
-        live.add_station(1, &crate::station::mount_specs(4, &mounts));
+        live.add_station(1, &crate::station::mount_specs(5, &mounts));
         live.place_world(1);
         let mut record = BattleRecord::open(EntityId(79), Vec2::ZERO, None, false, 0, sides());
         let mods = [
@@ -854,8 +855,8 @@ mod tests {
         }
         assert!(live.station_health(1).iter().any(|&(_, hull)| hull < 1.0), "the station took fire");
         let frames = record.tactical_replay().unwrap().frames_range(0, record.rounds.len()).unwrap();
-        assert!(frames.iter().all(|(_, f)| f.ships.iter().filter(|s| s.station == Some(4)).count() <= 4));
-        assert_eq!(frames[0].1.ships.iter().filter(|s| s.station == Some(4)).count(), 4, "rebuilt frames carry the hardpoints");
+        assert!(frames.iter().all(|(_, f)| f.ships.iter().filter(|s| s.station == Some(5)).count() <= 4));
+        assert_eq!(frames[0].1.ships.iter().filter(|s| s.station == Some(5)).count(), 4, "rebuilt frames carry the hardpoints");
     }
 
     fn datalink_replay_roundtrip(discovery: bool) {

@@ -113,6 +113,14 @@
       "perspectiveSha256": "50bc251905c22ac8698ad60f169a6a00759033578e60770baefc59079c2f8d38",
       "bottomSha256": "226894b0bc45a759b239593c4fe4dd309c4163885c300dbc621f0e1a83238513"
     },
+    "combat_freighter": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/combat-freighter-lod2.glb",
+      "sourceSha256": "5f96eff184e00ee1872566ed6738cbaed094239f8a3b4f0eed9ad810a9a39f51",
+      "triangles": 4630,
+      "topSha256": "19966264067888c29e4a8790bd751e364bf65a669b426fab8d6e1f66d3c35e6d",
+      "perspectiveSha256": "01b26a46fadea0c09af65fabfcfa753f97227684a75be2ab14914451cb3a4132",
+      "bottomSha256": "2e4953bf259891882f813086bd9b3032baa915080763eec223e575efe6e21d09"
+    },
     "small_freighter": {
       "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/small-freighter-lod2.glb",
       "sourceSha256": "21c051ba926e8daca3b68b9e1f1b11aa74c868dd3e980f11d21ad928a2609d25",
@@ -168,6 +176,30 @@
       "topSha256": "92a258e22ac96c8997340923db5c7e54de432dd8554bae0c2d5f2b5370767e0d",
       "perspectiveSha256": "e1187149ca3481fa485b05b01c2d50c513df94ded1d6fd5498a056097186fecf",
       "bottomSha256": "caa361051c1cd666188c0be1f6da8655f57a7c614c390d44f1550cfc9e35ae41"
+    },
+    "clean_slate": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/clean-slate-lod2.glb",
+      "sourceSha256": "53061a72342dfd27712fed11528c5ea4c2dabad764f4cd3573fef44328873d4b",
+      "triangles": 3964,
+      "topSha256": "ec20ee71a82354f54c2947ad9ec656be0781652e3d7269fcb49762091f2f7384",
+      "perspectiveSha256": "ce520562c1f20403e65b60aaedb4de48f64d990f70c7f707c1a0d588287011a1",
+      "bottomSha256": "d3c65c49823c4f206e728813d2b5c6181fd60777c26b44bf8946a14697a84232"
+    },
+    "second_wind": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/second-wind-lod2.glb",
+      "sourceSha256": "008389ccc611953d48ca6f112af59972c741f34571121a96e6770e292ee91afa",
+      "triangles": 3968,
+      "topSha256": "bbd30ab96a18bb185cf36dbb36be39e85b13ad364ea5340d2eb024f149ddcb91",
+      "perspectiveSha256": "214cfc9e7f9cfb0d21fa261c93d089432a720fd6e0d14cf71421eeea26b17be2",
+      "bottomSha256": "719ef7a2b54cb5f318fcfb4d7d547611c4c4f586258bb51e5044c03557316751"
+    },
+    "small_fortune": {
+      "source": "art-src/ship-models/interceptor-lod-experiment-v1/models/small-fortune-lod2.glb",
+      "sourceSha256": "07e70126e26e7848a834945d0ebd64d6a372bd814bad79f1433bb44a019be123",
+      "triangles": 3894,
+      "topSha256": "e2d9e68ccba7731afb71a329db95f571caa1c6703ba41870bdd380a4af2bf5ee",
+      "perspectiveSha256": "0818e2f7e0da9a42e6cf2371a3c9fdf580c885030640bf38563573830057cbb3",
+      "bottomSha256": "8847731eb87ebb4640f6aab4223180d5841a5765e71c1b8b9765d25c45088538"
     }
   }
 }

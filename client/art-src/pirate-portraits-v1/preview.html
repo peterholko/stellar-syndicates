@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pirate family portraits</title>
+<style>
+  :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101317; color: #f1ede6; }
+  * { box-sizing: border-box; }
+  body { max-width: 1420px; margin: auto; padding: 28px; }
+  header { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin-bottom: 24px; }
+  h1 { font-size: 26px; margin: 0 0 6px; }
+  p { color: #b9b5af; margin: 0; line-height: 1.5; }
+  nav { display: flex; gap: 6px; flex-wrap: wrap; }
+  .expressions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 0 0 24px; }
+  .expressions span { color: #b9b5af; font-size: 13px; margin-right: 6px; }
+  .expressions a { font-size: 13px; margin-left: auto; }
+  button { border: 1px solid #49433d; border-radius: 6px; background: #21262c; color: inherit; padding: 9px 12px; cursor: pointer; font: inherit; font-size: 13px; }
+  button[aria-pressed="true"] { background: #8b432c; border-color: #c0754e; }
+  button:focus-visible, a:focus-visible { outline: 2px solid #f6ba6d; outline-offset: 4px; }
+  main { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
+  article { border-top: 3px solid var(--accent); padding-top: 10px; }
+  h2 { font-size: 16px; margin: 0 0 4px; }
+  .trait { font-size: 12px; min-height: 32px; }
+  figure { margin: 12px 0 18px; }
+  .portrait { display: block; position: relative; overflow: hidden; width: 100%; aspect-ratio: 1; border-radius: 12px; background: #24292e; box-shadow: 0 0 0 1px #ffffff16; }
+  .portrait img { display: block; position: absolute; width: 100%; height: 100%; max-width: none; }
+  main[data-mode="crop"] .portrait img,
+  main[data-mode="72"] .portrait img,
+  main[data-mode="112"] .portrait img { width: 133.333333%; height: 133.333333%; left: -19.066667%; top: -15.066667%; }
+  main[data-mode="72"] .portrait { width: 72px; }
+  main[data-mode="112"] .portrait { width: 112px; }
+  figcaption { margin-top: 8px; color: #b9b5af; font-size: 12px; }
+  footer { margin-top: 12px; border-top: 1px solid #34383e; padding-top: 14px; font-size: 12px; color: #b9b5af; }
+  a { color: #edbd98; }
+  @media (max-width: 850px) { main { grid-template-columns: repeat(2, minmax(0, 1fr)); } header { display: block; } nav { margin-top: 18px; } }
+  @media (max-width: 420px) { body { padding: 16px; } main { gap: 12px; } }
+</style>
+<header>
+  <div><h1>Pirate family portraits</h1><p>Five nephews and their uncles. Select a portrait to open its master PNG.</p></div>
+  <nav aria-label="Portrait framing">
+    <button type="button" data-mode="full" aria-pressed="true">Full portraits</button>
+    <button type="button" data-mode="crop" aria-pressed="false">Face crop</button>
+    <button type="button" data-mode="72" aria-pressed="false">72 px</button>
+    <button type="button" data-mode="112" aria-pressed="false">112 px</button>
+  </nav>
+</header>
+<div class="expressions" role="group" aria-label="Expression">
+  <span>Expression</span>
+  <button type="button" data-expression="original" aria-pressed="true">Original</button>
+  <button type="button" data-expression="smug" aria-pressed="false">Smug</button>
+  <button type="button" data-expression="angry" aria-pressed="false">Angry</button>
+  <button type="button" data-expression="shocked" aria-pressed="false">Shocked</button>
+  <a href="expressions/preview.html">Compare expressions side by side</a>
+</div>
+<main data-mode="full">
+  <article style="--accent:#bc6543"><h2>Showboat</h2><p class="trait">Gold tooth · rust orange</p>
+    <figure><a class="portrait" href="showboat.png"><img src="showboat.png" alt="Showboat nephew with slicked dark hair, a gold tooth, and orange scarf"></a><figcaption>Nephew · the performer</figcaption></figure>
+    <figure><a class="portrait" href="showboat-uncle.png"><img src="showboat-uncle.png" alt="Showboat uncle with silver hair, a gold tooth, and looted medals"></a><figcaption>Uncle · the warlord</figcaption></figure>
+  </article>
+  <article style="--accent:#c19a42"><h2>Hothead</h2><p class="trait">Burn scars · mustard yellow</p>
+    <figure><a class="portrait" href="hothead.png"><img src="hothead.png" alt="Hothead nephew snarling beneath a raised cracked visor"></a><figcaption>Nephew · the brawler</figcaption></figure>
+    <figure><a class="portrait" href="hothead-uncle.png"><img src="hothead-uncle.png" alt="Hothead uncle with a scarred scalp, blue eyes, and a fixed glare"></a><figcaption>Uncle · the enforcer</figcaption></figure>
+  </article>
+  <article style="--accent:#934a52"><h2>Collector</h2><p class="trait">Wire spectacles · oxblood gloves</p>
+    <figure><a class="portrait" href="collector.png"><img src="collector.png" alt="Collector nephew wearing wire spectacles and a clean charcoal jacket"></a><figcaption>Nephew · the collector</figcaption></figure>
+    <figure><a class="portrait" href="collector-uncle.png"><img src="collector-uncle.png" alt="Collector uncle lifting cracked spectacles with an oxblood glove"></a><figcaption>Uncle · the accountant</figcaption></figure>
+  </article>
+  <article style="--accent:#59948a"><h2>Scrapper</h2><p class="trait">Amber lenses · green copper</p>
+    <figure><a class="portrait" href="scrapper.png"><img src="scrapper.png" alt="Scrapper nephew with a gap-toothed grin and one amber cybernetic eye"></a><figcaption>Nephew · the scavenger</figcaption></figure>
+    <figure><a class="portrait" href="scrapper-uncle.png"><img src="scrapper-uncle.png" alt="Scrapper uncle with grey locs, two amber lenses, and a copper jaw plate"></a><figcaption>Uncle · the junk king</figcaption></figure>
+  </article>
+  <article style="--accent:#c7bfae"><h2>Fatalist</h2><p class="trait">Line tattoos · bone white</p>
+    <figure><a class="portrait" href="fatalist.png"><img src="fatalist.png" alt="Fatalist nephew with geometric line tattoos and machine-bolt beads"></a><figcaption>Nephew · the fatalist</figcaption></figure>
+    <figure><a class="portrait" href="fatalist-uncle.png"><img src="fatalist-uncle.png" alt="Fatalist uncle with white hair, faded line tattoos, and bone-white armor"></a><figcaption>Uncle · the elder</figcaption></figure>
+  </article>
+</main>
+<footer>1254 × 1254 opaque PNG masters. The crop views use Teo’s existing framing: 75% square, 14.3% from the left and 11.3% from the top. <a href="generation.json">Prompts and generation record</a>.</footer>
+<script>
+  const gallery = document.querySelector('main');
+  for (const img of gallery.querySelectorAll('img')) {
+    img.dataset.slug = img.getAttribute('src').replace(/\.png$/, '');
+    img.dataset.originalAlt = img.alt;
+  }
+  for (const button of document.querySelectorAll('button[data-expression]')) {
+    button.addEventListener('click', () => {
+      const mood = button.dataset.expression;
+      for (const img of gallery.querySelectorAll('img')) {
+        const src = mood === 'original' ? `${img.dataset.slug}.png` : `expressions/${img.dataset.slug}-${mood}.png`;
+        img.src = src; img.parentElement.href = src;
+        img.alt = `${img.dataset.originalAlt}${mood === 'original' ? '' : `, ${mood} expression`}`;
+      }
+      for (const other of document.querySelectorAll('button[data-expression]')) other.setAttribute('aria-pressed', String(other === button));
+    });
+  }
+  for (const button of document.querySelectorAll('button[data-mode]')) {
+    button.addEventListener('click', () => {
+      gallery.dataset.mode = button.dataset.mode;
+      for (const control of document.querySelectorAll('button[data-mode]')) {
+        control.setAttribute('aria-pressed', String(control === button));
+      }
+    });
+  }
+</script>
+</html>

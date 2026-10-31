@@ -113,7 +113,8 @@ fn administration_is_local_and_does_not_reprice_work_already_queued() {
     assert_eq!(w.build_queue[0].work().unwrap().required, waiting, "queued work locks bonuses at receipt");
     finish_head(&mut w);
     queue(&mut w, owner, home, body, K::Warehouse);
-    let recipe = crate::build::recipe_for(BuildKind::Upgrade { upgrade: K::Warehouse });
+    // Warehouse III: on the tier curve (§tier-curve R1).
+    let recipe = crate::build::recipe_for_tier(BuildKind::Upgrade { upgrade: K::Warehouse }, 3);
     assert_eq!(w.build_queue[0].work().unwrap().required,
         (recipe.build_ticks as f64 * original.construction_time_mult() * 0.9).round());
     let unchanged = w.systems.iter().find(|s| s.id == home).unwrap().bodies.iter().find(|b| b.id == other.id).unwrap();

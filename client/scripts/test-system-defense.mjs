@@ -58,11 +58,19 @@ for (const theme of ["deck", "mobile"]) {
   assert.match(html, /defense-assign[^>]*data-fleet="candidate" disabled/);
   assert.match(html, /data-radius="10000" aria-pressed="true"/);
   assert.doesNotMatch(html, /System is safe|Guaranteed|data-fleet="rival"/);
+  // Peter (Oct 28 2026): no build button with nothing to build; the next
+  // station level carries its own once researched.
+  assert.doesNotMatch(html, /Build defenses|defense-build/);
 }
 assert.doesNotMatch(surface.systemDefenseHtml(st, system, report, 10_000, "deck"), /data-radius=/,
   "assignment controls start compact, not a full roster dumped into Overview");
+// Known threats show only once there is one (Peter, Oct 28 2026).
+assert.match(surface.systemDefenseHtml(st, system, report, 10_000, "deck"), /<h4>Known threats<\/h4>.*Rival/s, "a rival contact is a threat");
+const rival = st.ghosts.findIndex(g => g.id === "rival"), [rivalGhost] = st.ghosts.splice(rival, 1);
+assert.doesNotMatch(surface.systemDefenseHtml(st, system, report, 10_000, "deck"), /Known threats|No nearby armed contacts/, "nothing to fear, no section");
 st.timeline.push({ at_time: 50, text: "Pirate raid incoming: Freya — 2 raiders." });
-assert.match(surface.systemDefenseHtml(st, system, report, 10_000, "deck"), /Raid warning received at 50s/);
+assert.match(surface.systemDefenseHtml(st, system, report, 10_000, "deck"), /<h4>Known threats<\/h4>\s*<div class="system-defense-actions"><small>Raid warning received at 50s/, "a raid warning is one");
+st.ghosts.splice(rival, 0, rivalGhost);
 
 st.pendingOrders.clear();
 const commands = load("core/fleetorders.ts", { "./derive/fleet": fleets, "../icons": icons });
@@ -98,8 +106,9 @@ report.owner = "1";
 assert.equal(commands.fleetCommandsValid([{ ...bad, fleet_id: "rival", pursuit_radius: 10_000 }], st), false);
 
 // §orbital-defense: the station as the owner's report shows it.
-assert.equal(station.stationName(5), "Star Fortress");
-assert.equal(station.stationArtUrl(9, 512), "/art/derived/stations/v1/level-5-512.webp", "levels clamp to the ladder");
+assert.equal(station.stationName(1), "Gun Platform", "§gun-platform: the ladder's first level");
+assert.equal(station.stationName(6), "Star Fortress");
+assert.equal(station.stationArtUrl(9, 512), "/art/derived/stations/v2/level-6-512.webp", "levels clamp to the ladder");
 assert.equal(station.mountFitError(["mass_driver", "mass_driver", "whipple_armor"], false), "");
 assert.match(station.mountFitError(["torpedo_rack", "torpedo_rack", "whipple_armor"], false), /needs 9 fitting points; a hardpoint has 8/);
 assert.match(station.mountFitError(["point_defense_screen"], false), /weapons, armour and webs only/);
@@ -108,7 +117,7 @@ assert.equal(station.mountFitError(["prismatic_lance"], true), "");
 assert.match(station.mountFitError(["mass_driver", "mass_driver", "mass_driver", "mass_driver"], false), /three slots/);
 assert.deepEqual(plain(station.refitCrates(["mass_driver"], ["mass_driver", "mass_driver", "prismatic_lance", "whipple_armor"])),
   { mass_driver: 1, whipple_armor: 1 }, "only new crates are drawn; a lance comes with research");
-const citadel = { level: 4, name: "Citadel", body_id: "81", mounts: [
+const citadel = { level: 5, name: "Citadel", body_id: "81", mounts: [
   { modules: ["mass_driver", "mass_driver", "whipple_armor"], health: 1, offline: false },
   { modules: [], health: .6, offline: false },
   { modules: ["torpedo_rack"], health: .1, offline: true },
@@ -117,21 +126,29 @@ assert.equal(station.stationSummary(citadel), "Citadel · 3 of 4 hardpoints firi
 assert.equal(station.stationSummary({ ...citadel, mounts: citadel.mounts.map(m => ({ ...m, offline: true })) }),
   "Citadel · silenced: every hardpoint is out");
 st.galaxy.build_options = [{ key: "orbital_defense", tiers: [
-  { tier: 4, label: "Citadel", description: "Four hardpoints.", research_prerequisite: "weap_cm_v_grand_batteries", requires: { yard: "naval_drydock", tier: 1 } },
-  { tier: 5, label: "Star Fortress", description: "Six hardpoints; one per corporation.", research_prerequisite: "weap_cm_v_star_fortress", requires: { yard: "capital_slipway", tier: 1 } }] }];
+  { tier: 5, label: "Citadel", description: "Four hardpoints.", research_prerequisite: "weap_cm_v_grand_batteries", requires: { yard: "naval_drydock", tier: 1 } },
+  { tier: 6, label: "Star Fortress", description: "Six hardpoints; one per corporation.", research_prerequisite: "weap_cm_v_star_fortress", requires: { yard: "capital_slipway", tier: 1 } }] }];
 st.research = { programmes: [{ id: "weap_cm_v_star_fortress", name: "Star Fortress", state: "available" }] };
 const fortified = { ...report, station: citadel, structures: { naval_drydock: 1 }, modules: { mass_driver: 1 } };
 for (const theme of ["deck", "mobile"]) {
   const html = surface.systemDefenseHtml(st, system, fortified, 10_000, theme);
   assert.match(html, /<span>Citadel · 3 of 4 hardpoints firing · 1 local fleet<\/span>/);
-  assert.match(html, /level-4-256\.webp/);
+  assert.match(html, /level-5-256\.webp/);
   assert.match(html, /Mass Driver ×2 · Whipple Armor · Firing/);
   assert.match(html, /Beam battery \(stock\) · Firing · 60% hull/);
   assert.match(html, /Knocked out · repairing, 10% \(back at 25%\)/);
   assert.match(html, /defense-refit"[^>]*data-mount="0" disabled title="Refitting needs an Ordnance Foundry in the system"/);
-  assert.match(html, /Next: <b>Star Fortress<\/b>.*Needs Star Fortress research and Capital Slipway tier 1 in the system\./);
-  assert.match(html, /Raise to Star Fortress/);
+  // §unlocks (Peter, Oct 28 2026): a level research hasn't opened isn't shown.
+  assert.doesNotMatch(html, /Next:|Star Fortress research|Raise to/);
 }
+st.research.programmes[0].state = "completed";
+for (const theme of ["deck", "mobile"]) {
+  // Researched: Raise opens the build sheet, which names the missing yard;
+  // the level's description is a tooltip.
+  assert.match(surface.systemDefenseHtml(st, system, fortified, 10_000, theme),
+    /<small title="Six hardpoints; one per corporation\.">Next: <b>Star Fortress<\/b><\/small><button type="button" data-(deck|mobile)-act="defense-build" data-system="[^"]*">Raise to Star Fortress<\/button>/);
+}
+st.research.programmes[0].state = "available";
 fortified.structures.ordnance_foundry = 1;
 let draft = surface.stationDraftAction("defense-refit", { mount: "1" }, null, fortified).draft;
 assert.deepEqual(plain(draft), { mount: 1, fit: [] }, "a refit starts from the fitted battery");
@@ -153,7 +170,7 @@ assert.equal(confirmed.draft, null);
 assert.deepEqual(plain(confirmed.send), { type: "FitStation", system_id: "8", mount: 1, fit: ["mass_driver"] });
 assert.equal(surface.stationDraftAction("defense-refit-cancel", { mount: "1" }, draft, fortified).draft, null);
 assert.equal(surface.stationDraftAction("defense-assign", {}, draft, fortified), undefined, "not a refit action");
-assert.match(surface.systemDefenseHtml(st, system, { ...fortified, station: { ...citadel, level: 5, name: "Star Fortress" } }, 10_000, "deck"),
+assert.match(surface.systemDefenseHtml(st, system, { ...fortified, station: { ...citadel, level: 6, name: "Star Fortress" } }, 10_000, "deck"),
   /The Star Fortress is the top of the ladder\./);
 assert.match(surface.systemDefenseHtml(st, system, report, 10_000, "deck"), /2 platform tiers/, "legacy tiers still read as tiers");
 

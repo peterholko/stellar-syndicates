@@ -3,6 +3,7 @@ import type { ViewState } from "./state";
 import { label, structureImage } from "./icons";
 import { WARP_FACTOR } from "./core/derive/fleet";
 import { FOUNDING_SURFACES, planetSurfaceArt, type HabitableSurface } from "./planet-surfaces";
+import { clearStoredInvite, storedInvite } from "./core/derive/social";
 
 export const FOUNDING_STORY = [
   { art: "wormhole-opening-selected", title: "Beyond the Milky Way",
@@ -18,8 +19,9 @@ export const FOUNDING_STORY = [
     text: "The frontier holds danger as well as opportunity. Pirates prey on unguarded ships, and privateers from other charters may come for your hard-won resources. Stay vigilant, protect your trade routes, and be ready to defend your new home.",
     alt: "Pirate and privateer ships fire a few shots at a civilian freighter among asteroids above a frontier world." },
 ] as const;
-const PROFILE_STEP = FOUNDING_STORY.length;
-const LANDING_STEP = PROFILE_STEP + 1;
+/** §founding: after the story, the landing card for the world the server
+ * dealt (no choice: the three home worlds are close in value). */
+const LANDING_STEP = FOUNDING_STORY.length;
 
 export const FOUNDING_PROFILES: { id: FoundingProfile; name: string; terrain: HabitableSurface; opportunity: string; detail: string }[] = [
   { id: "mineral_highlands", name: "Mineral Highlands", terrain: FOUNDING_SURFACES.mineral_highlands, opportunity: "A second mineral to export",
@@ -39,10 +41,6 @@ export const SETTLEMENT_PROJECTS: { id: SettlementProject; key: string; title: s
 
 const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const art = (terrain: HabitableSurface) => planetSurfaceArt(terrain).full;
-const terrainCard = (terrain: HabitableSurface) => {
-  const image = planetSurfaceArt(terrain);
-  return `<img src="${image.src}" srcset="${image.srcset}" sizes="(max-width: 700px) calc(100vw - 60px), 310px" alt="">`;
-};
 const storyImage = (slide: typeof FOUNDING_STORY[number]) => {
   const base = `/art/derived/founding-intro/v1/${slide.art}`;
   return `<img class="settlement-story-image" src="${base}-1280.webp" srcset="${[768, 1280, 1672].map(w => `${base}-${w}.webp ${w}w`).join(", ")}" sizes="(max-width: 1082px) calc(100vw - 32px), 1050px" width="1672" height="941" alt="${esc(slide.alt)}" decoding="async">`;
@@ -65,11 +63,12 @@ export function projectStatus(body: BodyView, system: SystemStateView, project: 
 }
 
 /** One native modal for either shell: no corporation or timer is created by
- * advancing slides, selecting a card, skipping the story, or reconnecting. */
+ * advancing slides, skipping the story, or reconnecting. */
 export class SettlementUI {
   private dialog = document.createElement("dialog");
   private step = 0;
-  private profile: FoundingProfile = "mineral_highlands";
+  /** The home world dealt with the founding offer. */
+  private profile: FoundingProfile | null = null;
   private founding = false;
   private submitting = false;
   private identity = "";
@@ -77,15 +76,19 @@ export class SettlementUI {
   private review: SettlementProject | null = null;
   private notice = "";
   private signature = "";
+  /** §settle-near-friends (R7): the invite this landing redeems, once answered. */
+  private invite: Extract<ServerMsg, { type: "InviteStatus" }> | null = null;
 
   constructor(private state: ViewState, private send: (msg: ClientMsg) => void) {
+    // §settle-near-friends (R7): keep an `?invite=` link's code through sign-in.
+    storedInvite();
     this.dialog.className = "settlement-dialog";
     this.dialog.setAttribute("aria-labelledby", "settlement-title");
     document.body.append(this.dialog);
     this.dialog.addEventListener("cancel", event => {
       if (this.founding) {
         event.preventDefault();
-        if (!this.submitting) { this.step = PROFILE_STEP; this.dialog.scrollTop = 0; this.render(); this.focusTitle(); }
+        if (!this.submitting) { this.step = LANDING_STEP; this.dialog.scrollTop = 0; this.render(); this.focusTitle(); }
       }
     });
     this.dialog.addEventListener("click", event => {
@@ -94,14 +97,13 @@ export class SettlementUI {
       const act = button.dataset.settlementAct;
       if (this.founding && this.submitting) return;
       if (act === "close") { this.dialog.close(); this.site = null; return; }
-      if (act === "skip") this.step = PROFILE_STEP;
+      if (act === "skip") this.step = LANDING_STEP;
       if (act === "next") this.step = Math.min(LANDING_STEP, this.step + 1);
       if (act === "back") this.step = Math.max(0, this.step - 1);
-      if (act === "profile" && FOUNDING_PROFILES.some(p => p.id === button.dataset.profile)) this.profile = button.dataset.profile as FoundingProfile;
       if (act === "land" && this.founding && this.step === LANDING_STEP && !this.submitting && this.state.link === "online") {
         this.submitting = true;
         this.notice = "Landing order sent. Waiting for your colony report…";
-        this.send({ type: "FoundColony", profile: this.profile });
+        this.send({ type: "FoundColony" });
       }
       if (act === "review") this.review = button.dataset.project as SettlementProject;
       if (act === "cancel") this.review = null;
@@ -133,17 +135,24 @@ export class SettlementUI {
   onMessage(msg: ServerMsg): void {
     if (msg.type === "Welcome") {
       const identity = `${msg.galaxy.instance_id}:${msg.player_id}`;
-      if (identity !== this.identity) { this.step = 0; this.profile = "mineral_highlands"; }
+      if (identity !== this.identity) { this.step = 0; this.profile = null; }
       if (identity !== this.identity) { this.founding = false; this.dialog.close(); }
       this.identity = identity; this.site = null; this.submitting = false; this.notice = "";
     }
     if (msg.type === "FoundingOffer") {
-      this.founding = true; this.submitting = false;
+      this.founding = true; this.submitting = false; this.profile = msg.profile;
+      const code = storedInvite();
+      if (code) this.send({ type: "RedeemInvite", code });
       this.render(); if (!this.dialog.open) this.dialog.showModal();
+    }
+    if (msg.type === "InviteStatus") {
+      this.invite = msg;
+      if (!msg.ok) clearStoredInvite();
     }
     if (msg.type === "Error" && this.dialog.open) { this.notice = msg.message; this.submitting = false; }
     if (msg.type === "View" && this.founding && msg.systems.some(s => s.owner === this.state.playerId)) {
       this.founding = false; this.submitting = false; this.dialog.close();
+      clearStoredInvite(); this.invite = null;
     }
     if (this.dialog.open) this.render();
   }
@@ -169,22 +178,24 @@ export class SettlementUI {
   }
 
   private render(): void {
-    const profile = FOUNDING_PROFILES.find(p => p.id === this.profile)!;
+    const profile = FOUNDING_PROFILES.find(p => p.id === this.profile) ?? FOUNDING_PROFILES[0];
     const offline = this.state.link !== "online";
     let html = "";
     if (this.founding) {
       const status = offline ? "Connection lost. You can keep reading; reconnect before confirming settlement."
         : esc(this.notice);
-      const statusLine = status ? `<p${this.step < PROFILE_STEP ? ' class="settlement-muted settlement-story-status"' : ""} role="status">${status}</p>` : "";
-      if (this.step < PROFILE_STEP) {
+      const statusLine = status ? `<p${this.step < LANDING_STEP ? ' class="settlement-muted settlement-story-status"' : ""} role="status">${status}</p>` : "";
+      if (this.step < LANDING_STEP) {
         const slide = FOUNDING_STORY[this.step];
         const caption = slide.text.replace("{corporation}", () => this.state.name?.trim() || "Your corporation");
-        html = `<div class="settlement-story"><header class="settlement-story-header"><div><small>STELLAR SYNDICATES</small><span>Prologue · ${this.step + 1} / ${FOUNDING_STORY.length}</span></div><button type="button" data-settlement-act="skip">Skip story</button></header><figure class="settlement-story-frame">${storyImage(slide)}</figure><div class="settlement-content settlement-story-caption"><h1 id="settlement-title" tabindex="-1">${esc(slide.title)}</h1><p>${esc(caption)}</p>${statusLine}<footer><button type="button" data-settlement-act="back" ${this.step === 0 ? "disabled" : ""}>Back</button><button type="button" class="settlement-primary" data-settlement-act="next">${this.step === PROFILE_STEP - 1 ? "Choose your world" : "Continue"}</button></footer></div></div>`;
+        html = `<div class="settlement-story"><header class="settlement-story-header"><div><small>STELLAR SYNDICATES</small><span>Prologue · ${this.step + 1} / ${FOUNDING_STORY.length}</span></div><button type="button" data-settlement-act="skip">Skip story</button></header><figure class="settlement-story-frame">${storyImage(slide)}</figure><div class="settlement-content settlement-story-caption"><h1 id="settlement-title" tabindex="-1">${esc(slide.title)}</h1><p>${esc(caption)}</p>${statusLine}<footer><button type="button" data-settlement-act="back" ${this.step === 0 ? "disabled" : ""}>Back</button><button type="button" class="settlement-primary" data-settlement-act="next">${this.step === LANDING_STEP - 1 ? "Your world" : "Continue"}</button></footer></div></div>`;
       } else {
-        const landing = this.step === LANDING_STEP;
-        const content = !landing ? `<p>Three habitable home-world profiles. The same supplies and safe opening; a different local opportunity.</p><div class="settlement-choices">${FOUNDING_PROFILES.map(p => `<button type="button" data-settlement-act="profile" data-profile="${p.id}" aria-pressed="${p.id === this.profile}">${terrainCard(p.terrain)}<b>${p.name}</b><span>${p.opportunity}</span><small>${p.detail}</small></button>`).join("")}</div><p class="settlement-muted">Illustrative terrain. Only your selected home is settled; these are not three free colonies. Every profile supports mining, farming and later industry.</p>`
-          : `<p>Your colony ship lands and becomes the Command Center: a 1 MW reactor and holds for 1,000 goods. 6,000 settlers live aboard until you build a Habitat. No ships.</p><div class="settlement-kit">${structureImage("command_center", 1, "lg")}</div><p>2,000 credits · 410 Alloys · 163 Machinery · 40 Polymers · 100 Provisions · 120 Uranium · 10 Deuterium · 15 Armaments · 3 Warp Cores · 40 Semiconductors.</p><p><b>First builds:</b> Bioharvester → Habitat → Agroplex → Mining Complex.</p>`;
-        html = `<div class="settlement-hero" style="--settlement-art:url('${art(profile.terrain)}')"><small>STELLAR SYNDICATES · FOUNDING CHARTER</small><h1 id="settlement-title" tabindex="-1">${landing ? `Settle the ${profile.name}` : "Choose where your story begins"}</h1><span>${landing ? "2 / 2 · Confirm settlement" : "1 / 2 · Choose your world"}</span></div><div class="settlement-content">${content}${statusLine}<footer><button type="button" data-settlement-act="back" ${this.submitting ? "disabled" : ""}>${landing ? "Back" : "Back to story"}</button><button type="button" class="settlement-primary" data-settlement-act="${landing ? "land" : "next"}" ${this.submitting || (landing && offline) ? "disabled" : ""}>${this.submitting ? "Establishing colony…" : landing ? "Confirm settlement" : "Choose this world"}</button></footer></div>`;
+        const content = `<p>Your colony ship lands and becomes the Command Center: a 1 MW reactor and holds for 1,000 goods. 7,000 settlers live aboard until you build a Habitat.</p><div class="settlement-kit">${structureImage("command_center", 1, "lg")}</div><p>Your settlers are counting on you: feed them, then start mining.</p>`;
+        const invite = this.invite;
+        const inviteLine = !invite ? "" : invite.ok
+          ? `<p class="settlement-invite">Invited by <b>${esc(invite.from ?? "a friend")}</b>${invite.near ? ` · home near ${esc(invite.near)}` : ""}${invite.syndicate ? ` · joins ${esc(invite.syndicate)}` : ""}</p>`
+          : `<p class="settlement-invite is-refused">${esc(invite.message ?? "Invite refused.")}</p>`;
+        html = `<div class="settlement-hero" style="--settlement-art:url('${art(profile.terrain)}')"><small>STELLAR SYNDICATES · FOUNDING CHARTER</small><h1 id="settlement-title" tabindex="-1">Settle the ${profile.name}</h1><span>${profile.opportunity}</span></div><div class="settlement-content">${inviteLine}${content}${statusLine}<footer><button type="button" data-settlement-act="back" ${this.submitting ? "disabled" : ""}>Back</button><button type="button" class="settlement-primary" data-settlement-act="land" ${this.submitting || offline ? "disabled" : ""}>${this.submitting ? "Establishing colony…" : "Confirm settlement"}</button></footer></div>`;
       }
     } else {
       const current = this.currentSite();

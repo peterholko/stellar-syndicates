@@ -15,7 +15,7 @@ const PX_PER_UNIT = 1 / 2.24;
 /// arena units per recorded round (one engine step).
 export const MAX_SPEED: Record<ShipKind, number> = {
   convoy: 40, tiny_freighter: 40, small_freighter: 40, large_freighter: 38, heavy_freighter: 34,
-  bulk_freighter: 30, builder: 35, raider: 100, corvette: 65, colony: 33, scout: 115, survey_probe: 120, mining_barge: 30, mining_belt_station: 15, destroyer: 55,
+  bulk_freighter: 30, builder: 35, raider: 100, corvette: 65, colony: 33, scout: 115, survey_probe: 120, mining_barge: 30, mining_belt_station: 15, combat_freighter: 70, destroyer: 55,
   cruiser: 45, battleship: 36, dreadnought: 29, titan: 23, transport: 30, freighter: 32,
 };
 
@@ -36,7 +36,7 @@ export const TURN_RATE: Record<ShipKind, number> = {
   raider: 2.2, scout: 2.4, survey_probe: 2.6, corvette: 1.4, destroyer: 1.0, cruiser: 0.30, battleship: 0.20,
   dreadnought: 0.13, titan: 0.085, tiny_freighter: 1.2, small_freighter: 1.0, convoy: 0.28,
   large_freighter: 0.20, heavy_freighter: 0.14, bulk_freighter: 0.10, freighter: 0.24,
-  colony: 0.24, builder: 0.6, transport: 0.21, mining_barge: 0.5, mining_belt_station: 0.08,
+  colony: 0.24, builder: 0.6, transport: 0.21, mining_barge: 0.5, mining_belt_station: 0.08, combat_freighter: 1.3,
 };
 
 /// Wrap an angle difference into (−π, π].

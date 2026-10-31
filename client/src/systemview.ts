@@ -34,18 +34,18 @@ import type { StarArtGeometry } from "./starart";
 import { planetArtwork, planetArtUrl } from "./planetart";
 import { hashId, mulberry32 } from "./prng";
 import {
-  NEAR_INNER, ORBIT_TILT, PLATFORM_COVER_SU, formatAge, moonPeriod, nearOuterFor, nearRadius,
-  orbitalAngle, planetPeriod,
+  ORBIT_TILT, PLATFORM_COVER_SU, formatAge, moonPeriod, nearOuterFor, orbitalAngle, planetPeriod, trueRadius,
 } from "./systemlayout";
 import {
   drawCityLights, drawOrbitalGlyph, drawRings, glowSpriteTexture, hasRings, orbitalItems, orbitalYardUrl, stationArtUrl,
-  terminatorTexture, towardStarRotation, type OrbitalItem,
+  terminatorTexture, type OrbitalItem,
 } from "./systembodyfx";
 import { StarFx } from "./systemstarfx";
 import { SystemTrafficLayer, type ShipArtResolver, type TrafficModelCandidate, type TrafficPick } from "./systemtrafficlayer";
 import type { SystemPicture } from "./systemtraffic";
 import { hasOrbitalShipConstruction } from "./planet-structure-art";
 import { label } from "./icons";
+import type { TrackingTarget } from "./trackinginset";
 
 // ---- Public presentation data model (client-side, non-authoritative) --------
 
@@ -76,6 +76,9 @@ const SCENE_FIT = 0.42;
 const PLANET_RADIUS_CAP = 0.078;
 /** Furthest the orrery camera may zoom toward a world before the world rung. */
 export const SYSTEM_ZOOM_MAX = 2.8;
+/** §raid-camera: the tracking scene draws its fleets where they really are,
+ * however far out (the orrery holds them at the near zone's edge). */
+const TRACKING_REACH = 1e4;
 
 export interface VisualMoon {
   id: string;
@@ -83,6 +86,8 @@ export interface VisualMoon {
   orbitRadius: number; // normalized units, around its parent planet
   radius: number;
   angle: number;
+  /// §real-coordinates: seconds per turn, as served (else by its place).
+  period?: number;
   deposits: Deposit[];
   /// §bodies: structures ON this moon (owner-only upstream; {} for rivals).
   structures: Record<string, number>;
@@ -95,9 +100,13 @@ export interface VisualPlanet {
   orbitRadius: number; // normalized units, around the star (0 = star, ~0.95 = edge)
   radius: number; // normalized units
   angle: number; // radians (the orbital phase at time 0)
+  /// §real-coordinates: seconds per turn, as served (else Kepler by radius).
+  period?: number;
   moons: VisualMoon[];
   deposits: Deposit[];
   habitable: boolean;
+  /// §research-wiring Xenoacclimation: settled as if habitable.
+  acclimated?: boolean;
   /// §bodies: structures ON this body (owner-only upstream; {} for rivals).
   structures: Record<string, number>;
 }
@@ -187,7 +196,7 @@ export const BELT_META: Record<BeltKindName, { label: string; tint: number; dust
   icy: { label: "Icy belt", tint: 0xd6ecff, dust: 0x8fb6d8, desc: "Frozen rubble — a reservoir of volatiles for fuel and polymers." },
   shattered: { label: "Shattered world", tint: 0xe39a7e, dust: 0x8a5a4c, desc: "The broken crust of a lost planet, rich in metal." },
 };
-const beltKind = (kind: string | undefined): BeltKindName =>
+export const beltKind = (kind: string | undefined): BeltKindName =>
   kind === "metallic" || kind === "icy" || kind === "shattered" ? kind : "stony";
 const CHUNK_ART_FILL = 0.43;
 /// Chunk sprites scattered along each belt ring (over the existing dust dots).
@@ -247,9 +256,10 @@ function bodySizeVisual(size: BodyView["size"]): number {
 // Ownership/dynamic state is added later by the scene — never here.
 export function buildVisualSystem(sys: SystemInfo, bodies: BodyView[]): VisualSystem {
   // §bodies: the ROSTER comes from the wire (the sim owns it — kinds, names,
-  // habitability, deposit placement, moon structure). Only COSMETICS are
-  // derived here, per body, from a stable per-body seed: orbit spacing +
-  // jitter, phases, disc radii, and the visual sub-kind for rocky worlds.
+  // habitability, deposit placement, moon structure). §real-coordinates: so do
+  // the orbits (radius, phase, period), laid out by the sim with this same
+  // seeded draw, which stays as the fallback. Disc radii and the visual
+  // sub-kind for rocky worlds are cosmetics, from a stable per-body seed.
   const st = starTypeFor(sys.id);
   const planets: VisualPlanet[] = [];
   const byId = new Map<number, VisualPlanet>();
@@ -259,16 +269,21 @@ export function buildVisualSystem(sys: SystemInfo, bodies: BodyView[]): VisualSy
     const rng = mulberry32(hashId(`${sys.id}:${b.id}`) ^ 0xc0511c);
     const kind = visualKindFor(b, rng);
     const base = 0.22 + 0.72 * (n === 1 ? 0.5 : i / (n - 1));
+    const jitter = rng();
+    const radius = Math.min(PLANET_RADIUS_CAP, radiusForKind(kind, rng) * bodySizeVisual(b.size));
+    const phase = rng() * Math.PI * 2;
     const p: VisualPlanet = {
       id: String(b.id),
       name: b.name,
       kind,
-      orbitRadius: Math.min(0.95, base + (rng() - 0.5) * 0.03),
-      radius: Math.min(PLANET_RADIUS_CAP, radiusForKind(kind, rng) * bodySizeVisual(b.size)),
-      angle: rng() * Math.PI * 2,
+      orbitRadius: b.orbit?.radius ?? Math.min(0.95, base + (jitter - 0.5) * 0.03),
+      radius,
+      angle: b.orbit?.angle ?? phase,
+      period: b.orbit?.period,
       moons: [],
       deposits: b.deposits ?? [],
       habitable: b.habitable,
+      acclimated: b.acclimated,
       structures: b.structures,
     };
     planets.push(p);
@@ -279,12 +294,16 @@ export function buildVisualSystem(sys: SystemInfo, bodies: BodyView[]): VisualSy
     const parent = byId.get(b.parent);
     if (!parent) continue;
     const rng = mulberry32(hashId(`${sys.id}:${b.id}`) ^ 0xc0511c);
+    const orbit = parent.radius + 0.02 + rng() * 0.014 + parent.moons.length * 0.016;
+    const radius = Math.max(0.009, (0.011 + rng() * 0.006) * bodySizeVisual(b.size));
+    const phase = rng() * Math.PI * 2;
     parent.moons.push({
       id: String(b.id),
       name: b.name,
-      orbitRadius: parent.radius + 0.02 + rng() * 0.014 + parent.moons.length * 0.016,
-      radius: Math.max(0.009, (0.011 + rng() * 0.006) * bodySizeVisual(b.size)),
-      angle: rng() * Math.PI * 2,
+      orbitRadius: b.orbit?.radius ?? orbit,
+      radius,
+      angle: b.orbit?.angle ?? phase,
+      period: b.orbit?.period,
       deposits: b.deposits ?? [],
       structures: b.structures,
     });
@@ -320,8 +339,12 @@ export function buildVisualSystem(sys: SystemInfo, bodies: BodyView[]): VisualSy
 /// The wire's collapsed kind → a stable VISUAL sub-kind (rocky worlds pick a
 /// barren/desert/lava look from their per-body seed; the rest map 1:1).
 function visualKindFor(b: BodyView, rng: () => number): PlanetKind {
-  // Mineral Highlands is a living, habitable plateau, not an airless rock.
-  if (b.founding_camp) return b.founding_camp.profile === "coastal_plains" ? "ocean" : "terrestrial";
+  // Mineral Highlands is a living, habitable plateau, not an airless rock. A
+  // rocky world still makes its look draw first, as the sim's layout does.
+  if (b.founding_camp) {
+    if (b.kind === "rocky") rng();
+    return b.founding_camp.profile === "coastal_plains" ? "ocean" : "terrestrial";
+  }
   switch (b.kind) {
     // §marginal: only a world colonists can settle wears the lush art. Thin or
     // hostile air (such as a Terran world the one-garden rule demoted) reads Marginal.
@@ -336,12 +359,13 @@ function visualKindFor(b: BodyView, rng: () => number): PlanetKind {
   }
 }
 
-/** The same deterministic body artwork used by the System View. */
-export function bodyArtUrl(systemId: string, body: BodyView): string {
-  if (body.kind === "asteroid_belt") return beltChunkUrl(beltKind(body.belt?.kind), 512);
-  if (body.parent !== null) return MOON_ART_URL;
+/** The same deterministic body artwork used by the System View. `px` picks
+ * the smallest stored size that covers it (the World roster's icons ask 80). */
+export function bodyArtUrl(systemId: string, body: BodyView, px = 512): string {
+  if (body.kind === "asteroid_belt") return beltChunkUrl(beltKind(body.belt?.kind), px > 256 ? 512 : 256);
+  if (body.parent !== null) return px === 512 ? MOON_ART_URL : planetArtUrl("moon", px);
   const rng = mulberry32(hashId(`${systemId}:${body.id}`) ^ 0xc0511c);
-  return PLANET_ART_URL(visualKindFor(body, rng));
+  return px === 512 ? PLANET_ART_URL(visualKindFor(body, rng)) : planetArtUrl(visualKindFor(body, rng), px);
 }
 
 // ---- The scene ---------------------------------------------------------------
@@ -497,6 +521,10 @@ export class SystemViewScene {
   private dynBuilds: { key: string; body_id: number }[] = [];
   private devSig = "";
   private report: SystemStateView | null = null;
+  /// §charting: a known pirate base's name, drawn on the belt (`setReport`).
+  private pirateLabel: string | null = null;
+  private pirateText = new Text({ text: "", style: new TextStyle({ fill: 0xe08a2c, fontFamily: "ui-monospace, monospace",
+    fontSize: 10, letterSpacing: 1, dropShadow: { color: 0x02040a, alpha: 0.9, blur: 2, distance: 1 } }) });
   private reportMine = false;
   private statusSig = "";
   private statuses = new Map<number, BodyStatus>();
@@ -550,7 +578,7 @@ export class SystemViewScene {
   private battleIcon: (() => Texture | null) | null = null;
   private haze: Sprite | null = null;
 
-  constructor(private readonly options: { sceneryOnly?: boolean } = {}) {
+  constructor(private readonly options: { sceneryOnly?: boolean; tracking?: boolean } = {}) {
     this.starLayer.addChild(this.starFx.under, this.starGfx, this.starHolder, this.starFx.over);
     this.starLayer.zIndex = 0;
     this.bodyStack.sortableChildren = true;
@@ -560,7 +588,9 @@ export class SystemViewScene {
       this.markers.addChild(this.chipGfx);
       this.hud.addChild(this.header);
     }
-    this.content.addChild(this.worldRoot, this.markers, this.traffic.root, this.overlay, this.labels, this.hud);
+    this.content.addChild(this.worldRoot, this.markers, this.traffic.root, this.overlay, this.pirateText, this.labels, this.hud);
+    this.pirateText.anchor.set(0.5, 1);
+    this.pirateText.visible = false;
     this.root.addChild(this.vignette, this.content);
     this.root.visible = false;
     if (options.sceneryOnly) {
@@ -568,6 +598,16 @@ export class SystemViewScene {
       this.root.eventMode = "none";
       this.vignette.visible = this.markers.visible = this.overlay.visible = this.labels.visible = false;
       this.traffic.root.visible = this.hud.visible = this.coverGfx.visible = false;
+    }
+    if (options.tracking) {
+      // §tracking: the tracking inset's own scene (trackinginset.ts), drawn
+      // off-stage with its own camera: worlds and hulls, never names, chips,
+      // rings or orbit lines.
+      this.root.visible = true;
+      this.root.eventMode = "none";
+      this.vignette.visible = this.markers.visible = this.overlay.visible = this.labels.visible = false;
+      this.hud.visible = this.coverGfx.visible = this.orbitsGfx.visible = false;
+      this.traffic.setBare(true);
     }
     // Non-blocking: fallback circles render immediately; the scene rebuilds
     // once (cached thereafter) when the art lands.
@@ -721,9 +761,8 @@ export class SystemViewScene {
     return this.baseScale;
   }
 
-  /// The near zone's outer radius (normalized): where `nearRadius` puts a
-  /// contact at the defenses' reach. The galaxy map places hulls near a star
-  /// with the same band during the approach.
+  /// The frame's outer radius (normalized): contacts farther out than this
+  /// are held at the edge.
   nearOuterRadius(): number {
     return this.nearOuter;
   }
@@ -742,9 +781,11 @@ export class SystemViewScene {
     this.setStarCounterScale(1);
   }
 
+  /// Drop the world's ring and any pulse still running on it.
   clearSelection(): void {
     this.selected = null;
     this.selectedId = null;
+    this.pulse = null;
   }
 
   /// §bodies: feed the CURRENT wire bodies + queue. Structures/population on
@@ -775,7 +816,10 @@ export class SystemViewScene {
 
   /// The full served system report (owner-only fields fogged upstream) — the
   /// status chips and the occupied-yard art read it. `mine` gates the chips.
-  setReport(report: SystemStateView | null, mine: boolean): void {
+  /** `pirate`: §charting — the name of a pirate base our intel knows here
+   * (the den the Interceptor fights), drawn on the system's belt. */
+  setReport(report: SystemStateView | null, mine: boolean, pirate: string | null = null): void {
+    this.pirateLabel = pirate;
     if (this.options.sceneryOnly) return;
     this.report = report;
     this.reportMine = mine;
@@ -1052,7 +1096,7 @@ export class SystemViewScene {
     const g = this.coverGfx;
     g.clear();
     if (!cover) return;
-    const r = nearRadius(PLATFORM_COVER_SU, NEAR_INNER, this.nearOuter);
+    const r = trueRadius(PLATFORM_COVER_SU, Infinity);
     dashedEllipse(g, r, r * ORBIT_TILT, 72).stroke({ width: 1.2 / this.sceneScale, color: 0xff7a6b, alpha: 0.5 });
   }
 
@@ -1123,12 +1167,12 @@ export class SystemViewScene {
       let py: number;
       let depth: number;
       if (!node.parent) {
-        const a = orbitalAngle(node.baseAngle, planetPeriod(node.orbitRadius), time);
+        const a = orbitalAngle(node.baseAngle, node.planet?.period ?? planetPeriod(node.orbitRadius), time);
         px = Math.cos(a) * node.orbitRadius;
         py = Math.sin(a) * node.orbitRadius * ORBIT_TILT;
         depth = Math.sin(a) * node.orbitRadius;
       } else {
-        const a = orbitalAngle(node.baseAngle, moonPeriod(node.moonIndex), time);
+        const a = orbitalAngle(node.baseAngle, node.moon?.period ?? moonPeriod(node.moonIndex), time);
         px = node.parent.lx + Math.cos(a) * node.orbitRadius;
         py = node.parent.ly + Math.sin(a) * node.orbitRadius * ORBIT_TILT;
         depth = node.parent.z + Math.sin(a) * node.orbitRadius;
@@ -1139,7 +1183,9 @@ export class SystemViewScene {
       node.group.position.set(px, py);
       node.group.zIndex = depth;
       const toStar = Math.atan2(-py, -px);
-      if (node.art) node.art.rotation = towardStarRotation(toStar);
+      // Keep the painted surface and its axis upright. Turning the whole
+      // sprite toward the star makes it cartwheel as it follows its orbit.
+      if (node.art) node.art.rotation = 0;
       if (node.shade) node.shade.rotation = toStar + Math.PI;
       node.lights.rotation = toStar + Math.PI;
       this.poseOrbitals(node, time, scale);
@@ -1153,7 +1199,7 @@ export class SystemViewScene {
       const node = this.nodeById.get(this.selectedId);
       if (node) { this.selected.sx = node.hit.sx; this.selected.sy = node.hit.sy; this.selected.r = node.hit.r; }
     }
-    if (!this.options.sceneryOnly) {
+    if (!this.options.sceneryOnly && !this.options.tracking) {
       this.placeLabels();
       this.drawChips();
     }
@@ -1284,7 +1330,10 @@ export class SystemViewScene {
 
   private planetDetail(p: VisualPlanet): SystemBodyDetail {
     const meta = KIND_META[p.kind];
-    return { id: p.id, name: p.name, kindLabel: meta.label, kindColor: meta.color, isMoon: false, habitable: p.habitable, deposits: p.deposits, description: meta.desc, icon: PLANET_ART_URL(p.kind) };
+    // §research-wiring Xenoacclimation: an acclimated Marginal world settles.
+    const label = p.acclimated ? meta.label.replace("can't be settled", "acclimated") : meta.label;
+    const desc = p.acclimated ? meta.desc.replace("Colonists can't settle it.", "Acclimated settlers live here.") : meta.desc;
+    return { id: p.id, name: p.name, kindLabel: label, kindColor: meta.color, isMoon: false, habitable: p.habitable || !!p.acclimated, deposits: p.deposits, description: desc, icon: PLANET_ART_URL(p.kind) };
   }
   private beltDetail(belt: VisualBelt): SystemBodyDetail {
     const meta = BELT_META[belt.kind];
@@ -1375,6 +1424,28 @@ export class SystemViewScene {
   /// Selected hulls that may swap to the shared live 3D atlas this frame.
   modelCandidates(): TrafficModelCandidate[] {
     return this.options.sceneryOnly ? [] : this.traffic.modelCandidates();
+  }
+
+  /// §tracking: a fleet as this scene draws it, for the tracking inset: its
+  /// place and length (px), and its place in scene units from the star.
+  trackTarget(id: string): TrackingTarget | null {
+    const drawn = this.options.sceneryOnly ? null : this.traffic.trackTarget(id);
+    if (!drawn || !this.sceneScale) return null;
+    return { ...drawn, lx: (drawn.x - this.starLayout.x) / this.sceneScale, ly: (drawn.y - this.starLayout.y) / this.sceneScale };
+  }
+
+  /// §tracking: the tracking scene's camera: `scale` px a unit about a scene
+  /// point in a viewport of its own, beyond the orrery camera's limits. A
+  /// `cut` (a new shot) snaps its hulls rather than easing them across.
+  trackCamera(viewW: number, viewH: number, scale: number, focus: Vec2, cut = false): void {
+    const base = Math.min(viewW, viewH) * SCENE_FIT;
+    if (!(base > 0) || !(scale > 0)) return;
+    if (cut) this.traffic.cut();
+    this.zoom = this.zoomTarget = scale / base;
+    this.focus = { ...focus };
+    this.focusTarget = { ...focus };
+    this.follow = null;
+    this.layout(viewW, viewH, { x: 0, y: 0, w: viewW, h: viewH });
   }
 
   /// §body-management: resolve a VISUAL body id to its detail.
@@ -1553,6 +1624,28 @@ export class SystemViewScene {
       }
     }
 
+    // §charting: a pirate base our intel knows sits on the system's first belt
+    // (the den the Interceptor fights), ringed and named as on the galaxy map.
+    const pirateBelt = this.pirateLabel ? this.vis?.asteroidBelts[0] : undefined;
+    if (pirateBelt && this.pirateLabel) {
+      const a = -Math.PI / 4;
+      const bx = this.worldRoot.position.x + Math.cos(a) * pirateBelt.radius * this.sceneScale;
+      const by = this.worldRoot.position.y + Math.sin(a) * pirateBelt.radius * ORBIT_TILT * this.sceneScale;
+      const rr = 13;
+      for (let i = 0; i < 20; i += 2) {
+        const a0 = (i / 20) * Math.PI * 2;
+        const a1 = ((i + 1) / 20) * Math.PI * 2;
+        g.moveTo(bx + Math.cos(a0) * rr, by + Math.sin(a0) * rr).lineTo(bx + Math.cos(a1) * rr, by + Math.sin(a1) * rr);
+      }
+      g.stroke({ width: 1.4, color: 0xe08a2c, alpha: 0.85 });
+      g.circle(bx, by, 3).fill({ color: 0xe08a2c, alpha: 0.9 });
+      if (this.pirateText.text !== this.pirateLabel) this.pirateText.text = this.pirateLabel;
+      this.pirateText.position.set(bx, by - rr - 2);
+      this.pirateText.visible = true;
+    } else {
+      this.pirateText.visible = false;
+    }
+
     // The light-age stamp: how old this picture of the star is at command.
     const age = this.picture?.age ?? 0;
     const name = (this.vis?.name ?? "").toUpperCase();
@@ -1569,8 +1662,7 @@ export class SystemViewScene {
       dt,
       sceneScale: this.sceneScale,
       center: { x: cx, y: cy },
-      nearInner: NEAR_INNER,
-      nearOuter: this.nearOuter,
+      nearOuter: this.options.tracking ? TRACKING_REACH : this.nearOuter,
       starRadiusPx: starR,
       bounds: this.cameraRect,
       headline: { x: this.center.x, y: this.headlineY() + 16 },

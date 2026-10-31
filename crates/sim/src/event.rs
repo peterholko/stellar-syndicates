@@ -118,6 +118,15 @@ pub enum EventPayload {
         owner: PlayerId,
         kind: ShipKind,
     },
+    /// §welcome (R9): a hull built at `system` left the slip (a finished
+    /// build, never a split or a starting hull). `fleet` is the fleet it
+    /// formed or joined.
+    ShipLaunched {
+        owner: PlayerId,
+        system: EntityId,
+        fleet: EntityId,
+        kind: ShipKind,
+    },
     /// A player's move order finally reached a ship (its outbound light arrived)
     /// and took effect.
     OrderApplied {
@@ -304,6 +313,40 @@ pub enum EventPayload {
     },
     /// A delayed local project instruction failed; private site-origin news.
     IndustryRejected { owner: PlayerId, system: EntityId, reason: String },
+    /// §leave (R4): a corporation went on leave (`on`, until the leave's
+    /// latest end) or came back (`on: false`).
+    LeaveChanged { owner: PlayerId, on: bool, until: f64 },
+    /// §leave: an order refused because its corporation is on leave, or a
+    /// leave that can't start or end yet. Owner-only.
+    LeaveRefused { owner: PlayerId, reason: String },
+    /// §research-grant (R3): a grant bought `secs` of research for `programme`.
+    ResearchFunded { owner: PlayerId, programme: String, secs: f64, credits: f64 },
+    /// §research-grant: a grant refused. Owner-only.
+    ResearchGrantRefused { owner: PlayerId, reason: String },
+    /// §research-wiring Salvage Rigs: modules hauled out of a battle's wrecks
+    /// into `fleet`'s crate berths; `left` found no berth. Owner-only,
+    /// light-delayed from the battle.
+    WrecksSalvaged {
+        owner: PlayerId,
+        fleet: EntityId,
+        modules: Vec<(crate::module::ModuleKind, u32)>,
+        #[serde(default)]
+        left: u32,
+        pos: crate::math::Vec2,
+    },
+    /// §research-wiring Boarding Parties: a stripped convoy's freighters taken
+    /// as a prize fleet. Owner-only, light-delayed from the fight.
+    PrizeTaken {
+        owner: PlayerId,
+        victim: PlayerId,
+        fleet: EntityId,
+        hulls: u32,
+        pos: crate::math::Vec2,
+    },
+    /// §designations (R2): a capability pointed at its target. Owner-only.
+    DesignationSet { owner: PlayerId, cap: crate::research::Cap, target: crate::research::DesignationTarget },
+    /// §designations: a designation refused. Owner-only.
+    DesignationRefused { owner: PlayerId, reason: String },
     /// §construction: a waiting structure order was cancelled at its world and
     /// its goods returned to the system stockpile. Private site-origin news.
     BuildCancelled {
@@ -320,6 +363,19 @@ pub enum EventPayload {
         owner: PlayerId,
         system: EntityId,
         pos: crate::math::Vec2,
+    },
+    /// §scouting (Peter, Oct 28 2026, Travian's counter-scouting): a rival
+    /// Scout came within range of `owner`'s `system` and met its
+    /// counter-scouting (`World::counter_scouting`). `blocked`: the defence held,
+    /// so the probe read nothing. The system's owner hears of it whenever it had
+    /// any defence (a probe with none passes unseen); `by`, the prober, hears
+    /// only of a block. Both light-delayed from `pos`; once per approach.
+    ScoutContest {
+        by: PlayerId,
+        owner: PlayerId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+        blocked: bool,
     },
     /// A SCOUT captured an intel snapshot of a rival system's fortifications
     /// (§scout part 2). OWNER-ONLY: the knowledge exists on the scout at `pos`
@@ -582,6 +638,12 @@ pub enum EventPayload {
         owner: PlayerId,
         day: u64,
         credits: f64,
+        /// §standing-ladder (R3): standing that landed (after the daily allowance).
+        #[serde(default)]
+        standing: f64,
+        /// §standing-ladder: the programme the bonus dossier went to.
+        #[serde(default)]
+        dossier: Option<String>,
     },
     /// §signals: the Command Center picked up a faint signal near home.
     /// Owner-only.
@@ -612,12 +674,89 @@ pub enum EventPayload {
         category: crate::rankings::RankingCategory,
         place: u8,
     },
+    /// §captain-gear (R14): gear found in a cleared pirate site's cache,
+    /// now in the owner's armory.
+    GearFound {
+        owner: PlayerId,
+        gear: crate::captain::Gear,
+        system: EntityId,
+        pos: crate::math::Vec2,
+    },
+    /// §syndicate-projects (R6): a rung of the week's ladder was finished
+    /// (members' news, by the Authority relay).
+    SyndicateRungFinished {
+        syndicate: crate::ids::SyndicateId,
+        week: u32,
+        rung: u8,
+        points: u32,
+    },
+    /// A manager spent project points on a bonus level.
+    SyndicateBonusRaised {
+        syndicate: crate::ids::SyndicateId,
+        bonus: crate::syndicate::SyndicateBonus,
+        level: u8,
+    },
+    /// A syndicate placed in the week's projects (origin: the hub).
+    SyndicateMedalWon {
+        syndicate: crate::ids::SyndicateId,
+        week: u32,
+        place: u8,
+    },
     /// §founding R6/R10: the Authority paid a charter stipend for a founding
     /// milestone or a charter-ledger goal. Owner-only, stamped when earned.
     CharterStipend {
         owner: PlayerId,
         title: String,
         credits: f64,
+        /// §standing-ladder (R3): ledger goals pay standing (what landed)…
+        #[serde(default)]
+        standing: f64,
+        /// …and a research dossier (the programme it went to).
+        #[serde(default)]
+        dossier: Option<String>,
+    },
+    /// §player-styles: `owner`'s sensors first saw a fleet of `by`'s bound for
+    /// its `system` on a raid or blockade, once a trip. To `owner`,
+    /// light-delayed from where it was seen; `eta` is when it should arrive.
+    RaidSighted {
+        owner: PlayerId,
+        by: PlayerId,
+        system: EntityId,
+        fleet: EntityId,
+        ships: u32,
+        pos: crate::math::Vec2,
+        #[serde(default)]
+        eta: Option<f64>,
+    },
+    /// §player-styles: a pirate crew set up a hideout near `owner`'s home.
+    /// Owner-only, on its own clock (command learns of it at once).
+    PirateHideoutSpotted {
+        owner: PlayerId,
+        system: EntityId,
+        tier: u32,
+        pos: crate::math::Vec2,
+    },
+    /// §player-styles: a repeating raid stopped by itself, at home. Owner-only.
+    RaidRepeatStopped {
+        owner: PlayerId,
+        fleet: EntityId,
+        system: EntityId,
+        reason: RepeatStop,
+    },
+    /// §player-styles: a raid by `by` turned home from `owner`'s system because
+    /// `owner` has lost a day's limit to raids. To the raider, light-delayed
+    /// from the system.
+    RaidCapped {
+        by: PlayerId,
+        owner: PlayerId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+    },
+    /// §charter-crates: a charter crate was collected into the home
+    /// stockpile. Owner-only, on its own clock, like a stipend.
+    CharterCrateCollected {
+        owner: PlayerId,
+        charter_crate: crate::founding::CharterCrate,
     },
     /// §merchant: the traveling merchant docked at a corporation's home and
     /// is trading. Owner-only.
@@ -639,6 +778,13 @@ pub enum EventPayload {
         owner: PlayerId,
         system: EntityId,
         reason: String,
+    },
+    /// §treasury: an order the treasury couldn't pay for, refused at home as
+    /// it was given (`what` names it: "2 Lance Arrays"). Owner-only.
+    PaymentRefused {
+        owner: PlayerId,
+        what: String,
+        cost: f64,
     },
     /// §merchant: the merchant left (charter fulfilled or its stay ran out).
     MerchantDeparted {
@@ -663,6 +809,9 @@ pub enum EventPayload {
         system: EntityId,
         pos: crate::math::Vec2,
         plunder: std::collections::BTreeMap<crate::cargo::Commodity, u32>,
+        /// §player-styles: a founder's personal hideout, which no crew retakes.
+        #[serde(default)]
+        personal: bool,
     },
     /// A pirate pack deliberately broadcasts its threat from `pos`. The target
     /// hears it only after normal propagation; this is not a truth-side alert.
@@ -847,6 +996,10 @@ pub enum EventPayload {
         owner: PlayerId,
         needed: f64,
         kind: crate::fuel::ShortfallKind,
+        /// §log: priced when the order was given, and it goes anyway: a
+        /// warning that it may run dry, not a fleet held for want of fuel.
+        #[serde(default)]
+        warning: bool,
     },
     /// §fuel-overhaul: a fleet ran its regime's store dry under way and switched
     /// to its other store (`to`: Slow on Uranium, or Full on Deuterium).
@@ -972,6 +1125,144 @@ pub enum EventPayload {
         occurred_at: f64,
     },
 
+    /// §season: after a big Hub trade the Authority demands a levy rise.
+    /// Owner-only, from the Hub. Unanswered by `due`, it is accepted.
+    LevyRiseDemanded {
+        owner: PlayerId,
+        points: f64,
+        commodity: Commodity,
+        trade: f64,
+        due: f64,
+    },
+    /// §season: a levy rise answered at the Hub. Accepted: `levy` is the levy
+    /// now. Refused: `commodity` is embargoed until `arrears` are paid.
+    LevyAnswered {
+        owner: PlayerId,
+        accepted: bool,
+        by_default: bool,
+        levy: f64,
+        commodity: Commodity,
+        arrears: f64,
+    },
+    /// §season: arrears paid; the embargo on `commodity` is lifted.
+    EmbargoLifted {
+        owner: PlayerId,
+        commodity: Commodity,
+        arrears: f64,
+    },
+    /// §season: the Authority requisitions goods or credits by `due`.
+    RequisitionIssued {
+        owner: PlayerId,
+        id: u64,
+        demand: crate::season::Demand,
+        due: f64,
+    },
+    /// §season: a requisition paid or refused. Refused: standing lost, the
+    /// levy raised, and `enforced` when it brings a squadron.
+    RequisitionSettled {
+        owner: PlayerId,
+        id: u64,
+        demand: crate::season::Demand,
+        paid: bool,
+        by_default: bool,
+        enforced: bool,
+    },
+
+    /// §season: the Authority decreed a tighter grip. A public bulletin from
+    /// the Market Hub (`origin`), heard by every corporation on its light.
+    Decree {
+        grip: crate::season::Grip,
+        maturity: f64,
+        /// The emergency decree: the galaxy's Resolve brought it early.
+        #[serde(default)]
+        emergency: bool,
+    },
+    /// §season: a corporation's Resolve reached 50% or 100%. Owner-only, at home.
+    ResolveMilestone {
+        owner: PlayerId,
+        resolve: f64,
+    },
+    /// §season: the Authority cracks down. A public bulletin from the Hub.
+    CrackdownBegan {
+        id: u64,
+        kind: crate::season::CrackdownKind,
+        system: Option<EntityId>,
+        target: Option<PlayerId>,
+        until: f64,
+        /// Evidence at the scene can be found until then (0: none).
+        evidence_until: f64,
+    },
+    /// §season: a Scout's evidence exposed a staged crackdown. Public.
+    CrackdownExposed {
+        id: u64,
+        kind: crate::season::CrackdownKind,
+        by: PlayerId,
+    },
+    /// §season: a relic woke. Public, from the relic.
+    RelicWoke {
+        system: EntityId,
+        pos: crate::math::Vec2,
+    },
+    /// §season: a full relic gave its holder a bearing toward a sealed world.
+    /// Owner-only, from the relic.
+    BearingDrawn {
+        owner: PlayerId,
+        relic: EntityId,
+        angle: f64,
+    },
+    /// §season: a sealed Precursor world found — to the finder's circle, from
+    /// the world. Its guardians wake.
+    PrecursorFound {
+        owner: PlayerId,
+        system: EntityId,
+        body: u32,
+        finder: PlayerId,
+    },
+    /// §season: an Authority spy in your syndicate: the Authority will know at
+    /// `war_at`. Owner-only, at home.
+    SpyLeak {
+        owner: PlayerId,
+        war_at: f64,
+    },
+    /// §season: a Keystone rose (or fell) a level. Public, from its world.
+    KeystoneLevel {
+        holder: PlayerId,
+        system: EntityId,
+        level: u32,
+        /// It fell (a siege knocked it down).
+        fell: bool,
+    },
+    /// §season: a Keystone fed — `paid` goods toward its next level.
+    /// Owner-only, from the world.
+    KeystoneFed {
+        owner: PlayerId,
+        system: EntityId,
+        commodity: Commodity,
+        units: u32,
+    },
+    /// §season: Gate Step moved a fleet at once. Owner-only.
+    GateStepped {
+        owner: PlayerId,
+        fleet: EntityId,
+        system: EntityId,
+    },
+    /// §season: the season ended. Public, from the Hub.
+    SeasonEnded {
+        ending: crate::season::Ending,
+    },
+    /// §season: permanent war with the Authority. Public, from the Hub.
+    AuthorityWar {
+        owner: PlayerId,
+    },
+    /// §season: a Scout read a scene's evidence: it was real. Owner-only,
+    /// from the scene.
+    EvidenceRead {
+        owner: PlayerId,
+        id: u64,
+        kind: crate::season::CrackdownKind,
+        staged: bool,
+    },
+
     /// §TCA Phase 2: an ENFORCEMENT EXPEDITION was dispatched against a PROSCRIBED
     /// corporation. A PUBLIC bulletin from the Market Hub, exactly like a
     /// citation — the announcement IS the lead time, since the squadron has to fly
@@ -1019,6 +1310,20 @@ pub enum EventPayload {
         system: EntityId,
         pos: crate::math::Vec2,
         plunder: std::collections::BTreeMap<Commodity, u32>,
+    },
+
+    /// §vendetta: a turn of the pirate family's story, sent from `pos` on its
+    /// light to the founder's command center (`docs/pirate-vendetta.md`).
+    /// `stolen` is what the uncle got away with (`Lost` and `Fallen`);
+    /// `wreck` what a strike raider wrecked (`Wrecked`). Owner-only.
+    Vendetta {
+        owner: PlayerId,
+        beat: crate::founding::VendettaBeat,
+        pos: crate::math::Vec2,
+        #[serde(default)]
+        stolen: std::collections::BTreeMap<Commodity, u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wreck: Option<crate::founding::Wreck>,
     },
 }
 
@@ -1282,6 +1587,24 @@ impl TradeEvent {
     }
 }
 
+/// §player-styles: why a repeating raid stopped by itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepeatStop {
+    /// The last trip came home empty.
+    Empty,
+    /// The last trip lost a hull.
+    LostShips,
+    /// The victim has lost a day's limit.
+    Capped,
+    /// The target can't be raided now (protection, leave, a pact, a new owner).
+    Refused,
+    /// Home has no fuel for the next trip.
+    NoFuel,
+    /// Home's storage couldn't take the last trip's loot.
+    StoresFull,
+}
+
 /// The result of a battle (§8). One seeded roll per battle; both sides observe
 /// the same result, just light-delayed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1415,6 +1738,9 @@ pub enum TradeRejectReason {
     /// Resting orders are grandfathered, and your warehouse is still yours to
     /// fetch from; you simply cannot trade here.
     CharterRevoked,
+    /// §season: the Authority embargoed this good for you (a refused levy
+    /// rise) until the arrears are paid.
+    Embargoed,
 }
 
 /// Why a fleet ORDER was soft-rejected. Owner-only: the order may fail at
@@ -1435,6 +1761,8 @@ pub enum OrderRejectReason {
     TargetInGravityWell,
     /// PvP is withheld during founder protection. PvE remains legal.
     FounderProtection,
+    /// §leave (R4): the target's corporation is on leave.
+    OnLeave,
     /// A syndicate pact, non-aggression agreement, ceasefire, or separation
     /// window currently protects the target.
     DiplomaticProtection,
@@ -1459,11 +1787,17 @@ pub enum OrderRejectReason {
     NeedsInterceptor,
     /// Only a system another corporation owns can be blockaded.
     NotRivalTerritory,
+    /// §raid-order: a raid needs a hold to carry the loot.
+    NeedsHold,
     /// A standing blockade was called off: the war or right of reprisal that
     /// allowed it has ended (a treaty, a capture, an expired window).
     HostilitiesEnded,
     /// §belts: an anchored Mining Belt Station can't move until it unanchors.
     StationAnchored,
+    /// §log: an industry order (mining, skimming, a route, a station load)
+    /// that the fleet can't carry out where it is. It used to read as
+    /// "conditions changed before the signal reached the fleet".
+    IndustryRefused,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1497,7 +1831,7 @@ impl Event {
             RaidResolved { pos, .. } | SystemClaimed { pos, .. }
             | ShipDestroyed { pos, .. } | EmplacementDestroyed { pos, .. }
             | FlagshipDestroyed { pos, .. } | ColonyHeld { pos, .. }
-            | IntelGathered { pos, .. } | AssaultHeld { pos, .. }
+            | IntelGathered { pos, .. } | ScoutContest { pos, .. } | AssaultHeld { pos, .. }
             | AssaultBegan { pos, .. } | AssaultRepulsed { pos, .. }
             | SystemPlundered { pos, .. } | ModulesLost { pos, .. }
             | SpecialistsLost { pos, .. } | PirateEnclaveCleared { pos, .. }
@@ -1514,11 +1848,13 @@ impl Event {
             | Citation { pos, .. } | EnforcementDispatched { pos, .. }
             | EnforcementWithdrawn { pos, .. } | JumpFailed { pos, .. }
             | InterdictionRaised { pos, .. } | InterdictionCollapsed { pos, .. }
-            | FoundingRaided { pos, .. } => Some(*pos),
+            | FoundingRaided { pos, .. } | Vendetta { pos, .. } | GearFound { pos, .. }
+            | WrecksSalvaged { pos, .. } | PrizeTaken { pos, .. } | RaidCapped { pos, .. }
+            | RaidSighted { pos, .. } => Some(*pos),
             BuildStarted { system, .. } | SystemUpgraded { system, .. } | StationRefitted { system, .. }
             | SettlementDeveloped { system, .. }
             | BuildRejected { system, .. } | IndustryRejected { system, .. } | BuildCancelled { system, .. }
-            | SpecialistTrained { system, .. }
+            | SpecialistTrained { system, .. } | ShipLaunched { system, .. }
             | ModuleBuilt { system, .. } | ShipsRefitted { system, .. }
             | GarrisonSupplyStateChanged { system, .. } | FleetRepaired { system, .. }
             | ModulesDelivered { system, .. } | SpecialistsDelivered { system, .. }

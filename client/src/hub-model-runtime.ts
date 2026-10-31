@@ -1,5 +1,5 @@
 // Dynamically imported only while the Market Hub is close and on screen. One
-// small WebGL context renders the Authority Nexus into a tile, which Pixi
+// small WebGL context renders the Wormhole Hub into a tile, which Pixi
 // composites in place of the flat hub sprite. No DOM overlay.
 import * as THREE from "three";
 import type { ShipKind } from "./protocol";
@@ -11,7 +11,7 @@ import { createWormholeTraffic, type TrafficShip, type WormholeTraffic } from ".
 
 /** The traffic's hulls are the game's own LOD2 models (convoy is the Medium Freighter). */
 const TRAFFIC_HULLS: Record<TrafficShip, ShipKind> = {
-  interceptor: "raider", "tiny-freighter": "tiny_freighter", "small-freighter": "small_freighter", "medium-freighter": "convoy",
+  "tiny-freighter": "tiny_freighter", "small-freighter": "small_freighter", "medium-freighter": "convoy",
 };
 
 export class HubModelRuntime {

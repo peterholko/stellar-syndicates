@@ -149,6 +149,7 @@ impl World {
         let id = self.alloc_entity_id();
         let mut fleet = Fleet::single(id, PlayerId::PIRATE, kind, pos, order, None);
         fleet.reset_to(kind, count); // full hull; weaker guns, never pre-damage
+        fleet.fill_stores();
         fleet.operation_privateer = true;
         self.fleets.insert(id, fleet);
         events.push(Event::new(self.time, EventPayload::ShipSpawned { id, owner: PlayerId::PIRATE, kind }));
@@ -185,6 +186,7 @@ impl World {
                     let Some(charge_id) = encounter.protected_fleet else { continue; };
                     let Some(charge) = self.fleets.get(&charge_id).filter(|f| f.owner == player) else { continue; };
                     let charge_pos = charge.pos;
+                    let charge_docked = self.fleet_at_dock(charge, destination);
                     let escort_near = ship.pos.distance(charge_pos) <= crate::operation::ESCORT_RADIUS;
                     let guarding = matches!(ship.order, FleetOrder::Guard { target } if target == charge_id)
                         || ship.defense.as_ref().is_some_and(|d| d.guard == Some(charge_id));
@@ -218,8 +220,7 @@ impl World {
                     // A stationary ship already at the hub cannot cash an escort.
                     // It must stage at home, physically depart, and arrive alive
                     // alongside its actual escort. Combat is not a mandatory kill.
-                    if encounter.launched && escort_near && guarding
-                        && charge_pos.distance(destination) <= crate::ship::DOCK_RADIUS {
+                    if encounter.launched && escort_near && guarding && charge_docked {
                         self.operations.get_mut(&id).unwrap().contribution_mut(player).escort += 100;
                         self.complete_operation(id, Some(player), destination, events);
                     }

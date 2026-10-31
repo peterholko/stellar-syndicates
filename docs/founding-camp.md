@@ -3,7 +3,7 @@
 ## Entry flow
 
 New human corporations get a shared desktop/mobile, four-scene illustrated
-prologue before the existing world-profile choice and settlement confirmation:
+prologue before the settlement confirmation:
 
 1. **Beyond the Milky Way:** humanity opens a wormhole to another galaxy.
 2. **Your stellar charter:** a corporation receives the right to settle a planet.
@@ -17,9 +17,9 @@ masters and generation prompts are preserved in
 desktop and phone screens; no story text is baked into the paintings.
 
 Slides advance manually with Back / Continue; Skip story and Escape go to the
-profile choice, not straight into the simulation. Selection and back navigation
-are local drafts. Reading can continue offline, but landing confirmation
-requires a connection. Reconnection retains the current slide or profile draft.
+landing card, not straight into the simulation. Navigation is a local draft.
+Reading can continue offline, but landing confirmation requires a connection.
+Reconnection retains the current slide.
 
 The authenticated account's corporation is created only after **Confirm
 settlement**. Reading the introduction does not consume that corporation's
@@ -28,7 +28,16 @@ clicks and reconnects; an accepted, pending landing command also survives a
 checkpoint. The client closes the introduction on its received colony report,
 not an optimistic timer.
 
-## One home, three profiles
+## One home, three profiles, dealt
+
+Peter (Oct 21 2026): the three are close in value, so they are not a choice.
+The server deals each account one at random per galaxy
+(`GameLoop::dealt_profile`, FNV-1a over the galaxy instance and player id, so
+a reset deals afresh even from the same seed and a reconnect keeps the draw).
+`FoundingOffer.profile` names it, the landing card shows it ("Settle the
+Verdant Lowlands", its terrain and opportunity), and `FoundColony` carries no
+choice (protocol v57). Until then the player picked one on a "Choose your
+world" step, which defaulted to Mineral Highlands.
 
 These are alternative profiles for the allocated home world, not three free
 colonies. Whole-system ownership and galaxy geography are unchanged. No extra

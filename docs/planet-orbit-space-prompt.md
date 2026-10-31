@@ -105,3 +105,15 @@ the new space has fewer stars than the original sky on most worlds (about half
 to nine-tenths as many), and faint 1–2-level rectangular patches show only when
 the image is brightened about tenfold.
 
+## Barren v2 (Oct 28 2026)
+
+Peter wanted the baked-in pads gone from the Barren painting (moons and
+barren worlds use it). `barren-surface-v2.png` is v1 with the pads, roads,
+lights, terraced quarry and spoil heaps removed (his image model, one edit
+prompt; camera, horizon, sky and ridges unchanged). Its orbit version
+`barren-surface-v2-orbit.png` is v1's approved 240-row space strip over the new
+ground: the skies differ by about one level, so the join doesn't show, and the
+bottom 941 rows are pixel-identical to v2. `build-planet-workbench-art.mjs`
+picks the master per kind (`SURFACE_VERSION`), and `build-planet-sites.mjs`
+regenerated Barren's sites: 24 of 24 on clean open land.
+

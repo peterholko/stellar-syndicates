@@ -16,25 +16,36 @@ function compile(text, globals = {}) {
   return exports;
 }
 const generated = compile(await source("ship-art.generated.ts"));
-const art = compile(await source("shipart.ts"), { require: () => generated });
+const protocol = compile(await source("protocol.ts"));
+const art = compile(await source("shipart.ts"), { require: id => id === "./protocol" ? protocol : generated });
 const close = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-9,
   `${message}: ${actual} != ${expected}`);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const manifest = JSON.parse(await readFile(new URL("public/art/derived/ships/models-v1/manifest.json", client), "utf8"));
 const kinds = ["raider", "convoy", "scout", "corvette", "colony", "builder", "transport",
   "destroyer", "cruiser", "battleship", "dreadnought", "titan", "freighter",
-  "tiny_freighter", "small_freighter", "large_freighter", "heavy_freighter", "bulk_freighter", "mining_barge", "mining_belt_station",
-  "free_trader"];
+  "tiny_freighter", "combat_freighter", "small_freighter", "large_freighter", "heavy_freighter", "bulk_freighter", "mining_barge", "mining_belt_station",
+  "free_trader", "clean_slate", "second_wind", "small_fortune"];
 // The Survey Probe still borrows Scout art; every other kind has its own master.
 const standIns = { survey_probe: "scout" };
 assert.deepEqual(Object.keys(generated.SHIP_ART).sort(), [...kinds, ...Object.keys(standIns)].sort());
 for (const [kind, from] of Object.entries(standIns)) assert.deepEqual(generated.SHIP_ART[kind], generated.SHIP_ART[from]);
 assert.notDeepEqual(generated.SHIP_ART.mining_barge, generated.SHIP_ART.small_freighter, "Mining Barge has its own art");
 assert.notDeepEqual(generated.SHIP_ART.mining_belt_station, generated.SHIP_ART.builder, "Mining Belt Station has its own art");
+assert.notDeepEqual(generated.SHIP_ART.combat_freighter, generated.SHIP_ART.tiny_freighter, "Combat Freighter has its own art");
+assert.equal(manifest.ships.combat_freighter.referenceRatio, manifest.ships.tiny_freighter.referenceRatio,
+  "Combat Freighter keeps its established civilian padding calibration");
 // §merchant: the free trader's own art, at the footprint of the Authority
 // Freighter hull it flies as in the sim.
 assert.notDeepEqual(generated.SHIP_ART.free_trader.levels, generated.SHIP_ART.freighter.levels, "Free Trader has its own art");
 assert.equal(manifest.ships.free_trader.referenceRatio, manifest.ships.freighter.referenceRatio, "Free Trader keeps the Authority Freighter's footprint");
+// §traders: each trader flies their own ship, at the same footprint.
+for (const [trader, kind] of [["teo", "free_trader"], ["ines", "clean_slate"], ["mags", "second_wind"], ["rafi", "small_fortune"]]) {
+  assert.equal(art.fleetArtKind({ kind: "freighter", merchant: true, trader }), kind, `${trader} flies ${kind}`);
+  assert.equal(manifest.ships[kind].referenceRatio, manifest.ships.freighter.referenceRatio, `${kind} keeps the Authority Freighter's footprint`);
+}
+assert.equal(art.fleetArtKind({ kind: "freighter", merchant: true }), "free_trader", "Teo's ship until the server names the trader");
+for (const kind of ["clean_slate", "second_wind", "small_fortune"]) assert.notDeepEqual(generated.SHIP_ART[kind].levels, generated.SHIP_ART.free_trader.levels, `${kind} has its own art`);
 let checked = 0;
 for (const kind of kinds) {
   const hull = manifest.ships[kind];

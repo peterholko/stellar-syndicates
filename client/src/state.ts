@@ -3,10 +3,11 @@
 // verification); in M3 it becomes a delayed, fogged picture.
 
 import type {
-  EmplacementView, InterdictionFieldView, AnchorView, CaptainRosterView, CharterLedgerView, CharterView, FleetDoctrine, FoundingView, FreightView, GalaxyInfo, GhostView, JumpDepartureView, MarketView, MerchantView, PathPointView, PendingOrderView, PlayerId, StandingOrder, DepotRule, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
+  EmplacementView, WelcomeBackView, InterdictionFieldView, AnchorView, CaptainRosterView, CharterLedgerView, CharterView, FleetDoctrine, FoundingView, LeaveView, RaidLossView, FreightView, GalaxyInfo, GhostView, JumpDepartureView, MarketView, MerchantView, PathPointView, PendingOrderView, PlayerId, StandingOrder, DepotRule, SystemStateView, TimelineEntry, Vec2, WalletView } from "./protocol";
 import { defaultDoctrine } from "./protocol";
 import type { FleetCommand } from "./core/fleetorders";
 import { emptyTransactions, type TransactionHistoryState } from "./core/derive/transactions";
+import type { StoryKey } from "./story-events";
 
 export type LinkStatus = "connecting" | "reconnecting" | "online" | "offline";
 
@@ -100,6 +101,10 @@ export interface PendingIntent {
   /// Frozen control payloads, sent only by Confirm (never on a setting click).
   commands?: FleetCommand[];
   commander?: PlayerId | null;
+  /// §raid-order: a blockade that loads until full, then comes home.
+  raid?: boolean;
+  /** §player-styles: a raid that sets out again after each trip home. */
+  repeat?: boolean;
 }
 
 // NOTE: a raid result has NO inbound travelling signal. The map IS the inbound
@@ -148,7 +153,12 @@ export interface ViewState {
   priceHistory: Record<string, number[]>;
   /// Sim-time of the last price-history sample, to throttle accumulation.
   lastPriceSampleAt: number;
+  /// The Market Hub account report (warehouse, orders, equity): null until
+  /// its light first arrives.
   wallet: WalletView | null;
+  /// §treasury: the credits at the command center, known at once (even
+  /// before the Hub's first report). Null before the corporation exists.
+  credits: number | null;
   transactions: TransactionHistoryState;
   /// §TCA: the Market Hub freight desk — timetable, per-destination terms, and
   /// the player's OWN shipment queue. Owner-only, fresh from the View.
@@ -159,6 +169,10 @@ export interface ViewState {
   founding: FoundingView | null;
   /// §founding R10: the charter ledger once it opens (first guarded export).
   charterLedger: CharterLedgerView | null;
+  /** §leave (R4): the viewer's own leave. */
+  leave: LeaveView | null;
+  /** §player-styles: today's raid losses against the daily loot cap. */
+  raidLosses: RaidLossView | null;
   /** §merchant: the traveling merchant serving your home, while it's here. */
   merchant: MerchantView | null;
   /** §founding R7: the scripted Privateer's id, kept after the bounty report
@@ -166,6 +180,8 @@ export interface ViewState {
   lastFoundingPrivateer: string | null;
   /// §perf Part B: the static charter band ladder — arrives once in Welcome.
   charterLadder: [string, number][];
+  /** §standing-ladder (R3): the grades above full standing (Welcome). */
+  gradeLadder: [string, number][];
   /// §perf Part B: the static research programme catalog — arrives once in
   /// Welcome; the View's dynamic research slice joins onto it by id.
   researchCatalog: import("./protocol").ProgrammeInfo[];
@@ -207,6 +223,10 @@ export interface ViewState {
   diplomacy: import("./protocol").DiplomacyView | null;
   /// §rankings: the PUBLISHED leaderboard (public snapshot on the ledger close).
   rankings: import("./protocol").RankingRow[];
+  /** §syndicate-projects (R6): the published syndicates' table. */
+  syndicateRankings: import("./protocol").SyndicateRankingRow[];
+  /** §social (R5): channel, mail and presence (null until the first Sections). */
+  social: import("./protocol").SocialView | null;
   /// §research R6: the viewer's OWN research picture (null if unaffiliated).
   research: import("./protocol").ResearchView | null;
   /// Battle/capture identities the player has opened or dismissed. Dismissal
@@ -221,10 +241,20 @@ export interface ViewState {
   /// Whether `awaySince` has been latched this session (so live re-sends don't
   /// move the boundary).
   awaySet: boolean;
+  /** §welcome (R9): the server's report on return, latched with `awaySince`. */
+  welcome: WelcomeBackView | null;
   /// §charter-v4: story turns already told — their pop-up shown this session,
   /// or their news met in an earlier one. The guide names what a turn reveals
   /// (the free trader) only once it has been told.
-  storyTold: Set<"free_trader" | "pirates">;
+  storyTold: Set<StoryKey>;
+  /// §season (v75): the season as this corporation has heard it from the Hub:
+  /// maturity, the Authority's grip and the Galactic News Network.
+  season: import("./protocol").SeasonView | null;
+  /// §home-step: this session has opened the home System View (the guide's
+  /// first step). Session-only: building anything at home also passes it.
+  homeOpened: boolean;
+  /// §home-world-step: and one of its worlds (the planet view), the second.
+  homeWorldOpened: boolean;
   // Interaction.
   selectedShipId: string | null;
   /// Client-only command grouping; every member remains an independent fleet
@@ -281,14 +311,18 @@ export function initialState(): ViewState {
     priceHistory: {},
     lastPriceSampleAt: -1,
     wallet: null,
+    credits: null,
     transactions: emptyTransactions(),
     freight: null,
     charter: null,
     founding: null,
     charterLedger: null,
+    leave: null,
+    raidLosses: null,
     merchant: null,
     lastFoundingPrivateer: null,
     charterLadder: [],
+    gradeLadder: [],
     researchCatalog: [],
     standingOrders: [],
     depotRules: [],
@@ -310,13 +344,19 @@ export function initialState(): ViewState {
     midgameStage: "home_development",
     diplomacy: null,
     rankings: [],
+    syndicateRankings: [],
+    social: null,
     research: null,
     battleViewed: new Set(),
     battleDismissed: new Set(),
     timeline: [],
     awaySince: 0,
     awaySet: false,
+    welcome: null,
     storyTold: new Set(),
+    season: null,
+    homeOpened: false,
+    homeWorldOpened: false,
     selectedShipId: null,
     selectedShipIds: new Set(),
     selectedSystemId: null,

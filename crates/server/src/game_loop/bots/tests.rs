@@ -138,12 +138,12 @@ fn bot_observations_do_not_read_unarrived_market_or_fleet_truth() {
     g.bots.get_mut(&owner).unwrap().next_think = 1e9;
     advance(&mut g, 100.0);
     let before = g.bot_observation(owner).unwrap();
-    let credits = before.account.as_ref().unwrap().credits;
+    let credits = before.credits;
     g.world.players.get_mut(&owner).unwrap().credits += 1_000_000.0;
     g.world.players.get_mut(&owner).unwrap().warehouse.insert(C::Machinery, 999);
     g.market_accounts.record(&g.world);
     let unseen = g.bot_observation(owner).unwrap();
-    assert_eq!(unseen.account.as_ref().unwrap().credits, credits);
+    assert_eq!(unseen.credits, credits + 1_000_000.0, "§treasury: the treasury sits at home, known at once");
     assert_ne!(unseen.account.as_ref().unwrap().warehouse.get(&C::Machinery), Some(&999));
     // Even though the controller is hosted by the server, a hidden relocation
     // cannot change its delivered sighting until that sample's light arrives.
@@ -154,7 +154,9 @@ fn bot_observations_do_not_read_unarrived_market_or_fleet_truth() {
     g.world.tick += 1;
     g.history.record(&g.world);
     let unseen = g.bot_observation(owner).unwrap();
-    assert_eq!(unseen.own().find(|g| g.id == fleet).unwrap().pos, old_pos);
+    // §real-coordinates: a docked hull rides its world, so the next sample has
+    // turned with it by a fraction of a unit; the relocation stays unseen.
+    assert!(unseen.own().find(|g| g.id == fleet).unwrap().pos.distance(old_pos) < 1.0);
 }
 
 #[test]
@@ -267,8 +269,9 @@ fn planning_picture() -> (Bot, Observation) {
     let mut p = g.bot_observation(owner).unwrap();
     p.local_opening = false; // these policy fixtures model the post-opening economy
     landed_v3(&mut p);
-    p.account = Some(MarketAccountSample { standing: 100.0, credits: 20_000.0,
+    p.account = Some(MarketAccountSample { standing: 100.0,
         valuation: 0.0, warehouse: BTreeMap::new(), orders: Vec::new() });
+    p.credits = 20_000.0;
     p.ticker = Some(view::MarketTickerSample {
         prices: C::ALL.iter().map(|c| (*c, sim::market::base_price(*c))).collect(),
         available_buy: C::ALL.iter().map(|c| (*c, 1_000)).collect(),
@@ -315,7 +318,7 @@ fn strategic_hull(p: &Observation, id: u64, kind: H, count: u32) -> GhostView {
 
 fn strategic_ready() -> (Bot, Observation) {
     let (bot, mut p) = planning_picture();
-    p.account.as_mut().unwrap().credits = 1_000_000.0;
+    p.credits = 1_000_000.0;
     p.home.system.stockpile.insert(C::Deuterium, 100_000.0);
     p.home.system.stockpile.insert(C::Provisions, 200.0);
     p.home.system.set_tier(K::MiningComplex, 1);
@@ -689,7 +692,8 @@ fn midgame_specialists_are_budgeted_trained_and_posted_through_normal_commands()
     let (mut bot, mut p) = strategic_ready();
     for b in &mut p.home.system.bodies { b.assignments.clear(); b.structures.clear(); b.population = 0.0; }
     let body = &mut p.home.system.bodies[0]; body.population = 0.003;
-    body.structures = BTreeMap::from([(K::MiningComplex, 2), (K::Academy, 1)]);
+    // A Habitat houses the specialists (§research-wiring).
+    body.structures = BTreeMap::from([(K::MiningComplex, 2), (K::Academy, 1), (K::Habitat, 1)]);
     body.migration_policy = sim::MigrationPolicy::Managed;
     body.assignments.insert(K::MiningComplex, sim::production::Assignment::crew(2));
     body.assignments.insert(K::Academy, sim::production::Assignment::crew(1));
@@ -703,20 +707,23 @@ fn midgame_specialists_are_budgeted_trained_and_posted_through_normal_commands()
 }
 
 #[test]
-fn spending_reservations_survive_saves_and_wait_for_account_light() {
+fn spending_reservations_survive_saves_and_clear_once_paid() {
     let (mut bot, mut p) = planning_picture();
     bot.spend(&p, 1_000.0);
-    let arrival = bot.commitments[0].receiver_at;
+    let paid_at = bot.commitments[0].receiver_at;
     let mut restored: Bot = serde_json::from_value(serde_json::to_value(&bot).unwrap()).unwrap();
-    p.now = arrival + 1_000.0;
-    p.market_at = arrival - 1.0;
     restored.refresh(&p);
-    assert_eq!(restored.cash(&p), 19_000.0, "wall time alone cannot free money still absent from the served account");
-    p.account.as_mut().unwrap().credits -= 1_000.0;
-    p.market_at = arrival;
+    assert_eq!(restored.cash(&p), 19_000.0, "held until the order has paid");
+    // §treasury: the order took its payment as it left.
+    p.credits -= 1_000.0;
+    p.now = paid_at;
     restored.refresh(&p);
     assert!(restored.commitments.is_empty());
     assert_eq!(restored.cash(&p), 19_000.0);
+    restored.hold_for_route(&p, 500.0);
+    p.now += sim::transit::delay(p.cc, p.hub, p.c);
+    restored.refresh(&p);
+    assert_eq!(restored.cash(&p), 18_500.0, "a route's shopping budget is held a round trip of light");
     let mut legacy = serde_json::to_value(&bot).unwrap();
     for field in ["commitments", "returns", "avoided", "route_visits", "trade_cycles", "expansion", "status", "survey_started", "development",
         "campaign", "freight_homes", "economy_turn", "supply_dispatches", "reconnaissance"] {
@@ -808,16 +815,18 @@ fn the_ore_waits_for_the_trader_and_authority_leaves_it_alone() {
 fn critical_fuel_precedes_project_materials_and_rescue_preserves_runway() {
     let (mut bot, mut p) = planning_picture();
     p.home.system.stockpile.insert(C::Deuterium, 0.0);
+    // §gun-platform: the kit's Gun Platform goods spent, so the holds have room.
+    *p.home.system.stockpile.get_mut(&C::Alloys).unwrap() -= 35.0;
     let wanted = BTreeMap::from([(C::Deuterium, 80.0), (C::Machinery, 100.0)]);
     assert!(matches!(bot.market(&p, &wanted), Some(Command::MarketBuy { commodity: C::Deuterium, .. })));
     let ship = p.ghosts.iter_mut().find(|g| g.own).unwrap();
     ship.stalled = true; ship.docked = None; ship.fuel = Some(0.0);
     bot.waits.clear(); bot.commitments.clear();
-    p.account.as_mut().unwrap().credits = 13.0;
+    p.credits = 13.0;
     assert!(bot.rescue(&p).is_none());
     assert!(bot.recovering(&p));
     assert_eq!(bot.spendable(&p, false), 0.0);
-    p.account.as_mut().unwrap().credits = 20_000.0;
+    p.credits = 20_000.0;
     assert!(matches!(bot.rescue(&p), Some(Command::RequestFuelRescue { .. })));
     assert!(!bot.commitments.is_empty());
 }
@@ -860,7 +869,7 @@ fn a_tiny_ore_circuit_profit_depends_on_cruise_and_return_mass_counts() {
 #[test]
 fn thirteen_credits_can_recover_through_a_small_paid_export() {
     let (mut bot, mut p) = planning_picture();
-    p.account.as_mut().unwrap().credits = 13.0;
+    p.credits = 13.0;
     p.home.system.stockpile.insert(C::MetallicOre, 100.0);
     let cmd = bot.market(&p, &BTreeMap::new()).expect("size the shipment to real cash, not the normal minimum lot");
     let Command::BookFreightIn { commodity, units, sell_on_arrival, .. } = cmd else { panic!("expected revenue recovery") };
@@ -873,7 +882,7 @@ fn thirteen_credits_can_recover_through_a_small_paid_export() {
 #[test]
 fn recovery_can_liquidate_optional_warehouse_goods_but_not_operating_fuel() {
     let (mut bot, mut p) = planning_picture();
-    p.account.as_mut().unwrap().credits = 13.0;
+    p.credits = 13.0;
     p.account.as_mut().unwrap().warehouse = BTreeMap::from([(C::Deuterium, 40), (C::Machinery, 10)]);
     assert!(matches!(bot.market(&p, &BTreeMap::from([(C::Deuterium, 40.0), (C::Machinery, 20.0)])),
         Some(Command::MarketSell { commodity: C::Machinery, units: 10, .. })));
@@ -1109,12 +1118,19 @@ fn bots_send_their_mining_barge_to_the_charters_belt() {
     barge.composition = Some(vec![crate::protocol::CompCount { kind: H::MiningBarge, count: 1 }]);
     barge.industry = None; barge.guard_target = None; barge.docked = None;
     let (system, body, ore) = (EntityId(9811), 3, sim::Commodity::MetallicOre);
-    p.belt_lesson = Some((system, body, ore, p.home.system.pos + Vec2::new(20_000.0, 0.0)));
+    p.belt_lesson = Some((system, body, ore, p.home.system.pos + Vec2::new(20_000.0, 0.0), false));
     p.ghosts = vec![barge.clone()];
     p.founding_stage = sim::FoundingStage::BuildBarge;
     assert!(bot.belt_lesson(&p).is_none(), "the barge is built first");
+    // §den-pocket: a prospecting pass, then the pocket it found.
+    p.founding_stage = sim::FoundingStage::ProspectBelt;
+    assert!(matches!(bot.belt_lesson(&p), Some(Command::ProspectBelt { fleet_id, system_id, body_id, .. })
+        if fleet_id == barge.id && system_id == system && body_id == body));
     p.founding_stage = sim::FoundingStage::MineBelt;
-    assert!(matches!(bot.belt_lesson(&p), Some(Command::MineBelt { fleet_id, system_id, body_id, ore: o, .. })
+    p.belt_lesson = Some((system, body, sim::Commodity::TitaniumOre, p.home.system.pos + Vec2::new(20_000.0, 0.0), true));
+    assert!(matches!(planning_picture().0.belt_lesson(&p), Some(Command::MineBelt { ore: sim::Commodity::TitaniumOre, pocket: true, .. })));
+    p.belt_lesson = Some((system, body, ore, p.home.system.pos + Vec2::new(20_000.0, 0.0), false));
+    assert!(matches!(planning_picture().0.belt_lesson(&p), Some(Command::MineBelt { fleet_id, system_id, body_id, ore: o, .. })
         if fleet_id == barge.id && system_id == system && body_id == body && o == ore));
     let mut working = barge;
     working.industry = Some(sim::industry::FleetIndustry::Mine {
@@ -1557,7 +1573,7 @@ fn freighters_bring_the_missing_fuel_home_from_the_hub() {
     assert!(fuel > 0 && fuel <= 50, "a Tiny's hold of Fuel: {fuel}");
     assert_eq!(back.stops[1].unload.get(&C::Deuterium), Some(&fuel));
     assert!(back.shopping_budget.is_some_and(|b| b >= fuel as f64 * p.price(C::Deuterium)));
-    assert!(!bot.ready("market", p.now) && !bot.commitments.is_empty(), "the cash is held until the account report");
+    assert!(!bot.ready("market", p.now) && !bot.commitments.is_empty(), "the shopping budget is held");
     let mut g = game(2, 1);
     g.bots.get_mut(&p.owner).unwrap().next_think = 1e9;
     g.pending.push(Command::SetFreightRoute { player_id: p.owner, fleet_id: id, route: Some(back.clone()) });
@@ -1665,7 +1681,7 @@ fn a_docked_merchant_covers_only_the_projects_shortfall() {
     }
     assert!(!bot.ready("merchant", p.now), "one purchase per round trip");
     bot.waits.clear(); bot.commitments.clear();
-    p.account.as_mut().unwrap().credits = 100.0;
+    p.credits = 100.0;
     p.home.system.stockpile.insert(C::MetallicOre, 0.0);
     assert!(bot.merchant(&p, Some(project), &wanted).is_none(), "spare cash only");
     p.home.system.stockpile.insert(C::MetallicOre, 100.0);
@@ -1832,7 +1848,7 @@ fn multi_seed_bot_balancing_report() {
             for (&owner, bot) in &g.bots {
                 let p = g.bot_observation(owner).unwrap();
                 eprintln!("seed={seed} minute={minute} bot={} cash={:.0} fuel={:.1} hulls={} scouts={} surveys={} colonies={} routes={} stranded={} mine={} yard={} academy={} research={} commands={} status={}",
-                    bot.slot + 1, p.account.as_ref().map_or(0.0, |a| a.credits), p.stock(C::Deuterium),
+                    bot.slot + 1, p.credits, p.stock(C::Deuterium),
                     p.own().count(), p.count(H::Scout), p.surveyed.len().saturating_sub(1), p.sites.len().saturating_sub(1),
                     p.own().filter(|g| matches!(g.industry, Some(sim::industry::FleetIndustry::Route { .. }))).count(),
                     p.own().filter(|g| g.stalled).count(), p.home.system.tier(K::MiningComplex), p.home.system.tier(K::Shipyard),
@@ -2001,7 +2017,7 @@ fn multi_seed_bot_balancing_report() {
         }
         for (&owner, bot) in &g.bots {
             let p = g.bot_observation(owner).unwrap();
-            assert!(p.account.as_ref().is_some_and(|a| a.credits.is_finite() && a.credits >= 0.0));
+            assert!(p.credits.is_finite() && p.credits >= 0.0);
             assert_eq!(p.home.system.tier(K::MiningComplex) >= 1, true);
             assert!(bot.valid(owner, p.now));
             // A missing opportunity may legitimately postpone colonization or
@@ -2055,7 +2071,7 @@ fn bots_develop_and_physically_trade_without_bonus_resources() {
             eprintln!("bot t={minute}m commands={} (+{}) mine={} yard={} academy={} hulls={} research={:?} credits={:.0}",
                 sent, sent - last_commands, p.home.system.tier(K::MiningComplex), p.home.system.tier(K::Shipyard),
                 p.home.system.tier(K::Academy), p.own().count(), p.research.active,
-                p.account.as_ref().map_or(0.0, |a| a.credits));
+                p.credits);
             last_commands = sent;
         }
         if exported && imported && p.home.system.tier(K::Academy) > 0 && p.count(H::Scout) >= 1
@@ -2094,6 +2110,8 @@ fn a_bot_plays_the_charter_through_the_raid_and_the_privateer() {
     assert!(f.raid_report_at.is_some() && f.merchant_called, "the raid struck, the trader called; {status}");
     assert!(f.ore_sold > 0, "ore sold to the trader; {status}");
     assert!(f.reward_granted, "the Interceptor destroyed the privateer; {status}");
+    assert!(g.world.players[&owner].captains.values().any(|c| c.assigned_fleet.is_some()),
+        "Peter (Oct 30 2026): the Interceptor sailed under its captain; {status}");
     let den = f.den.expect("the den rose with the privateer");
     assert!(f.den_report_at.is_some() && g.world.enclaves[&den].cleared, "the Interceptor destroyed the den; {status}");
     assert!(f.stage.step() > sim::FoundingStage::ExpandMining.step(), "mining expanded within 36 minutes: {:?}; {status}", f.stage);
@@ -2133,6 +2151,8 @@ fn the_last_call_buys_what_the_builds_after_the_den_lack() {
     let (mut bot, mut p) = planning_picture();
     p.local_opening = true;
     p.founding_stage = sim::FoundingStage::EliminateDen;
+    // Every crate collected: the stock at home is all there is.
+    p.sealed_crates.clear();
     p.home.system.stockpile.insert(C::Electronics, 3.0);
     p.home.system.stockpile.insert(C::Alloys, 1_000.0);
     p.home.system.stockpile.insert(C::Machinery, 1_000.0);
@@ -2143,18 +2163,24 @@ fn the_last_call_buys_what_the_builds_after_the_den_lack() {
         sim::market::base_price);
     visit.phase = sim::merchant::MerchantPhase::Docked;
     p.merchant = Some(visit);
-    assert_eq!(super::opening::charter_goods_ahead()[&C::Electronics], 33.0,
-        "Academy 15, Solar Array 8, Survey Probe 4, Mining Barge 6");
+    assert_eq!(super::opening::charter_goods_ahead()[&C::Electronics], 53.0,
+        "Academy 15, Solar Array 8, Survey Probe 4, Mining Barge 6, and 20 for research");
     // The Interceptor's fuel too, as far as its stock goes.
     let fuel = ((p.fuel_target_of(C::Deuterium) * 2.0 - p.stock(C::Deuterium)).ceil().max(0.0) as u32).min(30);
     assert!(matches!(bot.charter_stock_up(&p), Some(Command::MerchantTrade { buys, .. })
-        if buys.get(&C::Electronics) == Some(&30) && buys.get(&C::Deuterium).copied().unwrap_or(0) == fuel
+        if buys.get(&C::Electronics) == Some(&50) && buys.get(&C::Deuterium).copied().unwrap_or(0) == fuel
             && buys.len() <= 2), "less the 3 at home; the kit covers the rest");
     let (mut bot, _) = planning_picture();
     p.home.system.stockpile.insert(C::Alloys, 100.0);
     let alloys = super::opening::charter_goods_ahead()[&C::Alloys];
     assert!(matches!(bot.charter_stock_up(&p), Some(Command::MerchantTrade { buys, .. })
         if buys.get(&C::Alloys) == Some(&((alloys - 100.0) as u32))), "a short kit good too");
+    // §charter-crates: what a sealed crate will bring isn't bought.
+    let (mut bot, _) = planning_picture();
+    p.sealed_crates.insert(C::Alloys, alloys);
+    assert!(matches!(bot.charter_stock_up(&p), Some(Command::MerchantTrade { buys, .. }) if !buys.contains_key(&C::Alloys)),
+        "the Expansion crate carries them");
+    p.sealed_crates.clear();
     let (mut bot, _) = planning_picture();
     p.founding_stage = sim::FoundingStage::DefeatPrivateer;
     assert!(bot.charter_stock_up(&p).is_none(), "not before the bounty");
@@ -2166,6 +2192,8 @@ fn the_last_call_buys_what_the_builds_after_the_den_lack() {
 fn the_charter_holds_back_what_its_builds_ahead_need() {
     let (_, mut p) = planning_picture();
     p.local_opening = true;
+    // Every crate collected: nothing sealed covers the builds ahead.
+    p.sealed_crates.clear();
     p.founding_stage = sim::FoundingStage::DefeatPrivateer;
     assert!(p.charter_reserve().is_empty(), "the trader still sells");
     p.founding_stage = sim::FoundingStage::FirstResearch;
@@ -2177,6 +2205,10 @@ fn the_charter_holds_back_what_its_builds_ahead_need() {
     let left = p.charter_reserve();
     assert_eq!(reserve[&C::Electronics] - left.get(&C::Electronics).copied().unwrap_or(0.0), 15.0,
         "built, the Academy holds nothing back");
+    // §charter-crates: a sealed crate's goods need no holding back.
+    p.sealed_crates = reserve.clone();
+    assert!(p.charter_reserve().is_empty(), "the crates bring them");
+    p.sealed_crates.clear();
     p.founding_stage = sim::FoundingStage::Complete;
     assert!(p.charter_reserve().is_empty());
 }
@@ -2244,4 +2276,19 @@ fn the_den_step_sends_the_interceptor_to_the_den_and_pauses_escorts() {
     let (mut bot, _) = planning_picture();
     assert!(!matches!(bot.recover_military(&p), Some(Command::MoveShip { ship_id, .. }) if ship_id == raider.id),
         "no trip home for repairs that can't happen");
+}
+
+/// §charter-crates: "Secure your stores" opens the Vault, and the bot puts it
+/// under the Command Center beside a Warehouse.
+#[test]
+fn a_bot_secures_its_stores_before_the_charter_ends() {
+    let (_, mut p) = planning_picture();
+    p.local_opening = true;
+    p.founding_stage = sim::FoundingStage::HaulOre;
+    assert!(p.structure(K::Vault, 1).is_none(), "no Vault before step 22");
+    p.founding_stage = sim::FoundingStage::SecureStores;
+    let landing = p.landing_body().unwrap();
+    assert!(matches!(p.structure(K::Vault, 1), Some(Project { what: BuildKind::Upgrade { upgrade: K::Vault }, body })
+        if body == landing), "under the Command Center");
+    assert!(matches!(p.structure(K::Warehouse, 1), Some(Project { what: BuildKind::Upgrade { upgrade: K::Warehouse }, .. })));
 }

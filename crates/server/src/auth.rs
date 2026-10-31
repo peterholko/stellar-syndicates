@@ -3,14 +3,19 @@
 //! commit immediately, independently of the asynchronous galaxy snapshot queue.
 //!
 //! Deployment: ACCOUNTS_DATABASE_URL (or DATABASE_URL), APP_ORIGIN=https://host.
-//! Only localhost may use HTTP. With a separate ACCOUNTS_DATABASE_URL, leaving
+//! Only localhost may use HTTP. When the game socket has its own host
+//! (`docs/front-door.md`), GAME_ORIGIN=https://play.host names it and
+//! COOKIE_DOMAIN=host shares the sign-in and device cookies with it. With a separate ACCOUNTS_DATABASE_URL, leaving
 //! DATABASE_URL unset keeps playtest galaxies ephemeral without losing accounts.
 //! This single authoritative server serializes session changes with handshakes;
 //! revocation reaches open sockets immediately and DB work never enters a tick.
 
 mod password;
+mod reset;
 #[cfg(test)]
 mod tests;
+
+pub use reset::reset_passphrase;
 
 use std::{
     collections::HashMap,
@@ -113,13 +118,64 @@ impl IntoResponse for AuthError {
 pub struct AuthConfig {
     origins: Vec<String>,
     secure: bool,
+    /// §front-door: the domain the sign-in and device cookies are shared under,
+    /// so the game host receives them. `None`: host-only cookies.
+    cookie_domain: Option<String>,
+    /// §front-door: the game socket on its own host, as sign-in replies give
+    /// it to the client. `None`: the page's own host.
+    game_url: Option<String>,
 }
 
 impl AuthConfig {
     pub fn from_env(port: u16) -> anyhow::Result<Self> {
         Self::for_origin(
             &std::env::var("APP_ORIGIN").unwrap_or_else(|_| format!("http://localhost:{port}")),
+        )?
+        .with_game_host(
+            std::env::var("COOKIE_DOMAIN").ok().filter(|s| !s.is_empty()).as_deref(),
+            std::env::var("GAME_ORIGIN").ok().filter(|s| !s.is_empty()).as_deref(),
         )
+    }
+
+    /// §front-door: the game socket on its own host. Its origin must sit
+    /// under the cookie domain, which must hold the page's own host, or the
+    /// socket would arrive signed out.
+    fn with_game_host(mut self, cookie_domain: Option<&str>, game_origin: Option<&str>) -> anyhow::Result<Self> {
+        let page = url::Url::parse(&self.origins[0])?;
+        let page_host = page.host_str().unwrap_or_default().to_owned();
+        let under = |host: &str, domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
+        if let Some(domain) = cookie_domain {
+            let domain = domain.to_ascii_lowercase();
+            anyhow::ensure!(
+                !domain.is_empty()
+                    && domain.split('.').count() >= 2
+                    && domain.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+                    && under(&page_host, &domain),
+                "COOKIE_DOMAIN must be a domain holding APP_ORIGIN's host"
+            );
+            self.cookie_domain = Some(domain);
+        }
+        if let Some(origin) = game_origin {
+            let url = url::Url::parse(origin)?;
+            let host = url.host_str().unwrap_or_default();
+            anyhow::ensure!(
+                url.username().is_empty()
+                    && url.password().is_none()
+                    && url.query().is_none()
+                    && url.fragment().is_none()
+                    && url.path() == "/"
+                    && url.scheme() == page.scheme(),
+                "GAME_ORIGIN must be a bare origin with APP_ORIGIN's scheme"
+            );
+            anyhow::ensure!(
+                host == page_host || self.cookie_domain.as_deref().is_some_and(|d| under(host, d)),
+                "GAME_ORIGIN on another host needs a COOKIE_DOMAIN that holds it"
+            );
+            let socket = if url.scheme() == "https" { "wss" } else { "ws" };
+            let port = url.port().map(|p| format!(":{p}")).unwrap_or_default();
+            self.game_url = Some(format!("{socket}://{host}{port}/ws"));
+        }
+        Ok(self)
     }
 
     fn for_origin(origin: &str) -> anyhow::Result<Self> {
@@ -146,6 +202,8 @@ impl AuthConfig {
         Ok(Self {
             origins,
             secure: url.scheme() == "https",
+            cookie_domain: None,
+            game_url: None,
         })
     }
 
@@ -159,18 +217,25 @@ impl AuthConfig {
     }
 
     fn cookie_name(&self) -> &'static str {
-        if self.secure {
-            "__Host-ss_session"
-        } else {
-            "ss_session"
+        // §front-door: `__Host-` forbids a Domain; `__Secure-` still needs HTTPS.
+        match (self.secure, self.cookie_domain.is_some()) {
+            (true, false) => "__Host-ss_session",
+            (true, true) => "__Secure-ss_session",
+            (false, _) => "ss_session",
         }
+    }
+
+    /// The shared-domain and Secure attributes every cookie carries.
+    fn cookie_scope(&self) -> String {
+        let domain = self.cookie_domain.as_deref().map(|d| format!("; Domain={d}")).unwrap_or_default();
+        format!("{domain}{}", if self.secure { "; Secure" } else { "" })
     }
 
     fn cookie(&self, token: &str, max_age: i64) -> HeaderValue {
         HeaderValue::from_str(&format!(
             "{}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}{}",
             self.cookie_name(),
-            if self.secure { "; Secure" } else { "" }
+            self.cookie_scope()
         ))
         .expect("only generated hex tokens enter cookies")
     }
@@ -184,10 +249,10 @@ impl AuthConfig {
     }
 
     fn device_cookie_name(&self) -> &'static str {
-        if self.secure {
-            "__Host-ss_device"
-        } else {
-            "ss_device"
+        match (self.secure, self.cookie_domain.is_some()) {
+            (true, false) => "__Host-ss_device",
+            (true, true) => "__Secure-ss_device",
+            (false, _) => "ss_device",
         }
     }
 
@@ -203,10 +268,24 @@ impl AuthConfig {
         HeaderValue::from_str(&format!(
             "{}={id}; Path=/; HttpOnly; SameSite=Strict; Max-Age={DEVICE_COOKIE_SECONDS}{}",
             self.device_cookie_name(),
-            if self.secure { "; Secure" } else { "" }
+            self.cookie_scope()
         ))
         .expect("only generated hex ids enter cookies")
     }
+
+    /// What a sign-in or session check returns: the account and, §front-door,
+    /// where the game socket is.
+    fn reply<'a>(&'a self, account: &'a Account) -> Json<AccountReply<'a>> {
+        Json(AccountReply { account, game_url: self.game_url.as_deref() })
+    }
+}
+
+#[derive(Serialize)]
+struct AccountReply<'a> {
+    #[serde(flatten)]
+    account: &'a Account,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    game_url: Option<&'a str>,
 }
 
 /// The one value of a cookie, or `None` when it is absent or sent twice.
@@ -312,34 +391,8 @@ pub struct AuthStore(Arc<Inner>);
 
 impl AuthStore {
     pub async fn from_env(port: u16) -> anyhow::Result<Self> {
-        let url = std::env::var("ACCOUNTS_DATABASE_URL")
-            .or_else(|_| std::env::var("DATABASE_URL"))
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "set ACCOUNTS_DATABASE_URL (or DATABASE_URL); accounts require PostgreSQL"
-                )
-            })?;
         let config = AuthConfig::from_env(port)?;
-        let mut options: PgConnectOptions = url
-            .parse()
-            .map_err(|_| anyhow::anyhow!("invalid account PostgreSQL configuration"))?;
-        if !matches!(options.get_host(), "localhost" | "127.0.0.1" | "::1")
-            && !options.get_host().starts_with('/')
-        {
-            // A remote account database must authenticate its TLS certificate,
-            // not merely try TLS then silently fall back to plaintext.
-            options = options.ssl_mode(PgSslMode::VerifyFull);
-        }
-        let pool = PgPoolOptions::new()
-            .max_connections(4)
-            .acquire_timeout(Duration::from_secs(5))
-            .connect_with(options)
-            .await
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "cannot connect to account PostgreSQL; refusing unauthenticated startup"
-                )
-            })?;
+        let pool = connect_from_env().await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
         Self::new(pool, config).await
     }
@@ -636,7 +689,7 @@ impl AuthStore {
         } else {
             SESSION_SECONDS
         };
-        let mut response = Json(account).into_response();
+        let mut response = self.0.config.reply(&account).into_response();
         response
             .headers_mut()
             .insert(header::SET_COOKIE, self.0.config.cookie(&token, lifetime));
@@ -650,6 +703,33 @@ impl AuthStore {
             .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
         response
     }
+}
+
+/// The account database named by ACCOUNTS_DATABASE_URL (or DATABASE_URL).
+async fn connect_from_env() -> anyhow::Result<PgPool> {
+    let url = std::env::var("ACCOUNTS_DATABASE_URL")
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .map_err(|_| {
+            anyhow::anyhow!("set ACCOUNTS_DATABASE_URL (or DATABASE_URL); accounts require PostgreSQL")
+        })?;
+    let mut options: PgConnectOptions = url
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid account PostgreSQL configuration"))?;
+    if !matches!(options.get_host(), "localhost" | "127.0.0.1" | "::1")
+        && !options.get_host().starts_with('/')
+    {
+        // A remote account database must authenticate its TLS certificate,
+        // not merely try TLS then silently fall back to plaintext.
+        options = options.ssl_mode(PgSslMode::VerifyFull);
+    }
+    PgPoolOptions::new()
+        .max_connections(4)
+        .acquire_timeout(Duration::from_secs(5))
+        .connect_with(options)
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!("cannot connect to account PostgreSQL; refusing unauthenticated startup")
+        })
 }
 
 async fn record_login(
@@ -745,7 +825,7 @@ async fn guest(
     match auth.authenticate(&headers).await {
         Ok(session) => {
             return Ok(
-                ([(header::CACHE_CONTROL, "no-store")], Json(session.account)).into_response(),
+                ([(header::CACHE_CONTROL, "no-store")], auth.0.config.reply(&session.account)).into_response(),
             );
         }
         Err(AuthError::Unauthorized) => {}
@@ -805,7 +885,7 @@ async fn session(State(auth): State<AuthStore>, headers: HeaderMap) -> Result<Re
     }
     let session = auth.authenticate(&headers).await?;
     let mut response =
-        ([(header::CACHE_CONTROL, "no-store")], Json(session.account)).into_response();
+        ([(header::CACHE_CONTROL, "no-store")], auth.0.config.reply(&session.account)).into_response();
     // A browser signed in before device ids existed gets one on its next visit,
     // before it opens the game socket.
     if auth.device(&headers).is_none() {

@@ -113,7 +113,10 @@ Until the first guarded export leaves home, the follow-up board offers one
 contract at a time, starting with Salvage, and each such offer stays open for
 24 hours instead of expiring within the session. The Authority's two rescue
 contracts (Hold the recovery zone, Protect the evacuation) also wait until the
-export has left. The desktop Log keeps the
+export has left. An offer puts nothing in space: the contract's pirate and the
+liner are staged only when it is accepted, and they leave when it ends (a
+launched liner still flies to Market). The liner's transponder is off, so only
+sensors find it. The desktop Log keeps the
 founding directive and real threats on top and folds other decisions (node
 broadcasts, distant hostiles that are not closing, contract offers, survey
 opportunities, idle-stock and storage notices) into one "Also happening" line.

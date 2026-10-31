@@ -1,0 +1,90 @@
+{
+  "name": "Combat Freighter",
+  "triangles": 5746,
+  "renderSections": 2,
+  "sourceComponents": 101,
+  "materials": "Native reference projections and existing fleet metal trims, three embedded 2048px PBR maps. Amber is paint; only cyan drives emission.",
+  "embeddedTextures": 3,
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "dimensionsXYZ": [
+    10.8947,
+    3.3665,
+    20.5613
+  ],
+  "axes": "Y up, -Z forward",
+  "units": "Relative model units; gameplay scale is assigned at integration",
+  "sockets": [
+    {
+      "name": "socket.engine.port",
+      "translation": [
+        -3.0,
+        0.0,
+        9.91842105263158
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.centre",
+      "translation": [
+        0.0,
+        0.0,
+        10.36578947368421
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.starboard",
+      "translation": [
+        2.9473684210526314,
+        0.0,
+        9.91842105263158
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "geometryCounts": {
+    "cargoCitadels": 1,
+    "holdDoors": 2,
+    "grappleArms": 4,
+    "grappleFingers": 12,
+    "mainEngines": 3,
+    "guns": 0
+  },
+  "triangleBudget": [
+    5000,
+    6000
+  ],
+  "generator": "Python/NumPy, existing fleet reconstruction workflow; no Blender",
+  "textures": "Native five-view pixels; dedicated bottom projection; continuous cylinder walls; reference-matched ImageGen material swatches on hidden edges and fittings",
+  "optimization": "Static parts merged by material; exact vertex deduplication; 16-bit indices",
+  "note": "Orthographic concept reconstruction. Production integration supplies dedicated map/panel art and three engine hardpoints; gameplay rules are unchanged.",
+  "role": "Unarmed raiding cargo carrier",
+  "geometry": "One armored cargo citadel, two clamshell doors, four folded three-finger grapple arms, three level engines.",
+  "weaponSockets": 0,
+  "uvFallbackPolicy": "Invalid UV charts fail the build.",
+  "stage": "Static source model; production uses the verified LOD2 export."
+}

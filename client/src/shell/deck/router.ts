@@ -9,11 +9,13 @@ export type DeckRouteName =
   | "doctrine"
   | "market"
   | "merchant"
+  | "shipyard"
   | "signals"
   | "research"
   | "officers"
   | "operations"
   | "syndicate"
+  | "comms"
   | "faction"
   | "rankings"
   | "log"
@@ -48,11 +50,13 @@ export const DECK_ROUTES: Record<DeckRouteName, DeckRouteMeta> = {
   doctrine: { title: "Doctrine", width: "standard" },
   market: { title: "Market Hub", width: "wide" },
   merchant: { title: "Free Trader", width: "wide" },
+  shipyard: { title: "Shipyard", width: "wide" },
   signals: { title: "Signals", width: "wide" },
   research: { title: "Research", width: "wide" },
   officers: { title: "Officers", width: "wide" },
   operations: { title: "Operations", width: "standard" },
   syndicate: { title: "Syndicate", width: "standard" },
+  comms: { title: "Comms", width: "standard" },
   faction: { title: "Faction", width: "standard" },
   rankings: { title: "Rankings", width: "wide" },
   log: { title: "Log", width: "standard" },
@@ -60,7 +64,10 @@ export const DECK_ROUTES: Record<DeckRouteName, DeckRouteMeta> = {
 };
 
 const HISTORY_KEY = "stellarSyndicatesDeckRoute";
-let nextSession = 1;
+// Numbered per page load, not from 1: a reload keeps the tab's history, and
+// the last load's markers must not read as this one's (closing past them
+// reopened whatever was open before the reload).
+let nextSession = Date.now();
 
 interface DeckHistoryMarker {
   session: number;
@@ -119,6 +126,14 @@ export class DeckRouter {
       this.entries.pop();
       this.emit();
     }
+  }
+
+  /** Climb one rung to `route`: back to it when it is the entry beneath (as
+   * Esc does), else put it in place of the current entry. */
+  climbTo(route: DeckRoute): void {
+    const below = this.entries.at(-2);
+    if (below?.name === route.name && below.params?.id === route.params?.id) this.back();
+    else this.replace(route);
   }
 
   close(): void {

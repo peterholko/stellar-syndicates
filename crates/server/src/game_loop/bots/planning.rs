@@ -159,10 +159,10 @@ impl Bot {
     pub(super) fn refresh(&mut self, p: &Observation) {
         self.waits.retain(|_, t| *t > p.now);
         self.avoided.retain(|_, t| *t > p.now);
-        // `market_at` is the emission cutoff of the actual account lookup. This
-        // is not an estimate timeout: that picture contains the action's result
-        // (or rejection) before we release its reservation. Saves retain it.
-        if p.account.is_some() { self.commitments.retain(|c| p.market_at < c.receiver_at); }
+        // §treasury: a hold lasts until its money has left the treasury (an
+        // order pays as it leaves) or, for a route's shopping budget, one
+        // round trip of light. Saves retain it.
+        self.commitments.retain(|c| p.now < c.receiver_at);
         self.surveys.retain(|fleet, _| p.own().any(|g| g.id == *fleet));
         self.reconnaissance.retain(|fleet, _| p.own().any(|g| g.id == *fleet));
         self.survey_started.retain(|id| self.surveys.contains_key(id));
@@ -188,8 +188,7 @@ impl Bot {
     }
 
     pub(super) fn cash(&self, p: &Observation) -> f64 {
-        (p.account.as_ref().map_or(0.0, |a| a.credits)
-            - self.commitments.iter().map(|c| c.amount).sum::<f64>()).max(0.0)
+        (p.credits - self.commitments.iter().map(|c| c.amount).sum::<f64>()).max(0.0)
     }
 
     pub(super) fn spendable(&self, p: &Observation, essential: bool) -> f64 {
@@ -200,9 +199,18 @@ impl Bot {
 
     pub(super) fn recovering(&self, p: &Observation) -> bool { self.cash(p) < p.operating_reserve() * 0.5 }
 
+    /// Hold `amount` until the order sent with it has paid (§treasury: as it
+    /// leaves, the next tick).
     pub(super) fn spend(&mut self, p: &Observation, amount: f64) {
-        self.commitments.push(Commitment { amount, receiver_at:
-            p.now + sim::transit::delay(p.cc, p.hub, p.c) + DT * 2.0 });
+        self.commitments.push(Commitment { amount, receiver_at: p.now + DT * 2.0 });
+        self.wait("market".into(), p, p.hub);
+    }
+
+    /// Hold a route's shopping budget for one round trip of light: the
+    /// freighter spends it at the Hub, later.
+    pub(super) fn hold_for_route(&mut self, p: &Observation, budget: f64) {
+        self.commitments.push(Commitment { amount: budget, receiver_at:
+            p.now + 2.0 * sim::transit::delay(p.cc, p.hub, p.c) + DT * 2.0 });
         self.wait("market".into(), p, p.hub);
     }
 
@@ -273,7 +281,7 @@ impl Bot {
                         K::Academy if p.local_opening && p.founding_stage == sim::FoundingStage::FirstResearch => 1,
                         K::Shipyard | K::NavalDrydock | K::CapitalSlipway | K::Garrison
                             if site.builds.iter().any(|job| job.body_id == body.id && matches!(job.what, BuildKind::Ship { .. }) && job.work_yard() == Some(kind)) => 2,
-                        K::OrdnanceFoundry if p.own().any(|f| f.damage.unwrap_or(0.0) > 0.05) => 2,
+                        K::Shipyard | K::OrdnanceFoundry if p.own().any(|f| f.damage.unwrap_or(0.0) > 0.05) => 2,
                         K::Academy => 3,
                         K::VolatileHarvester | K::FuelRefinery | K::UraniumMill => 4,
                         // §fuel-overhaul: refining burns no fuel any more.

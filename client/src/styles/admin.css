@@ -43,6 +43,14 @@ body.admin.has-drawer { overflow: hidden; }
 }
 .admin-message b { font-size: var(--fs-title); color: var(--warn); }
 .admin-message p { margin: 0; color: var(--ink); }
+.admin-signin { display: grid; gap: var(--space-2); width: min(320px, 100%); }
+.admin-signin input {
+  font: inherit; color: var(--ink); background: var(--field-bg); border: 1px solid var(--field-bd);
+  border-radius: var(--deck-radius); min-height: var(--deck-control-height); padding: 0 var(--space-3);
+}
+.admin-signin button { justify-self: start; }
+.admin-signin .admin-note { color: var(--warn); }
+.admin-signin .admin-note:empty { display: none; }
 .admin-note { margin: 0; color: var(--warn); }
 
 .admin-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-2); }

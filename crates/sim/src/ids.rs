@@ -35,6 +35,15 @@ impl PlayerId {
     /// server's `player_id_from_name` guards against ever colliding with it.
     pub const TCA: PlayerId = PlayerId(0x5443_4100_0000_0000); // "TCA\0\0\0\0\0"
 
+    /// The server's computer-run corporations: a namespace no account id (a
+    /// positive PostgreSQL i64) can reach.
+    pub const BOT_BASE: u64 = 0xB070_0000_0000_0000;
+
+    /// Whether this id belongs to a computer-run corporation.
+    pub fn is_bot(self) -> bool {
+        self.0 & 0xFFFF_0000_0000_0000 == Self::BOT_BASE
+    }
+
     /// Whether this id is the neutral PIRATE faction.
     pub fn is_pirate(self) -> bool {
         self.0 == Self::PIRATE.0

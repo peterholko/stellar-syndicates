@@ -3,7 +3,9 @@
 // mobile sheets all say the same thing about the same blockade.
 
 import type { DiplomacyView, GhostView, SystemInfo, SystemStateView, Vec2 } from "../../protocol";
+import { fleetCargoUnits } from "../../protocol";
 import { fmtDur } from "./format";
+import { fleetCargoCapacity } from "./fleet";
 
 export type BlockadeState = NonNullable<SystemStateView["blockade"]>;
 
@@ -39,11 +41,15 @@ export function siegeClock(b: BlockadeState | null | undefined, now: number, bas
   return { pct: Math.min(100, (elapsed / total) * 100), left: Math.max(0, total - elapsed), ripe: elapsed >= total, eta: b.siege_since + total };
 }
 
+/** §raid-feedback: the pirates hold it (the server names every pirate
+ * blockader "Pirates"). */
+const byPirates = (b: BlockadeState): boolean => !b.by_me && b.by_name === "Pirates";
+
 /** A short badge for the map and headlines. */
 export function blockadeBadge(b: BlockadeState, now: number, baseSecs: number): string {
   const stage = blockadeStage(b);
   if (stage === "contested") return b.by_me ? "CONTESTING" : "CONTESTED";
-  if (stage === "held") return b.by_me ? "BLOCKADING" : "BLOCKADED";
+  if (stage === "held") return b.by_me ? "BLOCKADING" : byPirates(b) ? "PIRATE RAID" : "BLOCKADED";
   return `SIEGE ${Math.floor(siegeClock(b, now, baseSecs)?.pct ?? 0)}%`;
 }
 
@@ -91,6 +97,16 @@ export function blockadeBrief(b: BlockadeState, now: number, baseSecs: number, m
       : { tone: "good", title: `Siege ${Math.floor(clock?.pct ?? 0)}%`,
         detail: `Ripe in ${fmtDur(clock?.left ?? 0)} while the blockade holds. Then land marines with a separate, idle troop-transport fleet at the star${marines}.` };
   }
+  if (byPirates(b) && stage !== "siege") {
+    // §raid-feedback (Peter, Oct 27 2026): what a raid costs, in numbers.
+    // A home raid's cap mirrors sim pirate::HOME_RAID_STOCK_FRAC / _MAX_LOOT.
+    return stage === "contested"
+      ? { tone: "warn", title: "Pirates attacking",
+        detail: "Your defenses are fighting them. If they fall, the pirates strip its stores." }
+      : { tone: "bad", title: "Pirate raid",
+        detail: (b.capturable ? "Stripping its stores." : "Taking up to 10% of each good, 60 units in all.")
+          + " Deliveries wait until they leave. Catch them on the way home to win it back." };
+  }
   if (stage === "contested") {
     return { tone: "warn", title: `${who} is attacking`,
       detail: "Your defenses are fighting a rival fleet. Shipping runs while they hold; if they fall, the system is blockaded." };
@@ -115,22 +131,36 @@ export function blockadeCapable(g: GhostView): boolean {
 
 /** Why `fleet` can't blockade a system held by `owner` (empty: it can). Mirrors
  * the sim's checks from the viewer's arrived diplomacy; the sim checks again
- * when the order arrives, and every tick after. */
+ * when the order arrives, and every tick after. `raid`: §raid-order — a raid
+ * needs a hold but no war (sim `World::blockade_allowed`). */
 export function blockadeOrderBlock(fleet: GhostView, owner: string | null | undefined, me: string,
-  diplomacy: DiplomacyView | null, now: number): string {
+  diplomacy: DiplomacyView | null, now: number, raid = false): string {
   if (!fleet.own) return "Choose one of your fleets.";
   if (!blockadeCapable(fleet)) return "A blockade needs an interceptor in the fleet to run down what slips past it.";
   if (!owner || owner === me) return "Only a system another corporation owns can be blockaded.";
+  if (raid && fleetCargoCapacity(fleet) <= 0) return "A raid needs a freighter to carry the loot.";
   const rel = diplomacy?.relations.find((relation) => relation.other === owner);
   if (!rel) return "";
   if (rel.separation_until > now || rel.state === "non_aggression" || rel.state === "ceasefire") {
     const pact = rel.state === "non_aggression" ? "non-aggression pact" : rel.state === "ceasefire" ? "ceasefire" : "separation window";
     return `Your ${pact} with ${rel.name} protects their systems.`;
   }
-  if (rel.state !== "war" && !((rel.reprisal_until ?? 0) > now)) {
+  if (!raid && rel.state !== "war" && !((rel.reprisal_until ?? 0) > now)) {
     return `Blockading ${rel.name}'s systems needs a declared war or your right of reprisal.`;
   }
   return "";
+}
+
+/** §raid-order: may this pending blockade be a raid instead? Loot rides in
+ * holds, so every fleet in it needs one (the sim refuses `needs_hold`). */
+export function raidableIntent(state: { ghosts: GhostView[] },
+  intent: { verb: string; shipId: string; shipIds?: string[] }): boolean {
+  if (intent.verb !== "blockade") return false;
+  const ids = intent.shipIds?.length ? intent.shipIds : [intent.shipId];
+  return ids.every((id) => {
+    const g = state.ghosts.find((entry) => entry.id === id && entry.own);
+    return !!g && fleetCargoCapacity(g) > 0;
+  });
 }
 
 /** Where a fleet on a Blockade order is: "Blockading Vidar · contested", or
@@ -149,9 +179,13 @@ export function blockadeStatus(g: GhostView, view: {
     const stage = blockadeStage(blockade);
     const tail = stage === "contested" ? "contested" : stage === "held" ? "held"
       : `siege ${Math.floor(siegeClock(blockade, view.simTime, view.galaxy?.siege_secs ?? 0)?.pct ?? 0)}%`;
-    return `Blockading ${info.name} · ${tail}`;
+    // §raid-order: a raid shows its load against its hold; §player-styles:
+    // a repeating one its trip.
+    const trip = g.raid_trip ? ` · ↻ ${g.raid_trip}` : "";
+    return g.raiding ? `Raiding ${info.name}${trip} · ${tail} · ${fleetCargoUnits(g)}/${fleetCargoCapacity(g)}`
+      : `Blockading ${info.name} · ${tail}`;
   }
-  return "Sailing to blockade";
+  return g.raiding ? `Sailing to raid${g.raid_trip ? ` · ↻ ${g.raid_trip}` : ""}` : "Sailing to blockade";
 }
 
 /** A delivery waiting outside a held blockade: "Waiting outside the blockade

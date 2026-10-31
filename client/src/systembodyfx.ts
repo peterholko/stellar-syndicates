@@ -184,7 +184,7 @@ export function orbitalItems(structures: Record<string, number>, seed: number): 
   const sensor = structures.sensor_array ?? 0;
   if (sensor > 0) add("sensor_array", "sensor_array", sensor, 1.6, 10 + sensor * 0.5);
   // §orbital-defense: the system's station, one sprite that grows with its level.
-  const station = Math.min(5, structures.orbital_defense ?? 0);
+  const station = Math.min(STATION_PX.length, structures.orbital_defense ?? 0);
   if (station > 0) add("orbital_defense", "orbital_defense", station, 1.5 + 0.12 * station, STATION_PX[station - 1]);
   const platforms = Math.min(4, structures.defense_platform ?? 0);
   for (let i = 0; i < platforms; i++) add(`defense_platform:${i}`, "defense_platform", structures.defense_platform, 1.38 + 0.06 * i, 8);
@@ -195,7 +195,8 @@ export function orbitalItems(structures: Record<string, number>, seed: number): 
 }
 
 /** On-screen size of a station sprite by level (Defense Platform … Star Fortress). */
-const STATION_PX = [16, 20, 26, 34, 48];
+// §gun-platform: the Gun Platform below the Defense Platform.
+const STATION_PX = [13, 16, 20, 26, 34, 48];
 
 export { stationArtUrl } from "./core/derive/station";
 

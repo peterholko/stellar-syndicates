@@ -4,7 +4,7 @@ import { DECK_ROUTES, type DeckCrumb, type DeckRoute, type DeckWidth } from "./r
 
 const WIDTH_KEY = "stellarSyndicates.deck.width.";
 /** Routes that float over the map as a centred panel instead of a right rail. */
-const POPOUTS: ReadonlySet<DeckRoute["name"]> = new Set(["market", "logistics", "merchant", "signals"]);
+const POPOUTS: ReadonlySet<DeckRoute["name"]> = new Set(["market", "logistics", "merchant", "signals", "shipyard"]);
 export const isPopoutRoute = (route: DeckRoute | null): boolean => !!route && POPOUTS.has(route.name);
 
 export class DeckWorkspace {
@@ -50,7 +50,10 @@ export class DeckWorkspace {
 
   cameraRect(): Rect {
     const topbar = document.getElementById("deck-topbar");
-    const top = topbar && !topbar.hidden ? topbar.getBoundingClientRect().bottom : 0;
+    // §stores: the stores bar sits under the top bar when shown.
+    const stores = document.getElementById("deck-stores");
+    const top = Math.max(topbar && !topbar.hidden ? topbar.getBoundingClientRect().bottom : 0,
+      stores && !stores.hidden ? stores.getBoundingClientRect().bottom : 0);
     const strip = document.getElementById("deck-command-strip");
     const founding = document.getElementById("deck-founding");
     const zoom = document.getElementById("deck-zoom");

@@ -38,6 +38,8 @@ pub struct AdminState {
     tutorial: TutorialRecorder,
     operators: Arc<HashSet<String>>,
     started_at: DateTime<Utc>,
+    /// `SIM_PACING`: sim seconds per wall second. Operators only (Oct 28 2026).
+    pacing_scale: f64,
 }
 
 impl AdminState {
@@ -48,6 +50,7 @@ impl AdminState {
         status: watch::Receiver<ServerStatus>,
         tutorial: TutorialRecorder,
         operators: HashSet<String>,
+        pacing_scale: f64,
     ) -> Self {
         Self {
             auth,
@@ -57,6 +60,7 @@ impl AdminState {
             tutorial,
             operators: Arc::new(operators),
             started_at: Utc::now(),
+            pacing_scale,
         }
     }
 }
@@ -387,6 +391,8 @@ struct ServerSummary {
     status: ServerStatus,
     /// False when the game loop did not answer in time; holdings are missing.
     holdings: bool,
+    /// The game speed (`SIM_PACING`); players don't see it.
+    pacing_scale: f64,
 }
 
 /// Where new players stop: everyone who arrived during this galaxy, from
@@ -506,6 +512,7 @@ async fn overview(
             started_at: state.started_at,
             status: state.status.borrow().clone(),
             holdings: available,
+            pacing_scale: state.pacing_scale,
         },
         totals: totals(&players, now),
         funnel,

@@ -58,6 +58,9 @@ function fixture(overrides = {}, text = rendererSource) {
     export class Renderer {
       ghosts = new Map();
       galaxy = null;
+      // §real-coordinates: the orbit preview is to the map's true scale; this
+      // System View rest scale meets it at the 384× limit (fitScale 1 here).
+      systemScene = { restScale: () => 860 * 384 };
       ${members.map(n => n.getText(ast)).join("\n")}
       fitScale() { return 1; }
       drawnSize(ghost) {
@@ -65,7 +68,8 @@ function fixture(overrides = {}, text = rendererSource) {
         const sp = this.ghosts.get(ghost.id) ?? {};
         return ${target.getText(ast)};
       }
-    }`, { fleetExactCount, hashId, ...shipArt, NEAR_ZONE_SU: layout.NEAR_ZONE_SU, systemShipPx: layout.systemShipPx });
+    }`, { fleetExactCount, hashId, ...shipArt, NEAR_ZONE_SU: layout.NEAR_ZONE_SU, systemShipPx: layout.systemShipPx,
+      SYSTEM_UNIT_SU: layout.SYSTEM_UNIT_SU });
   const renderer = new Renderer();
   for (const name of ["Convoy", "Raider", "Corvette", "Colony", "Scout", "Destroyer", "Cruiser",
     "Battleship", "Dreadnought", "Titan", "AuthorityFreighter", "Transport", "Builder", "MiningBarge", "MiningBeltStation",
@@ -74,7 +78,7 @@ function fixture(overrides = {}, text = rendererSource) {
   }
   renderer.texFleet = new Map(["freighter", "raider", "corvette", "scout"].flatMap(family =>
     ["wing", "squadron", "armada"].map(tier => [`${family}_${tier}`, { name: `${family}_${tier}`, width: 256 }])));
-  renderer.freightTextures = new Map(["tiny_freighter", "small_freighter", "large_freighter", "heavy_freighter", "bulk_freighter"]
+  renderer.freightTextures = new Map(["tiny_freighter", "combat_freighter", "small_freighter", "large_freighter", "heavy_freighter", "bulk_freighter"]
     .map(kind => [kind, { name: kind, width: 256 }]));
   return renderer;
 }
@@ -95,6 +99,7 @@ const changedClasses = new Set(["scout", "corvette", "destroyer", "cruiser", "ba
 const current = fixture();
 assert.equal(current.fleetMarker(ghost("mining_barge")).tex.name, "MiningBarge", "Barge selects its dedicated map texture");
 assert.equal(current.fleetMarker(ghost("mining_belt_station")).tex.name, "MiningBeltStation", "Station selects its dedicated map texture");
+assert.equal(current.fleetMarker(ghost("combat_freighter")).tex.name, "combat_freighter", "Combat Freighter selects its own map texture");
 current.scale = 10;
 close(current.shipSizePx("mining_belt_station"), 86 * 1.6, "Station retains its normal map freight base");
 current.scale = 96;
@@ -159,7 +164,7 @@ checkEndpoints(current);
 checkMonotonic(current);
 // Freight progression must remain readable at every zoom, using six distinct
 // single-hull designs even when a fleet has enough ships for a formation icon.
-const freightKinds = ["tiny_freighter", "small_freighter", "convoy", "large_freighter", "heavy_freighter", "bulk_freighter"];
+const freightKinds = ["tiny_freighter", "combat_freighter", "small_freighter", "convoy", "large_freighter", "heavy_freighter", "bulk_freighter"];
 checkMonotonic(current, freightKinds);
 for (const zoom of zooms) {
   current.scale = zoom;
@@ -175,7 +180,7 @@ for (const zoom of zooms) {
   }
 }
 current.scale = 96;
-for (const [index, cap] of [80, 100, 120, 160, 200, 240].entries()) {
+for (const [index, cap] of [80, 90, 100, 120, 160, 200, 240].entries()) {
   close(current.shipSizePx(freightKinds[index]), cap, "freight close-up cap");
 }
 // Execute the real map-picking radius expression: the Scout's reduced art must
@@ -290,7 +295,8 @@ const baseOnly = rendererSource.replace(scaledReturn, "const full = this.deepZoo
 assert.throws(() => check(fixture({}, baseOnly)), /proportional size/);
 // §system-approach: near a star, hulls ease to their System View size while
 // its orbit preview shows and grow back as they clear the system. Past the
-// 96× doorway they keep the System View's proportion to the growing preview.
+// 96× doorway they keep the System View's proportion to the true-scale
+// preview, which reaches the System View's own scale only at the zoom limit.
 const near = fixture();
 const star = { systems: [{ pos: { x: 0, y: 0 } }] };
 near.galaxy = star;
@@ -325,8 +331,7 @@ assert.ok(near.shipSizePx("cruiser", false, 1) < near.shipSizePx("cruiser") / 10
 const systemSize = layout.systemShipPx("cruiser");
 for (const [zoom, expected, why] of [[96, systemSize, "at the doorway: its System View size"],
   [192, systemSize, "never smaller than its System View size while the preview catches up"],
-  [96 / 0.35, systemSize, "the preview reaches System View scale"],
-  [384, systemSize * 0.35 * 4, "then it grows with the preview, in System View proportion"]]) {
+  [384, systemSize, "the preview reaches System View scale at the limit"]]) {
   near.scale = zoom;
   close(near.shipSizePx("cruiser", false, 1), expected, `cruiser near a star at r=${zoom.toFixed(1)}: ${why}`);
 }
@@ -356,7 +361,7 @@ for (const zoom of [96, 192, 384]) {
   const beside = hubbed.shipSizePx("raider", false, 0, 1);
   close(beside, layout.systemShipPx("raider") * Math.max(1, 0.35 * zoom / 96), `an Interceptor beside the hub at ${zoom}×: its System View size`);
   assert.ok(hubbed.hubRenderedPx() >= 8 * beside, `the station dwarfs it at ${zoom}× (${(hubbed.hubRenderedPx() / beside).toFixed(1)}×)`);
-  close(hubbed.shipSizePx("titan", false, 0.3, 0.8), hubbed.shipSizePx("titan", false, 0.8), "near a star and the hub, the stronger ease wins");
+  close(hubbed.shipSizePx("titan", false, 0.3, 0.8), hubbed.shipSizePx("titan", false, 0, 0.8), "near a star and the hub, the stronger ease wins");
 }
 hubbed.scale = 96;
 for (const { ghost: g } of scenarios) {

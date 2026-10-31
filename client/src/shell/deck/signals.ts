@@ -3,10 +3,11 @@
 // right: its painting, what it may hold, and a Send row per captain. After the
 // report, the same place lists what was found.
 import {
-  FIRST_TEN, SIGNAL_INFO, defaultSignal, findRows, firstTenStrip, sendRows, signalCardArt, signalCards,
+  FIRST_TEN, SIGNAL_INFO, defaultSignal, findRows, firstTenStrip, sendRows, signalCardArt, signalCards, signalInfo,
   signalFrameArt, signalsSummary, signalDur, type SignalCard,
 } from "../../core/derive/signals";
 import { shipKindLabel } from "../../core/derive/fleet";
+import { traderOf } from "../../core/derive/trader";
 import { systemName } from "../../core/derive/geo";
 import type { EntityId, SignalKind, SignalView } from "../../protocol";
 import { liveSimTime } from "../../state";
@@ -112,7 +113,7 @@ export class DeckSignalsRoutes {
       return `<section class="deck-page deck-signals"><div class="deck-empty-inline">No signals yet.</div></section>`;
     }
     const now = liveSimTime();
-    const cards = signalCards(view, st.ghosts, st.commandCenter, now);
+    const cards = signalCards(view, st.ghosts, st.commandCenter, now, traderOf(st.founding));
     if (!this.selected || !cards.some((c) => c.signal.id === this.selected)) this.selected = defaultSignal(cards);
     const strip = firstTenStrip(view);
     const head = `<header class="deck-signals__head"><span>${esc(signalsSummary(view, now))}</span>`
@@ -186,7 +187,7 @@ export class DeckSignalsRoutes {
   private report(s: SignalView, now: number): string {
     const st = this.ctx.state;
     const report = s.report!;
-    const info = SIGNAL_INFO[s.kind];
+    const info = signalInfo(s.kind, traderOf(st.founding));
     const fleet = st.ghosts.find((g) => g.own && g.id === report.fleet);
     const ship = fleet ? shipKindLabel(fleet.kind) : null;
     const programme = (id: string) => st.research?.programmes.find((p) => p.id === id)?.name ?? id;

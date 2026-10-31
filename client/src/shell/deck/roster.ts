@@ -10,6 +10,7 @@ import type {
   CaptainRosterView,
   GhostView,
   ProgrammeView,
+  ResearchGrantView,
 } from "../../protocol";
 import { liveSimTime } from "../../state";
 import { captainPortrait } from "../art";
@@ -152,6 +153,10 @@ export class DeckRosterRoutes {
         selection.tier = tier;
         selection.id = "";
       }
+    } else if (action === "research-grant") {
+      // §research-grant (R3): credits buy a research-hour, a few a day.
+      this.ctx.send({ type: "FundResearch" });
+      this.hooks.notice("<b>Research grant sent</b> · paid at command.");
     } else if (action === "research-select" || action === "research-inspect") {
       const programme = this.ctx.state.research?.programmes.find((entry) => entry.id === button.dataset.programme);
       if (programme) {
@@ -250,7 +255,7 @@ export class DeckRosterRoutes {
     const assignment = report && local && options ? `<div class="deck-inline-form"><select data-officer-fleet="${entry.id}">${options}</select><button type="button" data-deck-act="officer-assign" data-captain="${entry.id}">${entry.assigned_fleet ? "Transfer" : "Assign"}</button></div>` : "";
     const train = report && report.unspent > 0 ? `<div class="deck-officer-train">${(["command", "navigation", "fieldcraft", "logistics"] as CaptainAttribute[]).map((attribute) => `<button type="button" data-deck-act="officer-train" data-captain="${entry.id}" data-attribute="${attribute}" ${canTrain ? "" : "disabled"}>+ ${label(attribute)}</button>`).join("")}</div>` : "";
     const actions = `${entry.assigned_fleet && local ? `<button type="button" data-deck-act="officer-reserve" data-captain="${entry.id}">Return to reserve</button>` : ""}${assigned ? `<button type="button" data-deck-act="officer-fleet" data-fleet="${escAttr(assigned.id)}">Open formation</button>` : ""}`;
-    return `<article class="deck-officer-card${killed ? " is-lost" : recovering ? " is-recovering" : ""}">${captainPortrait(entry.portrait, report?.portrait_age ?? "young", `Portrait of ${titled}`, "deck-officer-card__portrait", true)}<div><header><div><span>${esc(status + hurt)}</span><h3>${esc(titled)}</h3></div>${report ? `<b>Lv ${report.level}</b>` : ""}</header><p>${report ? `Command ${report.attributes.command} · Navigation ${report.attributes.navigation} · Fieldcraft ${report.attributes.fieldcraft} · Logistics ${report.attributes.logistics}` : "Personnel light has not reached command."}</p><div class="deck-meter"><i style="width:${progress.toFixed(1)}%"></i></div><small>${report ? report.level >= 10 ? "Maximum level" : `${report.xp.toLocaleString()} / ${report.next_level_xp.toLocaleString()} XP · authority ${report.command_capacity}` : "Attributes pending"}</small>${train}${assignment}<div class="deck-officer-actions">${actions}</div></div></article>`;
+    return `<article class="deck-officer-card${killed ? " is-lost" : recovering ? " is-recovering" : ""}">${captainPortrait(entry.portrait, report?.portrait_age ?? "young", `Portrait of ${titled}`, "deck-officer-card__portrait", true)}<div><header><div><span>${esc(status + hurt)}</span><h3>${esc(titled)}</h3></div>${report ? `<b>Lv ${report.level}</b>` : ""}</header><p>${report ? `Command ${report.attributes.command} · Navigation ${report.attributes.navigation} · Fieldcraft ${report.attributes.fieldcraft} · Logistics ${report.attributes.logistics}` : "Personnel light has not reached command."}</p><div class="deck-meter"><i style="width:${progress.toFixed(1)}%"></i></div><small>${report ? report.level >= 10 ? "Maximum level" : `${report.xp.toLocaleString()} / ${report.next_level_xp.toLocaleString()} XP` : "Attributes pending"}</small>${train}${assignment}<div class="deck-officer-actions">${actions}</div></div></article>`;
   }
 
   private researchHtml(): string {
@@ -260,7 +265,7 @@ export class DeckRosterRoutes {
     const completed = research.programmes.filter((entry) => entry.state === "completed").length;
     const tabs: [ResearchPage, string][] = [["catalog", "Research"], ["queue", `Queue · ${queue.length}`], ["completed", `Completed · ${completed}`]];
     const nav = `<nav class="deck-tabs" aria-label="Research pages">${tabs.map(([page, name]) => `<button type="button" data-deck-act="research-page" data-page="${page}" aria-current="${this.researchPage === page ? "page" : "false"}" aria-selected="${this.researchPage === page}">${name}</button>`).join("")}</nav>`;
-    const active = research.active ? this.activeResearchHtml(research.active, research.stalled) : `<div class="deck-research-idle">No active research</div>`;
+    const active = research.active ? this.activeResearchHtml(research.active, research.stalled, research.grant) : `<div class="deck-research-idle">No active research</div>`;
     return `<section class="deck-page deck-research">${nav}${active}${this.researchPage === "queue" ? this.researchQueueHtml() : this.researchBrowserHtml()}</section>`;
   }
 
@@ -278,10 +283,12 @@ export class DeckRosterRoutes {
     return `<section class="deck-section"><header><h3>Research queue</h3><b>${queue.length}</b></header><div class="deck-research-queue">${queueHtml}</div></section>` + this.researchAcademiesHtml(research.academies, research.rate);
   }
 
-  private activeResearchHtml(active: { id: string; name: string; progress: number; cost: number; eta_secs: number | null }, stalled: boolean): string {
+  private activeResearchHtml(active: { id: string; name: string; progress: number; cost: number; eta_secs: number | null }, stalled: boolean, grant?: ResearchGrantView): string {
     const pct = Math.max(0, Math.min(100, active.progress / Math.max(1e-9, active.cost) * 100));
     const eta = stalled ? "Paused" : active.eta_secs !== null ? fmtEta(active.eta_secs) : "Awaiting supply";
-    return `<section class="deck-section deck-research-active"><header><button type="button" data-deck-act="research-inspect" data-programme="${escAttr(active.id)}"><small>In progress</small><strong>${esc(active.name)}</strong></button><b>${pct.toFixed(0)}% · ${esc(eta)}</b></header><div class="deck-meter" role="progressbar" aria-label="${escAttr(active.name)} progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct.toFixed(1)}"><i style="width:${pct.toFixed(1)}%"></i></div></section>`;
+    // §research-grant (R3): "Fund 1 h · 3,000 Cr · 2/3 today".
+    const fund = grant?.price != null ? `<div class="deck-research-grant"><button type="button" data-deck-act="research-grant" title="Credits buy research time, ${grant.per_day} grants a day." ${grant.left > 0 ? "" : "disabled"}>Fund ${fmtEta(grant.secs)} · ${fmt(grant.price)} Cr</button><small>${grant.left}/${grant.per_day} today</small></div>` : "";
+    return `<section class="deck-section deck-research-active"><header><button type="button" data-deck-act="research-inspect" data-programme="${escAttr(active.id)}"><small>In progress</small><strong>${esc(active.name)}</strong></button><b>${pct.toFixed(0)}% · ${esc(eta)}</b></header><div class="deck-meter" role="progressbar" aria-label="${escAttr(active.name)} progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct.toFixed(1)}"><i style="width:${pct.toFixed(1)}%"></i></div>${fund}</section>`;
   }
 
   private researchAcademiesHtml(academies: AcademyRow[], rate: number): string {

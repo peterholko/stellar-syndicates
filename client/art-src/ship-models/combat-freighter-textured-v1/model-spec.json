@@ -1,0 +1,114 @@
+{
+  "id": "combat-freighter",
+  "name": "Combat Freighter",
+  "center": [
+    267,
+    440
+  ],
+  "pixelsPerUnit": [
+    38,
+    38
+  ],
+  "reference": "combat-freighter-reference-v1/combat-freighter-reference.png",
+  "sprite": "combat-freighter-reference-v1/combat-freighter.png",
+  "triangleBudget": [
+    5000,
+    6000
+  ],
+  "counts": {
+    "cargoCitadels": 1,
+    "holdDoors": 2,
+    "grappleArms": 4,
+    "grappleFingers": 12,
+    "mainEngines": 3,
+    "guns": 0
+  },
+  "regions": {
+    "top": [
+      48,
+      51,
+      474,
+      832
+    ],
+    "bottom": [
+      498,
+      34,
+      924,
+      828
+    ],
+    "front": [
+      1040,
+      69,
+      1620,
+      290
+    ],
+    "back": [
+      1035,
+      344,
+      1623,
+      557
+    ],
+    "side": [
+      900,
+      600,
+      1740,
+      825
+    ]
+  },
+  "sideRegistration": [
+    [
+      51,
+      290,
+      610,
+      690,
+      832
+    ],
+    [
+      896,
+      1106,
+      1530,
+      1622,
+      1738
+    ]
+  ],
+  "sideBaseline": 744,
+  "sideHeightScale": 40,
+  "patches": {
+    "cyan": [
+      263,
+      102,
+      271,
+      141
+    ],
+    "glass": [
+      243,
+      180,
+      293,
+      188
+    ],
+    "silver": [
+      8,
+      1032,
+      674,
+      1698
+    ],
+    "dark": [
+      692,
+      1032,
+      1355,
+      1698
+    ],
+    "brass": [
+      1374,
+      1032,
+      2038,
+      1698
+    ],
+    "enginewall": [
+      692,
+      1032,
+      1355,
+      1698
+    ]
+  }
+}

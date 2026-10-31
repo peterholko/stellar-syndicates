@@ -108,10 +108,10 @@ function classMethod(path, name) {
 function markerFixture() {
   const path = "../src/render.ts";
   const file = ts.createSourceFile(path, readFileSync(new URL(path, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
-  const names = ["BATTLE_ONGOING_PX", "BATTLE_PULSE_PERIOD_MS", "BATTLE_PULSE_SCALE"];
+  const names = ["BATTLE_ONGOING_PX", "BATTLE_FAN_MAX", "BATTLE_HISTORY_TTL_S", "BATTLE_PULSE_PERIOD_MS", "BATTLE_PULSE_SCALE"];
   const constants = file.statements.filter((node) => ts.isVariableStatement(node)
     && node.declarationList.declarations.some((decl) => names.includes(decl.name.getText(file)))).map((node) => node.getText(file)).join("\n");
-  let now = 0;
+  let now = 0, sim = 0;
   class Sprite {
     constructor(texture) {
       this.texture = texture;
@@ -121,10 +121,10 @@ function markerFixture() {
     }
     destroy() { this.destroyed = true; }
   }
-  const { MapProbe, size, period, growth } = compile(`${constants}
-    export const size = BATTLE_ONGOING_PX, period = BATTLE_PULSE_PERIOD_MS, growth = BATTLE_PULSE_SCALE;
+  const { MapProbe, size, period, growth, ttl } = compile(`${constants}
+    export const size = BATTLE_ONGOING_PX, period = BATTLE_PULSE_PERIOD_MS, growth = BATTLE_PULSE_SCALE, ttl = BATTLE_HISTORY_TTL_S;
     export class MapProbe { ${classMethod(path, "drawBattles")} ${classMethod(path, "battlePick")} }`, {
-    Sprite, performance: { now: () => now }, COL_OWN: 1, COL_THREAT: 2, ...history,
+    Sprite, performance: { now: () => now }, liveSimTime: () => sim, COL_OWN: 1, COL_THREAT: 2, ...history,
   });
   const calls = [];
   const graphics = new Proxy({}, { get: (_, name) => (...args) => { calls.push([name, ...args]); return graphics; } });
@@ -132,8 +132,8 @@ function markerFixture() {
   Object.assign(map, { battleGfx: graphics, battleSprites: new Map(), selectedBattleId: null,
     texBattleOngoing: { width: 256 }, texBattleConcluded: { width: 256 },
     aftermathLayer: { addChild() {} }, worldToScreen: (pos) => pos });
-  return { map, calls, size, period, growth, draw(state, time = 0) {
-    calls.length = 0; now = time; map.drawBattles(state);
+  return { map, calls, size, period, growth, ttl, draw(state, time = 0, simTime = 0) {
+    calls.length = 0; now = time; sim = simTime; map.drawBattles(state);
   } };
 }
 
@@ -395,7 +395,7 @@ test("mobile battle brackets follow battle/reports and clear on sheet dismissal"
     byId: () => ({ querySelectorAll: () => [] }),
   });
   const shell = new Shell(), renderer = {};
-  Object.assign(shell, { ctx: { renderer, state: { battleReports: [{ id: 7, battle_id: "fight" }] } }, markLogRead() {} });
+  Object.assign(shell, { ctx: { renderer, state: { battleReports: [{ id: 7, battle_id: "fight" }] } }, syncLogBadge() {} });
   for (const [entry, expected] of [[{ id: "battle", props: { id: "fight" } }, "fight"],
     [{ id: "log", props: { aftermathId: 7 } }, "fight"], [{ id: "system" }, null], [null, null]]) {
     shell.syncDestination(entry);
@@ -527,6 +527,27 @@ test("whole active sprite pulses clearly and smoothly; history and hit targets s
   assert.equal(f.calls.length, 1, "deselect removes the brackets");
 });
 
+test("a concluded battle leaves the map after its time; an ongoing one never does", () => {
+  const f = markerFixture();
+  // The last arrived round is at 60 s (tick 1,800 at 30 Hz).
+  const past = { ...record(), id: "past", own_side: null, outcome: "target_destroyed", rounds: [round(0), round(120)] };
+  const active = { ...record(), id: "active", pos: { x: 500, y: 0 }, own_side: null };
+  const state = { battles: [{ id: active.id, pos: active.pos, own: false }], battleRecords: [past, active],
+    battleReports: [], battleDismissed: new Set(), tickHz: 30 };
+  assert.equal(f.ttl, 1_800, "half an hour of sim time on the map");
+  f.draw(state, 0, 60 + 100);
+  assert.equal(f.map.battleSprites.get("past").alpha, 0.85, "fresh history at full strength");
+  f.draw(state, 0, 60 + f.ttl * 5 / 6);
+  assert.ok(Math.abs(f.map.battleSprites.get("past").alpha - 0.85 / 2) < 1e-9, "it fades over the last third");
+  assert.equal(f.map.battlePick(past.pos.x, past.pos.y), "past", "still clickable while fading");
+  f.draw(state, 0, 60 + f.ttl);
+  assert.equal(f.map.battleSprites.has("past"), false, "gone after its time");
+  assert.equal(f.map.battlePick(past.pos.x, past.pos.y), null, "and no longer clickable");
+  f.draw(state, 0, 1e9);
+  assert.ok(f.map.battleSprites.has("active"), "an ongoing battle never expires");
+  assert.equal(f.map.battlePick(active.pos.x, active.pos.y), "active");
+});
+
 test("a missing grey texture falls back to a grey burst without leaving the colored sprite visible", () => {
   const f = markerFixture(), rec = { ...record(), own_side: null };
   const state = { battles: [], battleRecords: [rec], battleDismissed: new Set() };
@@ -579,7 +600,7 @@ test("battle marker survives split View/record packets and remains selectable", 
     "no predicted-intercept circles, guidance lines or countdown labels remain");
   const method = owner.members.find((m) => m.name?.getText(file) === "drawBattles");
   const { MapProbe } = compile(`export class MapProbe { ${method.getText(file)} }`, {
-    performance: { now: () => 1_000 }, BATTLE_ONGOING_PX: 40, COL_OWN: 1, COL_THREAT: 2,
+    performance: { now: () => 1_000 }, liveSimTime: () => 0, BATTLE_ONGOING_PX: 40, BATTLE_FAN_MAX: 2, BATTLE_HISTORY_TTL_S: 1_800, COL_OWN: 1, COL_THREAT: 2,
     BATTLE_PULSE_PERIOD_MS: 2_200, BATTLE_PULSE_SCALE: 0.04,
     ...history,
   });
@@ -612,6 +633,18 @@ test("battle marker survives split View/record packets and remains selectable", 
   assert.equal(draw(), later.id, "dismissing an earlier battle cannot hide a later fight at the same position");
   state.battleReports = [];
   assert.equal(draw(), later.id, "exact dismissal survives the shorter report retention window");
+  // A pile-up in one place (Oct 24 2026: a raid reopened its fight dozens of
+  // times) is one marker, the newest; live fights fan out two slots at most.
+  state.battleDismissed = new Set();
+  state.battleRecords = Array.from({ length: 30 }, (_, i) => ({ ...rec, id: `pile-${String(i).padStart(2, "0")}`,
+    started_at: rec.started_at + i, outcome: "both_survive" }));
+  assert.equal(draw(), "pile-29", "thirty concluded fights in one place draw one marker, the newest");
+  state.battleRecords = [];
+  state.battles = Array.from({ length: 6 }, (_, i) => ({ id: `live-${i}`, pos: rec.pos, own: false }));
+  draw();
+  const xs = map.battleHits.map((hit) => hit.sx);
+  assert.equal(xs.length, 6, "every live fight stays selectable");
+  assert.ok(Math.max(...xs) - Math.min(...xs) <= 2 * 40 * 0.85 + 1e-9, "the fan-out stops after two slots");
 });
 
 let failures = 0;

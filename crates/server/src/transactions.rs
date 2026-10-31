@@ -116,6 +116,13 @@ impl TransactionHistory {
     }
 
     pub fn since(&self) -> f64 { self.since.unwrap_or(0.0) }
+
+    /// §welcome (R9): `owner`'s receipts that reached command after `since`,
+    /// newest first. Ids follow arrival, so the walk stops at the first older one.
+    pub fn reported_after(&self, owner: PlayerId, since: f64) -> impl Iterator<Item = &TransactionEntry> {
+        self.entries.get(&owner).map_or(&[][..], Vec::as_slice).iter().rev()
+            .take_while(move |entry| entry.reported_at > since)
+    }
 }
 
 #[cfg(test)]

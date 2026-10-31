@@ -10,7 +10,8 @@ import { jumpRangeAt } from "./derive/nebula";
 import { armedSelection } from "./derive/orders";
 import { jumpDepartureKey } from "./session";
 import { siteTitle } from "./derive/exploration";
-import { SIGNAL_INFO } from "./derive/signals";
+import { signalInfo } from "./derive/signals";
+import { traderOf } from "./derive/trader";
 import { operationTitle } from "./derive/format";
 
 export type EmplacementKind = EmplacementView["kind"];
@@ -62,6 +63,9 @@ let clickCycle: { sx: number; sy: number; keys: string; index: number } | null =
 /// battle sites, wreck fields, a landing), then the worlds. There is no
 /// movement verb here — the sim has no intra-system positions to move to.
 export function resolveSystemClick(sx: number, sy: number, ctx: MapClickCtx): MapClickResult {
+  // §tracking: the tracking inset is its own picture; a click on it keeps the
+  // selection it shows.
+  if (ctx.renderer.trackingInsetAt(sx, sy)) return { kind: "none" };
   const pick = ctx.renderer.systemScenePick(sx, sy);
   if (pick?.kind === "fleet") {
     const fleet = ctx.state.ghosts.find((ghost) => ghost.id === pick.id);
@@ -100,6 +104,8 @@ export function resolveMapClick(
   const state = ctx.state;
   const renderer = ctx.renderer;
   const inspect = mods.inspect ?? false;
+  // §raid-camera: the tracking window over the galaxy is its own picture too.
+  if (renderer.trackingInsetAt(sx, sy)) return { kind: "none" };
 
   // Jump aiming owns the next map click, including clicks over systems. The
   // preview is anchored to the SERVED ghost and public well geometry only;
@@ -208,7 +214,9 @@ export function resolveMapClick(
       if (hitSys && rival) {
         // Say why up front rather than send an order the sim will refuse.
         const block = blockadeOrderBlock(selF, dyn.owner, state.playerId ?? "", state.diplomacy, state.simTime);
-        if (block) {
+        // §raid-order: a raid needs no war, so a fleet with a hold may still raid.
+        const raidOnly = !!block && !blockadeOrderBlock(selF, dyn.owner, state.playerId ?? "", state.diplomacy, state.simTime, true);
+        if (block && !raidOnly) {
           return {
             kind: "reject",
             reason: `<span style="color:var(--warn)"><b>Can't blockade ${esc(hitSys.name)}.</b> ${esc(block)} ` +
@@ -217,7 +225,7 @@ export function resolveMapClick(
         }
         return {
           kind: "intent",
-          intent: { shipId: selF.id, verb: "blockade", targetId: hitSys.id, dest: hitSys.pos },
+          intent: { shipId: selF.id, verb: "blockade", targetId: hitSys.id, dest: hitSys.pos, ...(raidOnly ? { raid: true } : {}) },
         };
       }
     }
@@ -331,7 +339,8 @@ export function resolveMapClick(
     // Ordinary berths live in the system/Hub and Fleets panels, not as
     // invisible targets over a star. A battle or blockade exposes the fleet on
     // the map again, matching the renderer's anti-concealment exceptions.
-    if (ghost.docked && !battlePos && !besieged.has(ghost.docked)) continue;
+    // DockSite reaches the client as "E29"; SystemInfo ids are "29".
+    if (ghost.docked && !battlePos && !besieged.has(ghost.docked.startsWith("E") ? ghost.docked.slice(1) : ghost.docked)) continue;
     const point = battlePos
       ? renderer.worldToScreen(battlePos)
       : renderer.fleetScreenPosition(ghost);
@@ -469,7 +478,7 @@ export function resolveMapClick(
   const signalId = renderer.signalPick(sx, sy);
   const signal = signalId ? state.signals?.signals.find((candidate) => candidate.id === signalId) : undefined;
   if (signal) cands.push({ key: `signal:${signal.id}`, sortD: -1e6,
-    label: SIGNAL_INFO[signal.kind].name, target: { type: "signal", id: signal.id }, readout: "" });
+    label: signalInfo(signal.kind, traderOf(state.founding)).name, target: { type: "signal", id: signal.id }, readout: "" });
 
   // A contract tag is a precise target: it opens the contract (accept, assign
   // or follow it from its card), never a movement order.

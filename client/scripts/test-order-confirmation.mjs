@@ -67,6 +67,8 @@ function fixture() {
     "../../core/derive/nebula": { jumpRangeAt: () => 50_000 },
     "../../core/derive/geo": geo, "../../icons": icons, "../../protocol": protocol,
     "../../core/derive/interdiction": interdiction,
+    "../../core/derive/blockade": compile("core/derive/blockade.ts", { "../../protocol": protocol, "./fleet": fleets,
+      "./format": { fmtDur: n => `${n}s` } }),
     "../../core/derive/market": { kitAffordable: () => true },
     "../signature": { sheetFingerprint: JSON.stringify },
     "../dom": { renderDeferred: () => false, setHtml: (node, html) => { node.innerHTML = html; } } };
@@ -195,6 +197,47 @@ test("Fusion Freight cuts each freighter's share; Slow moves quote Uranium; driv
   assert.equal(fleet.fleetBaseSpeed({...raider,own:false}), before);
   assert.ok(Math.abs(fleet.cruiseFuelMultiplier({...raider,transit:"full",cargo_manifest:[]}) - 1.4) < 1e-12, "Torch Regime taxes the warship's cruise");
   assert.equal(fleet.jumpAntimatter(raider, 50_000), jumpBefore, "but never its jump");
+});
+
+test("a blockade preview offers Raid to a fleet with a hold, and Raid sends raid: true (§raid-order)", () => {
+  const f = fixture();
+  const raider = f.state.ghosts.find(g => g.id === "101");
+  f.intent.beginPendingIntent({ verb: "blockade", shipId: "101", targetId: "s9", dest: { x: 5000, y: 0 } });
+  f.strip.render(true);
+  assert.doesNotMatch(f.root.innerHTML, /data-deck-command="confirm-raid"/, "no hold, no raid");
+  raider.composition = [...(raider.composition ?? []), { kind: "combat_freighter", count: 1 }];
+  f.strip.render(true);
+  assert.match(f.root.innerHTML, /data-deck-command="confirm-raid"[^>]*>Raid</);
+  assert.match(f.root.innerHTML, /data-deck-command="confirm"[^>]*>Blockade/);
+  f.stripClick("confirm-raid");
+  assert.deepEqual(plain(f.sent).filter(m => m.type === "BlockadeSystem"),
+    [{ type: "BlockadeSystem", fleet_id: "101", system_id: "s9", raid: true }]);
+});
+
+test("without a war the preview is a raid alone (§raid-order)", () => {
+  const f = fixture();
+  const raider = f.state.ghosts.find(g => g.id === "101");
+  raider.composition = [...(raider.composition ?? []), { kind: "combat_freighter", count: 1 }];
+  f.intent.beginPendingIntent({ verb: "blockade", shipId: "101", targetId: "s9", dest: { x: 5000, y: 0 }, raid: true });
+  f.strip.render(true);
+  assert.match(f.root.innerHTML, /data-deck-command="confirm"[^>]*>Raid/, "Raid is the confirm");
+  assert.doesNotMatch(f.root.innerHTML, /data-deck-command="confirm-raid"|>Blockade/, "no blockade to choose");
+  assert.match(f.root.innerHTML, /data-deck-command="confirm-raid-repeat"[^>]*>Raid ↻</, "§player-styles: or a repeating raid");
+  assert.match(f.orders.intentSummary(f.state.pendingIntent), /^Raid .*loot until full, then home/);
+  f.stripClick("confirm");
+  assert.deepEqual(plain(f.sent).filter(m => m.type === "BlockadeSystem"),
+    [{ type: "BlockadeSystem", fleet_id: "101", system_id: "s9", raid: true }]);
+});
+
+test("Raid ↻ sends a repeating raid (§player-styles)", () => {
+  const f = fixture();
+  const raider = f.state.ghosts.find(g => g.id === "101");
+  raider.composition = [...(raider.composition ?? []), { kind: "combat_freighter", count: 1 }];
+  f.intent.beginPendingIntent({ verb: "blockade", shipId: "101", targetId: "s9", dest: { x: 5000, y: 0 }, raid: true });
+  f.strip.render(true);
+  f.stripClick("confirm-raid-repeat");
+  assert.deepEqual(plain(f.sent).filter(m => m.type === "BlockadeSystem"),
+    [{ type: "BlockadeSystem", fleet_id: "101", system_id: "s9", raid: true, repeat: true }]);
 });
 
 test("Stealth on the fleet panel previews; Cancel changes nothing; Confirm sends exactly once", () => {
@@ -413,6 +456,19 @@ test("map Move retains its single confirmation and matching command payload", ()
   assert.equal(f.sent.length, 0);
   f.intent.confirmPendingIntent(); f.intent.confirmPendingIntent();
   assert.deepEqual(plain(f.sent), [{ type: "MoveShip", ship_id: "101", dest: { x: 25_000, y: 0 } }]);
+});
+
+test("a world taking the System View's selection lets go of fleets and what they aimed", () => {
+  const f = fixture();
+  f.intent.beginPendingIntent({ verb: "move", shipId: "101", dest: { x: 25_000, y: 0 } });
+  f.intent.intentAiming.jump = "101"; f.intent.intentAiming.guard = "101";
+  f.state.selectedOrderId = "o1"; f.state.selectedShipIds.add("103");
+  const version = f.ctx.renderer.stateVersion;
+  f.intent.deselectFleets();
+  assert.deepEqual([f.state.selectedShipId, [...f.state.selectedShipIds], f.state.selectedOrderId, f.state.pendingIntent,
+    f.intent.intentAiming.jump, f.intent.intentAiming.guard], [null, [], null, null, null, null]);
+  assert.ok(f.ctx.renderer.stateVersion > version, "the map redraws");
+  assert.equal(f.sent.length, 0, "nothing is sent");
 });
 
 test("no shell control bypasses confirmation for a fleet-command literal", () => {

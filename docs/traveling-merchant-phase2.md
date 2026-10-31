@@ -40,7 +40,7 @@ should only rely on it when needed", Peter, Oct 13).
 
 | Line | Stock | Price |
 | --- | --- | --- |
-| Staples: Alloys, Machinery, Electronics, Polymers, Provisions, Deuterium | Phase 1 amounts: 120 / 50 / 60 / 30 / 40 / 30 | Hub mid +50–100%, rolled per good per visit |
+| Staples: Alloys, Machinery, Semiconductors, Polymers, Provisions, Deuterium | Phase 1 amounts: 120 / 50 / 60 / 30 / 40 / 30 | Hub mid +50–100%, rolled per good per visit |
 | One special per visit | see below | see below |
 | It buys: ores and staples | up to 3,000 Cr a visit | 50% of Hub mid |
 
@@ -57,7 +57,7 @@ should only rely on it when needed", Peter, Oct 13).
   the Hub mid.
 - Bought goods land in that colony's stockpile, limited by its storage.
 
-**What it's worth:** at a colony, 40 Electronics cost about 1,450 Cr by
+**What it's worth:** at a colony, 40 Semiconductors cost about 1,450 Cr by
 Authority freight (Hub mid 34 plus the 6% fee), against 2,040–2,720 Cr from
 the trader. That's 600–1,300 Cr to have them in about 6 minutes instead of a
 freight trip from the Hub.

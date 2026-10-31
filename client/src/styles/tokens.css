@@ -44,9 +44,16 @@
   /* Toasts sit above workspaces but below opaque help/theater overlays. */
   --z-toast: var(--z-command);
   --z-hover: 60;
-  --deck-topbar-height: 40px;
+  /* The top bar's own row; with the stores bar shown the chrome is taller
+     (.deck.has-stores), and everything below follows --deck-topbar-height. */
+  --deck-topbar-row: 40px;
+  --deck-stores-height: 32px;
+  --deck-topbar-height: var(--deck-topbar-row);
   --deck-workspace-standard: 460px;
   --deck-workspace-system: 552px; /* 20% wider than the standard workspace. */
+  /* The System/World rail at its standard width: the window's alone, so the
+     planet stage beside it resizes only with the window. */
+  --deck-system-rail: min(var(--deck-workspace-system), calc(100vw - var(--space-6) - var(--space-1)));
   --deck-workspace-wide: 1240px;
   --deck-build-workbench-max: 920px;
   --deck-control-height: 32px;

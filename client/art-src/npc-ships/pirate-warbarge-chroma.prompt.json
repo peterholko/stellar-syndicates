@@ -1,0 +1,24 @@
+{
+  "id": "pirate-warbarge",
+  "category": "pirate",
+  "destination": "client/art-src/npc-ships/pirate-warbarge-chroma.png",
+  "prompt": "Use case: precise-object-edit. Image 1 is a complete pirate WARBARGE top-down sprite on chroma green, 1254x1254. Preserve its whole ship silhouette, viewpoint, exact position, size, four recessed amber stern engines, two heavy twin-barrel BOW turrets, central missile cells, off-center bridge and blackened/rust/orange/mustard materials. Make ONE correction: there must be exactly THREE smaller BROADSIDE turrets on EACH side of the hull, for SIX side turrets total, in addition to the two larger bow turrets. Currently there are only two side turrets on each side. Keep those and ADD a third matching small twin-barrel broadside turret lower down on each side on the broad aft armor plates, above the stern engines. Their barrels aim outward sideways. Left-side turrets at approximately y=460,650,860; right-side turrets at the same three y locations. Clearly separate each turret with a gap. Total turrets: two large at bow plus three smaller port plus three smaller starboard. Do not remove, merge or duplicate any other ship part.\nKeep all of the complete craft within the canvas. Background remains flat PURE GREEN #00FF00 everywhere outside the ship, no gradients, shadows, text, symbols, exhaust, beams or smoke. Output one square 1254x1254 RGB PNG.",
+  "references": [
+    "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-bc2cce51-ee6e-4f96-b208-85f24bc33821.png"
+  ],
+  "transparent": false,
+  "expectedSize": [
+    1254,
+    1254
+  ],
+  "revisionNote": "Add the third broadside turret on each flank to match the cruiser armament brief.",
+  "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-b0069654-c625-47c6-8ef5-704966082bea.png",
+  "inspection": {
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGB",
+    "sha256": "a92cdbf125196fef835430a1c2f8228ec5acb9bce34ed911a66d2f48dd3efe54"
+  },
+  "tool": "image_gen.imagegen",
+  "generatedAt": "2026-10-22"
+}

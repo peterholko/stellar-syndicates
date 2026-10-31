@@ -1,0 +1,43 @@
+{
+  "id": "gate-stage-2",
+  "category": "gate",
+  "destination": "client/art-src/season-gate-v1/gate-stage-2.png",
+  "prompt": "Use case: precise-object-edit. Asset: one 1254 x1254 transparent RGBA galaxy-map sprite for Stellar Syndicates. Image 1 is the authoritative OVERHEAD MASTER of this exact gate. Preserve its strict orthographic top-down camera, perfect circular footprint, image position, diameter, four diagonal anchor locations, upper-left soft light, ivory-and-brass materials and crisp game-art style. Do not tilt the camera. Do not move or resize the ring. Pylons remain viewed from their small triangular TOPS, never upright towers. Change ONLY the construction state as follows:\nFRAME. Keep all four diagonal anchor pylons and their footings. The entire circular ring exists as bare graphite lattice truss. ONLY THE UPPER THIRD (the arc from about 10 o'clock to 2 o'clock) has ivory ceramic armor and brass seams. The lower two-thirds shows open skeletal truss. Remove ALL eight inner-edge emitters; they have not been installed. No tender. The aperture and holes through the truss remain transparent.\nThe final output is one complete centered structure, roughly 90% canvas width with equal clear margins, not a sheet or scene. Genuine alpha outside and in all described empty holes, no floor, no shadow plate, no background. No labels, text, UI, grid, border or unrelated ships.",
+  "references": [
+    "client/art-src/season-gate-v1/gate-stage-3.png"
+  ],
+  "transparent": true,
+  "expectedSize": [
+    1254,
+    1254
+  ],
+  "dependsOn": "gate-lineup",
+  "stage": 2,
+  "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-3b84ef44-d11b-458b-9f89-a498ada6156a.png",
+  "inspection": {
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "sha256": "2869c99e30b9217f9cdf83b1ac9c5627c5b270059cfa1e31f9a924f474d0e6e4",
+    "alphaExtrema": [
+      0,
+      255
+    ],
+    "alphaBounds": [
+      0,
+      19,
+      1238,
+      1214
+    ],
+    "transparentPixelFraction": 0.6321,
+    "solidBoundsAtAlpha128": [
+      71,
+      72,
+      1183,
+      1162
+    ],
+    "centerAlpha": 0
+  },
+  "tool": "image_gen.imagegen",
+  "generatedAt": "2026-10-22"
+}

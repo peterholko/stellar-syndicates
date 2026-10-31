@@ -4,7 +4,7 @@
 //! freighters collect by hand (`StationLoad`) or on a freight route. Anchored,
 //! it cannot move, merge or split; unanchoring takes as long as anchoring.
 use super::*;
-use crate::industry::{Anchor, AnchorPhase, ANCHOR_SECS, SKIM_RANGE_SU};
+use crate::industry::{Anchor, AnchorPhase, ANCHOR_SECS};
 
 impl World {
     /// The owner's station anchored at a belt, and the room left in its hold.
@@ -110,7 +110,7 @@ impl World {
     }
 
     /// One tick of every station's anchor. An approaching station anchors once
-    /// it is within `SKIM_RANGE_SU` of the star; anchoring and unanchoring each
+    /// it reaches its point on the belt; anchoring and unanchoring each
     /// take `ANCHOR_SECS`. When the system becomes the station's own colony,
     /// the station unloads into the new stockpile and comes free.
     pub(super) fn tick_belt_stations(&mut self, events: &mut Vec<Event>) {
@@ -130,8 +130,14 @@ impl World {
             let at = |phase| Anchor { phase, since: now, ..anchor };
             match anchor.phase {
                 AnchorPhase::Approaching => {
+                    // §real-coordinates: anchors once at its point on the belt.
+                    let arrived = self
+                        .systems
+                        .iter()
+                        .find(|s| s.id == anchor.system)
+                        .is_some_and(|s| self.fleet_at_spot(id, &self.fleets[&id], s));
                     let f = self.fleets.get_mut(&id).unwrap();
-                    if pos.distance(star) <= SKIM_RANGE_SU {
+                    if arrived {
                         f.order = FleetOrder::Idle;
                         tenders::hold(f);
                         f.anchor = Some(at(AnchorPhase::Anchoring));
@@ -216,7 +222,7 @@ impl World {
                     && !f.disposable
                     && !f.contains(ShipKind::MiningBeltStation)
                     && matches!(f.order, FleetOrder::Idle)
-                    && f.pos.distance(self.fleets[&station].pos) <= crate::ship::DOCK_RADIUS
+                    && self.at_dock_point(f.pos, self.fleets[&station].pos)
             })
             && !engaged(self, fleet)
             && !engaged(self, station);
@@ -225,7 +231,7 @@ impl World {
             return;
         }
         let f = &self.fleets[&fleet];
-        let room = f.cargo_capacity().saturating_sub(f.cargo_units());
+        let room = f.trade_capacity().saturating_sub(f.cargo_units());
         let n = units.min(room).min(self.fleets[&station].cargo_amount(commodity));
         if n == 0 {
             self.industry_reject(owner, fleet, events);
@@ -250,7 +256,7 @@ mod tests {
     use crate::industry::{FleetIndustry, FreightPort, FreightRoute, RouteStop};
 
     /// A home of the owner's and an unowned, charted belt with ore; a lone
-    /// station and a barge parked at the belt's star.
+    /// station and a barge parked at the belt.
     fn scene() -> (World, PlayerId, EntityId, (EntityId, u32, C), EntityId, EntityId) {
         let mut w = World::new(SimConfig::for_players(812, 4));
         let owner = PlayerId(911);
@@ -274,6 +280,8 @@ mod tests {
         w.fleets.insert(station, Fleet::single(station, owner, ShipKind::MiningBeltStation, pos, FleetOrder::Idle, None));
         let barge = w.alloc_entity_id();
         w.fleets.insert(barge, Fleet::single(barge, owner, ShipKind::MiningBarge, pos, FleetOrder::Idle, None));
+        w.park_at(station, system, body);
+        w.park_at(barge, system, body);
         (w, owner, home, (system, body, ore), station, barge)
     }
     fn pump(w: &mut World, seconds: f64, events: &mut Vec<Event>) {

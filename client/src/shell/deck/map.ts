@@ -19,6 +19,8 @@ interface DeckMapHooks {
   watchSystemBattle(id: string, systemId: string): void;
   returnedToGalaxy(): void;
   openTarget(target: SelectTarget): void;
+  /** §home-step: a click on this system flies into its System View. */
+  diveOnSelect(systemId: string): boolean;
   notice(html: string): void;
   clearNotice(): void;
 }
@@ -201,6 +203,9 @@ export class DeckMapInteraction {
       renderer.adjustSystemScrub(event.deltaY < 0 ? SYSTEM_SCRUB_STEP : -SYSTEM_SCRUB_STEP);
       return;
     }
+    // §tracking: the tracking window is its own picture; the wheel over it
+    // never zooms the map beneath (or opens a world or a star under it).
+    if (renderer.trackingInsetAt(event.clientX, event.clientY)) return;
     if (renderer.viewMode.type === "system") {
       const factor = Math.exp(-event.deltaY * 0.0016);
       if (event.deltaY < 0) {
@@ -293,7 +298,8 @@ export class DeckMapInteraction {
       if (pick?.kind === "battle" || pick?.kind === "wreck") this.hooks.watchSystemBattle(pick.id, renderer.viewMode.systemId);
       return;
     }
-    if (renderer.viewMode.type !== "galaxy" || renderer.isSystemScrubbing()) return;
+    if (renderer.viewMode.type !== "galaxy" || renderer.isSystemScrubbing()
+      || renderer.trackingInsetAt(event.clientX, event.clientY)) return;
     const battleId = renderer.battlePick(event.clientX, event.clientY);
     if (battleId !== null) {
       // Running or concluded — enterBattle resolves which and opens the
@@ -311,10 +317,24 @@ export class DeckMapInteraction {
       this.ctx.intent.clearPendingIntent(true);
       this.hooks.clearNotice();
     }
+    this.enterSystem(system);
+  }
+
+  /** Enter a system's System View at once, as a double-click does. */
+  enterSystem(system: SystemInfo): void {
     this.pushSystemDynamic(system.id);
     const dynamic = this.ctx.state.systems.find((entry) => entry.id === system.id);
-    renderer.enterSystemView(system, dynamic?.bodies ?? []);
+    this.ctx.renderer.enterSystemView(system, dynamic?.bodies ?? []);
     this.hooks.enteredSystem(system);
+  }
+
+  /** §home-step: fly into a system's System View; its arrival is routed as
+   * the wheel's handoff is (`tick`). False when the map can't fly now. */
+  flyInto(id: string): boolean {
+    const system = this.systemById(id);
+    if (!system) return false;
+    const bodies = this.ctx.state.systems.find((entry) => entry.id === id)?.bodies ?? [];
+    return this.ctx.renderer.flyIntoSystem(system, bodies);
   }
 
   cycleFleet(direction: -1 | 1): void {
@@ -392,17 +412,21 @@ export class DeckMapInteraction {
     else if (!inspect && result.target.type === "system") {
       this.ctx.state.selectedSystemId = result.target.id;
       this.ctx.renderer.stateVersion++;
+      if (this.hooks.diveOnSelect(result.target.id)) this.flyInto(result.target.id);
     } else if (!inspect && result.target.type === "emplacement") {
-      this.clearFleetSelection();
+      this.ctx.intent.deselectFleets();
       this.ctx.state.selectedEmplacementId = result.target.id;
       this.ctx.renderer.stateVersion++;
     } else if (!inspect && result.target.type === "jumpDeparture") {
-      this.clearFleetSelection();
+      this.ctx.intent.deselectFleets();
       this.ctx.state.selectedEmplacementId = null;
       this.ctx.renderer.selectedJumpDepartureKey = result.target.key;
       this.ctx.renderer.stateVersion++;
     } else if (!inspect && (result.target.type === "aftermath" || result.target.type === "capture")) {
       this.ctx.renderer.selectedBattleMarkerId = result.target.id;
+    } else if (!inspect && result.target.type === "systemBody") {
+      // One selection in the System View: the world takes it from any fleet.
+      this.ctx.intent.deselectFleets();
     }
     this.hooks.openTarget(result.target);
     if (result.target.readout) this.hooks.notice(result.target.readout);
@@ -445,15 +469,6 @@ export class DeckMapInteraction {
     this.ctx.renderer.stateVersion++;
   }
 
-  private clearFleetSelection(): void {
-    this.ctx.intent.clearPendingIntent(true);
-    this.ctx.intent.clearJumpAiming(true);
-    this.ctx.intent.clearGuardAiming(true);
-    this.ctx.state.selectedOrderId = null;
-    this.ctx.state.selectedShipId = null;
-    this.ctx.state.selectedShipIds.clear();
-  }
-
   private updateHover(clientX: number, clientY: number): void {
     const renderer = this.ctx.renderer;
     const state = this.ctx.state;
@@ -467,7 +482,7 @@ export class DeckMapInteraction {
       this.showHover(copy, clientX, clientY);
       return;
     }
-    if (renderer.viewMode.type !== "galaxy") {
+    if (renderer.viewMode.type !== "galaxy" || renderer.trackingInsetAt(clientX, clientY)) {
       this.hideHover();
       renderer.canvas.style.cursor = "default";
       return;

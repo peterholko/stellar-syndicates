@@ -21,6 +21,11 @@ impl Bot {
 
     pub(super) fn next_research(&self, p: &Observation, wanted: &BTreeMap<C, f64>) -> Option<&'static str> {
         let available = |id: &str| p.available_research.iter().any(|s| s == id);
+        // §refining: the charter's research step is Enrichment, for its Smelter.
+        if p.founding_stage == sim::FoundingStage::FirstResearch && available(sim::founding::CHARTER_RESEARCH)
+            && !p.research.has(sim::founding::CHARTER_RESEARCH) {
+            return Some(sim::founding::CHARTER_RESEARCH);
+        }
         let safe = |s: &&Prospect| !self.avoided.contains_key(&s.id) && !p.threatened(s.pos);
         let range_blocked = p.expansion_unlocked
             && p.prospects.iter().filter(safe).next().is_some()
@@ -122,7 +127,7 @@ impl Bot {
         } else if let Some(project) = project {
             let missing: Vec<_> = p.project_costs(project).into_iter()
                 .filter(|(c, n)| p.stock(*c) + 1e-9 < *n)
-                .map(|(c, n)| format!("{c:?} {:.0}", (n - p.stock(c)).ceil())).collect();
+                .map(|(c, n)| format!("{} {:.0}", c.display_name(), (n - p.stock(c)).ceil())).collect();
             format!("development {:?}: {}", project.what, if missing.is_empty() {
                 "awaiting command/report".into()
             } else { format!("awaiting {}", missing.join(", ")) })

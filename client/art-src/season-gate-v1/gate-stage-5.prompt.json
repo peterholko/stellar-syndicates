@@ -1,0 +1,43 @@
+{
+  "id": "gate-stage-5",
+  "category": "gate",
+  "destination": "client/art-src/season-gate-v1/gate-stage-5.png",
+  "prompt": "Use case: precise-object-edit. Asset: one 1254 x1254 transparent RGBA galaxy-map sprite for Stellar Syndicates. Image 1 is the authoritative OVERHEAD MASTER of this exact gate. Preserve its strict orthographic top-down camera, perfect circular footprint, image position, diameter, four diagonal anchor locations, upper-left soft light, ivory-and-brass materials and crisp game-art style. Do not tilt the camera. Do not move or resize the ring. Pylons remain viewed from their small triangular TOPS, never upright towers. Change ONLY the construction state as follows:\nOPEN. Preserve all solid geometry exactly: eight ivory armor segments, four diagonal pylons, eight cylindrical inner-edge emitters. All eight emitters shine CYAN. Fill ONLY the circular aperture with a powerful swirling WHITE-GOLD vortex and a bright white-gold core. The portal is almost white at its center, pale gold at its edge. This aperture is luminous and opaque. ALL space OUTSIDE the ring remains transparent. NO outer glow, outward rays or beams. No purple or violet anywhere.\nThe final output is one complete centered structure, roughly 90% canvas width with equal clear margins, not a sheet or scene. Genuine alpha outside and in all described empty holes, no floor, no shadow plate, no background. No labels, text, UI, grid, border or unrelated ships.",
+  "references": [
+    "client/art-src/season-gate-v1/gate-stage-3.png"
+  ],
+  "transparent": true,
+  "expectedSize": [
+    1254,
+    1254
+  ],
+  "dependsOn": "gate-lineup",
+  "stage": 5,
+  "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-800c4439-f1d2-404f-b9b2-a207e72b877e.png",
+  "inspection": {
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "sha256": "c194e703a1f4f64582688d5cd45ed84e9486410c93140a2b637f53b2efe7e72d",
+    "alphaExtrema": [
+      0,
+      255
+    ],
+    "alphaBounds": [
+      0,
+      7,
+      1246,
+      1254
+    ],
+    "transparentPixelFraction": 0.3488,
+    "solidBoundsAtAlpha128": [
+      70,
+      71,
+      1185,
+      1163
+    ],
+    "centerAlpha": 254
+  },
+  "tool": "image_gen.imagegen",
+  "generatedAt": "2026-10-22"
+}

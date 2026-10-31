@@ -119,6 +119,7 @@ pub fn prepare_estimate(
         NodeEffects {
             veil: &veil,
             deep_scan: &deep,
+            intel: crate::view::ViewerIntel::of(world, viewer),
         },
     );
     let own = ghosts.iter().find(|g| g.id == attacker && g.own)?;
@@ -246,11 +247,13 @@ pub fn prepare_estimate(
     let base_seed = world.config.seed ^ attacker.0.rotate_left(17) ^ target.0.rotate_left(41);
     // Rules v14: a fight inside a system is fought at its world. Star
     // positions are public; ownership is the viewer's arrived picture.
+    // §den: a system of belts alone has no world (as the battle itself).
     let world_side = world
         .systems
         .iter()
         .filter(|s| s.pos.distance(ghost.pos) <= sim::build::DEFENSE_PLATFORM_RADIUS)
         .min_by(|a, b| a.pos.distance(ghost.pos).total_cmp(&b.pos.distance(ghost.pos)))
+        .filter(|s| s.bodies.iter().any(|b| !b.is_belt()))
         .map(|s| {
             let held_by_viewer = world.information.site(s.id, cc, c, now).is_some_and(|r| r.system.owner == Some(viewer));
             if held_by_viewer { 0 } else { 1 }

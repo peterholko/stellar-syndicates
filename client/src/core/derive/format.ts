@@ -186,8 +186,16 @@ export function triggerLabel(t: StandingTrigger): string {
 // derived right here from the player's own View — no extra information, just a
 // summary of what they can already see.
 export function agoLabel(at: number): string {
-  const d = Math.max(0, state.simTime - at);
-  return d < 90 ? `${d.toFixed(0)}s ago` : `${(d / 60).toFixed(0)}m ago`;
+  return `${ageLabel(Math.max(0, state.simTime - at))} ago`;
+}
+
+/** §log: an age in the units a person reads it: "40s", "8m", "3h", "2d". */
+export function ageLabel(seconds: number): string {
+  const d = Math.max(0, seconds);
+  if (d < 90) return `${d.toFixed(0)}s`;
+  if (d < 90 * 60) return `${(d / 60).toFixed(0)}m`;
+  if (d < 36 * 3600) return `${(d / 3600).toFixed(0)}h`;
+  return `${(d / 86400).toFixed(0)}d`;
 }
 
 

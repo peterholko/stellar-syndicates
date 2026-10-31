@@ -354,8 +354,15 @@ pub enum FleetIndustry {
         body: u32,
         /// Seconds of dwell banked on this pass.
         dwell: f64,
+        /// The pass's length: [`PROSPECT_SECS`], shortened by Survey Protocols.
+        #[serde(default = "prospect_secs")]
+        need: f64,
         status: String,
     },
+}
+
+fn prospect_secs() -> f64 {
+    PROSPECT_SECS
 }
 pub fn outpost_costs() -> &'static [(Commodity, u32)] {
     &[

@@ -8,6 +8,7 @@ import { renderer } from "../src/render";
 import { state } from "../src/state";
 import { SHIP_MODELS } from "../src/ship-models.generated";
 import { fleetArtKind, type ShipArtKind } from "../src/shipart";
+import { TRADER_SHIP_ART, type TraderSlug } from "../src/protocol";
 import { DeckEmpireRoutes } from "../src/shell/deck/empire";
 import { MobileParitySurfaces } from "../src/shell/mobile/parity";
 import { installPressGuard, setHtml } from "../src/shell/dom";
@@ -34,10 +35,12 @@ style.textContent = `
 document.head.append(style);
 const $ = (id: string) => document.getElementById(id)!;
 const kinds = Object.keys(SHIP_MODELS) as ShipArtKind[];
+/** §traders: which trader flies each trader ship's art. */
+const traderOfArt = new Map(Object.entries(TRADER_SHIP_ART).map(([slug, art]) => [art as ShipArtKind, slug as TraderSlug]));
 /** A map fleet showing this art: an art variant flies as another hull in the
- * sim (§merchant: the free trader is a flagged Authority Freighter). */
-const fleetOf = (kind: ShipArtKind) => kind === "free_trader"
-  ? { kind: "freighter" as ShipKind, tca: true, merchant: true, composition: [{ kind: "freighter" as ShipKind, count: 1 }] }
+ * sim (§merchant: every free trader is a flagged Authority Freighter). */
+const fleetOf = (kind: ShipArtKind) => traderOfArt.has(kind)
+  ? { kind: "freighter" as ShipKind, tca: true, merchant: true, trader: traderOfArt.get(kind), composition: [{ kind: "freighter" as ShipKind, count: 1 }] }
   : { kind, composition: [{ kind, count: 1 }] };
 const mobile = new URLSearchParams(location.search).has("mobile");
 const body = { id: 0, name: "Aster Prime", kind: "rocky", environment: "habitable", size: "large", geology: "metal_rich",
@@ -54,7 +57,7 @@ state.galaxy = { hub: { x: 5000, y: 5000 }, radius: 10000, nebulas: [], c: 1000,
   jump_range: 2000, jump_spool_s: 10, hyperlimit: 10, scout_sensor_mult: 1, convoy_sensor_mult: 1,
   sensor_array_base: 0, sensor_array_per_tier: 0, defense_platform_radius: 0,
   systems: [{ id: system.id, name: "Aster", pos: { x: 2000, y: 3000 }, band: "rich", body_count: 1 }],
-  build_options: kinds.filter(kind => kind !== "free_trader").map((kind, i) => ({ key: kind, label: SHIP_MODELS[kind].title, build_secs: 60 + i * 15,
+  build_options: kinds.filter(kind => !traderOfArt.has(kind)).map((kind, i) => ({ key: kind, label: SHIP_MODELS[kind].title, build_secs: 60 + i * 15,
     costs: [{ commodity: "alloys", units: 40 + i * 10 }, { commodity: "electronics", units: 20 }] })),
 } as any;
 state.research = { programmes: ["prop_freight_frames", "prop_heavy_lifters", "prop_line_express_charters", "prop_line_bulk_charters", "prop_line_autonomous_freight", "hull_line_iv_destroyer", "hull_line_v_cruiser", "hull_line_vi_battleship", "hull_line_vii_dreadnought", "hull_line_viii_titan"].map(id => ({ id, state: "completed" })) } as any;
@@ -115,6 +118,12 @@ function miningComparison(): void {
   arrange(3, ["small_freighter", "mining_barge", "convoy"]);
 }
 $("fixture-mining-comparison").onclick = miningComparison;
+function combatFreighterComparison(): void {
+  moving = false; closePanels();
+  renderer.zoomByFactor(10 / renderer.zoomFactor());
+  arrange(3, ["tiny_freighter", "combat_freighter", "small_freighter"]);
+}
+$("fixture-combat-freighter-comparison").onclick = combatFreighterComparison;
 function stationComparison(): void {
   moving = false; closePanels();
   renderer.zoomByFactor(10 / renderer.zoomFactor());

@@ -1,0 +1,268 @@
+{
+  "recipe": "season-v1-alpha-frame-chroma-2",
+  "mastersUnmodified": true,
+  "assets": {
+    "tactical-datacore": {
+      "family": "gear",
+      "source": "art-src/captain-gear-v1/tactical-datacore.png",
+      "sourceSha256": "111d7eaebd70808798cb5035cecdce241c3f2363f4a60de7d8a4740134a1beb2",
+      "nativeSolidBounds": {
+        "left": 84,
+        "top": 230,
+        "width": 1138,
+        "height": 844
+      },
+      "framing": "fit within 78% width and 68% height; preserve proportions",
+      "levels": {
+        "64": "/art/derived/season/v1/tactical-datacore-64.png?v=243d24d9fe17",
+        "128": "/art/derived/season/v1/tactical-datacore-128.png?v=590bd0cef076",
+        "256": "/art/derived/season/v1/tactical-datacore-256.png?v=908b6c068b2e"
+      }
+    },
+    "admirals-datacore": {
+      "family": "gear",
+      "source": "art-src/captain-gear-v1/admirals-datacore.png",
+      "sourceSha256": "9d9f9c70ffdf5d880335e16f93d78cc32c4829495f6e3988c6c501f7a840687f",
+      "nativeSolidBounds": {
+        "left": 61,
+        "top": 222,
+        "width": 1157,
+        "height": 805
+      },
+      "framing": "fit within 78% width and 68% height; preserve proportions",
+      "levels": {
+        "64": "/art/derived/season/v1/admirals-datacore-64.png?v=6640565ca107",
+        "128": "/art/derived/season/v1/admirals-datacore-128.png?v=71888efa2b81",
+        "256": "/art/derived/season/v1/admirals-datacore-256.png?v=e7f4f4ad31a3"
+      }
+    },
+    "astrogation-suite": {
+      "family": "gear",
+      "source": "art-src/captain-gear-v1/astrogation-suite.png",
+      "sourceSha256": "04bd8bc93677ad5106e3d00162ad3ffd62060f1e8fc537a6508b59315660a5d0",
+      "nativeSolidBounds": {
+        "left": 89,
+        "top": 222,
+        "width": 1077,
+        "height": 839
+      },
+      "framing": "fit within 78% width and 68% height; preserve proportions",
+      "levels": {
+        "64": "/art/derived/season/v1/astrogation-suite-64.png?v=dc7c0b00594f",
+        "128": "/art/derived/season/v1/astrogation-suite-128.png?v=40e99a15a24e",
+        "256": "/art/derived/season/v1/astrogation-suite-256.png?v=7ea81588e2ef"
+      }
+    },
+    "pathfinders-astrolabe": {
+      "family": "gear",
+      "source": "art-src/captain-gear-v1/pathfinders-astrolabe.png",
+      "sourceSha256": "5e902f3605945064cd50e2ee85823d317bd418e95ca2d3abe6c9014ff014c0ba",
+      "nativeSolidBounds": {
+        "left": 238,
+        "top": 168,
+        "width": 792,
+        "height": 932
+      },
+      "framing": "fit within 78% width and 68% height; preserve proportions",
+      "levels": {
+        "64": "/art/derived/season/v1/pathfinders-astrolabe-64.png?v=fac4131f059d",
+        "128": "/art/derived/season/v1/pathfinders-astrolabe-128.png?v=5d8fd67b621f",
+        "256": "/art/derived/season/v1/pathfinders-astrolabe-256.png?v=80fcf1ad60be"
+      }
+    },
+    "survey-kit": {
+      "family": "gear",
+      "source": "art-src/captain-gear-v1/survey-kit.png",
+      "sourceSha256": "605b0317efadb3161292ea555b77117760cbf6a995acb0b4e67293eed9b377b9",
+      "nativeSolidBounds": {
+        "left": 83,
+        "top": 110,
+        "width": 1102,
+        "height": 1043
+      },
+      "framing": "fit within 78% width and 68% height; preserve proportions",
+      "levels": {
+        "64": "/art/derived/season/v1/survey-kit-64.png?v=ef57b1e72f5e",
+        "128": "/art/derived/season/v1/survey-kit-128.png?v=d19a642b7b53",
+        "256": "/art/derived/season/v1/survey-kit-256.png?v=92590351828c"
+      }
+    },
+    "precursor-lens": {
+      "family": "gear",
+      "source": "art-src/captain-gear-v1/precursor-lens.png",
+      "sourceSha256": "201bc50a2b3f856f20b049cba622a7c4aa7a2571e35d0a7b8b567059e4ba2e5d",
+      "nativeSolidBounds": {
+        "left": 133,
+        "top": 264,
+        "width": 1009,
+        "height": 710
+      },
+      "framing": "fit within 78% width and 68% height; preserve proportions",
+      "levels": {
+        "64": "/art/derived/season/v1/precursor-lens-64.png?v=211819f85908",
+        "128": "/art/derived/season/v1/precursor-lens-128.png?v=875afba5eb05",
+        "256": "/art/derived/season/v1/precursor-lens-256.png?v=388331f059a2"
+      }
+    },
+    "quartermasters-ledger": {
+      "family": "gear",
+      "source": "art-src/captain-gear-v1/quartermasters-ledger.png",
+      "sourceSha256": "cb8b14f43319a31bf9c109c893bfe66ae2b771b97c253ad66a529bc10998de88",
+      "nativeSolidBounds": {
+        "left": 77,
+        "top": 216,
+        "width": 1129,
+        "height": 880
+      },
+      "framing": "fit within 78% width and 68% height; preserve proportions",
+      "levels": {
+        "64": "/art/derived/season/v1/quartermasters-ledger-64.png?v=d062ba25a70c",
+        "128": "/art/derived/season/v1/quartermasters-ledger-128.png?v=f3eeee62c25b",
+        "256": "/art/derived/season/v1/quartermasters-ledger-256.png?v=142504ec4c3d"
+      }
+    },
+    "chandlers-seal": {
+      "family": "gear",
+      "source": "art-src/captain-gear-v1/chandlers-seal.png",
+      "sourceSha256": "127f443e0ecce45708d39324595ce59c121f15f0406fea8f71b4dc979278d1f7",
+      "nativeSolidBounds": {
+        "left": 71,
+        "top": 231,
+        "width": 1132,
+        "height": 831
+      },
+      "framing": "fit within 78% width and 68% height; preserve proportions",
+      "levels": {
+        "64": "/art/derived/season/v1/chandlers-seal-64.png?v=7b5e801e053d",
+        "128": "/art/derived/season/v1/chandlers-seal-128.png?v=3c6263d58f59",
+        "256": "/art/derived/season/v1/chandlers-seal-256.png?v=2f2711c9a303"
+      }
+    },
+    "gate-stage-1": {
+      "family": "gate",
+      "source": "art-src/season-gate-v1/gate-stage-1.png",
+      "sourceSha256": "b6834228521ebf8b9114a29c98755af6aaa83a24d8f269f45ecd52e6726bd4fc",
+      "nativeSolidBounds": {
+        "left": 78,
+        "top": 83,
+        "width": 1103,
+        "height": 1073
+      },
+      "framing": "full canvas; common stage alignment",
+      "levels": {
+        "64": "/art/derived/season/v1/gate-stage-1-64.png?v=0306a22779c9",
+        "128": "/art/derived/season/v1/gate-stage-1-128.png?v=6a5ebd87d13d",
+        "256": "/art/derived/season/v1/gate-stage-1-256.png?v=9f215e312c4e",
+        "512": "/art/derived/season/v1/gate-stage-1-512.png?v=d86ea4362ab9"
+      }
+    },
+    "gate-stage-2": {
+      "family": "gate",
+      "source": "art-src/season-gate-v1/gate-stage-2.png",
+      "sourceSha256": "2869c99e30b9217f9cdf83b1ac9c5627c5b270059cfa1e31f9a924f474d0e6e4",
+      "nativeSolidBounds": {
+        "left": 71,
+        "top": 72,
+        "width": 1112,
+        "height": 1090
+      },
+      "framing": "full canvas; common stage alignment",
+      "levels": {
+        "64": "/art/derived/season/v1/gate-stage-2-64.png?v=402d78dbced4",
+        "128": "/art/derived/season/v1/gate-stage-2-128.png?v=bc5618a52f91",
+        "256": "/art/derived/season/v1/gate-stage-2-256.png?v=c755850fd30e",
+        "512": "/art/derived/season/v1/gate-stage-2-512.png?v=d82025fc9a5a"
+      }
+    },
+    "gate-stage-3": {
+      "family": "gate",
+      "source": "art-src/season-gate-v1/gate-stage-3.png",
+      "sourceSha256": "c11baedcfd6da772036a8c31ea6bca33ee181f90598eb82fbe5bce22e0d8ae41",
+      "nativeSolidBounds": {
+        "left": 71,
+        "top": 73,
+        "width": 1111,
+        "height": 1090
+      },
+      "framing": "full canvas; common stage alignment",
+      "levels": {
+        "64": "/art/derived/season/v1/gate-stage-3-64.png?v=5de8000ea200",
+        "128": "/art/derived/season/v1/gate-stage-3-128.png?v=c0d6034b08e3",
+        "256": "/art/derived/season/v1/gate-stage-3-256.png?v=b0dd73778d65",
+        "512": "/art/derived/season/v1/gate-stage-3-512.png?v=358709fc38d8"
+      }
+    },
+    "gate-stage-4": {
+      "family": "gate",
+      "source": "art-src/season-gate-v1/gate-stage-4.png",
+      "sourceSha256": "51b41f2e0c2532db2cf5b4ab567836bd06fce992bb017521e41666a85052e134",
+      "nativeSolidBounds": {
+        "left": 68,
+        "top": 70,
+        "width": 1118,
+        "height": 1096
+      },
+      "framing": "full canvas; common stage alignment",
+      "levels": {
+        "64": "/art/derived/season/v1/gate-stage-4-64.png?v=5e47eab3ac1b",
+        "128": "/art/derived/season/v1/gate-stage-4-128.png?v=35483a7196e6",
+        "256": "/art/derived/season/v1/gate-stage-4-256.png?v=4d90b9a74f51",
+        "512": "/art/derived/season/v1/gate-stage-4-512.png?v=52fe7b1850d6"
+      }
+    },
+    "gate-stage-5": {
+      "family": "gate",
+      "source": "art-src/season-gate-v1/gate-stage-5.png",
+      "sourceSha256": "c194e703a1f4f64582688d5cd45ed84e9486410c93140a2b637f53b2efe7e72d",
+      "nativeSolidBounds": {
+        "left": 70,
+        "top": 71,
+        "width": 1115,
+        "height": 1092
+      },
+      "framing": "full canvas; common stage alignment",
+      "levels": {
+        "64": "/art/derived/season/v1/gate-stage-5-64.png?v=f803b3ff48ae",
+        "128": "/art/derived/season/v1/gate-stage-5-128.png?v=7504c5f426e9",
+        "256": "/art/derived/season/v1/gate-stage-5-256.png?v=68ab0d324a1c",
+        "512": "/art/derived/season/v1/gate-stage-5-512.png?v=cd5d40c8e0a2"
+      }
+    },
+    "pirate-reaver": {
+      "family": "pirate",
+      "source": "art-src/npc-ships/pirate-reaver-chroma.png",
+      "sourceSha256": "7ad1d16c7f87e89dee6d544d3435d9faa12d51da20fdd1c0f629f490031dffc6",
+      "nativeSolidBounds": {
+        "left": 290,
+        "top": 10,
+        "width": 673,
+        "height": 1228
+      },
+      "framing": "green keyed; fit within 92% width and height; preserve proportions",
+      "levels": {
+        "128": "/art/derived/season/v1/pirate-reaver-128.png?v=f05d71f3eb42",
+        "256": "/art/derived/season/v1/pirate-reaver-256.png?v=65496f5c9f27",
+        "512": "/art/derived/season/v1/pirate-reaver-512.png?v=939301bf9131",
+        "1254": "/art/derived/season/v1/pirate-reaver-1254.png?v=74b53b6538e5"
+      }
+    },
+    "pirate-warbarge": {
+      "family": "pirate",
+      "source": "art-src/npc-ships/pirate-warbarge-chroma.png",
+      "sourceSha256": "a92cdbf125196fef835430a1c2f8228ec5acb9bce34ed911a66d2f48dd3efe54",
+      "nativeSolidBounds": {
+        "left": 198,
+        "top": 15,
+        "width": 859,
+        "height": 1210
+      },
+      "framing": "green keyed; fit within 92% width and height; preserve proportions",
+      "levels": {
+        "128": "/art/derived/season/v1/pirate-warbarge-128.png?v=beddb33d043c",
+        "256": "/art/derived/season/v1/pirate-warbarge-256.png?v=08f81494ad3a",
+        "512": "/art/derived/season/v1/pirate-warbarge-512.png?v=164117fd29ce",
+        "1254": "/art/derived/season/v1/pirate-warbarge-1254.png?v=74f1f1ad4f3c"
+      }
+    }
+  }
+}

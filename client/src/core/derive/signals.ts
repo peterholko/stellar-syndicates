@@ -6,6 +6,7 @@ import type {
 } from "../../protocol";
 import { label } from "../../icons";
 import { fleetBaseSpeed, shipKindLabel, transitSpeedMultiplier, WARP_FACTOR } from "./fleet";
+import { TRADERS, type Trader } from "./trader";
 
 /** Mirrors sim::signals. */
 export const SIGNAL_SWEEP_S = 30;
@@ -61,6 +62,14 @@ export const SIGNAL_INFO: Record<SignalKind, SignalInfo> = {
     mayHold: ["Teo's goods", "A finder's fee"],
     icon: `<rect x="7" y="9" width="18" height="14" rx="2"/><path d="M7 14 H25 M16 9 V14"/>` },
 };
+
+/** §traders: a signal's card text. The lost crate is the founder's own free
+ * trader's, as the server names it. */
+export function signalInfo(kind: SignalKind, trader: Trader = TRADERS.teo): SignalInfo {
+  const info = SIGNAL_INFO[kind];
+  return kind === "teos_lost_crate" ? { ...info, name: `${trader.first}'s lost crate`,
+    blurb: `A crate stencilled “${trader.ship}”.`, mayHold: [`${trader.first}'s goods`, "A finder's fee"] } : info;
+}
 
 const ART = "/art/derived/signals/v1";
 
@@ -123,9 +132,10 @@ export interface SignalCard {
 
 /** The cards, in order: reports in, then those being answered, then open by
  * age (newest first). */
-export function signalCards(view: SignalsView, ghosts: readonly GhostView[], home: Vec2 | null, now: number): SignalCard[] {
+export function signalCards(view: SignalsView, ghosts: readonly GhostView[], home: Vec2 | null, now: number,
+  trader: Trader = TRADERS.teo): SignalCard[] {
   const cards = view.signals.map((signal): SignalCard => {
-    const info = SIGNAL_INFO[signal.kind];
+    const info = signalInfo(signal.kind, trader);
     if (signal.report) {
       return { signal, info, status: "reported", tag: "Report in", line: `Explored · ${ago(now - signal.report.at)}`, progress: null };
     }

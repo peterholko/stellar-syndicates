@@ -1,0 +1,45 @@
+{
+  "generation_method": "built-in image_gen",
+  "assets": [
+    {
+      "tier": 1,
+      "file": "tier-1-prospecting-outpost.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 2264809,
+      "sha256": "f584d46753884691dd2e9a794f4a1d6ad35c32d18952e33e21efded95678d6da"
+    },
+    {
+      "tier": 2,
+      "file": "tier-2-automated-mine.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 2331289,
+      "sha256": "3f06cda441d96cb453ed123ea716247751602419247b8ab90f87c7115c08a116"
+    },
+    {
+      "tier": 3,
+      "file": "tier-3-deep-core-quarry.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 2605273,
+      "sha256": "1fc8b4372ee805a29f2170f4ca9e5d0ee80363b99729b1a1848f3a7ab7be7fcd"
+    },
+    {
+      "tier": 4,
+      "file": "tier-4-refinery-complex.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 2722594,
+      "sha256": "d8faefeb39d4532e8f4f07bc8ffc11b219e4b35e48a6b9d28639b2a0a689e916"
+    },
+    {
+      "tier": 5,
+      "file": "tier-5-asteroid-foundry.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 2793897,
+      "sha256": "c5432ab434fa98fdbb035b6d2e057c3062ca566292dcacac05a18ee36917bddc"
+    }
+  ]
+}

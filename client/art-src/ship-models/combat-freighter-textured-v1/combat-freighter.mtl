@@ -1,0 +1,15 @@
+newmtl material_0
+Kd 1 1 1
+Ks .3 .3 .3
+Ns 48
+Ke .65 .65 .65
+map_Kd textures/combat-freighter-basecolor.png
+map_Ke textures/combat-freighter-emissive.png
+
+newmtl material_1
+Kd 1 1 1
+Ks .3 .3 .3
+Ns 48
+Ke .65 .65 .65
+map_Kd textures/combat-freighter-basecolor.png
+map_Ke textures/combat-freighter-emissive.png

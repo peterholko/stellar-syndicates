@@ -78,7 +78,7 @@ pub struct AsteroidField {
   how fast fields run dry.
 - **No Ferrite fields.** Every home already mines Ferrite, and the economics
   below show it doesn't pay to haul. Fields carry the ores a home lacks:
-  Cuprite and Crystalline feed Electronics, and Volatiles feed Fuel and
+  Cuprite and Crystalline feed Semiconductors, and Volatiles feed Fuel and
   Polymers.
 
 **Seeding.** Fields are seeded on a new galaxy only, with `--reset-galaxy` and
@@ -94,7 +94,7 @@ no migration.
 - **Why the mid ring is authored.** Homes sit near the core, at a frontier of
   about 0.08. Cuprite only starts at 0.20 and reaches full weight at 0.35, so a
   roll there would almost always give Crystalline. Authoring it gives every home
-  the same two Electronics ores within reach.
+  the same two Semiconductor ores within reach.
 - **Rolled ore.**
   `roll_raw_deposit_where(rng, frontier, |c| matches!(c, CrystallineOre | CupriteOre | TitaniumOre))`.
   Frontier comes from position, as it does for home neighbourhoods:
@@ -114,7 +114,7 @@ no migration.
   A rigged hull gives up Cargo Pods, Extended Tanks or a Fuel Transfer Rig. A
   rigged Convoy holds 400, not 800, and carries no extra tanks.
 - **Build.** At a staffed Shipyard I. The starting recipe is Machinery 10,
-  Alloys 16 and Electronics 4. For comparison, Cargo Pods cost Alloys 18,
+  Alloys 16 and Semiconductors 4. For comparison, Cargo Pods cost Alloys 18,
   Polymers 12 and Machinery 6.
 - **Unlock.** The first rig is found: the home ore cluster's surface cache
   gains one Mining Rig. Recovering it is the move players already learn on the
@@ -338,7 +338,7 @@ What the table says:
    - Recommended: a rig on existing freighters now, a barge hull later.
    - Alternative: the barge first, which waits on art.
 3. **Starter cluster ore.**
-   - Recommended: Cuprite. The home lacks it, and it feeds Electronics.
+   - Recommended: Cuprite. The home lacks it, and it feeds Semiconductors.
    - Alternative: Crystalline.
 4. **How rigs unlock.**
    - Recommended: the first rig is found in the cluster cache, and cheap

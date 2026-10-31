@@ -196,6 +196,22 @@ impl RankingCategory {
     }
 }
 
+/// §syndicate-projects (R6): one syndicate in the published table, from the
+/// same close as the corporations'. Ordered by members' combined valuation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyndicateRankingRow {
+    pub id: crate::ids::SyndicateId,
+    pub name: String,
+    pub members: u32,
+    pub valuation: f64,
+    /// Project points earned this week.
+    pub week_points: u32,
+    /// Bonus levels bought, all tracks.
+    pub levels: u32,
+    /// Weekly project medals: gold, silver, bronze.
+    pub medals: [u32; 3],
+}
+
 /// One corporation's row in a PUBLISHED rankings ledger — a snapshot copy taken on
 /// the ledger tick. All values are cumulative campaign totals (public record).
 /// Serialisable both ways: persisted with the world, and shipped verbatim to the

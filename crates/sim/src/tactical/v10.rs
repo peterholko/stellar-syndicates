@@ -276,7 +276,7 @@ pub(super) fn update_formations(state: &mut TacticalState, seed: u64) -> Vec<Opt
             super::Math::Soft => crate::dmath::polar(facing, 1.0),
         };
         let ring = if shape == Shape::Ring { extent } else { 0.0 };
-        let anchor = if side == 0 { state.bearing * (BEAM_RANGE * 0.85) } else { Vec2::ZERO };
+        let anchor = if side == 0 { state.bearing * (BEAM_RANGE * 0.85 * state.range_scale(0)) } else { Vec2::ZERO };
         let hold = match hold_distance(state, shape, &members, ring) {
             Some(d) if closes => target_enemy - ahead * d,
             _ => anchor,

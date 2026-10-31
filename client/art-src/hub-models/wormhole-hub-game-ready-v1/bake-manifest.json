@@ -1,0 +1,7 @@
+{
+  "recipe": "wormhole-hub-ortho-top-perspective-hero-v1",
+  "source": "art-src/ship-models/wormhole-hub-textured-v1/wormhole-hub.glb",
+  "sourceSha256": "449d7f2833c36325785b4f4878ad36e1443b291f52802ca0b66373d61b50fe08",
+  "topSha256": "f642be63e57ce7598fb1cd248a2a414a1b1debb9fbf695efdd0504e4375980af",
+  "heroSha256": "8524a2d614267b7c60de61a9b4caf06142bece890c8e1f26d653931d632f695e"
+}

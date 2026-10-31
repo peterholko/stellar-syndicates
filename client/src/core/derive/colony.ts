@@ -16,7 +16,7 @@ const ROLE_PRODUCT: Record<ColonyOpportunityView["role"], Commodity[]> = {
   population_world: [], shipbuilding_center: [], strategic_outpost: [],
 };
 const ROLE_NAME: Record<ColonyOpportunityView["role"], string> = {
-  mining_world: "mining", fuel_complex: "fuel production", electronics_center: "electronics",
+  mining_world: "mining", fuel_complex: "fuel production", electronics_center: "semiconductor production",
   agricultural_exporter: "agriculture", population_world: "population capacity",
   shipbuilding_center: "shipbuilding", strategic_outpost: "jump staging",
 };

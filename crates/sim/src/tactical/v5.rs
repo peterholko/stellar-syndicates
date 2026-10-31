@@ -7,7 +7,12 @@ use v1::{Distribution, ProjSetup, SimOutcome, TacticalState};
 
 pub(super) fn offense(fit: &Loadout) -> (DamageType, f64) {
     let n = fit.modules().iter().filter(|m| **m == ModuleKind::PrismaticLance).count();
-    if n > 0 && !fit.modules().contains(&ModuleKind::TorpedoRack) && !fit.modules().contains(&ModuleKind::MassDriver) {
+    // §research-wiring Lance Array: only a fit carrying one reads it, so every
+    // older fit (and recording) fights as before.
+    let arrays = fit.modules().iter().filter(|m| **m == ModuleKind::LanceArray).count();
+    if arrays > 0 && fit.fires_lance_array() {
+        (DamageType::Beam, crate::module::LANCE_ARRAY_MULT * arrays as f64)
+    } else if n > 0 && !fit.modules().contains(&ModuleKind::TorpedoRack) && !fit.modules().contains(&ModuleKind::MassDriver) {
         (DamageType::Beam, 1.45 * n as f64)
     } else { rules_v1::offense(fit) }
 }

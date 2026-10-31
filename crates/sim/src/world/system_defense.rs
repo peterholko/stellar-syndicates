@@ -15,7 +15,7 @@ impl World {
             let Some(post) = fleet.system_defense() else { continue; };
             if engaged.contains(&id) { continue; } // tactical retreat owns a running battle
             // Verify the destination locally, not from an unseen remote capture.
-            if fleet.pos.distance(post.station) <= crate::ship::DOCK_RADIUS
+            if fleet.pos.distance(post.station) <= crate::transit::HYPERLIMIT
                 && self.systems.iter().find(|s| s.id == post.system).is_none_or(|s| s.owner != Some(fleet.owner))
             {
                 changes.push((id, FleetOrder::Idle, None));
@@ -52,7 +52,7 @@ impl World {
                 other.owner != fleet.owner && other.is_combatant() && !other.owner.is_tca()
                     && !self.are_allied(fleet.owner, other.owner)
                     && !self.diplomacy_protects(fleet.owner, other.owner)
-                    && (other.owner.is_sentinel() || (!self.founder_protected(fleet.owner) && !self.founder_protected(other.owner)))
+                    && (other.owner.is_sentinel() || (!self.pvp_shielded(fleet.owner) && !self.pvp_shielded(other.owner)))
                     && !self.in_sovereign_zone(other.pos)
             };
             let (mut friendly, mut enemy) = (fleet.combat_weight(), 0.0);
@@ -79,8 +79,11 @@ impl World {
             // Complete the return before taking another sortie. Otherwise a
             // quarry just inside the leash repeatedly pulls a returning guard
             // back out, recreating a drop/spool sawtooth at the perimeter.
+            // §real-coordinates: back at the post is at rest over the defended
+            // world, inside the well.
             if outside || retreat || !fleet.is_combatant()
-                || fleet.pos.distance(post.station) > 1e-6 { continue; }
+                || fleet.vel.length_sq() > 1e-9
+                || fleet.pos.distance(post.station) > crate::transit::HYPERLIMIT { continue; }
             // Remain berthed for normal refuelling/resupply instead of installing
             // a dry Intercept at the dock, which would make the berth ineligible.
             if !fleet.supplied || fleet.fuel < crate::fuel::fuel_tick(fleet.mass(), fleet.transit_speed(), DT)
@@ -260,7 +263,9 @@ mod tests {
         }
         assert!(broke_off);
         assert!(maximum <= post.radius + 1e-6, "maximum excursion {maximum} exceeds {}", post.radius);
-        assert!(w.fleets[&id].pos.distance(post.station) < 1e-6);
+        // §real-coordinates: back at rest over the defended world.
+        assert!(w.fleets[&id].pos.distance(post.station) < crate::transit::HYPERLIMIT);
+        assert!(w.fleets[&id].vel.length() < 1e-9);
         assert_eq!(w.fleets[&id].system_defense(), Some(post));
     }
 

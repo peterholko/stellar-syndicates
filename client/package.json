@@ -28,6 +28,7 @@
     "test:battle-fx": "node scripts/test-battle-fx.mjs",
     "test:battle-backdrop": "node scripts/test-battle-backdrop.mjs",
     "test:progression": "node scripts/test-progression.mjs",
+    "test:charter-crates": "node scripts/test-charter-crates.mjs",
     "test:settlement": "node scripts/test-settlement.mjs",
     "test:story-events": "node scripts/test-story-events.mjs",
     "test:industry": "node scripts/test-industry.mjs && node scripts/test-industrial-expansion.mjs",
@@ -62,6 +63,9 @@
     "test:map-markers": "node scripts/test-map-markers.mjs && node scripts/test-exploration.mjs",
     "test:system-defense": "node scripts/test-system-defense.mjs",
     "test:system-view": "node scripts/test-system-view.mjs",
+    "test:map-layers": "node scripts/test-map-layers.mjs",
+    "test:shipyard-view": "node scripts/test-shipyard-view.mjs",
+    "test:captain-intro": "node scripts/test-captain-intro.mjs",
     "test:live-battle": "node scripts/test-live-battle.mjs && node scripts/test-battle-history.mjs && node scripts/test-battle-aftermath.mjs"
   },
   "dependencies": {

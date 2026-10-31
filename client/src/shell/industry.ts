@@ -6,7 +6,7 @@ import { foundingHomeSystemId } from "../core/derive/geo";
 import { FOUNDING_STEP } from "../core/derive/founding";
 import { commodityIcon, icon, ICONS, label, type IconKey } from "../icons";
 import { COMMODITIES, MINERAL_DEPOSITS } from "../core/derive/market";
-import { fleetCargoCapacity, fleetFuelCapacity, guardCapable, PROSPECT_SECS, shipKindLabel, transitLabel } from "../core/derive/fleet";
+import { fleetFuelCapacity, fleetTradeCapacity, guardCapable, PROSPECT_SECS, shipKindLabel, transitLabel } from "../core/derive/fleet";
 import { availableStock, colonyProjectReason, firstShipmentRoute, freightRouteReason, hubQuote, openingImportPlan, productionPlan, projectName,
   routeAboard, routeCruiseSpeed, routeHubEstimate, routeLegSeconds, routePortId, routePortPosition, type OpeningInvestment } from "../core/derive/industry";
 import { planetArtUrl, planetArtwork, type PlanetArtKind } from "../planetart";
@@ -28,7 +28,14 @@ const dur = (secs: number) => {
   return s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m` : s >= 60 ? `${Math.floor(s / 60)}m${s % 60 ? ` ${s % 60}s` : ""}` : `${s}s`;
 };
 const projectKinds: ColonyProjectKind[] = ["orbital_assembly", "agricultural_export", "deep_extraction"];
-const targets: ProjectTarget[] = [{ kind: "cruiser" }, { kind: "academy" }, { kind: "colony" }, ...projectKinds.map(project => ({ kind: "development" as const, project }))];
+// §unlocks (Oct 28 2026, Peter): what research hasn't unlocked isn't shown.
+const done = (st: ViewState, id: string) => !!st.research?.programmes.some(p => p.id === id && p.state === "completed");
+const ramscoop = (st: ViewState) => done(st, "prop_expedition_v_ramscoop");
+/** More than two stops (bar a return to the first port) needs Autonomous Freight. */
+const stopCap = (st: ViewState) => done(st, "prop_line_autonomous_freight") ? st.galaxy?.industry_catalog?.max_stops ?? 8 : 3;
+const projectsOpen = (st: ViewState) => projectKinds.filter(k => k !== "orbital_assembly" || done(st, "mat_foundry_iv_fusion_reactors"));
+const targets = (st: ViewState): ProjectTarget[] => [...done(st, "hull_line_v_cruiser") ? [{ kind: "cruiser" as const }] : [], { kind: "academy" }, { kind: "colony" },
+  ...projectsOpen(st).map(project => ({ kind: "development" as const, project }))];
 const key = (t: ProjectTarget) => t.kind === "development" ? t.project : t.kind;
 const fleetName = (g: GhostView) => `${shipKindLabel(g.kind)} · ${g.id}`;
 const TABS: [string, string][] = [["routes", "Routes"], ["planner", "Production"], ["projects", "Projects"], ["harvesting", "Harvesting"], ["standing", "Standing rules"]];
@@ -95,7 +102,8 @@ const portName = (st: ViewState, port: RouteStop["port"]) =>
  * is received light. A View refresh cannot erase an unfinished manifest. */
 export function industryHtml(st: ViewState): string {
   const v = ui(st);
-  const tabs = `<nav class="lx-tabs" aria-label="Logistics sections">${TABS.map(([t, name]) =>
+  if (v.tab === "harvesting" && !ramscoop(st)) v.tab = "routes";
+  const tabs = `<nav class="lx-tabs" aria-label="Logistics sections">${TABS.filter(([t]) => t !== "harvesting" || ramscoop(st)).map(([t, name]) =>
     `<button type="button" ${act("tab", `data-tab="${t}"`)} aria-pressed="${v.tab === t}">${name}</button>`).join("")}</nav>`;
   const body = v.tab === "routes" ? routesHtml(st, v) : v.tab === "planner" ? plannerHtml(st, v) : v.tab === "projects" ? projectsHtml(st, v)
     : v.tab === "harvesting" ? skimmingHtml(st, v) : v.tab === "standing" ? depotHtml(st, v) : "";
@@ -104,7 +112,7 @@ export function industryHtml(st: ViewState): string {
 
 // ─── Routes: fleets on the left, the selected Freighter's plan, trip or editor ───
 
-const cargoFleets = (st: ViewState) => st.ghosts.filter(g => g.own && !g.tca && fleetCargoCapacity(g) > 0);
+const cargoFleets = (st: ViewState) => st.ghosts.filter(g => g.own && !g.tca && fleetTradeCapacity(g) > 0);
 const aboard = (g: GhostView): Manifest => Object.fromEntries(fleetCargoManifest(g).map(c => [c.commodity, c.units]));
 function homeSystem(st: ViewState): SystemStateView | undefined {
   return st.systems.find(s => s.owner === st.playerId && s.id === foundingHomeSystemId()) ?? st.systems.find(s => s.owner === st.playerId);
@@ -191,7 +199,7 @@ function routesHtml(st: ViewState, v: Ui): string {
 
 function railHtml(st: ViewState, v: Ui, fleets: GhostView[], names: Map<string, string>): string {
   const escorts = st.ghosts.filter(g => guardCapable(g) && !fleets.includes(g));
-  const freighters = fleets.map(g => `<button type="button" class="lx-rail__item" ${act("pick-fleet", `data-fleet="${esc(g.id)}"`)} aria-pressed="${g.id === v.fleet}">${hullIcon(g)}<span><b>${esc(names.get(g.id) ?? shipKindLabel(g.kind))}</b><small>${fleetState(st, g)}</small><small>Hold ${amount(total(aboard(g)))} / ${amount(fleetCargoCapacity(g))}</small></span></button>`).join("");
+  const freighters = fleets.map(g => `<button type="button" class="lx-rail__item" ${act("pick-fleet", `data-fleet="${esc(g.id)}"`)} aria-pressed="${g.id === v.fleet}">${hullIcon(g)}<span><b>${esc(names.get(g.id) ?? shipKindLabel(g.kind))}</b><small>${fleetState(st, g)}</small><small>Hold ${amount(total(aboard(g)))} / ${amount(fleetTradeCapacity(g))}</small></span></button>`).join("");
   const guards = escorts.map(g => {
     const target = g.guard_target ? names.get(g.guard_target) : null;
     const dock = dockName(st, g);
@@ -252,7 +260,7 @@ function planHtml(st: ViewState, v: Ui, fleet: GhostView, home: SystemStateView,
   const basket = v.basket ?? plan.manifest;
   const escort = defaultEscort(st, fleet);
   const route = firstShipmentRoute(home, fleet, escort?.id ?? null, basket, v.cap);
-  const hold = fleetCargoCapacity(fleet), held = total(basket);
+  const hold = fleetTradeCapacity(fleet), held = total(basket);
   const legs = routeLegSeconds(st, fleet, route), trip = legs.every(s => s != null) ? legs.reduce((a, b) => a! + b!, 0)! : null;
   const money = routeHubEstimate(st, route);
   const reason = freightRouteReason(st, fleet, route);
@@ -352,14 +360,14 @@ function goodsOptions(st: ViewState, stop: RouteStop, current: Commodity): strin
 }
 
 function editorHtml(st: ViewState, v: Ui, fleet: GhostView, names: Map<string, string>, standalone: boolean): string {
-  const route = v.route, cap = fleetCargoCapacity(fleet), n = route.stops.length;
+  const route = v.route, cap = fleetTradeCapacity(fleet), n = route.stops.length;
   const after = routeAboard(route, aboard(fleet));
   const reason = freightRouteReason(st, fleet, route);
   // Hub shopping only buys what fits; anywhere else an overfull load stalls the Freighter.
   const overflow = after.findIndex((units, i) => units > cap && !(route.stops[i].port.kind === "hub" && route.shopping_budget != null));
   const legs = routeLegSeconds(st, fleet, route), run = legs.every(s => s != null) ? legs.reduce((a, b) => a! + b!, 0)! : null;
   const money = routeHubEstimate(st, route);
-  const maxStops = st.galaxy?.industry_catalog?.max_stops ?? 8;
+  const maxStops = stopCap(st);
   const shopping = route.shopping_budget != null;
   const stations = st.ghosts.filter(g => g.own && (g.kind === "mining_belt_station" || g.composition?.some(c => c.kind === "mining_belt_station")));
   const ports = (current: string) => option("hub", "Market Hub", current) + st.systems.filter(s => s.owner === st.playerId).map(s => option(s.id, sysName(st, s.id), current)).join("")
@@ -433,6 +441,7 @@ function plannerHtml(st: ViewState, v: Ui): string {
 }
 function projectsHtml(st: ViewState, v: Ui): string {
   const sites = st.systems.filter(s => s.owner === st.playerId);
+  if (!projectsOpen(st).includes(v.project)) v.project = projectsOpen(st)[0];
   if (!sites.some(s => s.id === v.system)) v.system = sites[0]?.id ?? "";
   const s = sites.find(s => s.id === v.system), catalog = st.galaxy?.industry_catalog;
   const spec = catalog?.projects.find(p => p.kind === v.project);
@@ -446,11 +455,11 @@ function projectsHtml(st: ViewState, v: Ui): string {
     deep_extraction: "Mineral deposit · Machinery → deep reserves of one chosen mineral." };
   return `<section class="industry-panel"><h3>Projects & reserves</h3><label>Colony<select ${field("system")}>${sites.map(s => option(s.id,sysName(st,s.id),v.system)).join("")}</select></label>
     ${s ? `<section><h4>Protected materials</h4><small>Stock floors fill as goods arrive. Matching construction spends its own reserve; exports and other projects cannot.</small>
-    ${targets.map(t => { const r = s.industry?.reservations.find(r => key(r.target) === key(t)); return `<article class="industry-card"><header><b>${projectName(t)}</b><button type="button" ${act("reserve",`data-target="${key(t)}" data-on="${r ? "false" : "true"}"`)}>${r ? "Release" : "Reserve"}</button></header>
+    ${targets(st).map(t => { const r = s.industry?.reservations.find(r => key(r.target) === key(t)); return `<article class="industry-card"><header><b>${projectName(t)}</b><button type="button" ${act("reserve",`data-target="${key(t)}" data-on="${r ? "false" : "true"}"`)}>${r ? "Release" : "Reserve"}</button></header>
       <small>${esc(goods(Object.fromEntries(cost(t))))}</small>${r ? `<small>Reserved goal · ${esc(goods(r.goods))}</small>` : ""}</article>`; }).join("")}</section>
     ${s.industry?.outpost ? `<p>${label(s.industry.outpost.kind)} outpost · ${s.industry.outpost.supplied ? "supplied" : "waiting for supplies"}</p>` : `<section><h4>Major colony development</h4>
       ${s.industry?.projects.map(p => { const spec = catalog?.projects.find(s => s.kind === p.kind); const percent = Math.min(100,p.work / (spec?.build_secs ?? 180)*100); return `<article class="industry-card"><header><b>${projectName({kind:"development",project:p.kind})}</b><button type="button" ${act("active",`data-project="${p.kind}" data-on="${!p.active}"`)}>${p.active ? "Pause" : "Resume"}</button></header><progress max="100" value="${percent}"></progress><small>${!p.active ? "Paused" : percent < 100 ? `Construction ${Math.floor(percent)}%` : p.supplied ? goods(Object.fromEntries(p.outputs.map(([c,n]) => [c,n*60]))) + " / min" : "Waiting for workers / inputs / access"}</small></article>`; }).join("") ?? ""}
-      <div class="industry-grid"><label>Project<select ${field("project")}>${projectKinds.map(k => option(k,projectName({kind:"development",project:k}),v.project)).join("")}</select></label>
+      <div class="industry-grid"><label>Project<select ${field("project")}>${projectsOpen(st).map(k => option(k,projectName({kind:"development",project:k}),v.project)).join("")}</select></label>
       <label>World<select ${field("body")}>${s.bodies.map(b => option(String(b.id),b.name,String(v.body))).join("")}</select></label>
       ${v.project === "deep_extraction" ? resourceSelect(v.resource,"resource",MINERAL_DEPOSITS) : ""}</div>
       <p>${descriptions[v.project]}</p><small>${spec ? `${spec.workers} workforce units · ${spec.build_secs}s staffed construction · ${goods(Object.fromEntries(spec.costs))}` : "Catalog unavailable"}</small>
@@ -465,7 +474,7 @@ function outpostsHtml(st: ViewState, v: Ui): string {
   if (!sites.some(s => s.id === v.outpostSystem)) v.outpostSystem = sites[0]?.id ?? "";
   const site = sites.find(s => s.id === v.outpostSystem);
   if (site && !site.bodies.some(b => b.id === v.outpostBody)) v.outpostBody = site.bodies[0]?.id ?? 0;
-  const fleets = st.ghosts.filter(g => g.own && !g.tca && fleetCargoCapacity(g) > 0);
+  const fleets = st.ghosts.filter(g => g.own && !g.tca && fleetTradeCapacity(g) > 0);
   if (!fleets.some(g => g.id === v.builder)) v.builder = fleets[0]?.id ?? "";
   const f = fleets.find(g => g.id === v.builder), kit = st.galaxy?.industry_catalog?.outpost_costs ?? [];
   const ready = f && kit.length && kit.every(([c,n]) => fleetCargoManifest(f).filter(x => x.commodity === c).reduce((sum,x) => sum+x.units,0) >= n);
@@ -505,12 +514,11 @@ function skimmingHtml(st: ViewState,v: Ui): string {
   const fleets = st.ghosts.filter(g => g.own && !g.tca);
   if (!sites.some(s => s.id === v.skimSystem)) v.skimSystem = sites[0]?.id ?? "";
   if (!fleets.some(g => g.id === v.skimFleet)) v.skimFleet = fleets[0]?.id ?? "";
-  const unlocked = st.research?.programmes.some(p => p.id === "prop_expedition_v_ramscoop" && p.state === "completed");
   return `<section class="industry-panel"><h3>Gas-giant Helium-3 harvesting</h3><p>Tops up fusion tanks after Fusion Reactors; Freighters collect the rest as cargo.</p>
     <div class="industry-grid"><label>Fleet<select ${field("skimFleet")}>${fleets.map(g => option(g.id,fleetName(g),v.skimFleet)).join("")}</select></label>
     <label>Gas-giant system<select ${field("skimSystem")}>${sites.map(s => option(s.id,sysName(st,s.id),v.skimSystem)).join("")}</select></label></div>
-    <button type="button" ${act("skim")} ${unlocked && v.skimFleet && v.skimSystem ? "" : "disabled"}>Harvest Helium-3…</button>
-    <small>${unlocked ? `${amount((st.galaxy?.industry_catalog?.skim_helium3_per_s ?? 1 / 6) * 60)} Helium-3/min on station; pauses near combat or blockades.` : "Requires Ramscoop Skimming research."}</small></section>`;
+    <button type="button" ${act("skim")} ${v.skimFleet && v.skimSystem ? "" : "disabled"}>Harvest Helium-3…</button>
+    <small>${amount((st.galaxy?.industry_catalog?.skim_helium3_per_s ?? 1 / 6) * 60)} Helium-3/min on station; pauses near combat or blockades.</small></section>`;
 }
 /** §belts: a barge job's status, as the fleet line reads it. */
 const MINE_STATUS: Record<string, string> = {
@@ -521,8 +529,8 @@ const MINE_STATUS: Record<string, string> = {
 const beltName = (st: ViewState, system: EntityId, body: number): string =>
   st.systems.find(s => s.id === system)?.bodies.find(b => b.id === body)?.name ?? sysName(st, system);
 /** §pockets: a prospecting pass, as the fleet line reads it. */
-function prospectStatus(i: { dwell: number; status: string }): string {
-  if (i.status === "prospecting") return `${Math.max(1, Math.ceil(PROSPECT_SECS - i.dwell))} s left`;
+function prospectStatus(i: { dwell: number; need?: number; status: string }): string {
+  if (i.status === "prospecting") return `${Math.max(1, Math.ceil((i.need ?? PROSPECT_SECS) - i.dwell))} s left`;
   return MINE_STATUS[i.status] ?? i.status;
 }
 export function fleetIndustryHtml(g: GhostView, st: ViewState): string {
@@ -601,13 +609,13 @@ export function handleIndustryAction(el: HTMLElement, ctx: CoreContext): boolean
     const home = homeSystem(st), good = el.dataset.good as Commodity, step = Number(el.dataset.step);
     if (!home || !fleet || !good || !step) return true;
     const basket = { ...(v.basket ?? openingImportPlan(st, home, shipmentGoal(st)).manifest) };
-    if (step > 0 && total(basket) >= fleetCargoCapacity(fleet)) return true;
+    if (step > 0 && total(basket) >= fleetTradeCapacity(fleet)) return true;
     basket[good] = Math.max(0, (basket[good] ?? 0) + step);
     v.basket = basket;
   }
   else if (a === "send-shipment" || a === "customize" || a === "opening-plan") {
     // The charter's shipment: the plan card's basket, cap and escort. "opening-plan" is the older draft button's name.
-    const home = homeSystem(st), f = fleet && fleetCargoCapacity(fleet) > 0 ? fleet : cargoFleets(st)[0];
+    const home = homeSystem(st), f = fleet && fleetTradeCapacity(fleet) > 0 ? fleet : cargoFleets(st)[0];
     if (!home || !f) return true;
     v.fleet = f.id;
     const route = firstShipmentRoute(home, f, defaultEscort(st, f)?.id ?? null, v.basket ?? openingImportPlan(st, home, shipmentGoal(st)).manifest, v.cap);
@@ -623,7 +631,7 @@ export function handleIndustryAction(el: HTMLElement, ctx: CoreContext): boolean
     else { v.route = structuredClone(source.run.route); v.editing = true; v.picker = null; }
   }
   else if (a === "stop" && el.dataset.fleet) ctx.intent.beginFleetCommand({type:"SetFreightRoute",fleet_id:el.dataset.fleet,route:null});
-  else if (a === "add-stop" && v.route.stops.length < (st.galaxy?.industry_catalog?.max_stops ?? 8)) {
+  else if (a === "add-stop" && v.route.stops.length < stopCap(st)) {
     const last = v.route.stops.at(-1)?.port;
     v.route.stops.push({port: last?.kind === "hub" ? (homeSystem(st) ? {kind:"system",id:homeSystem(st)!.id} : {kind:"hub"}) : {kind:"hub"},load:{},unload:{},sell:false});
   }
@@ -645,7 +653,7 @@ export function handleIndustryAction(el: HTMLElement, ctx: CoreContext): boolean
     const reason = freightRouteReason(st,fleet,v.route);
     if (reason) { v.feedback = reason; return true; }
     stageRoute(ctx, v, fleet.id, v.route);
-  } else if (a === "reserve") { const target = targets.find(t => key(t) === el.dataset.target); if (target) { ctx.send({type:"ReserveProject",system_id:v.system,target,reserve:el.dataset.on === "true"}); v.feedback = "Reservation order sent; awaiting the system report."; } }
+  } else if (a === "reserve") { const target = targets(st).find(t => key(t) === el.dataset.target); if (target) { ctx.send({type:"ReserveProject",system_id:v.system,target,reserve:el.dataset.on === "true"}); v.feedback = "Reservation order sent; awaiting the system report."; } }
   else if (a === "build-project") {
     const s = st.systems.find(s => s.id === v.system), reason = s ? colonyProjectReason(st,s,v.body,v.project,v.resource) : "Choose a colony.";
     if (reason) v.feedback = reason;

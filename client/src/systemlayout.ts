@@ -3,37 +3,41 @@
 // and the galaxy map's approach hints. No Pixi, no state, no I/O.
 // ============================================================================
 //
-// The System View is still a PRESENTATION of system-level facts (see the hard
-// boundary in systemview.ts): nothing here creates intra-system positions in
-// the sim. Three cosmetic mappings live here so every consumer agrees on them:
+// §real-coordinates: the sim owns positions inside a system now. Every world
+// orbits its star (BodyView.orbit, laid out by the sim exactly as this view
+// always drew it) and every ship at a system is at one of its worlds. The
+// view draws them all to one true scale, 1 unit = SYSTEM_UNIT_SU:
 //
-//   * the TILTED ORBITAL PLANE — a fixed oblique view of the schematic plane.
-//     Positions are foreshortened vertically; sprites stay upright and round.
-//   * COSMETIC ORBITAL MOTION — every body turns about its parent as a pure
-//     function of (public seed, time). Same for every viewer; a remote system
-//     is posed at its OBSERVED time, so its picture visibly runs behind.
-//   * the NEAR ZONE — the star's immediate neighbourhood in galaxy space
-//     (docking radius → the defenses' reach), drawn to scale just outside the
-//     outermost orbit, keeping each contact's true bearing. Contacts farther
-//     out appear only as arrows at its edge; the galaxy map shows the rest.
+//   * the TILTED ORBITAL PLANE — a fixed oblique view of the plane. Positions
+//     are foreshortened vertically; sprites stay upright and round.
+//   * ORBITAL MOTION — every body turns about its parent as a function of its
+//     served orbit and time. A remote system is posed at its OBSERVED time,
+//     so its picture visibly runs behind.
+//   * the NEAR ZONE — out to the defenses' reach, contacts are drawn at their
+//     true distance and bearing; farther out they appear only as arrows at
+//     the frame's edge, and the galaxy map shows the rest.
 
-import type { ShipKind } from "./protocol";
+import type { BodyView, ShipKind, Vec2 } from "./protocol";
 
 /** Vertical foreshortening of the orbital plane (cos of the view inclination). */
 export const ORBIT_TILT = 0.6;
 
-/** Mirrors `sim::ship::DOCK_RADIUS`: inside this a fleet is AT the system. */
+/** Mirrors `sim::ship::DOCK_RADIUS`: the Hub's docking radius (a system's
+ * is its whole gravity well). */
 export const DOCK_RADIUS_SU = 260;
+/** Mirrors `sim::body::SYSTEM_UNIT_SU`: one System View unit in galaxy su. */
+export const SYSTEM_UNIT_SU = 860;
+/** Mirrors `sim::transit::HYPERLIMIT`: a star's gravity well. */
+export const WELL_SU = 900;
 /** Mirrors `sim::build::DEFENSE_PLATFORM_RADIUS` (the wire also carries it). */
 export const PLATFORM_COVER_SU = 1_300;
 /** The near zone's edge: the defenses' reach, which is also how close a fight
  * must be for the server to tag it as fought at this star. */
 export const NEAR_ZONE_SU = PLATFORM_COVER_SU;
 
-/** Normalized radius where the near zone begins (planets end near 0.96). */
-export const NEAR_INNER = 1.08;
-/** The zone's preferred and minimum outer radius (normalized). */
-export const NEAR_OUTER_MAX = 1.5;
+/** The frame's preferred (the defenses' reach) and minimum outer radius
+ * (normalized). */
+export const NEAR_OUTER_MAX = NEAR_ZONE_SU / SYSTEM_UNIT_SU;
 export const NEAR_OUTER_MIN = 1.2;
 
 /** A hull's resting on-screen length (px) in the System View, before
@@ -43,7 +47,7 @@ const SYSTEM_SHIP_PX: Record<ShipKind, number> = {
   scout: 15, survey_probe: 11, mining_barge: 19, raider: 18, corvette: 20, tiny_freighter: 17, small_freighter: 19, convoy: 22,
   large_freighter: 25, heavy_freighter: 27, bulk_freighter: 29, freighter: 25, colony: 25,
   transport: 23, builder: 21, destroyer: 24, cruiser: 27, battleship: 30, dreadnought: 34, titan: 39,
-  mining_belt_station: 30,
+  mining_belt_station: 30, combat_freighter: 18,
 };
 /** Hulls read at a fixed, legible size beside worlds tens of pixels across. */
 const SYSTEM_SHIP_SCALE = 1.25;
@@ -98,11 +102,42 @@ export function orbitalAngle(baseAngle: number, period: number, time: number): n
   return baseAngle - (turns - Math.floor(turns)) * TAU;
 }
 
-/** Galaxy distance from the star → near-zone radius (normalized). Linear from
- * the docking radius to the zone's edge, so distances read true. */
-export function nearRadius(distanceSu: number, inner: number, outer: number): number {
-  const t = (distanceSu - DOCK_RADIUS_SU) / (NEAR_ZONE_SU - DOCK_RADIUS_SU);
-  return inner + Math.max(0, Math.min(1, t)) * (outer - inner);
+/** Galaxy distance from the star → its radius on the plane (normalized), to
+ * scale, held at the frame's edge `outer` beyond it. */
+export function trueRadius(distanceSu: number, outer: number): number {
+  return Math.max(0, Math.min(distanceSu / SYSTEM_UNIT_SU, outer));
+}
+
+/** A served body's offset from its star at `time` (normalized, the untilted
+ * plane): a moon's adds its planet's. Null without a served orbit. */
+export function bodyOffset(bodies: readonly BodyView[], id: number, time: number): PlanePoint | null {
+  const body = bodies.find((b) => b.id === id);
+  const orbit = body?.orbit;
+  if (!body || !orbit || body.kind === "asteroid_belt") return null;
+  const a = orbitalAngle(orbit.angle, orbit.period, time);
+  const own = { x: Math.cos(a) * orbit.radius, y: Math.sin(a) * orbit.radius };
+  if (body.parent === null) return own;
+  const parent = bodyOffset(bodies, body.parent, time);
+  return parent ? { x: parent.x + own.x, y: parent.y + own.y } : null;
+}
+
+/** How close (su) a fleet at rest must be to a world to be AT it. */
+const AT_WORLD_SU = 30;
+
+/** The world (planet or moon) a fleet at `pos` is at, at `time`: the nearest
+ * within reach, else null. */
+export function worldAt(bodies: readonly BodyView[], star: Vec2, pos: Vec2, time: number): number | null {
+  const x = (pos.x - star.x) / SYSTEM_UNIT_SU;
+  const y = (pos.y - star.y) / SYSTEM_UNIT_SU;
+  let best: number | null = null;
+  let bestD = AT_WORLD_SU / SYSTEM_UNIT_SU;
+  for (const b of bodies) {
+    const o = bodyOffset(bodies, b.id, time);
+    if (!o) continue;
+    const d = Math.hypot(o.x - x, o.y - y);
+    if (d <= bestD) { best = b.id; bestD = d; }
+  }
+  return best;
 }
 
 /** The zone's outer radius for a camera rectangle: as wide as the tilted
@@ -147,7 +182,9 @@ export interface AnchorBody {
 }
 
 const WARSHIPS = new Set(["raider", "corvette", "destroyer", "cruiser", "battleship", "dreadnought", "titan"]);
-const FREIGHT = new Set(["tiny_freighter", "small_freighter", "convoy", "large_freighter", "heavy_freighter", "bulk_freighter", "freighter"]);
+// §holds: a Combat Freighter berths by the stores it unloads into.
+const FREIGHT = new Set(["tiny_freighter", "small_freighter", "convoy", "large_freighter", "heavy_freighter", "bulk_freighter", "freighter",
+  "combat_freighter"]);
 
 const PREFERENCES: Record<string, string[]> = {
   warship: ["capital_slipway", "naval_drydock", "shipyard", "garrison", "command_center"],

@@ -131,7 +131,7 @@ impl World {
         let signal = self.players[&player].signals.signals.iter().find(|s| s.id == signal_id).cloned().unwrap();
         let hurt = signal.hazardous
             && crate::rng::Rng::keyed_id(self.config.seed, "signal-hurt", signal_id.0).next_f64()
-                < hurt_chance(captain.attributes.fieldcraft);
+                < hurt_chance(captain.effective().fieldcraft);
         let fleet = self.fleets.get_mut(&fleet_id).unwrap();
         let mut aboard = Vec::new();
         let mut left = Vec::new();
@@ -196,6 +196,7 @@ impl World {
             let corp = self.players.get_mut(&player).unwrap();
             if let Some(captain) = corp.captains.get_mut(&outcome.captain).filter(|c| !c.missing()) {
                 captain.grant_xp(outcome.xp);
+                captain.record.signals += 1;
                 if outcome.hurt { captain.hurt_until = Some(outcome.swept_at + SIGNAL_HURT_S); }
             }
             if signal.number as usize <= FIRST_TEN { corp.signals.first_ten_reported.insert(signal.number); }
@@ -222,6 +223,7 @@ impl World {
     fn pay_signal_reward(&mut self, player: PlayerId, signal: &Signal, reward: &SignalReward) -> Option<SignalFind> {
         let home_system = self.players.get(&player)?.home_system?;
         let home_pos = self.systems.iter().find(|s| s.id == home_system).map_or(Vec2::ZERO, |s| s.pos);
+        let now = self.time;
         let corp = self.players.get_mut(&player)?;
         Some(match reward {
             SignalReward::Cargo { .. } | SignalReward::Module { .. } => return None,
@@ -231,30 +233,19 @@ impl World {
             }
             SignalReward::Standing { credits, standing } => {
                 corp.credits += credits;
-                corp.tca_standing = (corp.tca_standing + standing).min(crate::tca::TCA_STANDING_MAX);
-                SignalFind::Standing { credits: *credits, standing: *standing }
+                // §standing-ladder: the daily allowance past full standing applies.
+                let landed = corp.earn_standing(*standing, now);
+                SignalFind::Standing { credits: *credits, standing: landed }
             }
-            SignalReward::Dossier { fraction } => {
-                let research = &corp.research;
-                let fresh = |id: &str| !research.has(id) && !research.recovered_dossiers.contains(id)
-                    && crate::research::programme(id).is_some_and(|p| !p.hidden);
-                // The active programme first, then the queue, then the first
-                // Tier I left in the catalogue.
-                let programme = research.active.iter().chain(&research.queue).find(|id| fresh(id.as_str())).cloned()
-                    .or_else(|| crate::research::visible_ids()
-                        .filter(|id| crate::research::programme(id).is_some_and(|p| p.tier == 1))
-                        .find(|id| fresh(id)).map(String::from));
-                match programme {
-                    Some(id) => {
-                        corp.research.recover_dossier(&id, *fraction);
-                        SignalFind::Dossier { programme: id }
-                    }
-                    None => {
-                        corp.credits += 500.0;
-                        SignalFind::Credits { credits: 500.0 }
-                    }
+            // The active programme first, then the queue, then the first
+            // Tier I left in the catalogue.
+            SignalReward::Dossier { fraction } => match World::grant_dossier(corp, *fraction) {
+                Some(id) => SignalFind::Dossier { programme: id },
+                None => {
+                    corp.credits += 500.0;
+                    SignalFind::Credits { credits: 500.0 }
                 }
-            }
+            },
             SignalReward::Blueprint { options } => {
                 match options.iter().copied().find(|&m| !crate::research::has_module(&corp.research, m)) {
                     Some(module) => {
@@ -283,6 +274,11 @@ impl World {
                 corp.captains.insert(captain.id, captain);
                 SignalFind::Captain { name }
             }
+            SignalReward::Gear { gear } => {
+                corp.armory.push(*gear);
+                corp.armory.sort();
+                SignalFind::Gear { gear: *gear }
+            }
             SignalReward::Specialist { specialist } => {
                 // The survivors' own craft flies them home.
                 let craft = self.spawn_trade_convoy(player, signal.pos, home_pos,
@@ -303,9 +299,10 @@ impl World {
         let ore = signal.kind == SignalKind::OreFragment;
         let site = self.create_exploration_site(signal.pos, if ore { SiteKind::Asteroids } else { SiteKind::Derelict }, 0);
         let now = self.time;
+        let named = signal.kind.name_for(self.free_trader(player));
         let cache = self.exploration.sites.get_mut(&site).unwrap();
         cache.founding_owner = Some(player);
-        cache.details.name = if ore { "Prospector's cache".into() } else { format!("{} cache", signal.kind.name()) };
+        cache.details.name = if ore { "Prospector's cache".into() } else { format!("{named} cache") };
         cache.details.cargo = goods.iter().copied().collect();
         cache.details.modules.clear();
         cache.details.research_fraction = 0.0;

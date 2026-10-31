@@ -123,6 +123,7 @@ mod tests {
         let scout = w.alloc_entity_id();
         w.fleets.insert(scout, Fleet::single(scout, player, ShipKind::Scout, pos,
             FleetOrder::Survey { system: source, station: pos, dwell_since: Some(w.time - crate::explore::SURVEY_SECS - 1.0) }, None));
+        w.park_at_system(scout, source);
         let mut events = Vec::new();
         w.resolve_surveys(&mut events);
         assert!(events.iter().any(|e| matches!(e.payload, EventPayload::SurveyCompleted { .. })));

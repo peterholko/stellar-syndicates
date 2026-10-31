@@ -30,14 +30,16 @@ fn stock(w: &World, sys: EntityId, c: C) -> f64 {
 }
 
 #[test]
-fn the_kit_carries_both_fuels_and_the_charters_warp_cores() {
+fn the_charter_carries_both_fuels_and_its_warp_cores() {
     let (w, owner, home) = founded();
     assert!(!w.fleets.values().any(|f| f.owner == owner), "§charter-v4: no founding fleet");
-    let kit = crate::galaxy::charter_kit();
-    assert_eq!(stock(&w, home, C::Uranium), kit[&C::Uranium] + crate::fuel::URANIUM_HOME_SEED,
-        "new hulls fill at the dock: the kit fuels the first Freighter");
+    // §charter-crates: the home's seed at landing; the Expansion crate's
+    // Uranium fuels the first Freighter, and each hull's chapter brings its core.
+    assert_eq!(stock(&w, home, C::Uranium), crate::fuel::URANIUM_HOME_SEED);
     assert_eq!(stock(&w, home, C::Deuterium), crate::fuel::DEUTERIUM_HOME_SEED);
-    assert_eq!(stock(&w, home, C::WarpCore), 3.0, "the Freighter, the Interceptor and the barge");
+    let supplies = crate::founding::charter_supplies();
+    assert_eq!(supplies[&C::Uranium], 100.0, "new hulls fill at the dock: the crates fuel the first Freighter");
+    assert_eq!(supplies[&C::WarpCore], 5.0, "the Freighter, three Interceptors and the barge");
 }
 
 #[test]

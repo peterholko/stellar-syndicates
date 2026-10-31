@@ -114,8 +114,8 @@ impl World {
                 if (!directly_attacking && other.owner.is_tca())
                     || self.diplomacy_protects(fleet.owner, other.owner)
                     || (!other.owner.is_sentinel()
-                        && (self.founder_protected(fleet.owner)
-                            || self.founder_protected(other.owner)))
+                        && (self.pvp_shielded(fleet.owner)
+                            || self.pvp_shielded(other.owner)))
                     || self.in_sovereign_zone(seen)
                 {
                     continue;

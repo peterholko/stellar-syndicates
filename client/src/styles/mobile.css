@@ -104,7 +104,10 @@
 }
 
 .m-status-more:not([hidden]) { display: grid; }
-.m-status-help { grid-column: 1 / -1; margin: 1px 0 0; color: var(--dim); font-size: 11px; line-height: 1.4; }
+/* §map-layers: which systems' names the map shows. */
+.m-name-layers { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 2px 0 0; padding: 0; border: 0; }
+.m-name-layers legend { float: left; width: 100%; margin-bottom: 2px; padding: 0; color: var(--dim); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.m-name-layers label { flex: 1 1 40%; display: flex; align-items: center; gap: 6px; min-height: 32px; }
 
 .m-tabs {
   position: fixed;
@@ -400,11 +403,6 @@
 .m-founding__next > em { color: var(--accent); font-size: 11px; font-style: normal; }
 .m-founding__waiting { display: grid; gap: 5px; }
 /* §charter-v5: a goal beyond the next step (the den's belt), quieter than it. */
-.m-founding__goal { display: grid; gap: 5px; padding: 8px; border: 1px dashed rgba(255,255,255,.14); border-radius: 8px; }
-.m-founding__goal > small { color: var(--accent); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
-.m-founding__goal > b { font-size: 12px; }
-.m-founding__goal > p { margin: 0; color: var(--dim); font-size: 11px; }
-.m-founding__goal > button { min-height: 44px; }
 .m-founding__waiting > small { color: var(--dim); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
 .m-founding__waiting > button { min-height: 44px; }
 
@@ -456,6 +454,8 @@
 .m-action-grid .battle-withdraw-confirm { grid-column: 1 / -1; display: grid; gap: 8px; padding: 9px; border: 1px solid var(--warn); border-radius: 9px; color: var(--warn); font-size: 12px; }
 .m-action-grid .battle-withdraw-confirm > div { display: flex; flex-wrap: wrap; gap: 7px; }
 .m-action-grid button,
+.m-yard-peek,
+.m-yard-tabs button,
 .m-primary,
 .m-founding__body button,
 .m-feature-card button,
@@ -487,14 +487,31 @@ button.m-primary, .m-action-grid button.m-primary, .m-decision button.m-primary,
 .m-order > span:first-child { color: var(--ink); text-align: left; }
 .m-order small { color: var(--dim); }
 .m-order button { min-height: 44px; }
+/* §shipyard-view: hull lines open the yard; the yard sheet's tabs and line. */
+button.m-order--hull { width: 100%; border-width: 0 0 1px; border-radius: 0; background: none; color: inherit; font: inherit; text-align: left; }
+.m-service-row .m-yard-line { display: block; min-height: 32px; padding: 0; border: 0; background: none; color: var(--dim); font-size: 11px; text-align: left; white-space: normal; text-decoration: underline dotted; }
+.m-yard-peek { display: grid; gap: 2px; width: 100%; margin-bottom: 10px; padding: 8px 10px; text-align: left; }
+.m-yard-peek span { color: var(--dim); font-size: 12px; }
+.m-yard-tabs { display: flex; gap: 6px; margin-bottom: 8px; overflow-x: auto; }
+.m-yard-tabs button { display: grid; gap: 2px; flex: none; min-height: 44px; padding: 4px 10px; text-align: left; }
+.m-yard-tabs button[aria-pressed="true"] { border-color: var(--accent); }
+.m-yard-tabs small { color: var(--dim); }
+.m-yard-info { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0 6px; }
+.m-yard-info span { display: grid; gap: 2px; }
+.m-yard-info small { color: var(--dim); font-size: 12px; }
+.m-yard-info em { font-style: normal; white-space: nowrap; }
+/* §hull stats: the hull's figures in one row under its 3D model. */
+.m-hull-stats { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); margin: 8px 0 10px; }
+.m-hull-stats > span { min-height: 0; padding: 7px; }
+.m-hull-stats b { font-size: 13px; }
 /* §merchant: the terms and the handshake stay pinned to the sheet's foot (the body scrolls). */
 .m-merchant-dock { position: sticky; bottom: calc(-14px - env(safe-area-inset-bottom)); display: grid; gap: 8px; margin: 0 -12px calc(-14px - env(safe-area-inset-bottom)); padding: 10px 12px calc(14px + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); background: rgba(9, 14, 25, .97); }
 .m-merchant-dock .m-primary { width: 100%; }
 .m-merchant-terms { color: var(--dim); font-size: 12px; }
 .m-merchant-terms b { color: var(--ink); }
-/* §persona: Teo Brannick's portrait and his word on the offer. */
-.m-merchant-trader { display: grid; grid-template-columns: 72px minmax(0, 1fr); column-gap: 10px; row-gap: 6px; align-items: start; }
-.m-merchant-portrait { grid-row: 1 / 3; width: 72px; height: 72px; border: 1px solid var(--border); border-radius: 10px; object-fit: cover; background: rgba(0, 0, 0, .25); }
+/* §traders: the founder's trader's portrait and their word on the offer. */
+.m-merchant-trader { display: grid; grid-template-columns: 90px minmax(0, 1fr); column-gap: 10px; row-gap: 6px; align-items: start; }
+.m-merchant-portrait { grid-row: 1 / 3; width: 90px; height: 90px; border: 1px solid var(--border); border-radius: 10px; object-fit: cover; background: rgba(0, 0, 0, .25); }
 .m-merchant-portrait.is-interim { object-fit: contain; padding: 4px; }
 .m-merchant-who { display: grid; gap: 2px; }
 .m-merchant-who small { color: var(--dim); font-size: 11px; }
@@ -530,6 +547,8 @@ button.m-primary, .m-action-grid button.m-primary, .m-decision button.m-primary,
 .m-merchant-row small { color: var(--dim, #9aa); }
 .m-merchant-row small.m-merchant-held { color: var(--ink); }
 .m-merchant-row input { width: 100%; min-height: 36px; }
+.m-merchant-row.has-max { grid-template-columns: minmax(0, 1fr) auto 5.5rem; }
+.m-merchant-row.has-max > button { min-height: 36px; }
 .m-market-row > span { display: grid; gap: 2px; }
 .m-market-row b { font-size: 13px; }
 .m-market-row small { color: var(--dim); font-size: 11px; }
@@ -547,14 +566,59 @@ button.m-primary, .m-action-grid button.m-primary, .m-decision button.m-primary,
 .m-decision.is-danger { border-color: rgba(255, 107, 107, .28); background: rgba(255, 107, 107, .04); }
 .m-decision b { font-size: 13px; }
 .m-decision p { margin: 0; color: var(--dim); font-size: 11px; line-height: 1.4; }
+.m-invite-row { display: grid; gap: 6px; margin-bottom: 8px; padding: 8px; border: 1px solid var(--border, rgba(255,255,255,.12)); border-radius: 8px; }
+.m-invite-row input { width: 100%; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px; }
+.m-invite-row small { color: var(--dim); font-size: 11px; }
+.m-ladder { display: flex; gap: 4px; margin: 6px 0; padding: 0; list-style: none; }
+.m-ladder li { flex: 1; display: grid; place-items: center; min-height: 28px; border: 1px solid rgba(255, 255, 255, .14); border-radius: 6px; color: var(--dim); font-size: 12px; }
+.m-ladder li.is-done { border-color: var(--positive, #78dca0); color: var(--positive, #78dca0); }
+.m-ladder li.is-current { border-color: var(--accent); color: var(--accent); }
 .m-decision > div { display: flex; justify-content: flex-end; gap: 6px; }
 .m-decision button { min-height: 44px; }
 
-.m-log-row { display: grid; gap: 3px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.055); font-size: 12px; line-height: 1.4; }
-.m-log-row time { color: var(--dim); font-size: 11px; }
-.m-log-row.is-bad { color: var(--negative); }
-.m-log-row.is-warn { color: var(--warn); }
-.m-log-row.is-good { color: var(--positive); }
+/* §log (Oct 28 2026): the phone's Inbox and History; the left stripe carries
+   severity (bad red, warn amber, good green, info blue). */
+.m-subtabs--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.m-log-group, .m-log-day { display: flex; justify-content: space-between; margin: 12px 0 6px; color: var(--dim); font-size: 10px; font-weight: 400; letter-spacing: .06em; text-transform: uppercase; }
+.m-log-group b { color: var(--ink); font-weight: 400; }
+.m-log-filters { display: flex; gap: 5px; margin: 0 -2px 4px; padding: 2px; overflow-x: auto; scrollbar-width: none; }
+.m-log-filters button { flex: 0 0 auto; min-height: 36px; padding: 0 12px; border: 1px solid var(--field-bd); border-radius: 999px; background: transparent; color: var(--dim); font: inherit; font-size: 11px; }
+.m-log-filters button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.m-logrow { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; margin-bottom: 3px; padding: 4px 4px 4px 9px; border-left: 3px solid var(--border); border-radius: 6px; background: rgba(255, 255, 255, .025); }
+.m-logrow.is-bad { border-left-color: var(--negative); background: rgba(255, 107, 107, .06); }
+.m-logrow.is-warn { border-left-color: var(--warn); background: rgba(255, 180, 84, .05); }
+.m-logrow.is-good { border-left-color: var(--positive); }
+.m-logrow.is-info { border-left-color: var(--info); }
+.m-logrow__text { display: grid; gap: 2px; min-width: 0; }
+.m-logrow__text b { display: -webkit-box; overflow: hidden; font-size: 12px; font-weight: 400; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.m-logrow.is-unread .m-logrow__text b { color: #fff; font-weight: 600; }
+.m-logrow__text small { overflow: hidden; color: var(--dim); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.m-logrow__act { min-height: 40px; padding: 0 10px; border: 1px solid var(--accent); border-radius: 8px; background: transparent; color: var(--accent); font: inherit; white-space: nowrap; }
+.m-logrow__act.is-danger { border-color: var(--negative); color: var(--negative); }
+.m-logrow__menu > summary { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 8px; color: var(--dim); list-style: none; }
+.m-logrow__menu > summary::-webkit-details-marker { display: none; }
+.m-logrow__menu[open] > summary { background: rgba(255, 255, 255, .06); color: var(--ink); }
+.m-logrow__menu > div { position: absolute; z-index: 3; top: calc(100% - 2px); right: 0; display: grid; min-width: 160px; padding: 4px; border: 1px solid var(--field-bd); border-radius: 10px; background: var(--panel-bg); box-shadow: var(--panel-shadow); }
+.m-logrow__menu > div button { min-height: 44px; padding: 0 12px; border: 0; background: transparent; color: var(--ink); font: inherit; text-align: left; }
+.m-logrow:has(> .m-logrow__main) { display: block; padding: 0; }
+.m-logrow__main { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 4px 8px 4px 9px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+.m-logrow__main time { color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+.m-logreport { display: grid; gap: 8px; padding: 0 8px 10px 9px; }
+.m-logreport__lines { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; color: var(--dim); font-size: 11px; line-height: 1.4; }
+.m-logreport__lines time { color: var(--ink); }
+.m-logreport__goods { width: 100%; border-collapse: collapse; font-size: 11px; }
+.m-logreport__goods td { padding: 2px 0; }
+.m-logreport__goods td:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+.m-logreport__goods .is-neg { color: var(--negative); }
+.m-logreport__goods tfoot td { border-top: 1px solid var(--border); }
+.m-log-more { width: 100%; min-height: 44px; border: 1px dashed var(--field-bd); border-radius: 8px; background: transparent; color: var(--dim); font: inherit; }
+.m-log-away { display: grid; gap: 6px; margin-bottom: 8px; padding: 8px 10px; border: 1px solid var(--field-bd); border-radius: 10px; background: rgba(255, 255, 255, .02); }
+.m-log-away > header { display: flex; align-items: center; justify-content: space-between; }
+.m-log-away > header button { width: 40px; min-height: 40px; border: 0; background: transparent; color: var(--dim); font: inherit; }
+.m-log-away ul { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; font-size: 11px; line-height: 1.4; }
+.m-log-away li::before { content: "▸ "; color: var(--accent); }
+.m-log-away li.is-bad::before { color: var(--negative); }
+.m-log-away li.is-warn::before { color: var(--warn); }
 
 /* Phase 5 parity surfaces use one portrait information grammar: horizontal
    selectors choose a single dense board, while cards keep every desktop verb
@@ -595,6 +659,11 @@ button.m-primary, .m-action-grid button.m-primary, .m-decision button.m-primary,
   color: var(--accent);
 }
 .m-subtabs--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* §season: the Log's News tab. */
+.m-news-head { margin: 0 0 10px; color: var(--dim); font-size: 11px; }
+.m-logrow.m-newsrow { grid-template-columns: 20px minmax(0, 1fr) auto; }
+.m-newsrow__source { width: 20px; height: 20px; }
+.m-newsrow.is-yours .m-logrow__text b { color: var(--warn); }
 
 .m-feature-card,
 .m-card,
@@ -942,3 +1011,28 @@ div.m-grid-line { margin: 0 0 8px; }
 .m-signal-dismiss { width: 100%; min-height: 44px; margin-top: 8px; }
 .m-signals-link { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; min-height: 44px; margin-top: 12px; padding: 8px 12px; border: 1px solid var(--field-bd); border-radius: 8px; color: inherit; text-align: left; }
 .m-signals-link span { color: var(--dim); font-size: 12px; }
+/* §social (R5): the Comms sheet. */
+.m-chat-log { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; }
+.m-chat-line p { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.m-chat-line small { opacity: .65; }
+.m-chat-report { padding: 0 6px; font-size: 11px; opacity: .6; }
+.m-chat-compose { display: flex; gap: 6px; margin-top: 8px; }
+.m-chat-compose input { flex: 1; min-width: 0; }
+.m-mail-open p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.m-mail-open small { display: block; opacity: .7; }
+.m-list-row.is-unread b { font-weight: 700; }
+
+/* §battle-archive: the Check-in sheet's Battles list. */
+.m-battle-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; min-height: 44px; padding: 4px 0; border-top: 1px solid var(--border); }
+.m-battle-row > span { display: grid; min-width: 0; }
+.m-battle-row > span > :is(b, small) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-battle-row small, .m-battle-row > em { color: var(--dim); font-size: 12px; font-style: normal; }
+.m-battle-row.is-good > em { color: var(--positive); }
+.m-battle-row.is-bad > em { color: var(--negative); }
+.m-battle-row.is-live > em { color: var(--warn); }
+/* §traders: a merchant ship's sheet names the trader who flies it. */
+.m-fleet-trader { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: start; }
+.m-fleet-trader > img { width: 64px; height: 64px; border-radius: 8px; object-fit: cover; }
+.m-fleet-trader > div { display: grid; gap: 4px; }
+.m-fleet-trader small, .m-fleet-trader p { margin: 0; color: var(--dim); }
+.m-fleet-trader button { justify-self: start; }

@@ -152,7 +152,7 @@ impl World {
             }
             self.exploration_systems.insert(id);
             // Exotic-star rewards keep matching the public star artwork.
-            if let Some(bonus) = crate::node::node_bonus_for(id) {
+            if let Some(bonus) = self.exotic_bonus(id) {
                 self.nodes.insert(id, crate::node::Node::dormant(bonus));
             }
             added.push(pos);
@@ -254,11 +254,15 @@ fn sparse_bodies(id: EntityId, name: &str, rng: &mut Rng, frontier: f64) -> Vec<
 fn sparse_body(id: u32, name: String, kind: BodyKind, parent: Option<u32>) -> Body {
     Body {
         founding_camp: None,
+        crown_project: false,
+        acclimated: false,
+        orbital_habitat: false,
         id,
         name,
         kind,
         parent,
         belt: None,
+        orbit: None,
         habitable: false,
         profile: PlanetaryProfile::default(),
         deposits: Vec::new(),

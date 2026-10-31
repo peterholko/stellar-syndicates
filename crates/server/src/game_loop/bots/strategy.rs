@@ -139,9 +139,14 @@ impl Bot {
                         * b.habitat_capacity_mult() * sim::research::mod_of(&p.research, ModKey::HabitatCap))
                 { 140.0 * profile.expansion } else { 15.0 },
             K::DefensePlatform | K::OrbitalDefense | K::Garrison => if p.threatened(p.home.system.pos) { 200.0 } else { 55.0 * profile.military },
-            K::OrdnanceFoundry => if p.own().any(|f| f.damage.unwrap_or(0.0) > 0.15) { 200.0 } else { 40.0 * profile.military },
+            // §repair: a home Shipyard already mends hulls; a Foundry is then the forward base.
+            K::OrdnanceFoundry => if p.home.system.tier(K::Shipyard) == 0 && p.own().any(|f| f.damage.unwrap_or(0.0) > 0.15) { 200.0 } else { 40.0 * profile.military },
             K::SensorArray => 50.0 * profile.science,
             K::ServiceBerth => 10.0,
+            // §vault: cheap cover for the dearest goods once pirates come calling.
+            K::Vault => if p.threatened(p.home.system.pos) { 90.0 } else { 15.0 },
+            // §season: computer-run corporations stay loyal.
+            K::AssemblyHall => 0.0,
             K::CommandCenter => if p.home.system.bodies.iter().any(|b| b.tier(kind) > 0
                 && b.pool_slots_built(sim::build::SlotPool::Infrastructure) >= b.infrastructure_slots()) {
                 170.0 * profile.expansion
@@ -155,6 +160,10 @@ impl Bot {
                 { 170.0 } else { 25.0 },
             // The last tech's factory: antimatter for the jump bottles.
             K::AntimatterPlant => 40.0 * profile.military,
+            // §asteroid-quarry: a home belt's one structure, crewed and powered.
+            K::AsteroidQuarry => if p.home.system.bodies.iter().any(|b| b.is_belt() && !b.deposits.is_empty()) {
+                if role == Role::Mining { 130.0 } else { 60.0 }
+            } else { 0.0 },
         };
         base / (1.0 + p.home.system.tier(kind) as f64 * 0.45)
     }
@@ -181,10 +190,12 @@ impl Bot {
                 p.structure(K::Agroplex, 1), p.structure(K::MiningComplex, 1)] {
                 if project.is_some() { return project; }
             }
+            if let Some(project) = self.gun_platform(p) { return Some(project); }
             if self.raid_pending(p) { return None; }
             // §charter-v5: the Freighter waits for the privateer's bounty, so
             // its Hub-trip reserve never starves the Interceptor.
-            let freight = !in_charter || p.founding_stage.step() > sim::FoundingStage::DefeatPrivateer.step();
+            // §charter-crates: and for the export's crate, which carries its core.
+            let freight = !in_charter || p.founding_stage.step() >= sim::FoundingStage::PrepareExport.step();
             for project in [self.landing_plant(p), p.structure(K::Shipyard, 1),
                 self.charter_escort(p),
                 (freight && p.own().all(|f| !f.kind.is_player_freighter())).then(|| p.ship(H::TinyFreighter, 1)).flatten(),
@@ -192,8 +203,13 @@ impl Bot {
                 // trader's semiconductors go to the Interceptor.
                 (!in_charter || p.founding_stage.step() >= sim::FoundingStage::FirstResearch.step())
                     .then(|| p.structure(K::Academy, 1)).flatten(),
+                // §refining: the Smelter, once its step and Enrichment are in.
+                (in_charter && p.founding_stage.step() >= sim::FoundingStage::BuildSmelter.step())
+                    .then(|| p.structure(K::Smelter, 1)).flatten(),
                 self.charter_expansion(p),
-                p.structure(K::UraniumMill, 1),
+                // §charter-crates: the mill's goods come in the Reach crate.
+                (!in_charter || p.founding_stage.step() >= sim::FoundingStage::BuildBarge.step())
+                    .then(|| p.structure(K::UraniumMill, 1)).flatten(),
                 // §charter v3: the survey step's stop is the Survey Probe's job,
                 // one probe per outstanding stop until its report lands.
                 self.charter_probe_due(p).and_then(|_| p.ship(H::SurveyProbe, 1)),
@@ -201,7 +217,10 @@ impl Bot {
                 // waits until it is fulfilled.
                 (!in_charter).then(|| p.ship(H::Scout, 1)).flatten(),
                 // §belts: the charter's barge lesson, once the surveys are in.
-                p.belt_lesson.and_then(|_| p.ship(H::MiningBarge, 1))] {
+                p.belt_lesson.and_then(|_| p.ship(H::MiningBarge, 1)),
+                // §charter-crates: "Secure your stores", a Warehouse and a Vault.
+                (in_charter && p.founding_stage == sim::FoundingStage::SecureStores)
+                    .then(|| p.structure(K::Warehouse, 1).or_else(|| p.structure(K::Vault, 1))).flatten()] {
                 if project.is_some() { return project; }
             }
         }
@@ -214,8 +233,10 @@ impl Bot {
         }
         for kind in K::ALL {
             // §charter-v4: the kit is the charter's; while it runs, optional
-            // works wait, except storage.
-            if in_charter && kind != K::Warehouse { continue; }
+            // works wait, except storage. §charter-crates: and storage only
+            // once it runs short, since each crate holds just its chapter's builds.
+            if in_charter && (kind != K::Warehouse
+                || p.home.system.storage_headroom() >= p.home.system.storage_cap() * 0.3) { continue; }
             if let Some(project) = p.structure(kind, p.home.system.tier(kind) + 1) {
                 choices.push((self.structure_value(p, kind), project));
             }
@@ -321,7 +342,7 @@ impl Bot {
         let scale = (p.home.system.storage_cap() * 0.35 / total.max(1.0)).min(1.0);
         for (c, n) in flow { *wanted.entry(c).or_default() += (n * scale).ceil(); }
         if project.is_some_and(|j| matches!(j.what, BuildKind::Upgrade { upgrade: K::OrdnanceFoundry }))
-            || p.home.system.tier(K::OrdnanceFoundry) > 0 && p.own().any(|f| f.damage.unwrap_or(0.0) > 0.05) {
+            || sim::build::REPAIR_YARDS.iter().any(|&k| p.home.system.tier(k) > 0) && p.own().any(|f| f.damage.unwrap_or(0.0) > 0.05) {
             *wanted.entry(C::Alloys).or_default() += 30.0;
             *wanted.entry(C::Machinery).or_default() += 10.0;
         }
@@ -332,13 +353,18 @@ impl Bot {
 
     pub(super) fn specialist_need(&self, p: &Observation) -> Option<sim::specialist::SpecialistKind> {
         if p.home.system.tier(K::Academy) == 0 || self.recovering(p) { return None; }
+        // §research-wiring: only as many specialists as the home houses work.
+        let housed = p.home.system.specialists.values().sum::<u32>()
+            + p.home.builds.iter().filter(|b| matches!(b.what, BuildKind::Train { .. })).count() as u32;
+        if housed >= p.home.system.specialist_housing() { return None; }
         sim::specialist::SpecialistKind::ALL.into_iter().filter_map(|kind| {
             let need: u32 = p.home.system.bodies.iter().flat_map(|b| b.assignments.iter()
                 .filter(move |(k, a)| kind.affine(**k) && a.workers > 0)
                 .map(move |(k, a)| b.tier(*k).min(a.workers + a.specialists.values().sum::<u32>()))) .sum();
             let have = p.home.system.specialists.get(&kind).copied().unwrap_or(0)
                 + p.home.builds.iter().filter(|b| b.what == BuildKind::Train { specialist: kind }).count() as u32;
-            (need > have).then_some((need - have, kind))
+            // Lazily: `then_some` would compute `need - have` even when it underflows.
+            (need > have).then(|| (need - have, kind))
         }).max_by_key(|(short, _)| *short).map(|(_, kind)| kind)
     }
 }

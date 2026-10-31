@@ -16,17 +16,22 @@ export function survivorOrderBlock(st: AftermathState, fleet: GhostView | undefi
   return "";
 }
 
-/** A normal berth/Shipyard is NOT a repair yard. Mirror the sim's staffed
- * Ordnance Foundry requirement using arrived owned-system reports only.
- * Supplies can change before arrival; this is eligibility, never a guarantee. */
+/** Mirror the sim's repair yards (repair_docked_fleets): a staffed Ordnance
+ * Foundry or, §repair (Oct 21 2026), a staffed Shipyard, with Alloys and
+ * Machinery, from arrived owned-system reports only. Supplies can change
+ * before arrival; this is eligibility, never a guarantee. */
 export function nearestRepairYard(st: AftermathState, fleet: GhostView): SystemInfo | undefined {
   const candidates = st.galaxy?.systems.filter((system) => {
     const report = st.systems.find((s) => s.id === system.id && s.owner === st.playerId);
-    if (!report || !(report.structures.ordnance_foundry > 0)) return false;
-    // repair_docked_fleets uses site_for(OrdnanceFoundry), the primary body.
+    if (!report) return false;
+    const staffed = (structure: string, body: number | undefined) => body !== undefined && report.assignments.some((a) =>
+      a.structure === structure && a.body_id === body && a.staffing > 0 && a.skill > 0);
+    // site_for(OrdnanceFoundry) is the primary body; a Shipyard's is its own.
     const primary = report.bodies.find((b) => b.parent === null) ?? report.bodies[0];
-    const line = report.assignments.find((a) => a.structure === "ordnance_foundry" && a.body_id === primary?.id);
-    return !!line && line.staffing > 0 && line.skill > 0
+    const foundry = (report.structures.ordnance_foundry ?? 0) > 0 && staffed("ordnance_foundry", primary?.id);
+    const shipyard = (report.structures.shipyard ?? 0) > 0
+      && staffed("shipyard", report.bodies.find((b) => (b.structures?.shipyard ?? 0) > 0)?.id);
+    return (foundry || shipyard)
       && ["alloys", "machinery"].every((kind) => report.stockpile?.some((s) => s.commodity === kind && s.units > 0));
   }) ?? [];
   return candidates.sort((a, b) => Math.hypot(a.pos.x - fleet.pos.x, a.pos.y - fleet.pos.y)

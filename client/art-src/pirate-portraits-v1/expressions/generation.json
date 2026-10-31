@@ -1,0 +1,768 @@
+{
+  "generated_on": "2026-10-25",
+  "tool": "built-in image_gen",
+  "expressions": [
+    "smug",
+    "angry",
+    "shocked"
+  ],
+  "crop": {
+    "left": 0.143,
+    "top": 0.113,
+    "size": 0.75
+  },
+  "requests": [
+    {
+      "slug": "showboat",
+      "emotion": "smug",
+      "id": "showboat-smug",
+      "file": "expressions/showboat-smug.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to smug. A broad self-satisfied showman's grin, one eyebrow cocked higher than in the original, eyes slightly narrowed with playful contempt. Keep the gold canine clearly visible. He is enjoying having the upper hand.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/showboat.png"
+      ]
+    },
+    {
+      "slug": "showboat",
+      "emotion": "angry",
+      "id": "showboat-angry",
+      "file": "expressions/showboat-angry.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to angry. His performer's charm has collapsed into wounded pride and revenge: eyebrows sharply drawn down, eyes fixed in a furious glare, nose slightly tense, lips pulled back in an angry open-mouthed snarl showing the same gold canine. Intense and dangerous, with no comic exaggeration.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/showboat.png"
+      ]
+    },
+    {
+      "slug": "showboat",
+      "emotion": "shocked",
+      "id": "showboat-shocked",
+      "file": "expressions/showboat-shocked.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to shocked. His confidence has suddenly broken: both eyebrows lift, eyes widen naturally, and his jaw drops into a small open-mouth gasp, still showing the same gold canine. A clear, believable 'this cannot be happening' reaction.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/showboat.png"
+      ]
+    },
+    {
+      "slug": "showboat-uncle",
+      "emotion": "smug",
+      "id": "showboat-uncle-smug",
+      "file": "expressions/showboat-uncle-smug.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to smug. The older warlord wears a slow, superior, asymmetrical smile, with one brow subtly raised and narrowed amused eyes. Part the smile just enough to show his existing gold canine. He believes the outcome is already decided.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/showboat-uncle.png"
+      ]
+    },
+    {
+      "slug": "showboat-uncle",
+      "emotion": "angry",
+      "id": "showboat-uncle-angry",
+      "file": "expressions/showboat-uncle-angry.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to angry. The theatrical smile is gone. His brows knot deeply, eyelids tighten into a fierce vengeful glare, cheeks tense, and the upper lip curls to expose the same gold canine. Controlled menace beginning to boil over.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/showboat-uncle.png"
+      ]
+    },
+    {
+      "slug": "showboat-uncle",
+      "emotion": "shocked",
+      "id": "showboat-uncle-shocked",
+      "file": "expressions/showboat-uncle-shocked.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to shocked. The warlord's composure cracks: his eyebrows rise, his eyes open noticeably wider, and his mouth falls slightly open in stunned disbelief. Retain the mature dignity and age of the same man; this is a serious battlefield reversal.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/showboat-uncle.png"
+      ]
+    },
+    {
+      "slug": "hothead",
+      "emotion": "smug",
+      "id": "hothead-smug",
+      "file": "expressions/hothead-smug.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to smug. Replace the original angry snarl with a cocky, lopsided, closed-to-parted-lip smirk. One eyebrow is raised while the eyes have a taunting, pleased look. Youthful swagger and smug satisfaction, clearly less angry than the original.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/hothead.png"
+      ]
+    },
+    {
+      "slug": "hothead",
+      "emotion": "angry",
+      "id": "hothead-angry",
+      "file": "expressions/hothead-angry.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to angry. A visibly stronger revenge expression than the original: eyebrows lowered and drawn together, pale blue eyes locked in a furious glare, nostrils tense, mouth open in a sharp angry shout with natural teeth visible. Keep it grounded and believable.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/hothead.png"
+      ]
+    },
+    {
+      "slug": "hothead",
+      "emotion": "shocked",
+      "id": "hothead-shocked",
+      "file": "expressions/hothead-shocked.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to shocked. A sudden jolt of disbelief interrupts his aggression: brows shoot upward, pale blue eyes widen, and the mouth hangs partly open with the jaw slack. A frightened instant of 'what just hit us?', with a natural human face.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/hothead.png"
+      ]
+    },
+    {
+      "slug": "hothead-uncle",
+      "emotion": "smug",
+      "id": "hothead-uncle-smug",
+      "file": "expressions/hothead-uncle-smug.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to smug. A rare, grimly satisfied tight smirk at one corner of the mouth, one brow slightly raised, eyelids narrowed with contemptuous confidence. Preserve his heavy, stern older face; the expression must read as smug rather than furious.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/hothead-uncle.png"
+      ]
+    },
+    {
+      "slug": "hothead-uncle",
+      "emotion": "angry",
+      "id": "hothead-uncle-angry",
+      "file": "expressions/hothead-uncle-angry.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to angry. Make the contained revenge fury unmistakable and stronger than the original: both brows drawn down and inward, deeply creased forehead, pale blue eyes narrowed in an icy glare, jaw visibly clenched, lips tightly compressed with one corner slightly curled. No shouting: this enforcer's anger is held still.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/hothead-uncle.png"
+      ]
+    },
+    {
+      "slug": "hothead-uncle",
+      "emotion": "shocked",
+      "id": "hothead-uncle-shocked",
+      "file": "expressions/hothead-uncle-shocked.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to shocked. The enforcer is caught off guard: forehead relaxes upward into raised brows, pale blue eyes widen, lips part and the jaw loosens slightly. A stunned, credible break in his normally rigid composure.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/hothead-uncle.png"
+      ]
+    },
+    {
+      "slug": "collector",
+      "emotion": "smug",
+      "id": "collector-smug",
+      "file": "expressions/collector-smug.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to smug. A small, polished, self-satisfied half-smile with one mouth corner lifted; one brow gently raised above the wire spectacles, eyes narrowed with calculating amusement. Quiet superiority, clearly readable without a broad grin.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/collector.png"
+      ]
+    },
+    {
+      "slug": "collector",
+      "emotion": "angry",
+      "id": "collector-angry",
+      "file": "expressions/collector-angry.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to angry. Quiet, precise revenge anger: smile completely removed, both brows pulled down into a pronounced frown visible above the wire spectacles, eyes narrowed hard, jaw tense, lips pressed into a thin severe line. He is furious while maintaining control; no shouting.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/collector.png"
+      ]
+    },
+    {
+      "slug": "collector",
+      "emotion": "shocked",
+      "id": "collector-shocked",
+      "file": "expressions/collector-shocked.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to shocked. His calculation has failed: both eyebrows rise above the wire spectacles, eyes widen naturally through the lenses, lips part slightly in genuine disbelief. Keep the same raised gloved hand and composed body pose while the face betrays surprise.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/collector.png"
+      ]
+    },
+    {
+      "slug": "collector-uncle",
+      "emotion": "smug",
+      "id": "collector-uncle-smug",
+      "file": "expressions/collector-uncle-smug.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to smug. A restrained, knowing, superior smile, slightly lifted chin only through facial attitude without changing head position, one eyebrow arched and eyes amused behind the wire spectacles. The older accountant thinks he has already settled the matter.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/collector-uncle.png"
+      ]
+    },
+    {
+      "slug": "collector-uncle",
+      "emotion": "angry",
+      "id": "collector-uncle-angry",
+      "file": "expressions/collector-uncle-angry.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to angry. Cold revenge fury under perfect control: a strong knitted brow, tightened eyelids, hard eyes directed exactly as before, compressed lips and a visibly tense jaw. Remove all hint of a smile. Preserve the hand lifting his spectacles and the existing cracked lens.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/collector-uncle.png"
+      ]
+    },
+    {
+      "slug": "collector-uncle",
+      "emotion": "shocked",
+      "id": "collector-uncle-shocked",
+      "file": "expressions/collector-uncle-shocked.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to shocked. A rare failure of composure: brows noticeably raised, eyes wide through the spectacles, mouth slightly open in stunned disbelief. Preserve the exact hand and spectacle position, including the cracked lens; only the facial muscles change.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/collector-uncle.png"
+      ]
+    },
+    {
+      "slug": "scrapper",
+      "emotion": "smug",
+      "id": "scrapper-smug",
+      "file": "expressions/scrapper-smug.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to smug. An even more self-satisfied lopsided gap-toothed grin, the natural eye narrowed with mischievous delight and one brow raised. He has spotted something profitable and is savoring it. Keep the exact existing missing-tooth pattern and amber cyber-eye hardware.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/scrapper.png"
+      ]
+    },
+    {
+      "slug": "scrapper",
+      "emotion": "angry",
+      "id": "scrapper-angry",
+      "file": "expressions/scrapper-angry.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to angry. A predatory revenge snarl: natural brow pulled down, natural eye narrowed fiercely, nose wrinkled slightly and upper lip curled with teeth bared. Keep the exact existing missing-tooth pattern. The amber cybernetic lens and its hardware do not change or acquire an organic eye.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/scrapper.png"
+      ]
+    },
+    {
+      "slug": "scrapper",
+      "emotion": "shocked",
+      "id": "scrapper-shocked",
+      "file": "expressions/scrapper-shocked.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to shocked. Startled disbelief: natural brow raised, natural eye wide, lower jaw dropped into a small open-mouth gasp. Use forehead, mouth and the one natural eye to make the surprise readable; keep the amber cyber-eye and missing-tooth pattern unchanged.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/scrapper.png"
+      ]
+    },
+    {
+      "slug": "scrapper-uncle",
+      "emotion": "smug",
+      "id": "scrapper-uncle-smug",
+      "file": "expressions/scrapper-uncle-smug.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to smug. A wide, wolfish, self-satisfied grin with one corner higher, cheeks lifted and forehead relaxed with amused superiority. The emotion is carried by his brows, cheeks and mouth. Preserve both fixed amber cybernetic lenses, their glow and hardware exactly.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/scrapper-uncle.png"
+      ]
+    },
+    {
+      "slug": "scrapper-uncle",
+      "emotion": "angry",
+      "id": "scrapper-uncle-angry",
+      "file": "expressions/scrapper-uncle-angry.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to angry. A fierce revenge snarl: brows and forehead drawn downward around the unchanged implants, nose tense, upper lip raised and mouth partly open showing clenched teeth, jaw rigid. The two cybernetic eyes remain amber mechanical lenses with identical hardware and brightness; no organic eyeballs or new eyelids.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/scrapper-uncle.png"
+      ]
+    },
+    {
+      "slug": "scrapper-uncle",
+      "emotion": "shocked",
+      "id": "scrapper-uncle-shocked",
+      "file": "expressions/scrapper-uncle-shocked.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to shocked. His greedy confidence collapses into startled disbelief: brows and forehead lift around the unchanged implants, cheeks relax, and jaw drops with mouth open. Convey surprise through brow and mouth while keeping both amber mechanical lenses, their glow, copper jaw plate, and all implants exactly intact.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/scrapper-uncle.png"
+      ]
+    },
+    {
+      "slug": "fatalist",
+      "emotion": "smug",
+      "id": "fatalist-smug",
+      "file": "expressions/fatalist-smug.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to smug. The smallest but clearly visible knowing, superior half-smile: one corner of the mouth lifts, one eyebrow arches slightly, and the deep-set eyes narrow with quiet certainty. Unsettling self-satisfaction suited to a normally solemn man, never a broad grin.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/fatalist.png"
+      ]
+    },
+    {
+      "slug": "fatalist",
+      "emotion": "angry",
+      "id": "fatalist-angry",
+      "file": "expressions/fatalist-angry.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to angry. Cold, focused revenge anger: brows deeply drawn together, eyes tightened into an intense hard glare, jaw and cheek muscles tense, lips pressed into a severe line with a slight downward curl. His calm has hardened into wrath; no theatrical shouting.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/fatalist.png"
+      ]
+    },
+    {
+      "slug": "fatalist",
+      "emotion": "shocked",
+      "id": "fatalist-shocked",
+      "file": "expressions/fatalist-shocked.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to shocked. A rare fracture in his fatalistic calm: both eyebrows lift, deep-set eyes widen, and his lips part slightly as the jaw relaxes. A distinct, believable moment of disbelief, still restrained and serious.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/fatalist.png"
+      ]
+    },
+    {
+      "slug": "fatalist-uncle",
+      "emotion": "smug",
+      "id": "fatalist-uncle-smug",
+      "file": "expressions/fatalist-uncle-smug.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to smug. A faint but legible asymmetrical smile of absolute superiority, one brow subtly lifted and eyes narrowed knowingly. The elder remains serene and chilling, as though he has already foreseen victory.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/fatalist-uncle.png"
+      ]
+    },
+    {
+      "slug": "fatalist-uncle",
+      "emotion": "angry",
+      "id": "fatalist-uncle-angry",
+      "file": "expressions/fatalist-uncle-angry.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to angry. Serenity becomes a severe, vengeful glare: brows pulled down and together with strong forehead tension, deep-set eyes narrowed, jaw clenched and lips pressed firmly into a hard line. Keep the anger quiet, intense and unmistakable.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/fatalist-uncle.png"
+      ]
+    },
+    {
+      "slug": "fatalist-uncle",
+      "emotion": "shocked",
+      "id": "fatalist-uncle-shocked",
+      "file": "expressions/fatalist-uncle-shocked.png",
+      "prompt": "Use case: identity-preserve\nAsset type: one expression variant of an existing pirate character portrait for Stellar Syndicates, used at 72 to 112 pixels beside dialogue.\nInput image 1: the ONLY EDIT TARGET and the authoritative finished portrait of this exact character. This is an expression edit of the same person, not a redesign, a new person, or an older/younger version.\nPrimary request: change only the facial expression to shocked. The elder is visibly unsettled for the first time: brows raised, eyes wider than his usual deep-set stare, lips parted and lower jaw slightly slack. Serious astonishment without comedy or exaggerated cartoon fear.\nIdentity invariants: preserve the exact underlying face structure, age, skin tone, nose, jaw shape, facial proportions, scars, tattoos, hairline, hair length and color, facial hair, ears, teeth, gold tooth if present, spectacles, cybernetic implants and other identifying marks. Natural movement of eyebrows, eyelids, cheeks, lips and jaw for this expression is the only change.\nComposition invariants: lock the original head position, head angle, gaze direction, shoulder position, body pose, hand and finger positions, crop, scale, framing, camera, perspective, clothes, armor, accessories, material colors, lighting, background and painterly rendering. Keep all fixed objects and details in the same positions so swapping portraits in the game does not jump. Do not zoom, reframe, relight, beautify, smooth away age, or add props.\nExpression readability: natural human anatomy with a clear expression that remains legible as a small portrait, without turning the realistic painting into a cartoon. Keep the family personality.\nOutput: exactly one opaque square PNG portrait at the same resolution and framing as the input (1254 x 1254). No montage, expression sheet, extra person, duplicate face, text, captions, letters, numbers, logos, watermark, border or interface.",
+      "transparent_background": false,
+      "references": [
+        "client/art-src/pirate-portraits-v1/fatalist-uncle.png"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "showboat-smug",
+      "file": "expressions/showboat-smug.png",
+      "generator_output": "exec-7e482b44-21b8-48f0-8997-357999ca23e3.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "6744acb8eaf452d31b69b0e54acca61ea157ec6c652c66b028e90768171849db",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/showboat.png",
+          "sha256": "8df89f6a38e61344db28ac358039dcff2de4f2cd18ea5e09cbb89ad0fc732f35"
+        }
+      ]
+    },
+    {
+      "id": "showboat-angry",
+      "file": "expressions/showboat-angry.png",
+      "generator_output": "exec-b60e07ae-a938-47c1-a798-48b2c341c1b3.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "e85606ca91f17184747585ca76d2121750267ae524421fb2706d57479d211ee0",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/showboat.png",
+          "sha256": "8df89f6a38e61344db28ac358039dcff2de4f2cd18ea5e09cbb89ad0fc732f35"
+        }
+      ]
+    },
+    {
+      "id": "showboat-shocked",
+      "file": "expressions/showboat-shocked.png",
+      "generator_output": "exec-7b7d4362-17a9-4bb5-82cb-0eb8839b8013.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "b980493487a3492f622320f12aded6f6646b5ff1a51abc3a09fa2dbc83f394bf",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/showboat.png",
+          "sha256": "8df89f6a38e61344db28ac358039dcff2de4f2cd18ea5e09cbb89ad0fc732f35"
+        }
+      ]
+    },
+    {
+      "id": "showboat-uncle-smug",
+      "file": "expressions/showboat-uncle-smug.png",
+      "generator_output": "exec-dad2b973-37fc-4c69-87bf-848015d564d3.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "31966b93f6630547d65af076c2872752b26e07efb60601d0435e90995c724118",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/showboat-uncle.png",
+          "sha256": "ad0350c52899c604eb8f016f970450ad9d6efbcc3e90926549d44015a815d807"
+        }
+      ]
+    },
+    {
+      "id": "showboat-uncle-angry",
+      "file": "expressions/showboat-uncle-angry.png",
+      "generator_output": "exec-c8264d55-62dc-4ec3-a4ac-95133e4dcf02.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "0076bfc2b603c6ec83d696bdb5ee45e385ffe28c16ae564fd2aa7ae655710c37",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/showboat-uncle.png",
+          "sha256": "ad0350c52899c604eb8f016f970450ad9d6efbcc3e90926549d44015a815d807"
+        }
+      ]
+    },
+    {
+      "id": "showboat-uncle-shocked",
+      "file": "expressions/showboat-uncle-shocked.png",
+      "generator_output": "exec-a474e7c4-10e4-4e1d-ad95-35740e0f6db4.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "463b0f9c9003e72fca30a07c5fe7b1da875a1671104c9a7f65269e747dc9a00e",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/showboat-uncle.png",
+          "sha256": "ad0350c52899c604eb8f016f970450ad9d6efbcc3e90926549d44015a815d807"
+        }
+      ]
+    },
+    {
+      "id": "hothead-smug",
+      "file": "expressions/hothead-smug.png",
+      "generator_output": "exec-38ca1934-a9c7-4373-a09e-a18f73a3da0d.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "e4872b55f3508818496db0c7de191f5b383de598d0f2a7bda9aee78a06472e1d",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/hothead.png",
+          "sha256": "492c7017d6e83e5246d3f2acd01a28c0b5044076a7cc211a8a70eb51c90cb327"
+        }
+      ]
+    },
+    {
+      "id": "hothead-angry",
+      "file": "expressions/hothead-angry.png",
+      "generator_output": "exec-1c2ccda0-b7e5-4be0-8030-4bbc79ebedfc.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "44d98d84364f90a670ae9d07b857a816475ad9c10b17654eb00a13e656df0be1",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/hothead.png",
+          "sha256": "492c7017d6e83e5246d3f2acd01a28c0b5044076a7cc211a8a70eb51c90cb327"
+        }
+      ]
+    },
+    {
+      "id": "hothead-shocked",
+      "file": "expressions/hothead-shocked.png",
+      "generator_output": "exec-cc4816d4-dd18-4a2f-89e9-e735228494a5.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "a3b3eb09be334cad6c05426351c422baf45f00f84546b38d16d4d0b493cd287f",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/hothead.png",
+          "sha256": "492c7017d6e83e5246d3f2acd01a28c0b5044076a7cc211a8a70eb51c90cb327"
+        }
+      ]
+    },
+    {
+      "id": "hothead-uncle-smug",
+      "file": "expressions/hothead-uncle-smug.png",
+      "generator_output": "exec-99042d7d-4f33-4a23-b3d7-dd9470d6cc09.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "3a517ae90548431b321b98a50116270eea9ca67f4e5c71d9bf98fb8c8b891e56",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/hothead-uncle.png",
+          "sha256": "abfb92a99d30103af06e6b60653643fb33e4f6ab85b5500e51bcb1197c068517"
+        }
+      ]
+    },
+    {
+      "id": "hothead-uncle-angry",
+      "file": "expressions/hothead-uncle-angry.png",
+      "generator_output": "exec-cf80784b-5d4c-46a9-842a-7a59b7be55d7.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "62d3216daafbf4e186e7210d694b7ffdf0bb147066068b6b8f2b9283f429a91f",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/hothead-uncle.png",
+          "sha256": "abfb92a99d30103af06e6b60653643fb33e4f6ab85b5500e51bcb1197c068517"
+        }
+      ]
+    },
+    {
+      "id": "hothead-uncle-shocked",
+      "file": "expressions/hothead-uncle-shocked.png",
+      "generator_output": "exec-ef2c54aa-7733-4dd3-895a-78333e128ba8.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "648e2d0b3cc8bc42b855d7ea377dc9490dd2c2fa5be6e9e5206dc903a0efdf2a",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/hothead-uncle.png",
+          "sha256": "abfb92a99d30103af06e6b60653643fb33e4f6ab85b5500e51bcb1197c068517"
+        }
+      ]
+    },
+    {
+      "id": "collector-smug",
+      "file": "expressions/collector-smug.png",
+      "generator_output": "exec-0b90e7b3-ca97-407e-b418-654bf6a03a22.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "e6400e01cbe99ea43b115560f1f64a4db5c70ab43c91cade5158c8b9e9f5b536",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/collector.png",
+          "sha256": "4340b4e81180ceedd05c2c37e4b45ed8dfbd5e7858bada38d73c8894b31c5e65"
+        }
+      ]
+    },
+    {
+      "id": "collector-angry",
+      "file": "expressions/collector-angry.png",
+      "generator_output": "exec-f592d556-7abd-41ec-b23a-a02a23af606f.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "b589fd9248de2ce426f22544258a52af9ae2ced43ee89455e63aa0208d96c410",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/collector.png",
+          "sha256": "4340b4e81180ceedd05c2c37e4b45ed8dfbd5e7858bada38d73c8894b31c5e65"
+        }
+      ]
+    },
+    {
+      "id": "collector-shocked",
+      "file": "expressions/collector-shocked.png",
+      "generator_output": "exec-13497b9b-6b3a-4eed-8c66-e9fcb0a90584.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "ee5ad4aff850901202918e586106fd204a80183d03827ca9227b9abe93d809f0",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/collector.png",
+          "sha256": "4340b4e81180ceedd05c2c37e4b45ed8dfbd5e7858bada38d73c8894b31c5e65"
+        }
+      ]
+    },
+    {
+      "id": "collector-uncle-smug",
+      "file": "expressions/collector-uncle-smug.png",
+      "generator_output": "exec-ce238c42-bd10-4aac-bbc0-a81025a4c7bb.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "ab290f22f9c35b01b0d45c796cfa4e2a88342bb3becf3e5a139a7d5ff887c624",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/collector-uncle.png",
+          "sha256": "48ef31062a0893f0321196679450dd2b13290bbd201ebb452196469c0237bfff"
+        }
+      ]
+    },
+    {
+      "id": "collector-uncle-angry",
+      "file": "expressions/collector-uncle-angry.png",
+      "generator_output": "exec-ec1c1e92-27f6-40f6-9e0e-91e2aecec137.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "dc584934c4729c9ffafdb255c9be53f439881a0c26c531e5ab546f6a0e9fe955",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/collector-uncle.png",
+          "sha256": "48ef31062a0893f0321196679450dd2b13290bbd201ebb452196469c0237bfff"
+        }
+      ]
+    },
+    {
+      "id": "collector-uncle-shocked",
+      "file": "expressions/collector-uncle-shocked.png",
+      "generator_output": "exec-50d25849-68cc-48d2-99dc-a5eab4b509e7.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "e5c46fa83e86a26532bc89447932fc191347e08f99e562cc81b64e771355c8f1",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/collector-uncle.png",
+          "sha256": "48ef31062a0893f0321196679450dd2b13290bbd201ebb452196469c0237bfff"
+        }
+      ]
+    },
+    {
+      "id": "scrapper-smug",
+      "file": "expressions/scrapper-smug.png",
+      "generator_output": "exec-d1e2ed07-8176-40b5-8223-30ab27f7b865.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "b51fe297fb69afabe23366e5e359dbc6dbc825ee7248370117faccd1b4d758c4",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/scrapper.png",
+          "sha256": "74f957f73c2db8870bde6efe1f27d0de6bb0f57131c4b432e765489b4633ef1d"
+        }
+      ]
+    },
+    {
+      "id": "scrapper-angry",
+      "file": "expressions/scrapper-angry.png",
+      "generator_output": "exec-f79161d4-00c0-4fac-bc73-3a8f9b869487.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "b9d22ea3c747fc57ff49013e2d2bf4d4e1031d7e3bb307825d1e24039162e7cd",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/scrapper.png",
+          "sha256": "74f957f73c2db8870bde6efe1f27d0de6bb0f57131c4b432e765489b4633ef1d"
+        }
+      ]
+    },
+    {
+      "id": "scrapper-shocked",
+      "file": "expressions/scrapper-shocked.png",
+      "generator_output": "exec-e9ba29b0-819f-4165-bfcf-e7a9c1a8a81e.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "8fe6f8ae131fdc06955e2487bb3ddc48ba7eb806dfd6f63836db73ad5768aff1",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/scrapper.png",
+          "sha256": "74f957f73c2db8870bde6efe1f27d0de6bb0f57131c4b432e765489b4633ef1d"
+        }
+      ]
+    },
+    {
+      "id": "scrapper-uncle-smug",
+      "file": "expressions/scrapper-uncle-smug.png",
+      "generator_output": "exec-39a941da-d18d-488c-bf88-5153c26f235d.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "b1ed146e22558bb3dc73ff3515725da640721c58d93ca41b0323168d14b80ee7",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/scrapper-uncle.png",
+          "sha256": "153ab68310977c51c90d54f41854526374055b9958b238a04b6fbcdc99c6918a"
+        }
+      ]
+    },
+    {
+      "id": "scrapper-uncle-angry",
+      "file": "expressions/scrapper-uncle-angry.png",
+      "generator_output": "exec-2a5938ea-2f9c-45f6-993e-93b2e4693c08.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "ee2f3487c0d5d8553b6c1a14e9e69a69576456985881e36e143771015548d76a",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/scrapper-uncle.png",
+          "sha256": "153ab68310977c51c90d54f41854526374055b9958b238a04b6fbcdc99c6918a"
+        }
+      ]
+    },
+    {
+      "id": "scrapper-uncle-shocked",
+      "file": "expressions/scrapper-uncle-shocked.png",
+      "generator_output": "exec-e23bc7ed-7f08-489c-8cb3-d1ef9d656ea3.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "3fd123d30890c735050f876362c6c800aa0e218d6cc0d2af82828daaf394c228",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/scrapper-uncle.png",
+          "sha256": "153ab68310977c51c90d54f41854526374055b9958b238a04b6fbcdc99c6918a"
+        }
+      ]
+    },
+    {
+      "id": "fatalist-smug",
+      "file": "expressions/fatalist-smug.png",
+      "generator_output": "exec-6ecd9d95-0914-4187-881f-d82392edeff5.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "e571a68e007a184123dedbc8ff186ee7fca9815f336ae46049663b5f586caa26",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/fatalist.png",
+          "sha256": "fe6bf42830e559c437bf9961598ba58f4c08b6abd662b7f38683f82f2f3d38d1"
+        }
+      ]
+    },
+    {
+      "id": "fatalist-angry",
+      "file": "expressions/fatalist-angry.png",
+      "generator_output": "exec-fbea981c-b2ad-46a3-bea3-50f7d9ad2fee.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "877772d540f68db48d288f0d4c303a51aa69f6fcf4042b558b86c9bda0c5d5ef",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/fatalist.png",
+          "sha256": "fe6bf42830e559c437bf9961598ba58f4c08b6abd662b7f38683f82f2f3d38d1"
+        }
+      ]
+    },
+    {
+      "id": "fatalist-shocked",
+      "file": "expressions/fatalist-shocked.png",
+      "generator_output": "exec-368177e8-1fd4-4253-aee9-72520e73f52a.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "e9f72e1912038083ec110dfecd46f4c56eb1bb147d137c010a0f4e7902fbc405",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/fatalist.png",
+          "sha256": "fe6bf42830e559c437bf9961598ba58f4c08b6abd662b7f38683f82f2f3d38d1"
+        }
+      ]
+    },
+    {
+      "id": "fatalist-uncle-smug",
+      "file": "expressions/fatalist-uncle-smug.png",
+      "generator_output": "exec-8f497238-b0ec-4a63-ba24-7df54a44ad14.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "2ba7a04f355715390129aa773c2d669719e7098a6edcd4c76a54e34005836a98",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/fatalist-uncle.png",
+          "sha256": "e1b6233ad21a7bc702203a2bee6261a3b2da68f5d6704cd60e7a551024763b47"
+        }
+      ]
+    },
+    {
+      "id": "fatalist-uncle-angry",
+      "file": "expressions/fatalist-uncle-angry.png",
+      "generator_output": "exec-f322ef9f-3488-48d6-b3c5-b74749ba19ad.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "b99843365a94002ee84efe34a4b1c7e2d64ed287c14598eece69d4392a78f498",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/fatalist-uncle.png",
+          "sha256": "e1b6233ad21a7bc702203a2bee6261a3b2da68f5d6704cd60e7a551024763b47"
+        }
+      ]
+    },
+    {
+      "id": "fatalist-uncle-shocked",
+      "file": "expressions/fatalist-uncle-shocked.png",
+      "generator_output": "exec-0f42e730-94d3-4045-ac3e-25c24659e847.png",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "1c25bb86153bb2d08de2c7d86b7341c2bc9e2da05c0f73b367eb4b37a48d00be",
+      "reference_snapshots": [
+        {
+          "file": "client/art-src/pirate-portraits-v1/fatalist-uncle.png",
+          "sha256": "e1b6233ad21a7bc702203a2bee6261a3b2da68f5d6704cd60e7a551024763b47"
+        }
+      ]
+    }
+  ]
+}

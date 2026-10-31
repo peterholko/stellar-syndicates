@@ -29,12 +29,34 @@ deps["../../icons"] = compile("icons.ts");
 deps["./icons"] = deps["../../icons"];
 deps["./planet-surface-structure-art.generated"] = compile("planet-surface-structure-art.generated.ts");
 deps["../../planet-structure-art"] = compile("planet-structure-art.ts");
+deps["../../core/derive/station"] = compile("core/derive/station.ts");
 const marketDerive = compile("core/derive/market.ts");
+// §tier-curve (R1): the client prices and times each tier exactly as the sim does.
+{
+  const rust = readFileSync(new URL("../../crates/sim/src/build.rs", import.meta.url), "utf8");
+  const curve = name => JSON.parse(rust.match(new RegExp(`pub const ${name}: \\[f64; 6\\] = (\\[[^\\]]+\\]);`))[1].replace(/_/g, ""));
+  assert.deepEqual([...marketDerive.TIER_CURVE.cost], curve("TIER_COST_MULT"));
+  assert.deepEqual([...marketDerive.TIER_CURVE.time], curve("TIER_TIME_MULT"));
+  const slugFn = rust.slice(rust.indexOf("pub fn slug(self) -> &'static str {"), rust.indexOf("pub fn title(self)"));
+  const slugs = [...slugFn.matchAll(/StructureKind::\w+ => "([a-z0-9_]+)",/g)].map(m => m[1]);
+  assert.ok(slugs.length >= 30);
+  for (const slug of slugs) assert.ok(slug in marketDerive.POOL_OF, `${slug}: the client knows it is a structure`);
+  const mine = { key: "mining_complex", label: "Mining Complex", build_secs: 18,
+    costs: [{ commodity: "alloys", units: 25 }, { commodity: "machinery", units: 12 }] };
+  assert.equal(marketDerive.structureLevel(mine, 2), mine, "tier II keeps the base recipe");
+  const third = marketDerive.structureLevel(mine, 3);
+  assert.deepEqual(third.costs.map(c => c.units), [40, 19], "×1.6, rounded as the sim rounds");
+  assert.equal(third.build_secs, 360);
+  assert.equal(marketDerive.structureLevel(mine, 6).build_secs, 18 * 2700);
+  const plant = { key: "power_plant", label: "Power Plant", build_secs: 25, costs: [{ commodity: "alloys", units: 20 }] };
+  assert.equal(marketDerive.structureLevel(plant, 3), plant, "explicit ladders keep their own recipes");
+}
 deps["../../core/derive/market"] = marketDerive;
 // §construction: the world's work-slot model, shared by the panel and the controller.
-deps["./construction"] = compile("core/derive/construction.ts");
+deps["./construction"] = deps["../../core/derive/construction"] = compile("core/derive/construction.ts");
 deps["./market"] = marketDerive;
 deps["./format"] = deps["../../core/derive/format"] = compile("core/derive/format.ts");
+deps["./station"] ??= compile("core/derive/station.ts");
 const worldbuild = deps["../../core/derive/worldbuild"] = compile("core/derive/worldbuild.ts");
 deps["./prng"] = compile("prng.ts");
 deps["../../planet-surfaces"] = compile("planet-surfaces.ts");
@@ -58,8 +80,8 @@ deps["../../ship-models.generated"] = compile("ship-models.generated.ts");
   assert.deepEqual(plain(line.map(job => [job.key, job.tier, job.position, job.active])),
     [["warehouse", 2, 1, true], ["academy", 1, 2, false], ["warehouse", 3, 3, false], ["camp_quarters", 1, 4, false]],
     "the active job leads, waiting jobs keep receipt order, hulls never take the slot, and each order builds the next tier");
-  assert.deepEqual(plain(line.map(job => [job.startsIn, job.readyIn])), [[0, 30], [30, 70], [70, 100], [100, 340]],
-    "estimates chain through the line at this world's construction speed");
+  assert.deepEqual(plain(line.map(job => [job.startsIn, job.readyIn])), [[0, 30], [30, 70], [70, 670], [670, 910]],
+    "estimates chain through the line at this world's construction speed, Warehouse III on the tier curve (×20)");
   assert.deepEqual(plain(line.map(job => job.cancellable)), [false, true, true, false],
     "a structure cancels, waiting or building, unless a later order builds on it; a camp project never");
   assert.equal(worldbuild.structureQueue({ ...report, builds: report.builds.filter(job => job.id !== 4) }, body, catalog, 100)[0].cancellable,
@@ -146,11 +168,19 @@ const zChrome = Number(tokensCss.match(/--z-chrome:\s*(\d+)/)?.[1]);
 const zCommand = Number(tokensCss.match(/--z-command:\s*(\d+)/)?.[1]);
 assert.ok(zPlanet > 0 && zPlanet < zChrome && zPlanet < zCommand, "the stage sits above the map but beneath chrome, the command band and toasts");
 assert.match(planetCss, /\.deck-planet-stage \{[^}]*z-index: var\(--z-planet\)/);
-assert.match(planetCss, /\.deck-planet-stage \{[^}]*right: var\(--deck-workspace-inset, 0px\)/, "the stage stops at the workspace edge");
-assert.match(planetCss, /\.deck-planet-stage \{[^}]*--deck-bottom-row-inset/, "the scene keeps clear of the bottom row only");
-assert.doesNotMatch(planetCss, /\.deck-planet-stage \{[^}]*--deck-workbench-bottom-inset/, "the tutorial overlaps the scene; it never shrinks it");
-// The bottom band publishes that row: the strip or zoom height plus its 12 px
-// offset from the window edge, whatever the tutorial's height.
+// The planet resizes only with the window (Peter, Oct 27 2026): a command-strip
+// notice, the tutorial or a crowded world strip never moves an edge of the scene.
+const stageRule = planetCss.match(/\.deck-planet-stage \{[^}]*\}/)[0];
+assert.match(stageRule, /right: var\(--deck-system-rail\)/, "the stage stops where the world column starts");
+assert.match(src("styles/deck.css"), /\[data-route="world"\][^\n]*\[data-width="standard"\] \{ width: var\(--deck-system-rail\); \}/, "…which is that column's own width");
+assert.match(tokensCss, /--deck-system-rail: min\(var\(--deck-workspace-system\), calc\(100vw - var\(--space-6\) - var\(--space-1\)\)\);/, "a function of the window alone");
+assert.match(stageRule, /padding: var\(--space-3\) var\(--space-4\) calc\(var\(--deck-control-height\) \+ var\(--space-3\) \* 2\);/, "the scene keeps the bottom control row clear");
+assert.doesNotMatch(stageRule, /--deck-(workspace-inset|bottom-row-inset|workbench-bottom-inset)/, "no edge follows a measured panel");
+assert.match(planetCss, /\.deck-planet-scene \{[^}]*grid-template-rows: var\(--deck-control-height\) minmax\(0, 1fr\)/, "the world strip's row is one control high");
+assert.match(planetCss, /\.deck-planet__worlds \{ align-self: start;/, "so its scrollbar hangs into the gap instead");
+// The bottom band still publishes the bottom row for the merchant and shipyard
+// pop-outs: the strip or zoom height plus its 12 px offset from the window
+// edge, whatever the tutorial's height.
 {
   const rootProps = new Map(), pageProps = new Map(), frames = [];
   const element = (width, height) => ({ hidden: false, offsetWidth: width, offsetHeight: height });
@@ -167,12 +197,30 @@ assert.doesNotMatch(planetCss, /\.deck-planet-stage \{[^}]*--deck-workbench-bott
   const band = new DeckBottomBand(bandRoot, strip, founding, zoom, () => {}, controller.signal);
   const flush = () => { while (frames.length) frames.shift()(); };
   flush();
-  assert.equal(pageProps.get("--deck-bottom-row-inset"), "60px", "the scene clears the bottom row");
+  assert.equal(pageProps.get("--deck-bottom-row-inset"), "60px", "the pop-outs clear the bottom row");
   founding.offsetHeight = 640;
   band.refresh(); flush();
-  assert.equal(pageProps.get("--deck-bottom-row-inset"), "60px", "an expanded tutorial overlaps the scene");
-  assert.ok(Number.parseFloat(rootProps.get("--deck-strip-bottom")) > 640, "the strip still docks above the tutorial");
-  strip.hidden = true; zoom.hidden = true;
+  assert.equal(pageProps.get("--deck-bottom-row-inset"), "60px", "whatever the tutorial's height");
+  // The strip squeezes into the bottom row beside the tutorial rather than
+  // floating above it (Peter, Oct 27 2026), clear of Founding and zoom.
+  const placed = () => ["--deck-strip-left", "--deck-strip-width", "--deck-strip-bottom"].map((k) => Number.parseFloat(rootProps.get(k)));
+  let [left, width, bottom] = placed();
+  assert.equal(bottom, 0, "beside the tutorial, in the bottom row");
+  assert.ok(left >= 360 + 12 && left + width + 12 <= 1_368 - 160, "between Founding and zoom");
+  founding.hidden = true;
+  band.refresh(); flush();
+  [left, width, bottom] = placed();
+  assert.deepEqual([left, width, bottom], [(1_368 - 720) / 2, 720, 0], "centred while it clears both");
+  founding.hidden = false;
+  bandRoot.clientWidth = 640;
+  band.refresh(); flush();
+  [left, width, bottom] = placed();
+  assert.ok(bottom > 640, "a gap too narrow for the strip sends it above the tutorial");
+  bandRoot.clientWidth = 1_368;
+  strip.hidden = true;
+  band.refresh(); flush();
+  assert.ok(placed()[1] > 0, "a hidden strip keeps its place, so it appears there at once (no zero-width flash)");
+  zoom.hidden = true;
   band.refresh(); flush();
   assert.equal(pageProps.get("--deck-bottom-row-inset"), "0px", "no bottom row, no inset");
   controller.abort();
@@ -202,7 +250,7 @@ assert.match(workspaceSource, /isPopoutRoute\(this\.route\) \|\| this\.route\.na
 // The fixture follows the actual authored catalogue and staffed-kind list.
 const descriptions = Object.fromEntries([...empireSource.slice(empireSource.indexOf("const STRUCTURE_DESCRIPTION"), empireSource.indexOf("import { MODULES"))
   .matchAll(/^  (\w+): "([^"]+)"/gm)].map(([, key, description]) => [key, description]));
-assert.equal(Object.keys(descriptions).length, 31);
+assert.equal(Object.keys(descriptions).length, 34);
 // §construction: the staffed set lives with the work-slot model now.
 const workforceStructures = new Set(worldbuild.WORKFORCE_STRUCTURES);
 const catalog = [
@@ -260,13 +308,13 @@ for (const surface of [...deps["../../planet-surfaces"].HABITABLE_SURFACES, "ter
     assert.ok(html.includes('class="deck-planet__selection is-space"'));
   }
   // §orbital-defense: the station hangs between the yards, as its level's art.
-  for (let level = 1; level <= 5; level++) {
+  for (let level = 1; level <= 6; level++) {
     orbitModel.body.structures.orbital_defense = level;
     const html = new deck.PlanetPanel().renderScene(orbitModel);
     assert.match(html, new RegExp(`id="planet-spot-orbital_defense"[^>]*class="deck-planet__building is-space is-station"[^>]*--planet-x:50%;--planet-y:${stationY(level)}%;--planet-scale:1;--station-level:${level}"`),
       "between the yards, sized by its level");
-    assert.ok(html.includes(`/art/derived/stations/v1/level-${level}-256.webp`));
-    assert.match(new deck.PlanetPanel().render(orbitModel), new RegExp(`Level ${level} of 5`), "a station has levels, not tiers");
+    assert.ok(html.includes(`/art/derived/stations/v2/level-${level}-256.webp`));
+    assert.match(new deck.PlanetPanel().render(orbitModel), new RegExp(`Level ${level} of 6`), "a station has levels, not tiers");
     assert.equal(html.match(/id="planet-spot-shipyard"[^>]*style="([^"]+)"/)[1], oldGround, "the station never moves a ground building");
   }
   delete orbitModel.body.structures.orbital_defense;
@@ -373,6 +421,30 @@ for (const tier of [2, 3]) {
 }
 assert.doesNotMatch(commandPanel.render(commandModel), /data-select="command_center"/, "headquarters has no fourth-level upgrade button");
 assert.equal(planetStructures(commandModel).find(s => s.key === "command_center").staffable, false);
+// §asteroid-quarry: a belt's one structure is its own rock in the foreground,
+// with no crew and an upkeep that grows with its tier.
+const quarryModel = structuredClone(initialModel);
+quarryModel.body = { ...quarryModel.body, id: 5, name: "Freya Belt", kind: "asteroid_belt", belt: { kind: "metallic", radius: .55, width: .04 },
+  environment: "uninhabitable", habitable: false, structures: { asteroid_quarry: 3 }, resource_slots: 1, industrial_slots: 0, infrastructure_slots: 0,
+  deposits: [{ resource: "bornite_ore", richness: .24, reserves: null }, { resource: "metallic_ore", richness: .21, reserves: null }] };
+quarryModel.report.bodies = [quarryModel.body];
+quarryModel.report.builds = [];
+quarryModel.catalog.push({ key: "asteroid_quarry", label: "Asteroid Quarry", costs: [{ commodity: "alloys", units: 45 }], build_secs: 24,
+  upkeep: [["provisions", .03], ["machinery", .005]] });
+quarryModel.report.assignments = [{ ...line, structure: "asteroid_quarry", title: "Asteroid Quarry", body_id: 5, workers: 0, specialists: {},
+  suspended: null, tier: 3, outputs: [["bornite_ore", .6], ["metallic_ore", .63]] }];
+const quarryPanel = new PlanetPanel();
+quarryPanel.focus("asteroid_quarry");
+const quarryItem = planetStructures(quarryModel).find(s => s.key === "asteroid_quarry");
+assert.deepEqual([quarryItem.staffable, quarryItem.status], [false, "Automatic"], "no crew; it runs while paid");
+assert.match(quarryPanel.renderScene(quarryModel), /class="deck-planet__building is-quarry" style="--planet-x:28%;--planet-y:71%;--planet-scale:1"[^>]*>[\s\S]*?asteroid-quarry\/v2\/tier-3-1280\.webp/,
+  "its rock stands in the belt's foreground");
+const quarryHtml = quarryPanel.render(quarryModel);
+assert.doesNotMatch(quarryHtml, /deck-planet__workforce-summary/, "a belt has no workforce to show");
+assert.doesNotMatch(quarryHtml, /data-deck-act="planet-workers"/, "no crew stepper");
+assert.match(quarryHtml, /<small>Upkeep<\/small><div>[\s\S]*?<b>−5\.4<\/b>[\s\S]*?<b>−0\.9<\/b>/, "tier III eats 5.4 Provisions and 0.9 Machinery a minute");
+quarryModel.report.assignments[0].suspended = "no_supplies";
+assert.equal(planetStructures(quarryModel).find(s => s.key === "asteroid_quarry").status, "Needs Provisions and Machinery");
 // Slots are capacity, not a truth shortcut or a new city-placement mechanic.
 // Reconcile only received jobs/buildings; hold the same address through growth,
 // queued→built, upgrades, cancellation and reload. Preferences are cosmetic.
@@ -407,10 +479,11 @@ assert.equal(new PlanetSites(storage).snapshot(siteModel).occupied.find(site => 
 const fullModel = structuredClone(siteModel);
 // Stress every available address (24, more than the real per-world pool caps).
 // Omit two optional military yards, the Gaia-only Living Terraces, the
-// slot-free Power Plant and the fuel overhaul's two optional fuel works to
+// slot-free Power Plant, the belt-only Asteroid Quarry and the fuel overhaul's
+// two optional fuel works to
 // include storage and local administration without constructing an impossible
 // world that exceeds the 24 terrain sites.
-for (const key of Object.keys(fullModel.descriptions).filter(key => !["capital_slipway", "ordnance_foundry", "living_terraces", "power_plant", "uranium_mill", "antimatter_plant"].includes(key))) fullModel.body.structures[key] = 1;
+for (const key of Object.keys(fullModel.descriptions).filter(key => !["capital_slipway", "ordnance_foundry", "living_terraces", "power_plant", "asteroid_quarry", "uranium_mill", "antimatter_plant"].includes(key))) fullModel.body.structures[key] = 1;
 const allOccupied = new PlanetSites(storage).snapshot(fullModel).occupied;
 assert.equal(allOccupied.length, 24, "even the all-buildings preview reuses empty reservations instead of overlapping built structures");
 assert.equal(new Set(allOccupied.map(site => site.slot)).size, 24);
@@ -726,6 +799,7 @@ function checkWorldRoute(source) {
   buildPanel.queries.set("#deck-build-workbench-title", new Element("title"));
   const fixture = structuredClone(initialModel), navigation = [], dispatched = [], deferred = [];
   fixture.report.bodies = [fixture.body, { ...fixture.body, id: 4, name: "Freya IV" }];
+  const ceilings = {};
   const state = { playerId: "1", simTime: 100, commandCenter: { x: 0, y: 0 }, galaxy: { systems: [fixture.system], build_options: fixture.catalog }, systems: [fixture.report], timeline: [], ghosts: [], pendingOrders: new Map(), battles: [], research: { programmes: [] } };
   let deferBuild = false;
   deps["../dom"] = { setHtml(node, html) { node.html = html; }, renderDeferred(id, callback) { if (deferBuild && id === buildRoot.id) { deferred.push(callback); return true; } return false; } };
@@ -736,6 +810,8 @@ function checkWorldRoute(source) {
   deps["./planet"] = { PlanetPanel };
   deps["../../core/derive/market"] = { ...marketDerive,
     structureResearched: entry => !entry.research_prerequisite,
+    structureUnlocked: entry => !entry.research_prerequisite,
+    structureCeiling: key => ceilings[key] ?? Infinity,
     // The sim's tier rule (built + orders + 1) without stock or research gates.
     structOption: (o, dyn, b) => {
       const current = b.structures[o.key] ?? 0, orders = dyn.builds.filter(j => j.body_id === b.id && j.key === o.key).length;
@@ -809,7 +885,14 @@ function checkWorldRoute(source) {
   assert.match(stageRoot.html, /class="deck-bsheet__level">IV → V</, "an upgrade card names the step");
   assert.match(stageRoot.html, /data-deck-act="world-builder-queue" data-key="mining_complex"[^>]*>Queue level V</, "the button names the exact level it orders");
   assert.match(stageRoot.html, /<dt>Output<\/dt><dd>×6 → <b>×8\.6<\/b><\/dd><dt>Crew<\/dt><dd>4 → <b>5<\/b><\/dd>/, "the sim's own figures for the next level");
-  assert.match(stageRoot.html, /class="deck-bsheet__rung is-research" title="Levels V and VI need research"/, "levels V and VI are marked as research");
+  // §unlocks (Peter, Oct 28 2026): no rung for a level research hasn't opened.
+  assert.match(stageRoot.html, /class="deck-bsheet__ladder" style="--levels:6"/, "an unknown ceiling hides nothing");
+  assert.doesNotMatch(stageRoot.html, /is-research|need research/);
+  ceilings.mining_complex = 4;
+  ui.render(world, true);
+  assert.match(stageRoot.html, /class="deck-bsheet__ladder" style="--levels:4"/, "levels above the ceiling aren't drawn");
+  delete ceilings.mining_complex;
+  ui.render(world, true);
   ui.handleAction(action(stageRoot, "world-builder-queue", { key: "mining_complex" }), world);
   assert.deepEqual(plain(dispatched.at(-1)), ["mining_complex", "home", 3], "the order targets this world");
   // Peter (Oct 20 2026): queuing closes the sheet; Build opens it again.
@@ -849,14 +932,21 @@ function checkWorldRoute(source) {
   // only after a confirm.
   assert.match(originRoot.html, /class="deck-construction__line"[\s\S]*#2[\s\S]*Mining Complex V[\s\S]*data-deck-act="world-cancel" data-job="41"/);
   assert.doesNotMatch(originRoot.html, /queued · next|world-queue-toggle/, "the line is always listed; nothing folds it away");
-  // One order, one bar: only the Construction card draws progress and time.
+  // One order, one bar: only the Construction card draws progress and time,
+  // and since Oct 21 2026 the planet a small bar over its Building tag.
   Object.assign(fixture.report.builds[0], { id: 40, start_time: 80, complete_time: 140 });
   ui.render(world, true);
-  assert.equal((originRoot.html + stageRoot.html).match(/role="progressbar"/g)?.length, 1, "the building job has one bar");
+  assert.equal(originRoot.html.match(/role="progressbar"/g)?.length, 1, "the building job has one bar in the column");
+  assert.match(stageRoot.html, /id="planet-construction-fuel_refinery"[\s\S]*?class="deck-planet__pill is-active"><i class="deck-planet__pill-bar" role="progressbar"[^>]*aria-valuenow="33"><i style="width:33\.3%"><\/i><\/i>Building</,
+    "and a small one over its Building tag on the planet");
   assert.match(originRoot.html, /class="deck-construction__job is-head[^"]*"[\s\S]*?role="progressbar"[^>]*aria-valuenow="33"[\s\S]*?<em title="As reported ~\d+s ago">40s<\/em>/,
     "in the card, with its time");
-  assert.match(stageRoot.html, /id="planet-construction-fuel_refinery"[\s\S]*?class="deck-planet__pill is-active">Building</, "the planet says where, not how far");
-  assert.doesNotMatch(stageRoot.html + originRoot.html, /deck-planet__ring|Under construction|upgrading to|40s<\/b>/, "no ring, no second bar, no second clock");
+  // §live-progress: both carry the job's line (from 80 s, 100% over 60 s), so
+  // each frame redraws them between the panel's redraws.
+  for (const html of [stageRoot.html, originRoot.html]) {
+    assert.match(html, /role="progressbar" data-live-progress="80 0 1\.6666666666666667" aria-label="Fuel Refinery I build progression"/);
+  }
+  assert.doesNotMatch(stageRoot.html + originRoot.html, /deck-planet__ring|Under construction|upgrading to|40s<\/b>/, "no ring, no second clock");
   assert.match(originRoot.html, /class="deck-planet__row is-rising"[\s\S]*?Fuel Refinery I[\s\S]*?class="deck-planet__tag is-active">Building</, "the rising row is tagged too");
   ui.handleAction(action(stageRoot, "planet-select", { structure: "mining_complex" }), world);
   assert.match(originRoot.html, /class="deck-construction__job is-picked"><span class="deck-construction__pos">#2/, "picking a building marks its order in the card");
@@ -968,8 +1058,9 @@ function checkWorldRoute(source) {
   ui.handleAction(action(originRoot, "planet-select", { structure: "mining_complex" }), world);
   assert.doesNotMatch(stageRoot.html, /class="deck-bsheet"/, "clicking a building shows its management");
   assert.match(originRoot.html, /id="planet-row-mining_complex"[^>]*aria-pressed="true"/);
-  // The building's own Upgrade opens the sheet on its next level.
-  assert.match(originRoot.html, /class="deck-planet__upgrade"><span>Level V<small>[^<]*<\/small><\/span><button type="button" class="is-primary" data-deck-act="world-build" data-mode="structures" data-select="mining_complex">Upgrade to V</);
+  // The building's own Upgrade opens the sheet on its next level; its costs
+  // and time live there, not on the building.
+  assert.match(originRoot.html, /class="deck-planet__upgrade"><button type="button" class="is-primary" data-deck-act="world-build" data-mode="structures" data-select="mining_complex">Upgrade to V</);
   ui.handleAction(action(originRoot, "world-build", { mode: "structures", select: "mining_complex" }), world);
   assert.match(stageRoot.html, /data-deck-act="world-builder-pick" data-key="mining_complex" aria-pressed="true"/, "the sheet opens on it");
   assert.match(stageRoot.html, /aria-selected="true" data-deck-act="world-builder-tab" data-pool="resource"/, "in its slot type");
@@ -1076,7 +1167,7 @@ assert.throws(() => checkWorldRoute(empireSource.replace("this.worldBuildFor = w
 // never an overlay, so map accelerators stay live and Esc/zoom-out climb one rung.
 const shellAst = ts.createSourceFile("index.ts", src("shell/deck/index.ts"), ts.ScriptTarget.Latest, true);
 const shellClass = shellAst.statements.find(node => ts.isClassDeclaration(node) && node.members.some(member => member.name?.getText(shellAst) === "keyDown"));
-const methods = shellClass.members.filter(member => ["keyDown", "overlayOpen", "escapeOneLayer", "zoomIn", "zoomOut", "zoomFit"].includes(member.name?.getText(shellAst))).map(member => member.getText(shellAst)).join("\n");
+const methods = shellClass.members.filter(member => ["keyDown", "overlayOpen", "escapeOneLayer", "zoomIn", "zoomOut", "zoomFit", "closeWorkspace"].includes(member.name?.getText(shellAst))).map(member => member.getText(shellAst)).join("\n");
 assert.doesNotMatch(methods, /deck-world-workbench|closeWorldWorkbench/);
 const nodes = { "deck-help": { hidden: true }, "deck-join": { hidden: true }, "deck-nav-overflow": { hidden: true } };
 const document = { getElementById: id => nodes[id] ?? null, activeElement: null };
@@ -1086,7 +1177,7 @@ let backs = 0, exits = 0, routes = 0, zoomOuts = 0, zoomIns = 0, confirms = 0;
 keyboard.ctx = {
   state: { pendingIntent: null, selectedShipId: null, selectedShipIds: new Set(), ghosts: [] },
   intent: { intentAiming: {}, confirmPendingIntent() { confirms++; } },
-  renderer: { viewMode: { type: "system", systemId: "home" }, isSystemScrubbing: () => false, exitSystemView() { exits++; }, setSystemDynamic() {} },
+  renderer: { viewMode: { type: "system", systemId: "home" }, isSystemScrubbing: () => false, isFlying: () => false, exitSystemView() { exits++; }, setSystemDynamic() {} },
 };
 keyboard.router = { current: { name: "world" }, back() { backs++; } };
 keyboard.empire = { closeBuildWorkbench: () => false };
@@ -1117,6 +1208,49 @@ assert.equal(zoomOuts, 1, "the orrery keeps its own scrub-out");
 keyboard.ctx.state.pendingIntent = {};
 key("Enter");
 assert.equal(confirms, 1, "map confirmation is live beside a planet");
+// ✕ on a planet climbs to its system's orrery, not out to the galaxy (Peter, Oct 21 2026).
+const climbs = [];
+let closes = 0;
+keyboard.ctx.state.galaxy = { systems: [{ id: "home", name: "Freya" }] };
+keyboard.router = { current: { name: "world", params: { systemId: "home", bodyId: "12" } }, climbTo(route) { climbs.push(route); }, close() { closes++; } };
+keyboard.closeWorkspace();
+assert.deepEqual(JSON.parse(JSON.stringify(climbs)), [{ name: "system", params: { id: "home", systemLabel: "Freya" } }]);
+assert.equal(closes, 0);
+keyboard.router.current = { name: "market" };
+keyboard.closeWorkspace();
+assert.equal(closes, 1, "anywhere else ✕ still closes");
+// The real router over one tab's history: the climb, and a reload's leftovers.
+const tab = { states: [null], at: 0, listeners: [] };
+const history = {
+  get state() { return tab.states[tab.at]; },
+  pushState(state) { tab.states.length = tab.at + 1; tab.states.push(state); tab.at++; },
+  replaceState(state) { tab.states[tab.at] = state; },
+  go(delta) { tab.at += delta; for (const listener of tab.listeners) listener({ state: tab.states[tab.at] }); },
+  back() { this.go(-1); },
+};
+const pageLoad = () => {
+  tab.listeners = [];
+  const { DeckRouter } = compile("shell/deck/router.ts", undefined, { history,
+    window: { addEventListener: (type, listener) => type === "popstate" && tab.listeners.push(listener) } });
+  return new DeckRouter(() => {}, new AbortController().signal);
+};
+pageLoad().go({ name: "merchant" });
+await new Promise(done => setTimeout(done, 5));
+const router = pageLoad();
+const freyaSystem = { name: "system", params: { id: "home", systemLabel: "Freya" } };
+const freya12 = { name: "world", params: { systemId: "home", bodyId: "12" } };
+router.go(freyaSystem);
+router.go(freya12);
+router.climbTo(freyaSystem);
+assert.deepEqual([router.current?.name, router.current?.params?.id], ["system", "home"], "back down to the system beneath");
+router.close();
+assert.equal(router.current, null, "the last load's entry (Teo's stall) stays shut");
+router.go(freya12);
+router.climbTo(freyaSystem);
+assert.equal(router.current?.name, "system", "no system beneath: it takes the world's place");
+router.back();
+assert.equal(router.current, null);
+assert.match(src("shell/mobile/sheets.ts"), /\nlet nextSession = Date\.now\(\);/, "mobile sheets number sessions per load too");
 console.log("PASS: world route beneath its system, map-area scene with workspace column, child construction, world switch by replace, deep links, Esc/zoom ladder; served reports, workforce confirmation, stable footprints, orbit space and docked fleets, and rival privacy.");
 
 if (process.argv.includes("--serve")) {
@@ -1130,15 +1264,20 @@ if (process.argv.includes("--serve")) {
   initialModel.body.infrastructure_slots = 3;
   initialModel.report.structures = { ...initialModel.body.structures };
   initialModel.report.stockpile = [{ commodity: "alloys", units: 40 }];
-  // §belts: --belt opens a charted Metallic belt with a Mining Complex.
+  // §belts: --belt opens a charted Metallic belt with a tier I Asteroid
+  // Quarry; --quarry=N sets its tier (0: none yet, its one site waiting).
   if (process.argv.includes("--belt")) {
+    const tier = Number(process.argv.find(arg => arg.startsWith("--quarry="))?.split("=")[1] ?? 1);
     initialModel.body = { ...initialModel.body, id: 5, name: "Freya Belt", kind: "asteroid_belt",
       belt: { kind: "metallic", radius: .55, width: .04 }, environment: "uninhabitable", habitable: false,
-      structures: { mining_complex: 1 }, resource_slots: 2, industrial_slots: 0, infrastructure_slots: 0,
+      structures: tier ? { asteroid_quarry: tier } : {}, resource_slots: 1, industrial_slots: 0, infrastructure_slots: 0,
       deposits: [{ resource: "bornite_ore", richness: .24, reserves: null }, { resource: "metallic_ore", richness: .21, reserves: null }],
       // §pockets: a found Titanium pocket after two prospecting passes.
       pockets: [{ resource: "titanium_ore", richness: .86, reserves: 1820 }], prospected: 2 };
-    initialModel.report.assignments = [{ ...line, body_id: 5, workers: 1, tier: 1, outputs: [["bornite_ore", .2], ["metallic_ore", .21]] }];
+    initialModel.catalog.push({ key: "asteroid_quarry", label: "Asteroid Quarry", costs: [{ commodity: "alloys", units: 45 }], build_secs: 24,
+      upkeep: [["provisions", .03], ["machinery", .005]] });
+    initialModel.report.assignments = tier ? [{ ...line, structure: "asteroid_quarry", title: "Asteroid Quarry", body_id: 5, workers: 0, specialists: {},
+      suspended: null, tier, outputs: [["bornite_ore", .2 * tier], ["metallic_ore", .21 * tier]] }] : [];
     const ship = (id, kind) => ({ id, kind, owner: "1", own: true, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, age: 0, jumped: false, route: null,
       passengers: {}, cargo: null, count_class: "one", composition: [{ kind, count: 1 }] });
     initialModel.fixtureGhosts = [ship("fx-barge", "mining_barge"), ship("fx-scout", "scout"),
@@ -1265,8 +1404,9 @@ if (process.argv.includes("--serve")) {
         for (const id of ['deck-planet-stage','deck-workspace-body','deck-build-workbench']) document.getElementById(id).addEventListener('click',event=>{const b=event.target.closest('button[data-deck-act]');if(b&&!b.disabled)controller.handleAction(b,current);});
         document.getElementById('fixture-open').onclick=()=>controller.render(current,true);
         document.getElementById('fixture-deliver').onclick=()=>{if(sent?.type==='SetAssignment'){let line=state.systems[0].assignments.find(a=>a.body_id===sent.body_id&&a.structure===sent.structure);if(!line){line={...model.report.assignments[0],body_id:sent.body_id,structure:sent.structure,title:sent.structure,outputs:[]};state.systems[0].assignments.push(line);}line.workers=sent.workers;line.specialists=sent.specialists;line.outputs=line.structure==='mining_complex'?[['metallic_ore',line.workers*.2],['silicates',line.workers*.05]]:[];sent=null;document.getElementById('fixture-status').textContent='Assignment report received';controller.invalidate();}};
+        window.__fixture={state,controller};
         document.getElementById('fixture-build-report').onclick=()=>{if(sent?.type==='DevelopSystem'){state.systems[0].builds.push({id:900+state.systems[0].builds.length,key:sent.upgrade,body_id:sent.body_id,queued:true,start_time:null,complete_time:null});sent=null;document.getElementById('fixture-status').textContent='Construction report received';controller.invalidate();}};
-        document.getElementById('fixture-all').onclick=()=>{for(const body of state.systems[0].bodies)for(const key of Object.keys(model.descriptions))body.structures[key]=Math.min(1,SURFACE_STRUCTURE_TIERS[key]??6);controller.invalidate();};
+        document.getElementById('fixture-all').onclick=()=>{for(const body of state.systems[0].bodies)for(const key of Object.keys(model.descriptions)){if((body.kind==="asteroid_belt")!==(key==="asteroid_quarry"))continue;body.structures[key]=Math.min(1,SURFACE_STRUCTURE_TIERS[key]??6);}controller.invalidate();};
         document.getElementById('fixture-command').onclick=()=>{const tier=model.body.structures.command_center%3+1;model.body.structures.command_center=tier;model.body.infrastructure_slots=3+tier-1;model.body.structure_build_time_mult=[1,1,.9,.8][tier];controller.invalidate();};
         const yardButton = document.createElement('button');yardButton.id='fixture-yard';yardButton.textContent='Next yard tier';
         yardButton.onclick=()=>{for(const body of state.systems[0].bodies)for(const key of ['shipyard','naval_drydock','capital_slipway'])body.structures[key]=(body.structures[key]??0)%6+1;controller.invalidate();};

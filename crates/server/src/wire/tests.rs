@@ -17,7 +17,7 @@ fn orders() -> Vec<Value> {
     vec![
         json!({"type":"Join", "name":"Étoile 星際 🚀", "view_hz":5}),
         json!({"type":"Join", "name":"Desktop"}),
-        json!({"type":"FoundColony", "profile":"coastal_plains"}),
+        json!({"type":"FoundColony"}),
         json!({"type":"DevelopSettlement", "system_id":"29", "body_id":1, "project":"quarters"}),
         json!({"type":"MoveShip", "ship_id":"18446744073709551615", "dest":{"x":1234567.8901234567,"y":-0.00001234567890123}}),
         json!({"type":"JumpShip", "ship_id":"9007199254740993", "dest":{"x":-1234.5,"y":65536}}),

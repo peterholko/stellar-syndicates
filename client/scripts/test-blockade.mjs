@@ -14,7 +14,9 @@ const load = (file, deps = {}) => {
   return exports;
 };
 const fmtDur = secs => `${Math.round(secs)}s`;
-const b = load("core/derive/blockade.ts", { "./format": { fmtDur } });
+const b = load("core/derive/blockade.ts", { "./format": { fmtDur },
+  "../../protocol": { fleetCargoUnits: g => g.loaded ?? 0 },
+  "./fleet": { fleetCargoCapacity: g => g.hold ?? 0 } });
 let tests = 0;
 const test = (name, fn) => { fn(); tests++; console.log(`PASS ${name}`); };
 
@@ -44,6 +46,22 @@ test("badges read the same on every surface", () => {
   assert.equal(b.blockadeBadge(blockade({ held_since: 200 }), 300, 600), "BLOCKADED");
   assert.equal(b.blockadeBadge(blockade({ held_since: 200, by_me: true }), 300, 600), "BLOCKADING");
   assert.equal(b.blockadeBadge(blockade({ held_since: 200, siege_since: 200 }), 350, 600), "SIEGE 25%");
+});
+
+// §raid-feedback (Peter, Oct 27 2026: "very little feedback on what impact
+// the raider had"): a pirate raid on a home says what it costs.
+test("a pirate raid says what it takes", () => {
+  const raid = over => blockade({ by: "1", by_name: "Pirates", capturable: false, ...over });
+  assert.equal(b.blockadeBadge(raid({ held_since: 200 }), 300, 600), "PIRATE RAID");
+  assert.equal(b.blockadeBadge(raid(), 300, 600), "CONTESTED");
+  const held = b.blockadeBrief(raid({ held_since: 200 }), 300, 600);
+  assert.equal(held.title, "Pirate raid");
+  assert.match(held.detail, /up to 10% of each good, 60 units in all/);
+  assert.match(held.detail, /Deliveries wait until they leave/);
+  assert.match(b.blockadeBrief(raid({ held_since: 200, capturable: true }), 300, 600).detail, /^Stripping its stores\./,
+    "the home raid's cap is only claimed at a home");
+  assert.equal(b.blockadeBrief(raid(), 300, 600).title, "Pirates attacking");
+  assert.equal(b.blockadeBadge(blockade({ held_since: 200, by_name: "Pirates", by_me: true }), 300, 600), "BLOCKADING");
 });
 
 test("each side is told what the stage means and what to do", () => {
@@ -78,12 +96,36 @@ test("orders are refused before they are sent, with the reason", () => {
   assert.match(b.blockadeOrderBlock(fleet(["raider"]), "9", "1", pact, 50), /ceasefire with Vesper/);
 });
 
+test("a raid needs a hold but no war (§raid-order)", () => {
+  const fleet = (hold) => ({ own: true, composition: [{ kind: "raider", count: 2 }], pos: { x: 0, y: 0 }, hold });
+  const peace = { relations: [{ other: "9", name: "Vesper", state: "neutral", separation_until: 0 }], incoming: [] };
+  assert.match(b.blockadeOrderBlock(fleet(80), "9", "1", peace, 50), /declared war/, "a blockade still needs a war");
+  assert.equal(b.blockadeOrderBlock(fleet(80), "9", "1", peace, 50, true), "", "a raid doesn't");
+  assert.match(b.blockadeOrderBlock(fleet(0), "9", "1", peace, 50, true), /freighter to carry the loot/);
+  const pact = { relations: [{ other: "9", name: "Vesper", state: "non_aggression", separation_until: 0 }], incoming: [] };
+  assert.match(b.blockadeOrderBlock(fleet(80), "9", "1", pact, 50, true), /non-aggression pact/, "a pact still protects");
+});
+
 test("a blockading fleet says where and at what stage", () => {
   const view = { simTime: 400, galaxy: { siege_secs: 600, systems: [{ id: "s1", name: "Vidar", pos: { x: 1000, y: 0 } }] },
     systems: [{ id: "s1", blockade: blockade({ by_me: true, held_since: 200, siege_since: 250 }) }] };
   const g = { own: true, pos: { x: 1100, y: 0 }, composition: [] };
   assert.equal(b.blockadeStatus(g, view), "Blockading Vidar · siege 25%");
   assert.equal(b.blockadeStatus({ ...g, pos: { x: 9000, y: 0 } }, view), "Sailing to blockade");
+});
+
+test("a raid shows its load and needs a hold (§raid-order)", () => {
+  const view = { simTime: 400, galaxy: { siege_secs: 600, systems: [{ id: "s1", name: "Vidar", pos: { x: 1000, y: 0 } }] },
+    systems: [{ id: "s1", blockade: blockade({ by_me: true, held_since: 200 }) }] };
+  const g = { id: "f1", own: true, pos: { x: 1100, y: 0 }, composition: [], raiding: true, loaded: 46, hold: 80 };
+  assert.equal(b.blockadeStatus(g, view), "Raiding Vidar · held · 46/80");
+  assert.equal(b.blockadeStatus({ ...g, pos: { x: 9000, y: 0 } }, view), "Sailing to raid");
+  const intent = { verb: "blockade", shipId: "f1" };
+  assert.equal(b.raidableIntent({ ghosts: [g] }, intent), true, "a fleet with a hold may raid");
+  assert.equal(b.raidableIntent({ ghosts: [{ ...g, hold: 0 }] }, intent), false, "warships alone can't carry loot");
+  assert.equal(b.raidableIntent({ ghosts: [g] }, { ...intent, verb: "move" }), false, "only a blockade becomes a raid");
+  assert.equal(b.raidableIntent({ ghosts: [g, { ...g, id: "f2", hold: 0 }] }, { ...intent, shipIds: ["f1", "f2"] }), false,
+    "every fleet in a batch needs a hold");
 });
 
 test("a held blockade says how often it catches a runner", () => {

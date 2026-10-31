@@ -86,6 +86,15 @@ impl SignalKind {
         }
     }
 
+    /// §traders: the name its finder reads. The lost crate is their own free
+    /// trader's (the id keeps Teo's name).
+    pub fn name_for(self, trader: &crate::merchant::FreeTrader) -> std::borrow::Cow<'static, str> {
+        match self {
+            Self::TeosLostCrate => format!("{}'s lost crate", trader.first).into(),
+            _ => self.name().into(),
+        }
+    }
+
     /// The world day a random signal of this kind can first appear, and its
     /// weight in the draw.
     fn draw(self) -> (f64, u32) {
@@ -127,6 +136,8 @@ pub enum SignalReward {
     Captain,
     /// A specialist, home by liner.
     Specialist { specialist: SpecialistKind },
+    /// §captain-gear (R14): a piece of captain's gear, for the armory.
+    Gear { gear: crate::captain::Gear },
 }
 
 impl SignalReward {
@@ -141,6 +152,7 @@ impl SignalReward {
             Self::Blueprint { .. } => "a blueprint",
             Self::Captain => "a captain",
             Self::Specialist { .. } => "a specialist",
+            Self::Gear { .. } => "captain's gear",
         }
     }
 }
@@ -161,6 +173,8 @@ pub enum SignalFind {
     Captain { name: String },
     /// The survivors' own craft, flying home.
     Specialist { specialist: SpecialistKind },
+    /// §captain-gear (R14): into the armory at home.
+    Gear { gear: crate::captain::Gear },
 }
 
 /// The sweep's result, fixed on site; applied when its report reaches command.
@@ -300,10 +314,15 @@ fn draw_rewards(rng: &mut crate::rng::Rng, kind: SignalKind, hazardous: bool, ti
         &[M::WhippleArmor, M::ExtendedTanks, M::ReflectivePlating, M::ReconSuite],
         &[M::ReflectivePlating, M::ReconSuite, M::PointDefenseScreen, M::WarpStabilizer]];
     let crates = crate_tiers[tier.clamp(1, 3) as usize - 1];
+    // §captain-gear (R14): gear rides on rolls already made, so adding it
+    // leaves every other draw as it was.
+    use crate::captain::{Gear, GearGrade};
+    let field = R::Gear { gear: Gear::pick(pick >> 8, GearGrade::Field) };
+    let relic = R::Gear { gear: Gear::pick(pick >> 8, GearGrade::Relic) };
     match kind {
         SignalKind::DriftingWreck if roll < 0.5 => vec![R::Cargo { goods: vec![(C::Alloys, units(20, 40)), (C::Machinery, units(4, 10))] }],
         SignalKind::DriftingWreck if roll < 0.85 => vec![R::Module { module: one(crates) }],
-        SignalKind::DriftingWreck => vec![],
+        SignalKind::DriftingWreck => vec![field],
         SignalKind::CargoPod => vec![R::Cargo { goods: vec![match pick % 3 {
             0 => (C::Polymers, units(20, 35)),
             1 => (C::Provisions, units(25, 40)),
@@ -327,14 +346,20 @@ fn draw_rewards(rng: &mut crate::rng::Rng, kind: SignalKind, hazardous: bool, ti
             let mut out = vec![R::Dossier { fraction: 0.2 },
                 R::Cargo { goods: vec![(C::Electronics, units(10, 20)), (C::Machinery, units(8, 15))] }];
             if roll < 0.15 { out.push(R::Blueprint { options: FIND_BLUEPRINTS.to_vec() }); }
+            else if roll < 0.3 { out.push(field); }
             out
         }
         SignalKind::PirateStash if roll < 0.4 => vec![R::Module { module: one(&[M::MassDriver, M::TorpedoRack]) }],
-        SignalKind::PirateStash => vec![R::Credits { credits: units(800, 1_500) as f64 },
-            R::Cargo { goods: vec![(C::Armaments, units(10, 20))] }],
+        SignalKind::PirateStash => {
+            let mut out = vec![R::Credits { credits: units(800, 1_500) as f64 },
+                R::Cargo { goods: vec![(C::Armaments, units(10, 20))] }];
+            if roll >= 0.85 { out.push(field); }
+            out
+        }
         SignalKind::GhostShip => {
             let mut out = vec![R::Module { module: one(&[M::PointDefenseScreen, M::ReflectivePlating]) }];
             if roll < 0.1 { out.push(R::Blueprint { options: FIND_BLUEPRINTS.to_vec() }); }
+            else if roll < 0.25 { out.push(relic); }
             out
         }
         SignalKind::PrecursorFragment => {
@@ -342,6 +367,8 @@ fn draw_rewards(rng: &mut crate::rng::Rng, kind: SignalKind, hazardous: bool, ti
                 R::Cargo { goods: vec![(C::PrecisionComponents, units(6, 12))] }];
             if roll < 0.1 {
                 out.push(R::Blueprint { options: vec![M::SurveyDrive, M::NebulaSpectrometer, M::PrismaticLance] });
+            } else if roll < 0.2 {
+                out.push(relic);
             }
             out
         }

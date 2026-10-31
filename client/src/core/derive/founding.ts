@@ -1,45 +1,69 @@
-import type { CaptainRosterView, Commodity, FoundingStage, FoundingView, GhostView } from "../../protocol";
+import type { CaptainRosterView, CharterCrateView, Commodity, FoundingStage, FoundingView, GhostView } from "../../protocol";
 import type { BodyView, SystemStateView } from "../../protocol";
 import { isPlayerFreighter } from "../../protocol";
 import type { ViewState } from "../../state";
 import type { FleetCommand } from "../fleetorders";
 import { COMMODITY_VALUE, dockedAtSystem, fleetBaseSpeed, guardCapable, mineCapable, surveyCapable, transitSpeedMultiplier, WARP_FACTOR } from "./fleet";
 import { fmtDur } from "./format";
+import { HYPERLIMIT_SU } from "./geo";
 import { bodyPoolUsage, MINERAL_DEPOSITS } from "./market";
 import { dockedMerchant, merchantLeavesIn, merchantShortfall, type MerchantTarget } from "./merchant";
 import { label } from "../../icons";
+import { colonyName, pirateNames, PRIVATEER_HUNT_SU, STRIKE_BOUNTY, VENDETTA_BOUNTY, VENDETTA_DEFENDERS } from "./vendetta";
 
-/** §charter-v5: eighteen steps in five chapters. Retired stages count as the
- * step that replaced them; a finished charter counts as the last. */
-export const FOUNDING_TOTAL = 18;
+/** §charter-v5: twenty-three steps in six chapters (§vendetta added the last;
+ * §refining and §den-pocket the Smelter and the prospecting pass, and
+ * §gun-platform the defense after the raid, Oct 30 2026; §charter-crates the
+ * stores before the uncle, Oct 31). Retired stages count as the step that
+ * replaced them; a finished charter counts as the last. */
+export const FOUNDING_TOTAL = 23;
 export const FOUNDING_STEP: Record<FoundingStage, number> = {
   build_bioharvester: 1, build_habitat: 2, build_agroplex: 3, build_mine: 4,
-  pirate_raid: 5, sell_ore: 6,
-  power_shipyard: 7, buy_semiconductors: 7,
-  build_shipyard: 8, complete_export: 8, grow_business: 8, build_second_freighter: 8,
-  build_interceptor: 9, build_freighter: 9, build_convoy: 9,
-  defeat_privateer: 10, eliminate_den: 11,
-  prepare_export: 12, local_recovery: 12, export_production: 12,
-  first_research: 13, build_academy: 13,
-  expand_mining: 14,
-  survey_candidates: 15, build_scout: 15,
-  build_barge: 16, mine_belt: 17, haul_ore: 18,
-  build_colony: 18, establish_colony: 18, complete: 18,
+  pirate_raid: 5, build_gun_platform: 6, sell_ore: 7,
+  power_shipyard: 8, buy_semiconductors: 8,
+  build_shipyard: 9, complete_export: 9, grow_business: 9, build_second_freighter: 9,
+  build_interceptor: 10, build_freighter: 10, build_convoy: 10,
+  defeat_privateer: 11, eliminate_den: 12,
+  prepare_export: 13, local_recovery: 13, export_production: 13,
+  first_research: 14, build_academy: 14,
+  build_smelter: 15, expand_mining: 16,
+  survey_candidates: 17, build_scout: 17,
+  build_barge: 18, prospect_belt: 19, mine_belt: 20, haul_ore: 21, secure_stores: 22, vendetta: 23,
+  build_colony: 23, establish_colony: 23, complete: 23,
 };
 
-export type FoundingChapter = "Landfall" | "Raid" | "Pirates" | "Expansion" | "Reach";
+export type FoundingChapter = "Landfall" | "Raid" | "Pirates" | "Expansion" | "Reach" | "Vendetta";
 /** The guide's checklist in the server's words (tutorial::Step::label). */
 export const FOUNDING_CHAPTERS: [FoundingChapter, [FoundingStage, string][]][] = [
   ["Landfall", [["build_bioharvester", "Harvest biomass"], ["build_habitat", "House the settlers"],
     ["build_agroplex", "Make provisions"], ["build_mine", "Bring the mine online"]]],
-  ["Raid", [["pirate_raid", "Pirates raid the colony"], ["sell_ore", "Sell ore to the trader"],
-    ["power_shipyard", "Power the Shipyard"], ["build_shipyard", "Build a Shipyard"]]],
+  ["Raid", [["pirate_raid", "Pirates raid the colony"], ["build_gun_platform", "Build a Gun Platform"],
+    ["sell_ore", "Sell ore to the trader"], ["power_shipyard", "Power the Shipyard"], ["build_shipyard", "Build a Shipyard"]]],
   ["Pirates", [["build_interceptor", "Build an Interceptor"], ["defeat_privateer", "Destroy the privateer"],
     ["eliminate_den", "Eliminate the privateer den"]]],
-  ["Expansion", [["prepare_export", "Export your ore"], ["first_research", "Start research"],
-    ["expand_mining", "Expand mining operations"], ["survey_candidates", "Chart a nearby system"]]],
-  ["Reach", [["build_barge", "Build a Mining Barge"], ["mine_belt", "Mine the belt"], ["haul_ore", "Bring the ore home"]]],
+  ["Expansion", [["prepare_export", "Export your ore"], ["first_research", "Research Enrichment"],
+    ["build_smelter", "Build a Smelter"], ["expand_mining", "Expand mining operations"],
+    ["survey_candidates", "Chart a nearby system"]]],
+  ["Reach", [["build_barge", "Build a Mining Barge"], ["prospect_belt", "Prospect the belt"],
+    ["mine_belt", "Mine the belt"], ["haul_ore", "Bring the ore home"]]],
+  ["Vendetta", [["secure_stores", "Secure your stores"], ["vendetta", "Defeat the privateer's uncle"]]],
 ];
+
+/** §vendetta: the guide's anonymous pirates by their family's names: "the
+ * privateer den", "the privateer's uncle" and "the privateer". */
+export function withPirateNames(text: string, f?: FoundingView | null): string {
+  const names = pirateNames(f);
+  if (!names.family) return text;
+  const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+  return text
+    .replace(/\b([Tt])he privateer den\b/g, (_, t: string) => t === "T" ? cap(names.den) : names.den)
+    .replace(/\b[Tt]he privateer's uncle\b/g, names.uncle)
+    .replace(/\b[Tt]he (Rogue )?[Pp]rivateer\b/g, names.privateer);
+}
+
+/** §refining (Peter, Oct 30 2026): the charter's research step (sim
+ * `founding::CHARTER_RESEARCH`), because it unlocks the Smelter. */
+const ENRICHMENT = "mat_enrichment";
 
 /** §no-spoilers (Oct 15 2026): a twist is news only once it is told — the
  * raid once command sees it, the trader once its pop-up has shown. Until
@@ -47,6 +71,8 @@ export const FOUNDING_CHAPTERS: [FoundingChapter, [FoundingStage, string][]][] =
  * calls its chapter by a plain name; a step already passed always shows. */
 const TWIST: Partial<Record<FoundingStage, (f: FoundingView, st: ViewState) => boolean>> = {
   pirate_raid: f => !!f.raid_seen,
+  // §gun-platform: a defense step would give the raid away.
+  build_gun_platform: f => !!f.raid_seen,
   sell_ore: (_, st) => traderTold(st),
 };
 const CHAPTER_TOLD: Partial<Record<FoundingChapter, (f: FoundingView) => boolean>> = { Raid: f => !!f.raid_seen };
@@ -58,7 +84,7 @@ export function foundingBusinessGoals(st: ViewState, home?: SystemStateView) {
   const built = (kind: string) => home?.bodies.some(b => (b.structures[kind] ?? 0) > 0);
   const staffed = (kind: string) => home?.assignments.some(a => a.structure === kind
     && (a.workers > 0 || Object.values(a.specialists).some(n => n > 0)));
-  const enriched = st.research?.programmes.some(p => p.id === "mat_enrichment" && p.state === "completed");
+  const enriched = st.research?.programmes.some(p => p.id === ENRICHMENT && p.state === "completed");
   const freight = !built("shipyard") ? ["build-shipyard", "Build Shipyard"]
     : !staffed("shipyard") ? ["shipyard", "Staff Shipyard"] : ["build-convoy", "Build Tiny Freighter"];
   const refine = !built("academy") && !enriched ? ["build-academy", "Build Academy"]
@@ -71,6 +97,10 @@ export function foundingBusinessGoals(st: ViewState, home?: SystemStateView) {
   ];
 }
 
+/** §camp (Oct 28 2026, Peter): the Founding Camp's settlement projects open
+ * once the charter is complete; until then the guide alone leads. */
+export const campOpen = (st: ViewState): boolean => !st.founding || st.founding.stage === "complete";
+
 /** Landfall's parallel goals from received reports: the fallback card when
  * the plan has no single next step. The guide never sends fleet orders itself.
  * §charter v3: no beacon, cache or Scout refit; null when nothing is left. */
@@ -80,8 +110,6 @@ export function foundingLocalGoals(st: ViewState, home?: SystemStateView) {
   const mine = home?.bodies.some(b => (b.structures.mining_complex ?? 0) > 0);
   const staffed = home?.assignments.some(a => a.structure === "mining_complex" && a.workers > 0);
   const goals = [];
-  const camp = home?.bodies.find(b => b.founding_camp);
-  if (camp && camp.founding_camp!.completed.length < 4) goals.push({ title: "Grow your Founding Camp", copy: "Prospect your world, improve extraction or storage, and prepare housing for arriving workers. Optional projects share your planet's construction queue.", action: "home-development", label: "Develop your settlement" });
   if (!mine || !staffed) goals.push({ title: "Bring the mine online", copy: "Build the Mining Complex and assign its workforce. Ore is your first export.", action: mine ? "mine" : "build-mine", label: mine ? "Staff Mining Complex" : "Build Mining Complex" });
   if (f.privateer && !f.bounty_received) goals.push({ title: "Protect the shipment", copy: "The privateer threatens your Freighter. The Interceptor engages it on its own.", action: "privateer", label: "Inspect Privateer" });
   if (!f.export_dispatched) goals.push({ title: "Send your first shipment", copy: "Choose return supplies and a spending cap. The ship sells, buys what it can afford and returns; you need not wait online.", action: "opening-imports", label: "Plan guarded export & return" });
@@ -101,7 +129,7 @@ export function foundingScoutGoal(home?: SystemStateView) {
 /** §belts: the charted belt the barge lesson points at, with its name, its
  * system's name and position, and the ore worth cutting there. */
 export function foundingBelt(st: ViewState): { system: string; body: number; name: string; where: string;
-  pos?: { x: number; y: number }; ore?: Commodity } | null {
+  pos?: { x: number; y: number }; ore?: Commodity; pocket?: Commodity } | null {
   const target = st.founding?.belt_target;
   if (!target) return null;
   const system = st.systems.find(s => s.id === target.system);
@@ -109,8 +137,10 @@ export function foundingBelt(st: ViewState): { system: string; body: number; nam
   const info = st.galaxy?.systems.find(s => s.id === target.system);
   const ore = [...(belt?.deposits ?? [])]
     .sort((a, b) => b.richness * (COMMODITY_VALUE[b.resource] ?? 0) - a.richness * (COMMODITY_VALUE[a.resource] ?? 0))[0]?.resource;
+  // §den-pocket: a pocket this corporation has found, while it lasts.
+  const pocket = belt?.pockets?.find(d => d.reserves == null || d.reserves > 0)?.resource;
   return { system: target.system, body: target.body, name: belt?.name ?? "the charted belt",
-    where: info?.name ?? "a nearby system", pos: info?.pos, ore };
+    where: info?.name ?? "a nearby system", pos: info?.pos, ore, pocket };
 }
 
 /** §charter-v4: the privateer den its log named, once the kill report is in. */
@@ -120,24 +150,33 @@ export function foundingDen(st: ViewState): { system: string; name: string; pos:
   return id && info ? { system: id, name: info.name, pos: info.pos } : null;
 }
 
+/** "an", "a second", "a third": the next Interceptor, by how many fly. */
+const interceptorOrdinal = (have: number): string => ["an", "a second", "a third"][have] ?? "another";
+
+/** In reserve and fit for duty, wherever stationed. */
+const inReserve = (c: CaptainRosterView, now: number) => c.assigned_fleet == null && c.loss_fate == null
+  && (c.recovering_until == null || c.recovering_until <= now);
+
+/** The fleet carries a captain. */
+const captained = (st: ViewState, fleet: GhostView) => !!fleet.captain || st.captains.some(c => c.assigned_fleet === fleet.id);
+
 /** §charter-v4: a captain in reserve where this fleet is docked, free to
  * take command of it. None when the fleet already has one. */
 export function reserveCaptain(st: ViewState, fleet: GhostView): CaptainRosterView | undefined {
-  if (fleet.captain || st.captains.some(c => c.assigned_fleet === fleet.id)) return undefined;
-  return st.captains.find(c => c.assigned_fleet == null && c.loss_fate == null
-    && (c.recovering_until == null || c.recovering_until <= st.simTime)
-    && !!c.stationed_system && dockedAtSystem(fleet, c.stationed_system));
+  if (captained(st, fleet)) return undefined;
+  return st.captains.find(c => inReserve(c, st.simTime) && !!c.stationed_system && dockedAtSystem(fleet, c.stationed_system));
 }
 
 /** §belts: the barge lesson's build step, Shipyard first. */
-export function foundingBargeGoal(home: SystemStateView | undefined, belt: string): FoundingStep {
+export function foundingBargeGoal(home: SystemStateView | undefined, belt: string,
+  recipe = "40 Alloys · 20 Machinery · 12 Polymers · 6 Semiconductors · 1 Warp Core"): FoundingStep {
   const yard = home?.bodies.find(b => (b.structures.shipyard ?? 0) > 0);
   const staffed = yard && home?.assignments.some(a => a.body_id === yard.id && a.structure === "shipyard"
     && (a.workers > 0 || Object.values(a.specialists).some(n => n > 0)));
-  return !yard ? { title: "Prepare a Shipyard", copy: "Build a Shipyard to make your Mining Barge.", action: "build-shipyard", label: "Build Shipyard" }
-    : !staffed ? { title: "Staff the Shipyard", copy: staffCopy(home, "Assign workforce so the Shipyard can build the barge."), action: "shipyard", label: "Staff Shipyard" }
-    : { title: "Build a Mining Barge", copy: `40 Alloys, 20 Machinery, 12 Polymers and 6 Semiconductors at your Shipyard. It will mine ${belt}, which your survey charted.`,
-      reason: "A barge mines a belt in a system you don't own; no colony needed.", action: "build-barge", label: "Build Mining Barge" };
+  return !yard ? { title: "Prepare a Shipyard", copy: "For the Mining Barge.", action: "build-shipyard", label: "Build Shipyard" }
+    : !staffed ? { title: "Staff the Shipyard", copy: staffCopy(home), hint: UNSTAFFED, action: "shipyard", label: "Assign workforce" }
+    : { title: "Build a Mining Barge", copy: recipe, hint: `It mines ${belt}. A barge works a belt in a system you don't own; no colony needed.`,
+      action: "build-barge", label: "Build" };
 }
 
 /** §charter-v4: the free trader has been told — its pop-up shown, or its
@@ -159,25 +198,40 @@ export function viaMerchant(st: ViewState, home: SystemStateView | undefined, ta
   name: string, step: FoundingStep): FoundingStep {
   const merchant = traderTold(st) ? dockedMerchant(st) : null;
   const short = merchant && home ? merchantShortfall(st, home, target, merchant) : {};
-  const goods = Object.entries(short).map(([c, n]) => `${n} ${label(c)}`).join(", ");
+  const goods = Object.entries(short).map(([c, n]) => `${n} ${label(c)}`).join(" · ");
   if (!goods) return step;
-  const trader = { title: `Buy the ${name} parts`, copy: `Free trader: ${goods}.`,
-    action: `merchant-${target}`, label: "Buy from trader" };
-  return { ...trader, reason: step.reason, alternatives: [trader, { title: step.title, copy: step.copy, action: step.action, label: step.label }] };
+  const trader = { title: `Buy the ${name} parts`, copy: goods, action: `merchant-${target}`, label: "Buy from trader" };
+  return { ...trader, reason: step.reason, hint: step.hint, alternatives: [trader, choice(step)] };
 }
+
+/** A step offered beside another: its button says the whole step. */
+const choice = (step: FoundingStep) => ({ title: step.title, copy: step.copy, action: step.action, label: step.title });
+/** Peter (Oct 30 2026): the Interceptor's captain isn't optional. */
+const assignCaptain = (captain: CaptainRosterView): FoundingStep => ({ title: "Assign a captain", copy: `${captain.name} → Interceptor`,
+  hint: "The kill promotes its captain.", action: "assign-captain", label: "Assign" });
 
 // ─── §founding R4/R7: ONE plan for every shell ───────────────────────────────
 // The guide shows one next action with its reason, what is already under way
 // (with ETAs), and optional work "while you wait". Chapters count real facts
 // from received reports, so the numbering never skips a step.
 
+// Peter (Oct 27 2026): "reduce the repetitive text in the tutorial steps".
+// One line per fact: the button never repeats the title, copy is figures, why
+// goes on hover, and a card that waits takes its progress line as its title.
 export interface FoundingStep {
   title: string;
+  /** Figures (a recipe, a count); empty when the title and button say it all. */
   copy: string;
   action: string;
+  /** The button: just the verb when the title names the thing ("Build"). */
   label: string;
-  /** Why this step is next, in a short sentence. */
+  /** A reward or an obstacle, in a few words ("Bounty: 8,300 Cr."). */
   reason?: string;
+  /** Why, on hover (desktop only). */
+  hint?: string;
+  /** A waiting card's own progress line, ETA and all: its title in the guide,
+   * and no longer in the under-way list. The Log keeps the plain title. */
+  status?: string;
   /** Business choices shown as sibling buttons instead of one action. */
   alternatives?: { title: string; copy: string; action: string; label: string }[];
 }
@@ -189,16 +243,15 @@ export interface FoundingPlan {
   progress: string[];
   primary: FoundingStep | null;
   waiting: FoundingStep[];
-  /** §charter-v5: a goal beyond the next step: once the den falls, the rich
-   * belt it guarded, until the survey step takes it up. */
-  goal: FoundingStep | null;
   /** Tone for the primary card: an obstacle the player must clear first. */
   blocked: boolean;
 }
 
 
-function eta(g: GhostView, dest: { x: number; y: number }): string {
-  const distance = Math.hypot(dest.x - g.pos.x, dest.y - g.pos.y);
+/** Time to `dest`, or to `within` of it: a raider arrives at the colony's
+ * well edge, where the raid (and the charter's mine) begins. */
+function eta(g: GhostView, dest: { x: number; y: number }, within = 0): string {
+  const distance = Math.max(0, Math.hypot(dest.x - g.pos.x, dest.y - g.pos.y) - within);
   const moving = Math.hypot(g.vel.x, g.vel.y);
   const cruise = fleetBaseSpeed(g) * WARP_FACTOR * transitSpeedMultiplier(g);
   return fmtDur(distance / Math.max(1, moving > 1 ? Math.max(moving, cruise * 0.5) : cruise));
@@ -246,14 +299,16 @@ function shipmentLine(st: ViewState, freighter: GhostView | undefined, homePos?:
 const aboardUnits = (g: GhostView | undefined) =>
   (g?.cargo_manifest ?? (g?.cargo ? [g.cargo] : [])).reduce((n, c) => n + c.units, 0);
 
-/** An Industry build step, yard first. */
-/** §workforce cap: a staffing step's copy — or, when every worker already has
- * a post, where to find one (the + is disabled). */
-function staffCopy(home: SystemStateView | undefined, copy: string): string {
+/** §workforce cap: a staffing step needs no copy — unless every worker already
+ * has a post, when it says where to find one (the + is disabled). */
+function staffCopy(home: SystemStateView | undefined): string {
   const workforce = home?.workforce;
-  return workforce && workforce.units - workforce.posted <= 0 ? "No free workforce: take one off another building." : copy;
+  return workforce && workforce.units - workforce.posted <= 0 ? "No free workforce: take one off another building." : "";
 }
 
+const UNSTAFFED = "An unstaffed building does nothing.";
+
+/** An Industry build step, yard first. */
 function foundingIndustryGoal(home: SystemStateView | undefined, structure: "shipyard" | "academy",
   build: FoundingStep): FoundingStep {
   const body = home?.bodies.find(b => (b.structures[structure] ?? 0) > 0);
@@ -262,7 +317,7 @@ function foundingIndustryGoal(home: SystemStateView | undefined, structure: "shi
   if (!body) return build;
   if (!staffed) {
     return { title: structure === "shipyard" ? "Staff the Shipyard" : "Staff the Academy",
-      copy: staffCopy(home, "Assign one workforce. An unstaffed building does nothing."), action: structure, label: "Assign workforce" };
+      copy: staffCopy(home), hint: UNSTAFFED, action: structure, label: "Assign workforce" };
   }
   return build;
 }
@@ -273,24 +328,52 @@ export function recipeLine(st: ViewState, key: string): string {
     .map(c => `${c.units} ${label(c.commodity)}`).join(" · ");
 }
 
-/** §charter-v5 (Peter, Oct 16 2026): once the den falls, the long-term goal
- * is the belt it guarded, rich in minerals by the look of it: a Survey Probe
- * charts it. Done early, the survey step (15) completes as it is reached.
- * None for a home without a den, or once the belt is charted. */
-function denBeltGoal(st: ViewState, own: GhostView[], progress: string[], home?: SystemStateView): FoundingStep | null {
-  const den = foundingDen(st);
-  if (!den || st.founding?.survey_candidates[0] !== den.system) return null;
-  if (st.systems.find(s => s.id === den.system)?.bodies.some(b => b.geology !== null)) return null;
-  const active = own.find(g => surveyCapable(g) && surveyingAt(g, den.pos, st));
-  if (active) {
-    progress.push(active.survey_progress != null ? `Surveying ${den.name} · ${Math.round(active.survey_progress * 100)}%`
-      : `${surveyorNoun(active)} en route to ${den.name} · ETA ${eta(active, den.pos)}`);
-    return null;
-  }
-  if (home?.builds.some(j => j.key === "survey_probe")) return null;
-  const goal = { title: `Survey the belt at ${den.name}`, copy: "The den guarded a belt that looks rich in minerals." };
-  return freeSurveyor(own) ? { ...goal, action: "survey-stop", label: "Send the survey" }
-    : { ...goal, copy: `${goal.copy} A Survey Probe charts it.`, action: "build-probe", label: "Build Survey Probe" };
+/** §home-step (Peter, Oct 21 2026): the guide's first step is to open your
+ * home system; clicking its star, or the button, flies into its System View.
+ * A client step before the server's eighteen: done once this session has
+ * opened the home System View, or once anything is built or queued at home. */
+export const HOME_STEP_TITLE = "Open your home system";
+
+export function homeStepPending(st: ViewState, home?: SystemStateView): boolean {
+  const f = st.founding;
+  if (!f?.local_opening || f.stage !== "build_bioharvester" || st.homeOpened || !home) return false;
+  return untouchedHome(home);
+}
+
+/** Nothing built or queued at home beyond the Command Center. */
+const untouchedHome = (home: SystemStateView): boolean => !home.builds.length
+  && home.bodies.every(b => Object.entries(b.structures).every(([kind, n]) => kind === "command_center" || !n));
+
+/** §home-world-step (Peter, Oct 28 2026): then open one of home's worlds, to
+ * see the planet view. A client step like the first, done the same ways. */
+export const HOME_WORLD_STEP_TITLE = "Open your home world";
+
+export function homeWorldStepPending(st: ViewState, home?: SystemStateView): boolean {
+  const f = st.founding;
+  if (!f?.local_opening || f.stage !== "build_bioharvester" || !st.homeOpened || st.homeWorldOpened || !home) return false;
+  return untouchedHome(home);
+}
+
+/** Latch the second step once a world of home is open. True when it has just
+ * latched, so the guide redraws. */
+export function noteHomeWorldOpened(st: ViewState, systemId: string | null, homeId: string | null): boolean {
+  if (st.homeWorldOpened || !systemId || systemId !== homeId) return false;
+  st.homeWorldOpened = true;
+  return true;
+}
+
+/** The home system while the first step asks for it, else null. */
+export function homeStepSystem(st: ViewState, homeId: string | null): string | null {
+  const home = homeId ? st.systems.find(s => s.id === homeId) : undefined;
+  return home && homeStepPending(st, home) ? home.id : null;
+}
+
+/** Latch the first step once the home System View is open, however it was
+ * entered. True when it has just latched, so the guide redraws. */
+export function noteHomeOpened(st: ViewState, viewedId: string | null, homeId: string | null): boolean {
+  if (st.homeOpened || !viewedId || viewedId !== homeId) return false;
+  st.homeOpened = true;
+  return true;
 }
 
 /** §charter-v4: the landing world, where the Command Center stands. */
@@ -304,8 +387,10 @@ export function expansionBody(home: SystemStateView): BodyView | undefined {
   const ore = (b: BodyView) => b.deposits?.some(d => MINERAL_DEPOSITS.includes(d.resource)) ?? false;
   const free = (b: BodyView) => { const p = bodyPoolUsage(b, home).resource; return p.used < p.total; };
   const level = (b: BodyView, kind: string) => b.structures[kind] ?? 0;
-  return home.bodies.filter(b => !level(b, "command_center") && ore(b) && (level(b, "mining_complex") > 0 || free(b)))
-    .sort((a, b) => level(b, "mining_complex") - level(a, "mining_complex") || level(b, "power_plant") - level(a, "power_plant")
+  // §asteroid-quarry: on a belt the mine is its quarry.
+  const mine = (b: BodyView) => level(b, "mining_complex") + level(b, "asteroid_quarry");
+  return home.bodies.filter(b => !level(b, "command_center") && ore(b) && (mine(b) > 0 || free(b)))
+    .sort((a, b) => mine(b) - mine(a) || level(b, "power_plant") - level(a, "power_plant")
       || Number(a.kind === "asteroid_belt") - Number(b.kind === "asteroid_belt") || a.id - b.id)[0];
 }
 
@@ -334,50 +419,72 @@ export function foundingPlan(st: ViewState, home?: SystemStateView): FoundingPla
   const waiting: FoundingStep[] = [];
   let primary: FoundingStep | null = null;
   let blocked = false;
-  const camp = home?.bodies.find(b => b.founding_camp);
-  const settlement: FoundingStep = { title: "Develop your settlement", copy: "Prospect your world (free), then improve extraction, storage or housing.",
-    action: "home-development", label: "Settlement projects" };
+  /** Something under way: its progress line, and a card that waits on it
+   * with that line as its title. */
+  const waitOn = (title: string, detail: string | null, card: Omit<FoundingStep, "title" | "status">): FoundingStep => {
+    const status = detail ? `${title} · ${detail}` : title;
+    progress.push(status);
+    return { ...card, title, status };
+  };
   /** A build under way: its progress line, and a card to wait on. */
   const building = (kind: string, name: string, then: string, body?: number): FoundingStep | null => {
     const j = job(kind, body);
     if (!j) return null;
     const left = !j.queued && j.complete_time != null ? Math.max(0, j.complete_time - st.simTime) : null;
-    progress.push(`${name} under construction${j.queued ? " · queued" : left != null ? ` · ${fmtDur(left)}` : ""}`);
-    return { title: `${name} under construction`, copy: then, action: "home-world", label: `Open ${body !== undefined && body !== landing?.id ? "world" : world}` };
+    return waitOn(`${name} under construction`, j.queued ? "queued" : left != null ? fmtDur(left) : null,
+      { copy: then, action: "home-world", label: `Open ${body !== undefined && body !== landing?.id ? "world" : world}` });
   };
   /** Build a structure, then staff it when it needs a crew. */
   const structure = (kind: string, name: string, build: FoundingStep, crew: boolean): FoundingStep => {
-    if (!built(kind)) return building(kind, name, crew ? "Staff it when it is finished." : "It stands when it is finished.") ?? build;
+    if (!built(kind)) return building(kind, name, crew ? "Then staff it." : "") ?? build;
     if (crew && !staffed(kind)) {
-      return { title: `Staff the ${name}`, copy: staffCopy(home, "Assign one workforce. An unstaffed building does nothing."),
-        reason: `${name} stands on ${world}.`, action: STAFF_ACTION[kind] ?? kind, label: "Assign workforce" };
+      return { title: `Staff the ${name}`, copy: staffCopy(home), hint: UNSTAFFED, action: STAFF_ACTION[kind] ?? kind, label: "Assign workforce" };
     }
     return build;
   };
   const chapterOf = FOUNDING_CHAPTERS.find(([, steps]) => steps.some(([s]) => FOUNDING_STEP[s] === step))
     ?? FOUNDING_CHAPTERS[FOUNDING_CHAPTERS.length - 1];
   const told = ([s]: [FoundingStage, string]) => step > FOUNDING_STEP[s] || (TWIST[s]?.(f, st) ?? true);
-  const checklist = chapterOf[1].filter(told).map(([s, title]) => ({ title, done: step > FOUNDING_STEP[s] }));
+  const homeStep = homeStepPending(st, home);
+  const worldStep = homeWorldStepPending(st, home);
+  const checklist = [...chapterOf[0] === "Landfall"
+    ? [{ title: HOME_STEP_TITLE, done: !homeStep }, { title: HOME_WORLD_STEP_TITLE, done: !homeStep && !worldStep }] : [],
+    ...chapterOf[1].filter(told).map(([s, title]) => ({ title: withPirateNames(title, f), done: step > FOUNDING_STEP[s] }))];
   const chapterName = CHAPTER_TOLD[chapterOf[0]]?.(f) ?? true ? chapterOf[0] : COVER_NAME[chapterOf[0]] ?? chapterOf[0];
 
   switch (step) {
     // ─── Landfall: the colony ship lands and becomes the Command Center ───────
-    case 1:
-      primary = structure("bioharvester", "Bioharvester", { title: "Build a Bioharvester", copy: `${kit("bioharvester")}, from the charter kit. It harvests Biomass.`,
-        reason: "Your settlers live on the kit's Provisions.", action: "build-bioharvester", label: "Build Bioharvester" }, true);
+    case 1: {
+      const homeName = st.galaxy?.systems.find(s => s.id === home?.id)?.name;
+      const worldName = landingBody(home)?.name;
+      primary = homeStep
+        ? { title: HOME_STEP_TITLE, copy: `Click ${homeName ?? "your home system"} on the map.`, action: "open-home", label: `Open ${homeName ?? "home"}` }
+        : worldStep
+          ? { title: HOME_WORLD_STEP_TITLE, copy: `Click ${worldName ?? "your home world"} in the system.`, action: "home-world", label: `Open ${worldName ?? "it"}` }
+          : structure("bioharvester", "Bioharvester", { title: "Build a Bioharvester", copy: kit("bioharvester"),
+          hint: "It harvests Biomass. Your settlers live on the Landfall crate's Provisions.", action: "build-bioharvester", label: "Build" }, true);
       break;
+    }
     case 2:
-      primary = structure("habitat", "Habitat", { title: "Build a Habitat", copy: `${kit("habitat")}. Your settlers move out of the colony ship.`,
-        reason: "They live aboard until it stands.", action: "build-habitat", label: "Build Habitat" }, false);
+      primary = structure("habitat", "Habitat", { title: "Build a Habitat", copy: kit("habitat"),
+        hint: "Your settlers live aboard the colony ship until it stands.", action: "build-habitat", label: "Build" }, false);
       break;
     case 3:
-      primary = structure("agroplex", "Agroplex", { title: "Build an Agroplex", copy: `${kit("agroplex")}. It turns Biomass into Provisions.`,
-        reason: "The kit's Provisions won't last.", action: "build-agroplex", label: "Build Agroplex" }, true);
+      primary = structure("agroplex", "Agroplex", { title: "Build an Agroplex", copy: kit("agroplex"),
+        hint: "Biomass → Provisions. The crate's Provisions won't last.", action: "build-agroplex", label: "Build" }, true);
       break;
-    case 4:
-      primary = structure("mining_complex", "Mining Complex", { title: "Build a Mining Complex", copy: `${kit("mining_complex")}, on ${world}'s Ferrite Ore. The Command Center's 1 MW reactor runs it.`,
-        reason: "Ore is your first export.", action: "build-mine", label: "Build Mining Complex" }, true);
+    case 4: {
+      primary = structure("mining_complex", "Mining Complex", { title: "Build a Mining Complex", copy: kit("mining_complex"),
+        hint: `On ${world}'s Ferrite Ore. The Command Center's 1 MW reactor runs it.`, action: "build-mine", label: "Build" }, true);
+      // §charter-gates: the privateer sets out as the mine starts; once
+      // command sees it, its approach shows while the mine goes up.
+      const pirate = f.raid_seen && f.privateer ? st.ghosts.find(g => g.id === f.privateer) : undefined;
+      if (pirate && homePos) {
+        const homeName = st.galaxy?.systems.find(s => s.id === home?.id)?.name ?? "the colony";
+        progress.push(`Raider closing on ${homeName} · ETA ${eta(pirate, homePos, HYPERLIMIT_SU)}`);
+      }
       break;
+    }
 
     // ─── Raid: the privateer takes the kit's semiconductors and Armaments (the
     // story is a pop-up, story-events.ts; the guide keeps to what happens) ────
@@ -386,54 +493,73 @@ export function foundingPlan(st: ViewState, home?: SystemStateView): FoundingPla
       const over = !!pirate && !!homePos && Math.hypot(pirate.pos.x - homePos.x, pirate.pos.y - homePos.y) <= 1_200;
       // Not news until command sees it: the mine's own moment.
       if (!f.raid_seen) {
-        primary = { title: "The mine is running", copy: "Ferrite Ore is coming in.", action: "mine", label: "Open the mine" };
+        primary = { title: "The mine is running", copy: "", action: "mine", label: "Open the mine" };
       } else if (over) {
         blocked = true;
-        progress.push("Raider over the colony");
-        primary = { title: "Raider over the colony", copy: "It's stripping the stockpile.", action: "privateer", label: "Watch it" };
+        primary = waitOn("Raider over the colony", null, { copy: "It's stripping the stockpile.", action: "privateer", label: "Watch" });
       } else {
         blocked = true;
         const homeName = st.galaxy?.systems.find(s => s.id === home?.id)?.name ?? "the colony";
-        if (pirate && homePos) progress.push(`Raider closing on ${homeName} · ETA ${eta(pirate, homePos)}`);
-        primary = { title: "Raider inbound", copy: "No ships, no defenses.", action: "privateer", label: "Watch it" };
+        primary = waitOn(`Raider closing on ${homeName}`, pirate && homePos ? `ETA ${eta(pirate, homePos, HYPERLIMIT_SU)}` : null,
+          { copy: "No ships, no defenses.", action: "privateer", label: "Watch" });
       }
       break;
     }
-    case 6: {
+    case 6:
+      // §gun-platform (Peter, Oct 30 2026): straight after the raid, the
+      // crudest defense, from kit Alloys and Machinery.
+      primary = building("orbital_defense", "Gun Platform", "", landing?.id)
+        ?? { title: "Build a Gun Platform", copy: kit("orbital_defense"), reason: "Pirates leave defended worlds alone.",
+          hint: `One salvaged gun over ${world}. It joins every fight in the system.`, action: "build-gun-platform", label: "Build" };
+      break;
+    case 7: {
       const need = st.galaxy?.build_options?.find(o => o.key === "power_plant")?.costs.find(c => c.commodity === "electronics")?.units ?? 0;
       // The trader is news only once its pop-up has told it (after the
       // server says it docked): until then the guide never names it.
       primary = traderTold(st) && dockedMerchant(st)
-        ? { title: "Sell ore to the trader", copy: "We'd better sell ore to the trader to buy semiconductors for our ships.",
-          action: "merchant-ore", label: "Sell ore" }
+        ? { title: "Sell ore to the trader", copy: "We need semiconductors for our ships.", action: "merchant-ore", label: "Sell" }
         : { title: "Find semiconductors", copy: `The Solar Array needs ${need}.`, action: "market", label: "Open Market" };
       break;
     }
-    case 7:
-      primary = building("power_plant", "Solar Array", "The Shipyard comes next.", landing?.id)
-        ?? viaMerchant(st, home, "power_plant", "Solar Array", { title: "Build a Solar Array", copy: `${kit("power_plant")}. +8 MW on ${world}.`,
-          reason: "A Shipyard needs more than the Command Center's 1 MW.", action: "build-power", label: "Build Solar Array" });
-      break;
     case 8:
-      primary = structure("shipyard", "Shipyard", viaMerchant(st, home, "shipyard", "Shipyard", { title: "Build a Shipyard", copy: `${kit("shipyard")}.`,
-        reason: "It builds every ship that comes next.", action: "build-shipyard", label: "Build Shipyard" }), true);
+      primary = building("power_plant", "Solar Array", "Then the Shipyard.", landing?.id)
+        ?? viaMerchant(st, home, "power_plant", "Solar Array", { title: "Build a Solar Array", copy: kit("power_plant"),
+          hint: `+8 MW on ${world}. A Shipyard needs more than the Command Center's 1 MW.`, action: "build-power", label: "Build" });
+      break;
+    case 9:
+      primary = structure("shipyard", "Shipyard", viaMerchant(st, home, "shipyard", "Shipyard", { title: "Build a Shipyard", copy: kit("shipyard"),
+        hint: "It builds every ship that comes next.", action: "build-shipyard", label: "Build" }), true);
       break;
 
     // ─── Pirates: the Interceptor, the privateer and its den ───────────────────
-    case 9: {
-      const story = "The privateer lurks nearby.";
-      if (level("shipyard") < 2) {
-        primary = building("shipyard", "Shipyard II", "Then build the Interceptor.")
-          ?? viaMerchant(st, home, "shipyard", "Shipyard II", { title: "Upgrade to Shipyard II", copy: `${kit("shipyard")}. Interceptors need a level II yard.`,
-            reason: story, action: "build-shipyard-2", label: "Upgrade Shipyard" });
+    case 10: {
+      // Peter (Oct 25 2026): Shipyard I builds it. Peter (Oct 30 2026): its
+      // captain isn't optional; the step completes once one commands it.
+      const hunter = own.find(g => guardCapable(g));
+      const free = st.captains.find(c => inReserve(c, st.simTime));
+      const boarding = !!hunter && (captained(st, hunter)
+        || !!st.pendingOrders.get(hunter.id)?.some(o => !o.lost && o.kind === "assign"));
+      // A captain boards only a ship at rest: not one on Guard or Defend duty.
+      const atRest = !!hunter && !hunter.guard_target && !hunter.defend_system;
+      const captain = hunter && !boarding && atRest ? reserveCaptain(st, hunter) : undefined;
+      if (!hunter || (!free && !boarding)) {
+        primary = building("raider", "Interceptor", "Then assign its captain.")
+          ?? foundingIndustryGoal(home, "shipyard", viaMerchant(st, home, "raider", "Interceptor", { title: "Build an Interceptor", copy: kit("raider"),
+            hint: "The privateer lurks nearby.", action: "build-interceptor", label: "Build" }));
+      } else if (boarding) {
+        primary = waitOn("Captain boarding", null, { copy: "", action: "raider", label: "Select Interceptor" });
+      } else if (captain) {
+        primary = assignCaptain(captain);
       } else {
-        primary = building("raider", "Interceptor", "Then hunt the privateer.")
-          ?? foundingIndustryGoal(home, "shipyard", viaMerchant(st, home, "raider", "Interceptor", { title: "Build an Interceptor", copy: `${kit("raider")}.`,
-            reason: story, action: "build-interceptor", label: "Build Interceptor" }));
+        // The free captain waits at its station; the Interceptor is away or on duty.
+        const station = st.galaxy?.systems.find(s => s.id === free?.stationed_system);
+        primary = { title: station && dockedAtSystem(hunter, station.id) ? "Stand the Interceptor down"
+          : station?.id === home?.id ? "Bring the Interceptor home" : `Send the Interceptor to ${station?.name ?? "its captain"}`,
+          copy: `${free!.name} boards at the dock.`, action: "interceptor-captain", label: "Send" };
       }
       break;
     }
-    case 10: {
+    case 11: {
       const hunter = own.find(g => guardCapable(g));
       const pirate = f.privateer ? st.ghosts.find(g => g.id === f.privateer) : undefined;
       const fighting = !!hunter && st.battles.some(b => b.own && b.participants.includes(hunter.id));
@@ -441,37 +567,42 @@ export function foundingPlan(st: ViewState, home?: SystemStateView): FoundingPla
       const captain = hunter && !ordered("assign") ? reserveCaptain(st, hunter) : undefined;
       // An empty tank at home: the trader's Deuterium fills it at the dock.
       const dry = !!hunter && hunter.fuel != null && hunter.fuel < 1 && atHome(hunter);
-      const attack: FoundingStep = { title: "Destroy the privateer", copy: "Send your Interceptor after it.",
-        reason: "Bounty: 4,500 Cr.", action: "attack-privateer", label: "Attack" };
+      const attack: FoundingStep = { title: "Destroy the privateer", copy: "", reason: "Bounty: 8,300 Cr.",
+        action: "attack-privateer", label: "Attack" };
+      // §privateer-hunt (Oct 27 2026): out of sight after its raid, it lies
+      // quiet where it went to ground; the Interceptor finds it there.
+      const lastSeen = !pirate ? f.privateer_last_seen ?? null : null;
+      const hunt: FoundingStep = { title: "Find the privateer", copy: "Search its last known position.", reason: "Bounty: 8,300 Cr.",
+        action: "hunt-privateer", label: "Hunt" };
       if (!hunter) {
         blocked = true;
         primary = building("raider", "Interceptor", "Then hunt the privateer.")
-          ?? { title: "Interceptor lost", copy: `${kit("raider")} for another.`, action: "build-interceptor", label: "Build Interceptor" };
+          ?? { title: "Interceptor lost", copy: kit("raider"), action: "build-interceptor", label: "Build Interceptor" };
       } else if (fighting) {
-        progress.push("Interceptor engaging the privateer");
-        primary = { title: "The fight is on", copy: "Its report reaches command at light speed.",
-          reason: "Bounty: 4,500 Cr.", action: "privateer", label: "Watch the fight" };
+        primary = waitOn("Interceptor engaging the privateer", null, { copy: "", action: "privateer", label: "Watch" });
       } else if (dry && dockedMerchant(st) && traderTold(st)) {
         blocked = true;
-        primary = { title: "Fuel the Interceptor", copy: "Its tank is empty. The trader sells Deuterium.",
-          action: "merchant-fuel", label: "Buy Deuterium" };
+        primary = { title: "Fuel the Interceptor", copy: "Its tank is empty.", action: "merchant-fuel", label: "Buy Deuterium" };
       } else if (captain) {
-        // Guide-only: the kill completes the step, captain or not.
-        primary = { title: "Assign a captain", copy: `${captain.name} takes command of the Interceptor.`,
-          reason: "The kill promotes its captain.", action: "assign-captain", label: "Assign captain" };
-        if (pirate) waiting.push({ ...attack, title: "Attack without a captain", label: "Attack now" });
+        // Peter (Oct 30 2026): not optional. A replacement Interceptor takes
+        // the reserve captain before it hunts.
+        primary = assignCaptain(captain);
       } else if (pirate && (ordered("attack") || heading(hunter, pirate.pos, 3_000, st))) {
-        progress.push(`Interceptor closing on the privateer · ETA ${eta(hunter, pirate.pos)}`);
-        primary = { title: "The hunt is on", copy: "It engages when it closes.", reason: "Bounty: 4,500 Cr.",
-          action: "privateer", label: "Watch the hunt" };
+        primary = waitOn("Interceptor closing on the privateer", `ETA ${eta(hunter, pirate.pos)}`, { copy: "", action: "privateer", label: "Watch" });
       } else if (pirate) {
         primary = attack;
+      } else if (lastSeen && Math.hypot(hunter.pos.x - lastSeen.x, hunter.pos.y - lastSeen.y) <= PRIVATEER_HUNT_SU) {
+        primary = waitOn("Interceptor lying in wait", null, { copy: "It attacks on contact.", action: "raider", label: "Select Interceptor" });
+      } else if (lastSeen && heading(hunter, lastSeen, PRIVATEER_HUNT_SU, st)) {
+        primary = waitOn("Interceptor hunting the privateer", `ETA ${eta(hunter, lastSeen)}`, { copy: "", action: "raider", label: "Watch" });
+      } else if (lastSeen) {
+        primary = hunt;
       } else {
         primary = { title: "Destroy the privateer", copy: "It's out of sight.", action: "command", label: "Open Command" };
       }
       break;
     }
-    case 11: {
+    case 12: {
       const den = foundingDen(st);
       const hunter = own.find(g => guardCapable(g));
       const fighting = !!hunter && st.battles.some(b => b.own && b.participants.includes(hunter.id));
@@ -481,13 +612,12 @@ export function foundingPlan(st: ViewState, home?: SystemStateView): FoundingPla
       } else if (!hunter) {
         blocked = true;
         primary = building("raider", "Interceptor", `Then send it to ${den.name}.`)
-          ?? { title: "Interceptor lost", copy: `${kit("raider")} for another.`, action: "build-interceptor", label: "Build Interceptor" };
+          ?? { title: "Interceptor lost", copy: kit("raider"), action: "build-interceptor", label: "Build Interceptor" };
       } else if (fighting || near) {
-        progress.push(`Interceptor ${fighting ? "fighting the garrison" : "at the den"} · ${den.name}`);
-        primary = { title: "Assault under way", copy: "Its report reaches command at light speed.", action: "den", label: `Open ${den.name}` };
+        primary = waitOn(`Interceptor ${fighting ? "fighting the garrison" : "at the den"}`, den.name,
+          { copy: "", action: "den", label: `Open ${den.name}` });
       } else if (heading(hunter, den.pos, 1_500, st)) {
-        progress.push(`Interceptor en route to ${den.name} · ETA ${eta(hunter, den.pos)}`);
-        primary = { title: "Interceptor on its way", copy: "The garrison engages it on arrival.", action: "den", label: `Open ${den.name}` };
+        primary = waitOn(`Interceptor en route to ${den.name}`, `ETA ${eta(hunter, den.pos)}`, { copy: "", action: "den", label: `Open ${den.name}` });
       } else {
         primary = { title: `Destroy the den at ${den.name}`, copy: "Three damaged raiders. No defenses.",
           reason: "It holds what the raid took.", action: "assault-den", label: "Send Interceptor" };
@@ -498,36 +628,51 @@ export function foundingPlan(st: ViewState, home?: SystemStateView): FoundingPla
     // ─── Expansion: an export, research, a second mine, a survey ──────────────
     // §charter-v5 (Peter, Oct 16 2026): the trader left during the den hunt,
     // so the ore goes to the Market Hub.
-    case 12: {
+    case 13: {
       const shipment = shipmentLine(st, freighter, homePos);
       const hubOre = st.market?.prices.find(p => p.commodity === "metallic_ore")?.price;
       const reason = hubOre != null ? `The Market Hub pays ${hubOre.toFixed(1)} Cr a unit.` : "The Market Hub buys ore.";
       if (!freighter) {
         primary = building("tiny_freighter", "Tiny Freighter", "Then load it with ore.")
-          ?? foundingIndustryGoal(home, "shipyard", { title: "Build a Tiny Freighter", copy: `${kit("tiny_freighter")}. It fuels with Uranium at the dock.`,
-            reason, action: "build-convoy", label: "Build Tiny Freighter" });
+          ?? foundingIndustryGoal(home, "shipyard", { title: "Build a Tiny Freighter", copy: kit("tiny_freighter"),
+            reason, hint: "It fuels with Uranium at the dock.", action: "build-convoy", label: "Build" });
       } else if (routeHold?.startsWith("Storage full") || (storageFull && !atHome(freighter))) {
         blocked = true;
         primary = { title: "Make room at home", copy: routeHold ?? `Storage is full (${Math.floor(home!.storage_used)}/${home!.storage_cap}).`,
-          reason: "Expand the storehouse, or ship goods out.", action: "home-development", label: "Open settlement" };
+          reason: "Build a Warehouse, or ship goods out.", action: "build-warehouse", label: "Build Warehouse" };
       } else if (shipment) {
-        primary = { title: "Shipment under way", copy: "It sells your ore at the Market Hub.",
-          action: "shipment-trip", label: "Follow the trip" };
+        // Its line joins the under-way list below (the trip stays in view after this step).
+        primary = { title: shipment.split(" · ")[0], status: shipment, copy: "", action: "shipment-trip", label: "Follow" };
       } else {
-        primary = { title: "Export your ore", copy: "Load Ferrite Ore and send the Freighter to the Market Hub.",
-          reason, action: "opening-imports", label: "Plan the shipment" };
+        primary = { title: "Export your ore", copy: "", reason, action: "opening-imports", label: "Plan the shipment" };
       }
       break;
     }
-    case 13: {
-      const academy = foundingIndustryGoal(home, "academy", viaMerchant(st, home, "academy", "Academy", { title: "Build an Academy", copy: `${kit("academy")}. Research unlocks better extraction, hulls and refining.`,
-        action: "build-academy", label: "Build Academy" }));
-      primary = building("academy", "Academy", "Staff it, then choose a programme.")
-        ?? (built("academy") && staffed("academy") ? { title: "Choose your first programme", copy: "Any Tier I programme. The Authority funds most of the first one.",
-          action: "research", label: "Open Research" } : academy);
+    case 14: {
+      // §refining (Peter, Oct 30 2026): Enrichment, for the Smelter it unlocks.
+      const academy = foundingIndustryGoal(home, "academy", viaMerchant(st, home, "academy", "Academy", { title: "Build an Academy", copy: kit("academy"),
+        hint: "Research unlocks better extraction, hulls and refining.", action: "build-academy", label: "Build" }));
+      primary = building("academy", "Academy", "Then staff it and research Enrichment.")
+        ?? (built("academy") && staffed("academy") ? { title: "Research Enrichment", copy: "Tier I · the Authority funds most of it",
+          hint: "It unlocks the Smelter.", action: "research", label: "Open Research" } : academy);
       break;
     }
-    case 14: {
+    case 15: {
+      // §refining: Ferrite into Alloys. A Smelter eats more ore than one mine
+      // makes, which is what the next step's second mine answers.
+      const research = st.research?.active;
+      if (!st.research?.programmes.some(p => p.id === ENRICHMENT && p.state === "completed")) {
+        primary = research?.id === ENRICHMENT
+          ? waitOn("Enrichment under way", research.eta_secs != null ? fmtDur(research.eta_secs) : null,
+            { copy: "Then a Smelter.", action: "research", label: "Open Research" })
+          : { title: "Research Enrichment", copy: "Tier I", hint: "It unlocks the Smelter.", action: "research", label: "Open Research" };
+        break;
+      }
+      primary = structure("smelter", "Smelter", { title: "Build a Smelter", copy: kit("smelter"),
+        hint: "Ferrite Ore → Alloys. Every build ahead needs Alloys.", action: "build-smelter", label: "Build" }, true);
+      break;
+    }
+    case 16: {
       const body = home ? expansionBody(home) : undefined;
       if (!body) {
         blocked = true;
@@ -535,42 +680,100 @@ export function foundingPlan(st: ViewState, home?: SystemStateView): FoundingPla
         break;
       }
       const ore = body.deposits?.find(d => MINERAL_DEPOSITS.includes(d.resource))?.resource;
-      const reason = "The charter's land grant now covers your whole system.";
-      if (!(body.structures.power_plant > 0)) {
+      const grant = "The charter's land grant now covers your whole system.";
+      // §refining: the obstacle the second mine answers, once it shows.
+      const reason = home?.converters?.some(c => c.structure === "smelter" && c.status === "no_inputs")
+        ? "The Smelter is short of ore." : undefined;
+      if (body.kind === "asteroid_belt") {
+        // §asteroid-quarry: a belt's mine crews and powers itself.
+        primary = building("asteroid_quarry", "Asteroid Quarry", "", body.id)
+          ?? { title: `Quarry ${body.name}`, copy: kit("asteroid_quarry"), reason,
+            hint: `${grant} It mines every deposit on the belt with its own crew and power, and eats Provisions and Machinery.`,
+            action: "build-expansion-quarry", label: "Build Asteroid Quarry" };
+      } else if (!(body.structures.power_plant > 0)) {
         primary = building("power_plant", "Solar Array", `Then a Mining Complex on ${body.name}.`, body.id)
-          ?? viaMerchant(st, home, "power_plant", "Solar Array", { title: `Power ${body.name}`, copy: `${kit("power_plant")}. A mine there needs its own power.`,
-            reason, action: "build-expansion-power", label: "Build Solar Array" });
+          ?? viaMerchant(st, home, "power_plant", "Solar Array", { title: `Power ${body.name}`, copy: kit("power_plant"), reason,
+            hint: `${grant} A mine there needs its own power.`, action: "build-expansion-power", label: "Build Solar Array" });
       } else if (!(body.structures.mining_complex > 0)) {
-        primary = building("mining_complex", "Mining Complex", "Staff it when it is finished.", body.id)
-          ?? { title: `Mine ${body.name}`, copy: `${kit("mining_complex")}, on its ${ore ? label(ore) : "ore"}.`,
-            reason, action: "build-expansion-mine", label: "Build Mining Complex" };
+        primary = building("mining_complex", "Mining Complex", "Then staff it.", body.id)
+          ?? { title: `Mine ${body.name}`, copy: kit("mining_complex"), reason, hint: `${grant} It mines ${ore ? label(ore) : "ore"} there.`,
+            action: "build-expansion-mine", label: "Build Mining Complex" };
       } else {
-        primary = { title: `Staff ${body.name}'s mine`, copy: staffCopy(home, "Assign one workforce."), action: "expansion-mine", label: "Assign workforce" };
+        primary = { title: `Staff ${body.name}'s mine`, copy: staffCopy(home), reason, hint: UNSTAFFED, action: "expansion-mine", label: "Assign workforce" };
       }
       break;
     }
-    case 15: {
+    case 17: {
       const stop = f.survey_candidates[0];
       const stopName = st.galaxy?.systems.find(s => s.id === stop)?.name ?? "the nearby stop";
       const stopPos = st.galaxy?.systems.find(s => s.id === stop)?.pos;
       const active = stopPos ? own.find(g => surveyCapable(g) && surveyingAt(g, stopPos, st)) : undefined;
       const surveyor = freeSurveyor(own);
       // §charter-v4: the den's system, whose belt the den guarded.
-      const why = stop && stop === f.den ? "The den guarded a rich belt there." : "Only a survey reveals what a system holds.";
+      const why = stop && stop === f.den ? "The den guarded a rich belt there." : undefined;
       if (active && stopPos) {
         const noun = surveyorNoun(active);
-        progress.push(active.survey_progress != null
-          ? `Surveying ${stopName} · ${Math.round(active.survey_progress * 100)}%`
-          : `${noun} en route to ${stopName} · ETA ${eta(active, stopPos)}`);
-        primary = { title: "The survey is under way", copy: `Its report charts ${stopName}'s worlds and any belts, and comes home at light speed.`,
-          action: noun === "Scout" ? "scout" : "probe", label: `Select the ${noun === "Scout" ? "Scout" : "probe"}` };
+        const card = { copy: "", action: noun === "Scout" ? "scout" : "probe", label: `Select the ${noun === "Scout" ? "Scout" : "probe"}` };
+        primary = active.survey_progress != null
+          ? waitOn(`Surveying ${stopName}`, `${Math.round(active.survey_progress * 100)}%`, card)
+          : waitOn(`${noun} en route to ${stopName}`, `ETA ${eta(active, stopPos)}`, card);
       } else if (surveyor) {
-        primary = { title: `Chart ${stopName}`, copy: `Send your ${surveyorNoun(surveyor)} to survey ${stopName}. A probe is spent when its report is sent.`,
-          reason: why, action: "survey-stop", label: "Send the survey" };
+        primary = { title: `Chart ${stopName}`, copy: "", reason: why,
+          hint: "Only a survey reveals what a system holds. A probe is spent when its report is sent.", action: "survey-stop", label: "Send the survey" };
       } else {
-        primary = building("survey_probe", "Survey Probe", `When it launches, send it to ${stopName}.`)
-          ?? viaMerchant(st, home, "survey_probe", "Survey Probe", { title: "Build a Survey Probe", copy: `${kit("survey_probe")} at your Shipyard. It flies to ${stopName}, charts it and is spent.`,
-            reason: stop && stop === f.den ? why : "The cheapest way to learn what a system holds.", action: "build-probe", label: "Build Survey Probe" });
+        primary = building("survey_probe", "Survey Probe", `Then send it to ${stopName}.`)
+          ?? viaMerchant(st, home, "survey_probe", "Survey Probe", { title: "Build a Survey Probe", copy: kit("survey_probe"), reason: why,
+            hint: `It flies to ${stopName}, charts it and is spent.`, action: "build-probe", label: "Build" });
+      }
+      break;
+    }
+
+    // ─── Vendetta: the stores secured, then the privateer's uncle ──────────────
+    case 22:
+      // §charter-crates (Peter, Oct 31 2026): a Warehouse for the barge's ore
+      // and a Vault the uncle's raid can't reach.
+      primary = !built("warehouse")
+        ? building("warehouse", "Warehouse", "Then the Vault.")
+          ?? { title: "Build a Warehouse", copy: kit("warehouse"), reason: "+700 storage.",
+            hint: "Room for the barge's ore.", action: "build-store-warehouse", label: "Build" }
+        : !built("vault")
+          ? building("vault", "Vault", "", landing?.id)
+            ?? { title: "Build a Vault", copy: kit("vault"), reason: "Raiders can't reach it.",
+              hint: "It keeps your 200 most valuable units out of any raid.", action: "build-vault", label: "Build" }
+          : waitOn("Stores secured", null, { copy: "", action: "home-world", label: `Open ${world}` });
+      break;
+    case 23: {
+      const { uncle } = pirateNames(f);
+      const v = f.vendetta;
+      const pack = v?.fleet ? st.ghosts.find(g => g.id === v.fleet) : undefined;
+      const warships = own.filter(g => guardCapable(g));
+      const bounty = `Bounty: ${VENDETTA_BOUNTY.toLocaleString()} Cr and his flagship's salvage.`;
+      // §vendetta-campaign: three Interceptors for his flagship and four raiders.
+      const another: FoundingStep = building("raider", "Interceptor", `Keep it at ${colonyName(st)}.`)
+        ?? { title: `Build ${interceptorOrdinal(warships.length)} Interceptor`, copy: kit("raider"),
+          reason: `${uncle} brings his flagship and four raiders.`, action: "build-interceptor", label: "Build" };
+      if (v?.fallen) {
+        // §gun-platform (Peter, Oct 30 2026): game over, and a restart.
+        blocked = true;
+        primary = { title: `${colonyName(st)} has fallen`, copy: `${uncle} sacked the colony.`, action: "restart-corporation", label: "Restart" };
+      } else if (v?.won != null) {
+        primary = { title: v.won ? `${uncle} is dead` : `${uncle} got away`, copy: "", hint: "The charter completes as the report comes in.",
+          action: "command", label: "Open Command" };
+      } else if (v?.arrived || pack) {
+        if (pack && homePos) progress.push(v?.arrived ? `${uncle} over ${colonyName(st)}` : `${uncle} inbound · ETA ${eta(pack, homePos)}`);
+        primary = foundingCommands("attack-uncle", st, home)
+          ? { title: `Attack ${uncle}`, copy: "Every warship → his flagship", reason: bounty, action: "attack-uncle", label: "Attack" }
+          : { title: `${uncle} is here`, copy: "Your warships at home fight him.", reason: bounty, action: "command", label: "Open Command" };
+      } else {
+        if (v?.depart_at != null) progress.push(`${uncle} sets out in ${fmtDur(Math.max(0, v.depart_at - st.simTime))}`);
+        const captain = warships.map(g => reserveCaptain(st, g) ? g : null).find(g => !!g);
+        // Peter (Oct 30 2026): online if possible, never avoidable; if the
+        // colony's defense can't hold, it falls.
+        const when = `His countdown runs while you're online; he comes within a day regardless. If nothing at home still fights when he's done, the colony falls.`;
+        primary = warships.length < VENDETTA_DEFENDERS ? { ...another, hint: when }
+          : { title: "Hold your warships at home", copy: `Every warship at rest in ${colonyName(st)} and the Gun Platform join the fight.`,
+            reason: bounty, hint: `${uncle} attacks your strongest warship. ${when}`, action: "command", label: "Open Command" };
+        if (captain && warships.length >= VENDETTA_DEFENDERS) waiting.push({ title: "Assign a captain", copy: "A captain makes a warship hit harder.", action: "assign-captain", label: "Assign captain" });
       }
       break;
     }
@@ -583,45 +786,114 @@ export function foundingPlan(st: ViewState, home?: SystemStateView): FoundingPla
       const work = barge?.industry?.kind === "mine" ? barge.industry : null;
       const aboard = aboardUnits(barge);
       if (f.stage === "build_barge" || !barge) {
-        primary = building("mining_barge", "Mining Barge", `When it launches, send it to ${beltName}.`);
+        primary = building("mining_barge", "Mining Barge", `Then send it to ${beltName}.`);
         if (!primary) {
-          primary = foundingBargeGoal(home, beltName);
+          primary = foundingBargeGoal(home, beltName, kit("mining_barge") || undefined);
           if (primary.action === "build-barge") primary = viaMerchant(st, home, "mining_barge", "Mining Barge", primary);
           if (f.stage !== "build_barge") primary = { ...primary, title: "Replace the Mining Barge", reason: "Your barge was lost." };
           // By now the food reserve and ore fill home storage; the kit needs room to land.
           if (storageFull && primary.action === "build-barge") {
-            primary = { ...primary, reason: `Home storage is full (${Math.floor(home!.storage_used)}/${home!.storage_cap}). Ship goods out or add storage so the barge's kit can land.` };
+            primary = { ...primary, reason: `Home storage is full (${Math.floor(home!.storage_used)}/${home!.storage_cap}): make room for the barge's kit.` };
           }
+        }
+      } else if (f.stage === "prospect_belt") {
+        // §den-pocket (Peter, Oct 30 2026): a prospecting pass finds what the
+        // den guarded.
+        const pass = barge.industry?.kind === "prospect" ? barge.industry : null;
+        if (pass && pass.status !== "travelling") {
+          primary = waitOn(`Prospecting ${beltName}`, pass.need ? `${Math.round(100 * Math.min(1, pass.dwell / pass.need))}%` : null,
+            { copy: "", action: "barge", label: "Select Mining Barge" });
+        } else if (pass && belt?.pos) {
+          primary = waitOn(`Mining Barge en route to ${beltName}`, `ETA ${eta(barge, belt.pos)}`, { copy: "", action: "barge", label: "Select Mining Barge" });
+        } else {
+          primary = { title: `Prospect ${beltName}`, copy: "", hint: "A prospecting pass finds a belt's hidden pockets.",
+            action: "prospect-belt", label: "Prospect" };
         }
       } else if (f.stage === "mine_belt") {
         const bound = !!belt?.pos && (work?.status === "travelling" || (!work && heading(barge, belt.pos, 1_500, st)));
+        const target = belt?.pocket ?? belt?.ore;
         if (work && work.status !== "travelling") {
-          progress.push(`Mining Barge ${work.status === "mining" ? `cutting ${label(work.ore)}` : work.status} at ${beltName} · its report is on the way to command`);
-          primary = { title: "The barge is at work", copy: "This step completes when its report reaches command.", action: "barge", label: "Select Mining Barge" };
+          primary = waitOn(`Mining Barge ${work.status === "mining" ? `cutting ${label(work.ore)}` : work.status} at ${beltName}`, null,
+            { copy: "", hint: "This step completes when its report reaches command.", action: "barge", label: "Select Mining Barge" });
         } else if (bound && belt?.pos) {
-          progress.push(`Mining Barge en route to ${beltName} · ETA ${eta(barge, belt.pos)}`);
-          primary = { title: "The barge is on its way", copy: `It starts cutting ore when it reaches ${beltName}.`, action: "barge", label: "Select Mining Barge" };
+          primary = waitOn(`Mining Barge en route to ${beltName}`, `ETA ${eta(barge, belt.pos)}`, { copy: "", action: "barge", label: "Select Mining Barge" });
         } else {
-          primary = { title: "Send the barge to the belt", copy: `Your survey charted ${beltName}. The barge cuts ${belt?.ore ? label(belt.ore) : "ore"} into its own hold.`,
-            reason: "Command hears when it starts cutting.", action: "mine-belt", label: "Send Mining Barge" };
+          primary = { title: "Send the barge to the belt", copy: `${beltName} · ${target ? label(target) : "ore"}${belt?.pocket ? " pocket" : ""}`,
+            hint: "The barge cuts ore into its own hold. Command hears when it starts.", action: "mine-belt", label: "Send" };
         }
       } else {
         // haul_ore: home, unload.
         const homeBound = !!homePos && !atHome(barge) && !work && heading(barge, homePos, 2_500, st);
         if (atHome(barge) && aboard > 0) {
-          primary = { title: "Unload the ore", copy: `Store the barge's ${aboard} units in your home stockpile, for the Smelter or the Market.`,
-            action: "barge-unload", label: "Unload ore" };
+          primary = { title: "Unload the ore", copy: `${aboard} units → home stockpile`, action: "barge-unload", label: "Unload" };
         } else if (homeBound && homePos) {
-          progress.push(`Mining Barge bringing ${aboard} units home · ETA ${eta(barge, homePos)}`);
-          primary = { title: "The barge is heading home", copy: "Unload it when it docks.", action: "barge", label: "Select Mining Barge" };
+          primary = waitOn(`Mining Barge bringing ${aboard} units home`, `ETA ${eta(barge, homePos)}`, { copy: "", action: "barge", label: "Select Mining Barge" });
         } else if (work) {
           progress.push(`Mining Barge ${work.status === "full" ? "hold full" : `cutting ${label(work.ore)}`} at ${beltName} · ${aboard} units aboard`);
-          primary = { title: "Bring the ore home", copy: work.status === "full" ? "The hold is full. Send the barge home and unload it." : "Send the barge home with what it has cut, or let it fill its hold first.",
-            reason: "Ore earns nothing until it is unloaded or sold.", action: "barge-home", label: "Send the barge home" };
+          primary = { title: "Bring the ore home", copy: work.status === "full" ? "" : "Or let it fill its hold first.",
+            hint: "Ore earns nothing until it is unloaded or sold.", action: "barge-home", label: "Send the barge home" };
         } else {
-          primary = { title: "Bring the ore home", copy: "Send the barge home and unload its ore, or sell it at the Market Hub.", action: "barge-home", label: "Send the barge home" };
+          primary = { title: "Bring the ore home", copy: "Or sell it at the Market Hub.", action: "barge-home", label: "Send the barge home" };
         }
       }
+    }
+  }
+  // §charter-crates: a released crate comes first: its chapter's builds are in it.
+  const sealed = f.crates?.find(c => c.released);
+  if (sealed && !blocked) {
+    if (primary) waiting.unshift(primary);
+    primary = { title: "Charter crate", copy: crateLine(sealed), hint: "This chapter's supplies, from the Authority.",
+      action: "collect-crate", label: "Collect" };
+  }
+  // §vendetta: from step 17 the uncle's oath stands and the guide readies
+  // the colony, without saying when he comes (Peter, Oct 28 2026: "why are we
+  // giving away to the player what happens here").
+  if (step >= 17 && step <= 22 && f.vendetta) {
+    const { uncle } = pirateNames(f);
+    progress.unshift(`${uncle} swore revenge`);
+    // One under way shows as its progress line, not as something to do.
+    const warships = own.filter(g => guardCapable(g)).length;
+    if (warships < VENDETTA_DEFENDERS && !building("raider", "Interceptor", "")) {
+      waiting.push({ title: `Build ${interceptorOrdinal(warships)} Interceptor`, copy: kit("raider"), action: "build-interceptor", label: "Build Interceptor" });
+    }
+  }
+  // §vendetta-campaign (Peter, Oct 30 2026: "the uncle should harass the
+  // player's expanded mining ops"): a strike in sight comes before the step.
+  const strike = step >= 17 ? f.vendetta?.strikes?.find(s => !s.done && s.fleet && st.ghosts.some(g => g.id === s.fleet)) : undefined;
+  if (strike) {
+    const { uncle } = pirateNames(f);
+    const reason = `Bounty: ${STRIKE_BOUNTY} Cr.`;
+    blocked = true;
+    if (strike.kind === "mine") {
+      // §gun-platform (Peter, Oct 30 2026): it wrecks the world, it steals nothing.
+      const world = home?.bodies.find(b => b.id === strike.body)?.name ?? "your second mine";
+      primary = { title: strike.over ? `Raider over ${world}` : `Raider closing on ${world}`,
+        copy: strike.over ? (strike.wrecked?.length ? `${strike.wrecked.map(k => k === "power_plant" ? "Solar Array" : label(k)).join(", ")} wrecked`
+          : "It's wrecking the mine.") : "",
+        reason, hint: `${uncle}'s raider wrecks one structure every 30 s, the mine first.`, action: "attack-strike", label: "Attack" };
+    } else if (strike.kind === "freighter") {
+      primary = { title: "Raider hunting your freighter", copy: "Dock it, or fight.", reason,
+        hint: `${uncle}'s raider. A freighter docked or in a gravity well is safe.`, action: "attack-strike", label: "Attack" };
+    } else {
+      primary = { title: "Raiders on the barge", copy: "", reason, hint: `Two of ${uncle}'s raiders.`, action: "defend-barge", label: "Send Interceptors" };
+    }
+  } else if (step >= 17 && step < 23) {
+    // §gun-platform: a wrecked second mine, until it stands again.
+    const hit = f.vendetta?.strikes?.find(s => s.kind === "mine" && s.wrecked?.length);
+    const body = hit ? home?.bodies.find(b => b.id === hit.body) : undefined;
+    if (body && !(body.structures.mining_complex > 0) && !(body.structures.asteroid_quarry > 0)) {
+      const title = `Rebuild ${body.name}'s mine`;
+      const reason = "The Smelter needs its ore.";
+      const rebuild: FoundingStep = body.kind === "asteroid_belt"
+        ? building("asteroid_quarry", "Asteroid Quarry", "", body.id)
+          ?? { title, copy: kit("asteroid_quarry"), reason, action: "build-expansion-quarry", label: "Build Asteroid Quarry" }
+        : !(body.structures.power_plant > 0)
+          ? building("power_plant", "Solar Array", `Then ${body.name}'s mine.`, body.id)
+            ?? { title, copy: kit("power_plant"), reason, action: "build-expansion-power", label: "Build Solar Array" }
+          : building("mining_complex", "Mining Complex", "Then staff it.", body.id)
+            ?? { title, copy: kit("mining_complex"), reason, action: "build-expansion-mine", label: "Build Mining Complex" };
+      // One under way shows as its progress line (`building` adds it).
+      if (!rebuild.status) waiting.unshift(rebuild);
     }
   }
   // §charter-v5: the trader's last call. Once the privateer's bounty is paid
@@ -629,30 +901,43 @@ export function foundingPlan(st: ViewState, home?: SystemStateView): FoundingPla
   // Market Hub sells semiconductors: the bounty buys what the builds ahead need.
   const lastCall = f.bounty_received && traderTold(st) ? dockedMerchant(st) : null;
   if (lastCall && primary) {
-    progress.unshift(`Trader leaves in ${fmtDur(merchantLeavesIn(lastCall, st.simTime))}`);
+    const leaves = fmtDur(merchantLeavesIn(lastCall, st.simTime));
     const short = Object.entries(merchantShortfall(st, home, "ahead", lastCall))
       .sort(([a], [b]) => Number(b === "electronics") - Number(a === "electronics"));
-    if (short.length) {
-      const stock: FoundingStep = { title: "Stock up before the trader leaves",
-        copy: `${short.map(([c, n]) => `${n} ${label(c)}`).join(", ")} for the builds ahead.`,
-        action: "merchant-ahead", label: "Buy from trader" };
-      if (blocked) waiting.unshift(stock);
-      else primary = { ...stock, reason: "After it, only the Market Hub sells them.",
-        alternatives: [stock, { title: primary.title, copy: primary.copy, action: primary.action, label: primary.label }] };
+    const stock: FoundingStep | null = short.length ? { title: "Stock up before the trader leaves",
+      copy: `${short.map(([c, n]) => `${n} ${label(c)}`).join(", ")} for the builds and research ahead.`,
+      action: "merchant-ahead", label: "Buy from trader" } : null;
+    if (stock && !blocked) {
+      // The countdown is its headline. A card that only waits gives way to it
+      // (its line stays under way); any other stays beside it.
+      primary = { ...stock, status: `Stock up · trader leaves in ${leaves}`, reason: "Then only the Market Hub sells them.",
+        alternatives: primary.status ? undefined : [stock, choice(primary)] };
+    } else {
+      progress.unshift(`Trader leaves in ${leaves}`);
+      if (stock) waiting.unshift(stock);
     }
   }
-  if (queued("mining_complex") && step !== 4 && step !== 14) progress.push("Mining Complex under construction");
+  if (queued("mining_complex") && step !== 4 && step !== 16) progress.push("Mining Complex under construction");
   // The first shipment's trip stays in view after its step: it brings parts home.
-  const trip = step >= 12 ? shipmentLine(st, freighter, homePos) : null;
+  const trip = step >= 13 ? shipmentLine(st, freighter, homePos) : null;
   if (trip) progress.unshift(trip);
-  if (camp && camp.founding_camp!.completed.length < 4 && primary?.action !== "home-development") waiting.push(settlement);
-  const goal = step >= 12 && step <= 14 ? denBeltGoal(st, own, progress, home) : null;
-  return { chapter: { name: chapterName, done: checklist.filter(s => s.done).length, total: checklist.length }, checklist, progress, primary, waiting, goal, blocked };
+  // A waiting card's own line is its title, not a second line above it.
+  const echo = primary?.status ? progress.indexOf(primary.status) : -1;
+  if (echo >= 0) progress.splice(echo, 1);
+  // §vendetta: the family's names wherever the guide says "the privateer".
+  const name = (text: string) => withPirateNames(text, f);
+  const named = (card: FoundingStep | null): FoundingStep | null => card && { ...card, title: name(card.title), copy: name(card.copy),
+    reason: card.reason && name(card.reason), hint: card.hint && name(card.hint), status: card.status && name(card.status),
+    alternatives: card.alternatives?.map(a => ({ ...a, title: name(a.title), copy: name(a.copy), label: name(a.label) })) };
+  return { chapter: { name: chapterName, done: checklist.filter(s => s.done).length, total: checklist.length }, checklist,
+    progress: progress.map(line => withPirateNames(line, f)), primary: named(primary), waiting: waiting.map(card => named(card)!),
+    blocked };
 }
 
 /** §charter-v4: the guide's staffing actions by structure. */
 const STAFF_ACTION: Record<string, string> = {
   bioharvester: "bioharvester", agroplex: "agroplex", mining_complex: "mine", shipyard: "shipyard", academy: "academy",
+  smelter: "smelter",
 };
 
 /** §charter-v4: where a guide build action builds and what it selects. Until
@@ -671,21 +956,32 @@ export function foundingBuildTarget(action: string, st: ViewState, home: SystemS
     : !grant ? landing
     : target.at === "mine" ? bestMineBody(home)
     : target.at === "academy" ? bestAcademyBody(home)
+    : target.at === "store" ? bestStoreBody(home)
     : bestShipyardBody(home);
   return body ? { body, mode: target.mode, select: target.key } : null;
 }
 
-const BUILD_ACTIONS: Record<string, { key: string; mode: "structures" | "ships"; at: "landing" | "mine" | "academy" | "shipyard" | "yard" | "expansion" }> = {
+const BUILD_ACTIONS: Record<string, { key: string; mode: "structures" | "ships"; at: "landing" | "mine" | "academy" | "shipyard" | "yard" | "expansion" | "store" }> = {
   "build-bioharvester": { key: "bioharvester", mode: "structures", at: "landing" },
   "build-habitat": { key: "habitat", mode: "structures", at: "landing" },
   "build-agroplex": { key: "agroplex", mode: "structures", at: "landing" },
   "build-power": { key: "power_plant", mode: "structures", at: "landing" },
+  // §gun-platform: over the landing world.
+  "build-gun-platform": { key: "orbital_defense", mode: "structures", at: "landing" },
+  "build-warehouse": { key: "warehouse", mode: "structures", at: "landing" },
+  // §charter-crates: step 22's Warehouse keeps the landing world's last site
+  // free; the Vault is dug under its Command Center.
+  "build-store-warehouse": { key: "warehouse", mode: "structures", at: "store" },
+  "build-vault": { key: "vault", mode: "structures", at: "landing" },
   "build-mine": { key: "mining_complex", mode: "structures", at: "mine" },
   "build-academy": { key: "academy", mode: "structures", at: "academy" },
+  // §refining: inside the land grant still, so the landing world's free
+  // industrial site, beside the Shipyard.
+  "build-smelter": { key: "smelter", mode: "structures", at: "landing" },
   "build-shipyard": { key: "shipyard", mode: "structures", at: "shipyard" },
-  "build-shipyard-2": { key: "shipyard", mode: "structures", at: "yard" },
   "build-expansion-power": { key: "power_plant", mode: "structures", at: "expansion" },
   "build-expansion-mine": { key: "mining_complex", mode: "structures", at: "expansion" },
+  "build-expansion-quarry": { key: "asteroid_quarry", mode: "structures", at: "expansion" },
   "build-convoy": { key: "tiny_freighter", mode: "ships", at: "yard" },
   "build-interceptor": { key: "raider", mode: "ships", at: "yard" },
   "build-scout": { key: "scout", mode: "ships", at: "yard" },
@@ -723,13 +1019,40 @@ export function foundingCommands(action: string, st: ViewState, home?: SystemSta
       }
       return commands;
     }
+    // §vendetta: every warship near home at the uncle's pack.
+    case "attack-uncle": {
+      const pack = f.vendetta?.fleet;
+      if (!pack || !st.ghosts.some(g => g.id === pack)) return null;
+      const fleets = own.filter(g => guardCapable(g) && (!homePos || Math.hypot(g.pos.x - homePos.x, g.pos.y - homePos.y) <= 30_000));
+      return fleets.length ? fleets.map(g => ({ type: "AttackFleet", fleet_id: g.id, target_id: pack })) : null;
+    }
     // §charter-v4: the privateer, its captain and its den.
     case "attack-privateer":
       return escort && f.privateer && st.ghosts.some(g => g.id === f.privateer)
         ? [{ type: "AttackFleet", fleet_id: escort.id, target_id: f.privateer }] : null;
+    // §privateer-hunt: to where it went to ground.
+    case "hunt-privateer":
+      return escort && f.privateer_last_seen && !st.ghosts.some(g => g.id === f.privateer)
+        ? [{ type: "MoveShip", ship_id: escort.id, dest: f.privateer_last_seen }] : null;
     case "assign-captain": {
       const captain = escort ? reserveCaptain(st, escort) : undefined;
       return escort && captain ? [{ type: "AssignCaptain", captain_id: captain.id, fleet_id: escort.id }] : null;
+    }
+    // The free captain boards at its station: the Interceptor goes there.
+    case "interceptor-captain": {
+      const station = st.galaxy?.systems.find(s => s.id === st.captains.find(c => inReserve(c, st.simTime))?.stationed_system);
+      return escort && station && !captained(st, escort) ? [{ type: "MoveShip", ship_id: escort.id, dest: station.pos }] : null;
+    }
+    // §vendetta-campaign: the warships near home at the mine's raider, and
+    // every warship at the barge's.
+    case "attack-strike":
+    case "defend-barge": {
+      const kind = action === "attack-strike" ? "mine" : "barge";
+      const strike = f.vendetta?.strikes?.find(s => !s.done && s.kind === kind && s.fleet);
+      const raider = strike ? st.ghosts.find(g => g.id === strike.fleet) : undefined;
+      const fleets = own.filter(g => guardCapable(g) && (kind === "barge" || !homePos
+        || Math.hypot(g.pos.x - homePos.x, g.pos.y - homePos.y) <= 30_000));
+      return raider && fleets.length ? fleets.map(g => ({ type: "AttackFleet", fleet_id: g.id, target_id: raider.id })) : null;
     }
     case "assault-den": {
       const den = foundingDen(st);
@@ -741,8 +1064,17 @@ export function foundingCommands(action: string, st: ViewState, home?: SystemSta
     case "mine-belt": {
       const barge = own.find(g => mineCapable(g));
       const belt = foundingBelt(st);
+      // §den-pocket: a found pocket before the belt's own ore.
+      if (barge && belt?.pocket) {
+        return [{ type: "MineBelt", fleet_id: barge.id, system_id: belt.system, body_id: belt.body, ore: belt.pocket, pocket: true }];
+      }
       return barge && belt?.ore
         ? [{ type: "MineBelt", fleet_id: barge.id, system_id: belt.system, body_id: belt.body, ore: belt.ore }] : null;
+    }
+    case "prospect-belt": {
+      const barge = own.find(g => mineCapable(g));
+      const belt = foundingBelt(st);
+      return barge && belt ? [{ type: "ProspectBelt", fleet_id: barge.id, system_id: belt.system, body_id: belt.body }] : null;
     }
     // §charter v3: the probe survey and the barge's trip home.
     case "survey-stop": {
@@ -782,6 +1114,20 @@ export function bestAcademyBody(system: SystemStateView): BodyView | undefined {
   const command = (b: BodyView) => Number((b.structures?.command_center ?? 0) > 0);
   return [...system.bodies].sort((a, b) => Number(free(b) > 0) - Number(free(a) > 0)
     || command(b) - command(a) || free(b) - free(a) || a.id - b.id)[0];
+}
+
+/** §charter-crates: where step 22's Warehouse goes: a home world with a free
+ * site, the landing world last, so its last site stays free. */
+export function bestStoreBody(system: SystemStateView): BodyView | undefined {
+  const free = (b: BodyView) => { const p = bodyPoolUsage(b, system).infrastructure; return p.total - p.used; };
+  const command = (b: BodyView) => Number((b.structures?.command_center ?? 0) > 0);
+  return [...system.bodies].filter(b => b.kind !== "asteroid_belt" && free(b) > 0)
+    .sort((a, b) => command(a) - command(b) || free(b) - free(a) || a.id - b.id)[0] ?? landingBody(system);
+}
+
+/** §charter-crates: a crate's goods, "95 Alloys · 42 Machinery". */
+export function crateLine(c: CharterCrateView): string {
+  return Object.entries(c.goods).filter(([, n]) => (n ?? 0) > 0).map(([good, n]) => `${n} ${label(good)}`).join(" · ");
 }
 
 /** Hours-and-minutes for long clocks ("23h 40m"; under an hour, "12m"). */

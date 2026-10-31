@@ -15,6 +15,8 @@ const docked: MerchantView = { fleet: "m", system: "home", phase: "docked", leav
 syncRenderClock(1_000);
 state.simTime = 1_000;
 state.merchant = docked;
+// §traders: ?trader=teo|ines|mags picks who flies it.
+state.founding = { trader: new URLSearchParams(location.search).get("trader") ?? "teo" } as unknown as typeof state.founding;
 state.wallet = { credits: 3_000, report_pending: false } as typeof state.wallet;
 state.timeline = [];
 state.systems = [{ id: "home", storage_used: 620, storage_cap: 1_000, stockpile: [

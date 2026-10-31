@@ -77,7 +77,7 @@ const keyOf = Object.fromEntries([...keyArms.matchAll(/Step::(\w+) => "(\w+)"/g)
 assert.deepEqual([...STAGE_KEYS], ["signed_up", "entered", ...variants.map(v => keyOf[v])]);
 assert.equal(tutorialRank(null), -1);
 assert.equal(tutorialRank({ next: "signed_up" }), 0);
-assert.equal(tutorialRank({ next: "privateer" }), 12);
+assert.equal(tutorialRank({ next: "privateer" }), 13);
 assert.equal(tutorialRank({ next: null }), STAGE_KEYS.length, "a fulfilled charter sorts past every step");
 
 // Every player-supplied string reaches the page as text, never as markup.
@@ -124,6 +124,7 @@ if (process.argv.includes("--serve")) {
     research: ["Start research", "Expansion"],
     expansion: ["Expand mining operations", "Expansion"], survey: ["Chart a nearby system", "Expansion"],
     barge: ["Build a Mining Barge", "Reach"], belt_mining: ["Mine the belt", "Reach"], haul: ["Bring the ore home", "Reach"],
+    vendetta: ["Defeat the privateer's uncle", "Vendetta"],
   };
   // The stage each sample player is on (21 = fulfilled): a cluster stuck on
   // the privateer fight, two who never entered, one who never founded.

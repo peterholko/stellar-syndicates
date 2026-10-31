@@ -51,6 +51,48 @@ fn passwords_are_salted_argon2id_not_plaintext_or_fast_hashes() {
 }
 
 #[test]
+fn a_game_host_shares_the_cookies_and_is_served_to_the_client() {
+    // §front-door: the page on stellar.example, the socket on play.stellar.example.
+    let config = AuthConfig::for_origin("https://stellar.example").unwrap()
+        .with_game_host(Some("stellar.example"), Some("https://play.stellar.example")).unwrap();
+    let cookie = config.cookie(&random_token(), SESSION_SECONDS).to_str().unwrap().to_string();
+    for expected in ["__Secure-ss_session=", "Domain=stellar.example", "HttpOnly", "Secure", "SameSite=Strict", "Path=/"] {
+        assert!(cookie.contains(expected), "{cookie}");
+    }
+    let device = config.device_cookie(&random_device_id()).to_str().unwrap().to_string();
+    assert!(device.starts_with("__Secure-ss_device=") && device.contains("Domain=stellar.example"), "{device}");
+    let token = random_token();
+    let mut headers = HeaderMap::new();
+    headers.insert(header::COOKIE, format!("__Secure-ss_session={token}").parse().unwrap());
+    assert_eq!(config.token(&headers).unwrap().as_slice(), Sha256::digest(token.as_bytes()).as_slice());
+    headers.insert(header::COOKIE, format!("__Host-ss_session={token}").parse().unwrap());
+    assert!(config.token(&headers).is_err(), "the old host-only cookie no longer signs in");
+    // The page's origin still guards the socket: the game host is not a page.
+    headers.insert(header::ORIGIN, "https://play.stellar.example".parse().unwrap());
+    assert!(config.check_origin(&headers).is_err());
+    headers.insert(header::ORIGIN, "https://stellar.example".parse().unwrap());
+    config.check_origin(&headers).unwrap();
+
+    let account = Account { id: Uuid::nil(), player_id: 7, corporation_name: "Greeks".into(), is_guest: false };
+    let reply = serde_json::to_value(&config.reply(&account).0).unwrap();
+    assert_eq!(reply["game_url"], "wss://play.stellar.example/ws");
+    assert_eq!(reply["corporation_name"], "Greeks");
+    let plain = AuthConfig::for_origin("https://stellar.example").unwrap();
+    assert!(serde_json::to_value(&plain.reply(&account).0).unwrap().get("game_url").is_none(), "same host: no URL");
+
+    let base = || AuthConfig::for_origin("https://stellar.example").unwrap();
+    assert!(base().with_game_host(Some("other.example"), None).is_err(), "the domain must hold the page");
+    assert!(base().with_game_host(Some("example"), None).is_err(), "not a bare suffix");
+    assert!(base().with_game_host(None, Some("https://play.stellar.example")).is_err(), "another host needs the shared cookie");
+    assert!(base().with_game_host(Some("stellar.example"), Some("https://play.evil.example")).is_err());
+    assert!(base().with_game_host(Some("stellar.example"), Some("http://play.stellar.example")).is_err(), "no downgrade");
+    assert!(base().with_game_host(Some("stellar.example"), Some("https://play.stellar.example/ws")).is_err(), "an origin, not a URL");
+    let local = AuthConfig::for_origin("http://localhost:8080").unwrap().with_game_host(None, None).unwrap();
+    assert!(local.game_url.is_none() && local.cookie_domain.is_none());
+    assert!(local.cookie("", 0).to_str().unwrap().starts_with("ss_session="));
+}
+
+#[test]
 fn cookies_and_origins_protect_account_and_socket_requests() {
     let config = AuthConfig::for_origin("https://stellar.example").unwrap();
     let cookie = config
@@ -927,6 +969,72 @@ async fn postgres_guests_register_in_place_without_claiming_other_players() {
         StatusCode::OK,
         "creation limits do not block resuming an existing account"
     );
+    pool.close().await;
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+#[test]
+fn reset_entries_keep_spaces_and_drop_only_the_line_ending() {
+    let mut input = std::io::Cursor::new(" a spaced passphrase \r\nsecond line\n");
+    assert_eq!(*reset::read_entry(&mut input).unwrap(), " a spaced passphrase ");
+    assert_eq!(*reset::read_entry(&mut input).unwrap(), "second line");
+    assert!(reset::read_entry(&mut input).is_err(), "no input changes nothing");
+}
+
+/// The operator's reset: the new passphrase signs in, the old one and the old
+/// cookie don't, and the account keeps its identity.
+#[tokio::test]
+#[ignore = "requires TEST_ACCOUNTS_DATABASE_URL; creates its own isolated test schema"]
+async fn postgres_passphrase_reset_replaces_the_hash_and_ends_the_session() {
+    let url = std::env::var("TEST_ACCOUNTS_DATABASE_URL").expect("set TEST_ACCOUNTS_DATABASE_URL");
+    let admin = PgPool::connect(&url).await.unwrap();
+    let schema = format!("reset_test_{}", Uuid::new_v4().simple());
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    let search_path = format!("SET search_path TO {schema}");
+    let pool = PgPoolOptions::new()
+        .max_connections(4)
+        .after_connect(move |conn, _| {
+            let statement = search_path.clone();
+            Box::pin(async move {
+                sqlx::query(&statement).execute(conn).await?;
+                Ok(())
+            })
+        })
+        .connect(&url)
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let app = routes(AuthStore::new_for_test(pool.clone(), "http://localhost:8080").await);
+    let origin = Some("http://localhost:8080");
+    let old = json!({"login":"operator@example.com", "password":"the forgotten passphrase"});
+    let mut register = old.clone();
+    register["corporation_name"] = json!("Reset Corp");
+    let (status, headers, account) = api(&app, "register", "POST", origin, None, register).await;
+    assert_eq!(status, StatusCode::OK, "{account}");
+    let signed_in = cookie(&headers);
+    let id: Uuid = account["id"].as_str().unwrap().parse().unwrap();
+
+    reset::set_passphrase(&pool, id, Zeroizing::new("a fresh operator passphrase".into()))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        api(&app, "session", "GET", None, Some(&signed_in), Value::Null).await.0,
+        StatusCode::UNAUTHORIZED,
+        "the old sign-in ended"
+    );
+    assert_eq!(api(&app, "login", "POST", origin, None, old).await.0, StatusCode::UNAUTHORIZED);
+    let fresh = json!({"login":"operator@example.com", "password":"a fresh operator passphrase"});
+    let (status, _, again) = api(&app, "login", "POST", origin, None, fresh).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again["id"], account["id"], "same account, same corporation");
     pool.close().await;
     sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
         .execute(&admin)

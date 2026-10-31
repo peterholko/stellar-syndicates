@@ -15,7 +15,7 @@ const verdict = (tone: BattleNoticeTone): string => tone === "good" ? "Victory" 
 
 /** §founding R7: a delayed combat report worded from the reader's side. The
  * scripted founding Privateer is named, so its defeat reads as the lesson it is. */
-export function reportNotice(report: RaidReport, pirateId?: string, privateer?: EntityId | null): BattleNotice {
+export function reportNotice(report: RaidReport, pirateId?: string, privateer?: EntityId | null, privateerName = "the Rogue Privateer"): BattleNotice {
   const mine = report.you === "attacker" ? report.attacker_kind : report.target_kind;
   const theirs = report.you === "attacker" ? report.target_kind : report.attacker_kind;
   const theirShip = report.you === "attacker" ? report.target_ship : report.attacker_ship;
@@ -49,7 +49,7 @@ export function reportNotice(report: RaidReport, pirateId?: string, privateer?: 
         text = `Your ${shipKindLabel(mine)} destroyed a rival ${shipKindLabel(theirs)}.`;
       }
   }
-  if (privateer && theirShip === privateer) text = text.replace(`a rival ${shipKindLabel(theirs)}`, "the Rogue Privateer");
+  if (privateer && theirShip === privateer) text = text.replace(`a rival ${shipKindLabel(theirs)}`, privateerName);
   else if (pirateId && (report.attacker === pirateId || report.defender === pirateId)) text = text.replaceAll("rival", "pirate");
   return { title: verdict(tone), text, tone };
 }

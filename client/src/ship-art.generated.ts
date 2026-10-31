@@ -620,6 +620,37 @@ export const SHIP_ART = {
       }
     ]
   },
+  "combat_freighter": {
+    "anchor": [
+      0.5,
+      0.5
+    ],
+    "lengthRatio": 0.8931419457735247,
+    "referenceRatio": 0.8515625,
+    "calib": 0.9534458705357143,
+    "levels": [
+      {
+        "size": 128,
+        "url": "/art/derived/ships/models-v1/combat_freighter-128.png?v=cd0daa68cf13"
+      },
+      {
+        "size": 256,
+        "url": "/art/derived/ships/models-v1/combat_freighter-256.png?v=be39d166a0d1"
+      },
+      {
+        "size": 512,
+        "url": "/art/derived/ships/models-v1/combat_freighter-512.png?v=9b67c9ba6513"
+      },
+      {
+        "size": 1024,
+        "url": "/art/derived/ships/models-v1/combat_freighter-1024.png?v=362f21bcdade"
+      },
+      {
+        "size": 1254,
+        "url": "/art/derived/ships/models-v1/combat_freighter-1254.png?v=199662640678"
+      }
+    ]
+  },
   "free_trader": {
     "anchor": [
       0.5,
@@ -648,6 +679,99 @@ export const SHIP_ART = {
       {
         "size": 1254,
         "url": "/art/derived/ships/models-v1/free_trader-1254.png?v=92a258e22ac9"
+      }
+    ]
+  },
+  "clean_slate": {
+    "anchor": [
+      0.5,
+      0.5
+    ],
+    "lengthRatio": 0.8931419457735247,
+    "referenceRatio": 0.82421875,
+    "calib": 0.9228306361607144,
+    "levels": [
+      {
+        "size": 128,
+        "url": "/art/derived/ships/models-v1/clean_slate-128.png?v=20e95ae6c2ea"
+      },
+      {
+        "size": 256,
+        "url": "/art/derived/ships/models-v1/clean_slate-256.png?v=c21535c8be41"
+      },
+      {
+        "size": 512,
+        "url": "/art/derived/ships/models-v1/clean_slate-512.png?v=79223a11bf12"
+      },
+      {
+        "size": 1024,
+        "url": "/art/derived/ships/models-v1/clean_slate-1024.png?v=1b53fa5a923f"
+      },
+      {
+        "size": 1254,
+        "url": "/art/derived/ships/models-v1/clean_slate-1254.png?v=ec20ee71a823"
+      }
+    ]
+  },
+  "second_wind": {
+    "anchor": [
+      0.5,
+      0.5
+    ],
+    "lengthRatio": 0.8931419457735247,
+    "referenceRatio": 0.82421875,
+    "calib": 0.9228306361607144,
+    "levels": [
+      {
+        "size": 128,
+        "url": "/art/derived/ships/models-v1/second_wind-128.png?v=0e03ccbea3a4"
+      },
+      {
+        "size": 256,
+        "url": "/art/derived/ships/models-v1/second_wind-256.png?v=7f8ae5b72d54"
+      },
+      {
+        "size": 512,
+        "url": "/art/derived/ships/models-v1/second_wind-512.png?v=11281a80f7e1"
+      },
+      {
+        "size": 1024,
+        "url": "/art/derived/ships/models-v1/second_wind-1024.png?v=d4ec22b3701a"
+      },
+      {
+        "size": 1254,
+        "url": "/art/derived/ships/models-v1/second_wind-1254.png?v=bbd30ab96a18"
+      }
+    ]
+  },
+  "small_fortune": {
+    "anchor": [
+      0.5,
+      0.5
+    ],
+    "lengthRatio": 0.8931419457735247,
+    "referenceRatio": 0.82421875,
+    "calib": 0.9228306361607144,
+    "levels": [
+      {
+        "size": 128,
+        "url": "/art/derived/ships/models-v1/small_fortune-128.png?v=369b732a7e1f"
+      },
+      {
+        "size": 256,
+        "url": "/art/derived/ships/models-v1/small_fortune-256.png?v=624418db2fb2"
+      },
+      {
+        "size": 512,
+        "url": "/art/derived/ships/models-v1/small_fortune-512.png?v=c14fa722ea82"
+      },
+      {
+        "size": 1024,
+        "url": "/art/derived/ships/models-v1/small_fortune-1024.png?v=46bce2bdf19b"
+      },
+      {
+        "size": 1254,
+        "url": "/art/derived/ships/models-v1/small_fortune-1254.png?v=e2d9e68ccba7"
       }
     ]
   },

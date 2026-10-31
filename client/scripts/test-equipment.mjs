@@ -22,8 +22,12 @@ const fleets = load("core/derive/fleet.ts", { "../../state": clock, "../../proto
 const icons = { label: slug => eq.MODULES.find(m => m.kind === slug)?.name ?? slug, icon: () => "" };
 const market = load("core/derive/market.ts", { "../../state": clock, "../../protocol": protocol, "./fleet": fleets, "./equipment": eq, "../../icons": icons });
 
-assert.equal(eq.MODULES.length, 17);
-for (const m of eq.MODULES) assert.equal(m.fit, ["torpedo_rack", "whipple_armor", "prismatic_lance", "interdiction_field"].includes(m.kind) ? 3 : 2);
+assert.equal(eq.MODULES.length, 18);
+// §research-wiring Lance Array: the line's heavy beam, research-made.
+assert.equal(eq.moduleFitsHull("lance_array", "destroyer"), true);
+assert.equal(eq.moduleFitsHull("lance_array", "raider"), false);
+assert.equal(eq.utilityProgramme("lance_array"), "weap_strike_iii_lance_array");
+for (const m of eq.MODULES) assert.equal(m.fit, ["torpedo_rack", "whipple_armor", "prismatic_lance", "interdiction_field", "lance_array"].includes(m.kind) ? 3 : 2);
 // Rules v11 control modules: webs and stabilizers fit any warship; the
 // interdiction field only a destroyer, once.
 for (const kind of ["raider", "corvette", "destroyer", "cruiser", "titan"]) {
@@ -158,6 +162,21 @@ assert.equal(fleets.fleetCargoCapacity(podded), 800);
 assert.equal(fleets.fleetFuelCapacity(podded), fleets.fleetFuelCapacity(g));
 const mixed = { ...podded, composition: [{ kind: "convoy", count: 3 }, { kind: "raider", count: 1 }] };
 assert.equal(fleets.fleetCargoCapacity(mixed), 1600, "only the fitted hull gains hold space");
+// §syndicate-projects (R6): Freight II widens freighter holds only, rounded down per kind.
+assert.equal(fleets.fleetCargoCapacity({ ...mixed, cargo_mult: 1.12 }), Math.floor(1600 * 1.12), "a raider holds nothing to widen");
+assert.equal(fleets.fleetCargoCapacity({ ...g, cargo_mult: 1.06 }), Math.floor(400 * 1.06));
+// §holds: a Combat Freighter's hold is loot only; Prize Holds and Cargo Pods widen it.
+const raid = { ...g, kind: "combat_freighter", loadouts: [], cargo_manifest: [],
+  composition: [{ kind: "combat_freighter", count: 1 }, { kind: "small_freighter", count: 1 }] };
+assert.equal(fleets.fleetCargoCapacity(raid), 230);
+assert.equal(fleets.fleetTradeCapacity(raid), 150, "a dock never fills the loot hold");
+assert.equal(fleets.fleetCargoCapacity({ ...raid, prize_mult: 1.5 }), 270, "Prize Holds: 120");
+assert.equal(fleets.fleetCargoCapacity({ ...raid, prize_mult: 1.5,
+  loadouts: [{ kind: "combat_freighter", n: 1, modules: ["cargo_pods"] }] }), 390, "Cargo Pods double it");
+assert.equal(eq.moduleFitsHull("cargo_pods", "combat_freighter"), true);
+assert.equal(eq.moduleFitsHull("extended_tanks", "combat_freighter"), true);
+assert.equal(eq.moduleFitsHull("fuel_transfer_rig", "combat_freighter"), false);
+assert.equal(eq.moduleFitsHull("torpedo_rack", "combat_freighter"), false, "a berth, not a hardpoint");
 assert.equal(market.refitCargoBlocked(podded, "convoy", ["cargo_pods"], [], 1), true);
 assert.equal(market.refitCargoBlocked(podded, "convoy", ["cargo_pods"], ["extended_tanks"], 1), true);
 const atLimit = { ...podded, cargo_manifest: [{ commodity: "alloys", units: 400 }] };

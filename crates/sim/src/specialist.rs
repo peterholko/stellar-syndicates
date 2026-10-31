@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 use crate::build::StructureKind;
 use crate::ship::ShipKind;
 
-/// The five specialist professions (v1 — the Expert tier and finer splits are
-/// explicitly out of scope). Ordering is stable for BTreeMap determinism.
+/// The five specialist professions, and (§research-wiring Expert Training)
+/// each one's expert tier: trained at an Academy, never hired at Sol.
+/// Ordering is stable for BTreeMap determinism; append only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SpecialistKind {
@@ -25,6 +26,11 @@ pub enum SpecialistKind {
     IndustrialEngineer,
     /// The yards: Shipyard boost, and Armaments (weapons are ships' work).
     NavalArchitect,
+    ExpertGeologist,
+    ExpertPetrochemicalEngineer,
+    ExpertXenobiologist,
+    ExpertIndustrialEngineer,
+    ExpertNavalArchitect,
 }
 
 impl SpecialistKind {
@@ -36,6 +42,36 @@ impl SpecialistKind {
         SpecialistKind::NavalArchitect,
     ];
 
+    /// The expert tiers, in profession order.
+    pub const EXPERTS: [SpecialistKind; 5] = [
+        SpecialistKind::ExpertGeologist,
+        SpecialistKind::ExpertPetrochemicalEngineer,
+        SpecialistKind::ExpertXenobiologist,
+        SpecialistKind::ExpertIndustrialEngineer,
+        SpecialistKind::ExpertNavalArchitect,
+    ];
+
+    pub fn is_expert(self) -> bool {
+        Self::EXPERTS.contains(&self)
+    }
+
+    /// The profession, without its tier.
+    pub fn base(self) -> Self {
+        match self {
+            SpecialistKind::ExpertGeologist => SpecialistKind::Geologist,
+            SpecialistKind::ExpertPetrochemicalEngineer => SpecialistKind::PetrochemicalEngineer,
+            SpecialistKind::ExpertXenobiologist => SpecialistKind::Xenobiologist,
+            SpecialistKind::ExpertIndustrialEngineer => SpecialistKind::IndustrialEngineer,
+            SpecialistKind::ExpertNavalArchitect => SpecialistKind::NavalArchitect,
+            base => base,
+        }
+    }
+
+    /// The profession's expert tier.
+    pub fn expert(self) -> Self {
+        Self::EXPERTS[Self::ALL.iter().position(|k| *k == self.base()).expect("a profession")]
+    }
+
     pub fn slug(self) -> &'static str {
         match self {
             SpecialistKind::Geologist => "geologist",
@@ -43,6 +79,11 @@ impl SpecialistKind {
             SpecialistKind::Xenobiologist => "xenobiologist",
             SpecialistKind::IndustrialEngineer => "industrial_engineer",
             SpecialistKind::NavalArchitect => "naval_architect",
+            SpecialistKind::ExpertGeologist => "expert_geologist",
+            SpecialistKind::ExpertPetrochemicalEngineer => "expert_petrochemical_engineer",
+            SpecialistKind::ExpertXenobiologist => "expert_xenobiologist",
+            SpecialistKind::ExpertIndustrialEngineer => "expert_industrial_engineer",
+            SpecialistKind::ExpertNavalArchitect => "expert_naval_architect",
         }
     }
 
@@ -53,7 +94,18 @@ impl SpecialistKind {
             SpecialistKind::Xenobiologist => "Xenobiologist",
             SpecialistKind::IndustrialEngineer => "Industrial Engineer",
             SpecialistKind::NavalArchitect => "Naval Architect",
+            SpecialistKind::ExpertGeologist => "Expert Geologist",
+            SpecialistKind::ExpertPetrochemicalEngineer => "Expert Petrochemical Engineer",
+            SpecialistKind::ExpertXenobiologist => "Expert Xenobiologist",
+            SpecialistKind::ExpertIndustrialEngineer => "Expert Industrial Engineer",
+            SpecialistKind::ExpertNavalArchitect => "Expert Naval Architect",
         }
+    }
+
+    /// Skill points on an affine line: 3 for a specialist, 5 for an expert
+    /// (a full line reaches ×1.75 or ×2.25).
+    pub fn skill_points(self) -> u32 {
+        if self.is_expert() { crate::production::EXPERT_SKILL_POINTS } else { crate::production::SPECIALIST_SKILL_POINTS }
     }
 
     /// The AFFINITY table: which structures this profession's skill bonus
@@ -62,7 +114,7 @@ impl SpecialistKind {
     pub fn affine(self, structure: StructureKind) -> bool {
         use StructureKind as K;
         matches!(
-            (self, structure),
+            (self.base(), structure),
             (SpecialistKind::Geologist, K::MiningComplex | K::UraniumMill)
                 | (
                     SpecialistKind::PetrochemicalEngineer,
@@ -102,6 +154,14 @@ pub const ACADEMY_TRAIN_COSTS: &[(crate::cargo::Commodity, f64)] = &[
     (crate::cargo::Commodity::Electronics, 10.0),
 ];
 
+/// §research-wiring Expert Training: an expert course, on top of the
+/// specialist it raises. Tunable.
+pub const EXPERT_TRAIN_COSTS: &[(crate::cargo::Commodity, f64)] = &[
+    (crate::cargo::Commodity::Provisions, 30.0),
+    (crate::cargo::Commodity::Electronics, 20.0),
+    (crate::cargo::Commodity::PrecisionComponents, 5.0),
+];
+
 // --- TRANSPORT --------------------------------------------------------------------
 
 /// Passenger berths per SHIP of each kind — only the logistics hulls carry
@@ -126,6 +186,7 @@ pub fn passenger_capacity(kind: ShipKind) -> u32 {
         | ShipKind::SurveyProbe
         | ShipKind::MiningBarge // its crew works the cutters, not passenger berths
         | ShipKind::MiningBeltStation // a depot crew, not passenger berths
+        | ShipKind::CombatFreighter // a prize crew, and a hold for loot
         | ShipKind::Raider
         | ShipKind::Corvette
         | ShipKind::Destroyer

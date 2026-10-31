@@ -1,0 +1,213 @@
+{
+  "revision": 2,
+  "ships": [
+    {
+      "slug": "clean-slate",
+      "name": "Clean Slate",
+      "owner": "Ines Varga",
+      "before": {
+        "triangles": 6216,
+        "minimumTexelsPerUnit": 2.1375,
+        "maximumAnisotropy": 136.498,
+        "areaWithAnisotropyOver4Pct": 1.014,
+        "areaWithAnisotropyOver10Pct": 0.329,
+        "areaBelow8TexelsPerUnitPct": 1.38,
+        "areaOnAtlasBackgroundPct": 0.0
+      },
+      "after": {
+        "triangles": 6250,
+        "minimumTexelsPerUnit": 17.0323,
+        "maximumAnisotropy": 2.217,
+        "areaWithAnisotropyOver4Pct": 0.0,
+        "areaWithAnisotropyOver10Pct": 0.0,
+        "areaBelow8TexelsPerUnitPct": 0.0,
+        "areaOnAtlasBackgroundPct": 0.0
+      },
+      "fallbackBefore": 0,
+      "fallbackAfter": 0,
+      "dockingRegistrationBefore": {
+        "sampledPixel": [
+          1372.321,
+          752.8
+        ],
+        "expectedPixel": [
+          1363,
+          719
+        ],
+        "pixelError": 35.062,
+        "hullX": -4.842105388641357,
+        "housingRootGapUnits": 0,
+        "method": "Barycentric interpolation of exported hull UVs at port collar height and longitudinal station."
+      },
+      "dockingRegistrationAfter": {
+        "sampledPixel": [
+          1363.0,
+          719.0
+        ],
+        "expectedPixel": [
+          1363,
+          719
+        ],
+        "pixelError": 0.0,
+        "hullX": -4.842105388641357,
+        "housingRootGapUnits": 0,
+        "method": "Barycentric interpolation of exported hull UVs at port collar height and longitudinal station."
+      },
+      "seamCandidatesBefore": 295,
+      "seamCandidatesAfter": 226,
+      "modelSHA256": "18e364d067209deeca0c12824479dfbdec4a727937dd143fd0c5a4fc27e5af0d",
+      "triangles": 6250,
+      "findings": [
+        "The cockpit side walls used a 12 \u00d7 10 pixel sample; the raised slab also put a second window belt below the top-view windows.",
+        "The docking rims reached 28.9:1 local UV stretch. Shoulder edges and the central spine abruptly changed to unrelated swatches.",
+        "Side-view docking artwork was vertically offset by about 34 pixels. Its original door crop was also off-center. Long wall polygons interpolated across a registration breakpoint, shifting features between their endpoints."
+      ],
+      "fixes": [
+        "Rebuilt the canopy as a sloped closed solid with one continuous native window projection.",
+        "Unwrapped rings using physical circumference and radial cap coordinates. Folded the adjacent top-view pixels over thin panel edges.",
+        "Registered side artwork to the actual collar center, resized the collars, and split wall geometry at the projection breakpoints."
+      ],
+      "remaining": "The long side/underside join and bow bevels still combine independently drawn views. Some panel lines and painted shading change across those joins; this is visible in close inspection."
+    },
+    {
+      "slug": "second-wind",
+      "name": "Second Wind",
+      "owner": "Mags Halloran",
+      "before": {
+        "triangles": 7612,
+        "minimumTexelsPerUnit": 0.1908,
+        "maximumAnisotropy": 192.658,
+        "areaWithAnisotropyOver4Pct": 2.602,
+        "areaWithAnisotropyOver10Pct": 2.328,
+        "areaBelow8TexelsPerUnitPct": 6.287,
+        "areaOnAtlasBackgroundPct": 0.0
+      },
+      "after": {
+        "triangles": 7778,
+        "minimumTexelsPerUnit": 10.3046,
+        "maximumAnisotropy": 3.688,
+        "areaWithAnisotropyOver4Pct": 0.0,
+        "areaWithAnisotropyOver10Pct": 0.0,
+        "areaBelow8TexelsPerUnitPct": 0.0,
+        "areaOnAtlasBackgroundPct": 0.0
+      },
+      "fallbackBefore": 3,
+      "fallbackAfter": 0,
+      "dockingRegistrationBefore": {
+        "sampledPixel": [
+          1276.933,
+          745.9
+        ],
+        "expectedPixel": [
+          1225,
+          728
+        ],
+        "pixelError": 54.931,
+        "hullX": -5.173162676129165,
+        "housingRootGapUnits": 0,
+        "method": "Barycentric interpolation of exported hull UVs at port collar height and longitudinal station."
+      },
+      "dockingRegistrationAfter": {
+        "sampledPixel": [
+          1225.0,
+          728.0
+        ],
+        "expectedPixel": [
+          1225,
+          728
+        ],
+        "pixelError": 0.0,
+        "hullX": -5.173162937193902,
+        "housingRootGapUnits": 0,
+        "method": "Barycentric interpolation of exported hull UVs at port collar height and longitudinal station."
+      },
+      "seamCandidatesBefore": 223,
+      "seamCandidatesAfter": 194,
+      "modelSHA256": "fb63a78718a05f6cee1006a933dc851776030a827c1a2ca2d439467047d3fe2a",
+      "triangles": 7778,
+      "findings": [
+        "The workshop rim used an 8-pixel-wide orange crop: 98.65% of that component\u2019s area fell below 8 texels per model unit. The crane arms used the same undersized sample.",
+        "The wheelhouse had the same 12 \u00d7 10 pixel glass-wall problem. An intermediate concentric dome also placed its roof ridge through the windshield; this needed a separate feature-aligned cabin rebuild. The hidden starboard engine core reached 192.7:1 UV stretch.",
+        "Three underside hatch faces silently replaced collapsed UVs with generic silver. Global bottom-view scaling was biased by the asymmetric bridge and crane.",
+        "The side docking artwork was about 18 pixels too high, and nonlinear registration across unsplit wall faces displaced the circle along the hull. Its source crop center was slightly off too."
+      ],
+      "fixes": [
+        "Replaced tiny paint samples with native-resolution material strips and gave the crane/rim consistent physical texture scale.",
+        "Traced independent wheelhouse roof and sill boundaries around the painted window frames, seated its console and antenna mounts, and continued the sill artwork onto its skirt. The exported windshield now occupies one plane. Engine body, core, ring and cap mappings are separate.",
+        "Mapped the underside hatch walls explicitly, registered the belly to the rigid body centerline, and made collapsed UVs fail the build.",
+        "Aligned the port-side projection and collar size; fitted distinct service-panel trims to starboard instead of projecting port-only docking details there."
+      ],
+      "remaining": "The concept\u2019s mismatched engine housings and asymmetric underside are still interpreted geometry. The port engine retains a top/side projection boundary, and some belly/side plating transitions remain visible."
+    },
+    {
+      "slug": "small-fortune",
+      "name": "Small Fortune",
+      "owner": "Rafi Mensah",
+      "before": {
+        "triangles": 7748,
+        "minimumTexelsPerUnit": 2.1111,
+        "maximumAnisotropy": 115.867,
+        "areaWithAnisotropyOver4Pct": 7.028,
+        "areaWithAnisotropyOver10Pct": 3.315,
+        "areaBelow8TexelsPerUnitPct": 1.083,
+        "areaOnAtlasBackgroundPct": 0.0
+      },
+      "after": {
+        "triangles": 7764,
+        "minimumTexelsPerUnit": 11.6281,
+        "maximumAnisotropy": 2.999,
+        "areaWithAnisotropyOver4Pct": 0.0,
+        "areaWithAnisotropyOver10Pct": 0.0,
+        "areaBelow8TexelsPerUnitPct": 0.0,
+        "areaOnAtlasBackgroundPct": 0.0
+      },
+      "fallbackBefore": 1,
+      "fallbackAfter": 0,
+      "dockingRegistrationBefore": {
+        "sampledPixel": [
+          1200.779,
+          750.9
+        ],
+        "expectedPixel": [
+          1210,
+          701
+        ],
+        "pixelError": 50.745,
+        "hullX": -4.066243354058212,
+        "housingRootGapUnits": 0.6706,
+        "method": "Barycentric interpolation of exported hull UVs at port collar height and longitudinal station."
+      },
+      "dockingRegistrationAfter": {
+        "sampledPixel": [
+          1210.0,
+          701.0
+        ],
+        "expectedPixel": [
+          1210,
+          701
+        ],
+        "pixelError": 0.0,
+        "hullX": -4.06624316260516,
+        "housingRootGapUnits": 0,
+        "method": "Barycentric interpolation of exported hull UVs at port collar height and longitudinal station."
+      },
+      "seamCandidatesBefore": 237,
+      "seamCandidatesAfter": 172,
+      "modelSHA256": "52b8c285669d214bba4f1a1e30430a43058967cf3ea7af082f51463393d79faf",
+      "triangles": 7764,
+      "findings": [
+        "The cockpit had a flat dark strip sampled from 12 \u00d7 10 pixels. Bow/front projection used a compressed, offset crop that put oversized details on the wrong faces.",
+        "Engine coupling bands reached 70.2:1 local stretch. Cap UVs were normalized by the widest engine radius rather than the radius of the end face.",
+        "The loading-lock walls and the edges of the cream spine used generic red paint. One belly-door wall silently fell back to silver.",
+        "The side docking artwork was about 50 pixels too high. The long side projection also crossed a registration breakpoint inside an unsplit face, and the original source crop missed the center of the door."
+      ],
+      "fixes": [
+        "Rebuilt the sloped canopy and centered the lower-bow projection on the actual front body.",
+        "Used radial cap mappings with the actual cap radius and physical scale for bands/nozzle walls; recentered the port exhaust crop and retained the native red/cream engine panels.",
+        "Added fitted service-panel coverage to the loading lock, continued the cream stripe onto its raised edges, and mapped the belly-door wall explicitly.",
+        "Aligned the port-side docking reference, resized and seated the collar against the hull, subdivided registration crossings and corrected the bottom-view centerline. The original housing started outside the body, leaving a 0.67-unit gap."
+      ],
+      "remaining": "The engine housings still combine native top and side illustrations, so narrow paint seams remain around those projection transitions. The starboard service trim is reconstructed coverage because there is no independent starboard drawing."
+    }
+  ]
+}

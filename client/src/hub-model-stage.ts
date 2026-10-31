@@ -1,26 +1,26 @@
-// The Authority Nexus for the live map hub and the art baker: one loader and
-// one camera, so the baked sprite and the live render frame the station alike.
+// The Wormhole Hub for the live map hub and the art baker: one loader and one
+// camera, so the baked sprite and the live render frame the station alike.
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { disposeModel, resizeModelTextures } from "./ship-model-stage";
 import { createWormholeEffect, type WormholeEffect } from "./wormhole-effect";
-import { HUB_YAW } from "./hub-model-policy";
+import { HUB_LAY_FLAT, HUB_YAW } from "./hub-model-policy";
 
 export interface HubStation {
   /** Add this to the scene. */
   readonly root: THREE.Group;
   /** Lean the station by setting `pose.rotation.x` (negative: seen from the bottom edge). */
   readonly pose: THREE.Group;
-  /** The station's own frame (its authored units, diameter 19.8): decorative
-   * traffic belongs here so it leans and turns with the station. */
+  /** The station's own frame (its authored units, 17.34 across, ring in XY):
+   * decorative traffic belongs here so it leans and turns with the station. */
   readonly local: THREE.Object3D;
   readonly flow: WormholeEffect;
   dispose(): void;
 }
 
-/** Load the station centred on its aperture, its diameter normalized to 2 units,
- * turned by HUB_YAW, with the living vortex attached. The disc lies in the XZ
- * plane, towers up. */
+/** Load the station laid flat (HUB_LAY_FLAT: ring in the XZ plane, front up),
+ * centred on its aperture, its span normalized to 2 units, turned by HUB_YAW,
+ * with the living portal attached. */
 export async function loadHubStation(url: string, options: {
   signal?: AbortSignal; maxTextureSize?: number; playing?: boolean; time?: number;
 } = {}): Promise<HubStation> {
@@ -37,7 +37,9 @@ export async function loadHubStation(url: string, options: {
   }
   const wormhole = scene.getObjectByName("wormhole");
   if (!wormhole) { disposeModel(scene); throw new Error("Hub model has no wormhole assembly"); }
-  // Centre the disc on its aperture; keep the disc plane where it was authored.
+  scene.rotation.x = HUB_LAY_FLAT;
+  scene.updateMatrixWorld(true);
+  // Centre the ring on its aperture; keep its face where the turn put it.
   const bounds = new THREE.Box3().setFromObject(scene);
   const center = bounds.getCenter(new THREE.Vector3());
   const diameter = Math.max(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z);

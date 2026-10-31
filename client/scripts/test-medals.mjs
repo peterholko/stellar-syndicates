@@ -65,11 +65,11 @@ assert.match(card.corpCardHtml(medals.corpCard([row("1", "New")], "1", null, 0),
 deps["./medals"] = medals;
 const board = compile("core/derive/board.ts");
 const op = (id, state, day) => ({ id, state, board_day: day, progress: 0, goal: 1 });
-const st = { simTime: 100_800, board: { day: 1, next_at: 172_800, done: 2, needed: 3, bonus_credits: 1_000, bonus_paid: false },
+const st = { simTime: 100_800, board: { day: 1, next_at: 172_800, done: 2, needed: 3, bonus_standing: 3, bonus_dossier: 0.05, bonus_paid: false },
   operations: [op("9", "completed", 1), op("4", "offered", 1), op("7", "active", 1), op("2", "offered", 0), { id: "5", state: "offered" }] };
 const summary = board.boardSummary(st);
 assert.deepEqual(copy(summary.contracts.map((o) => o.id)), ["7", "4", "9"], "today's only: active, offered, then done");
-assert.equal(board.boardLine(summary), "2/3 for +1,000 Cr · new in 20h 0m");
+assert.equal(board.boardLine(summary), "2/3 for +3 standing · 5% research · new in 20h 0m", "§standing-ladder: no credits");
 st.board.bonus_paid = true;
 assert.equal(board.boardLine(board.boardSummary(st)), "Bonus paid · new in 20h 0m");
 st.board = null;

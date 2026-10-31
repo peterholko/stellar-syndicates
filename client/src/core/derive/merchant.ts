@@ -6,16 +6,23 @@ import type { ViewState } from "../../state";
 import { availableStock } from "./industry";
 
 /** The charter builds the guide can send to the merchant. §charter-v4: the
- * Solar Array and the Interceptor too (a Shipyard II costs a Shipyard).
+ * Solar Array and the Interceptor too.
  * §charter-v5: "ahead", the trader's last call: the semiconductors of the
  * builds after the den (`AHEAD`). */
 export type MerchantTarget = "power_plant" | "shipyard" | "raider" | "academy" | "survey_probe" | "mining_barge" | "ahead";
 export const MERCHANT_TARGETS: readonly MerchantTarget[] = ["power_plant", "shipyard", "raider", "academy", "survey_probe", "mining_barge", "ahead"];
 /** §charter-v5: the charter's builds after the den: the Academy, the
  * expansion's Solar Array and Mining Complex, the Survey Probe and the Mining
- * Barge. The raid took the kit's semiconductors they need. The bots count
- * the same builds (`charter_goods_ahead`). */
-const AHEAD = ["academy", "power_plant", "mining_complex", "survey_probe", "mining_barge"];
+ * Barge, (§vendetta) the second Interceptor the uncle's fight needs and
+ * (§refining) the Smelter. The raid took the kit's semiconductors and
+ * Armaments they need. The bots count the same builds but the Interceptor
+ * (`charter_goods_ahead`): they skip the vendetta. */
+// §vendetta-campaign: the second and third Interceptors.
+const AHEAD = ["academy", "smelter", "power_plant", "mining_complex", "survey_probe", "mining_barge", "raider", "raider"];
+/** Semiconductors research draws from home stock meanwhile (about 0.6 a
+ * minute at tier I): the stock-up buys them too (sim
+ * `merchant::RESEARCH_RESERVE`). */
+export const RESEARCH_RESERVE = 20;
 export const isMerchantTarget = (key: string): key is MerchantTarget => (MERCHANT_TARGETS as readonly string[]).includes(key);
 
 export type MerchantGoods = Partial<Record<Commodity, number>>;
@@ -84,14 +91,16 @@ export function merchantShortfall(st: ViewState, home: SystemStateView | undefin
   m: MerchantView): MerchantGoods {
   const recipe = (key: string) => st.galaxy?.build_options.find((o) => o.key === key)?.costs ?? [];
   const costs = target !== "ahead" ? recipe(target) : [...AHEAD.flatMap(recipe).reduce((sum, c) =>
-    sum.set(c.commodity, (sum.get(c.commodity) ?? 0) + c.units), new Map<string, number>())]
+    sum.set(c.commodity, (sum.get(c.commodity) ?? 0) + c.units), new Map<string, number>([["electronics", RESEARCH_RESERVE]]))]
     .map(([commodity, units]) => ({ commodity, units }));
   const out: MerchantGoods = {};
+  // §charter-crates: the crates still sealed bring their goods.
+  const sealed = (c: Commodity) => (st.founding?.crates ?? []).reduce((n, k) => n + (k.goods[c] ?? 0), 0);
   for (const cost of costs) {
     const c = cost.commodity as Commodity;
     const good = m.goods.find((g) => g.commodity === c);
     if (!good) continue;
-    const short = Math.ceil(cost.units - (home ? availableStock(home, c) : 0) - 1e-9);
+    const short = Math.ceil(cost.units - (home ? availableStock(home, c) : 0) - sealed(c) - 1e-9);
     const units = Math.min(Math.max(0, short), good.stock);
     if (units > 0) out[c] = units;
   }

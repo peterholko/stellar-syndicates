@@ -1,0 +1,721 @@
+[
+  {
+    "id": "tactical-datacore",
+    "category": "gear",
+    "destination": "client/art-src/captain-gear-v1/tactical-datacore.png",
+    "prompt": "Use case: stylized-concept. Asset type: one transparent game UI item icon for Stellar Syndicates, a premium dark sci-fi strategy game. It joins an existing icon family; Image 1 is a member of that family, attached ONLY for style, material, camera and finish. Do not copy its subject.\nSubject: Tactical Datacore: A ruggedized command datacore: a thick armored data cartridge seated half-way into a compact field rack, with a small cyan tactical holo-lens on top showing a few abstract wedge shapes. Side grip handles, a row of small status lights. Field grade.\nThis is a captain's personal kit, a portable object a starship captain carries or wears on duty. It is NOT a ship module, NOT a weapon, NOT a building and NOT a vehicle. Its size reads as hand-held or desk-sized.\nCamera and framing: the same elevated three-quarter view as Image 1, light from the upper left. One complete object, centred on a square 1254 x 1254 canvas. It spans about 72-80% of the canvas width and 56-68% of its height, like the family's measured icons. Bold, simple silhouette that still reads at 64 px; a few large readable forms, restrained small detail.\nStyle: crisp, professionally rendered hard-surface 3D game icon, no painterly strokes. Charcoal gunmetal, worn steel edges, small panel lines.\nGRADE:\n- FIELD grade (+1): practical issue kit. Charcoal gunmetal and steel, restrained cyan indicator lights, one small amber accent, mild wear. Rugged and functional.\n- RELIC grade (+2): the same kind of object, rare and ancient: aged gold and brass filigree inlaid in dark gunmetal, one violet precursor crystal set at its heart with a soft violet inner light, a few cyan details. Ornate but still a tool, slightly grander than its Field twin. The violet light stays inside the object; no outer halo.\nBackground: genuinely transparent PNG with real alpha; no floor, plinth, shadow plate, smoke, starfield or frame.\nConstraints: exactly one object, no text, letters, numbers, labels, logos, insignia lettering, watermark, border, badge, circle behind it or UI. No hands, people, faces or skulls. No glow halos, sparks or beams.\nFor this specific output, apply ONLY the FIELD grade treatment described above.",
+    "references": [
+      "client/art-src/ui-icons/raster-masters/module-mass-driver.png"
+    ],
+    "transparent": true,
+    "expectedSize": [
+      1254,
+      1254
+    ],
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-dce6ecc9-c2ca-412d-bd9d-ea8d3464fd62.png",
+    "inspection": {
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "sha256": "111d7eaebd70808798cb5035cecdce241c3f2363f4a60de7d8a4740134a1beb2",
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "alphaBounds": [
+        0,
+        49,
+        1225,
+        1222
+      ],
+      "transparentPixelFraction": 0.5991,
+      "solidBoundsAtAlpha128": [
+        84,
+        230,
+        1222,
+        1074
+      ],
+      "centerAlpha": 253
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "admirals-datacore",
+    "category": "gear",
+    "destination": "client/art-src/captain-gear-v1/admirals-datacore.png",
+    "prompt": "Use case: stylized-concept. Asset type: one transparent game UI item icon for Stellar Syndicates, a premium dark sci-fi strategy game. It joins an existing icon family; Image 1 is a member of that family, attached ONLY for style, material, camera and finish. Do not copy its subject.\nSubject: Admiral's Datacore: The same command datacore made for a fleet admiral: an elongated cartridge in a gold-filigreed gunmetal cradle, a violet precursor crystal set into the cartridge's face, a slim brass holo-lens crown above it. Relic grade.\nThis is a captain's personal kit, a portable object a starship captain carries or wears on duty. It is NOT a ship module, NOT a weapon, NOT a building and NOT a vehicle. Its size reads as hand-held or desk-sized.\nCamera and framing: the same elevated three-quarter view as Image 1, light from the upper left. One complete object, centred on a square 1254 x 1254 canvas. It spans about 72-80% of the canvas width and 56-68% of its height, like the family's measured icons. Bold, simple silhouette that still reads at 64 px; a few large readable forms, restrained small detail.\nStyle: crisp, professionally rendered hard-surface 3D game icon, no painterly strokes. Charcoal gunmetal, worn steel edges, small panel lines.\nGRADE:\n- FIELD grade (+1): practical issue kit. Charcoal gunmetal and steel, restrained cyan indicator lights, one small amber accent, mild wear. Rugged and functional.\n- RELIC grade (+2): the same kind of object, rare and ancient: aged gold and brass filigree inlaid in dark gunmetal, one violet precursor crystal set at its heart with a soft violet inner light, a few cyan details. Ornate but still a tool, slightly grander than its Field twin. The violet light stays inside the object; no outer halo.\nBackground: genuinely transparent PNG with real alpha; no floor, plinth, shadow plate, smoke, starfield or frame.\nConstraints: exactly one object, no text, letters, numbers, labels, logos, insignia lettering, watermark, border, badge, circle behind it or UI. No hands, people, faces or skulls. No glow halos, sparks or beams.\nFor this specific output, apply ONLY the RELIC grade treatment described above.",
+    "references": [
+      "client/art-src/ui-icons/raster-masters/module-mass-driver.png"
+    ],
+    "transparent": true,
+    "expectedSize": [
+      1254,
+      1254
+    ],
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-a576c704-6c0f-4eee-9166-78c81b007248.png",
+    "inspection": {
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "sha256": "9d9f9c70ffdf5d880335e16f93d78cc32c4829495f6e3988c6c501f7a840687f",
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "alphaBounds": [
+        0,
+        37,
+        1223,
+        1236
+      ],
+      "transparentPixelFraction": 0.6394,
+      "solidBoundsAtAlpha128": [
+        61,
+        222,
+        1218,
+        1027
+      ],
+      "centerAlpha": 253
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "astrogation-suite",
+    "category": "gear",
+    "destination": "client/art-src/captain-gear-v1/astrogation-suite.png",
+    "prompt": "Use case: stylized-concept. Asset type: one transparent game UI item icon for Stellar Syndicates, a premium dark sci-fi strategy game. It joins an existing icon family; Image 1 is a member of that family, attached ONLY for style, material, camera and finish. Do not copy its subject.\nSubject: Astrogation Suite: A navigator's astrogation slate: a heavy tablet in a gunmetal frame with a fold-out cyan star-chart projector arm and two small calibration dials. Field grade.\nThis is a captain's personal kit, a portable object a starship captain carries or wears on duty. It is NOT a ship module, NOT a weapon, NOT a building and NOT a vehicle. Its size reads as hand-held or desk-sized.\nCamera and framing: the same elevated three-quarter view as Image 1, light from the upper left. One complete object, centred on a square 1254 x 1254 canvas. It spans about 72-80% of the canvas width and 56-68% of its height, like the family's measured icons. Bold, simple silhouette that still reads at 64 px; a few large readable forms, restrained small detail.\nStyle: crisp, professionally rendered hard-surface 3D game icon, no painterly strokes. Charcoal gunmetal, worn steel edges, small panel lines.\nGRADE:\n- FIELD grade (+1): practical issue kit. Charcoal gunmetal and steel, restrained cyan indicator lights, one small amber accent, mild wear. Rugged and functional.\n- RELIC grade (+2): the same kind of object, rare and ancient: aged gold and brass filigree inlaid in dark gunmetal, one violet precursor crystal set at its heart with a soft violet inner light, a few cyan details. Ornate but still a tool, slightly grander than its Field twin. The violet light stays inside the object; no outer halo.\nBackground: genuinely transparent PNG with real alpha; no floor, plinth, shadow plate, smoke, starfield or frame.\nConstraints: exactly one object, no text, letters, numbers, labels, logos, insignia lettering, watermark, border, badge, circle behind it or UI. No hands, people, faces or skulls. No glow halos, sparks or beams.\nFor this specific output, apply ONLY the FIELD grade treatment described above.\nFRAMING IS CRITICAL: keep the entire solid object inside x=150 to 1104 and y=210 to 1044 on the 1254-square canvas. Leave generous true-alpha padding: 12% at left and right, and at least 17% above and below. Do not zoom the object to fill the canvas.",
+    "references": [
+      "client/art-src/ui-icons/raster-masters/module-mass-driver.png"
+    ],
+    "transparent": true,
+    "expectedSize": [
+      1254,
+      1254
+    ],
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-6723929b-ad91-43a4-9616-d9f1429f9150.png",
+    "inspection": {
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "sha256": "04bd8bc93677ad5106e3d00162ad3ffd62060f1e8fc537a6508b59315660a5d0",
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "alphaBounds": [
+        84,
+        196,
+        1182,
+        1221
+      ],
+      "transparentPixelFraction": 0.6535,
+      "solidBoundsAtAlpha128": [
+        89,
+        222,
+        1166,
+        1061
+      ],
+      "centerAlpha": 253
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "pathfinders-astrolabe",
+    "category": "gear",
+    "destination": "client/art-src/captain-gear-v1/pathfinders-astrolabe.png",
+    "prompt": "Use case: stylized-concept. Asset type: one transparent game UI item icon for Stellar Syndicates, a premium dark sci-fi strategy game. It joins an existing icon family; Image 1 is a member of that family, attached ONLY for style, material, camera and finish. Do not copy its subject.\nSubject: Pathfinder's Astrolabe: An ancient pathfinder's astrolabe: three thin interlocking gold-and-brass rings around a floating violet crystal core, mounted on a small dark gunmetal base. Relic grade.\nThis is a captain's personal kit, a portable object a starship captain carries or wears on duty. It is NOT a ship module, NOT a weapon, NOT a building and NOT a vehicle. Its size reads as hand-held or desk-sized.\nCamera and framing: the same elevated three-quarter view as Image 1, light from the upper left. One complete object, centred on a square 1254 x 1254 canvas. It spans about 72-80% of the canvas width and 56-68% of its height, like the family's measured icons. Bold, simple silhouette that still reads at 64 px; a few large readable forms, restrained small detail.\nStyle: crisp, professionally rendered hard-surface 3D game icon, no painterly strokes. Charcoal gunmetal, worn steel edges, small panel lines.\nGRADE:\n- FIELD grade (+1): practical issue kit. Charcoal gunmetal and steel, restrained cyan indicator lights, one small amber accent, mild wear. Rugged and functional.\n- RELIC grade (+2): the same kind of object, rare and ancient: aged gold and brass filigree inlaid in dark gunmetal, one violet precursor crystal set at its heart with a soft violet inner light, a few cyan details. Ornate but still a tool, slightly grander than its Field twin. The violet light stays inside the object; no outer halo.\nBackground: genuinely transparent PNG with real alpha; no floor, plinth, shadow plate, smoke, starfield or frame.\nConstraints: exactly one object, no text, letters, numbers, labels, logos, insignia lettering, watermark, border, badge, circle behind it or UI. No hands, people, faces or skulls. No glow halos, sparks or beams.\nFor this specific output, apply ONLY the RELIC grade treatment described above.\nFRAMING IS CRITICAL: keep the entire solid object inside x=150 to 1104 and y=210 to 1044 on the 1254-square canvas. Leave generous true-alpha padding: 12% at left and right, and at least 17% above and below. Do not zoom the object to fill the canvas.",
+    "references": [
+      "client/art-src/ui-icons/raster-masters/module-mass-driver.png"
+    ],
+    "transparent": true,
+    "expectedSize": [
+      1254,
+      1254
+    ],
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-09731ca6-a3c0-444d-a21d-d3bf93c9e5c6.png",
+    "inspection": {
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "sha256": "5e902f3605945064cd50e2ee85823d317bd418e95ca2d3abe6c9014ff014c0ba",
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "alphaBounds": [
+        25,
+        20,
+        1230,
+        1254
+      ],
+      "transparentPixelFraction": 0.7023,
+      "solidBoundsAtAlpha128": [
+        238,
+        168,
+        1030,
+        1100
+      ],
+      "centerAlpha": 253
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "survey-kit",
+    "category": "gear",
+    "destination": "client/art-src/captain-gear-v1/survey-kit.png",
+    "prompt": "Use case: stylized-concept. Asset type: one transparent game UI item icon for Stellar Syndicates, a premium dark sci-fi strategy game. It joins an existing icon family; Image 1 is a member of that family, attached ONLY for style, material, camera and finish. Do not copy its subject.\nSubject: Survey Kit: A field survey kit: a compact armored case opened at an angle, holding a handheld scanner wand with a cyan emitter tip and three small sample vials in clips. Field grade.\nThis is a captain's personal kit, a portable object a starship captain carries or wears on duty. It is NOT a ship module, NOT a weapon, NOT a building and NOT a vehicle. Its size reads as hand-held or desk-sized.\nCamera and framing: the same elevated three-quarter view as Image 1, light from the upper left. One complete object, centred on a square 1254 x 1254 canvas. It spans about 72-80% of the canvas width and 56-68% of its height, like the family's measured icons. Bold, simple silhouette that still reads at 64 px; a few large readable forms, restrained small detail.\nStyle: crisp, professionally rendered hard-surface 3D game icon, no painterly strokes. Charcoal gunmetal, worn steel edges, small panel lines.\nGRADE:\n- FIELD grade (+1): practical issue kit. Charcoal gunmetal and steel, restrained cyan indicator lights, one small amber accent, mild wear. Rugged and functional.\n- RELIC grade (+2): the same kind of object, rare and ancient: aged gold and brass filigree inlaid in dark gunmetal, one violet precursor crystal set at its heart with a soft violet inner light, a few cyan details. Ornate but still a tool, slightly grander than its Field twin. The violet light stays inside the object; no outer halo.\nBackground: genuinely transparent PNG with real alpha; no floor, plinth, shadow plate, smoke, starfield or frame.\nConstraints: exactly one object, no text, letters, numbers, labels, logos, insignia lettering, watermark, border, badge, circle behind it or UI. No hands, people, faces or skulls. No glow halos, sparks or beams.\nFor this specific output, apply ONLY the FIELD grade treatment described above.",
+    "references": [
+      "client/art-src/ui-icons/raster-masters/module-mass-driver.png"
+    ],
+    "transparent": true,
+    "expectedSize": [
+      1254,
+      1254
+    ],
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-a5573b94-70f6-4583-a63a-6855fbae41e4.png",
+    "inspection": {
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "sha256": "605b0317efadb3161292ea555b77117760cbf6a995acb0b4e67293eed9b377b9",
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "alphaBounds": [
+        80,
+        73,
+        1222,
+        1254
+      ],
+      "transparentPixelFraction": 0.4986,
+      "solidBoundsAtAlpha128": [
+        83,
+        110,
+        1185,
+        1153
+      ],
+      "centerAlpha": 253
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "precursor-lens",
+    "category": "gear",
+    "destination": "client/art-src/captain-gear-v1/precursor-lens.png",
+    "prompt": "Use case: stylized-concept. Asset type: one transparent game UI item icon for Stellar Syndicates, a premium dark sci-fi strategy game. It joins an existing icon family; Image 1 is a member of that family, attached ONLY for style, material, camera and finish. Do not copy its subject.\nSubject: Precursor Lens: A precursor survey lens: a large faceted violet crystal lens held in a dark weathered stone-and-gold mount with a short grip, faint violet light in the crystal. Relic grade.\nThis is a captain's personal kit, a portable object a starship captain carries or wears on duty. It is NOT a ship module, NOT a weapon, NOT a building and NOT a vehicle. Its size reads as hand-held or desk-sized.\nCamera and framing: the same elevated three-quarter view as Image 1, light from the upper left. One complete object, centred on a square 1254 x 1254 canvas. It spans about 72-80% of the canvas width and 56-68% of its height, like the family's measured icons. Bold, simple silhouette that still reads at 64 px; a few large readable forms, restrained small detail.\nStyle: crisp, professionally rendered hard-surface 3D game icon, no painterly strokes. Charcoal gunmetal, worn steel edges, small panel lines.\nGRADE:\n- FIELD grade (+1): practical issue kit. Charcoal gunmetal and steel, restrained cyan indicator lights, one small amber accent, mild wear. Rugged and functional.\n- RELIC grade (+2): the same kind of object, rare and ancient: aged gold and brass filigree inlaid in dark gunmetal, one violet precursor crystal set at its heart with a soft violet inner light, a few cyan details. Ornate but still a tool, slightly grander than its Field twin. The violet light stays inside the object; no outer halo.\nBackground: genuinely transparent PNG with real alpha; no floor, plinth, shadow plate, smoke, starfield or frame.\nConstraints: exactly one object, no text, letters, numbers, labels, logos, insignia lettering, watermark, border, badge, circle behind it or UI. No hands, people, faces or skulls. No glow halos, sparks or beams.\nFor this specific output, apply ONLY the RELIC grade treatment described above.\nFraming: this is a compact inventory icon with generous transparent breathing room. Draw the object at a moderate size in the middle of the canvas, about three quarters of its width. Do not zoom in. Preserve the entire object and its alpha.",
+    "references": [
+      "client/art-src/ui-icons/raster-masters/module-mass-driver.png"
+    ],
+    "transparent": true,
+    "expectedSize": [
+      1254,
+      1254
+    ],
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-a6b1f883-328f-4853-a601-ed9f81749137.png",
+    "inspection": {
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "sha256": "201bc50a2b3f856f20b049cba622a7c4aa7a2571e35d0a7b8b567059e4ba2e5d",
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "alphaBounds": [
+        0,
+        23,
+        1232,
+        1228
+      ],
+      "transparentPixelFraction": 0.6994,
+      "solidBoundsAtAlpha128": [
+        133,
+        264,
+        1142,
+        974
+      ],
+      "centerAlpha": 252
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "quartermasters-ledger",
+    "category": "gear",
+    "destination": "client/art-src/captain-gear-v1/quartermasters-ledger.png",
+    "prompt": "Use case: stylized-concept. Asset type: one transparent game UI item icon for Stellar Syndicates, a premium dark sci-fi strategy game. It joins an existing icon family; Image 1 is a member of that family, attached ONLY for style, material, camera and finish. Do not copy its subject.\nSubject: Quartermaster's Ledger: A quartermaster's ledger: a thick armored data ledger, half open, with a cyan manifest screen inside and a small cargo-crate emboss on its cover clasp. Field grade.\nThis is a captain's personal kit, a portable object a starship captain carries or wears on duty. It is NOT a ship module, NOT a weapon, NOT a building and NOT a vehicle. Its size reads as hand-held or desk-sized.\nCamera and framing: the same elevated three-quarter view as Image 1, light from the upper left. One complete object, centred on a square 1254 x 1254 canvas. It spans about 72-80% of the canvas width and 56-68% of its height, like the family's measured icons. Bold, simple silhouette that still reads at 64 px; a few large readable forms, restrained small detail.\nStyle: crisp, professionally rendered hard-surface 3D game icon, no painterly strokes. Charcoal gunmetal, worn steel edges, small panel lines.\nGRADE:\n- FIELD grade (+1): practical issue kit. Charcoal gunmetal and steel, restrained cyan indicator lights, one small amber accent, mild wear. Rugged and functional.\n- RELIC grade (+2): the same kind of object, rare and ancient: aged gold and brass filigree inlaid in dark gunmetal, one violet precursor crystal set at its heart with a soft violet inner light, a few cyan details. Ornate but still a tool, slightly grander than its Field twin. The violet light stays inside the object; no outer halo.\nBackground: genuinely transparent PNG with real alpha; no floor, plinth, shadow plate, smoke, starfield or frame.\nConstraints: exactly one object, no text, letters, numbers, labels, logos, insignia lettering, watermark, border, badge, circle behind it or UI. No hands, people, faces or skulls. No glow halos, sparks or beams.\nFor this specific output, apply ONLY the FIELD grade treatment described above.\nFraming: this is a compact inventory icon with generous transparent breathing room. Draw the object at a moderate size in the middle of the canvas, about three quarters of its width. Do not zoom in. Preserve the entire object and its alpha.",
+    "references": [
+      "client/art-src/ui-icons/raster-masters/module-mass-driver.png"
+    ],
+    "transparent": true,
+    "expectedSize": [
+      1254,
+      1254
+    ],
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-9ede5796-e377-44bc-9354-9f15dab7e12b.png",
+    "inspection": {
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "sha256": "cb8b14f43319a31bf9c109c893bfe66ae2b771b97c253ad66a529bc10998de88",
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "alphaBounds": [
+        0,
+        21,
+        1208,
+        1228
+      ],
+      "transparentPixelFraction": 0.5769,
+      "solidBoundsAtAlpha128": [
+        77,
+        216,
+        1206,
+        1096
+      ],
+      "centerAlpha": 253
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "chandlers-seal",
+    "category": "gear",
+    "destination": "client/art-src/captain-gear-v1/chandlers-seal.png",
+    "prompt": "Use case: stylized-concept. Asset type: one transparent game UI item icon for Stellar Syndicates, a premium dark sci-fi strategy game. It joins an existing icon family; Image 1 is a member of that family, attached ONLY for style, material, camera and finish. Do not copy its subject.\nSubject: Chandler's Seal: A ship chandler's seal: a heavy brass-and-gold seal stamp with an octagonal face, a violet crystal pommel and a short chain. Next to it lies one small sealed charter tab under a wax-like violet seal. Relic grade.\nThis is a captain's personal kit, a portable object a starship captain carries or wears on duty. It is NOT a ship module, NOT a weapon, NOT a building and NOT a vehicle. Its size reads as hand-held or desk-sized.\nCamera and framing: the same elevated three-quarter view as Image 1, light from the upper left. One complete object, centred on a square 1254 x 1254 canvas. It spans about 72-80% of the canvas width and 56-68% of its height, like the family's measured icons. Bold, simple silhouette that still reads at 64 px; a few large readable forms, restrained small detail.\nStyle: crisp, professionally rendered hard-surface 3D game icon, no painterly strokes. Charcoal gunmetal, worn steel edges, small panel lines.\nGRADE:\n- FIELD grade (+1): practical issue kit. Charcoal gunmetal and steel, restrained cyan indicator lights, one small amber accent, mild wear. Rugged and functional.\n- RELIC grade (+2): the same kind of object, rare and ancient: aged gold and brass filigree inlaid in dark gunmetal, one violet precursor crystal set at its heart with a soft violet inner light, a few cyan details. Ornate but still a tool, slightly grander than its Field twin. The violet light stays inside the object; no outer halo.\nBackground: genuinely transparent PNG with real alpha; no floor, plinth, shadow plate, smoke, starfield or frame.\nConstraints: exactly one object, no text, letters, numbers, labels, logos, insignia lettering, watermark, border, badge, circle behind it or UI. No hands, people, faces or skulls. No glow halos, sparks or beams.\nFor this specific output, apply ONLY the RELIC grade treatment described above.\nFraming: this is a compact inventory icon with generous transparent breathing room. Draw the object at a moderate size in the middle of the canvas, about three quarters of its width. Do not zoom in. Preserve the entire object and its alpha.",
+    "references": [
+      "client/art-src/ui-icons/raster-masters/module-mass-driver.png"
+    ],
+    "transparent": true,
+    "expectedSize": [
+      1254,
+      1254
+    ],
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-272241e6-64ae-4f89-9095-9f656a88467e.png",
+    "inspection": {
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "sha256": "127f443e0ecce45708d39324595ce59c121f15f0406fea8f71b4dc979278d1f7",
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "alphaBounds": [
+        0,
+        81,
+        1207,
+        1254
+      ],
+      "transparentPixelFraction": 0.6423,
+      "solidBoundsAtAlpha128": [
+        71,
+        231,
+        1203,
+        1062
+      ],
+      "centerAlpha": 253
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "05-season",
+    "category": "glyphs",
+    "destination": "client/art-src/galaxy-map-glyphs-v1/05-season.png",
+    "prompt": "Use case: precise-object-edit. Image 1 is a six-glyph atlas on black, 1536x1024. Preserve its dimensions, exact 3-column by 2-row grid, all six glyph centers, overall style and the other FIVE glyphs unchanged. Correct ONLY the TOP-LEFT construction-gate glyph: make its circular band exactly THREE equally long white arc segments, separated by exactly THREE black gaps at 2 o'clock, 6 o'clock and 10 o'clock. There is NO gap at 12 o'clock. The upper arc is one continuous smooth piece running across 12 o'clock from 10 to 2. The lower-right arc runs 2 to 6. The lower-left arc runs 6 to 10. A small blocky crane arm sits just outside at the upper-right gap. The crane does not cause a fourth break. No extra arc, spoke, pylon or marker.\nRest of atlas untouched: top-middle complete gate with black four-point star; top-right elongated orbiting crystal; bottom-left downward raider with 3 speed bars; bottom-middle cracked dome and bent antenna; bottom-right ring and laurel. Use only PURE WHITE #FFFFFF and PURE BLACK #000000, flat binary stencil art without grey, textures, gradients, shading, antialiasing, text or grid. Opaque background.",
+    "references": [
+      "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-5dedc4a7-6c36-4250-bd35-a7373f60fdf7.png"
+    ],
+    "transparent": false,
+    "expectedSize": [
+      1536,
+      1024
+    ],
+    "revisionNote": "Correct construction glyph from four ring breaks to three equal arcs.",
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-6ea18705-6c5d-4e4d-987f-97050bea2bdd.png",
+    "inspection": {
+      "width": 1536,
+      "height": 1024,
+      "mode": "RGB",
+      "sha256": "4a638429379a3369b26f0efe292dc67549b8f968d3ce6707a03b593bfab2849f"
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "gate-lineup",
+    "category": "gate",
+    "destination": "client/art-src/season-gate-v1/gate-lineup.png",
+    "prompt": "Use case: stylized-concept. Asset type: design lineup sheet for a five-stage construction progression of one megastructure in the dark sci-fi strategy game Stellar Syndicates.\nShow FIVE images of the SAME jump gate in one row on a plain white 3:1 landscape sheet, left to right, each the next construction stage. All five use the SAME camera: a three-quarter view tilted back about 37 degrees from top-down, seen from the near (bottom) edge, light from the upper left, and ONE consistent scale, so every stage has the same ring diameter. Every stage is fully visible with clear space between them.\nSUBJECT: the Terran Charter Authority's new jump gate: one large circular ring built from EIGHT equal armored segments, its radial width about 14% of its radius, with the aperture filling the rest. FOUR slender anchor pylons stand just outside the ring on the diagonals, linked to it by short struts. Ivory ceramic armor plates with machined brass inlay over graphite truss, small cyan running lights. The same family as a premium Authority station: precise, civic, monumental, not military.\nSTAGES:\n1. FOUNDATION: the four anchor pylons complete; only HALF of the ring exists, as bare graphite truss arcs with no armor. ONE small boxy construction tender clamped onto the end of the truss arc, with a short crane arm.\n2. FRAME: the whole ring exists as bare graphite truss; the upper third of it is clad in ivory armor segments with brass seams.\n3. CLAD: the whole ring is clad in ivory armor; EIGHT field-emitter modules (squat brass-and-cyan cylinders) mounted around its inner edge, all DARK.\n4. CHARGING: identical to stage 3, but all eight emitters glow cyan and a thin translucent white-gold film stretches across the aperture.\n5. OPEN: the finished gate; the aperture is a blazing white-gold vortex of light with a bright core, its light held tightly inside the ring; cyan emitters at full power. No beams leaving the gate.\nSTYLE: precise colored hard-surface 3D game concept rendering, clean contours, fine panel lines, mild wear, soft neutral illumination, no harsh shadows. Each silhouette must read clearly from above at small size.\nNo stars, nebula, planets, ships (except the one construction tender at stage 1), people, scale bars, logos or watermark. No franchise design: no chevrons or dialling ring, no Mass Effect relay arms, no Death Star.\nText exactly once each, small and charcoal, centered under each stage: \"FOUNDATION\", \"FRAME\", \"CLAD\", \"CHARGING\", \"OPEN\".",
+    "references": [],
+    "transparent": false,
+    "expectedAspect": "3:1",
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-d41f1bad-62dc-4e8b-a28d-08370585fbb1.png",
+    "inspection": {
+      "width": 2172,
+      "height": 724,
+      "mode": "RGB",
+      "sha256": "168983626d880d1ad5eb156507bbb0c4f1e8fa687f935dc4b5b376b95681ab63"
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "gate-stage-1",
+    "category": "gate",
+    "destination": "client/art-src/season-gate-v1/gate-stage-1.png",
+    "prompt": "Use case: precise-object-edit. Image 1 is the EDIT TARGET: foundation-stage overhead map sprite. Image 2 is a REFERENCE for the locations and appearance of FOUR diagonal anchor pylons. Make ONE precise correction to Image 1: ADD the two missing detached anchor pylons on the RIGHT, at the same top-right and bottom-right positions as Image 2. Each added anchor is a small ivory-and-brass triangular pylon top and footing with a short inward-pointing connection strut, floating by itself with no ring attached. The top-right anchor matches Image2 at about (1080,160) and the bottom-right anchor matches Image2 at about (1080,1060), on a 1254-square canvas. Total: exactly FOUR complete diagonal anchor pylons, two already attached to the left half-ring and two detached on the empty right half.\nKeep Image 1's left skeletal HALF-RING, single tender at its top end, truss details, camera, scale, position, light and materials unchanged. Do NOT add any ring segments on the right. Do NOT turn this into a full ring. Do NOT add emitters or armor to the truss. The unfinished center and missing right half are truly transparent. Preserve real RGBA transparency, strict overhead view, 1254x1254 canvas. No new objects except the two right anchors, no text, no background.",
+    "references": [
+      "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-68819f3d-281d-4464-af61-8989f3adbe89.png",
+      "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-b7a04d81-ee03-4cf9-ad28-0c45c99e0863.png"
+    ],
+    "transparent": true,
+    "expectedSize": [
+      1254,
+      1254
+    ],
+    "dependsOn": "gate-lineup",
+    "stage": 1,
+    "revisionNote": "Restore the two detached right anchors, keeping the half-ring construction stage.",
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-b305ee59-2b43-4fae-9608-c812ff7c1411.png",
+    "inspection": {
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "sha256": "b6834228521ebf8b9114a29c98755af6aaa83a24d8f269f45ecd52e6726bd4fc",
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "alphaBounds": [
+        33,
+        30,
+        1236,
+        1254
+      ],
+      "transparentPixelFraction": 0.7885,
+      "solidBoundsAtAlpha128": [
+        78,
+        83,
+        1181,
+        1156
+      ],
+      "centerAlpha": 0
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "gate-stage-2",
+    "category": "gate",
+    "destination": "client/art-src/season-gate-v1/gate-stage-2.png",
+    "prompt": "Use case: precise-object-edit. Asset: one 1254 x1254 transparent RGBA galaxy-map sprite for Stellar Syndicates. Image 1 is the authoritative OVERHEAD MASTER of this exact gate. Preserve its strict orthographic top-down camera, perfect circular footprint, image position, diameter, four diagonal anchor locations, upper-left soft light, ivory-and-brass materials and crisp game-art style. Do not tilt the camera. Do not move or resize the ring. Pylons remain viewed from their small triangular TOPS, never upright towers. Change ONLY the construction state as follows:\nFRAME. Keep all four diagonal anchor pylons and their footings. The entire circular ring exists as bare graphite lattice truss. ONLY THE UPPER THIRD (the arc from about 10 o'clock to 2 o'clock) has ivory ceramic armor and brass seams. The lower two-thirds shows open skeletal truss. Remove ALL eight inner-edge emitters; they have not been installed. No tender. The aperture and holes through the truss remain transparent.\nThe final output is one complete centered structure, roughly 90% canvas width with equal clear margins, not a sheet or scene. Genuine alpha outside and in all described empty holes, no floor, no shadow plate, no background. No labels, text, UI, grid, border or unrelated ships.",
+    "references": [
+      "client/art-src/season-gate-v1/gate-stage-3.png"
+    ],
+    "transparent": true,
+    "expectedSize": [
+      1254,
+      1254
+    ],
+    "dependsOn": "gate-lineup",
+    "stage": 2,
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-3b84ef44-d11b-458b-9f89-a498ada6156a.png",
+    "inspection": {
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "sha256": "2869c99e30b9217f9cdf83b1ac9c5627c5b270059cfa1e31f9a924f474d0e6e4",
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "alphaBounds": [
+        0,
+        19,
+        1238,
+        1214
+      ],
+      "transparentPixelFraction": 0.6321,
+      "solidBoundsAtAlpha128": [
+        71,
+        72,
+        1183,
+        1162
+      ],
+      "centerAlpha": 0
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "gate-stage-3",
+    "category": "gate",
+    "destination": "client/art-src/season-gate-v1/gate-stage-3.png",
+    "prompt": "Use case: precise-object-edit. Image 1 is the same gate's angled concept view. CHANGE THE CAMERA to a STRICT VERTICAL ORTHOGRAPHIC PLAN VIEW suitable for a galaxy-map sprite. Look straight DOWN along the ring axis, perpendicular to the ring plane, at 90 degrees. The outer ring and inner aperture must be PERFECT CIRCLES, not ellipses. No perspective, no isometric tilt, no front-versus-back size difference. The four tall diagonal pylons must be seen from their TOPS ONLY, as small triangular cross-sections on footings; absolutely no long upright tower sides or upright tower silhouettes. This camera requirement has highest priority.\nPreserve the same ivory-and-brass eight-segment ring design, four diagonal anchor pylon footings with short struts, eight dark cylindrical emitters around its inner edge and mild wear. Emitters inactive, tiny cyan running lights only. Center the perfect ring at (627,627) on a 1254 x1254 transparent RGBA square, entire footprint including four diagonal anchor footings fits within x=63..1191,y=63..1191. Truly transparent empty circular aperture and surrounding space. Soft upper-left light, crisp high-end hard-surface game sprite. No ground, shadow plane, outer glow, labels, text or other objects. One fully clad INACTIVE gate. Render its plan-view surfaces, never its concept-art elevation.",
+    "references": [
+      "client/art-src/season-gate-v1/gate-stage-3.png"
+    ],
+    "transparent": true,
+    "expectedSize": [
+      1254,
+      1254
+    ],
+    "dependsOn": "gate-lineup",
+    "stage": 3,
+    "revisionNote": "Correct concept-sheet perspective to strict overhead map view.",
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-b7a04d81-ee03-4cf9-ad28-0c45c99e0863.png",
+    "inspection": {
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "sha256": "c11baedcfd6da772036a8c31ea6bca33ee181f90598eb82fbe5bce22e0d8ae41",
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "alphaBounds": [
+        13,
+        23,
+        1241,
+        1254
+      ],
+      "transparentPixelFraction": 0.5733,
+      "solidBoundsAtAlpha128": [
+        71,
+        73,
+        1182,
+        1163
+      ],
+      "centerAlpha": 0
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22",
+    "referenceSnapshots": [
+      {
+        "usedPath": "client/art-src/season-gate-v1/gate-stage-3.png",
+        "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-dc9a63c7-bd2d-4f7d-acdd-bce90e3944dc.png"
+      }
+    ]
+  },
+  {
+    "id": "gate-stage-4",
+    "category": "gate",
+    "destination": "client/art-src/season-gate-v1/gate-stage-4.png",
+    "prompt": "Use case: precise-object-edit. Asset: one 1254 x1254 transparent RGBA galaxy-map sprite for Stellar Syndicates. Image 1 is the authoritative OVERHEAD MASTER of this exact gate. Preserve its strict orthographic top-down camera, perfect circular footprint, image position, diameter, four diagonal anchor locations, upper-left soft light, ivory-and-brass materials and crisp game-art style. Do not tilt the camera. Do not move or resize the ring. Pylons remain viewed from their small triangular TOPS, never upright towers. Change ONLY the construction state as follows:\nCHARGING. Preserve all solid geometry exactly: eight ivory armor segments, four diagonal pylons, eight cylindrical inner-edge emitters. Turn on all eight emitters with bright CYAN light. Add a THIN, TRANSLUCENT WHITE-GOLD charging film across the entire aperture, gently swirling faint gold strands. This film is visibly transparent and only moderately luminous; no blazing core. All space OUTSIDE the ring stays genuinely transparent. Keep all light confined within the ring.\nThe final output is one complete centered structure, roughly 90% canvas width with equal clear margins, not a sheet or scene. Genuine alpha outside and in all described empty holes, no floor, no shadow plate, no background. No labels, text, UI, grid, border or unrelated ships.",
+    "references": [
+      "client/art-src/season-gate-v1/gate-stage-3.png"
+    ],
+    "transparent": true,
+    "expectedSize": [
+      1254,
+      1254
+    ],
+    "dependsOn": "gate-lineup",
+    "stage": 4,
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-88f1d112-0c0b-4537-ad6d-6c8449e86ac2.png",
+    "inspection": {
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "sha256": "51b41f2e0c2532db2cf5b4ab567836bd06fce992bb017521e41666a85052e134",
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "alphaBounds": [
+        0,
+        9,
+        1253,
+        1254
+      ],
+      "transparentPixelFraction": 0.3294,
+      "solidBoundsAtAlpha128": [
+        68,
+        70,
+        1186,
+        1166
+      ],
+      "centerAlpha": 146
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "gate-stage-5",
+    "category": "gate",
+    "destination": "client/art-src/season-gate-v1/gate-stage-5.png",
+    "prompt": "Use case: precise-object-edit. Asset: one 1254 x1254 transparent RGBA galaxy-map sprite for Stellar Syndicates. Image 1 is the authoritative OVERHEAD MASTER of this exact gate. Preserve its strict orthographic top-down camera, perfect circular footprint, image position, diameter, four diagonal anchor locations, upper-left soft light, ivory-and-brass materials and crisp game-art style. Do not tilt the camera. Do not move or resize the ring. Pylons remain viewed from their small triangular TOPS, never upright towers. Change ONLY the construction state as follows:\nOPEN. Preserve all solid geometry exactly: eight ivory armor segments, four diagonal pylons, eight cylindrical inner-edge emitters. All eight emitters shine CYAN. Fill ONLY the circular aperture with a powerful swirling WHITE-GOLD vortex and a bright white-gold core. The portal is almost white at its center, pale gold at its edge. This aperture is luminous and opaque. ALL space OUTSIDE the ring remains transparent. NO outer glow, outward rays or beams. No purple or violet anywhere.\nThe final output is one complete centered structure, roughly 90% canvas width with equal clear margins, not a sheet or scene. Genuine alpha outside and in all described empty holes, no floor, no shadow plate, no background. No labels, text, UI, grid, border or unrelated ships.",
+    "references": [
+      "client/art-src/season-gate-v1/gate-stage-3.png"
+    ],
+    "transparent": true,
+    "expectedSize": [
+      1254,
+      1254
+    ],
+    "dependsOn": "gate-lineup",
+    "stage": 5,
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-800c4439-f1d2-404f-b9b2-a207e72b877e.png",
+    "inspection": {
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "sha256": "c194e703a1f4f64582688d5cd45ed84e9486410c93140a2b637f53b2efe7e72d",
+      "alphaExtrema": [
+        0,
+        255
+      ],
+      "alphaBounds": [
+        0,
+        7,
+        1246,
+        1254
+      ],
+      "transparentPixelFraction": 0.3488,
+      "solidBoundsAtAlpha128": [
+        70,
+        71,
+        1185,
+        1163
+      ],
+      "centerAlpha": 254
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "pirate-reaver",
+    "category": "pirate",
+    "destination": "client/art-src/npc-ships/pirate-reaver-chroma.png",
+    "prompt": "Use case: stylized-concept.\nAsset type: one production-quality spaceship hull sprite for Stellar Syndicates, a premium space strategy game, on a chroma-key background.\nInput image: Image 1 is an existing pirate hull, attached ONLY as the pirate fleet's style, material and finish reference. Do not copy its silhouette.\nPrimary request: design a NEW pirate warship of the line, clearly heavier and more dangerous than Image 1, that reads as a capital-class threat both as a 40-90 pixel galaxy-map sprite and in a closer view.\nComposition: strict orthographic TOP-DOWN plan view, camera directly overhead; the nose points exactly UP and the engines point DOWN. One complete centred craft on a square 1254 x 1254 canvas. Its length spans about 92% of the canvas height with even margins above the nose and below the engines.\nVisual style: the pirate hull culture of Image 1: blackened gunmetal with layered salvaged plates, rust streaks, rivets, mismatched repair patches in burnt orange and worn mustard, dull bronze piping, amber-lit RECESSED engine mouths with no exhaust plumes. Hard-surface game art, crisp readable large forms, restrained secondary detail, soft upper-left light, strong value separation for a dark navy map.\nBackground: one flat pure chroma green (#00FF00) filling the whole canvas, with no shadows, gradients or green anywhere on the ship.\nConstraints: exactly one craft; no text, numbers, labels, logos, skulls, insignia, watermark, border or UI; no weapons fire, beams or smoke; no recognizable franchise design.\n\nSubject and distinguishing silhouette (takes priority):\nA PIRATE REAVER, destroyer class: a long, narrow armored blade of a hull, about 0.45 width-to-length ratio, built around ONE heavy spinal mass driver whose barrel runs out past the nose. Two short scythe-curved armored fins at mid-hull; one armored sponson on each flank, each with a rack of FOUR torpedo tubes. THREE recessed amber engines across the stern, the middle one set farther back. Patched plating and one long burnt-orange stripe down the port side.",
+    "references": [
+      "client/art-src/npc-ships/pirate-corsair-chroma.png"
+    ],
+    "transparent": false,
+    "expectedSize": [
+      1254,
+      1254
+    ],
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-94670adb-041f-4dff-83b0-a4de7a32699b.png",
+    "inspection": {
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGB",
+      "sha256": "7ad1d16c7f87e89dee6d544d3435d9faa12d51da20fdd1c0f629f490031dffc6"
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "pirate-warbarge",
+    "category": "pirate",
+    "destination": "client/art-src/npc-ships/pirate-warbarge-chroma.png",
+    "prompt": "Use case: precise-object-edit. Image 1 is a complete pirate WARBARGE top-down sprite on chroma green, 1254x1254. Preserve its whole ship silhouette, viewpoint, exact position, size, four recessed amber stern engines, two heavy twin-barrel BOW turrets, central missile cells, off-center bridge and blackened/rust/orange/mustard materials. Make ONE correction: there must be exactly THREE smaller BROADSIDE turrets on EACH side of the hull, for SIX side turrets total, in addition to the two larger bow turrets. Currently there are only two side turrets on each side. Keep those and ADD a third matching small twin-barrel broadside turret lower down on each side on the broad aft armor plates, above the stern engines. Their barrels aim outward sideways. Left-side turrets at approximately y=460,650,860; right-side turrets at the same three y locations. Clearly separate each turret with a gap. Total turrets: two large at bow plus three smaller port plus three smaller starboard. Do not remove, merge or duplicate any other ship part.\nKeep all of the complete craft within the canvas. Background remains flat PURE GREEN #00FF00 everywhere outside the ship, no gradients, shadows, text, symbols, exhaust, beams or smoke. Output one square 1254x1254 RGB PNG.",
+    "references": [
+      "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-bc2cce51-ee6e-4f96-b208-85f24bc33821.png"
+    ],
+    "transparent": false,
+    "expectedSize": [
+      1254,
+      1254
+    ],
+    "revisionNote": "Add the third broadside turret on each flank to match the cruiser armament brief.",
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-b0069654-c625-47c6-8ef5-704966082bea.png",
+    "inspection": {
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGB",
+      "sha256": "a92cdbf125196fef835430a1c2f8228ec5acb9bce34ed911a66d2f48dd3efe54"
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "new-colony",
+    "category": "story",
+    "destination": "client/art-src/story-events-v1/new-colony.png",
+    "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. Strong readable focal point, essential subjects within the central 75% of the frame, comfortable edges for responsive display. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: a corporation's colony ship sets down on a newly chartered world, the start of a second settlement far from home.\nScene/backdrop: a broad rocky plateau on an untouched world at first light, under an unfamiliar sky with a ringed gas giant low on the horizon and one bright distant star (home). Thin mist in the valleys below, sparse hardy vegetation between the rocks.\nSubject: the white colony ship, the same design as in Image 1, a few metres above the ground on final descent. Its landing struts are extended and its downwash raises a ring of dust. Two small survey drones with cyan lights fly ahead of it over the landing zone, and four ground beacons with amber lights mark the zone. One planted pole stands at the plateau's edge with a small plain pennant (no emblem, no text). No people yet.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: cool dawn light with warm amber beacons; quiet, hopeful, the scale of a new beginning.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.",
+    "references": [
+      "client/art-src/founding-intro-v1/first-landing.png"
+    ],
+    "transparent": false,
+    "expectedSize": [
+      1672,
+      941
+    ],
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-451ee5de-6e8e-46d5-b469-fcb1b8072e2d.png",
+    "inspection": {
+      "width": 1672,
+      "height": 941,
+      "mode": "RGB",
+      "sha256": "fd8df18ed859c2c017d1ad185a5554585da48aa2b4f52cf3cafc568e7ad6d705"
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "gate-opens",
+    "category": "story",
+    "destination": "client/art-src/story-events-v1/gate-opens.png",
+    "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. Strong readable focal point, essential subjects within the central 75% of the frame, comfortable edges for responsive display. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: the finished Authority jump gate opens for the first time, near the galaxy's central market hub, ending the season.\nScene/backdrop: deep space near the Authority Nexus: a violet wormhole held in a slim ivory ring sits small in the far background. In the middle distance, several other jump gates stand unfinished at different stages (bare truss arcs, half-clad rings) in a loose field.\nSubject: in the foreground, the finished gate, a large ring of eight ivory-and-brass armored segments with cyan field emitters (as in the Gate lineup, stage 5). Its aperture erupts into a blazing white-gold vortex with a bright core. A broad crowd of starships from many corporations hangs back in a respectful arc, small silhouettes catching the gold light: freighters, escorts and a few heavy warships. The gate's light washes over their hulls.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: awe and triumph; the white-gold aperture is the only strong light, against cool blue darkness.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nREFERENCE ROLES: Image 1 is the painting STYLE reference only, not this scene. Image 2 is the authoritative GATE DESIGN and progression lineup: use its OPEN rightmost stage for the large foreground gate and its unfinished stages for the distant construction field. Give the gate believable dimensional depth and perspective within the cinematic scene. Preserve four external diagonal pylons, eight ivory-and-brass segments, cyan emitters and white-gold aperture. The small distant Nexus alone is violet. Do not reproduce lineup labels or white sheet.",
+    "references": [
+      "client/art-src/founding-intro-v1/first-landing.png",
+      "client/art-src/season-gate-v1/gate-lineup.png"
+    ],
+    "transparent": false,
+    "expectedSize": [
+      1672,
+      941
+    ],
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-56028959-8e55-4987-b044-ca4efe010143.png",
+    "inspection": {
+      "width": 1672,
+      "height": 941,
+      "mode": "RGB",
+      "sha256": "99073ef0b8e50a71e65615ff51204e6b2fb3005119792c63baad3c55b979f8e9"
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22"
+  },
+  {
+    "id": "relics-awaken",
+    "category": "story",
+    "destination": "client/art-src/story-events-v1/relics-awaken.png",
+    "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. Strong readable focal point, essential subjects within the central 75% of the frame, comfortable edges for responsive display. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: the galaxy's exotic nodes awaken as relics, and pirates move to claim them.\nScene/backdrop: a remote star system with a dim red sun. A shattered moonlet drifts in the foreground, its broken interior exposed.\nSubject: inside the moonlet's broken interior, a tall elongated violet crystal relic has just woken, its facets glowing with a cold violet light that lights the jagged rock walls. In the middle distance, three pirate warships in the blackened, rust-patched, orange-striped pirate style, with amber engines, close in from the dark. Their silhouettes are rim-lit violet by the relic.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: ominous and wondrous; violet relic light against the red sun and black space; a contest about to begin.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nREFERENCE ROLES: Image 1 is painting STYLE only. Images 2 and 3 are pirate SHIP DESIGN references only; show three ships in this family in believable scene perspective, not flat top-down sprites, and never copy the green background. The relic and moonlet are the foreground subject, pirates secondary in the middle distance.",
+    "references": [
+      "client/art-src/founding-intro-v1/first-landing.png",
+      "client/art-src/npc-ships/pirate-reaver-chroma.png",
+      "client/art-src/npc-ships/pirate-warbarge-chroma.png"
+    ],
+    "transparent": false,
+    "expectedSize": [
+      1672,
+      941
+    ],
+    "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-92715e94-c898-4ce6-8dbc-30e174469893.png",
+    "inspection": {
+      "width": 1672,
+      "height": 941,
+      "mode": "RGB",
+      "sha256": "62f6cc9caa8191e384b9ac230a8897253fdccc4e8eda6baacee2bcb30aff4feb"
+    },
+    "tool": "image_gen.imagegen",
+    "generatedAt": "2026-10-22",
+    "referenceSnapshots": [
+      {
+        "usedPath": "client/art-src/npc-ships/pirate-warbarge-chroma.png",
+        "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-bc2cce51-ee6e-4f96-b208-85f24bc33821.png"
+      }
+    ]
+  }
+]

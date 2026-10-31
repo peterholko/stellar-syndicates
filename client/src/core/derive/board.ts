@@ -10,7 +10,9 @@ export interface BoardSummary {
   day: number;
   done: number;
   needed: number;
-  bonus: number;
+  /** §standing-ladder (R3): the bonus's standing and dossier fraction. */
+  bonusStanding: number;
+  bonusDossier: number;
   bonusPaid: boolean;
   /// Until the next day's contracts.
   nextIn: number;
@@ -26,12 +28,20 @@ export function boardSummary(st: ViewState, now = st.simTime): BoardSummary | nu
   if (!b) return null;
   const contracts = st.operations.filter((o) => o.board_day === b.day)
     .sort((x, y) => (ORDER[x.state] ?? 3) - (ORDER[y.state] ?? 3) || String(x.id).localeCompare(String(y.id), undefined, { numeric: true }));
-  return { day: b.day, done: b.done, needed: b.needed, bonus: b.bonus_credits, bonusPaid: b.bonus_paid,
+  return { day: b.day, done: b.done, needed: b.needed, bonusStanding: b.bonus_standing, bonusDossier: b.bonus_dossier, bonusPaid: b.bonus_paid,
     nextIn: Math.max(0, b.next_at - now), contracts };
 }
 
-/** "2/3 for +1,000 Cr · new in 6h 20m". */
+/** "2/3 for +3 standing · 5% research · new in 6h 20m". */
 export function boardLine(s: BoardSummary): string {
-  const bonus = s.bonusPaid ? "Bonus paid" : `${Math.min(s.done, s.needed)}/${s.needed} for +${fmt(s.bonus)} Cr`;
+  const bonus = s.bonusPaid ? "Bonus paid" : `${Math.min(s.done, s.needed)}/${s.needed} for ${serviceReward(s.bonusStanding, s.bonusDossier)}`;
   return `${bonus} · new in ${fmtDays(s.nextIn)}`;
+}
+
+/** §standing-ladder (R3): "+3 standing · 5% research". */
+export function serviceReward(standing: number, research: number): string {
+  const parts = [];
+  if (standing > 0) parts.push(`+${fmt(standing)} standing`);
+  if (research > 0) parts.push(`${Math.round(research * 100)}% research`);
+  return parts.join(" · ");
 }

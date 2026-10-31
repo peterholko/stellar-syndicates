@@ -1,0 +1,36 @@
+Tool: built-in imagegen
+Purpose: Six-view wormhole hub concept reference for 3D modeling.
+Source: /Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-1987174b-63fc-4cb1-ad12-bac907cc1a13.png
+Modeling note: Depth and previously unseen surfaces are inferred. The image is a concept reference; projection alignment and final dimensions should be established in the 3D model.
+
+INITIAL PROMPT
+Use case: stylized-concept.
+Create a NEW orthographic engineering art reference sheet of the wormhole hub shown in the supplied image, suitable for a 3D modeler. The supplied image defines the front appearance and architecture. Preserve it faithfully.
+
+Use a standard UNFOLDED TECHNICAL DRAWING LAYOUT on one wide landscape canvas, not a grid of six panels:
+- The MIDDLE HORIZONTAL ROW contains, from left to right: LEFT SIDE, FRONT, RIGHT SIDE, BACK.
+- All FOUR of those middle-row views have exactly the same full antenna-tip-to-tip HEIGHT, with their topmost and bottommost points horizontally aligned. The FRONT and BACK are equally sized circles with the same towers and docking arms. LEFT SIDE and RIGHT SIDE are equally tall narrow edge profiles, approximately one eighth of the front's width.
+- TOP is a narrow horizontal edge profile placed DIRECTLY ABOVE FRONT, with exactly the same full docking-arm-tip-to-tip WIDTH as FRONT.
+- BOTTOM is a narrow horizontal edge profile placed DIRECTLY BELOW FRONT, also with exactly the same full WIDTH as FRONT.
+Use generous clear spacing, and subtle thin gray horizontal alignment guides through the upper and lower extremities of the four middle-row views. This is one shared drafting space, not independently scaled thumbnails or separate unequal panels. The whole sheet uses ONE COMMON SCALE.
+Place the six simple uppercase labels FRONT, BACK, TOP, BOTTOM, LEFT SIDE, RIGHT SIDE beside their respective views. No other text or measurements.
+
+Projection: the ring's plane is vertical. FRONT and BACK are true circular face-on orthographic elevations. TOP and BOTTOM look down/up along the reference's vertical tower axis, showing the shallow thickness of the ring as horizontal edge elevations. LEFT SIDE and RIGHT SIDE show the ring edge-on as vertical elevations. No perspective, no foreshortening, no three-quarter view. Do not show a circular or elliptical portal in any edge-on view.
+Keep the same three parallel tall spire assemblies, long left and right docking arms, four cardinal blue emitters, concentric ring rails, segmented pale steel panels and fine antenna details. Extend the hidden architecture plausibly into a shallow industrial annulus, roughly one tenth of the ring diameter in axial depth. Both side profiles must be mirror-consistent in shape and size. Rear details must match all front attachment positions. Do not add any towers or structures.
+Color and finish: detailed crisp 2D technical concept illustration, dark gunmetal, steel gray, warm brass accents, amber running lights and controlled cyan-blue energy, on a clean near-white background. Preserve the swirling blue portal in FRONT and BACK only, with low bloom so metal boundaries stay readable. Flat neutral lighting, clean outlines and light form shading. No cast shadows, space scenery, planets, ships, dramatic effects, title, watermark, or additional views.
+The primary priority is correct identical scale and genuine orthographic projections of this one hub. Keep all six views fully within the canvas.
+
+FINAL GEOMETRY REFINEMENT PROMPT
+Use case: precise-object-edit.
+Input image 1: the unfolded six-view wormhole hub reference sheet to correct.
+Input image 2: the original front-facing design, which has the correct circular ring and correct front proportions.
+
+Make a final geometry correction to image 1. Keep its same overall layout, six labeled views, background, rendering style, row alignment, and equal heights of FRONT, BACK, LEFT SIDE and RIGHT SIDE. Keep the existing overall canvas dimensions.
+
+The FRONT and BACK in image 1 have been stretched too wide horizontally. Correct them to match image 2: each ring must be a geometrically true CIRCLE with equal outer width and height, not a horizontal oval. Narrow these two whole face-on views horizontally as needed, preserving their current total heights. Their full silhouettes including the docking arms and upper/lower spires should be approximately square, as in image 2. Both face-on views should have exactly the same corrected dimensions. Do not increase the image height or shorten the side profiles.
+
+Then resize TOP and BOTTOM uniformly so their full horizontal docking-arm span EXACTLY matches the corrected FRONT docking-arm span. Center TOP and BOTTOM directly above and below FRONT. Keep their mechanical thickness shallow and their true horizontal edge-on projections. Keep LEFT SIDE and RIGHT SIDE as equally tall narrow vertical edge profiles.
+
+Preserve the station design, architecture and palette, all labels, the subtle horizontal alignment lines, and every structural attachment. Front and rear use the same geometry. Do not add details, objects, arrows, measurements, text, or scenery. The six views should read as correctly proportioned orthographic projections of one hub.
+Output the corrected complete sheet.
+

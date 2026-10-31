@@ -7,7 +7,11 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&
 
 /** Gold, silver and bronze counts as chips; nothing when there are none. */
 export function medalChipsHtml(row: RankingRow): string {
-  const [g, s, b] = medalTotals(row);
+  return medalCountsHtml(medalTotals(row));
+}
+
+/** Chips for [gold, silver, bronze] counts; nothing when all are zero. */
+export function medalCountsHtml([g, s, b]: readonly number[]): string {
   if (!g && !s && !b) return "";
   const chip = (kind: string, n: number) => n ? `<i class="medal is-${kind}">${n}</i>` : "";
   return `<span class="medals" title="Weekly medals: ${g} gold, ${s} silver, ${b} bronze">${chip("gold", g)}${chip("silver", s)}${chip("bronze", b)}</span>`;

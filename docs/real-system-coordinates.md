@@ -1,7 +1,9 @@
 # Real coordinates inside star systems
 
-Status: design note, third revision Oct 20 2026 after Peter's review. Nothing
-built.
+Status: built Oct 20 2026 (all four phases), uncommitted on `main` after the
+`pre-real-coordinates` tag. Protocol v56; :8080 reset on it with the dev
+Interceptor. "As built" at the end lists where the build differs from this
+note.
 
 Peter (Oct 20 2026): a ship's position didn't line up between the galaxy map
 and the System View; asked for "actually have coordinates on the star system
@@ -123,3 +125,52 @@ orbit beside their worlds stay; and no ship stops at a star's centre.
 3. Server and client: orbits on the wire, true scale in both views, the
    handoff, the berth bug.
 4. Reset :8080 (with the dev Interceptor) and update the docs.
+
+## As built (Oct 20 2026)
+
+Code: `crates/sim/src/body.rs` (`Orbit`, `layout_orbits`, `SYSTEM_UNIT_SU`),
+`crates/sim/src/orbits.rs` (positions, main/berth/defended world, `AtWorld`),
+`crates/sim/src/world/real_coordinates.rs` (where each fleet goes, steering,
+riding, settling), `client/src/systemlayout.ts` (`bodyOffset`, `worldAt`,
+`trueRadius`), `systemtraffic.ts`, `systemtrafficlayer.ts` (`ringSlot`),
+`render.ts` (`previewScale`, `diveTilt`, `nearStarPlacement`,
+`restingRingOffset`).
+
+- **Layout.** The sim's layout is the client's old `buildVisualSystem`, bit for
+  bit (checked on 156 values across 8 systems; pinned in
+  `the_layout_is_the_system_views`). It runs after generation and on every
+  load. The client uses the served orbits and periods, keeping its own draw as
+  the fallback; a rocky world with a founding camp still makes its look draw.
+- **Steering.** An order whose point is exactly a star's position means that
+  system (`spot_for`). Outside the well the fleet aims at the star, so a
+  turning world can't pull a warp course off its lock; inside, at its spot's
+  position at the end of the step. The order keeps naming the star.
+- **Riding.** Arriving sets `Fleet.at_world`; an idle fleet with one is moved
+  with its world each tick (vel 0, no fuel, no light-years). A fleet the world
+  has left behind in the well (it held through a fight) flies back; one moved
+  out of the system drops it.
+- **Settling.** Only a fleet idle exactly at a star (a new hull, a refit, a
+  spawned pack) is placed at its spot at once. A player's move order to any
+  point inside a well means the system.
+- **In port.** Orders to a fleet anywhere in its Command Center's well arrive
+  at once, as they did at the star (light inside a well is under half a
+  second anyway).
+- **Rules.** Docked = at rest in the well (Hub: 260 su). Merges, joins, refit
+  rejoin, landings and colony claims: in the same well, at rest. Blockade
+  station: within 140 su of the besieged (main) world; run zone = the well
+  (900 su); standoff ring 1,200 su; establishment fights open at the
+  blockaders. Pirate base radius = the base's well. Battles also draw in
+  warships at rest anywhere in the well. A corvette at rest in a system covers
+  1,300 su from its star. Salvage and prize recovery: anywhere in the well.
+  Survey: within 120 su of the main world. Freight ports, outposts, skimming,
+  mining, prospecting and station anchoring: arrived at their spot
+  (`fleet_at_spot`/`fleet_at_dock`).
+- **Client.** True scale in both views. Docked hulls moor in a ring about the
+  world they are at; fleets at rest at another world ring it (cordon), in the
+  same slot on the galaxy map over the dive; fights are drawn where they are
+  fought. The "E29"/"29" id mismatch is fixed in `render.ts` and
+  `core/mapclick.ts`.
+- **Not done.** A route line's last leg still ends at the star; bots weren't
+  re-tuned (their tests and the charter test pass). The galaxy preview draws
+  no moons or belts, by choice (Peter, Oct 20 2026: not needed there).
+

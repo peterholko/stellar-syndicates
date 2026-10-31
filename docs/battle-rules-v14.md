@@ -12,7 +12,10 @@ open space is fought exactly as under v13, to the bit.
 ## In battle
 
 - **The world.** It stands in the arena 900 su behind the side that holds
-  the system, and its radius is 260. That is the defenders at their own
+  the system, and its radius is 260. A system of belts alone (a pirate
+  den's) has none since Oct 29 2026: its battles stand in the asteroid field,
+  and the theater draws the belt's rocks and its distant star
+  (`battle_world_side`, the estimate's `world_side`, `battlebackdrop.ts`). That is the defenders at their own
   system, and also the defenders at an unclaimed system or a third party's.
   It is the attackers when a fleet is attacked inside the attacker's own
   system. The world is terrain. Hulls steer around it and never enter it, and

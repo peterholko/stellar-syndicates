@@ -117,6 +117,18 @@ export function clearPendingIntent(preserveReadout = false): void {
   emitIntentChanged({ renderIntentBar: true, readout: readoutHtml });
 }
 
+/** Let go of the selected fleets and anything aimed from them. A world taking
+ * the System View's selection calls it: one selection there (Peter, Oct 21 2026). */
+export function deselectFleets(): void {
+  clearPendingIntent(true);
+  clearJumpAiming(true);
+  clearGuardAiming(true);
+  state.selectedOrderId = null;
+  state.selectedShipId = null;
+  state.selectedShipIds.clear();
+  renderer.stateVersion++;
+}
+
 function previewReadout(intent: PendingIntent): string {
   const target = intentTargetLabel(intent);
   const ship = state.ghosts.find((ghost) => ghost.id === intent.shipId && ghost.own);
@@ -297,10 +309,14 @@ export function confirmPendingIntent(): void {
     case "blockade": {
       if (!intent.targetId) break;
       const system = state.galaxy?.systems.find((candidate) => candidate.id === intent.targetId);
-      net.send({ type: "BlockadeSystem", fleet_id: ship.id, system_id: intent.targetId });
+      net.send({ type: "BlockadeSystem", fleet_id: ship.id, system_id: intent.targetId, ...(intent.raid ? { raid: true } : {}),
+        ...(intent.raid && intent.repeat ? { repeat: true } : {}) });
       delete state.orders[ship.id];
-      readoutHtml =
-        `Blockade ordered: your fleet → <b>${esc(system?.name ?? "target system")}</b>. ` +
+      readoutHtml = intent.raid && intent.repeat
+        ? `Repeating raid ordered → <b>${esc(system?.name ?? "target system")}</b>. Loads until full, comes home, goes again.`
+        : intent.raid
+        ? `Raid ordered → <b>${esc(system?.name ?? "target system")}</b>. Loads until full, then comes home.`
+        : `Blockade ordered: your fleet → <b>${esc(system?.name ?? "target system")}</b>. ` +
         `The order travels at light speed; on station it fights the system's defenses, then cuts its logistics. ` +
         `<span class="dim">Lift blockade (fleet panel) brings it home.</span>`;
       break;

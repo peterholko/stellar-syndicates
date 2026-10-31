@@ -1,0 +1,45 @@
+{
+  "id": "gate-stage-1",
+  "category": "gate",
+  "destination": "client/art-src/season-gate-v1/gate-stage-1.png",
+  "prompt": "Use case: precise-object-edit. Image 1 is the EDIT TARGET: foundation-stage overhead map sprite. Image 2 is a REFERENCE for the locations and appearance of FOUR diagonal anchor pylons. Make ONE precise correction to Image 1: ADD the two missing detached anchor pylons on the RIGHT, at the same top-right and bottom-right positions as Image 2. Each added anchor is a small ivory-and-brass triangular pylon top and footing with a short inward-pointing connection strut, floating by itself with no ring attached. The top-right anchor matches Image2 at about (1080,160) and the bottom-right anchor matches Image2 at about (1080,1060), on a 1254-square canvas. Total: exactly FOUR complete diagonal anchor pylons, two already attached to the left half-ring and two detached on the empty right half.\nKeep Image 1's left skeletal HALF-RING, single tender at its top end, truss details, camera, scale, position, light and materials unchanged. Do NOT add any ring segments on the right. Do NOT turn this into a full ring. Do NOT add emitters or armor to the truss. The unfinished center and missing right half are truly transparent. Preserve real RGBA transparency, strict overhead view, 1254x1254 canvas. No new objects except the two right anchors, no text, no background.",
+  "references": [
+    "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-68819f3d-281d-4464-af61-8989f3adbe89.png",
+    "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-b7a04d81-ee03-4cf9-ad28-0c45c99e0863.png"
+  ],
+  "transparent": true,
+  "expectedSize": [
+    1254,
+    1254
+  ],
+  "dependsOn": "gate-lineup",
+  "stage": 1,
+  "revisionNote": "Restore the two detached right anchors, keeping the half-ring construction stage.",
+  "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-b305ee59-2b43-4fae-9608-c812ff7c1411.png",
+  "inspection": {
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "sha256": "b6834228521ebf8b9114a29c98755af6aaa83a24d8f269f45ecd52e6726bd4fc",
+    "alphaExtrema": [
+      0,
+      255
+    ],
+    "alphaBounds": [
+      33,
+      30,
+      1236,
+      1254
+    ],
+    "transparentPixelFraction": 0.7885,
+    "solidBoundsAtAlpha128": [
+      78,
+      83,
+      1181,
+      1156
+    ],
+    "centerAlpha": 0
+  },
+  "tool": "image_gen.imagegen",
+  "generatedAt": "2026-10-22"
+}

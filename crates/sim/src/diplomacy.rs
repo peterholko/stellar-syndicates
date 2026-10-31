@@ -3,7 +3,7 @@
 //! Diplomacy is ground-truth policy plus a separate, light-delayed known picture.
 //! A declaration never grants an FTL alert: the target learns it after the
 //! command-center-to-command-center wavefront, and territorial war cannot begin
-//! before that notice plus [`WAR_NOTICE_GRACE_S`]. Mutual treaties take effect
+//! before that notice plus `SimConfig::war_notice_secs`. Mutual treaties take effect
 //! when accepted because both parties consent; the acceptor's response still
 //! travels back before the proposer sees it in their panel.
 
@@ -11,16 +11,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::PlayerId;
 
-/// Playtest notice window after a declaration reaches its target. Production
-/// pacing can lengthen this without changing the mechanic.
-pub const WAR_NOTICE_GRACE_S: f64 = 60.0;
+/// The notice window after a declaration reaches its target: the default for
+/// `SimConfig::war_notice_secs` (§async-clocks R4: hours, so a defender who
+/// checks in a few times a day sees the war coming).
+pub const WAR_NOTICE_GRACE_S: f64 = 2.0 * 3600.0;
 /// Treaty proposals expire so an ancient offer cannot be accepted after the
 /// strategic picture that produced it has disappeared.
 pub const TREATY_OFFER_LIFETIME_S: f64 = 15.0 * 60.0;
 /// Former syndicate members cannot attack one another during separation.
 pub const SYNDICATE_SEPARATION_S: f64 = 5.0 * 60.0;
-/// A right of reprisal created by neutral-space aggression.
-pub const REPRISAL_S: f64 = 10.0 * 60.0;
+/// A right of reprisal created by neutral-space aggression: the default for
+/// `SimConfig::reprisal_secs` (§async-clocks R4: long enough for an absent
+/// victim to answer).
+pub const REPRISAL_S: f64 = 12.0 * 3600.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]

@@ -1,0 +1,44 @@
+{
+  "id": "pirate-vendetta",
+  "category": "story",
+  "destination": "client/art-src/story-events-v1/pirate-vendetta.png",
+  "prompt": "Use case: illustration-story\nAsset type: one cinematic story-event illustration for Stellar Syndicates, a space colony strategy game, opaque 1672 x 941 pixels. It opens the tutorial's final battle: a pirate warlord comes to avenge his nephew.\nInput image 1: LOCATION and STYLE reference, the game's earlier painting of a pirate raid on this colony. Keep the same colony and landscape: the white colony ship, the domed habitats, the solar fields, the mountains and the large moon in the sky. Match its realistic cinematic painting style and finish. It is now night.\nInput image 2: the pirate CORSAIR design: long dagger nose, swept crescent wings, three aft engines, dark gunmetal hull with rust-orange patch plates. This is the warlord's flagship, far larger than the raider in Image 1. Never include the white reference sheet, its views or its labels.\nInput image 3: the colony's INTERCEPTOR design: white and pale grey hull, twin engines, dark wingtips with cyan lights. These are the defenders. Use only the spacecraft design; never include the white reference sheet, multiple diagram views or labels.\nComposition: the corsair drops out of the night sky over the colony, upper center-right, huge and menacing, engines glowing orange, with three smaller pirate raiders in the same rust-orange and gunmetal livery fanned out around it. Lower left, two interceptors lift off from the colony's pad and climb toward it, their engine trails curving upward. Below, the colony is on alert: amber warning beacons, floodlights sweeping the sky, colonists hurrying to shelter. Keep the corsair, the raiders and the interceptors large and readable in a small pop-up, never tiny distant dots.\nLighting/mood: night; cold blue moonlight, warm amber colony lights, the corsair's orange engines and red running lights; tense, the moment before the fight.\nConstraints: exactly one Corsair flagship, three smaller pirate raiders and two defending Interceptors. No weapons fire, explosions or debris yet; no text, captions, numbers, logos, interface, watermark or border. Exactly one finished wide landscape image.",
+  "references": [
+    "client/art-src/story-events-v1/pirate-raid.png",
+    "client/art-src/pirate-corsair-reference-v1/pirate-corsair-reference.png",
+    "client/art-src/interceptor-reference-v1/interceptor-reference.png"
+  ],
+  "transparent": false,
+  "expectedSize": [
+    1672,
+    941
+  ],
+  "tool": "image_gen.imagegen",
+  "generatedAt": "2026-10-25",
+  "referenceSnapshots": [
+    {
+      "file": "client/art-src/story-events-v1/pirate-raid.png",
+      "sha256": "48a9847a742686c5a1c82fae613605ea5ba7c1b393cd0eab35340e7859b90167"
+    },
+    {
+      "file": "client/art-src/pirate-corsair-reference-v1/pirate-corsair-reference.png",
+      "sha256": "f4854f8ed987dd32c41f0a2600a1ec7467126920c68ee08ac5d7e8fa8a322455"
+    },
+    {
+      "file": "client/art-src/interceptor-reference-v1/interceptor-reference.png",
+      "sha256": "0a375a4b41ce77cda1d5ec8284e66bf120cbf92cc55d16f5752b0ec618224152"
+    }
+  ],
+  "generatedSource": "/Users/peter/.codex/generated_images/01a1752b-59f7-70e1-8aaa-53c7de10e237/exec-caf67e47-7f04-49e5-81e7-644b48731900.png",
+  "inspection": {
+    "width": 1672,
+    "height": 941,
+    "bytes": 2591661,
+    "sha256": "238e3d066aae89568055a7a3133d30a75319c63fa9c39107b0d11d5d46693cd4",
+    "visualReview": "One large Corsair, three smaller pirate ships and two white Interceptors; recognizable moon, mountains, colony ship, habitats and solar arrays at night; no weapons fire, explosions, text or reference-sheet elements.",
+    "opaque": true,
+    "channels": 3,
+    "decoded": true
+  },
+  "processing": "Copied native image bytes; no resize, crop or upscale."
+}

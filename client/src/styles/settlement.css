@@ -9,6 +9,9 @@
 .settlement-story-header small { display: block; letter-spacing: .16em; font-size: 11px; color: #b4ddea; }
 .settlement-story-header span { display: block; color: #8da4b5; font-size: 12px; margin-top: 6px; }
 .settlement-story-header button { background: transparent; border-color: transparent; font-size: 13px; }
+/* §season: the broadcast telling the story, by its emblem. */
+.story-source { display: flex; align-items: center; gap: 10px; }
+.story-source img { flex: none; width: 32px; height: 32px; }
 .settlement-story-frame { margin: 0; background: #050b12; border-block: 1px solid #223647; }
 .settlement-story-image { display: block; width: 100%; height: auto; max-height: 50dvh; object-fit: contain; }
 .settlement-dialog .settlement-story-caption { padding-bottom: 12px; }
@@ -20,15 +23,12 @@
 .settlement-hero small { color: #b4ddea; letter-spacing: .16em; }
 .settlement-dialog h1 { font-size: clamp(26px, 3vw, 42px); margin: 18px 0; line-height: 1.1; }
 .settlement-hero span, .settlement-muted, .settlement-dialog small { color: #a4b7c5; }
+.settlement-invite { margin: 0 0 12px; padding: 8px 12px; border: 1px solid rgba(120, 220, 160, .35); border-radius: 8px; background: rgba(120, 220, 160, .07); }
+.settlement-invite.is-refused { border-color: rgba(255, 180, 84, .35); background: rgba(255, 180, 84, .07); }
 .settlement-content { padding: 20px 36px 28px; }
 .settlement-content p { line-height: 1.6; }
 .settlement-content footer { display: flex; justify-content: space-between; gap: 12px; margin-top: 20px; position: sticky; bottom: -28px; padding: 14px 0; background: #0b141ef5; }
 .settlement-content header > button { float: right; font-size: 24px; }
-.settlement-choices { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin: 24px 0; }
-.settlement-choices button { text-align: left; padding: 0 0 18px; overflow: hidden; }
-.settlement-choices button[aria-pressed="true"] { border-color: #a2e5f7; box-shadow: 0 0 0 2px #67b9cd; background: #17313e; }
-.settlement-choices img { width: 100%; height: 115px; object-fit: cover; }
-.settlement-choices b, .settlement-choices span, .settlement-choices small { display: block; margin: 12px 16px 0; line-height: 1.45; }
 .settlement-kit { display: flex; gap: 24px; align-items: center; margin: 20px 0; }
 .settlement-kit img { width: 80px; height: 80px; object-fit: contain; }
 .settlement-projects { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -45,10 +45,10 @@
   .settlement-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
   .settlement-story-header { padding: 12px 16px; gap: 8px; }
   .settlement-story-header small { font-size: 10px; letter-spacing: .12em; }
+  .story-source img { width: 26px; height: 26px; }
   .settlement-hero { padding: 30px 20px 20px; }
   .settlement-content { padding: 16px 20px; }
-  .settlement-choices, .settlement-projects { grid-template-columns: 1fr; }
-  .settlement-choices img { height: 90px; }
+  .settlement-projects { grid-template-columns: 1fr; }
 }
 /* §charter-v4: story event pop-ups reuse the prologue's slide. */
 .story-event { width: min(860px, calc(100vw - 32px)); }
@@ -57,3 +57,14 @@
 .story-event .settlement-story-frame.is-icon { height: min(50dvh, calc(min(860px, 100vw - 32px) * 941 / 1672)); display: grid; place-items: center; background: radial-gradient(circle, #5c1f1f 0, #050b12 38%); }
 .story-event .settlement-story-frame.is-icon img { width: 128px; height: 128px; max-height: none; aspect-ratio: auto; }
 .story-event .settlement-story-caption footer { justify-content: flex-end; }
+/* §vendetta: a pirate's transmission: face, name, line. */
+.story-transmission { display: flex; align-items: center; gap: 16px; margin: 0 0 14px; }
+.story-transmission img { flex: none; width: 104px; height: 104px; border-radius: 14px; border: 2px solid #c46c34; object-fit: cover; background: #050b12; }
+.story-transmission.is-alone img { width: 156px; height: 156px; }
+.story-transmission strong { display: block; color: #e8965a; font-size: 18px; margin-bottom: 4px; }
+.story-transmission q { display: block; font-size: 17px; line-height: 1.4; color: #dce0e8; }
+.story-transmission + p { color: #a0a8b6; font-size: 14px; }
+@media (max-width: 560px) {
+  .story-transmission img, .story-transmission.is-alone img { width: 80px; height: 80px; }
+  .story-transmission q { font-size: 15px; }
+}

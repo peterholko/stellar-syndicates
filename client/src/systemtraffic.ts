@@ -6,17 +6,17 @@
 // battles, records, the system report). It adds no knowledge: every fleet here
 // is a ghost the galaxy map could already draw, every battle a marker it could
 // already show, every siege fact a field the server only sends to the two
-// participants. What it decides is purely presentational:
+// participants. §real-coordinates: the sim puts every ship at a system at one
+// of its worlds, so the picture reads where each one really is:
 //
-//   * BERTH   — a fleet berthed at this system parks beside the world hosting
-//               the facility it uses; the free trader beside the home world
-//               it serves (systemlayout.fleetBerth).
-//   * NEAR    — a fleet under way in the star's near zone keeps its true
-//               bearing and distance, drawn to scale outside the orbits.
-//   * CORDON  — a hostile fleet loitering at the system rings the world it
-//               threatens (and draws the blockade there when one is served).
-//   * BATTLE  — participants of a battle at this star face each other at the
-//               battle's anchor.
+//   * BERTH   — a fleet berthed at this system is moored in the ring around
+//               the world it is at.
+//   * CORDON  — a fleet at rest at a world it isn't berthed at (a visitor, a
+//               blockader, a raider) rings that world, facing it.
+//   * NEAR    — a fleet under way in the star's near zone, at its true
+//               bearing and distance, to scale.
+//   * BATTLE  — participants of a battle at this star face each other where
+//               it is being fought.
 //   * INBOUND — a contact beyond the near zone closing on the star becomes an
 //               edge arrow with its served-motion ETA.
 //   * OUTBOUND— a contact that has just left the near zone, by its served
@@ -30,11 +30,11 @@ import type {
 import { battleRecordMarkKey } from "./battlehistory";
 import { blockadeBadge, siegeClock } from "./core/derive/blockade";
 import {
-  DOCK_RADIUS_SU, NEAR_ZONE_SU, PLATFORM_COVER_SU, defendedWorld, fleetBerth, pictureAge, siegeTarget,
-  type AnchorBody,
+  DOCK_RADIUS_SU, NEAR_ZONE_SU, fleetBerth, pictureAge, siegeTarget, worldAt, type AnchorBody,
 } from "./systemlayout";
 
-/** Where something is drawn: beside a world, in the near zone, or at the star. */
+/** Where something is drawn: beside a world, at a true place in the near
+ * zone, or at the star. */
 export type PictureAnchor =
   | { kind: "body"; body: number }
   | { kind: "near"; distance: number; bearing: number }
@@ -45,8 +45,8 @@ export type FleetPlacement =
   | { mode: "cordon"; body: number | null; slot: number; slots: number }
   | { mode: "near"; distance: number; bearing: number }
   /** §belts: your station anchored at a belt, and your barges working it,
-   *  sit on that belt's band. */
-  | { mode: "belt"; body: number; slot: number; slots: number }
+   *  sit on that belt's band, around where they really are on it. */
+  | { mode: "belt"; body: number; slot: number; slots: number; bearing: number }
   | { mode: "battle"; battle: string; side: 0 | 1; slot: number; slots: number }
   | { mode: "inbound"; bearing: number; eta: number | null }
   /** `to`/`eta`: an own fleet's flight-plan destination and arrival, if known. */
@@ -130,11 +130,6 @@ export interface SystemPictureInput {
   places?: readonly { name: string; pos: Vec2 }[];
 }
 
-/** A contact closer than this (and not berthed) is AT the star: cordon/orbit. */
-const LOITER_SU = DOCK_RADIUS_SU * 1.6;
-/** A battle inside the defenses' reach is fought in the star's orbit, at the
- * defended world; a fight tagged to this star beyond it sits at the zone's edge. */
-const ORBITAL_BATTLE_SU = PLATFORM_COVER_SU;
 /** Hulls a world always draws individually (the System View's smallest cap). */
 const ALWAYS_DRAWN = 3;
 /** Edge arrows only for fleets within this of the star (a plain distance: the
@@ -164,6 +159,20 @@ export function fleetTone(g: GhostView): FleetTone {
 function headingOf(g: GhostView): number | null {
   const speed = Math.hypot(g.vel.x, g.vel.y);
   return speed > 0.5 ? Math.atan2(g.vel.y, g.vel.x) : null;
+}
+
+/** §raid-camera: the tracked fleet drawn where it really is, however far out.
+ * The picture keeps hulls only within the near zone (an arrow beyond); the
+ * tracking scene follows one fleet anywhere, selected. */
+export function trackedHull(picture: SystemPicture, g: GhostView, star: { x: number; y: number }): SystemPicture {
+  const drawn = picture.fleets.find((f) => f.id === g.id);
+  if (drawn && drawn.placement.mode !== "inbound" && drawn.placement.mode !== "outbound") return picture;
+  const tone = fleetTone(g);
+  const placed: PictureFleet = {
+    id: g.id, ghost: g, tone, hostile: tone === "rival" || tone === "pirate", heading: headingOf(g), selected: true,
+    placement: { mode: "near", distance: Math.hypot(g.pos.x - star.x, g.pos.y - star.y), bearing: Math.atan2(g.pos.y - star.y, g.pos.x - star.x) },
+  };
+  return { ...picture, fleets: [...picture.fleets.filter((f) => f.id !== g.id), placed] };
 }
 
 function anchorBodies(dynamic: SystemStateView | undefined): AnchorBody[] {
@@ -232,16 +241,12 @@ function battleIntensity(rec: BattleRecordView | undefined): number {
   return Math.min(1, 0.45 + (dealt > 0 ? 0.25 : 0) + Math.min(0.3, kills * 0.15));
 }
 
-/** Where a fight at (or near) this star is drawn. */
-function battleAnchor(pos: Vec2, star: Vec2, bodies: AnchorBody[], besieged: boolean): PictureAnchor {
+/** Where a fight at (or near) this star is drawn: where it is being fought
+ * (it stays there while its world turns on). */
+function battleAnchor(pos: Vec2, star: Vec2): PictureAnchor {
   const dx = pos.x - star.x;
   const dy = pos.y - star.y;
-  const distance = Math.hypot(dx, dy);
-  if (distance <= ORBITAL_BATTLE_SU) {
-    const body = besieged ? siegeTarget(bodies) : defendedWorld(bodies);
-    return body === null ? { kind: "star" } : { kind: "body", body };
-  }
-  return { kind: "near", distance, bearing: Math.atan2(dy, dx) };
+  return { kind: "near", distance: Math.hypot(dx, dy), bearing: Math.atan2(dy, dx) };
 }
 
 function seedOf(id: string): number {
@@ -271,6 +276,10 @@ export function deriveSystemPicture(input: SystemPictureInput): SystemPicture {
   const { system, dynamic, galaxy } = input;
   const star = system.pos;
   const bodies = anchorBodies(dynamic);
+  const served = dynamic?.bodies ?? [];
+  // The world a fleet is at, at its own sighting's time (it rides that world).
+  const atWorld = (g: GhostView): number | null =>
+    Math.hypot(g.vel.x, g.vel.y) > 1 ? null : worldAt(served, star, g.pos, input.simTime - g.age);
   const blockade = dynamic?.blockade ?? null;
   const near = (pos: Vec2, radius: number) => Math.hypot(pos.x - star.x, pos.y - star.y) <= radius;
 
@@ -287,7 +296,7 @@ export function deriveSystemPicture(input: SystemPictureInput): SystemPicture {
     if (concluded.has(b.id) || !atThisStar(b.id, b.pos)) continue;
     liveIds.add(b.id);
     battles.push({
-      id: b.id, live: true, anchor: battleAnchor(b.pos, star, bodies, !!blockade), own: b.own,
+      id: b.id, live: true, anchor: battleAnchor(b.pos, star), own: b.own,
       intensity: battleIntensity(recordById.get(b.id)), age: b.age,
       selected: input.selectedBattleId === b.id,
     });
@@ -296,7 +305,7 @@ export function deriveSystemPicture(input: SystemPictureInput): SystemPicture {
     if (rec.outcome !== null || liveIds.has(rec.id) || !atThisStar(rec.id, rec.pos)) continue;
     liveIds.add(rec.id);
     battles.push({
-      id: rec.id, live: true, anchor: battleAnchor(rec.pos, star, bodies, !!blockade), own: rec.own_side !== null,
+      id: rec.id, live: true, anchor: battleAnchor(rec.pos, star), own: rec.own_side !== null,
       intensity: battleIntensity(rec), age: null, selected: input.selectedBattleId === rec.id,
     });
   }
@@ -306,7 +315,7 @@ export function deriveSystemPicture(input: SystemPictureInput): SystemPicture {
     .filter((rec) => rec.outcome !== null && !liveIds.has(rec.id) && atThisStar(rec.id, rec.pos)
       && !input.battleDismissed.has(battleRecordMarkKey(rec.id)))
     .map((rec) => ({
-      id: rec.id, anchor: battleAnchor(rec.pos, star, bodies, false), seed: seedOf(rec.id),
+      id: rec.id, anchor: battleAnchor(rec.pos, star), seed: seedOf(rec.id),
       selected: input.selectedBattleId === rec.id,
     }));
 
@@ -332,26 +341,26 @@ export function deriveSystemPicture(input: SystemPictureInput): SystemPicture {
       fleets.push({ ...base, placement: { mode: "battle", battle, side, slot: 0, slots: 1 } });
       continue;
     }
+    const dx = g.pos.x - star.x;
+    const dy = g.pos.y - star.y;
+    const distance = Math.hypot(dx, dy);
+    const bearing = Math.atan2(dy, dx);
     if (dockedHere(g, system.id)) {
-      fleets.push({ ...base, placement: { mode: "berth", body: fleetBerth(g, bodies), slot: 0, slots: 1 } });
+      fleets.push({ ...base, placement: { mode: "berth", body: atWorld(g) ?? fleetBerth(g, bodies), slot: 0, slots: 1 } });
       continue;
     }
     const belt = workingBelt(g, system.id, star);
     if (belt !== null) {
-      fleets.push({ ...base, placement: { mode: "belt", body: belt, slot: 0, slots: 1 } });
+      fleets.push({ ...base, placement: { mode: "belt", body: belt, slot: 0, slots: 1, bearing } });
       continue;
     }
     if (g.docked) continue; // berthed elsewhere (another system or the Hub)
-    const dx = g.pos.x - star.x;
-    const dy = g.pos.y - star.y;
-    const distance = Math.hypot(dx, dy);
-    // Hostile fleets loitering at the star form the cordon; so do the
-    // viewer's own fleets blockading it, rather than idling in the near zone.
-    if (distance <= LOITER_SU && (hostile || (g.own && !!blockade?.by_me))) {
-      fleets.push({ ...base, placement: { mode: "cordon", body: siegeTarget(bodies), slot: 0, slots: 1 } });
+    // At rest at a world it isn't berthed at: a visitor, a blockader, a raider.
+    const world = distance <= NEAR_ZONE_SU ? atWorld(g) : null;
+    if (world !== null) {
+      fleets.push({ ...base, placement: { mode: "cordon", body: world, slot: 0, slots: 1 } });
       continue;
     }
-    const bearing = Math.atan2(dy, dx);
     if (distance <= NEAR_ZONE_SU) {
       fleets.push({ ...base, placement: { mode: "near", distance, bearing } });
       continue;
@@ -374,6 +383,7 @@ export function deriveSystemPicture(input: SystemPictureInput): SystemPicture {
   }
 
   // Stable slots per group: own fleets first, then heavier hulls, then id.
+  // (A belt group's arc centres on its first member's place on the ring.)
   const groups = new Map<string, PictureFleet[]>();
   for (const f of fleets) {
     const p = f.placement;
@@ -391,9 +401,12 @@ export function deriveSystemPicture(input: SystemPictureInput): SystemPicture {
     // smallest per-world cap is lifted into the last always-drawn slot.
     const chosen = list.findIndex((f) => f.selected);
     if (chosen > ALWAYS_DRAWN - 1) list.splice(ALWAYS_DRAWN - 1, 0, ...list.splice(chosen, 1));
+    const lead = list[0].placement;
     list.forEach((f, slot) => {
       const p = f.placement;
-      if (p.mode === "berth" || p.mode === "cordon" || p.mode === "battle" || p.mode === "belt") {
+      if (p.mode === "belt") {
+        f.placement = { ...p, slot, slots: list.length, bearing: lead.mode === "belt" ? lead.bearing : p.bearing };
+      } else if (p.mode === "berth" || p.mode === "cordon" || p.mode === "battle") {
         f.placement = { ...p, slot, slots: list.length };
       }
     });
@@ -405,8 +418,10 @@ export function deriveSystemPicture(input: SystemPictureInput): SystemPicture {
   let siege: PictureSiege | null = null;
   if (blockade || landingRecord) {
     const latest = landingRecord?.rounds[landingRecord.rounds.length - 1];
+    // The world the besiegers really hold over, else the main world.
+    const held = fleets.find((f) => f.placement.mode === "cordon" && (f.hostile || f.ghost.own));
     siege = {
-      target: siegeTarget(bodies),
+      target: held?.placement.mode === "cordon" ? held.placement.body : siegeTarget(bodies),
       byMe: blockade ? blockade.by_me : !!landingRecord?.attacking,
       badge: blockade ? blockadeBadge(blockade, input.simTime, galaxy.siege_secs) : null,
       progress: blockade && blockade.siege_since !== null

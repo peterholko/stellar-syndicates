@@ -67,16 +67,21 @@ close(layout.orbitalAngle(1, p, p), 1, "one period returns to the same phase", 1
 assert.notEqual(layout.orbitalAngle(1, p, p / 4), 1, "bodies move between");
 close(layout.orbitalAngle(1, p, Number.NaN), 1, "a missing clock poses at the seed");
 assert.equal(layout.NEAR_ZONE_SU, layout.PLATFORM_COVER_SU, "the near zone reaches as far as the defenses do");
-assert.equal(layout.nearRadius(0, 1.08, 1.5), 1.08, "inside the dock radius → the zone's inner edge");
-assert.equal(layout.nearRadius(1e9, 1.08, 1.5), 1.5, "beyond the near zone → its outer edge");
-close(layout.nearRadius((layout.DOCK_RADIUS_SU + layout.NEAR_ZONE_SU) / 2, 1.08, 1.5), 1.29,
-  "drawn to scale: halfway out is halfway across the zone");
-let last = 0;
-for (const d of [300, 500, 800, 1100, 1290]) {
-  const r = layout.nearRadius(d, 1.08, 1.5);
-  assert.ok(r > last, "the zone is monotonic in distance");
-  last = r;
-}
+// §real-coordinates: one true scale, a unit = SYSTEM_UNIT_SU, held at the frame's edge.
+assert.equal(layout.SYSTEM_UNIT_SU, 860, "mirrors the sim's System View unit");
+close(layout.trueRadius(430, 1.5), 0.5, "to scale");
+assert.equal(layout.trueRadius(1e9, 1.5), 1.5, "beyond the frame → its edge");
+close(layout.NEAR_OUTER_MAX, layout.NEAR_ZONE_SU / layout.SYSTEM_UNIT_SU, "the frame reaches the defenses' reach at most");
+// Served orbits put worlds (and the ships at them) at true places.
+const orbiting = [{ id: 1, parent: null, kind: "rocky", orbit: { radius: 0.5, angle: 0, period: 100 } },
+  { id: 2, parent: 1, kind: "ice", orbit: { radius: 0.1, angle: Math.PI / 2, period: 0 } }];
+close(layout.bodyOffset(orbiting, 1, 0).x, 0.5, "a planet at its phase");
+close(layout.bodyOffset(orbiting, 1, 25).y, -0.5, "a quarter turn on: counter-clockwise on screen");
+close(layout.bodyOffset(orbiting, 2, 0).y, 0.1, "a moon rides its planet");
+const starAt = { x: 1000, y: 0 };
+assert.equal(layout.worldAt(orbiting, starAt, { x: 1000 + 430 + 10, y: 0 }, 0), 1, "a fleet beside a world is at it");
+assert.equal(layout.worldAt(orbiting, starAt, { x: 1000 + 430, y: 86 }, 0), 2, "the nearest world wins");
+assert.equal(layout.worldAt(orbiting, starAt, { x: 1000 + 200, y: 0 }, 0), null, "between worlds is at none");
 assert.equal(layout.nearOuterFor(200, 2000, 254), layout.NEAR_OUTER_MIN, "never cramped below the minimum");
 assert.equal(layout.nearOuterFor(5000, 5000, 254), layout.NEAR_OUTER_MAX, "never wider than the maximum");
 assert.equal(layout.formatAge(0.4), "live");
@@ -109,7 +114,11 @@ assert.equal(layout.fleetBerth({ kind: "convoy", merchant: true }, depotRoster),
 // --- Picture derivation ------------------------------------------------------
 const star = { x: 10_000, y: 0 };
 const system = { id: "9", name: "Tarsis", pos: star, band: "rich" };
-const wireBody = (b) => ({ ...b, name: `Tarsis ${b.id}`, environment: "terran", geology: null, special: null, special_effect: null,
+// §real-coordinates: served orbits, frozen (period 0) so places are exact: world
+// 1 east of the star, world 2 south, moon 3 beside world 2.
+const ORBITS = { 1: { radius: 0.4, angle: 0, period: 0 }, 2: { radius: 0.8, angle: Math.PI / 2, period: 0 },
+  3: { radius: 0.08, angle: 0, period: 0 } };
+const wireBody = (b) => ({ orbit: ORBITS[b.id], ...b, name: `Tarsis ${b.id}`, environment: "terran", geology: null, special: null, special_effect: null,
   habitat_capacity_mult: 1, population_growth_mult: 1, provisions_mult: 1, construction_time_mult: 1, mineral_extraction_mult: null,
   resource_slots: null, industrial_slots: null, infrastructure_slots: null, ship_build_time_mult: null, deposits: null,
   migration_policy: "closed", inbound_migrants: 0 });
@@ -130,8 +139,10 @@ const near = ghost("r1", "raider", { own: false, owner: "rival", composition: nu
   pos: { x: star.x + 600, y: 800 }, vel: { x: -10, y: -10 } });
 const closing = ghost("r4", "raider", { own: false, owner: "rival", composition: null,
   pos: { x: star.x + 3000, y: 4000 }, vel: { x: -10, y: -10 } });
-const loiter = ghost("r2", "destroyer", { own: false, owner: "rival", composition: null, pos: { x: star.x + 120, y: 50 } });
+const atWorld1 = { x: star.x + 0.4 * 860, y: 0 };
+const loiter = ghost("r2", "destroyer", { own: false, owner: "rival", composition: null, pos: atWorld1 });
 const allyLoiter = ghost("a1", "corvette", { own: false, ally: true, owner: "ally", pos: { x: star.x + 100, y: 0 } });
+const allyVisit = ghost("a3", "corvette", { own: false, ally: true, owner: "ally", pos: { x: star.x, y: 0.8 * 860 + 5 } });
 const inboundPirate = ghost("p1", "raider", { own: false, pirate: true, owner: "pirates", composition: null,
   pos: { x: star.x + 40_000, y: 0 }, vel: { x: -50, y: 0 } });
 const passingPirate = ghost("p2", "raider", { own: false, pirate: true, owner: "pirates", composition: null,
@@ -146,7 +157,7 @@ const vega = { name: "Vega", pos: { x: star.x, y: 30_000 } };
 const ownLeaving = ghost("f5", "convoy", { pos: { x: star.x, y: 2000 }, vel: { x: 0, y: 40 }, speed: 40, path: [{ pos: vega.pos }] });
 const ownParked = ghost("f6", "corvette", { pos: { x: star.x + 5000, y: 0 } });
 const picture = traffic.deriveSystemPicture(input({
-  ghosts: [docked, dockedElsewhere, hub, near, closing, loiter, allyLoiter, inboundPirate, passingPirate, ownInbound, far,
+  ghosts: [docked, dockedElsewhere, hub, near, closing, loiter, allyLoiter, allyVisit, inboundPirate, passingPirate, ownInbound, far,
     leaving, longGone, allyLeaving, ownLeaving, ownParked],
   selectedShipId: "f1", selectedShipIds: new Set(["f1"]), places: [vega],
 }));
@@ -162,9 +173,10 @@ close(placement("r1").distance, 1000, "the near zone keeps the true distance");
 close(placement("r1").bearing, Math.atan2(800, 600), "the near zone keeps the true bearing");
 assert.equal(placement("r4").mode, "inbound", "beyond the near zone, a hostile closing in is an edge arrow");
 close(placement("r4").eta, (5000 - layout.DOCK_RADIUS_SU) / 14, "its ETA from served motion");
-assert.equal(placement("r2").mode, "cordon", "a hostile loitering at the star rings its main world");
+assert.equal(placement("r2").mode, "cordon", "a hostile at rest at a world rings that world");
 assert.equal(placement("r2").body, 1);
-assert.equal(placement("a1").mode, "near", "an ally at the star is no cordon");
+assert.equal(placement("a1").mode, "near", "between worlds: its true place");
+assert.deepEqual(plain(placement("a3")), { mode: "cordon", body: 2, slot: 0, slots: 1 }, "a visitor at a world rings it too");
 assert.equal(placement("p1").mode, "inbound", "a pirate closing on the star is an inbound chevron");
 close(placement("p1").eta, (40_000 - layout.DOCK_RADIUS_SU) / 50, "ETA from served motion");
 assert.equal(placement("p2"), null, "a contact not closing is not inbound");
@@ -198,8 +210,9 @@ const inbound = ghost("b2", "mining_barge", { pos: { x: star.x + 9000, y: 0 },
 const theirs = ghost("s2", "mining_belt_station", { own: false, owner: "rival", pos: { x: star.x + 300, y: 50 } });
 const banded = traffic.deriveSystemPicture(input({ ghosts: [depot, cutter, inbound, theirs] }));
 const band = (id) => banded.fleets.find((f) => f.id === id)?.placement ?? null;
-assert.deepEqual(plain(band("s1")), { mode: "belt", body: 20, slot: 1, slots: 2 }, "the station holds the band");
-assert.deepEqual(plain(band("b1")), { mode: "belt", body: 20, slot: 0, slots: 2 }, "beside its barge");
+const onRing = Math.atan2(100, 200);
+assert.deepEqual(plain(band("s1")), { mode: "belt", body: 20, slot: 1, slots: 2, bearing: onRing }, "the station holds the band");
+assert.deepEqual(plain(band("b1")), { mode: "belt", body: 20, slot: 0, slots: 2, bearing: onRing }, "beside its barge, where they are");
 assert.notEqual(band("b2")?.mode, "belt", "a barge still on its way is not on the band");
 assert.notEqual(band("s2").mode, "belt", "a rival's anchor is private: just a hull at the star");
 
@@ -232,19 +245,20 @@ const fight = traffic.deriveSystemPicture(input({
 }));
 assert.deepEqual(plain(fight.battles.map((b) => b.id).sort()), ["close", "orbit"],
   "only fights at this star: tagged, or untagged inside the near zone");
-assert.deepEqual(plain(fight.battles.find((b) => b.id === "orbit").anchor), { kind: "body", body: 3 }, "inside platform cover → the platform world");
-assert.deepEqual(plain(fight.battles.find((b) => b.id === "close").anchor), { kind: "body", body: 3 }, "so is the zone's edge");
+assert.deepEqual(plain(fight.battles.find((b) => b.id === "orbit").anchor), { kind: "near", distance: 200, bearing: 0 },
+  "a fight is drawn where it is fought");
+assert.deepEqual(plain(fight.battles.find((b) => b.id === "close").anchor), { kind: "near", distance: 1200, bearing: 0 }, "so is one at the zone's edge");
 assert.ok(fight.battles.find((b) => b.id === "orbit").intensity > 0.5, "arrived kills and damage brighten the fight");
 assert.deepEqual(plain(fight.fleets.map((f) => [f.id, f.placement.mode, f.placement.side])), [["b1", "battle", 1], ["b2", "battle", 0]],
   "participants face off by the record's sides");
 assert.deepEqual(plain(fight.wrecks.map((w) => w.id)), ["wreck"], "concluded, served, not dismissed, at this star");
-assert.equal(fight.wrecks[0].anchor.kind, "near", "a fight tagged to this star beyond the defenses sits at the zone's edge");
+assert.equal(fight.wrecks[0].anchor.kind, "near", "a wreck lies where its fight was");
 
 // Sieges: participant-only fields; a third party sees none.
 const besieged = { ...report, blockade: { by: "rival", since: 100, by_me: false, siege_since: 700 }, ground: { suppression: 0.4 } };
 const siege = traffic.deriveSystemPicture(input({ dynamic: besieged, ghosts: [loiter],
   groundRecords: [{ id: "landing", system: "9", outcome: null, attacking: false, rounds: [{ marines_frac: 0.6, defenders_frac: 0.5, suppression: 0.4 }] }] })).siege;
-assert.equal(siege.target, 1, "the siege is fought over the main world");
+assert.equal(siege.target, 1, "the siege is fought over the world its besiegers hold");
 close(siege.progress, 0.5, "siege clock from the served onset");
 close(siege.suppression, 0.4, "garrison pinned");
 assert.deepEqual(plain(siege.landing), { id: "landing", marines: 0.6, defenders: 0.5 });
@@ -287,6 +301,44 @@ assert.equal(scene.modelCandidates().length, 1, "only the selected hull may go l
 assert.ok(scene.modelCandidates()[0].canvasPx >= 32);
 const home = scene.bodyScreen("1");
 assert.equal(scene.pick(home.sx, home.sy).kind, "body", "worlds remain clickable under no traffic");
+// A full orbit changes position and the night side, never the painted axis.
+// Include a moon, a rewind, and a long-running clock to catch accumulated spin.
+{
+  const orbitingScene = new systems.SystemViewScene();
+  for (const kind of ["terrestrial", "gas_giant"]) orbitingScene.kindTex.set(kind, { width: 512 });
+  orbitingScene.moonTex = { width: 512 };
+  const moving = bodiesWire.map((b) => ({ ...b, orbit: { ...b.orbit, period: b.parent == null ? 100 : 25 } }));
+  orbitingScene.setSystem(systems.buildVisualSystem(system, moving), null);
+  orbitingScene.layout(1200, 800);
+  for (const node of orbitingScene.nodes) {
+    assert.ok(node.art, "exercise loaded planet and moon artwork");
+    node.shade = new Sprite({ width: 128 }); // headless canvas has no shade texture
+  }
+  const positions = [];
+  for (const time of [0, 25, 50, 75, 100, 100000.25, 0]) {
+    orbitingScene.update("me", "me", 1000 + time * 1000, time);
+    positions.push(orbitingScene.nodes.map((n) => [n.lx, n.ly]));
+    for (const node of orbitingScene.nodes) {
+      close(node.art.rotation, 0, `${node.id}: no sprite roll at time ${time}`);
+      const away = (Math.cos(node.shade.rotation) * node.lx + Math.sin(node.shade.rotation) * node.ly) / Math.hypot(node.lx, node.ly);
+      close(away, 1, `${node.id}: shadow still faces away from the star`);
+    }
+  }
+  assert.notDeepEqual(plain(positions[0]), plain(positions[1]), "worlds still move around their orbits");
+  assert.deepEqual(plain(positions[0]), plain(positions[4]), "one period returns to the same positions");
+  assert.deepEqual(plain(positions[0]), plain(positions[6]), "rewinding restores the original positions and axes");
+}
+// One selection (Peter, Oct 21 2026): a fleet taking it drops the world's ring
+// and its pulse (Renderer.syncSystemSelection calls clearSelection).
+const overlayStrokes = (color) => scene.overlay.commands.filter(([op, style]) => op === "stroke" && style?.color === color).length;
+scene.update("me", "me", 1101, 0);
+assert.equal(overlayStrokes(0xffffff), 1, "the picked world's ring");
+scene.pulseBody("2");
+scene.update("me", "me", 1102, 0);
+assert.deepEqual([overlayStrokes(0xffffff), overlayStrokes(0x4fc3ff)], [1, 1], "a pulse moves the one ring");
+scene.clearSelection();
+scene.update("me", "me", 1103, 0);
+assert.deepEqual([overlayStrokes(0xffffff), overlayStrokes(0x4fc3ff)], [0, 0], "no ring and no pulse");
 assert.ok(scene.nodes.find((node) => node.id === "2").orbitals.size > 0, "the orbital yard orbits its world");
 assert.ok(scene.chipTexts.some((t) => t.visible && /rationing/.test(t.text)), "owner chips name food trouble");
 assert.ok(scene.chipTexts.some((t) => t.visible && /⚒ 1/.test(t.text)), "owner chips count construction");
@@ -356,6 +408,228 @@ const crowd = Array.from({ length: 7 }, (_, i) => ghost(`c${i}`, "convoy", { doc
 scene.setPicture(traffic.deriveSystemPicture(input({ ghosts: crowd })));
 scene.update("me", "me", 1300, 0);
 assert.ok(scene.traffic.textPool.some((t) => t.visible && t.text === "+4 docked"), "seven berths at fit zoom → three drawn + '+4 docked'");
+// §tracking (Peter, Oct 27 2026): the orrery keeps its sizes; a selected fleet
+// gets a small zoomed camera instead (trackinginset.ts).
+{
+  const raiderArt = () => ({ tex: { width: 128 }, mult: 0.87 });
+  scene.setShipArt(raiderArt, null);
+  const tracked = traffic.deriveSystemPicture(input({ ghosts: [ghost("t1", "raider", { docked: "9" }), inboundPirate],
+    selectedShipId: "t1", selectedShipIds: new Set(["t1"]) }));
+  scene.setPicture(tracked);
+  scene.update("me", "me", 1400, 0);
+  const target = scene.trackTarget("t1");
+  const marker = scene.traffic.markers.get("t1");
+  assert.ok(target.px >= 32 && scene.modelCandidates().some((c) => c.id === "t1"),
+    "a selected Interceptor (its art drawn at 0.87) still reaches its live 3D hull");
+  assert.deepEqual(plain({ x: target.x, y: target.y, title: target.title, color: target.color }),
+    { x: marker.x, y: marker.y, title: "INTERCEPTOR", color: 0x4fc3ff }, "the hull as the orrery draws it, in its tone");
+  close(target.lx, (marker.x - scene.starLayout.x) / scene.sceneScale, "and its place in scene units");
+  assert.equal(scene.trackTarget("p1"), null, "an edge arrow is not tracked");
+  assert.equal(scene.trackTarget("gone"), null);
+  // The inset draws a scene of its own: worlds and hulls only, its own camera.
+  const own = new systems.SystemViewScene({ tracking: true });
+  own.setSystem(visual, null);
+  own.setShipArt(raiderArt, null);
+  own.setReport({ ...report, bodies: bodiesWire, builds: [], converters: [], food_state: "well_supplied", storage_used: 0, storage_cap: 100 }, true);
+  own.setPicture(tracked);
+  const frameOn = (focus, now) => { own.trackCamera(94, 58, 330, focus); own.update("me", "me", now, 0); return own.trackTarget("t1"); };
+  let seen = frameOn({ x: target.lx, y: target.ly }, 1500);
+  seen = frameOn({ x: seen.lx, y: seen.ly }, 1500);
+  close(own.sceneScale, 330, "a fixed scale of its own, whatever the orrery's limits", 1e-9);
+  assert.ok(Math.abs(seen.x - 47) < 1e-6 && Math.abs(seen.y - 29) < 1e-6, "locked on the fleet");
+  const ownMarker = own.traffic.markers.get("t1");
+  assert.ok(own.root.visible && ownMarker.root.visible && ownMarker.sprite.visible, "drawn off-stage: the hull");
+  assert.ok([own.labels, own.hud, own.markers, own.overlay, own.orbitsGfx, own.coverGfx].every((l) => !l.visible),
+    "no names, chips, rings or orbit lines");
+  assert.ok(!ownMarker.chrome.visible && !ownMarker.label.visible && !ownMarker.badge.visible && !own.traffic.texts.visible,
+    "no pips, labels or badges");
+  assert.equal(own.traffic.markers.get("p1").root.visible, false, "no edge arrows");
+  assert.ok(marker.chrome.visible, "the orrery keeps its own");
+  // The orrery's pans and zooms never reframe it (Peter: "the tracking window
+  // shouldn't move its frame when the player pans or zooms").
+  const before = plain(frameOn({ x: seen.lx, y: seen.ly }, 1500));
+  scene.zoomAt(target.x, target.y, 2.5);
+  scene.panBy(140, -60);
+  for (let i = 1; i <= 20; i++) scene.update("me", "me", 1400 + i * 100, 0);
+  assert.notDeepEqual(plain(scene.trackTarget("t1")), plain(target), "the orrery moved");
+  assert.deepEqual(plain(frameOn({ x: seen.lx, y: seen.ly }, 1500)), before, "the inset's picture did not");
+  scene.resetZoom(true);
+  scene.setShipArt(art, null);
+}
+// §raid-camera (Peter, Oct 27 2026): the tracking window follows the raid in,
+// the raider drawn where it really is, however far out.
+{
+  const base = traffic.deriveSystemPicture(input({ ghosts: [inboundPirate, docked] }));
+  const raid = traffic.trackedHull(base, inboundPirate, star);
+  const hull = raid.fleets.find((f) => f.id === "p1");
+  assert.deepEqual(plain({ ...hull.placement, tone: hull.tone, hostile: hull.hostile, selected: hull.selected }),
+    { mode: "near", distance: 40_000, bearing: 0, tone: "pirate", hostile: true, selected: true },
+    "a hull at its true place, not an edge arrow");
+  close(hull.heading, Math.PI, "heading in");
+  assert.equal(raid.fleets.filter((f) => f.id === "p1").length, 1);
+  assert.deepEqual(plain(raid.fleets.find((f) => f.id === "f1")), plain(base.fleets.find((f) => f.id === "f1")), "the rest as drawn");
+  const inZone = traffic.deriveSystemPicture(input({ ghosts: [near] }));
+  assert.equal(traffic.trackedHull(inZone, near, star), inZone, "a hull already drawn keeps its place");
+  // The tracking scene draws it there, not held at the near zone's edge.
+  const cam = new systems.SystemViewScene({ tracking: true });
+  cam.setSystem(visual, null);
+  cam.setShipArt(art, null);
+  cam.setPicture(raid);
+  cam.trackCamera(95, 59, 330, { x: 0, y: 0 }, true);
+  cam.update("me", "me", 2000, 0);
+  const out = cam.trackTarget("p1");
+  close(out.lx, 40_000 / 860, "at its true distance", 1e-6);
+  // Its camera follows it every frame: hulls ride the camera's moves and ease
+  // toward new places; only a cut (a new shot) snaps them.
+  cam.trackCamera(95, 59, 330, { x: out.lx, y: out.ly }, false);
+  cam.update("me", "me", 2016, 0);
+  const framed = cam.trackTarget("p1");
+  close(framed.lx, out.lx, "a camera move alone never slides it", 1e-6);
+  close(framed.x, 47.5, "framed on it", 1e-6);
+  const closer = { ...inboundPirate, pos: { x: star.x + 39_000, y: 0 } };
+  cam.setPicture(traffic.trackedHull(traffic.deriveSystemPicture(input({ ghosts: [closer] })), closer, star));
+  cam.trackCamera(95, 59, 330, { x: framed.lx, y: framed.ly }, false);
+  cam.update("me", "me", 2032, 0);
+  const eased = cam.trackTarget("p1");
+  assert.ok(eased.lx < out.lx && eased.lx > 39_000 / 860, "eased toward its new place");
+  cam.trackCamera(95, 59, 330, { x: eased.lx, y: eased.ly }, true);
+  cam.update("me", "me", 2048, 0);
+  close(cam.trackTarget("p1").lx, 39_000 / 860, "a cut snaps it there", 1e-6);
+  // The privateer loots from the star itself: parked there, it keeps the way it came.
+  const flying = cam.traffic.markers.get("p1").angle;
+  const parked = { ...inboundPirate, pos: { ...star }, vel: { x: 0, y: 0 } };
+  cam.setPicture(traffic.trackedHull(traffic.deriveSystemPicture(input({ ghosts: [parked], selectedShipId: "p1" })), parked, star));
+  cam.update("me", "me", 2064, 0);
+  close(cam.traffic.markers.get("p1").angle, flying, "parked on the star, its heading kept", 1e-9);
+  close(flying, Math.PI, "flying in from the east");
+}
+// The inset itself: its corner, magnification, camera and centring.
+{
+  class Matrix {
+    constructor() { this.identity(); }
+    identity() { Object.assign(this, { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }); return this; }
+    translate(x, y) { this.tx += x; this.ty += y; return this; }
+    apply(p) { return { x: this.a * p.x + this.c * p.y + this.tx, y: this.b * p.x + this.d * p.y + this.ty }; }
+  }
+  const RenderTexture = { create: ({ width, height, resolution }) => ({ width, height, source: { resolution },
+    resize(w, h, r) { this.width = w; this.height = h; this.source.resolution = r; } }) };
+  const { TrackingInset, TRACKING_SCALE } = load("trackinginset.ts", { "pixi.js": { ...pixi, Matrix, RenderTexture } });
+  const inset = new TrackingInset();
+  const cams = [];
+  const renders = [];
+  const cam = { trackCamera: (w, h, scale, focus, cut) => cams.push({ w, h, scale, focus: plain(focus), cut }) };
+  const gpu = { resolution: 2, render: (o) => renders.push({ fleet: o.transform.apply({ x: 60, y: 40 }), clear: o.clear, clearColor: o.clearColor }) };
+  const area = { x: 0, y: 72, w: 1048, h: 928 };
+  const fleet = (px, lx, ly, x = 60, y = 40) => ({ x, y, px, lx, ly, title: "INTERCEPTOR", color: 0x4fc3ff });
+  assert.equal(inset.prepare(cam, "t1", fleet(36, 0.2, -0.1, 500, 300), area), true);
+  const mag = 0.38 * 450 / 36;
+  const [vw, vh] = [Math.round(450 / mag), Math.round(279 / mag)];
+  assert.deepEqual(cams[0], { w: vw, h: vh, scale: TRACKING_SCALE, focus: { x: 0.2, y: -0.1 }, cut: true },
+    "its own camera: a fixed scale, on the fleet's place, in the inset's size over the magnification; a new shot");
+  assert.deepEqual(plain(inset.box), { x: 12, y: 84, w: 450, h: 279 }, "the map area's top-left corner, 50% larger (Peter)");
+  inset.render(gpu, {}, fleet(36, 0.25, -0.05));
+  close(renders[0].fleet.x, vw / 2, "the fleet exactly at the centre");
+  close(renders[0].fleet.y, (vh + 20 * vh / 279) / 2, "beneath the caption");
+  assert.deepEqual(plain(renders[0].clearColor), [0, 0, 0, 0], "clear, over its starfield");
+  close(inset.texture.source.resolution, 2 * 450 / vw, "the texture's resolution gives the magnification back", 1e-9);
+  assert.deepEqual([inset.view.width, inset.view.height], [450, 279]);
+  assert.match(inset.caption.text, /TRACKING · INTERCEPTOR/);
+  assert.ok(inset.contains(20, 100) && !inset.contains(400, 400), "its clicks are its own");
+  inset.prepare(cam, "t1", fleet(36, 9, 9), area);
+  assert.deepEqual([cams[1].focus, cams[1].cut], [{ x: 0.25, y: -0.05 }, false], "the same fleet: framed where it stood, no cut");
+  inset.prepare(cam, "t2", fleet(120, 0.5, 0.5), area);
+  assert.deepEqual([cams[2].focus, cams[2].w, cams[2].cut], [{ x: 0.5, y: 0.5 }, 200, true],
+    "a new fleet is a new shot, from its place in the orrery; a big hull never under 2.25×");
+  assert.throws(() => inset.render({ resolution: 1, render: () => { throw new Error("lost"); } }, {}, fleet(120, 0.5, 0.5)),
+    "a failed render reaches the renderer, which hides the inset");
+  assert.equal(inset.prepare(cam, "t2", fleet(36, 0, 0), { x: 0, y: 0, w: 400, h: 600 }), false, "a map too small spares no corner");
+  assert.equal(inset.root.visible, false);
+  assert.equal(inset.contains(20, 100), false);
+  // §raid-camera: centred just above the map's middle, the galaxy framing the
+  // raid beneath it (§raid-frame); at the top on a short map.
+  assert.equal(inset.prepare(cam, "p1", fleet(36, 46, 0), area, "center"), true);
+  assert.deepEqual(plain(inset.box), { x: 299, y: 221, w: 450, h: 279 });
+  assert.deepEqual(plain(inset.place(area, "center")), plain(inset.box), "the frame beneath knows where it sits");
+  assert.ok(inset.box.y + inset.box.h <= area.y + area.h / 2 - 36, "clear of the map's lower half");
+  // §raid-frame: the raid's news along the window's foot, in its tone,
+  // centred in a band of its own; shrunk to fit a narrow window; gone with it.
+  const raidNote = "RAIDER DETECTED · ON COURSE FOR FREYA";
+  inset.render(gpu, {}, { ...fleet(36, 46, 0), color: 0xe08a2c }, raidNote);
+  const rects = () => inset.band.commands.filter((c) => c[0] === "rect").map((c) => c.slice(1));
+  assert.deepEqual(rects(), [[299, 221, 450, 20], [299, 221 + 279 - 22, 450, 22]], "the caption's band, and the note's along the foot");
+  assert.equal(inset.note.visible, true);
+  assert.equal(inset.note.text, raidNote);
+  assert.equal(inset.note.style.fill, 0xe08a2c, "in the raider's tone");
+  close(inset.note.position.x + inset.note.width / 2, 299 + 450 / 2, "centred");
+  assert.ok(inset.note.position.y > 221 + 279 - 22 && inset.note.position.y + inset.note.height < 221 + 279, "inside its band");
+  inset.render(gpu, {}, fleet(36, 46, 0), raidNote.repeat(3));
+  close(inset.note.scale.x, (450 - 16) / (raidNote.length * 3 * 6), "a long one shrinks to fit", 1e-9);
+  inset.render(gpu, {}, fleet(36, 46, 0));
+  assert.equal(inset.note.visible, false, "no note, no band");
+  assert.equal(rects().length, 1);
+  inset.prepare(cam, "p1", fleet(36, 46, 0), { ...area, h: 500 }, "center");
+  assert.equal(inset.box.y, 84);
+  // Wiring: its scene is built on demand for the system it shows (the
+  // orrery's, or the raided home) from the orrery's data (never its camera),
+  // drawn after the live 3D hulls, on the desktop deck, and nothing on it
+  // reaches the map beneath.
+  const renderSrc = source("render.ts");
+  assert.match(renderSrc, /private trackingScene = new SystemViewScene\(\{ tracking: true \}\);/);
+  for (const call of ["setSystem(buildVisualSystem(sys, dyn?.bodies ?? [])", "setStarArt(loaded.texture, loaded.art)", "setShipArt(",
+    "setHaze(this.hazeFor(sys))", "setDynamic(dyn?.bodies ?? []"]) {
+    assert.ok(renderSrc.includes(`this.trackingScene.${call}`), `the tracking scene gets ${call}`);
+  }
+  assert.match(renderSrc, /let tracked: string \| null = this\.updateRaidCamera\(state\);/, "an incoming raid takes the window first");
+  assert.match(renderSrc, /tracked = this\.updateTrackingScene\(state, dyn, report, mine, shown, observed\);/);
+  assert.match(renderSrc, /prepare\(this\.trackingScene, raid\.id, seen, this\.cameraRect, "center"\)/, "the raid's window is centred");
+  const raidCamera = renderSrc.slice(renderSrc.indexOf("private updateRaidCamera("), renderSrc.indexOf("private showTrackingSystem("));
+  assert.ok(raidCamera.includes("trackedHull(deriveSystemPicture(") && !raidCamera.includes("shipModels.add"),
+    "the raider at its true place; pirate culture art never goes live 3D");
+  const boot = source("boot.ts");
+  assert.match(boot, /const home = foundingHomeSystemId\(\);\n\s*if \(home\) activeShell\?\.focusRaid\?\.\(id, home\);\n\s*renderer\.trackRaid\(id, home\);/,
+    "it starts with the raid's focus");
+  assert.match(boot, /if \(event\.key === "pirates"\) renderer\.trackRaid\(null\);/, "and ends as the raid's story opens");
+  // §raid-frame: both shells leave a System View, open the raider's panel
+  // (or sheet) and only then frame the raid, so the frame fits the map left;
+  // nothing follows it any more.
+  for (const file of ["shell/deck/index.ts", "shell/mobile/index.ts"]) {
+    const shell = source(file);
+    const focus = shell.slice(shell.indexOf("focusRaid(id: string, homeId: string): void {"), shell.indexOf("onCore(events: CoreEvent[]): void {"));
+    assert.match(focus, /renderer\.exitSystemView\(\);[\s\S]*this\.map\.focusFleet\(id\);\n\s*renderer\.frameRaid\(raider\.pos, home\.pos\);/, `${file}: out, the panel, then the frame`);
+    assert.doesNotMatch(shell, /\.follow\(/, `${file}: no follow`);
+  }
+  assert.doesNotMatch(renderSrc, /followId|tickFollow/, "the old follow is gone");
+  // Its note (Peter: "Raider detected on course for <System>"): the raid's
+  // window only, while the raider is outside the hyperlimit; a notice on mobile.
+  const raidTop = renderSrc.slice(renderSrc.indexOf("private updateRaidCamera("), renderSrc.indexOf("private showTrackingSystem("));
+  assert.match(raidTop, /this\.raidNote = null;/, "cleared every frame");
+  assert.match(raidTop, /> this\.galaxy\.hyperlimit\) \{\n\s*this\.raidNote = `RAIDER DETECTED · ON COURSE FOR \$\{sys\.name\.toUpperCase\(\)\}`;/,
+    "until it crosses the hyperlimit to loot");
+  assert.match(renderSrc, /this\.trackingInset\.render\(this\.app\.renderer, this\.trackingScene\.root, target, id === this\.raid\?\.id \? this\.raidNote : null, work\);/,
+    "never on a selected fleet's window");
+  assert.match(source("shell/mobile/index.ts"),
+    /renderer\.frameRaid\(raider\.pos, home\.pos\);\n\s*this\.notices\?\.push\(\{ html: `<b>Raider detected<\/b> · on course for \$\{escapeHtml\(home\.name\)\}`, tone: "bad", durationMs: 20_000 \}\);/,
+    "mobile: the same news as a notice");
+  // Its course: one dashed amber line from the raider (as drawn) to the home
+  // star's disc, under the hulls, while the raid camera tracks it (both shells).
+  const course = renderSrc.slice(renderSrc.indexOf("private drawRaidCourse("), renderSrc.indexOf("private updateReacquisitions("));
+  assert.ok(course.includes("screenById.get(raid.id)") && course.includes("this.systemHitRadius(home)") && course.includes("COL_PIRATE"),
+    "from the drawn raider to the star's disc, in pirate amber");
+  assert.match(renderSrc, /this\.drawProjections\(state, screenById\);\n\s*this\.drawRaidCourse\(screenById\);/);
+  assert.match(renderSrc, /this\.raidCourseGfx, \/\/ §raid-frame, under the ghosts\n\s*this\.ghostsLayer,/);
+  const raidTick = renderSrc.slice(renderSrc.indexOf("private updateRaidCamera("), renderSrc.indexOf("const dyn = state.systems.find((s) => s.id === sys.id);"));
+  assert.ok(raidTick.indexOf("RAID_CAMERA_LOST_MS") < raidTick.indexOf("!this.trackingInsetOn"), "a raid ends on time without the window too");
+  assert.match(source("core/mapclick.ts"), /resolveMapClick\([\s\S]*?if \(renderer\.trackingInsetAt\(sx, sy\)\) return \{ kind: "none" \};/,
+    "a click on it over the galaxy reaches nothing beneath");
+  assert.match(source("shell/deck/map.ts"), /if \(renderer\.viewMode\.type !== "galaxy" \|\| renderer\.trackingInsetAt\(clientX, clientY\)\) \{/, "nor a hover");
+  assert.match(renderSrc, /this\.shipModels\.add\(\{ \.\.\.candidate, id: `tracking:\$\{candidate\.id\}`/, "its live 3D hull under a key of its own");
+  assert.match(renderSrc, /this\.hubModel\.endFrame\([^;]*\);\n\s*this\.renderTrackingInset\(tracked, /, "after the live 3D hulls");
+  assert.match(renderSrc, /systemScenePick\(sx: number, sy: number\): SystemScenePick \| null \{\n\s*if \([^\n]*this\.trackingInset\.contains\(sx, sy\)\) return null;/);
+  assert.match(source("core/mapclick.ts"), /if \(ctx\.renderer\.trackingInsetAt\(sx, sy\)\) return \{ kind: "none" \};/, "a click on it keeps the selection");
+  assert.match(source("shell/deck/map.ts"), /if \(renderer\.trackingInsetAt\(event\.clientX, event\.clientY\)\) return;/, "the wheel on it never zooms the orrery");
+  assert.match(source("shell/deck/index.ts"), /ctx\.renderer\.setTrackingInset\(true\);/);
+  assert.doesNotMatch(source("shell/mobile/index.ts"), /setTrackingInset/, "desktop only");
+}
 // Star FX: a pulsar's flash is a soft additive glow, never a magnified polygon,
 // and flare shapes tessellate at screen-like size before scaling back down.
 {
@@ -399,18 +673,22 @@ assert.equal(scenery.markers.children.length, 0);
   const rast = ts.createSourceFile("render.ts", renderSource, ts.ScriptTarget.Latest, true);
   const owner = rast.statements.find((n) => ts.isClassDeclaration(n) && n.name?.text === "Renderer");
   const hintMethod = owner.members.find((n) => n.name?.getText(rast) === "drawApproachHint");
-  const growthMethod = owner.members.find((n) => n.name?.getText(rast) === "approachGrowth");
+  const member = (name) => owner.members.find((n) => n.name?.getText(rast) === name).getText(rast);
   const constant = (name) => rast.statements.filter(ts.isVariableStatement).flatMap((n) => [...n.declarationList.declarations])
     .find((d) => d.name.getText(rast) === name).getText(rast);
   const exportsHint = {};
-  vm.runInNewContext(ts.transpileModule(`const ${constant("SCHEMATIC_GROW_FROM")}; const ${constant("SYSTEM_ZOOM_FACTOR")};
-    exports.HintRenderer = class { approachVisuals = new Map(); galaxy = { c: 100 }; handoffGrowth = null;
+  let previewTime = 0;
+  vm.runInNewContext(ts.transpileModule(`${["clamp01", "smooth01", "SYSTEM_ZOOM_FACTOR", "APPROACH_HINT_START"]
+    .map((name) => `const ${constant(name)};`).join(" ")}
+    exports.HintRenderer = class { approachVisuals = new Map(); galaxy = { c: 100 }; handoffGrowth = null; scale = 1;
       constructor(scene) { this.systemScene = scene; }
-      ${growthMethod.getText(rast)}
+      fitScale() { return 0.001; }
+      ${member("previewScale")}
+      ${member("diveTilt")}
       ${hintMethod.getText(rast)} }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText,
-  { exports: exportsHint, Sprite, Texture: pixi.Texture, buildVisualSystem: systems.buildVisualSystem, liveSimTime: () => 0,
-    orbitalAngle: layout.orbitalAngle, planetPeriod: layout.planetPeriod, ORBIT_TILT: layout.ORBIT_TILT,
-    terminatorTexture: () => ({ width: 128 }), towardStarRotation: bodyFx.towardStarRotation, planetArtwork: planetArt.planetArtwork });
+  { exports: exportsHint, Sprite, Texture: pixi.Texture, buildVisualSystem: systems.buildVisualSystem, liveSimTime: () => previewTime,
+    orbitalAngle: layout.orbitalAngle, planetPeriod: layout.planetPeriod, ORBIT_TILT: layout.ORBIT_TILT, SYSTEM_UNIT_SU: layout.SYSTEM_UNIT_SU,
+    terminatorTexture: () => ({ width: 128 }), planetArtwork: planetArt.planetArtwork });
   let artLoaded = true;
   const baseScale = 300;
   const scene = { starVisibleDiameterPx: () => 0.17 * baseScale, restScale: () => baseScale,
@@ -420,8 +698,9 @@ assert.equal(scenery.markers.children.length, 0);
   const star = { x: 500, y: 400 };
   const planets = systems.buildVisualSystem(system, bodiesWire).planets;
   const drawn = new Graphics();
+  hint.scale = 0.001 * 96;
   hint.drawApproachHint(drawn, preview, system, bodiesWire, star, 1, 96, { commandCenter: null });
-  const k = baseScale * 0.35;
+  const k = hint.scale * layout.SYSTEM_UNIT_SU; // §real-coordinates: the map's own true scale
   assert.equal(drawn.commands.filter(([op]) => op === "circle").length, 0, "no grey dots once the art is in");
   assert.ok(preview.worldsBack.visible && preview.worldsFront.visible);
   assert.equal(preview.worlds.filter((w) => w.art.visible).length, planets.length, "one world per planet; moons wait for the System View");
@@ -429,25 +708,26 @@ assert.equal(scenery.markers.children.length, 0);
     const world = preview.worlds[i];
     const art = planetArt.planetArtwork(planet.kind);
     assert.equal(world.art.texture.kind, planet.kind, `${planet.name}: its own kind's art`);
-    close(world.art.scale.x, (2 * planet.radius * k) / (art.visualRatio * 512), `${planet.name}: the System View's size at the doorway`);
+    close(world.art.scale.x, (2 * planet.radius * k) / (art.visualRatio * 512), `${planet.name}: the System View's size, to the map's scale`);
     assert.equal(world.art.parent, Math.sin(planet.angle) < 0 ? preview.worldsBack : preview.worldsFront,
       `${planet.name}: depth-sorted against the star like the System View`);
     const toStar = Math.atan2(star.y - world.art.position.y, star.x - world.art.position.x);
-    close(world.art.rotation, bodyFx.towardStarRotation(toStar), `${planet.name}: lit from its star`);
+    close(world.art.rotation, 0, `${planet.name}: its axis matches the upright System View`);
     close(world.shade.rotation, toStar + Math.PI, `${planet.name}: night side away from the star`);
   });
-  // Past the doorway the preview keeps growing with the camera, up to the
-  // System View's own fit; mid-handoff it rides the schematic's scale.
+  // Past the doorway the preview keeps growing with the camera, at true
+  // scale; mid-handoff it rides the schematic's scale.
   const outer = planets.reduce((a, p) => (p.orbitRadius > a.orbitRadius ? p : a));
   const outerRx = (zoom) => {
     const g = new Graphics();
+    hint.scale = 0.001 * zoom;
     hint.drawApproachHint(g, preview, system, bodiesWire, star, 1, zoom, { commandCenter: null });
     assert.equal(g.commands.filter(([op]) => op === "ellipse").length, 0, "orbits never cross the star's face");
     return preview.orbits.commands.filter(([op]) => op === "ellipse").map(([, , , rx]) => rx).reduce((a, b) => Math.max(a, b), 0);
   };
-  close(outerRx(96), outer.orbitRadius * k, "doorway: the schematic's grow-in start");
+  close(outerRx(96), outer.orbitRadius * k, "doorway: true scale");
   close(outerRx(192), outer.orbitRadius * k * 2, "past the doorway the preview grows with the camera");
-  close(outerRx(384), outer.orbitRadius * baseScale, "…never past the System View's own fit");
+  close(outerRx(384), outer.orbitRadius * k * 4, "…to the zoom limit");
   hint.handoffGrowth = { id: system.id, scale: 0.7 };
   close(outerRx(153.6), outer.orbitRadius * baseScale * 0.7, "mid-handoff: the schematic's own scale");
   hint.handoffGrowth = { id: "elsewhere", scale: 0.7 };
@@ -455,16 +735,30 @@ assert.equal(scenery.markers.children.length, 0);
   hint.handoffGrowth = null;
   artLoaded = false;
   const before = new Graphics();
+  hint.scale = 0.001 * 96;
   hint.drawApproachHint(before, preview, system, bodiesWire, star, 1, 96, { commandCenter: null });
   assert.equal(before.commands.filter(([op]) => op === "circle").length, planets.length, "grey dots until the art loads");
   assert.ok(preview.worlds.every((w) => !w.art.visible) && !preview.worldsFront.visible, "and no stale art");
+  artLoaded = true;
+  const movingSystem = { ...system, id: "axis-regression" };
+  const moving = bodiesWire.map((b) => ({ ...b, orbit: { ...b.orbit, period: 100 } }));
+  for (previewTime of [0, 25, 50, 75, 100, 0]) {
+    hint.drawApproachHint(new Graphics(), preview, movingSystem, moving, star, 1, 96, { commandCenter: null });
+    for (const world of preview.worlds) {
+      close(world.art.rotation, 0, "the galaxy preview keeps the same axis throughout an orbit");
+      const dx = world.art.position.x - star.x, dy = world.art.position.y - star.y;
+      close((Math.cos(world.shade.rotation) * dx + Math.sin(world.shade.rotation) * dy) / Math.hypot(dx, dy), 1,
+        "the preview shadow follows the changing light direction");
+    }
+  }
+
 }
 
 // --- Travelling hulls near a star sit where the System View will draw them --
-// The real placement from render.ts, compiled alone: over the 40→96× dive a
-// hull in a star's near zone slides from its true position onto the System
-// View's band (just outside the outermost orbit, tilted, true bearing), so it
-// doesn't jump at the handoff; farther out it eases back to true.
+// The real placement from render.ts, compiled alone. §real-coordinates: every
+// hull is at its true place at every zoom; over the 40→96× dive the plane about
+// a star tilts into the System View's (its true scale, ORBIT_TILT), and through
+// a handoff it rides the schematic's own scale. Farther out it eases back flat.
 {
   const renderSource = source("render.ts");
   const rast = ts.createSourceFile("render.ts", renderSource, ts.ScriptTarget.Latest, true);
@@ -473,69 +767,68 @@ assert.equal(scenery.markers.children.length, 0);
   const constant = (name) => rast.statements.filter(ts.isVariableStatement).flatMap((n) => [...n.declarationList.declarations])
     .find((d) => d.name.getText(rast) === name).getText(rast);
   const exportsPlace = {};
-  vm.runInNewContext(ts.transpileModule(`${["clamp01", "smooth01", "SCHEMATIC_GROW_FROM", "SYSTEM_ZOOM_FACTOR",
+  vm.runInNewContext(ts.transpileModule(`${["clamp01", "smooth01", "SYSTEM_ZOOM_FACTOR",
     "APPROACH_HINT_START", "SHIP_SYSTEM_CLEAR_SU"].map((name) => `const ${constant(name)};`).join(" ")}
     exports.PlaceRenderer = class { handoffGrowth = null; cx = 40; cy = -30; scale = 1;
       constructor(scene, galaxy) { this.systemScene = scene; this.galaxy = galaxy; }
       fitScale() { return 0.001; }
       worldToScreen(p) { return { x: this.cx + p.x * this.scale, y: this.cy + p.y * this.scale }; }
-      ${method("approachGrowth")}
+      ${method("previewScale")}
+      ${method("diveTilt")}
       ${method("nearStarPlacement")}
       ${method("shipScreen")}
       ${method("routeScreen")} }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText,
-  { exports: exportsPlace, NEAR_ZONE_SU: layout.NEAR_ZONE_SU, NEAR_INNER: layout.NEAR_INNER, ORBIT_TILT: layout.ORBIT_TILT,
-    DOCK_RADIUS_SU: layout.DOCK_RADIUS_SU, nearRadius: layout.nearRadius });
-  const baseScale = 300, outer = 1.4;
+  { exports: exportsPlace, NEAR_ZONE_SU: layout.NEAR_ZONE_SU, ORBIT_TILT: layout.ORBIT_TILT, SYSTEM_UNIT_SU: layout.SYSTEM_UNIT_SU });
+  const baseScale = 300;
   const starPos = { x: 100_000, y: 50_000 };
-  const r = new exportsPlace.PlaceRenderer({ restScale: () => baseScale, nearOuterRadius: () => outer },
+  const r = new exportsPlace.PlaceRenderer({ restScale: () => baseScale },
     { systems: [{ id: "far", pos: { x: -200_000, y: 0 } }, { id: system.id, pos: starPos }] });
   const at = (zoom) => { r.scale = 0.001 * zoom; };
   const point = (d, bearing) => ({ x: starPos.x + Math.cos(bearing) * d, y: starPos.y + Math.sin(bearing) * d });
   const truth = (p) => r.worldToScreen(p);
   // The System View's own placement (systemtrafficlayer planeToScreen) about
-  // the star, at the preview's scale.
+  // the star, at a scale of k px per unit.
   const systemView = (d, bearing, k) => {
     const star = truth(starPos);
-    const radius = layout.nearRadius(d, layout.NEAR_INNER, outer) * k;
+    const radius = layout.trueRadius(d, Infinity) * k;
     return { x: star.x + Math.cos(bearing) * radius, y: star.y + Math.sin(bearing) * radius * layout.ORBIT_TILT };
   };
   const same = (a, b, label) => { close(a.x, b.x, `${label} x`, 1e-6); close(a.y, b.y, `${label} y`, 1e-6); };
 
   at(30);
-  same(r.shipScreen(point(800, 0.7)), truth(point(800, 0.7)), "below 40× every hull is drawn true");
+  same(r.shipScreen(point(800, 0.7)), truth(point(800, 0.7)), "below 40× every hull is drawn flat and true");
   assert.equal(r.shipScreen(point(800, 0.7)).tilt, 0);
   at(96);
-  const k = baseScale * 0.35;
-  for (const [d, bearing] of [[260, 0.3], [800, 0.7], [1_300, -2.1], [1_000, Math.PI / 2]]) {
-    same(r.shipScreen(point(d, bearing)), systemView(d, bearing, k), `at the doorway, ${d} su: where the System View draws it`);
+  for (const [d, bearing] of [[120, 1.1], [260, 0.3], [800, 0.7], [1_300, -2.1], [1_000, Math.PI / 2]]) {
+    same(r.shipScreen(point(d, bearing)), systemView(d, bearing, r.scale * layout.SYSTEM_UNIT_SU),
+      `at the doorway, ${d} su: where the System View draws it, to scale`);
   }
-  same(r.shipScreen(point(120, 1.1)), systemView(120, 1.1, k), "inside the docking radius: on the band's inner edge, like the System View");
   assert.equal(r.shipScreen(point(800, 0.7)).tilt, 1, "the heading takes the plane's foreshortening");
-  same(r.routeScreen(starPos), truth(starPos), "a route's end at the star stays at the star");
-  const clear = Math.max(layout.NEAR_ZONE_SU * 4, (2 * outer * k) / r.scale);
-  same(r.shipScreen(point(clear + 1, 2.5)), truth(point(clear + 1, 2.5)), "far out: true");
+  same(r.routeScreen(starPos), truth(starPos), "the star stays at the star");
+  const clear = 4 * layout.NEAR_ZONE_SU;
+  same(r.shipScreen(point(clear + 1, 2.5)), truth(point(clear + 1, 2.5)), "far out: flat");
   assert.equal(r.shipScreen(point(clear + 1, 2.5)).tilt, 0);
-  // Continuous at the band's edge and outward from the star along a bearing.
-  const radial = (d) => { const p = r.shipScreen(point(d, 0)); return Math.hypot(p.x - truth(starPos).x, p.y - truth(starPos).y); };
-  close(radial(1_300), radial(1_300.001), "no seam at the band's edge", 1e-3);
-  close(radial(clear - 0.001), radial(clear), "no seam where it rejoins the true map", 1e-3);
+  // Continuous at the near zone's edge and outward from the star along a bearing.
+  const radial = (d) => { const p = r.shipScreen(point(d, 1)); return Math.hypot(p.x - truth(starPos).x, p.y - truth(starPos).y); };
+  close(radial(1_300), radial(1_300.001), "no seam at the near zone's edge", 1e-3);
+  close(radial(clear - 0.001), radial(clear), "no seam where it flattens", 1e-3);
   for (let d = 300; d < clear; d += 100) assert.ok(radial(d + 100) > radial(d), `outward stays outward (${d} su)`);
   // Mid-handoff it rides the schematic's own scale, so the pictures coincide.
   at(150);
   r.handoffGrowth = { id: system.id, scale: 0.7 };
   same(r.shipScreen(point(900, -0.4)), systemView(900, -0.4, baseScale * 0.7), "mid-handoff: the schematic's scale");
   r.handoffGrowth = null;
-  // Halfway through the dive it is halfway there.
+  // Halfway through the dive, half the tilt.
   at(68);
   const half = r.shipScreen(point(800, 0.7));
-  const t = truth(point(800, 0.7)), v = systemView(800, 0.7, baseScale * 0.35 * 68 / 96);
-  same(half, { x: t.x + (v.x - t.x) * 0.5, y: t.y + (v.y - t.y) * 0.5 }, "halfway through the dive");
+  const t = truth(point(800, 0.7)), s0 = truth(starPos);
+  same(half, { x: t.x, y: s0.y + (t.y - s0.y) * (1 - 0.5 * (1 - layout.ORBIT_TILT)) }, "halfway through the dive");
 }
 
 // §orbital-defense: a world's station is drawn once in orbit, larger and a
 // little farther out at each level; legacy platform tiers keep their ring.
 const stationOf = level => bodyFx.orbitalItems({ orbital_defense: level }, 7).filter(item => item.kind === "orbital_defense");
-for (let level = 1; level <= 5; level++) {
+for (let level = 1; level <= 6; level++) {
   const [item, ...extra] = stationOf(level);
   assert.equal(extra.length, 0, "one station per world");
   assert.equal(item.tier, level);
@@ -544,7 +837,7 @@ for (let level = 1; level <= 5; level++) {
     assert.ok(item.px > lower.px && item.orbit > lower.orbit, `level ${level} outgrows level ${level - 1}`);
   }
 }
-assert.equal(stationOf(9)[0].tier, 5, "the ladder tops out at the Star Fortress");
+assert.equal(stationOf(9)[0].tier, 6, "the ladder tops out at the Star Fortress");
 assert.equal(stationOf(0).length, 0, "no station, nothing in orbit");
 assert.equal(bodyFx.orbitalItems({ defense_platform: 3 }, 7).filter(item => item.kind === "defense_platform").length, 3,
   "legacy platform tiers keep their own ring");
@@ -609,4 +902,26 @@ assert.equal(bodyFx.orbitalItems({ defense_platform: 3 }, 7).filter(item => item
     || c.tint === systems.BELT_META.icy.tint), "chunks use their type's art or its fallback tint");
 }
 
-console.log("System view: tilted layout, Kepler motion, near zone to scale, docking slots, fog-safe picture (berths, near zone, cordon, inbound and outbound arrows, battles, wrecks, sieges), hover-only defense reach, picks, caps, 3D candidates, galaxy orbit preview art, stations by level and inert scenery, and charted belts between orbits passed.");
+// §charting (Oct 28 2026): a known pirate base is drawn on the system's belt,
+// named as the galaxy map names it; the founding den reads PRIVATEER DEN.
+{
+  const view = source("systemview.ts"), render = source("render.ts");
+  assert.match(render, /state\.founding\?\.den === report\.id \? "☠ PRIVATEER DEN"/, "the founding den keeps the map's name");
+  assert.match(render, /this\.systemScene\.setReport\(report, mine, pirate\)/, "the name reaches the System View");
+  assert.match(view, /const pirateBelt = this\.pirateLabel \? this\.vis\?\.asteroidBelts\[0\] : undefined;/, "on the first charted belt");
+  assert.match(view, /this\.pirateText\.visible = false;\n    \}/, "and nowhere when there is none");
+}
+
+// §tracking (Oct 28 2026): a tracked Mining Barge cutting ore works among its
+// belt's rocks under a cutting beam; nothing is drawn for any other fleet.
+{
+  const render = source("render.ts"), inset = source("trackinginset.ts");
+  assert.match(render, /if \(!work \|\| work\.status !== "mining"\) return null;/, "only a barge at work");
+  assert.match(render, /return \{ rockUrl: beltChunkUrl\(beltKind\(belt\?\.kind\)\) \};/, "its own belt's rocks");
+  assert.match(render, /this\.renderTrackingInset\(tracked, tracked \? this\.trackingWork\(state, tracked\) : null\)/);
+  assert.match(inset, /this\.pane\.addChild\(this\.backdrop, this\.rocks, this\.view, this\.beam, this\.band\)/,
+    "rocks behind the scene, the beam over it");
+  assert.match(inset, /if \(!work \|\| !tex\) \{\n\s+this\.rocks\.visible = false;/, "no work, no rocks");
+}
+
+console.log("System view: tilted layout, Kepler motion, near zone to scale, docking slots, fog-safe picture (berths, near zone, cordon, inbound and outbound arrows, battles, wrecks, sieges), hover-only defense reach, picks, caps, 3D candidates, the tracking inset (its own scene and camera, untouched by the orrery's pans and zooms, cuts, corner, centring, wiring), the raid camera (the raider at its true place, centred, wiring), the raid frame's wiring, course line and note, galaxy orbit preview art, stations by level and inert scenery, and charted belts between orbits passed.");

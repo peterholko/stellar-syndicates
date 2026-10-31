@@ -50,9 +50,11 @@ assert.equal(m.merchantLeavesIn(merchant, 10_000), 860);
 
 // §persona: Teo Brannick's word on the offer, refusals in Teo's voice, the
 // server's result after a deal, and a portrait that falls back to the ship.
+deps["../../protocol"] = compile("protocol.ts");
 const t = deps["../../core/derive/trader"] = compile("core/derive/trader.ts");
+const teo = t.TRADERS.teo;
 const quoteOf = (buys, sells, credits = 10_000) => m.merchantQuote(merchant, buys, sells, home, credits);
-const says = (buys, sells, opts = {}) => t.traderLine(opts.merchant ?? merchant, buys, sells,
+const says = (buys, sells, opts = {}) => t.traderLine(opts.trader ?? teo, opts.merchant ?? merchant, buys, sells,
   quoteOf(buys, sells, opts.credits), opts.dealt ?? false, opts.lastCall ?? false);
 assert.deepEqual(copy(says({}, {})), { text: "Raided! Terrible. Lucky I came by, eh?", mood: "neutral" });
 assert.deepEqual(copy(says({}, {}, { dealt: true })), { text: "Back for more? Good, good.", mood: "pleased" });
@@ -70,16 +72,48 @@ assert.equal(says({}, { metallic_ore: 151 }).text, "I've a hold, not a moon.");
 assert.equal(says({}, { metallic_ore: 61 }).text, "You haven't dug that much yet.");
 assert.equal(says({}, {}, { merchant: { ...merchant, phase: "arriving" } }).text, "Hold your horses, I'm still docking.");
 assert.equal(says({}, {}, { merchant: { ...merchant, phase: "leaving" } }).mood, "scoff");
-assert.equal(t.refusalLine("Your charter bars trade").text, "Your charter's in the red. I don't touch that.");
-assert.equal(t.refusalLine("Something new").text, "No deal.");
+assert.equal(t.refusalLine(teo, "Your charter bars trade").text, "Your charter's in the red. I don't touch that.");
+assert.equal(t.refusalLine(teo, "Something new").text, "No deal.");
+assert.deepEqual(copy(t.dealLine(teo)), { text: "Done! You'll tell your grandchildren.", mood: "pleased" });
 const timeline = [{ at_time: 50, severity: "info", text: "Free trader: bought 8 semiconductors for 408 Cr." },
   { at_time: 120, severity: "warn", text: "Free trader: trade refused — Not enough credits." }];
 assert.equal(t.traderResult(timeline, 200), null, "nothing yet");
 assert.deepEqual(copy(t.traderResult(timeline, 100)), { ok: false, reason: "Not enough credits" });
 assert.deepEqual(copy(t.traderResult(timeline.slice(0, 1), 40)), { ok: true });
-assert.deepEqual(copy(t.traderPortrait("pleased")), { src: "/art/derived/ships/models-v1/previews/free_trader-768.webp",
-  alt: "the Long Odds.", painted: false }, "until the painting lands, the Long Odds stands in");
-assert.deepEqual(copy(t.TRADER), { name: "Teo Brannick", ship: "the Long Odds" });
+assert.deepEqual(copy(t.traderPortrait(teo, "pleased")), { src: "/art/derived/ships/models-v1/previews/free_trader-768.webp",
+  alt: "The Long Odds.", painted: false }, "until the painting lands, the Long Odds stands in");
+
+// §traders (Peter, Oct 27 2026): three free traders, one dealt per
+// corporation by the server; each speaks in their own voice.
+const ines = t.traderOf({ trader: "ines" });
+const mags = t.traderOf({ trader: "mags" });
+const rafi = t.traderOf({ trader: "rafi" });
+assert.deepEqual([t.traderOf(null).name, t.traderOf({}).slug, ines.name, mags.ship],
+  ["Teo Brannick", "teo", "Ines Varga", "Second Wind"], "the dealt trader; Teo until the server says");
+for (const trader of [teo, ines, mags, rafi]) {
+  assert.deepEqual(Object.keys(trader.voice).sort(), Object.keys(teo.voice).sort(), `${trader.name}: a line for every moment`);
+  for (const [key, line] of Object.entries(trader.voice)) {
+    assert.ok(typeof line === "function" ? /4 Cr/.test(line("4 Cr")) : line.length > 0, `${trader.name}: ${key}`);
+  }
+}
+assert.deepEqual(copy(says({}, {}, { trader: ines })), { text: "Raided. Unfortunate. I carry what they took.", mood: "neutral" });
+assert.equal(says({}, { metallic_ore: 40 }, { trader: ines }).text, "Ore. 4 Cr a unit. That is the price.");
+assert.deepEqual(copy(says({ electronics: 8 }, {}, { trader: ines, credits: 100 })), { text: "The numbers don't close.", mood: "scoff" });
+assert.equal(says({}, {}, { trader: mags, merchant: { ...merchant, phase: "arriving" } }).text, "Slow ships get there too, pet. Nearly tied up.");
+assert.equal(says({ electronics: 8 }, {}, { trader: mags }).text, "Chips. Real ones. I don't sell rubbish.");
+assert.equal(t.refusalLine(mags, "Something new").text, "Not today, pet.");
+// Peter: "can we have 4th male free trader".
+assert.equal(says({}, { metallic_ore: 40 }, { trader: rafi }).text, "Ore? Sure. 4 Cr a unit. Practically charity.");
+assert.deepEqual(copy(t.dealLine(rafi)), { text: "Done! Pleasure doing business, chief.", mood: "pleased" });
+assert.deepEqual(copy(t.traderPortrait(ines, "scoff")), { src: "/art/derived/ships/models-v1/previews/clean_slate-768.webp",
+  alt: "The Clean Slate.", painted: false }, "each trader's own portrait, their own ship until it is painted");
+assert.match(src("core/derive/trader.ts"), /\$\{PORTRAITS\}\/\$\{trader\.portrait\}\$\{suffix\}-320\.webp/);
+assert.deepEqual([teo.portrait, ines.portrait, mags.portrait, rafi.portrait], ["teo-brannick", "ines-varga", "mags-halloran", "rafi-mensah"]);
+const simTraders = [...readFileSync(new URL("../../crates/sim/src/merchant.rs", import.meta.url), "utf8")
+  .matchAll(/FreeTrader \{ slug: "(\w+)", name: "([^"]+)", first: "(\w+)", ship: "([^"]+)" \}/g)]
+  .map(([, slug, name, first, ship]) => ({ slug, name, first, ship }));
+assert.deepEqual(Object.values(t.TRADERS).map(({ slug, name, first, ship }) => ({ slug, name, first, ship })), simTraders,
+  "the sim's FREE_TRADERS, in order, with the same names");
 
 // The desktop stall: a guide shortcut fills the shortfall; the handshake sends one exchange.
 const sent = [];
@@ -96,7 +130,7 @@ class InputStub {}
 const doc = { activeElement: null };
 const { DeckMerchantRoutes } = compile("shell/deck/merchant.ts", { document: doc, HTMLInputElement: InputStub });
 const state = { merchant, wallet: { credits: 10_000, report_pending: false }, systems: [home], galaxy: st.galaxy, timeline: [], simTime: 300 };
-const root = { id: "deck-workspace-body", innerHTML: "", contains: () => false };
+const root = { id: "deck-workspace-body", innerHTML: "", contains: () => false, querySelector: () => null };
 const stall = new DeckMerchantRoutes(root, { state, send: (msg) => sent.push(msg) }, { go() {}, notice: (html) => notices.push(html) });
 const route = { name: "merchant", query: { for: "shipyard" } };
 assert.equal(stall.render({ name: "market" }), false, "another route is not the stall");
@@ -116,20 +150,34 @@ assert.match(root.innerHTML, /39\.0 Cr · 120 left/);
 // Your side shows the ore you have to sell; the box stops at it.
 assert.match(root.innerHTML, /4\.0 Cr · takes 150 more<\/small><small class="deck-merchant-row__held"><b>60<\/b> at home<\/small>/);
 assert.match(root.innerHTML, /max="60"[^>]+data-merchant-input="sell:metallic_ore"/, "no more than you hold");
+// Max puts all of it on the table, up to what the trader takes (Peter, Oct 21 2026).
+assert.match(root.innerHTML, /<span class="deck-merchant-row__amount"><input[^>]+data-merchant-input="sell:metallic_ore"[^>]*><button type="button" data-deck-act="merchant-max"[^>]*>Max<\/button><\/span>/);
+assert.equal((root.innerHTML.match(/merchant-max/g) ?? []).length, 1, "only on your side");
 assert.doesNotMatch(root.innerHTML, /\+50%|Markup|Hub \d|half the Hub|Storage room|<small>Credits/);
 // The terms and the handshake stay pinned to the panel's foot.
 assert.match(root.innerHTML, /class="deck-merchant__dock"><div class="deck-ticket-quote">You pay <b>2,559 Cr<\/b> · storage \+43<\/div>/,
   "one total: 15×39 + 13×93 + 15×51");
-assert.match(root.innerHTML, /data-deck-act="merchant-submit" title="Settles at your home at once" >Shake on it</);
+assert.match(root.innerHTML, /data-deck-act="merchant-submit" title="Settles at your home at once" >Trade</);
 assert.equal(stall.handleAction({ dataset: { deckAct: "merchant-submit" } }, route), true);
 assert.deepEqual(copy(sent), [{ type: "MerchantTrade", buys: { alloys: 15, machinery: 13, electronics: 15 }, sells: {} }]);
 assert.match(notices[0], /Deal sent<\/b> · you pay 2,559 Cr/);
 assert.match(root.innerHTML, /“Done! You(&#39;|')ll tell your grandchildren\.”/, "his parting shot");
-assert.match(root.innerHTML, /data-deck-act="merchant-submit" title="Settles at your home at once" disabled>Shake on it/, "the amounts clear after sending");
+assert.match(root.innerHTML, /data-deck-act="merchant-submit" title="Settles at your home at once" disabled>Trade/, "the amounts clear after sending");
 // The sim refused it after all: his word on why.
 state.timeline = [{ at_time: 300.5, severity: "warn", text: "Free trader: trade refused — Not enough storage room at home." }];
 stall.render(route);
 assert.match(root.innerHTML, /data-mood="scoff"[\s\S]*“And where would you put it all\?”/);
+
+// Max: the 60 you hold, under the 150 it takes; with more at home, the 150.
+assert.equal(stall.handleAction({ dataset: { deckAct: "merchant-max" } }, route), true);
+assert.match(root.innerHTML, /value="60"[^>]+data-merchant-input="sell:metallic_ore"/);
+const oreHeld = home.stockpile.find((line) => line.commodity === "metallic_ore");
+const heldBefore = oreHeld.units;
+oreHeld.units = 400;
+stall.handleAction({ dataset: { deckAct: "merchant-max" } }, route);
+assert.match(root.innerHTML, /value="150"[^>]+data-merchant-input="sell:metallic_ore"/, "no more than it takes");
+oreHeld.units = heldBefore;
+stall.handleInput({ dataset: { merchantInput: "sell:metallic_ore" }, value: "0" }, route);
 
 // Typing a sale prices it; an offer he won't take is never sent.
 stall.handleInput({ dataset: { merchantInput: "sell:metallic_ore" }, value: "200" }, route);
@@ -165,4 +213,17 @@ stall.render({ name: "merchant" }, true);
 assert.match(root.innerHTML, /the Long Odds · Arriving/);
 assert.match(root.innerHTML, /“Hold your horses, I(&#39;|')m still docking\.”/);
 assert.match(root.innerHTML, /data-merchant-input="buy:alloys" disabled/);
-console.log("PASS: merchant quotes, refusals, shortfall prefill, Teo Brannick's lines and the desktop negotiation table.");
+// Mobile: the same Max (as if typed) and Trade; Teo's portrait 25% larger in
+// both shells, from the 320 px derivative (Peter, Oct 21 2026).
+// An open guide floats over the table; the table keeps its height (Peter, Oct 21 2026).
+const deckCss = readFileSync(new URL("../src/styles/deck.css", import.meta.url), "utf8");
+assert.match(deckCss, /\.deck-workspace:is\(\[data-route="merchant"\], \[data-route="shipyard"\]\) \{ bottom: max\(calc\(var\(--deck-control-height\) \+ var\(--space-6\)\), calc\(var\(--deck-bottom-row-inset, 0px\) \+ var\(--space-3\)\)\); \}/);
+assert.doesNotMatch(deckCss, /data-route="merchant"\][^{]*\.deck-founding/, "the guide never folds for the trader");
+const mobile = src("shell/mobile/surfaces.ts");
+assert.match(mobile, /data-mobile-act="merchant-max" \$\{docked && most > 0 \? "" : "disabled"\}>Max<\/button>/);
+assert.match(mobile, /case "merchant-max": \{[\s\S]*?box\.value = units > 0 \? String\(units\) : "";\n\s*this\.handleMerchantInput\(box\);/);
+assert.match(mobile, /data-mobile-act="merchant-submit"[^>]*>Trade<\/button>/);
+assert.match(mobile, /m-merchant-portrait[^\n]{0,160}width="90" height="90"/);
+assert.match(src("shell/deck/merchant.ts"), /deck-merchant__portrait[^\n]{0,160}width="210" height="210"/);
+assert.match(src("core/derive/trader.ts"), /-320\.webp/);
+console.log("PASS: merchant quotes, refusals, shortfall prefill, four traders' lines (Teo, Ines, Mags, Rafi), Max and Trade, and the desktop negotiation table.");

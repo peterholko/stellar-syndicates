@@ -48,6 +48,10 @@ impl World {
             match o.kind { OperationKind::PrizeRecovery { pos, prize, .. } => Some((pos, prize)), _ => None }
         }) else { return; };
         if self.engagements.values().any(|e| e.attackers.contains(&fleet_id) || e.defenders.contains(&fleet_id)) { return; }
+        // §real-coordinates: a cache at a system is reached from any of its worlds.
+        let in_reach = self.fleets.get(&fleet_id).is_some_and(|f| {
+            f.pos.distance(pos) <= crate::operation::SALVAGE_RECOVERY_RADIUS || self.same_system(f.pos, pos)
+        });
         let Some(fleet) = self.fleets.get_mut(&fleet_id) else { return; };
         let modules = prize.modules();
         let needed: u32 = modules.values().sum();
@@ -56,8 +60,7 @@ impl World {
         // on-site rather than silently dropping equipment or paying partial data.
         let capacity = fleet.freighter_count().saturating_mul(crate::module::MODULE_CONVOY_BERTHS);
         let aboard: u32 = fleet.modules.values().sum();
-        if fleet.owner != player || fleet.pos.distance(pos) > crate::operation::SALVAGE_RECOVERY_RADIUS
-            || capacity.saturating_sub(aboard) < needed { return; }
+        if fleet.owner != player || !in_reach || capacity.saturating_sub(aboard) < needed { return; }
         for (kind, count) in modules { *fleet.modules.entry(kind).or_default() += count; }
         let operation = self.operations.get_mut(&id).unwrap();
         operation.assigned_fleets.insert(player, fleet_id);

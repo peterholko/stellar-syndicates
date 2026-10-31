@@ -40,7 +40,13 @@ impl World {
         let engaged = self.engagements.values().any(|e| e.attackers.contains(&pirate) || e.defenders.contains(&pirate));
         match raid.phase {
             RaidPhase::Inbound => {
-                if pos.distance(home) > crate::transit::HYPERLIMIT {
+                // In the colony's well: the mine it raced comes online.
+                if pos.distance(home) <= crate::transit::HYPERLIMIT
+                    && self.players[&owner].founding.stage == crate::founding::FoundingStage::BuildMine
+                {
+                    self.finish_charter_mine(owner, home_id);
+                }
+                if engaged || !self.steer_raid_at_colony(pirate, home_id) {
                     return;
                 }
                 // Over the colony: everything it came for, as it stands now.
@@ -88,15 +94,84 @@ impl World {
         }
     }
 
+    /// §charter-gates (Oct 26 2026, Peter): the privateer sets out the moment
+    /// the charter's mine starts going up, from where its flight into the
+    /// colony's system takes [`CHARTER_MINE_SECS`](crate::founding::CHARTER_MINE_SECS):
+    /// the drive's spool, then warp to the well edge (nearer, if its den is).
+    /// That is the mine's build time; the mine is finished as the privateer
+    /// drops into the well either way (`finish_charter_mine`). §raid-course:
+    /// its course is the colony's world, so it crosses the edge on that line,
+    /// then comes on at impulse.
+    pub(super) fn raid_on_mine_start(&mut self, owner: PlayerId, system: EntityId) -> Option<f64> {
+        let corp = self.players.get(&owner)?;
+        let f = &corp.founding;
+        if !f.enabled || !f.local_opening || f.stage != crate::founding::FoundingStage::BuildMine
+            || f.raid.is_some() || f.reward_granted || corp.home_system != Some(system)
+        {
+            return None;
+        }
+        self.launch_founding_raid(owner);
+        let sys = self.systems.iter().find(|s| s.id == system)?;
+        let (home, world) = (sys.pos, sys.main_world().map_or(sys.pos, |b| sys.body_pos(b, self.time)));
+        let pirate = self.fleets.get_mut(&self.players[&owner].founding.privateer?)?;
+        let warp = pirate.transit_speed() * crate::transit::WARP_FACTOR;
+        // How far short of the world its line in crosses the well's edge.
+        let (dir, d) = ((pirate.pos - world).normalized(), world - home);
+        let along = dir.dot(d);
+        let edge = -along + (along * along - d.length_sq() + crate::transit::HYPERLIMIT.powi(2)).max(0.0).sqrt();
+        let flight = edge + warp * (crate::founding::CHARTER_MINE_SECS - crate::transit::WARP_SPOOL_S);
+        let out = pirate.pos.distance(world);
+        if out > flight {
+            pirate.pos = world + (pirate.pos - world) * (flight / out);
+        }
+        Some(crate::founding::CHARTER_MINE_SECS)
+    }
+
+    /// §raid-course (Oct 30 2026, Peter: "The first pirate raiders seem to fly
+    /// towards the player's star system instead of their planet"): a raider
+    /// bound for a colony steers for the colony's world, not its star, and
+    /// names the system once inside the well, so it settles over that world
+    /// and rides it. Whether it is over the world now.
+    pub(super) fn steer_raid_at_colony(&mut self, fleet: EntityId, home_id: EntityId) -> bool {
+        let Some(sys) = self.systems.iter().find(|s| s.id == home_id) else { return false };
+        let Some(f) = self.fleets.get(&fleet) else { return false };
+        let star = sys.pos;
+        let in_well = f.pos.distance(star) <= crate::transit::HYPERLIMIT;
+        let over = in_well && self.besieged_distance(sys, f.pos) <= crate::founding::RAID_OVER_COLONY_SU;
+        let dest = if in_well { star } else { sys.main_world().map_or(star, |b| sys.body_pos(b, self.time)) };
+        if !(over && matches!(f.order, FleetOrder::Idle)) {
+            self.fleets.get_mut(&fleet).unwrap().order = FleetOrder::MoveTo { dest };
+        }
+        over
+    }
+
+    /// The charter's mine, going up during the privateer's flight, comes
+    /// online as it drops into the colony's well.
+    fn finish_charter_mine(&mut self, owner: PlayerId, system: EntityId) {
+        let tick = self.tick;
+        let mine = crate::build::BuildKind::Upgrade { upgrade: crate::build::StructureKind::MiningComplex };
+        if let Some(job) = self.build_queue.iter_mut()
+            .find(|j| j.owner == owner && j.system == system && j.what == mine
+                && j.structure_work.as_ref().is_some_and(|work| work.rate > 0.0))
+            && let Some(work) = job.structure_work.as_mut()
+        {
+            work.required = work.completed_at(tick);
+            job.complete_tick = tick;
+        }
+    }
+
     /// The privateer sets out from beyond the colony's sensors on its den's
     /// side, its den rising with it. A home without a den gets one from the
     /// dark side, away from the Market Hub.
     fn launch_founding_raid(&mut self, owner: PlayerId) {
         self.ensure_founding_den(owner);
         let corp = &self.players[&owner];
-        let Some(home) = corp.home_system.and_then(|id| self.systems.iter().find(|s| s.id == id)).map(|s| s.pos) else {
+        let Some(sys) = corp.home_system.and_then(|id| self.systems.iter().find(|s| s.id == id)) else {
             return;
         };
+        // §raid-course: its course is the colony's world from the first tick
+        // (in warp nothing steers, so a late turn would drop it out).
+        let (home, world) = (sys.pos, sys.main_world().map_or(sys.pos, |b| sys.body_pos(b, self.time)));
         let den = corp.founding.den.and_then(|d| self.systems.iter().find(|s| s.id == d)).map(|s| s.pos);
         let outward = if home.distance(self.hub) > 1.0 { (home - self.hub).normalized() } else { Vec2::new(1.0, 0.0) };
         let reach = self.config.sensor_range * crate::founding::RAID_START_SENSOR_RANGES;
@@ -106,9 +181,9 @@ impl World {
             }
             _ => (home + outward * reach, home + outward * reach),
         };
-        let lurk = base + (home - base) * crate::founding::RAID_LURK_FRACTION;
+        let lurk = home + (base - home).normalized() * self.config.sensor_range * crate::founding::RAID_LURK_SENSOR_RANGES;
         let id = self.alloc_entity_id();
-        let mut fleet = Fleet::single(id, PlayerId::PIRATE, ShipKind::Raider, start, FleetOrder::MoveTo { dest: home }, None);
+        let mut fleet = Fleet::single(id, PlayerId::PIRATE, ShipKind::Raider, start, FleetOrder::MoveTo { dest: world }, None);
         // The tutorial privateer: slow hull, weak guns, full hull.
         fleet.founding_privateer = true;
         if let Some(ship) = fleet.ships.first_mut() {
@@ -211,6 +286,94 @@ mod tests {
         events
     }
 
+    fn landing(w: &World, home: EntityId) -> u32 {
+        w.systems.iter().find(|s| s.id == home).unwrap().bodies.iter()
+            .find(|b| b.tier(crate::build::StructureKind::CommandCenter) > 0).unwrap().id
+    }
+
+    #[test]
+    fn the_charter_opens_its_structures_step_by_step() {
+        use crate::build::StructureKind as K;
+        let (mut w, owner, home) = founder();
+        let body = landing(&w, home);
+        let refusal = |w: &mut World, kind: K| {
+            let events = w.step(&[Command::DevelopSystem { player_id: owner, system_id: home, body_id: Some(body), upgrade: kind }]);
+            events.into_iter().find_map(|e| match e.payload {
+                EventPayload::IndustryRejected { owner: o, reason, .. } if o == owner => Some(reason),
+                _ => None,
+            })
+        };
+        assert_eq!(w.players[&owner].founding.stage, S::BuildBioharvester);
+        // Nothing rushes the Shipyard ahead of the raid.
+        assert_eq!(refusal(&mut w, K::OrbitalDefense).as_deref(), Some("The charter opens this at step 6"),
+            "§gun-platform: not before the first raid");
+        assert_eq!(refusal(&mut w, K::PowerPlant).as_deref(), Some("The charter opens this at step 8"));
+        assert_eq!(refusal(&mut w, K::Shipyard).as_deref(), Some("The charter opens this at step 9"));
+        assert_eq!(refusal(&mut w, K::Academy).as_deref(), Some("The charter opens this at step 14"));
+        assert_eq!(refusal(&mut w, K::MiningComplex).as_deref(), Some("The charter opens this at step 4"));
+        assert_eq!(refusal(&mut w, K::Bioharvester), None, "the step's own structure");
+        assert_eq!(stock(&w, home, C::Electronics), crate::founding::KIT_SEMICONDUCTORS, "the kit's chips wait for the raid");
+        // A step opens its structure and every earlier one.
+        let f = &mut w.players.get_mut(&owner).unwrap().founding;
+        f.set_stage(S::BuildShipyard, 0.0);
+        assert!(f.allows(K::Shipyard) && f.allows(K::PowerPlant) && f.allows(K::MiningComplex));
+        assert!(!f.allows(K::Academy));
+        f.set_stage(S::Complete, 0.0);
+        assert!(K::ALL.iter().all(|k| f.allows(*k)), "the charter fulfilled, nothing waits on it");
+    }
+
+    #[test]
+    fn the_privateer_sets_out_as_the_mine_starts_and_arrives_as_it_is_built() {
+        use crate::build::StructureKind as K;
+        let (mut w, owner, home) = founder();
+        let body = landing(&w, home);
+        w.players.get_mut(&owner).unwrap().founding.set_stage(S::BuildMine, w.time);
+        w.step(&[]);
+        assert!(w.players[&owner].founding.raid.is_none(), "not before the mine");
+        let events = w.step(&[Command::DevelopSystem { player_id: owner, system_id: home, body_id: Some(body), upgrade: K::MiningComplex }]);
+        assert!(!events.iter().any(|e| matches!(&e.payload, EventPayload::IndustryRejected { owner: o, .. } if *o == owner)), "{events:?}");
+        run_until(&mut w, 2.0, |w| w.players[&owner].founding.raid.is_some());
+        let started = w.tick;
+        let pirate = w.players[&owner].founding.privateer.expect("it sets out with the mine");
+        let home_pos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
+        assert!(w.fleets[&pirate].pos.distance(home_pos) > w.config.sensor_range, "unseen as it sets out");
+        // §raid-course: its course is the colony's world, not the star.
+        w.step(&[]);
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        let world = sys.body_pos(sys.main_world().unwrap(), w.time);
+        assert!(matches!(w.fleets[&pirate].order, FleetOrder::MoveTo { dest }
+            if dest.distance(world) < 20.0 && dest.distance(home_pos) > 100.0), "{:?}", w.fleets[&pirate].order);
+        let job = w.build_queue.iter().find(|j| j.owner == owner
+            && j.what == (crate::build::BuildKind::Upgrade { upgrade: K::MiningComplex })).unwrap();
+        let planned = job.complete_tick;
+        let begun = job.started_tick.unwrap();
+        let opening = (crate::founding::OPENING_BUILD_SECS * crate::config::TICK_HZ as f64) as u64;
+        assert!(planned - started > opening, "longer than an opening build: its flight");
+        let mine = |w: &World| w.systems.iter().find(|s| s.id == home).unwrap().bodies.iter()
+            .find(|b| b.id == body).unwrap().tier(K::MiningComplex);
+        run_until(&mut w, 120.0, |w| w.fleets[&pirate].pos.distance(home_pos) <= crate::transit::HYPERLIMIT);
+        let arrived = w.tick;
+        let hz = crate::config::TICK_HZ as u64;
+        assert_eq!(planned - begun, (crate::founding::CHARTER_MINE_SECS * hz as f64) as u64, "its timer: the flight");
+        assert!(planned.abs_diff(arrived) <= hz / 2, "the privateer keeps it: {planned} vs {arrived}");
+        assert_eq!(mine(&w), 0, "not before the privateer is in the colony's well");
+        run_until(&mut w, 2.0, |w| mine(w) == 1);
+        assert!(w.tick - arrived <= 1, "the mine comes online as it arrives: {} vs {arrived}", w.tick);
+        // §raid-course (Oct 30 2026): it loots over the colony's world, not at
+        // the well's edge.
+        let phase = |w: &World| w.players[&owner].founding.raid.as_ref().unwrap().phase;
+        assert_eq!(phase(&w), RaidPhase::Inbound, "it still has the well to cross");
+        run_until(&mut w, 60.0, |w| phase(w) != RaidPhase::Inbound);
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        let world = sys.body_pos(sys.main_world().unwrap(), w.time);
+        assert!(w.fleets[&pirate].pos.distance(world) <= crate::founding::RAID_OVER_COLONY_SU, "over the colony's world");
+        // Nothing could spend the kit's chips or Armaments first: it takes them all.
+        run_until(&mut w, 120.0, |w| w.players[&owner].founding.raid.as_ref().is_some_and(|r| r.phase == RaidPhase::Returning));
+        let stolen = &w.players[&owner].founding.raid.as_ref().unwrap().stolen;
+        assert_eq!(stolen.get(&C::Electronics).copied(), Some(crate::founding::KIT_SEMICONDUCTORS as u32));
+        assert_eq!(stolen.get(&C::Armaments).copied(), Some(crate::founding::KIT_ARMAMENTS as u32));
+    }
+
     #[test]
     fn the_raid_takes_every_semiconductor_and_armament_and_carries_them_to_the_den() {
         let (mut w, owner, home) = founder();
@@ -242,10 +405,10 @@ mod tests {
         assert!(stock(&w, home, C::MetallicOre) >= ore, "it takes nothing else");
         assert_eq!(w.fleets[&pirate].cargo_units(), 55, "the loot is aboard, not teleported");
 
-        // The report hands on to the ore sale; the trader is called.
+        // The report hands on to the Gun Platform (§gun-platform); the trader is called.
         w.time = w.time.max(report);
         w.step(&[]);
-        assert_eq!(w.players[&owner].founding.stage, S::SellOre);
+        assert_eq!(w.players[&owner].founding.stage, S::BuildGunPlatform);
         assert!(w.merchants.values().any(|v| v.customer == owner), "the free trader is called");
 
         // Home to its den, where the loot joins the den's stores; then it lurks.
@@ -260,6 +423,15 @@ mod tests {
         let den_pos = w.systems.iter().find(|s| s.id == den).unwrap().pos;
         assert!(lurk.distance(home_pos) > w.config.sensor_range, "it lurks beyond the colony's sensors");
         assert!(lurk.distance(den_pos) > pirate::PIRATE_ASSAULT_RADIUS * 4.0, "and clear of the den's garrison");
+        // §privateer-hunt (Peter, Oct 27 2026): just outside them, on the side
+        // it left by, quiet enough that only a hunter on the spot finds it.
+        assert!(lurk.distance(home_pos) < w.config.sensor_range * 1.2, "just outside: {:.0} su", lurk.distance(home_pos));
+        assert!((lurk - home_pos).dot(den_pos - home_pos) > 0.0, "on its den's side");
+        let quiet = w.fleets[&pirate].detection_signature();
+        let cc = w.players[&owner].command_center;
+        assert!(!crate::detection::detected(quiet, &[(cc, w.config.sensor_range)], lurk), "the colony can't see it");
+        assert!(crate::detection::detected(quiet, &[(lurk + Vec2::new(500.0, 0.0), w.config.sensor_range)], lurk),
+            "a hunter's sensors on the spot can");
     }
 
     #[test]
@@ -284,4 +456,3 @@ mod tests {
             && f.ships.len() == 1).count(), 1, "one privateer");
     }
 }
-

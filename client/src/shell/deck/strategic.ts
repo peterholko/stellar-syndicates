@@ -9,6 +9,7 @@ import {
 import {
   arrivalLocal,
   fmt,
+  fmtBuildDur,
   fmtDur,
   informationDelay,
   operationCopy,
@@ -17,7 +18,7 @@ import {
   operationReward,
   operationTitle,
 } from "../../core/derive/format";
-import { nearestSystemName, operationSystemName } from "../../core/derive/geo";
+import { nearestSystemName, systemName } from "../../core/derive/geo";
 import {
   battleCommandDelay,
 } from "../../core/derive/orders";
@@ -30,26 +31,33 @@ import { captainPortrait } from "../art";
 import { corpCard, fmtDays } from "../../core/derive/medals";
 import { boardLine, boardSummary } from "../../core/derive/board";
 import { signalsSummary } from "../../core/derive/signals";
-import { corpCardHtml, medalChipsHtml } from "../corpcard";
+import { corpCardHtml, medalChipsHtml, medalCountsHtml } from "../corpcard";
+import { bonusLine, currentRung, givingWorlds, roman } from "../../core/derive/projects";
 import { icon, label, type IconKey } from "../../icons";
 import type {
   BattleReportView,
   BattleSurvivor,
   CaptureReportView,
+  CharterView,
   Commodity,
   CompCount,
   GhostView,
   OperationView,
   RankingRow,
   ShipKind,
+  SyndicateBonus,
+  SyndicateProjectsView,
   SyndicateRole,
 } from "../../protocol";
 import { liveSimTime } from "../../state";
+import { crackdownTitle, DECREE_TEXT, demandText, gripNumeral, gripTitle, keystoneFeed, RESOLVE_BAND, RESOLVE_TIP, resolveBand } from "../../core/derive/season";
 import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext } from "../types";
 import type { DeckRoute } from "./router";
 import { handoffHtml, handleHandoffAction } from "./handoff";
+import { commsAction, commsHtml } from "./comms";
+import { INVITES_MAX, inviteLink, presenceText } from "../../core/derive/social";
 import { explorationHtml, explorationFocused, handleExplorationAction } from "../exploration";
 
 interface StrategicHooks {
@@ -110,9 +118,10 @@ export class DeckStrategicRoutes {
 
   render(route: DeckRoute | null, force = false): boolean {
     if (route?.name !== "battle" || route.params?.report) this.withdrawal.clear();
-    if (!route || !["operations", "syndicate", "faction", "rankings", "battle"].includes(route.name)) return false;
+    if (!route || !["operations", "syndicate", "faction", "rankings", "battle", "comms"].includes(route.name)) return false;
     const active = document.activeElement;
-    if (!force && (active instanceof HTMLInputElement || active instanceof HTMLSelectElement) && this.root.contains(active)) return true;
+    if (!force && (active instanceof HTMLInputElement || active instanceof HTMLSelectElement || active instanceof HTMLTextAreaElement)
+      && this.root.contains(active)) return true;
     const signature = sheetFingerprint([
       route,
       this.rankCategory,
@@ -138,6 +147,7 @@ export class DeckStrategicRoutes {
       this.ctx.state.orders,
       [...this.ctx.state.battleViewed],
       [...this.ctx.state.battleDismissed],
+      this.ctx.state.social,
     ]);
     if (!force && signature === this.routeSignature) return true;
     if (renderDeferred(this.root.id, () => this.render(route, true))) return true;
@@ -145,6 +155,7 @@ export class DeckStrategicRoutes {
     if (route.name === "operations") setHtml(this.root, explorationHtml(this.ctx.state)
       + (explorationFocused(this.ctx.state) ? "" : this.operationsHtml(route.query?.contract)));
     else if (route.name === "syndicate") setHtml(this.root, this.syndicateHtml());
+    else if (route.name === "comms") setHtml(this.root, commsHtml(this.ctx.state, route.query));
     else if (route.name === "faction") setHtml(this.root, this.factionHtml());
     else if (route.name === "rankings") setHtml(this.root, route.query?.corp ? this.corpCardHtml(route.query.corp) : this.rankingsHtml());
     else setHtml(this.root, this.battleHtml(route));
@@ -152,7 +163,10 @@ export class DeckStrategicRoutes {
   }
 
   handleAction(button: HTMLButtonElement, route: DeckRoute | null): boolean {
-    if (!route || !["operations", "syndicate", "faction", "rankings", "battle"].includes(route.name)) return false;
+    if (!route || !["operations", "syndicate", "faction", "rankings", "battle", "comms"].includes(route.name)) return false;
+    if (route.name === "comms" && button.dataset.deckAct?.startsWith("strategic-comms-")) {
+      if (commsAction(button, this.ctx, route, this.hooks.go)) { this.invalidate(); return true; }
+    }
     if (route.name === "operations" && handleExplorationAction(button, this.ctx)) {
       this.invalidate(); this.render(route, true); return true;
     }
@@ -177,6 +191,24 @@ export class DeckStrategicRoutes {
     if (action.startsWith("strategic-operation-")) this.operationAction(action, button);
     else if (action.startsWith("strategic-syndicate-")) this.syndicateAction(action, button);
     else if (action === "strategic-faction-pay") this.payReinstatement();
+    // §season: answer the Authority's demands from the Faction page.
+    else if (action === "strategic-levy") {
+      this.ctx.send({ type: "AnswerLevy", accept: button.dataset.accept === "1" });
+      this.hooks.notice(`<b>Levy ${button.dataset.accept === "1" ? "accepted" : "refused"}</b> · answer on its way to the Hub.`);
+    } else if (action === "strategic-feed" && button.dataset.system && button.dataset.commodity) {
+      this.ctx.send({ type: "FeedKeystone", system_id: button.dataset.system, commodity: button.dataset.commodity as Commodity, units: Number(button.dataset.units ?? 0) });
+      this.hooks.notice(`<b>Keystone fed</b> · ${esc(button.dataset.units ?? "")} ${esc(label(button.dataset.commodity as Commodity))} · on its way.`);
+    } else if (action === "strategic-gate-step" && button.dataset.fleet && button.dataset.system) {
+      this.ctx.send({ type: "GateStep", fleet_id: button.dataset.fleet, system_id: button.dataset.system });
+      this.hooks.notice(`<b>Gate Step</b> · to ${esc(systemName(button.dataset.system))}.`);
+    } else if (action === "strategic-arrears" && button.dataset.commodity) {
+      this.ctx.send({ type: "PayArrears", commodity: button.dataset.commodity as Commodity });
+      this.hooks.notice("<b>Arrears paid</b> · on their way to the Hub.");
+    } else if (action === "strategic-requisition" && button.dataset.id) {
+      const pay = button.dataset.pay === "1";
+      this.ctx.send({ type: "AnswerRequisition", id: Number(button.dataset.id), pay });
+      this.hooks.notice(`<b>Requisition ${pay ? "paid" : "refused"}</b> · answer on its way to the Hub.`);
+    }
     else if (action.startsWith("strategic-battle-withdraw-") && button.dataset.battle && button.dataset.fleet && route.name === "battle" && route.params?.id === button.dataset.battle) {
       const notice = this.withdrawal.handle(action.slice("strategic-battle-withdraw-".length), button.dataset.battle, button.dataset.fleet, this.ctx);
       if (notice) this.hooks.notice(notice);
@@ -365,16 +397,47 @@ export class DeckStrategicRoutes {
         const own = member.id === this.ctx.state.playerId;
         const maySet = syndicate.is_founder && member.id !== syndicate.founder && !own;
         const controls = maySet ? `<div class="deck-role-actions">${(["member", "quartermaster", "officer"] as SyndicateRole[]).map((role) => `<button type="button" data-deck-act="strategic-syndicate-role" data-member="${escAttr(member.id)}" data-role="${role}" aria-pressed="${member.role === role}">${esc(human(role))}</button>`).join("")}</div>` : "";
-        return `<div class="deck-member-row"><span><i></i><span><b>${esc(member.name)}</b><small>${own ? "You · " : ""}${esc(human(member.role))}</small></span></span>${controls}</div>`;
+        const presence = this.ctx.state.social?.members.find((m) => m.player === member.id);
+        return `<div class="deck-member-row${presence?.online ? " is-online" : presence ? " is-offline" : ""}"><span><i></i><span><b>${esc(member.name)}</b><small>${own ? "You · " : ""}${esc(human(member.role))}${presence && !own ? ` · ${esc(presenceText(presence))}` : ""}</small></span></span>${controls}</div>`;
       }).join("");
       const invite = ["founder", "officer"].includes(syndicate.my_role) ? `<div class="deck-inline-form"><input id="deck-syndicate-invite" maxlength="32" placeholder="Corporation name"><button type="button" data-deck-act="strategic-syndicate-invite">Invite</button></div>${syndicate.invited.length ? `<p class="deck-muted">Invited · ${syndicate.invited.map(esc).join(" · ")}</p>` : ""}` : "";
-      const project = ["founder", "officer", "quartermaster"].includes(syndicate.my_role) ? `<div class="deck-section__action"><button type="button" data-deck-act="strategic-syndicate-project" ${this.ctx.state.selectedSystemId ? "" : "disabled"}>Start shared operation</button><span>${this.ctx.state.selectedSystemId ? `Host at ${esc(operationSystemName(this.ctx.state.selectedSystemId))}.` : "Select a member-owned system on the map first."}</span></div>` : "";
-      membership = `<section class="deck-section"><header><div><h3>${esc(syndicate.name)}</h3><p>Mutual non-engagement pact · your role ${esc(human(syndicate.my_role))}.</p></div><b>${syndicate.members.length}</b></header><div class="deck-member-list">${members}</div>${invite}${project}<div class="deck-danger-row"><button type="button" class="is-danger" data-deck-act="strategic-syndicate-leave">Leave syndicate</button>${syndicate.is_founder ? `<button type="button" class="is-danger" data-deck-act="strategic-syndicate-dissolve">Dissolve syndicate</button>` : ""}</div></section>`;
+      membership = `<section class="deck-section"><header><div><h3>${esc(syndicate.name)}</h3><p>Mutual non-engagement pact · your role ${esc(human(syndicate.my_role))}.</p></div><b>${syndicate.members.length}</b></header><div class="deck-member-list">${members}</div><div class="deck-section__action"><button type="button" data-deck-act="strategic-syndicate-channel">Open channel</button></div>${invite}<div class="deck-danger-row"><button type="button" class="is-danger" data-deck-act="strategic-syndicate-leave">Leave syndicate</button>${syndicate.is_founder ? `<button type="button" class="is-danger" data-deck-act="strategic-syndicate-dissolve">Dissolve syndicate</button>` : ""}</div></section>`;
     } else {
       const invitationRows = invites.map((invite) => `<div class="deck-member-row"><span>${icon("syndicate", "sm")}<span><b>${esc(invite.name)}</b><small>Invitation received</small></span></span><button type="button" data-deck-act="strategic-syndicate-accept" data-syndicate="${escAttr(invite.id)}">Accept</button></div>`).join("");
       membership = `<section class="deck-section"><header><div><h3>Form a syndicate</h3><p>Members cannot raid, attack or blockade one another; allied holdings tint green only as membership light arrives.</p></div></header><div class="deck-inline-form"><input id="deck-syndicate-create" maxlength="32" placeholder="Syndicate name"><button type="button" class="is-primary" data-deck-act="strategic-syndicate-create">Create</button></div>${invitationRows ? `<div class="deck-subhead"><b>Invitations</b><span>${invites.length}</span></div><div class="deck-member-list">${invitationRows}</div>` : `<div class="deck-empty-inline">No pending invitations.</div>`}</section>`;
     }
-    return `<section class="deck-page deck-syndicate"><header class="deck-page__lead"><span>Alliance · permissions · formal conflict</span><h2>Syndicate & diplomacy</h2><p>Relationship changes are light-delayed and include a no-surprise separation window.</p></header>${membership}${this.diplomacyHtml()}</section>`;
+    return `<section class="deck-page deck-syndicate"><header class="deck-page__lead"><span>Alliance · permissions · formal conflict</span><h2>Syndicate & diplomacy</h2><p>Relationship changes are light-delayed and include a no-surprise separation window.</p></header>${membership}${syndicate?.projects ? this.projectsHtml(syndicate.projects) : ""}${this.friendInvitesHtml()}${this.diplomacyHtml()}</section>`;
+  }
+
+  /** §syndicate-projects (R6): the week's ladder, points and bonuses. */
+  private projectsHtml(p: SyndicateProjectsView): string {
+    const st = this.ctx.state;
+    const rung = currentRung(p);
+    const steps = p.rungs.map((r, i) => `<li class="${i < p.rung ? "is-done" : i === p.rung ? "is-current" : ""}" title="${escAttr(`${r.goal.toLocaleString()} ${label(r.goods)} · +${r.points} pts`)}">${i < p.rung ? "✓" : i + 1}</li>`).join("");
+    let give = `<div class="deck-empty-inline">Ladder done · next week ${fmtDays(p.week_ends_in)}</div>`;
+    if (rung) {
+      const worlds = givingWorlds(st.systems, st.playerId, rung.goods);
+      const need = rung.goal - p.progress;
+      const pct = Math.min(100, p.progress / rung.goal * 100);
+      give = `<div class="deck-project-rung"><b>${esc(label(rung.goods))} ${p.progress.toLocaleString()} / ${rung.goal.toLocaleString()}</b><small>+${rung.points} pts</small></div><div class="deck-meter"><i style="width:${pct.toFixed(1)}%"></i></div>` +
+        (worlds.length ? `<div class="deck-inline-form"><select id="deck-project-system">${worlds.map(([s, n]) => `<option value="${escAttr(s.id)}">${esc(systemName(s.id))} · ${n.toLocaleString()}</option>`).join("")}</select><input id="deck-project-units" type="number" min="1" max="${need}" value="${Math.min(need, worlds[0][1])}"><button type="button" class="is-primary" data-deck-act="strategic-syndicate-project-give">Give</button></div>`
+          : `<div class="deck-empty-inline">No ${esc(label(rung.goods))} on your worlds.</div>`);
+    }
+    const bonuses = p.bonuses.map((b) => {
+      const wait = b.next_in !== null ? ` · yours ${roman(b.mine)}, ${roman(b.mine + 1)} in ${fmtDays(b.next_in)}` : "";
+      const raise = p.may_raise && b.next_cost !== null ? `<button type="button" data-deck-act="strategic-syndicate-bonus-raise" data-bonus="${b.bonus}" ${p.points >= b.next_cost ? "" : "disabled"}>${roman(b.level + 1)} · ${b.next_cost} pts</button>` : "";
+      return `<div class="deck-member-row"><span><span><b>${esc(bonusLine(b))}</b>${wait ? `<small>${esc(wait.slice(3))}</small>` : ""}</span></span>${raise}</div>`;
+    }).join("");
+    const given = p.given.length ? `<p class="deck-muted">This week · ${p.given.map(([name, n]) => `${esc(name)} ${n.toLocaleString()}`).join(" · ")}</p>` : "";
+    return `<section class="deck-section deck-projects"><header><div><h3>Projects · week ${p.week}</h3><p>Closes in ${esc(fmtDays(p.week_ends_in))}${medalCountsHtml(p.medals)}</p></div><b title="Project points to spend">${p.points} pts</b></header><ol class="deck-ladder">${steps}</ol>${give}<div class="deck-member-list">${bonuses}</div>${given}</section>`;
+  }
+
+  /** §settle-near-friends (R7): links that hold a home near this corporation. */
+  private friendInvitesHtml(): string {
+    const open = this.ctx.state.social?.invites ?? [];
+    const rows = open.map((invite) => `<div class="deck-member-row deck-invite-row"><input readonly value="${escAttr(inviteLink(invite.code))}" aria-label="Invite link"><button type="button" data-deck-act="strategic-syndicate-link-copy" data-code="${escAttr(invite.code)}">Copy</button><small>${esc(invite.near)} · ${fmtDays(Math.max(0, invite.until - liveSimTime()))}</small><button type="button" class="is-danger" data-deck-act="strategic-syndicate-link-revoke" data-code="${escAttr(invite.code)}">Revoke</button></div>`).join("");
+    const hint = "A friend who lands through the link gets the held home and joins your syndicate if it has a seat.";
+    return `<section class="deck-section"><header><div><h3>Invite a friend</h3></div><b>${open.length}/${INVITES_MAX}</b></header>${rows ? `<div class="deck-member-list">${rows}</div>` : ""}<div class="deck-section__action"><button type="button" data-deck-act="strategic-syndicate-link-new" title="${escAttr(hint)}" ${open.length >= INVITES_MAX ? "disabled" : ""}>New invite link</button></div></section>`;
   }
 
   private diplomacyHtml(): string {
@@ -389,6 +452,30 @@ export class DeckStrategicRoutes {
   }
 
   private syndicateAction(action: string, button: HTMLButtonElement): void {
+    if (action === "strategic-syndicate-channel") {
+      this.hooks.go({ name: "comms" });
+      return;
+    }
+    if (action === "strategic-syndicate-link-new") { this.ctx.send({ type: "CreateInvite" }); return; }
+    if (action === "strategic-syndicate-project-give") {
+      const rung = this.ctx.state.syndicate?.projects && currentRung(this.ctx.state.syndicate.projects);
+      const system_id = this.root.querySelector<HTMLSelectElement>("#deck-project-system")?.value;
+      const units = Math.floor(Number(this.root.querySelector<HTMLInputElement>("#deck-project-units")?.value));
+      if (rung && system_id && units > 0) this.ctx.send({ type: "ContributeSyndicateProject", system_id, commodity: rung.goods, units });
+      return;
+    }
+    if (action === "strategic-syndicate-bonus-raise" && button.dataset.bonus) {
+      this.ctx.send({ type: "RaiseSyndicateBonus", bonus: button.dataset.bonus as SyndicateBonus });
+      return;
+    }
+    if (action === "strategic-syndicate-link-revoke" && button.dataset.code) { this.ctx.send({ type: "RevokeInvite", code: button.dataset.code }); return; }
+    if (action === "strategic-syndicate-link-copy" && button.dataset.code) {
+      const link = inviteLink(button.dataset.code);
+      void navigator.clipboard?.writeText(link).then(() => { button.textContent = "Copied"; }, () => {
+        button.closest(".deck-invite-row")?.querySelector<HTMLInputElement>("input")?.select();
+      });
+      return;
+    }
     const value = (id: string) => this.root.querySelector<HTMLInputElement>(`#${id}`)?.value.trim() ?? "";
     if (action === "strategic-syndicate-create") this.ctx.send({ type: "CreateSyndicate", name: value("deck-syndicate-create") || "Syndicate" });
     else if (action === "strategic-syndicate-invite") {
@@ -398,7 +485,6 @@ export class DeckStrategicRoutes {
     else if (action === "strategic-syndicate-leave") this.ctx.send({ type: "LeaveSyndicate" });
     else if (action === "strategic-syndicate-dissolve") this.ctx.send({ type: "DissolveSyndicate" });
     else if (action === "strategic-syndicate-role" && button.dataset.member && button.dataset.role) this.ctx.send({ type: "SetSyndicateRole", member: button.dataset.member, role: button.dataset.role as SyndicateRole });
-    else if (action === "strategic-syndicate-project" && this.ctx.state.selectedSystemId) this.ctx.send({ type: "CreateSyndicateOperation", system_id: this.ctx.state.selectedSystemId });
     else if (action === "strategic-syndicate-treaty-response") {
       const proposal_id = Number(button.dataset.proposal);
       if (Number.isFinite(proposal_id)) this.ctx.send({ type: "RespondTreaty", proposal_id, accept: button.dataset.accept === "1" });
@@ -418,9 +504,97 @@ export class DeckStrategicRoutes {
     if (!charter) return `<section class="deck-page"><header class="deck-page__lead"><span>Terran Charter Authority</span><h2>Faction</h2><p>No charter is present in the served account picture.</p></header></section>`;
     const rows = this.ctx.state.charterLadder.map(([title, at], index) => `<div class="deck-charter-row${title === charter.title ? " is-active" : ""}"><span>${title === charter.title ? "▸" : "·"} ${esc(title)}</span><small>${index === 0 ? "at" : index === 1 ? "below" : "at"} ${at.toFixed(0)}</small></div>`).join("");
     const bites = charter.tariff_mult > 1 || charter.market_penalty_frac > 0;
-    const shortfall = Math.max(0, charter.max_standing - charter.standing);
+    // §standing-ladder (R3): buying back stops at full standing; the grades
+    // above it are earned.
+    const full = charter.full_standing ?? charter.max_standing;
+    const shortfall = Math.max(0, full - charter.standing);
     const points = Math.max(1, Math.ceil(Math.min(shortfall, 20)));
-    return `<section class="deck-page deck-faction"><header class="deck-page__lead"><span>Legal status · served Authority ledger</span><h2>Terran Charter Authority</h2><p>Standing is priced law, not reputation. Citations land only when their light reaches the Market Hub.</p></header><div class="deck-stat-grid"><dl class="deck-stat${charter.status === "good_standing" ? "" : " is-warn"}"><dt>Charter</dt><dd>${esc(charter.title)}</dd></dl><dl class="deck-stat"><dt>Standing</dt><dd>${charter.standing.toFixed(0)} / ${charter.max_standing.toFixed(0)}</dd></dl><dl class="deck-stat${bites ? " is-warn" : ""}"><dt>Freight tariff</dt><dd>×${charter.tariff_mult.toFixed(2)}</dd></dl><dl class="deck-stat${bites ? " is-warn" : ""}"><dt>Exchange penalty</dt><dd>${(charter.market_penalty_frac * 100).toFixed(1)}%</dd></dl></div><section class="deck-section"><header><div><h3>Charter ladder</h3><p>Each band names the tariff on Authority freight and the cut of Exchange trades.</p></div></header><div class="deck-charter-ladder">${rows}</div></section>${shortfall > 0 ? `<section class="deck-section"><header><div><h3>Reinstatement</h3><p>Credits are burned; only standing actually restored is charged.</p></div></header><div class="deck-reinstatement"><input data-deck-input="reinstatement" type="number" min="1" step="1" value="${points}"><span data-reinstatement-cost>${fmt(points * charter.reinstate_cost_per_point)} Cr for ${points} pts</span><button type="button" class="is-primary" data-deck-act="strategic-faction-pay">Pay</button></div></section>` : ""}</section>`;
+    const grades = this.ctx.state.gradeLadder.map(([title, at]) => `<div class="deck-charter-row${title === charter.grade_title ? " is-active" : ""}"><span>${title === charter.grade_title ? "▸" : "·"} ${esc(title)}</span><small>at ${at.toFixed(0)}</small></div>`).join("");
+    const next = charter.next_grade ? `${esc(charter.next_grade.title)} at ${charter.next_grade.at.toFixed(0)}` : "Top grade";
+    const today = `${fmt(Math.min(charter.earned_today, charter.earn_per_day))}/${fmt(charter.earn_per_day)}`;
+    const gradeHtml = charter.grade_title ? `<section class="deck-section"><header><div><h3>Grade · ${esc(charter.grade_title)}</h3><p title="Contracts, Signals and the ledger earn standing past ${full.toFixed(0)}, up to ${fmt(charter.earn_per_day)} a day. Credits can't buy it.">Next: ${next} · today ${today}</p></div></header><div class="deck-stat-grid"><dl class="deck-stat"><dt>Freight fee</dt><dd>×${charter.tariff_mult.toFixed(2)}</dd></dl><dl class="deck-stat"><dt>Freight lift</dt><dd>${fmt(charter.shipment_cap)} / departure</dd></dl></div><div class="deck-charter-ladder">${grades}</div></section>` : "";
+    return `<section class="deck-page deck-faction"><header class="deck-page__lead"><span>Legal status · served Authority ledger</span><h2>Terran Charter Authority</h2><p>Standing is priced law, not reputation. Citations land only when their light reaches the Market Hub.</p></header>${this.gripHtml(charter)}<div class="deck-stat-grid"><dl class="deck-stat${charter.status === "good_standing" ? "" : " is-warn"}"><dt>Charter</dt><dd>${esc(charter.title)}</dd></dl><dl class="deck-stat"><dt>Standing</dt><dd>${charter.standing.toFixed(0)} / ${charter.max_standing.toFixed(0)}</dd></dl><dl class="deck-stat${bites ? " is-warn" : ""}"><dt>Freight tariff</dt><dd>×${charter.tariff_mult.toFixed(2)}</dd></dl><dl class="deck-stat${bites ? " is-warn" : ""}"><dt>Exchange penalty</dt><dd>${(charter.market_penalty_frac * 100).toFixed(1)}%</dd></dl></div><section class="deck-section"><header><div><h3>Charter ladder</h3><p>Each band names the tariff on Authority freight and the cut of Exchange trades.</p></div></header><div class="deck-charter-ladder">${rows}</div></section>${gradeHtml}${shortfall > 0 ? `<section class="deck-section"><header><div><h3>Reinstatement</h3><p>Credits are burned; only standing actually restored is charged.</p></div></header><div class="deck-reinstatement"><input data-deck-input="reinstatement" type="number" min="1" step="1" value="${points}"><span data-reinstatement-cost>${fmt(points * charter.reinstate_cost_per_point)} Cr for ${points} pts</span><button type="button" class="is-primary" data-deck-act="strategic-faction-pay">Pay</button></div></section>` : ""}</section>`;
+  }
+
+  /** §season: the grip in force, the levy, Resolve, the Authority's demands
+   * and its crackdowns. */
+  private gripHtml(charter: CharterView): string {
+    const season = this.ctx.state.season;
+    const sq = charter.squeeze;
+    const now = liveSimTime();
+    const grip = season?.grip ?? "charter";
+    const levy = charter.levy_frac ?? 0;
+    const own = sq ? Math.max(0, levy - sq.base) : 0;
+    const pct = (f: number) => `${(f * 100).toFixed(f * 100 % 1 ? 1 : 0)}%`;
+    const stats = `<div class="deck-stat-grid"><dl class="deck-stat${levy > 0 ? " is-warn" : ""}"><dt>Levy</dt><dd title="On every Hub sale and purchase">${levy > 0 ? pct(levy) : "None"}${own > 0.0005 ? ` <small>+${pct(own)} yours</small>` : ""}</dd></dl>`
+      + `<dl class="deck-stat"><dt>Galaxy maturity</dt><dd>${season ? `${Math.round(season.maturity * 100)}%` : "—"}</dd></dl>`
+      + `<dl class="deck-stat"><dt>Resolve</dt><dd title="${esc(RESOLVE_TIP)}">${Math.round((sq?.resolve ?? 0) * 100)}% <small>${esc(RESOLVE_BAND[resolveBand(sq?.resolve ?? 0)])}</small></dd></dl>`
+      + `<dl class="deck-stat${sq?.refusals ? " is-warn" : ""}"><dt>Refusals</dt><dd title="Three bring an Authority squadron">${sq?.refusals ?? 0} / 3</dd></dl>`
+      + `<dl class="deck-stat"><dt>Levy paid</dt><dd>${fmt(sq?.levy_paid ?? 0)} Cr</dd></dl>`
+      + `<dl class="deck-stat"><dt>Authority war fleet</dt><dd title="Grows with maturity and the galaxy's Resolve (${Math.round((season?.galaxy_resolve ?? 0) * 100)}%)">${season?.war_fleet ?? 0} hulls</dd></dl></div>`;
+    const rows: string[] = [];
+    if (sq?.rise) rows.push(`<div class="deck-demand"><span><b>Levy rise · +${pct(sq.rise.points)}</b><small>${esc(label(sq.rise.commodity))} · ${fmt(sq.rise.trade)} Cr trade · ${esc(fmtBuildDur(Math.max(0, sq.rise.due - now)))} to answer</small></span>`
+      + `<button type="button" class="is-primary" data-deck-act="strategic-levy" data-accept="1">Accept</button>`
+      + `<button type="button" class="is-danger" data-deck-act="strategic-levy" data-accept="0" title="Embargoes ${esc(label(sq.rise.commodity))} until ${fmt(sq.rise.arrears)} Cr arrears are paid">Refuse</button></div>`);
+    for (const req of sq?.requisitions ?? []) rows.push(`<div class="deck-demand"><span><b>Requisition · ${esc(demandText(req.demand, label))}</b><small>${req.demand.kind === "goods" ? "From your Hub warehouse · " : ""}${esc(fmtBuildDur(Math.max(0, req.due - now)))} left</small></span>`
+      + `<button type="button" class="is-primary" data-deck-act="strategic-requisition" data-id="${req.id}" data-pay="1">Pay</button>`
+      + `<button type="button" class="is-danger" data-deck-act="strategic-requisition" data-id="${req.id}" data-pay="0" title="Standing −8, levy +1%">Refuse</button></div>`);
+    for (const embargo of sq?.embargoes ?? []) rows.push(`<div class="deck-demand"><span><b>Embargo · ${esc(label(embargo.commodity))}</b><small>Arrears ${fmt(embargo.arrears)} Cr</small></span>`
+      + `<button type="button" class="is-primary" data-deck-act="strategic-arrears" data-commodity="${esc(embargo.commodity)}">Pay arrears</button></div>`);
+    // §season phase 4: the spy's clock and the war.
+    if (season?.rebel_since != null) rows.unshift(`<div class="deck-demand is-war"><span><b>At war with the Authority</b><small>No Hub, no Authority freight · bounties on your hulls · war fleet ${season.war_fleet} hulls</small></span></div>`);
+    else if (season?.war_at != null && season.war_at > now) rows.unshift(`<div class="deck-demand is-war"><span><b>An Authority spy</b><small>War in ${esc(fmtBuildDur(season.war_at - now))} · bring freight home</small></span></div>`);
+    for (const c of season?.crackdowns ?? []) {
+      const live = c.until > now && !c.exposed;
+      const evidence = c.evidence_until > now && !c.exposed ? (c.read ? "evidence read" : `evidence · Scout within ${fmtBuildDur(c.evidence_until - now)}`) : "";
+      rows.push(`<div class="deck-demand is-crackdown"><span><b>${esc(crackdownTitle(c.kind))}${c.exposed ? " · exposed" : ""}</b>`
+        + `<small>${[c.system ? esc(systemName(c.system)) : "", live ? `${esc(fmtBuildDur(c.until - now))} left` : "", esc(evidence)].filter(Boolean).join(" · ")}</small></span></div>`);
+    }
+    return `<section class="deck-section deck-grip"><header><div><h3>Grip ${gripNumeral(grip)} · ${esc(gripTitle(grip))}</h3><p>${esc(DECREE_TEXT[grip])}</p></div></header>${stats}${rows.join("")}</section>${this.keystoneHtml()}`;
+  }
+
+  /** §season phase 5: your Keystone, every other one, Gate Step and the clocks. */
+  private keystoneHtml(): string {
+    const st = this.ctx.state;
+    const season = st.season;
+    if (!season) return "";
+    const now = liveSimTime();
+    const parts: string[] = [];
+    const mine = season.keystone;
+    if (mine) {
+      const world = st.systems.find((system) => system.id === mine.system);
+      const feed = keystoneFeed(season, (world?.stockpile ?? {}) as Partial<Record<Commodity, number>>);
+      const rows = feed.map(([good, need, paid, have]) => {
+        const units = Math.max(0, Math.min(need - paid, have));
+        return `<div class="deck-demand"><span><b>${esc(label(good))} · ${fmt(paid)} / ${fmt(need)}</b><small>${fmt(have)} at ${esc(systemName(mine.system))}</small></span>`
+          + `<button type="button" class="is-primary" data-deck-act="strategic-feed" data-system="${esc(mine.system)}" data-commodity="${esc(good)}" data-units="${Math.floor(units)}" ${units >= 1 ? "" : "disabled"}>Feed ${fmt(units)}</button></div>`;
+      }).join("");
+      const relics = mine.relics_needed ? `<p>Relics held ${mine.relics_held} / ${mine.relics_needed}</p>` : "";
+      const gates = mine.powers ? this.gateStepHtml(mine.gates) : "";
+      parts.push(`<section class="deck-section deck-keystone"><header><div><h3>Keystone · ${esc(systemName(mine.system))} · level ${mine.level}/10</h3>`
+        + `<p>${mine.powers ? "Network Sight · Instant Command · Gate Step · Precursor Fleet" : "Feeding it is war with the Authority. No powers until level 10."}</p></div></header>${relics}${rows}${gates}</section>`);
+    }
+    const others = season.keystones.filter((k) => k.system !== mine?.system);
+    const clock = season.ending ? "" : season.ends_at ? `<p>The season ends in ${esc(fmtBuildDur(Math.max(0, season.ends_at - now)))} if no Seal fires.</p>` : "";
+    if (others.length || clock) {
+      parts.push(`<section class="deck-section"><header><div><h3>The race</h3>${clock}</div></header>${others.map((k) =>
+        `<div class="deck-demand is-crackdown"><span><b>${esc(systemName(k.system))} · level ${k.level}/10</b><small>${esc(k.holder_name ?? "unheld")}${k.seal_at ? ` · Seal in ${esc(fmtBuildDur(Math.max(0, k.seal_at - now)))}` : ""}</small></span></div>`).join("")}</section>`);
+    }
+    return parts.join("");
+  }
+
+  /** Gate Step: your fleets at a gate, and where each can step. */
+  private gateStepHtml(gates: string[]): string {
+    const st = this.ctx.state;
+    const pos = (id: string) => st.galaxy?.systems.find((system) => system.id === id)?.pos;
+    const rows = st.ghosts.filter((ghost) => ghost.own).flatMap((ghost) => {
+      const at = gates.find((gate) => { const p = pos(gate); return !!p && Math.hypot(p.x - ghost.pos.x, p.y - ghost.pos.y) <= 900; });
+      if (!at) return [];
+      const buttons = gates.filter((gate) => gate !== at).map((gate) =>
+        `<button type="button" data-deck-act="strategic-gate-step" data-fleet="${esc(ghost.id)}" data-system="${esc(gate)}">→ ${esc(systemName(gate))}</button>`).join("");
+      return [`<div class="deck-demand"><span><b>Gate Step · ${esc(shipKindLabel(ghost.kind))}</b><small>at ${esc(systemName(at))}</small></span>${buttons}</div>`];
+    });
+    return rows.join("");
   }
 
   private syncReinstatement(input: HTMLInputElement): void {
@@ -428,7 +602,7 @@ export class DeckStrategicRoutes {
     const output = this.root.querySelector<HTMLElement>("[data-reinstatement-cost]");
     if (!charter || !output) return;
     const wanted = Math.max(0, Math.floor(Number(input.value) || 0));
-    const points = Math.min(wanted, Math.max(0, charter.max_standing - charter.standing));
+    const points = Math.min(wanted, Math.max(0, (charter.full_standing ?? charter.max_standing) - charter.standing));
     output.textContent = `${fmt(points * charter.reinstate_cost_per_point)} Cr for ${points.toFixed(0)} pts`;
   }
 
@@ -444,7 +618,16 @@ export class DeckStrategicRoutes {
     const rows = [...this.ctx.state.rankings].sort((a, b) => category.value(b) - category.value(a));
     const categories = RANK_CATS.map((candidate) => `<button type="button" data-deck-act="strategic-rank" data-category="${candidate.slug}" aria-pressed="${candidate.slug === category.slug}">${esc(candidate.short)}</button>`).join("");
     const rankingRows = rows.map((row, index) => `<button type="button" class="deck-ranking-row${row.player_id === this.ctx.state.playerId ? " is-me" : ""}" data-deck-act="strategic-corp" data-corp="${escAttr(row.player_id)}"><b>${index + 1}</b><span><strong>${esc(row.name)}</strong>${row.player_id === this.ctx.state.playerId ? `<small>you</small>` : ""}${row.titles.map((title) => `<em>${esc(title)}</em>`).join("")}${medalChipsHtml(row)}</span><output>${esc(category.format(row))}</output></button>`).join("");
-    return `<section class="deck-page deck-rankings"><header class="deck-page__lead"><span>Published campaign ledger</span><h2>Rankings</h2><p>The same light-delayed close is published to every corporation.</p></header><section class="deck-section"><header><div><h3>${esc(category.label)}</h3><p>${esc(category.copy)}</p></div><b>${rows.length}</b></header><div class="deck-rank-categories">${categories}</div><div class="deck-ranking-table">${rankingRows || `<div class="deck-empty-inline">No ledger published yet; the first close lands shortly after campaign start.</div>`}</div></section></section>`;
+    return `<section class="deck-page deck-rankings"><header class="deck-page__lead"><span>Published campaign ledger</span><h2>Rankings</h2><p>The same light-delayed close is published to every corporation.</p></header><section class="deck-section"><header><div><h3>${esc(category.label)}</h3><p>${esc(category.copy)}</p></div><b>${rows.length}</b></header><div class="deck-rank-categories">${categories}</div><div class="deck-ranking-table">${rankingRows || `<div class="deck-empty-inline">No ledger published yet; the first close lands shortly after campaign start.</div>`}</div></section>${this.syndicateRankingsHtml()}</section>`;
+  }
+
+  /** §syndicate-projects (R6): the syndicates' table and their project medals. */
+  private syndicateRankingsHtml(): string {
+    const rows = this.ctx.state.syndicateRankings;
+    if (!rows.length) return "";
+    const mine = this.ctx.state.syndicate?.id;
+    const body = rows.map((row, index) => `<div class="deck-ranking-row${row.id === mine ? " is-me" : ""}"><b>${index + 1}</b><span><strong>${esc(row.name)}</strong><small>${row.members} members · ${row.week_points} pts this week</small>${medalCountsHtml(row.medals)}</span><output>${esc(fmt(row.valuation))} Cr</output></div>`).join("");
+    return `<section class="deck-section"><header><div><h3>Syndicates</h3><p>Members' combined valuation · weekly project medals</p></div><b>${rows.length}</b></header><div class="deck-ranking-table">${body}</div></section>`;
   }
 
   private corpCardHtml(id: string): string {
@@ -536,7 +719,7 @@ export class DeckStrategicRoutes {
     const button = (action: string, text: string, reason = "", hint = "") =>
       `<span title="${escAttr(reason || hint)}"><button type="button" data-deck-act="strategic-survivor-${action}" data-report="${report.id}" data-fleet="${escAttr(survivor.fleet_id)}" title="${escAttr(reason || hint)}" ${reason ? "disabled" : ""}>${esc(text)}</button></span>`;
     const repairReason = block || (fleet?.damage != null && fleet.damage <= .0001 ? "Fleet's latest report shows full hull." : "")
-      || (!yard ? "Repairs need a staffed Ordnance Foundry with Alloys and Machinery." : "")
+      || (!yard ? "Repairs need a staffed Shipyard or Ordnance Foundry with Alloys and Machinery." : "")
       || (fleet?.docked === yard?.id ? "Already docked at the repair yard." : "");
     const guarding = !!guard && fleet?.guard_target === guard.id;
     const guardReason = block || (!fleet || !guardCapable(fleet) ? "Requires an Interceptor fleet." : "")
@@ -557,7 +740,7 @@ export class DeckStrategicRoutes {
         ${button("repair", "Return for repairs", repairReason, yard ? `${yard.name} · ordinary delayed move order; repair supplies may change before arrival.` : "")}
         ${survivor.guard_target ? button("guard", guarding ? "Guarding" : "Continue guarding", guardReason, "Send a delayed guard order to this fleet.") : ""}
       </div>
-      ${fleet && !yard && survivor.hull < .9999 ? `<small class="deck-muted">Repairs need a staffed, supplied Ordnance Foundry.</small>` : ""}
+      ${fleet && !yard && survivor.hull < .9999 ? `<small class="deck-muted">Repairs need a staffed, supplied Shipyard or Ordnance Foundry.</small>` : ""}
     </article>`;
   }
 

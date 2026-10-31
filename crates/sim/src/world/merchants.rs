@@ -77,7 +77,19 @@ impl World {
                     }
                 }
                 MerchantPhase::Arriving => {
-                    if idle && pos.distance(host) <= crate::transit::HYPERLIMIT {
+                    // §merchant (Peter, Oct 27 2026): it docks as it enters the
+                    // home's well, not after crawling its 900 su to the star at
+                    // impulse (~28 s more for a Freighter). At rest on the star,
+                    // the next tick's movement berths it at the home world
+                    // (`settle_idle_in_wells`), as it did the old arrival.
+                    if pos.distance(host) <= crate::transit::HYPERLIMIT {
+                        if let Some(f) = self.fleets.get_mut(&ship) {
+                            f.pos = host;
+                            f.vel = Vec2::ZERO;
+                            f.drive_state = crate::ship::DriveState::Thrusters;
+                            f.regime = crate::transit::Regime::Thrusters;
+                            f.order = FleetOrder::Idle;
+                        }
                         if let Some(v) = self.merchants.get_mut(&ship) {
                             v.phase = MerchantPhase::Docked;
                             v.arrived_at = Some(self.time);
@@ -95,6 +107,12 @@ impl World {
                 }
             }
         }
+    }
+
+    /// §traders: the free trader this corporation deals with.
+    pub fn free_trader(&self, owner: PlayerId) -> &'static crate::merchant::FreeTrader {
+        let joined = self.players.get(&owner).map_or(0, |c| c.joined_tick);
+        crate::merchant::FreeTrader::of(self.config.seed, owner, joined)
     }
 
     /// The unit vector from `pos` toward the Market Hub (any direction if
@@ -269,6 +287,55 @@ mod tests {
         assert!(w.merchants.is_empty(), "one founding visit per corporation");
     }
 
+    /// Peter (Oct 27 2026): "why is there such a large delay between Teo's ship
+    /// arriving in orbit and the Free Trader event panel?" It docks as it
+    /// enters the home's well, at rest at the home world at once, not after
+    /// crawling its 900 su to the star at impulse.
+    #[test]
+    fn it_docks_as_it_enters_the_homes_well() {
+        let (mut w, owner, home) = founder();
+        raided(&mut w, owner);
+        let called = w.time;
+        let mut docked_at = None;
+        for _ in 0..60 * TICK_HZ {
+            let events = w.step(&[]);
+            if events.iter().any(|e| matches!(e.payload, EventPayload::MerchantArrived { owner: o, .. } if o == owner)) {
+                docked_at = Some(w.time);
+                break;
+            }
+        }
+        // 2,500 su out: a 1.5 s spool, then ~1,600 su of warp to the 900 su
+        // hyperlimit. Crawling the well too took ~41 s.
+        let trip = docked_at.expect("it docks") - called;
+        assert!(trip > 9.0 && trip < 15.0, "docked {trip:.1} s after the report");
+        // The next tick's movement settles it on its world, as it did the old
+        // arrival at the star.
+        w.step(&[]);
+        let (&ship, _) = w.merchants.iter().find(|(_, v)| v.customer == owner).unwrap();
+        let world = w.systems.iter().find(|s| s.id == home).unwrap().main_world();
+        let f = &w.fleets[&ship];
+        assert_eq!(f.at_world, world.map(|body| crate::orbits::AtWorld { system: home, body }), "berthed at the home world");
+        assert!(matches!(f.order, FleetOrder::Idle) && f.vel.length() == 0.0, "at rest");
+        assert_eq!(f.regime, crate::transit::Regime::Thrusters);
+    }
+
+    /// §traders (Peter, Oct 27 2026): three free traders, one dealt per
+    /// corporation as its pirate family is; the lost crate is its own.
+    #[test]
+    fn the_free_trader_is_dealt_per_corporation() {
+        use crate::merchant::{FreeTrader, FREE_TRADERS};
+        let a = FreeTrader::of(1, PlayerId(5), 100);
+        assert_eq!(a, FreeTrader::of(1, PlayerId(5), 100), "stable");
+        let dealt: std::collections::BTreeSet<_> = (0..60u64).map(|i| FreeTrader::of(1, PlayerId(i), 100).slug).collect();
+        assert_eq!(dealt.len(), FREE_TRADERS.len(), "every trader is dealt");
+        let (w, owner, _) = founder();
+        let corp = &w.players[&owner];
+        assert_eq!(w.free_trader(owner), FreeTrader::of(w.config.seed, owner, corp.joined_tick));
+        let crate_name = crate::signals::SignalKind::TeosLostCrate.name_for(w.free_trader(owner));
+        assert_eq!(crate_name, format!("{}'s lost crate", w.free_trader(owner).first));
+        assert_eq!(crate::signals::SignalKind::CargoPod.name_for(w.free_trader(owner)), "Cargo pod", "the rest keep theirs");
+    }
+
     /// §charter-v5 (Peter, Oct 16 2026): it leaves while the founder
     /// eliminates the pirates: a last call once the privateer's kill is
     /// reported, cut short when the den falls.
@@ -329,14 +396,15 @@ mod tests {
             if *o == owner && (*paid - 15.0 * ec_mid * 1.5).abs() < 1e-6)), "{events:?}");
         assert_eq!(stock(&w, home, Commodity::Electronics), before + 15.0);
         assert!((w.players[&owner].credits - (credits - 15.0 * ec_mid * 1.5)).abs() < 1e-6);
-        assert_eq!(w.merchants[&ship].stock[&Commodity::Electronics], 85);
+        let left = w.merchants[&ship].stock[&Commodity::Electronics];
+        assert_eq!(left, 127 - 15);
         assert!(ec_mid >= hub(Commodity::Electronics) * 0.5, "its prices come from the Hub");
 
         let refused = |w: &mut World, cmd: Command| w.step(&[cmd]).iter().find_map(|e| match &e.payload {
             EventPayload::MerchantTradeRefused { owner: o, reason, .. } if *o == owner => Some(reason.clone()),
             _ => None,
         });
-        assert_eq!(refused(&mut w, trade(vec![(Commodity::Electronics, 86)], vec![])).as_deref(),
+        assert_eq!(refused(&mut w, trade(vec![(Commodity::Electronics, left + 1)], vec![])).as_deref(),
             Some("The merchant hasn't that much"));
         assert_eq!(refused(&mut w, trade(vec![], vec![(Commodity::MetallicOre, ORE_CAP + 1)])).as_deref(),
             Some("The merchant won't take that much ore"));

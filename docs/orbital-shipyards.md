@@ -4,7 +4,7 @@
 
 | Facility | Tier I | Tier II | Tier III |
 | --- | --- | --- | --- |
-| Ground Shipyard | Tiny/Small Freighters, Scouts, Colony Ships, construction craft | Medium Freighters, Interceptors, Corvettes | More concurrent slips |
+| Ground Shipyard | Tiny/Small Freighters, Scouts, Colony Ships, construction craft, Interceptors (since Oct 25 2026) | Medium Freighters, Corvettes | More concurrent slips |
 | Orbital Shipyard | Large Freighters, Destroyers | Heavy Freighters, Cruisers | Bulk Freighters, Battleships |
 | Capital Slipway (orbital) | Dreadnoughts | Titans | More concurrent slips |
 

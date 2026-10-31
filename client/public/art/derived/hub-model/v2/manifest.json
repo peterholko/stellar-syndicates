@@ -1,0 +1,13 @@
+{
+  "recipe": "wormhole-hub-jpeg-1024-v1",
+  "source": "art-src/ship-models/wormhole-hub-textured-v1/wormhole-hub.glb",
+  "sourceSha256": "449d7f2833c36325785b4f4878ad36e1443b291f52802ca0b66373d61b50fe08",
+  "sourceBytes": 17232480,
+  "glbBytes": 3658792,
+  "glbSha256": "d51a5b2f3ae5cabec0db898181a588120d2c6a1100c36eb85274c0007e1d61a8",
+  "title": "Wormhole Hub",
+  "triangles": 33000,
+  "url": "/art/derived/hub-model/v2/wormhole-hub.glb?v=d51a5b2f3ae5",
+  "sprite": "/art/derived/hub-model/v2/wormhole-hub-top-1254.webp?v=0b145d4c1e9e",
+  "hero": "/art/derived/hub-model/v2/wormhole-hub-hero-512.webp?v=2d5354a3eab1"
+}

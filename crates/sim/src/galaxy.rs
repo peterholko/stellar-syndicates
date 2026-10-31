@@ -34,6 +34,13 @@ pub struct Deposit {
     pub accessibility: f64,
 }
 
+/// §research-wiring: specialists housed per Habitat or Living Terraces tier.
+pub const SPECIALISTS_PER_HOUSING_TIER: u32 = 2;
+
+fn one() -> f64 {
+    1.0
+}
+
 /// A procedurally-placed star system. `pos`, `name`, `deposits`, and `claim_cost`
 /// are static geography (known to all). `owner`/`claimed_at`/`stockpile` are
 /// *dynamic* state: a claim is an event at `pos`/`claimed_at`, so its reveal to
@@ -206,6 +213,14 @@ pub struct StarSystem {
     /// any Warehouse (`build::LANDING_HOLDS`). Zero everywhere else.
     #[serde(default)]
     pub landing_holds: f64,
+    /// §research-wiring Bulk Storage: the owner's warehouse multiple,
+    /// refreshed each tick (1.0 unowned). Never the landing holds.
+    #[serde(default = "one")]
+    pub storage_mult: f64,
+    /// §research-wiring Twin Campuses: the owner's housing research,
+    /// refreshed each tick.
+    #[serde(default)]
+    pub twin_campuses: bool,
 }
 
 /// The live BLOCKADE at a system (§contestable-territory). Recomputed each tick
@@ -361,14 +376,15 @@ impl StarSystem {
         if self.bodies.is_empty() {
             return None;
         }
-        // §belts: a belt hosts mines and nothing else, so only the extraction
-        // pick below may land on one.
+        // §belts: a belt hosts mines and nothing else (§asteroid-quarry: only
+        // its quarry), so only the quarry's pick below may land on one.
         let planets: Vec<&crate::body::Body> =
             self.bodies.iter().filter(|b| b.is_planet()).collect();
         let primary = planets.first().map(|b| b.id).or(Some(self.bodies[0].id));
         let richest_matching = |k: K| {
             self.bodies
                 .iter()
+                .filter(|b| !b.is_belt())
                 .flat_map(|b| b.deposits.iter().map(move |d| (b, d)))
                 .filter(|(_, d)| crate::production::extraction_structure(d.resource) == Some(k))
                 .max_by(|a, b| a.1.richness.partial_cmp(&b.1.richness).expect("finite"))
@@ -428,6 +444,11 @@ impl StarSystem {
                 })
             }
             K::FuelRefinery | K::ChemicalWorks => volatiles_body,
+            // §asteroid-quarry: a quarry already standing, else the belt with
+            // the most deposits.
+            K::AsteroidQuarry => self.bodies.iter().filter(|b| b.is_belt())
+                .max_by_key(|b| (b.tier(K::AsteroidQuarry), b.deposits.len(), std::cmp::Reverse(b.id)))
+                .map(|b| b.id),
             // §ground: the garrison sits where the people are — you defend a
             // populated world, not a bare rock.
             K::Habitat | K::Agroplex | K::Academy | K::Garrison => habitable_body,
@@ -436,12 +457,23 @@ impl StarSystem {
             K::LivingTerraces => self.bodies.iter()
                 .filter(|b| b.profile.environment == crate::body::Environment::Gaia)
                 .max_by_key(|b| b.tier(K::LivingTerraces)).map(|b| b.id),
+            // §vault: under the world's Command Center.
+            K::Vault => self.bodies.iter()
+                .filter(|b| b.tier(K::CommandCenter) > 0)
+                .max_by_key(|b| (b.tier(K::Vault), b.tier(K::CommandCenter), std::cmp::Reverse(b.id)))
+                .map(|b| b.id),
+            // §season: the colonists gather at the Command Center.
+            K::AssemblyHall => self.bodies.iter()
+                .filter(|b| b.tier(K::CommandCenter) > 0)
+                .max_by_key(|b| (b.tier(K::AssemblyHall), b.tier(K::CommandCenter), std::cmp::Reverse(b.id)))
+                .map(|b| b.id),
             K::CommandCenter => self.bodies.iter()
                 .filter(|b| b.kind != crate::body::BodyKind::GasGiant && !b.is_belt()
                     && b.population >= crate::build::COMMAND_CENTER_MIN_POPULATION)
                 .max_by_key(|b| b.tier(K::CommandCenter)).map(|b| b.id),
             // §power: the planet whose grid is shortest of its demand.
             K::PowerPlant => self.bodies.iter()
+                .filter(|b| !b.is_belt())
                 .max_by(|a, b| (a.grid.demand - a.grid.supply).total_cmp(&(b.grid.demand - b.grid.supply))
                     .then(b.id.cmp(&a.id)))
                 .map(|b| b.id),
@@ -551,7 +583,7 @@ impl StarSystem {
             .bodies
             .iter()
             .position(|b| match kind {
-                Some(crate::build::StructureKind::Bioharvester) => b.habitable,
+                Some(crate::build::StructureKind::Bioharvester) => b.settles(),
                 Some(crate::build::StructureKind::VolatileHarvester) => matches!(
                     b.kind,
                     crate::body::BodyKind::Ice | crate::body::BodyKind::GasGiant
@@ -890,27 +922,41 @@ impl StarSystem {
     /// §economy Part 4: the EFFECTIVE specialists on every line this tick —
     /// keyed `(body id, structure)` now; the resident pool stays SYSTEM-scoped
     /// and is walked in deterministic (body id, kind) order, non-destructively.
+    /// The value is `(crew, skill points)` ([`crate::production::skill_points`]).
+    /// §research-wiring Twin Campuses: only as many specialists work as the
+    /// system houses ([`Self::specialist_housing`]), the first lines first.
     pub fn effective_specialists(
         &self,
     ) -> BTreeMap<(u32, crate::build::StructureKind), (u32, u32)> {
         let mut pool_left = self.specialists.clone();
+        let mut housing_left = self.specialist_housing();
         let mut out = BTreeMap::new();
         for b in &self.bodies {
             for (kind, asg) in &b.assignments {
-                let (mut crew, mut matched) = (0u32, 0u32);
+                let (mut crew, mut experts, mut matched) = (0u32, 0u32, 0u32);
                 for (&sk, &n) in &asg.specialists {
                     let left = pool_left.entry(sk).or_insert(0);
-                    let take = n.min(*left);
+                    let take = n.min(*left).min(housing_left);
                     *left -= take;
+                    housing_left -= take;
                     crew += take;
                     if sk.affine(*kind) {
-                        matched += take;
+                        if sk.is_expert() { experts += take } else { matched += take }
                     }
                 }
-                out.insert((b.id, *kind), (crew, matched));
+                out.insert((b.id, *kind), (crew, crate::production::skill_points(experts, matched, b.tier(*kind))));
             }
         }
         out
+    }
+
+    /// §research-wiring: specialists the system houses — two per Habitat or
+    /// Living Terraces tier, three with Twin Campuses.
+    pub fn specialist_housing(&self) -> u32 {
+        let tiers: u32 = self.bodies.iter()
+            .map(|b| b.tier(crate::build::StructureKind::Habitat) + b.tier(crate::build::StructureKind::LivingTerraces))
+            .sum();
+        tiers * if self.twin_campuses { SPECIALISTS_PER_HOUSING_TIER + 1 } else { SPECIALISTS_PER_HOUSING_TIER }
     }
 
     /// §economy Part 3: the STAFFING factor of one BODY's line —
@@ -927,6 +973,10 @@ impl StarSystem {
         let tier = b.tier(kind);
         if tier == 0 {
             return 0.0;
+        }
+        // §asteroid-quarry: its own crew, while its upkeep is paid.
+        if kind == crate::build::StructureKind::AsteroidQuarry {
+            return b.assignments.get(&kind).is_none_or(|line| line.suspended.is_none()) as u8 as f64;
         }
         let workers = b.assignments.get(&kind).map(|a| a.workers).unwrap_or(0);
         let spec_crew = self
@@ -945,12 +995,12 @@ impl StarSystem {
             .find(|b| b.id == body_id)
             .map(|b| b.tier(kind))
             .unwrap_or(0);
-        let (_, matched) = self
+        let (_, points) = self
             .effective_specialists()
             .get(&(body_id, kind))
             .copied()
             .unwrap_or((0, 0));
-        crate::production::skill_factor(matched, tier)
+        crate::production::skill_factor_points(points, tier)
     }
 
     /// LEGACY single-budget readouts, now sums over the three pools — keeps the
@@ -1030,8 +1080,9 @@ impl StarSystem {
         } else {
             self.bodies.iter().map(|b| b.warehouse_capacity()).sum()
         };
-        ground + crate::build::STORAGE_PER_ORBITAL_WAREHOUSE_TIER
-                * self.tier_sum(crate::build::StructureKind::OrbitalWarehouse) as f64
+        (ground + crate::build::STORAGE_PER_ORBITAL_WAREHOUSE_TIER
+                * self.tier_sum(crate::build::StructureKind::OrbitalWarehouse) as f64)
+            * self.storage_mult
             + self.landing_holds_cap()
     }
 
@@ -1134,6 +1185,32 @@ pub struct HomeSlot {
     /// rich asteroid belt, where the founder's privateer den stands.
     #[serde(default)]
     pub den_system: Option<EntityId>,
+    /// §settle-near-friends (R7): held for an invite until it expires.
+    #[serde(default)]
+    pub reserved: Option<HomeReservation>,
+}
+
+/// §settle-near-friends (R7): how long an invite holds its home slot.
+pub const HOME_RESERVATION_S: f64 = 72.0 * 3_600.0;
+/// Open holds one corporation may keep at once.
+pub const HOME_RESERVATIONS_MAX: usize = 3;
+
+/// §settle-near-friends (R7): a free home slot held for one invite. `key` is
+/// the server's opaque handle for the invite code.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct HomeReservation {
+    pub key: u64,
+    /// The corporation that invited; the newcomer joins its syndicate.
+    pub by: PlayerId,
+    /// Sim time the hold lapses.
+    pub until: f64,
+}
+
+impl HomeSlot {
+    /// Held for an invite right now.
+    pub fn held(&self, now: f64) -> bool {
+        self.reserved.is_some_and(|r| r.until > now)
+    }
 }
 
 /// §ore-ladder: the RAW deposit table — what a system's deposits can be, how
@@ -1349,6 +1426,8 @@ pub(crate) fn unowned_system(
         legacy_assignments: BTreeMap::new(),
         specialists: BTreeMap::new(),
         landing_holds: 0.0,
+        storage_mult: 1.0,
+        twin_campuses: false,
     }
 }
 
@@ -1482,6 +1561,7 @@ pub fn generate_home_slots(
                 system: None, // set when the co-located home system is generated
                 founding_opportunities: Vec::new(),
                 den_system: None,
+                reserved: None,
             }
         })
         .collect()
@@ -1535,29 +1615,6 @@ pub(crate) fn home_starting_stockpile() -> BTreeMap<Commodity, f64> {
     ].into_iter().collect()
 }
 
-/// §charter-v4: the outfitting kit in the landed colony ship's holds. It
-/// covers every charter build but semiconductors: the Bioharvester, Habitat,
-/// Agroplex, mine, Solar Array, Shipyard and its second level, the
-/// Interceptor (its Armaments too), the Academy, the expansion's Solar Array
-/// and mine, the Survey Probe and the Mining Barge, plus a Tiny Freighter for
-/// Hub trade and the Uranium Mill's goods (20 Alloys, 8 Machinery) so a home
-/// can fuel its own hulls. §charter-v5: the raid takes its semiconductors and
-/// Armaments (`founding::RAID_TAKES`) as the mine comes online.
-/// Founders land with no ships and new hulls fill at the dock, so its Uranium
-/// (with the home's fuel seed) fills a Tiny Freighter (52.5), the Survey
-/// Probe and most of the Mining Barge until the Uranium Mill runs.
-pub(crate) fn charter_kit() -> BTreeMap<Commodity, f64> {
-    [
-        (Commodity::Provisions, crate::founding::KIT_PROVISIONS),
-        (Commodity::Uranium, 100.0),
-        (Commodity::Alloys, 410.0),
-        (Commodity::Machinery, 163.0),
-        (Commodity::Polymers, 40.0),
-        (Commodity::Armaments, crate::founding::KIT_ARMAMENTS),
-        (Commodity::WarpCore, 3.0),
-        (Commodity::Electronics, crate::founding::KIT_SEMICONDUCTORS),
-    ].into_iter().collect()
-}
 
 /// One developed home star system, co-located at `pos`, with modest seeded
 /// geology keyed by home `index` (so it's reproducible and independent of the
@@ -1651,6 +1708,8 @@ pub fn generate_home_system(
         legacy_assignments: BTreeMap::new(),
         specialists: BTreeMap::new(),
         landing_holds: 0.0,
+        storage_mult: 1.0,
+        twin_campuses: false,
     };
     // §rare-gardens: the garden is the home's ONLY habitable world. More people
     // need another system; a system with two such worlds should feel special.

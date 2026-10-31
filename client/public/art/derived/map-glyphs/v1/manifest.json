@@ -149,6 +149,42 @@
       "128": "/art/derived/map-glyphs/v1/issuer-authority-128.png?v=67345a9bc8b9",
       "sheet": "04-contract-issuers.png",
       "cell": 5
+    },
+    "gate-construction": {
+      "64": "/art/derived/map-glyphs/v1/gate-construction-64.png?v=91267416fc16",
+      "128": "/art/derived/map-glyphs/v1/gate-construction-128.png?v=18b349347d30",
+      "sheet": "05-season.png",
+      "cell": 0
+    },
+    "gate-open": {
+      "64": "/art/derived/map-glyphs/v1/gate-open-64.png?v=7d5904d5a13d",
+      "128": "/art/derived/map-glyphs/v1/gate-open-128.png?v=faa971c2c78b",
+      "sheet": "05-season.png",
+      "cell": 1
+    },
+    "relic": {
+      "64": "/art/derived/map-glyphs/v1/relic-64.png?v=dd4741136adc",
+      "128": "/art/derived/map-glyphs/v1/relic-128.png?v=9a2c825d3684",
+      "sheet": "05-season.png",
+      "cell": 2
+    },
+    "pirate-assault": {
+      "64": "/art/derived/map-glyphs/v1/pirate-assault-64.png?v=1ffaa386923b",
+      "128": "/art/derived/map-glyphs/v1/pirate-assault-128.png?v=23c41dd73824",
+      "sheet": "05-season.png",
+      "cell": 3
+    },
+    "derelict-colony": {
+      "64": "/art/derived/map-glyphs/v1/derelict-colony-64.png?v=c46f7811b82a",
+      "128": "/art/derived/map-glyphs/v1/derelict-colony-128.png?v=64c4bfd8b526",
+      "sheet": "05-season.png",
+      "cell": 4
+    },
+    "season-emblem": {
+      "64": "/art/derived/map-glyphs/v1/season-emblem-64.png?v=8e16bf7f9db1",
+      "128": "/art/derived/map-glyphs/v1/season-emblem-128.png?v=570945787732",
+      "sheet": "05-season.png",
+      "cell": 5
     }
   }
 }

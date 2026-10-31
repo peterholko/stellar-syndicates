@@ -3,6 +3,7 @@
 import { THEATER_EPILOGUE_ROUNDS, theaterAttach, theaterClose, theaterDebug, theaterResetCamera, theaterSetTime, theaterStep } from "../src/battletheater";
 import { SHIP_MODELS } from "../src/ship-models.generated";
 import type { BattleRecordView, KeyframeView, RecordCount, ShipKind } from "../src/protocol";
+import type { BattleScenerySource } from "../src/battlebackdrop";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id)! as T;
 const stage = $("stage"), scene = $<HTMLSelectElement>("scene"), kind = $<HTMLSelectElement>("kind");
@@ -14,6 +15,12 @@ let time = 0, playing = true, closed = false, previous = performance.now(), info
 /** A real engine fight (client/public/dev/battles), when one is selected. */
 let engine: BattleRecordView | null = null;
 
+// §den: ?den=stony|metallic|icy|shattered fights in a pirate den's system of
+// belts alone: its asteroid field, its star far off.
+const denKind = new URLSearchParams(location.search).get("den");
+const denScenery = denKind ? { galaxy: { systems: [{ id: "den", name: "Den", pos: { x: 0, y: 0 } }] },
+  systems: [{ id: "den", bodies: [{ id: 1, parent: null, kind: "asteroid_belt", size: "large", name: "", habitable: false,
+    deposits: [], structures: {}, belt: { kind: denKind, radius: 0.5, width: 0.04 } }] }] } as unknown as BattleScenerySource : undefined;
 function makeRecord(): BattleRecordView {
   const inspect = scene.value === "single";
   const types = scene.value === "all" ? kinds : inspect ? [kind.value as ShipKind] : combat;
@@ -31,8 +38,8 @@ function makeRecord(): BattleRecordView {
   });
   const deathTarget = ships.filter(s => s.side === 1).at(-1)!;
   // ?system=ID gives the fight that system's backdrop (its star from the id).
-  const rec: BattleRecordView = { id: `battle-model-fixture-${scene.value}-${kind.value}`, pos: { x: 0, y: 0 },
-    system: new URLSearchParams(location.search).get("system"),
+  const rec: BattleRecordView = { id: `battle-model-fixture-${scene.value}-${kind.value}`, pos: { x: denKind ? 300 : 0, y: 0 },
+    system: denKind ? "den" : new URLSearchParams(location.search).get("system"),
     started_at: 0, raid: false, fidelity: "participant", own_side: 0, light_frontier_tick: 4, outcome: "both_survive",
     sides: [0, 1].map(side => ({ corp: side ? "foe" : "own", posture: "engage_any", platform_tiers: 0,
       initial: counts(ships, side), flagship_name: side ? "Vesper" : "Aurora", loadouts: combat.map(type => ({ kind: type, n: 1,
@@ -76,7 +83,7 @@ void fetch("/dev/battles/index.json").then((r) => (r.ok ? r.json() : []), () => 
 });
 function attach(): void {
   if (closed) return;
-  theaterAttach(stage, record, null, { width: stage.clientWidth, height: stage.clientHeight });
+  theaterAttach(stage, record, null, { width: stage.clientWidth, height: stage.clientHeight }, denScenery);
 }
 function changeScene(): void {
   const name = scene.value.startsWith("engine:") ? scene.value.slice(7) : null;

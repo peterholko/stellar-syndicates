@@ -1,7 +1,7 @@
 import type { ClientMsg, GhostView } from "../protocol";
 import type { PendingIntent, ViewState } from "../state";
 import { label } from "../icons";
-import { dockedAtSystem, slowCapable, estimatedFuelForLeg, regimeStore, fleetBaseSpeed, fleetCargoCapacity, guardCapable, mineCapable, prospectCapable, PROSPECT_SECS, shipKindLabel, transitLabel, transitSpeedMultiplier, WARP_FACTOR } from "./derive/fleet";
+import { dockedAtSystem, slowCapable, estimatedFuelForLeg, regimeStore, fleetBaseSpeed, fleetTradeCapacity, guardCapable, mineCapable, prospectCapable, PROSPECT_SECS, shipKindLabel, transitLabel, transitSpeedMultiplier, WARP_FACTOR } from "./derive/fleet";
 import { ANCHOR_SECS, isStation } from "./derive/belts";
 
 /** §belts: mirror of the sim's DOCK_RADIUS: a freighter loads beside its station. */
@@ -73,7 +73,7 @@ export function fleetCommandsValid(commands: FleetCommand[], st: ViewState): boo
     // §belts: an idle freighter of yours beside your station.
     if (command.type === "StationLoad") {
       const station = own(command.station_id);
-      return !!fleet && !!station && fleet.id !== station.id && fleetCargoCapacity(fleet) > 0 && !isStation(fleet)
+      return !!fleet && !!station && fleet.id !== station.id && fleetTradeCapacity(fleet) > 0 && !isStation(fleet)
         && Math.hypot(fleet.pos.x - station.pos.x, fleet.pos.y - station.pos.y) <= STATION_DOCK_SU && command.units > 0;
     }
     if (command.type === "DeployOutpost") return !!fleet && st.systems.some(s => s.id === command.system_id
@@ -213,7 +213,7 @@ function commandLabel(command: FleetCommand, st: ViewState): string {
     case "AttackFleet": return `Attack fleet ${command.target_id}`;
     case "DefendSystem": return `Defend ${system(command.system_id)} · pursuit limit ${command.pursuit_radius.toLocaleString()} su`;
     case "CommitRaid": return `Raid fleet ${command.target_id}`;
-    case "BlockadeSystem": return `Blockade ${system(command.system_id)}`;
+    case "BlockadeSystem": return `${command.raid ? "Raid" : "Blockade"} ${system(command.system_id)}`;
     case "SurveySystem": return `Survey ${system(command.system_id)}`;
     case "ExploreSite": return `${({ investigate: "Investigate", restore: "Restore", recover: "Recover", study: "Deep investigation", extract: "Prepared extraction", signal: "Answer signal" })[command.task]} → ${st.explorationSites.find(s => s.id === command.site_id)?.details?.name ?? "Unknown contact"}`;
     case "AssignCaptain": return `Assign officer #${command.captain_id}`;

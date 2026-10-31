@@ -14,7 +14,7 @@ import { Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import type { CountClass, GhostView, ShipKind } from "./protocol";
 import { countClassLabel, fleetExactCount } from "./protocol";
 import { fleetArtKind, type ShipArtKind } from "./shipart";
-import { ORBIT_TILT, formatAge, nearRadius, systemShipPx } from "./systemlayout";
+import { ORBIT_TILT, formatAge, systemShipPx, trueRadius } from "./systemlayout";
 import type { FleetTone, PictureAnchor, PictureFleet, SystemPicture } from "./systemtraffic";
 import { seeded } from "./systembodyfx";
 
@@ -32,7 +32,7 @@ export interface TrafficFrame {
   /** Pixels per normalized orrery unit, and the star's screen position. */
   sceneScale: number;
   center: { x: number; y: number };
-  nearInner: number;
+  /** The frame's outer radius (normalized): farther contacts hold its edge. */
   nearOuter: number;
   starRadiusPx: number;
   /** The visible map rectangle (labels stay inside it). */
@@ -72,8 +72,7 @@ const TONE_COLOR: Record<FleetTone, number> = {
   own: 0x4fc3ff, ally: 0x74e08c, rival: 0xff7a6b, pirate: 0xe08a2c, tca: 0x7fa6c8,
 };
 const COL_THREAT = 0xff4d4d;
-/** §belts: where on its band a belt's working fleets sit, and their spacing. */
-const BELT_ARC_START = -2.2;
+/** §belts: the spacing of a belt's working fleets along its band. */
 const BELT_ARC_STEP = 0.16;
 const COL_SIEGE = 0xffb347;
 const SHIP_ART_FACING = Math.PI / 2;
@@ -84,7 +83,7 @@ const KIND_LABEL: Record<ShipKind, string> = {
   freighter: "Authority Freighter", raider: "Interceptor", corvette: "Corvette", colony: "Colony Ship",
   scout: "Scout", survey_probe: "Survey Probe", mining_barge: "Mining Barge", destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship",
   dreadnought: "Dreadnought", titan: "Titan", transport: "Troop Transport", builder: "Construction Ship",
-  mining_belt_station: "Mining Belt Station",
+  mining_belt_station: "Mining Belt Station", combat_freighter: "Combat Freighter",
 };
 /** A selected fleet is drawn larger so its live 3D hull (≥32px) qualifies. */
 const SELECTED_MIN_PX = 36;
@@ -100,6 +99,28 @@ function cordonCap(zoom: number): number {
 const RING_TILT = 0.74;
 /** Slots avoid the wedge below a world, where its name and status sit. */
 const LABEL_WEDGE = 1.15;
+
+/** A berthed or cordon fleet's place in the ring about its world, for a world
+ * `bodyR` px across at orrery zoom `zoom`: its angle on the ring and the
+ * ring's radii (px). Shared with the galaxy map's close-up, so a ship resting
+ * at a world sits in the same slot in both pictures. */
+export function ringSlot(mode: "berth" | "cordon", slot: number, slots: number, bodyR: number, zoom: number,
+  seconds: number): { a: number; rx: number; ry: number } {
+  // Docked hulls hold an inner ring; a hostile cordon rings outside them.
+  const perRing = mode === "cordon" ? cordonCap(zoom) : berthCap(zoom);
+  const ring = Math.floor(slot / perRing);
+  const inRing = Math.max(1, Math.min(perRing, slots - ring * perRing));
+  const rx = bodyR + (mode === "cordon" ? 40 : 17) + ring * 15;
+  // Slots fan out from the top (the most important hull first), left and
+  // right alternately, never into the label wedge beneath the world.
+  const i = slot % perRing;
+  const half = Math.ceil((inRing - 1) / 2);
+  const step = half > 0 ? Math.min(0.85, (Math.PI - LABEL_WEDGE / 2) / half) : 0;
+  const k = Math.ceil(i / 2);
+  const sign = i % 2 === 1 ? -1 : 1;
+  const sway = mode === "berth" ? Math.sin(seconds * 0.35 + slot) * 0.05 : 0;
+  return { a: -Math.PI / 2 + sign * k * step + sway + ring * 0.3, rx, ry: rx * RING_TILT };
+}
 const EASE_RATE = 6.5;
 const FADE_RATE = 3.2;
 
@@ -167,6 +188,10 @@ export class SystemTrafficLayer {
   private hiddenCordon = new Map<number, number>();
   private lastScale = 0;
   private lastCenter = { x: 0, y: 0 };
+  /// §tracking: the tracking inset's scene draws hulls and fire only; a
+  /// new shot there (`cut`) snaps its hulls on the next update.
+  private bare = false;
+  private cutNext = false;
 
   constructor() {
     this.root.eventMode = "none";
@@ -193,8 +218,16 @@ export class SystemTrafficLayer {
     this.hiddenCordon.clear();
     this.textUsed = 0;
     this.iconUsed = 0;
-    const snap = Math.abs(frame.sceneScale - this.lastScale) > 0.5
-      || Math.hypot(frame.center.x - this.lastCenter.x, frame.center.y - this.lastCenter.y) > 0.5;
+    const moved = { x: frame.center.x - this.lastCenter.x, y: frame.center.y - this.lastCenter.y };
+    const rescaled = Math.abs(frame.sceneScale - this.lastScale) > 0.5;
+    // §tracking: the tracking camera follows its fleet every frame, so there
+    // hulls ride the camera's move and keep easing; they snap only on a cut
+    // (a new fleet, or the inset shown again). The orrery snaps on any move.
+    const snap = this.bare ? rescaled || this.cutNext : rescaled || Math.hypot(moved.x, moved.y) > 0.5;
+    if (this.bare && !snap) {
+      for (const marker of this.markers.values()) { marker.x += moved.x; marker.y += moved.y; }
+    }
+    this.cutNext = false;
     this.lastScale = frame.sceneScale;
     this.lastCenter = { ...frame.center };
     for (const marker of this.markers.values()) marker.present = false;
@@ -285,6 +318,30 @@ export class SystemTrafficLayer {
     return marker && marker.present ? { x: marker.x, y: marker.y } : null;
   }
 
+  /** §tracking: the fleet the tracking inset follows — where and how long it
+   * is drawn, its name and tone. Null once it is gone or only an edge arrow. */
+  trackTarget(id: string): { x: number; y: number; px: number; title: string; color: number } | null {
+    const marker = this.markers.get(id);
+    const fleet = marker?.fleet;
+    const mode = fleet?.placement.mode;
+    if (!marker?.present || !fleet || mode === "inbound" || mode === "outbound") return null;
+    const g = fleet.ghost;
+    const age = g.age >= 1 ? `  Δ${formatAge(g.age)}` : "";
+    return { x: marker.x, y: marker.y, px: marker.px, title: `${fleetName(g).toUpperCase()}${age}`, color: TONE_COLOR[fleet.tone] };
+  }
+
+  /** §tracking: the tracking inset's scene carries hulls and fire, never
+   * names, badges, rings or edge arrows, under a camera that follows them. */
+  /** §tracking: the tracking camera cut to a new shot: snap, never slide. */
+  cut(): void {
+    this.cutNext = true;
+  }
+
+  setBare(on: boolean): void {
+    this.bare = on;
+    this.texts.visible = this.icons.visible = !on;
+  }
+
   // --- Placement ------------------------------------------------------------
 
   private planeToScreen(r: number, bearing: number, frame: TrafficFrame): { x: number; y: number } {
@@ -306,7 +363,7 @@ export class SystemTrafficLayer {
       }
     }
     if (anchor.kind === "near") {
-      const r = nearRadius(anchor.distance, frame.nearInner, frame.nearOuter);
+      const r = trueRadius(anchor.distance, frame.nearOuter);
       const p = this.planeToScreen(r, anchor.bearing, frame);
       return { ...p, u: { x: Math.cos(anchor.bearing), y: Math.sin(anchor.bearing) } };
     }
@@ -369,21 +426,7 @@ export class SystemTrafficLayer {
       const cx = body ? body.sx : frame.center.x;
       const cy = body ? body.sy : frame.center.y;
       const br = body ? body.r : frame.starRadiusPx;
-      // Docked hulls hold an inner ring; a hostile cordon rings outside them.
-      const perRing = p.mode === "cordon" ? cordonCap(frame.zoom) : berthCap(frame.zoom);
-      const ring = Math.floor(p.slot / perRing);
-      const inRing = Math.max(1, Math.min(perRing, p.slots - ring * perRing));
-      const rx = br + (p.mode === "cordon" ? 40 : 17) + ring * 15;
-      const ry = rx * RING_TILT;
-      // Slots fan out from the top (the most important hull first), left and
-      // right alternately, never into the label wedge beneath the world.
-      const i = p.slot % perRing;
-      const half = Math.ceil((inRing - 1) / 2);
-      const step = half > 0 ? Math.min(0.85, (Math.PI - LABEL_WEDGE / 2) / half) : 0;
-      const k = Math.ceil(i / 2);
-      const sign = i % 2 === 1 ? -1 : 1;
-      const sway = p.mode === "berth" ? Math.sin(t * 0.35 + p.slot) * 0.05 : 0;
-      const a = -Math.PI / 2 + sign * k * step + sway + ring * 0.3;
+      const { a, rx, ry } = ringSlot(p.mode, p.slot, p.slots, br, frame.zoom, t);
       x = cx + Math.cos(a) * rx;
       y = cy + Math.sin(a) * ry;
       angle = p.mode === "berth"
@@ -391,17 +434,19 @@ export class SystemTrafficLayer {
         : Math.atan2(cy - y, cx - x); // a cordon faces the world it threatens
     } else if (p.mode === "belt") {
       // §belts: a station and its barges hold a short arc of the band, the
-      // station first; the arc's place is fixed per belt.
+      // station first, centred where they really are on the ring.
       const r = frame.beltAt?.(p.body) ?? frame.nearOuter;
-      const bearing = BELT_ARC_START + p.body * 1.3 + (p.slot - (p.slots - 1) / 2) * BELT_ARC_STEP;
+      const bearing = p.bearing + (p.slot - (p.slots - 1) / 2) * BELT_ARC_STEP;
       ({ x, y } = this.planeToScreen(r, bearing, frame));
       angle = Math.atan2(Math.cos(bearing) * ORBIT_TILT, -Math.sin(bearing)); // along the band
     } else if (p.mode === "near") {
-      const r = nearRadius(p.distance, frame.nearInner, frame.nearOuter);
+      const r = trueRadius(p.distance, frame.nearOuter);
       ({ x, y } = this.planeToScreen(r, p.bearing, frame));
+      // Parked on the star itself (a raid's end), a hull keeps the way it came.
+      const parked = p.distance < 1 ? this.markers.get(fleet.id) : undefined;
       angle = fleet.heading !== null
         ? Math.atan2(Math.sin(fleet.heading) * ORBIT_TILT, Math.cos(fleet.heading))
-        : Math.atan2(frame.center.y - y, frame.center.x - x);
+        : parked?.placed ? parked.angle : Math.atan2(frame.center.y - y, frame.center.x - x);
       if (fleet.hostile) {
         labelText = `⚠ ${fleetName(g).toUpperCase()}`;
         labelColor = COL_THREAT;
@@ -451,7 +496,9 @@ export class SystemTrafficLayer {
       marker.sprite.visible = true;
       if (marker.sprite.texture !== art.tex) marker.sprite.texture = art.tex;
       marker.sprite.anchor.set(art.anchor?.[0] ?? 0.5, art.anchor?.[1] ?? 0.5);
-      marker.px = size * art.mult;
+      // The minimum holds after the art's calibration, so every selected hull
+      // (an Interceptor's art is drawn at 0.87) reaches its live 3D model.
+      marker.px = fleet.selected ? Math.max(size * art.mult, SELECTED_MIN_PX) : size * art.mult;
       marker.sprite.scale.set(marker.px / art.tex.width);
       marker.sprite.rotation = angle + SHIP_ART_FACING;
       marker.sprite.alpha = alpha;
@@ -489,7 +536,10 @@ export class SystemTrafficLayer {
     }
     const badge = countBadge(g);
     const arrow = p.mode === "inbound" || p.mode === "outbound";
-    marker.badge.visible = !!badge.text && !arrow;
+    // §tracking: the tracking scene keeps hulls only (no chrome or arrows).
+    chrome.visible = !this.bare;
+    marker.root.visible = !(this.bare && arrow);
+    marker.badge.visible = !!badge.text && !arrow && !this.bare;
     if (marker.badge.visible) {
       const bx = Math.max(8, half * 0.62);
       const by = Math.max(6, half * 0.5);
@@ -505,7 +555,7 @@ export class SystemTrafficLayer {
       labelColor = 0xffffff;
     }
     if (labelText && g.age >= 1 && !arrow) labelText += `  Δ${formatAge(g.age)}`;
-    marker.label.visible = !!labelText;
+    marker.label.visible = !!labelText && !this.bare;
     if (labelText) {
       marker.label.text = labelText;
       marker.label.style.fill = labelColor;

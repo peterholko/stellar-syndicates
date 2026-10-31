@@ -1,10 +1,9 @@
-// The Market Hub's live 3D station (the Authority Nexus). Pure rules shared by
+// The Market Hub's live 3D station (the Wormhole Hub). Pure rules shared by
 // the map bridge, the dynamically loaded runtime, the art baker and the tests.
 import { MAP_MODEL_TILT, mapModelBlend } from "./map-ship-model-policy";
 
-/** The live tile spans this many station diameters: room for the stabilizer
- * towers when the station leans, and for the traffic arriving from beyond its
- * rim (with its wakes, up to 1.23 radii in projection mid-lean). */
+/** The live tile spans this many station diameters: room for the station
+ * when it leans, and for the traffic arriving from beyond its rim. */
 export const HUB_MODEL_FIELD = 1.25;
 /** The baked top-down sprite's canvas spans this many station diameters. Both
  * views share the unit, so the live tile is sized from the drawn sprite. */
@@ -20,10 +19,12 @@ export const HUB_MODEL_IDLE_MS = 15_000;
  * vortex flows from there, like the System View's pulsars, whatever the
  * system's reduced-motion setting. */
 export const HUB_VORTEX_STILL_TIME = 0;
-/** The stabilizer towers stand on the diagonals, as in the approved concept.
- * In the panel hero's low view a tower on an axis would rise in front of the
- * vortex; the map's lean clears the aperture either way. */
-export const HUB_YAW = Math.PI / 4;
+/** The hub is authored standing (ring in XY, front +Z, its README). Turning it
+ * this far about X lays it flat, front up, so the map's top-down camera sees
+ * the approved front artwork. */
+export const HUB_LAY_FLAT = -Math.PI / 2;
+/** No turn: the front artwork faces the camera as it was drawn. */
+export const HUB_YAW = 0;
 /** The baked panel hero looks down from the screen's bottom edge, this far
  * above the disc. */
 export const HUB_HERO_ELEVATION = 35 * Math.PI / 180;
@@ -35,8 +36,8 @@ export function hubModelBlend(zoom: number): number {
 
 /** The station's top-down rim (half its visible span) and the depth of the
  * rim's underside, in station radii, measured from the model. */
-export const HUB_RIM = .9747;
-export const HUB_RIM_KEEL = .0373;
+export const HUB_RIM = 1;
+export const HUB_RIM_KEEL = .0014;
 
 /** The leaning station's lower edge below its centre, in station radii. */
 export function hubLeanBottom(tilt: number): number {
@@ -59,9 +60,9 @@ export function hubModelTilePx(spriteCanvasPx: number): number {
  * drawn this wide (px, its full diameter) and stops below the lower bound. */
 export const HUB_TRAFFIC_ON_PX = 300;
 export const HUB_TRAFFIC_OFF_PX = 260;
-/** Traffic hulls at twice the asset's scale study (0.9–1.8% of the station's
- * width), so they read on the map: still small craft beside the Nexus, and
- * still clear of each other on the asset's lanes. */
+/** Traffic hulls at twice the asset's scale study (3–4.7% of the station's
+ * width), so they read on the map: still small craft beside the hub, and still
+ * more than a unit clear of each other on the asset's lanes. */
 export const HUB_TRAFFIC_SCALE = 2;
 /** Traffic hulls are a few pixels long: display-sized textures suffice. */
 export const HUB_TRAFFIC_TEXTURE = 256;

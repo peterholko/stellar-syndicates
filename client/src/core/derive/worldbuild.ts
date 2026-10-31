@@ -1,8 +1,9 @@
 import { label } from "../../icons";
 import type { BodyView, BuildState, Commodity, SystemStateView } from "../../protocol";
-import { buildProgress } from "./construction";
+import { progressAt, progressLine, type ProgressLine } from "./construction";
 import { fmtBuildDur } from "./format";
 import { openingBuild, POOL_OF, SHIP_YARD, structureBuildSeconds, structureLevel, YARD_PREREQ, YARD_TITLE, type BuildOpt } from "./market";
+import { stationName } from "./station";
 
 /** §construction: each world builds one structure at a time, in the order the
  * orders arrived; hulls, modules and courses use their own facilities. This is
@@ -48,6 +49,8 @@ export interface StructureJob {
   readyIn: number | null;
   /** 0–100 for an active job with a known clock. */
   progress: number | null;
+  /** Its progress line, for a bar that redraws every frame (§live-progress). */
+  line: ProgressLine | null;
   /** A structure order, waiting or building, that no later order for the
    * same structure builds on (the sim's `cancel_build` rule). */
   cancellable: boolean;
@@ -60,7 +63,7 @@ export function structureQueue(report: SystemStateView, body: BodyView, catalog:
   const ordered = [...jobs.filter(job => !job.queued), ...jobs.filter(job => job.queued)];
   const earlier = new Map<string, number>();
   const mult = body.structure_build_time_mult ?? body.construction_time_mult;
-  let free: number | null = 0;
+  const slots = new SlotClock(report.structure_slots ?? 1);
   const line = ordered.map((job, index): StructureJob => {
     const before = earlier.get(job.key) ?? 0;
     earlier.set(job.key, before + 1);
@@ -72,17 +75,16 @@ export function structureQueue(report: SystemStateView, body: BodyView, catalog:
     if (active) {
       startsIn = 0;
       readyIn = job.complete_time == null ? null : Math.max(0, job.complete_time - now);
-      free = free === null || readyIn === null ? null : Math.max(free, readyIn);
+      slots.occupy(job.key, readyIn);
     } else {
       const option = catalog.find(entry => entry.key === job.key);
       const seconds = project ? PROJECT_SECONDS[job.key] * mult
         : option ? structureBuildSeconds(structureLevel(option, tier), body, openingBuild(job.key, tier, report.id, body)) : null;
-      startsIn = free;
-      readyIn = free === null || seconds === null ? null : free + seconds;
-      free = readyIn;
+      ({ startsIn, readyIn } = slots.queue(job.key, 0, seconds));
     }
+    const estimate = active ? progressLine(job) : null;
     return { job, key: job.key, tier, project, active, position: index + 1, startsIn, readyIn,
-      progress: active ? buildProgress(job, now) : null, cancellable: false };
+      progress: estimate ? progressAt(estimate, now) : null, line: estimate, cancellable: false };
   });
   for (const entry of line) {
     entry.cancellable = !entry.project && entry.job.id !== undefined
@@ -97,10 +99,13 @@ export function hullJobs(report: SystemStateView, body: BodyView): BuildState[] 
 }
 
 /** A structure order's name: the building and the level it builds. */
-export const jobTitle = (job: StructureJob): string => job.project ? label(job.key) : `${label(job.key)} ${romanTier(job.tier)}`;
+/** A station job is named for the level it raises ("Gun Platform"). */
+export const jobTitle = (job: StructureJob): string => job.project ? label(job.key)
+  : job.key === "orbital_defense" ? stationName(job.tier) : `${label(job.key)} ${romanTier(job.tier)}`;
 
 /** §construction: one order, one bar. Only the world's Construction card
- * draws an order's bar and time; the planet, the structure list, the build
+ * draws an order's bar and time (since Oct 21 2026 the planet adds a small bar,
+ * no time, over its Building tag); the planet, the structure list, the build
  * sheet and the system view name its place in line with one word: Building,
  * Starting (first in line, not yet reported started), #N while it waits, and
  * SENDING while the order is still on its way. */
@@ -183,8 +188,8 @@ export function gridLine(body: BodyView): { text: string; short: boolean; tip: s
 }
 
 /** The highest level the catalogue offers: Command Center and station levels
- * are listed; the Service Berth has one; everything else climbs to VI (V and VI
- * need research, which only the sim checks). */
+ * are listed; the Service Berth has one; everything else climbs to VI. What
+ * research has opened so far is `structureCeiling` (served, v72). */
 export function maxLevel(option: BuildOpt): number {
   if (option.tiers?.length) return Math.max(...option.tiers.map(level => level.tier));
   return option.key === "service_berth" ? 1 : 6;
@@ -195,7 +200,7 @@ export interface StructureFact { label: string; from: string | null; to: string 
 /** What raising `option` from level `from` (0: a new building) to `to` changes
  * on `body`, in the sim's own numbers. Only figures the client can state
  * exactly: extraction rates depend on the deposit, so a new mine shows none. */
-export function structureFacts(option: BuildOpt, from: number, to: number, body: BodyView): StructureFact[] {
+export function structureFacts(option: BuildOpt, from: number, to: number, body: BodyView, storageMult = 1): StructureFact[] {
   const key = option.key;
   const facts: StructureFact[] = [];
   const num = (value: number) => Math.round(value).toLocaleString("en-US");
@@ -236,10 +241,10 @@ export function structureFacts(option: BuildOpt, from: number, to: number, body:
     facts.push({ label: "Houses", from: was(num(camp ?? housing * mult * from)), to: num(housing * mult * to) });
   }
   if (key === "warehouse") {
-    const cap = (tier: number) => WAREHOUSE_FIRST + WAREHOUSE_PER_LEVEL * (tier - 1);
+    const cap = (tier: number) => (WAREHOUSE_FIRST + WAREHOUSE_PER_LEVEL * (tier - 1)) * storageMult;
     facts.push({ label: "Storage", from: was(num(cap(from))), to: num(cap(to)) });
   }
-  if (key === "orbital_warehouse") facts.push({ label: "Storage", from: was(num(ORBITAL_STORAGE_PER_LEVEL * from)), to: num(ORBITAL_STORAGE_PER_LEVEL * to) });
+  if (key === "orbital_warehouse") facts.push({ label: "Storage", from: was(num(ORBITAL_STORAGE_PER_LEVEL * from * storageMult)), to: num(ORBITAL_STORAGE_PER_LEVEL * to * storageMult) });
   // build::command_infrastructure_bonus and command_construction_mult.
   if (key === "command_center" && to >= 2) facts.push({ label: "Gives", from: null, to: to === 2 ? "+1 Infrastructure slot, builds 10% faster" : "+2 Infrastructure slots, builds 20% faster" });
   const unlocks = Object.entries(YARD_PREREQ).filter(([, need]) => need.yard === key && need.tier === to).map(([yard]) => YARD_TITLE[yard] ?? label(yard));
@@ -248,10 +253,51 @@ export function structureFacts(option: BuildOpt, from: number, to: number, body:
 }
 
 /** When a new order placed now would start and finish, behind the current line. */
-export function nextOrderTiming(line: readonly StructureJob[], seconds: number, travel: number): { startsIn: number | null; readyIn: number | null } {
+export function nextOrderTiming(line: readonly StructureJob[], seconds: number, travel: number, slotCount = 1, key?: string): { startsIn: number | null; readyIn: number | null } {
   if (!line.length) return { startsIn: travel, readyIn: travel + seconds };
-  const last = line[line.length - 1].readyIn;
-  return last === null ? { startsIn: null, readyIn: null } : { startsIn: Math.max(last, travel), readyIn: Math.max(last, travel) + seconds };
+  if (slotCount <= 1) {
+    const last = line[line.length - 1].readyIn;
+    return last === null ? { startsIn: null, readyIn: null } : { startsIn: Math.max(last, travel), readyIn: Math.max(last, travel) + seconds };
+  }
+  const slots = new SlotClock(slotCount);
+  for (const entry of line) slots.occupy(entry.key, entry.readyIn);
+  return slots.queue(key ?? "", travel, seconds);
+}
+
+/** §research-wiring Flash Forges: a world's structure slots as the sim fills
+ * them: the earliest free slot takes the next order, but a second order for a
+ * structure waits for the first. Times are seconds from now; null unknown. */
+class SlotClock {
+  private readonly free: (number | null)[];
+  private readonly done = new Map<string, number | null>();
+  constructor(count: number) { this.free = Array.from({ length: Math.max(1, count) }, () => 0); }
+  /** An order holding (or, for a waiting one, booked into) a slot until `readyIn`. */
+  occupy(key: string, readyIn: number | null): void {
+    // One slot: a legacy report's parallel jobs all hold it until the last ends.
+    if (this.free.length === 1) {
+      const free = this.free[0];
+      this.free[0] = free === null || readyIn === null ? null : Math.max(free, readyIn);
+    } else this.free[this.earliest()] = readyIn;
+    this.done.set(key, readyIn);
+  }
+  queue(key: string, notBefore: number, seconds: number | null): { startsIn: number | null; readyIn: number | null } {
+    const slot = this.earliest();
+    const same = this.done.has(key) ? this.done.get(key)! : 0;
+    const free = this.free[slot];
+    const startsIn = free === null || same === null ? null : Math.max(free, same, notBefore);
+    const readyIn = startsIn === null || seconds === null ? null : startsIn + seconds;
+    this.free[slot] = readyIn;
+    this.done.set(key, readyIn);
+    return { startsIn, readyIn };
+  }
+  private earliest(): number {
+    let best = 0;
+    for (let i = 1; i < this.free.length; i++) {
+      const a = this.free[best], b = this.free[i];
+      if (a === null || (b !== null && b < a)) best = i;
+    }
+    return best;
+  }
 }
 
 /** Developed worlds with an idle work slot or a structure under construction,
@@ -262,6 +308,33 @@ export function worldSlots(systems: readonly SystemStateView[], playerId: string
     .filter(body => Object.values(body.structures).some(tier => tier > 0) || system.builds.some(job => job.body_id === body.id && isStructureJob(job.key)))
     .map(body => {
       const line = structureQueue(system, body, catalog, now);
-      return { systemId: system.id, body, job: line[0] ?? null, waiting: Math.max(0, line.length - 1) };
+      return { systemId: system.id, body, job: line[0] ?? null, waiting: line.filter((entry, index) => index > 0 && !entry.active).length };
     }));
+}
+
+// §research-wiring: specialists, mirrored from the sim's specialist.rs.
+/** The five professions (experts are `expert_<profession>`). */
+export const SPECIALIST_KINDS = ["geologist", "petrochemical_engineer", "xenobiologist", "industrial_engineer", "naval_architect"] as const;
+/** SpecialistKind::affine: the structures each profession's skill serves. */
+const SPECIALIST_AFFINITY: Readonly<Record<string, readonly string[]>> = {
+  geologist: ["mining_complex", "uranium_mill"],
+  petrochemical_engineer: ["volatile_harvester", "fuel_refinery", "chemical_works"],
+  xenobiologist: ["bioharvester", "agroplex", "living_terraces"],
+  industrial_engineer: ["smelter", "electronics_fabricator", "machine_works", "armaments_complex", "composite_works", "hull_fabricator", "precision_works", "drive_works", "antimatter_plant"],
+  naval_architect: ["shipyard", "armaments_complex", "hull_fabricator", "drive_works"],
+};
+export const isExpertKind = (kind: string): boolean => kind.startsWith("expert_");
+export const baseSpecialist = (kind: string): string => kind.replace(/^expert_/, "");
+export const specialistAffine = (kind: string, structure: string): boolean => SPECIALIST_AFFINITY[baseSpecialist(kind)]?.includes(structure) ?? false;
+/** specialist::ACADEMY_TRAIN_COSTS / EXPERT_TRAIN_COSTS and their course ticks (40 s, 80 s). */
+export const COURSE = {
+  base: { costs: "20 Provisions + 10 Semiconductors", seconds: 40 },
+  expert: { costs: "30 Provisions + 20 Semiconductors + 5 Precision Components", seconds: 80 },
+} as const;
+/** Specialists of `kind` free to post on a line: the system pool, less those
+ * posted on every other line. */
+export function freeSpecialists(report: SystemStateView, kind: string, bodyId: number, structure: string): number {
+  const elsewhere = report.assignments.filter(a => !(a.body_id === bodyId && a.structure === structure))
+    .reduce((sum, a) => sum + (a.specialists[kind] ?? 0), 0);
+  return Math.max(0, (report.specialists?.[kind] ?? 0) - elsewhere);
 }

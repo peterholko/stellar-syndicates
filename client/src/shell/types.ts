@@ -34,6 +34,9 @@ export interface FramePolicy {
 export interface Shell {
   mount(root: HTMLElement, ctx: CoreContext): Promise<void>;
   onCore(events: CoreEvent[]): void;
+  /** §raid-focus: take the player to an incoming raid on the galaxy map: the
+   * raider selected, framed with the home it closes on. */
+  focusRaid?(id: string, homeId: string): void;
   onViewTick(): void;
   framePolicy(): FramePolicy;
   cameraRect(): Rect;

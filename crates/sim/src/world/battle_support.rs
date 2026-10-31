@@ -4,6 +4,35 @@
 use super::*;
 
 impl World {
+    /// §research-wiring (R2): a side's research in battle, fought at `at`.
+    /// Fields its owner hasn't researched stay unset, which the engine reads
+    /// as no change.
+    pub(super) fn battle_research(&self, owner: PlayerId, at: Vec2) -> crate::tactical::SideMods {
+        use crate::research::ModKey;
+        let m = |key| self.research_mod(owner, key);
+        let set = |x: f64| if x == 1.0 { 0.0 } else { x };
+        // Hardened Anchorage: fighting by a system of its own.
+        let home = self.systems.iter().any(|s| s.owner == Some(owner)
+            && s.pos.distance(at) <= crate::build::DEFENSE_PLATFORM_RADIUS);
+        crate::tactical::SideMods {
+            beam_dmg: set(m(ModKey::BeamDmg)),
+            driver_dmg: set(m(ModKey::DriverDmg)),
+            torp_dmg: set(m(ModKey::TorpDmg)),
+            opening_dmg: set(m(ModKey::OpeningRoundDmg)),
+            reflect: set(m(ModKey::ReflectBlunt)),
+            whipple: set(m(ModKey::WhippleBlunt)),
+            hull: set(m(ModKey::HullMass) * m(ModKey::DamagePoolDepth)),
+            anchored: if home { set(m(ModKey::AnchoredDmgTaken)) } else { 0.0 },
+            escort: set(m(ModKey::EscortedConvoyRaidDmg)),
+            wolfpack: set(m(ModKey::WolfpackPerStack)),
+            slip: set(m(ModKey::RaiderDisengageExposure)),
+            splash: if self.research_flag(owner, crate::research::Cap::OverpressureWarheads) {
+                crate::tactical::OVERPRESSURE_SPLASH
+            } else { 0.0 },
+            ..Default::default()
+        }
+    }
+
     pub(super) fn battle_escort_assignments(&self, attackers: &[EntityId], defenders: &[EntityId]) -> BTreeMap<EntityId, EntityId> {
         attackers.iter().chain(defenders).filter_map(|id| {
             let fleet = self.fleets.get(id)?;

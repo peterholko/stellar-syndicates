@@ -1,0 +1,11 @@
+{
+  "generator": "built-in image_gen",
+  "created": "2026-10-23",
+  "artifact_type": "design_mockup",
+  "implemented": false,
+  "input": "login-banner-mockup.png",
+  "output": "login-banner-mockup-low-glow-v2.png",
+  "source_path": "/Users/peter/.codex/generated_images/01a16aa3-23be-7f01-8476-11542192f80e/exec-945f8b60-0b67-4bca-b44f-b549ba18875d.png",
+  "transparent_background": false,
+  "prompt": "Use case: precise-object-edit.\nEdit target: the supplied Stellar Syndicates login-page design mockup, 1852 x 849 pixels.\n\nMake exactly one localized adjustment: substantially reduce the blue/cyan OUTER GLOW around the words \"STELLAR SYNDICATES\" in the header above the login panel.\n\nReduce the title lettering's cyan halo, bloom and surrounding blue haze by about 85%. Make the lettering read as crisp brushed silver/titanium, with neutral silver-white bevel highlights and only the faintest cool-blue edge reflection. The dark sky immediately around the letters should remain clean and dark. Retain good contrast and readable bright silver faces. Do not simply darken the entire title or blur the letters. Keep the exact existing words, letter shapes, type style, kerning, line spacing, scale and position.\n\nThe adjustment applies ONLY to the two-line STELLAR SYNDICATES wordmark at the top center-right of the branding lockup (approximately x=812 to 1178, y=100 to 193 in this image). Preserve the adjacent single-S hexagonal logo, its cyan star and orbital ring, and its gold/red accents exactly. Preserve all of the rest of the screenshot, including the entire login card and its text, its controls and colors, the spacecraft, the planet, the wormhole, the stars, the overall lighting and image framing.\n\nNo new objects, panels, text, frames, decoration, scenery, logos or watermark. Do not move anything, crop, resize the composition, or change the aspect ratio. Output the same full-screen mockup, with only a visibly subtler, cleaner, less neon title treatment."
+}

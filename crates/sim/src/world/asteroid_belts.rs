@@ -35,8 +35,11 @@ impl World {
         let radius = self.config.galaxy_radius;
         let homes: std::collections::BTreeSet<EntityId> =
             self.home_slots.iter().filter_map(|h| h.system).collect();
+        let dens: std::collections::BTreeSet<EntityId> =
+            self.home_slots.iter().filter_map(|h| h.den_system).collect();
         for sys in &mut self.systems {
             let home = homes.contains(&sys.id);
+            let den = dens.contains(&sys.id);
             let frontier = crate::belts::frontier_at(sys.pos, radius);
             let mut rng = crate::rng::Rng::keyed_id(seed, "belt-pockets-v1", sys.id.0);
             for b in sys.bodies.iter_mut().filter(|b| b.is_belt()) {
@@ -47,7 +50,9 @@ impl World {
                 if !b.pockets.is_empty() {
                     continue;
                 }
-                let pockets = if home { vec![crate::belts::home_pocket()] } else { rolled };
+                // §den-pocket: a den's belt hides what the den guarded.
+                let pockets = if home { vec![crate::belts::home_pocket()] }
+                    else if den { vec![crate::founding::den_pocket()] } else { rolled };
                 b.pockets = pockets
                     .into_iter()
                     .map(|deposit| crate::body::Pocket { deposit, found_by: Default::default() })
@@ -200,7 +205,9 @@ mod tests {
         let mut seen = std::collections::BTreeSet::new();
         for seed in [7, 41, 316, 2026] {
             let w = galaxy(seed);
-            let homes: std::collections::BTreeSet<_> = w.home_slots.iter().filter_map(|h| h.system).collect();
+            // Homes and §den-pocket dens hide fixed pockets.
+            let homes: std::collections::BTreeSet<_> = w.home_slots.iter().filter_map(|h| h.system)
+                .chain(w.home_slots.iter().filter_map(|h| h.den_system)).collect();
             for sys in w.systems.iter().filter(|s| !homes.contains(&s.id)) {
                 let frontier = crate::belts::frontier_at(sys.pos, w.config.galaxy_radius);
                 for b in sys.bodies.iter().filter(|b| b.is_belt()) {

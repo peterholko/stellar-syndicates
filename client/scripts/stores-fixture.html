@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stellar Syndicates · Stores</title></head>
+<body style="margin:0;min-height:100vh;background:#06101a;color:#dce7ed;font-family:system-ui,sans-serif">
+<div class="deck">
+  <header class="deck-topbar"><b>Stores fixture</b>
+    <button type="button" data-fixture="one">One system</button>
+    <button type="button" data-fixture="two">Two systems</button>
+    <button type="button" data-fixture="full">Storage full</button>
+    <button type="button" data-fixture="pop">Toggle Stores</button>
+    <span id="fixture-status"></span></header>
+  <div id="deck-stores" class="deck-stores" role="region" aria-label="Stores" hidden></div>
+  <section id="deck-stores-workbench" class="deck-build-workbench deck-stores-workbench" aria-labelledby="deck-stores-workbench-title" tabindex="-1" hidden>
+    <header class="deck-build-workbench__header"><div><span>Stores</span><h2 id="deck-stores-workbench-title">Stores</h2></div><button type="button" data-deck-act="stores-close" aria-label="Close stores">✕</button></header>
+    <div id="deck-stores-workbench-body" class="deck-build-workbench__body"></div>
+  </section>
+</div>
+<script type="module" src="./stores-fixture.ts"></script></body></html>

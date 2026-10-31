@@ -35,9 +35,10 @@ king hierarchy: syndicates stay flat.
 - **Rewards wait:** payouts are made as each completion report reaches
   command, as for every operation, and never vanish. No captain XP or
   research insight: those could be lost (no assigned fleet, no research).
-- **Bonus:** the third contract of a day's board that pays out pays 1,000 Cr
-  and 2 standing (`BOARD_BONUS_*`), once per day ("Contract board · 3 done ·
-  bonus 1,000 Cr."). Counted per corporation (`ContractBoard.done`), since
+- **Bonus:** the third contract of a day's board that pays out pays +3
+  standing and a 5% research dossier (`BOARD_BONUS_*`), once per day. Since
+  Oct 22 2026 it pays no credits, and standing past 100 counts against the
+  daily allowance (docs/retention-p0.md). Counted per corporation (`ContractBoard.done`), since
   the operations table is pruned at 512.
 - **Retired:** the per-30-second private Survey Office and Market offers.
 - **Client:** a "Contract board" section at the top of Operations (both

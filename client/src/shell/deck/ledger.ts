@@ -1,4 +1,5 @@
 import type { ViewState } from "../../state";
+import { serviceReward } from "../../core/derive/board";
 
 /** §founding R10/R12: the charter ledger on Command. Three Authority goals at
  * a time, each with real progress from served state and its one-time stipend.
@@ -16,7 +17,7 @@ export function charterLedgerHtml(st: ViewState): string {
       : goal.metric === "contracts" ? `<button type="button" data-deck-act="ledger-open" data-route="operations">Open Operations</button>`
       : goal.metric === "research" ? `<button type="button" data-deck-act="ledger-open" data-route="research">Open Research</button>`
       : "";
-    return `<article class="deck-charter-ledger__goal"><header><b>${esc(goal.title)}</b><em>+${goal.reward.toLocaleString()} Cr</em></header>` +
+    return `<article class="deck-charter-ledger__goal"><header><b>${esc(goal.title)}</b><em>${esc(serviceReward(goal.standing, goal.research))}</em></header>` +
       `<p>${esc(goal.detail)}</p>` +
       `<div class="deck-charter-ledger__bar" role="progressbar" aria-label="${esc(goal.title)}" aria-valuemin="0" aria-valuemax="${goal.target}" aria-valuenow="${Math.floor(goal.progress)}"><i style="width:${pct.toFixed(1)}%"></i></div>` +
       `<small>${count(goal.progress)} / ${count(goal.target)}</small>${action}</article>`;

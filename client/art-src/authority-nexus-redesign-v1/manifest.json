@@ -1,0 +1,50 @@
+{
+  "created_local_date": "2026-10-21",
+  "tool": "built-in image_gen",
+  "user_reference": "references/user-gate-reference.png",
+  "selection_note": "Six requested concepts plus a seventh inspired by the user-supplied gateway image. These are rendered concept references; view angles and framing are approximate rather than CAD-calibrated. The 680px layout target resolves the conflict between 80% canvas-height diameter and fitting inside a 768px-wide half.",
+  "images": [
+    {
+      "id": "01-slim-halo",
+      "name": "SLIM HALO",
+      "source": "/Users/peter/.codex/generated_images/01a16160-8f19-7ab0-843a-da66b311ae66/exec-f4d56fa6-14ab-421c-aea9-ee065eda6617.png",
+      "file": "01-slim-halo.png"
+    },
+    {
+      "id": "02-floating-crown",
+      "name": "FLOATING CROWN",
+      "source": "/Users/peter/.codex/generated_images/01a16160-8f19-7ab0-843a-da66b311ae66/exec-53ae23d7-d4bb-49af-bbc9-5950470484e7.png",
+      "file": "02-floating-crown.png"
+    },
+    {
+      "id": "03-armillary-gate",
+      "name": "ARMILLARY GATE",
+      "source": "/Users/peter/.codex/generated_images/01a16160-8f19-7ab0-843a-da66b311ae66/exec-0d472189-2ea4-47c3-ba73-3e1d5f8991e9.png",
+      "file": "03-armillary-gate.png"
+    },
+    {
+      "id": "04-compass-cross",
+      "name": "COMPASS CROSS",
+      "source": "/Users/peter/.codex/generated_images/01a16160-8f19-7ab0-843a-da66b311ae66/exec-95f84838-e079-4cf7-a9d7-0790d6352e50.png",
+      "file": "04-compass-cross.png"
+    },
+    {
+      "id": "05-broken-collar",
+      "name": "BROKEN COLLAR",
+      "source": "/Users/peter/.codex/generated_images/01a16160-8f19-7ab0-843a-da66b311ae66/exec-ae98f84d-1baa-4e9c-a047-4aded9fa9a89.png",
+      "file": "05-broken-collar.png"
+    },
+    {
+      "id": "06-precursor-gate",
+      "name": "PRECURSOR GATE",
+      "source": "/Users/peter/.codex/generated_images/01a16160-8f19-7ab0-843a-da66b311ae66/exec-2cd40854-efe4-444d-a10b-5187cf0b1c8d.png",
+      "file": "06-precursor-gate.png"
+    },
+    {
+      "id": "07-radial-customs-gate",
+      "name": "RADIAL CUSTOMS GATE",
+      "source": "/Users/peter/.codex/generated_images/01a16160-8f19-7ab0-843a-da66b311ae66/exec-2845f90a-f099-4c0d-bf25-3bb228f14e75.png",
+      "file": "07-radial-customs-gate.png"
+    }
+  ]
+}

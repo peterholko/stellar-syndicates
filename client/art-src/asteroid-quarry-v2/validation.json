@@ -1,0 +1,208 @@
+{
+  "status": "passed_numeric_and_visual_review",
+  "assets": [
+    {
+      "tier": 1,
+      "filename": "tier-1.png",
+      "format": "PNG",
+      "size": [
+        1672,
+        941
+      ],
+      "mode": "RGBA",
+      "transparent_pixels": 796372,
+      "opaque_pixels": 775162,
+      "antialiased_edge_pixels": 1818,
+      "restored_original_interior_pixels": 759035,
+      "shadow_sample_alpha": [
+        255,
+        255,
+        255
+      ],
+      "all_canvas_edges_transparent": true,
+      "source_attempt": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-1-attempt-3.png",
+      "sha256": "a7ce09e564320998083f73d8a52bece25b3bdb3b158371c92ccd7c4cb1ed0f23",
+      "solid_interiors_fully_opaque": true,
+      "opaque_rock_core_pixels_checked": 160165,
+      "original_rock_core_rgb_preserved": true,
+      "partial_alpha_confined_to_1_5_pixel_boundary": true,
+      "residual_green_fringe_pixels_over_threshold": 0,
+      "visual_review": {
+        "ships_and_loose_rocks_removed": true,
+        "empty_docking_clamps": true,
+        "background_and_structural_openings_transparent": true,
+        "light_and_dark_checkerboards_reviewed": true
+      }
+    },
+    {
+      "tier": 2,
+      "filename": "tier-2.png",
+      "format": "PNG",
+      "size": [
+        1672,
+        941
+      ],
+      "mode": "RGBA",
+      "transparent_pixels": 786744,
+      "opaque_pixels": 784505,
+      "antialiased_edge_pixels": 2103,
+      "restored_original_interior_pixels": 766335,
+      "shadow_sample_alpha": [
+        255,
+        255,
+        255
+      ],
+      "all_canvas_edges_transparent": true,
+      "source_attempt": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-2-attempt-2.png",
+      "sha256": "4c740f11f0d1f9316caa9daad73131e3d627ab20869584f1b92830b847da8de3",
+      "solid_interiors_fully_opaque": true,
+      "opaque_rock_core_pixels_checked": 160165,
+      "original_rock_core_rgb_preserved": true,
+      "partial_alpha_confined_to_1_5_pixel_boundary": true,
+      "residual_green_fringe_pixels_over_threshold": 0,
+      "visual_review": {
+        "ships_and_loose_rocks_removed": true,
+        "empty_docking_clamps": true,
+        "background_and_structural_openings_transparent": true,
+        "light_and_dark_checkerboards_reviewed": true
+      }
+    },
+    {
+      "tier": 3,
+      "filename": "tier-3.png",
+      "format": "PNG",
+      "size": [
+        1672,
+        941
+      ],
+      "mode": "RGBA",
+      "transparent_pixels": 733757,
+      "opaque_pixels": 836696,
+      "antialiased_edge_pixels": 2899,
+      "restored_original_interior_pixels": 811742,
+      "shadow_sample_alpha": [
+        255,
+        255,
+        255
+      ],
+      "all_canvas_edges_transparent": true,
+      "source_attempt": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-3-attempt-2.png",
+      "sha256": "05b9e1a4391b9eec0814ef81ee345ff7738d0210b93ce08cebb85b0253194293",
+      "solid_interiors_fully_opaque": true,
+      "opaque_rock_core_pixels_checked": 160165,
+      "original_rock_core_rgb_preserved": true,
+      "partial_alpha_confined_to_1_5_pixel_boundary": true,
+      "residual_green_fringe_pixels_over_threshold": 0,
+      "visual_review": {
+        "ships_and_loose_rocks_removed": true,
+        "empty_docking_clamps": true,
+        "background_and_structural_openings_transparent": true,
+        "light_and_dark_checkerboards_reviewed": true
+      }
+    },
+    {
+      "tier": 4,
+      "filename": "tier-4.png",
+      "format": "PNG",
+      "size": [
+        1672,
+        941
+      ],
+      "mode": "RGBA",
+      "transparent_pixels": 702706,
+      "opaque_pixels": 866786,
+      "antialiased_edge_pixels": 3860,
+      "restored_original_interior_pixels": 832044,
+      "shadow_sample_alpha": [
+        255,
+        255,
+        255
+      ],
+      "all_canvas_edges_transparent": true,
+      "source_attempt": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-4-attempt-2.png",
+      "sha256": "d343e9dcfba27eb5d2ccc8fd2ff5432a6e846589046f6d7e5fa7d5afd7b17ce8",
+      "solid_interiors_fully_opaque": true,
+      "opaque_rock_core_pixels_checked": 160165,
+      "original_rock_core_rgb_preserved": true,
+      "partial_alpha_confined_to_1_5_pixel_boundary": true,
+      "residual_green_fringe_pixels_over_threshold": 0,
+      "visual_review": {
+        "ships_and_loose_rocks_removed": true,
+        "empty_docking_clamps": true,
+        "background_and_structural_openings_transparent": true,
+        "light_and_dark_checkerboards_reviewed": true
+      }
+    },
+    {
+      "tier": 5,
+      "filename": "tier-5.png",
+      "format": "PNG",
+      "size": [
+        1672,
+        941
+      ],
+      "mode": "RGBA",
+      "transparent_pixels": 697541,
+      "opaque_pixels": 871713,
+      "antialiased_edge_pixels": 4098,
+      "restored_original_interior_pixels": 0,
+      "shadow_sample_alpha": [
+        255,
+        255,
+        255
+      ],
+      "all_canvas_edges_transparent": true,
+      "source_attempt": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-5-attempt-1.png",
+      "sha256": "8d6e4b9c03d494fcee48b3b888ae2e96436b8470b15e8656140d2500a99917a3",
+      "solid_interiors_fully_opaque": true,
+      "opaque_rock_core_pixels_checked": 160165,
+      "original_rock_core_rgb_preserved": false,
+      "partial_alpha_confined_to_1_5_pixel_boundary": true,
+      "residual_green_fringe_pixels_over_threshold": 0,
+      "visual_review": {
+        "ships_and_loose_rocks_removed": true,
+        "empty_docking_clamps": true,
+        "background_and_structural_openings_transparent": true,
+        "light_and_dark_checkerboards_reviewed": true
+      }
+    },
+    {
+      "tier": 6,
+      "filename": "tier-6.png",
+      "format": "PNG",
+      "size": [
+        1672,
+        941
+      ],
+      "mode": "RGBA",
+      "transparent_pixels": 665152,
+      "opaque_pixels": 904143,
+      "antialiased_edge_pixels": 4057,
+      "restored_original_interior_pixels": 856602,
+      "shadow_sample_alpha": [
+        255,
+        255,
+        255
+      ],
+      "all_canvas_edges_transparent": true,
+      "source_attempt": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-6-attempt-3.png",
+      "sha256": "fcc5f9ec44f325f62543f24d6d859a7c16231b189f4a448adfed875dc10dc855",
+      "solid_interiors_fully_opaque": true,
+      "opaque_rock_core_pixels_checked": 160165,
+      "original_rock_core_rgb_preserved": true,
+      "partial_alpha_confined_to_1_5_pixel_boundary": true,
+      "residual_green_fringe_pixels_over_threshold": 0,
+      "visual_review": {
+        "ships_and_loose_rocks_removed": true,
+        "empty_docking_clamps": true,
+        "background_and_structural_openings_transparent": true,
+        "light_and_dark_checkerboards_reviewed": true
+      }
+    }
+  ],
+  "review_images": [
+    "review/contact-sheet-light.png",
+    "review/contact-sheet-dark.png",
+    "review/edge-details.png"
+  ]
+}

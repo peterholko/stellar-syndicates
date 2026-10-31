@@ -74,16 +74,40 @@ function assertCharterMarkup(markup, prefix) {
   assert.match(markup, /The Authority owns the charter—and everyone who sails under it\./);
 }
 function profileFixture(prefix, ids) {
-  const ui = Object.fromEntries(["dialog", "open", "form", "login", "password", "confirm", "submit", "status", "error", "leave", "signOut", "leaveConfirm", "close", "registerFirst", "corporation"].map(key => [key, new Element()]));
+  const ui = Object.fromEntries(["dialog", "open", "form", "login", "password", "confirm", "submit", "status", "error", "leave", "signOut", "leaveConfirm", "close", "registerFirst", "corporation",
+    "vacationStatus", "vacationToggle", "vacationConfirm", "vacationConfirmText", "vacationYes", "vacationNo"].map(key => [key, new Element()]));
   ui.charter = charterFixture();
   ui.form.querySelector = selector => ({ "[name=username]": ui.login, "[name=password]": ui.password,
     "[name=confirm-password]": ui.confirm, "[type=submit]": ui.submit, ...ui.charter.selectors })[selector];
   ui.dialog.querySelector = selector => ({ "[data-profile-register]": ui.form, "[data-profile-status]": ui.status,
     "[data-profile-error]": ui.error, "[data-profile-leave]": ui.leave, "[data-profile-leave-confirm]": ui.leaveConfirm,
-    "[data-profile-close]": ui.close, "[data-profile-register-first]": ui.registerFirst, "[data-profile-corporation]": ui.corporation })[selector];
+    "[data-profile-close]": ui.close, "[data-profile-register-first]": ui.registerFirst, "[data-profile-corporation]": ui.corporation,
+    // §leave (R4): the vacation-mode section.
+    "[data-leave-status]": ui.vacationStatus, "[data-leave-toggle]": ui.vacationToggle, "[data-leave-confirm]": ui.vacationConfirm,
+    "[data-leave-confirm-text]": ui.vacationConfirmText, "[data-leave-yes]": ui.vacationYes, "[data-leave-no]": ui.vacationNo,
+    // §notifications (R8): the Alerts section.
+    ".account-notify": ui.notify })[selector];
+  ui.notify = new Element();
+  ui.notifyKinds = ["siege", "raid", "research"].map((kind) => Object.assign(new Element(), { dataset: { notifyKind: kind } }));
+  ui.notifyFields = Object.fromEntries(["status", "push", "digest", "email"].map((key) => [key, new Element()]));
+  ui.notify.querySelector = selector => ({ "[data-notify-status]": ui.notifyFields.status, "[data-notify-push]": ui.notifyFields.push,
+    "[data-notify-digest]": ui.notifyFields.digest, "[data-notify-email]": ui.notifyFields.email })[selector];
+  ui.notify.querySelectorAll = () => ui.notifyKinds;
   Object.assign(ids, { [`${prefix}-profile`]: ui.dialog, [`${prefix}-profile-open`]: ui.open, [`${prefix}-sign-out`]: ui.signOut });
   return ui;
 }
+// §notifications (R8): the alerts API, faked: what the server holds and what was saved.
+const notifySaves = [];
+const notifyApi = {
+  ALERT_KINDS: [["siege", "Colony under siege"], ["raid", "Pirate raid"], ["research", "Research done"]],
+  notifications: {
+    pushSupported: () => false,
+    get: async () => ({ kinds: ["raid"], email: null, email_digest: false, public_key: "k", push_live: false, email_live: false, devices: 0 }),
+    save: async (kinds, email, digest) => { notifySaves.push({ kinds: [...kinds], email, digest }); },
+    device: async () => null,
+    subscribe: async () => {}, unsubscribe: async () => {},
+  },
+};
 for (const prefix of ["deck", "m"]) {
   const login = new Element(), password = new Element(), corporation = new Element();
   const submit = new Element(), toggle = new Element(), guest = new Element(), heading = new Element(), intro = new Element(), error = new Element();
@@ -101,7 +125,7 @@ for (const prefix of ["deck", "m"]) {
   const api = { signIn: (...args) => { sent.push(["signIn", ...args]); return new Promise(resolve => { finish = resolve; }); },
     register: async (...args) => { sent.push(["register", ...args]); return account; }, signOut: async () => {}, session: async () => account,
     guest: () => { sent.push(["guest"]); return new Promise(resolve => { finish = resolve; }); } };
-  const module = compile("shell/account.ts", { document: { getElementById: id => ids[id] }, location: { reload() { reloads++; } } }, { "../auth": { accounts: api } });
+  const module = compile("shell/account.ts", { document: { getElementById: id => ids[id] }, location: { reload() { reloads++; } }, setInterval, clearInterval, setTimeout, clearTimeout }, { "../auth": { accounts: api }, "../notifications": notifyApi });
   const abort = new AbortController();
   module.bindAccountForm(prefix, { net: { disconnect() { disconnected++; } } }, abort.signal);
   const markup = module.accountFields(prefix);
@@ -110,12 +134,12 @@ for (const prefix of ["deck", "m"]) {
   assert.match(markup, /data-register-field hidden/);
   assert.match(markup, /8\+ characters/);
   assert.match(markup, /type="button" data-account-guest[^>]*>Continue as guest/);
-  assert.match(markup, /Terran Charter Authority/);
+  assert.match(markup, /<small>Terran Authority<\/small><h1[^>]*>Charter Command<\/h1>/, "the login card names the Terran Authority");
   assert.match(markup, /src="\/art\/derived\/authority-v2\/terran-charter-authority-seal-192\.webp"/);
   for (const [index, size] of [96, 192, 288, 384].entries()) {
     assert.ok(markup.includes(`/art/derived/authority-v2/terran-charter-authority-seal-${size}.webp ${index + 1}x`), "Authority seal supports high-density displays");
   }
-  assert.match(markup, /alt="Terran Charter Authority seal" width="96" height="96"/);
+  assert.match(markup, /alt="Terran Authority seal" width="96" height="96"/);
   assert.match(markup, /<h1[^>]*>Charter Command<\/h1>/);
   assert.match(markup, /class="account-lore" data-account-intro>Access your charter’s command center\./);
   assert.match(markup, /type="submit">Enter Command Center<\/button>/);
@@ -151,6 +175,12 @@ for (const prefix of ["deck", "m"]) {
   assert.match(backdrop, /src="\/art\/derived\/login\/login-market-horizon-v1\.webp"/);
   assert.match(backdrop, /alt=""/);
   assert.match(backdrop, /fetchpriority="high"/);
+  const logo = module.accountLogo();
+  assert.match(logo, /class="account-logo"/);
+  assert.match(logo, /alt="Stellar Syndicates"/);
+  for (const width of [480, 960, 1440]) {
+    assert.ok(logo.includes(`/art/derived/login/stellar-syndicates-banner-v1-${width}.webp ${width}w`), "the logo serves 1×–3× of the card's width");
+  }
   login.value = "pilot"; password.value = "correct password";
   const inFlight = form.fire("submit");
   await form.fire("submit");
@@ -257,16 +287,90 @@ for (const prefix of ["deck", "m"]) {
   assert.equal(charter.terms.open, false, "shell teardown closes the modal layer");
 }
 
+// §front-door: no answer from Charter Command. The card's buttons wait, the
+// page asks again every 10 s, and when it answers they come back by themselves.
+{
+  const NO_SIGNAL = "No signal from Charter Command. Standing by…";
+  const card = () => {
+    const els = { login: new Element(), password: new Element(), corporation: new Element(), submit: new Element(),
+      toggle: new Element(), guest: new Element(), heading: new Element(), intro: new Element(), error: new Element(), form: new Element() };
+    const charter = charterFixture();
+    const selectors = { "[name=username]": els.login, "[name=password]": els.password, "[name=corporation]": els.corporation,
+      "[type=submit]": els.submit, "[data-account-toggle]": els.toggle, "[data-account-guest]": els.guest,
+      h1: els.heading, "[data-account-intro]": els.intro, ...charter.selectors };
+    els.form.querySelector = selector => selectors[selector];
+    els.form.querySelectorAll = () => Array.from({ length: 3 }, () => new Element());
+    return els;
+  };
+  const ids = {};
+  profileFixture("deck", ids);
+  const timers = [], heard = [];
+  let up = false;
+  const api = { session: async () => { if (!up) throw new Error(NO_SIGNAL); return null; },
+    signIn: async () => { throw new Error(NO_SIGNAL); }, register: async () => account, guest: async () => account, signOut: async () => {} };
+  const module = compile("shell/account.ts", { document: { getElementById: id => ids[id] }, location: { reload() {} }, setInterval, clearInterval,
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout() {} },
+    { "../auth": { accounts: api, NO_SIGNAL }, "../notifications": notifyApi });
+  const bind = els => {
+    Object.assign(ids, { "deck-join-form": els.form, "deck-join-error": els.error });
+    const abort = new AbortController();
+    module.bindAccountForm("deck", { net: { disconnect() {} } }, abort.signal);
+    return abort;
+  };
+  const waits = els => els.submit.disabled && els.toggle.disabled && els.guest.disabled;
+  let shown = card(), abort = bind(shown);
+  assert.ok(!waits(shown), "with a signal the card works");
+  module.loseSignal(account => heard.push(account));
+  assert.equal(shown.error.textContent, NO_SIGNAL);
+  assert.ok(waits(shown), "no signal: no sign-in, charter request or guest entry");
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].ms, 10_000, "it asks again in 10 s");
+  // A layout switch builds a new card, which waits too.
+  abort.abort();
+  shown = card(); abort = bind(shown);
+  assert.equal(shown.error.textContent, NO_SIGNAL, "the new card keeps the line");
+  assert.ok(waits(shown));
+  await timers.at(-1).fn();
+  assert.equal(timers.length, 2, "still no answer: it asks again");
+  assert.ok(waits(shown));
+  up = true;
+  await timers.at(-1).fn();
+  assert.equal(shown.error.textContent, "", "an answer clears the line");
+  assert.ok(!waits(shown), "and the buttons come back");
+  assert.deepEqual(heard, [null], "boot hears the session it reports");
+  // Losing the signal mid-attempt makes the card wait the same way.
+  up = false;
+  shown.login.value = "pilot"; shown.password.value = "passphrase";
+  await shown.form.fire("submit");
+  assert.equal(shown.error.textContent, NO_SIGNAL);
+  assert.ok(waits(shown), "a failed sign-in with no signal waits");
+  assert.equal(shown.login.value, "pilot", "what was typed stays");
+  assert.equal(timers.length, 3);
+  up = true;
+  await timers.at(-1).fn();
+  assert.ok(!waits(shown));
+  abort.abort();
+}
+
 for (const prefix of ["deck", "m"]) {
   const ids = {}, ui = profileFixture(prefix, ids);
   let current = { ...account, is_guest: true }, finish, claims = 0, logouts = 0, reloads = 0, disconnected = 0;
   const api = { session: async () => current,
     completeRegistration: (...args) => { claims++; assert.deepEqual(args, ["newpilot", "orbital8"]); return new Promise(resolve => { finish = resolve; }); },
     signOut: async () => { logouts++; } };
-  const module = compile("shell/account.ts", { document: { getElementById: id => ids[id] }, location: { reload() { reloads++; } } }, { "../auth": { accounts: api } });
+  const module = compile("shell/account.ts", { document: { getElementById: id => ids[id] }, location: { reload() { reloads++; } }, setInterval, clearInterval, setTimeout, clearTimeout }, { "../auth": { accounts: api }, "../notifications": notifyApi });
   const abort = new AbortController();
   module.bindAccountProfile(prefix, { net: { disconnect() { disconnected++; } } }, abort.signal);
   await ui.open.fire("click");
+  // §notifications (R8): opening Profile loads the alerts; a change saves.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(ui.notifyKinds.map((box) => box.checked), [false, true, false]);
+  assert.match(ui.notifyFields.status.textContent, /server push off · email off/);
+  assert.equal(ui.notifyFields.push.disabled, true, "no push in this browser");
+  ui.notifyKinds[0].checked = true;
+  await ui.notifyKinds[0].fire("change");
+  await new Promise((resolve) => setTimeout(resolve, 550));
+  assert.deepEqual(notifySaves.at(-1), { kinds: ["siege", "raid"], email: null, digest: false });
   assert.equal(ui.dialog.open, true); assert.equal(ui.form.hidden, false);
   assert.equal(ui.charter.accept.checked, false);
   assert.equal(ui.charter.terms.open, false);
@@ -352,6 +456,15 @@ for (const size of [96, 192, 288, 384]) {
     assert.equal(alphaAt(x, y), 0, "outside and inside the orbital ring remain transparent");
   }
   assert.ok((await seal.stats()).channels[3].max > 200, "the emblem itself is visible");
+}
+for (const width of [480, 960, 1440]) {
+  const meta = await sharp(readFileSync(new URL(`../public/art/derived/login/stellar-syndicates-banner-v1-${width}.webp`, import.meta.url))).metadata();
+  assert.equal(meta.width, width);
+  assert.equal(meta.hasAlpha, true, "the logo keeps its transparent background");
+}
+for (const shell of ["deck", "mobile"]) {
+  const source = readFileSync(new URL(`../src/shell/${shell}/markup.ts`, import.meta.url), "utf8");
+  assert.match(source, /<div class="account-stage">\s*\$\{accountLogo\(\)\}\s*<form id="(?:deck|m)-join-form"/, `${shell}: the logo sits above the sign-in card`);
 }
 const accountCss = readFileSync(new URL("../src/styles/account.css", import.meta.url), "utf8");
 const introCss = readFileSync(new URL("../src/styles/settlement.css", import.meta.url), "utf8");

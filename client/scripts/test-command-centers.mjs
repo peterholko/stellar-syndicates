@@ -52,4 +52,20 @@ body.population = .002;
 body.kind = "gas_giant";
 assert.equal(option().buildable, false);
 assert.equal(api.structureLevel(commandCenter, 1).research_prerequisite, undefined);
+
+// §vault: dug under a Command Center, no slot; unseen while the charter runs.
+const vault = { key: "vault", label: "Vault", costs: [{ commodity: "alloys", units: 40 }, { commodity: "machinery", units: 10 }],
+  build_secs: 20, tiers: [1, 2, 3, 4, 5, 6].map(tier => ({ tier, label: "Vault", costs: [], build_secs: 20 })) };
+const world = { id: 3, kind: "terrestrial", population: .002, structures: { command_center: 1 },
+  resource_slots: 2, industrial_slots: 4, infrastructure_slots: 2, construction_time_mult: 1, structure_build_time_mult: 1 };
+const vaultOption = (on = world) => api.structOption(vault, { ...report, builds: [] }, on, api.bodyPoolUsage(on, { ...report, builds: [] }));
+assert.equal(api.structureConsumesSlot("vault"), false, "the Vault takes no slot");
+assert.equal(vaultOption().buildable, true, "under this world's Command Center");
+const bare = { ...world, id: 2, structures: { warehouse: 1 } };
+assert.equal(vaultOption(bare).buildable, false);
+assert.equal(vaultOption(bare).gate, "Needs a Command Center");
+state.founding = { charter_gates: { vault: 21 } };
+assert.equal(api.structureUnlocked(vault), false, "hidden until the charter completes");
+state.founding = { charter_gates: {} };
+assert.equal(api.structureUnlocked(vault), true);
 console.log("Command centers: exact level recipes, research/cap/population gates, no-slot accounting and report-only durations pass.");

@@ -5,8 +5,8 @@ Implemented as one structure family (`command_center`) with three levels on each
 | Level | Name | Cost to order this level | Base construction | Local bonus |
 | --- | --- | --- | --- | --- |
 | I | Landing Command | Free on initial settlement or a Colony Ship landing; rebuilding costs 15 Alloys + 5 Machinery | 3 minutes if constructed | None |
-| II | Colony Command Center | 40 Alloys + 12 Machinery + 8 Electronics | 5 minutes | +1 Infrastructure slot; 10% shorter structure construction |
-| III | Syndicate Headquarters | 120 Alloys + 40 Machinery + 30 Electronics + 20 Polymers | 15 minutes | +2 Infrastructure slots; 20% shorter structure construction, total rather than additive |
+| II | Colony Command Center | 40 Alloys + 12 Machinery + 8 Semiconductors | 5 minutes | +1 Infrastructure slot; 10% shorter structure construction |
+| III | Syndicate Headquarters | 120 Alloys + 40 Machinery + 30 Semiconductors + 20 Polymers | 15 minutes | +2 Infrastructure slots; 20% shorter structure construction, total rather than additive |
 
 Headquarters III requires **Prefab Construction** (`mat_prefab_construction`). Levels I–II do not require research. A solid-surface world with at least 1,000 residents is required to construct or upgrade the building. It takes no ordinary development slot and requires no posted workforce. The three levels upgrade the same footprint, not three separate buildings. Multiple populated worlds may each have one; the name Headquarters does not impose a corporation-wide singleton.
 

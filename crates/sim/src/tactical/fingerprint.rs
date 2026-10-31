@@ -62,7 +62,7 @@ const SCENARIOS: &[Scenario] = &[
         a: &[(K::Battleship, "mass_driver+mass_driver+mass_driver+mass_driver", 2), (K::Cruiser, "mass_driver+mass_driver", 3), (K::Corvette, "point_defense_screen", 2)],
         d: &[(K::Destroyer, "torpedo_rack", 2), (K::Corvette, "", 2)],
         tiers: 0, crippled: None, withdraw: None, world: true, relief: None,
-        station: Some((4, &["mass_driver+mass_driver+whipple_armor", "torpedo_rack+mass_driver+reflective_plating", "stasis_web+mass_driver+whipple_armor", ""])) },
+        station: Some((5, &["mass_driver+mass_driver+whipple_armor", "torpedo_rack+mass_driver+reflective_plating", "stasis_web+mass_driver+whipple_armor", ""])) },
     // Non-combat hulls: body radii from the size ladder, slow turns.
     Scenario { name: "convoy", seed: 29, a: &[(K::Raider, "torpedo_rack", 6), (K::Raider, "", 4), (K::Destroyer, "", 1)],
         d: &[(K::LargeFreighter, "", 1), (K::HeavyFreighter, "", 1), (K::Colony, "", 1), (K::Transport, "", 1), (K::Corvette, "point_defense_screen", 2)],

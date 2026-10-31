@@ -1,13 +1,11 @@
-// Star-type assignment — a deterministic, CLIENT-ONLY flavor layer. Each star
-// system is given a star type as a pure function of its (server-assigned) id, so
-// a system is ALWAYS the same type across frames / reloads / sessions. It affects
-// NOTHING mechanical (deposits, production, ownership, fog) — only the map icon +
-// System View artwork. Map, panels and battle scenery share this assignment.
+// Star-type assignment. Each star system is given a star type as a function of
+// its (server-assigned) id, so a system is ALWAYS the same type across frames /
+// reloads / sessions. Whether it is exotic is the server's call (exotic stars
+// carry nodes; see `chartStars`). Which star it is follows the id's roll, and
+// the sim maps the same roll to each node's bonus. Map, panels and battle
+// scenery share this assignment.
 // New galaxy/system art and resolution tiers live in starart.ts; legacy icon
 // metadata below remains for the unchanged battle-scenery path.
-//
-// FUTURE IDEA (not built): star type could later influence system properties —
-// e.g. exotic stars as special/hazardous systems. That would be a SIM change.
 
 export interface StarType {
   slug: string;
@@ -54,11 +52,24 @@ export const EXOTIC_FRACTION = 0.16;
 // prng.ts. The sim replicates this bit-for-bit (node parity test).
 import { hashId } from "./prng";
 
+// §node: which stars the server says are exotic (`SystemInfo.exotic`). It
+// matches the roll below except at homes, which are never exotic. A system
+// outside the served chart (fixtures, demos) keeps the roll.
+const servedExotic = new Map<string, boolean>();
+
+/// Take the served star chart's exotic flags (Welcome, GalaxyUpdate).
+export function chartStars(systems: readonly { id: string; exotic?: boolean }[]): void {
+  servedExotic.clear();
+  for (const system of systems) {
+    if (typeof system.exotic === "boolean") servedExotic.set(system.id, system.exotic);
+  }
+}
+
 /// The star type for a system id — stable and rarity-weighted (exotics rare).
 export function starTypeFor(id: string): StarType {
   const h = hashId(id);
   const roll = (h % 100000) / 100000; // [0,1)
-  const pool = roll < EXOTIC_FRACTION ? EXOTIC : REALISTIC;
+  const pool = (servedExotic.get(id) ?? roll < EXOTIC_FRACTION) ? EXOTIC : REALISTIC;
   return pool[(h >>> 17) % pool.length];
 }
 

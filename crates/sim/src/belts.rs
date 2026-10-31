@@ -337,11 +337,15 @@ pub fn add_belts(system: &mut StarSystem, belts: Vec<RolledBelt>) {
         };
         let mut body = Body {
             founding_camp: None,
+            crown_project: false,
+            acclimated: false,
+            orbital_habitat: false,
             id: next_id,
             name,
             kind: BodyKind::AsteroidBelt,
             parent: None,
             belt: Some(belt.shape),
+            orbit: None,
             habitable: false,
             profile: PlanetaryProfile::default(),
             deposits: belt.deposits,

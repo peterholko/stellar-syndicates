@@ -67,18 +67,91 @@ pub struct ProductionMods {
     pub ore_recovery: f64,
     /// Structure-time research is emitted with the same delayed site report.
     pub structure_build_time: f64,
+    // §research-wiring (R2):
+    /// Hydroponics, Gene-Tailored Crops: Agroplex output per Biomass.
+    pub agroplex_yield: f64,
+    /// Gene-Tailored Crops: Agroplex Biomass per unit.
+    pub agroplex_inputs: f64,
+    /// Autoforges: Machine Works inputs per unit.
+    pub machinery_inputs: f64,
+    /// Civic Rations: the Rationing efficiency, as a multiple of its base.
+    pub rationing: f64,
+    /// Provisions eaten per person.
+    pub provisions_use: f64,
+    /// Trace Refining: Mining Complexes on metal ores also yield Rare Elements.
+    pub trace_refining: bool,
+    /// Mantle Taps: Deep Deposits' tier lag no longer applies.
+    pub mantle_taps: bool,
+    /// Slag Reclamation: Smelters also emit Silicates.
+    pub slag_reclamation: bool,
+    /// Crown Vein: the designated body (system, body id), one band richer.
+    pub crown_vein: Option<(crate::ids::EntityId, u32)>,
+    /// Flash Forges: each world builds two structures at once.
+    pub flash_forges: bool,
+    /// Beneficiation: poor mineral ground mines at 85% of Average at worst.
+    pub beneficiation: bool,
 }
 
 impl Default for ProductionMods {
     fn default() -> Self {
-        Self { extraction: 1.0, extraction_moons: 1.0, processing: 1.0, ore_recovery: 1.0, structure_build_time: 1.0 }
+        Self {
+            extraction: 1.0, extraction_moons: 1.0, processing: 1.0, ore_recovery: 1.0, structure_build_time: 1.0,
+            agroplex_yield: 1.0, agroplex_inputs: 1.0, machinery_inputs: 1.0, rationing: 1.0, provisions_use: 1.0,
+            trace_refining: false, mantle_taps: false, slag_reclamation: false, crown_vein: None, flash_forges: false,
+            beneficiation: false,
+        }
     }
 }
 
+/// §research-wiring: Trace Refining's Rare Elements, per unit of metal ore mined.
+pub const TRACE_RARE_PER_ORE: f64 = 0.05;
+/// §research-wiring: Slag Reclamation's Silicates, per unit a Smelter emits.
+pub const SLAG_SILICATES_PER_OUTPUT: f64 = 0.10;
+
 impl ProductionMods {
+    /// Units emitted per unit of work: refining recovery for Smelters, crop
+    /// research for Agroplexes. Never changes the input draw or the work rate.
     pub fn recovery(self, kind: StructureKind) -> f64 {
-        if kind == StructureKind::Smelter { self.ore_recovery } else { 1.0 }
+        match kind {
+            StructureKind::Smelter => self.ore_recovery,
+            StructureKind::Agroplex => self.agroplex_yield,
+            _ => 1.0,
+        }
     }
+
+    /// The input basket's multiple: Autoforges for Machine Works, Gene-Tailored
+    /// Crops for Agroplexes.
+    pub fn input_mult(self, kind: StructureKind) -> f64 {
+        match kind {
+            StructureKind::MachineWorks => self.machinery_inputs,
+            StructureKind::Agroplex => self.agroplex_inputs,
+            _ => 1.0,
+        }
+    }
+
+    /// A by-product emitted beside the line's outputs, per unit of output:
+    /// Slag Reclamation's Silicates from Smelters.
+    pub fn byproduct(self, kind: StructureKind) -> Option<(Commodity, f64)> {
+        (self.slag_reclamation && kind == StructureKind::Smelter)
+            .then_some((Commodity::Silicates, SLAG_SILICATES_PER_OUTPUT))
+    }
+
+    /// The geology research on one body of `system`.
+    pub fn geology(self, system: crate::ids::EntityId, body: u32) -> crate::explore::GeologyMods {
+        crate::explore::GeologyMods { floor_average: self.mantle_taps, crown: self.crown_vein == Some((system, body)),
+            beneficiation: self.beneficiation }
+    }
+
+    /// Does a Mining Complex working `ore` also yield Rare Elements?
+    pub fn traces(self, ore: Commodity) -> bool {
+        self.trace_refining && is_metal_ore(ore)
+    }
+}
+
+/// §research-wiring: the metal-bearing ores (Trace Refining's "metallic deposits").
+pub fn is_metal_ore(c: Commodity) -> bool {
+    matches!(c, Commodity::MetallicOre | Commodity::CupriteOre | Commodity::TitaniumOre | Commodity::RareMetalOre
+        | Commodity::BorniteOre | Commodity::IlmeniteOre | Commodity::IridiumOre)
 }
 
 /// One industrial conversion: `structure` turns `inputs` (per 1.0 unit of
@@ -392,6 +465,8 @@ pub enum SuspendReason {
     /// cover the camp's reserve, so the small warehouse keeps room for ore.
     /// A deliberate, quiet pause — never a timeline alarm.
     FoodReserve,
+    /// §asteroid-quarry: the system can't pay a quarry's upkeep.
+    NoSupplies,
 }
 
 impl SuspendReason {
@@ -401,6 +476,7 @@ impl SuspendReason {
             SuspendReason::NoInputs => "no_inputs",
             SuspendReason::StorageFull => "storage_full",
             SuspendReason::FoodReserve => "food_reserve",
+            SuspendReason::NoSupplies => "no_supplies",
         }
     }
 }
@@ -421,13 +497,41 @@ pub fn skill_factor(matched: u32, tier: u32) -> f64 {
     1.0 + (SPECIALIST_SKILL_MULT - 1.0) * (matched.min(tier) as f64 / tier as f64)
 }
 
+/// §research-wiring Expert Training: skill points per affine specialist and
+/// per expert. A line full of experts reaches ×2.25.
+pub const SPECIALIST_SKILL_POINTS: u32 = 3;
+pub const EXPERT_SKILL_POINTS: u32 = 5;
+
+/// A line's skill points from its affine crew: the best `tier` of them,
+/// experts first.
+pub fn skill_points(experts: u32, specialists: u32, tier: u32) -> u32 {
+    let e = experts.min(tier);
+    e * EXPERT_SKILL_POINTS + specialists.min(tier - e) * SPECIALIST_SKILL_POINTS
+}
+
+/// [`skill_factor`] from skill points ([`skill_points`]). A line without
+/// experts reads exactly as [`skill_factor`] does.
+pub fn skill_factor_points(points: u32, tier: u32) -> f64 {
+    if points % SPECIALIST_SKILL_POINTS == 0 && points <= SPECIALIST_SKILL_POINTS * tier {
+        return skill_factor(points / SPECIALIST_SKILL_POINTS, tier);
+    }
+    1.0 + (SPECIALIST_SKILL_MULT - 1.0) * (points.min(EXPERT_SKILL_POINTS * tier) as f64
+        / (SPECIALIST_SKILL_POINTS * tier) as f64)
+}
+
 /// The FOOD factor of a structure's output — `FoodState::efficiency()` shaped
 /// by sector: the primary sector (extraction + Agroplex) never drops below
 /// `EXTRACTION_FOOD_FLOOR`; ADVANCED industry (machinery, armaments and components)
 /// suspends outright at Critical (precision work stops before the mills do).
 pub fn food_factor(kind: StructureKind, state: crate::colony::FoodState) -> f64 {
+    food_factor_with(kind, state, 1.0)
+}
+
+/// [`food_factor`] with Civic Rations: `rationing` multiplies the Rationing
+/// state's efficiency (1.0 without the research).
+pub fn food_factor_with(kind: StructureKind, state: crate::colony::FoodState, rationing: f64) -> f64 {
     use crate::colony::FoodState as F;
-    let eff = state.efficiency();
+    let eff = state.efficiency() * if state == F::Rationing { rationing } else { 1.0 };
     match kind {
         StructureKind::Bioharvester
         | StructureKind::VolatileHarvester

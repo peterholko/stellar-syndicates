@@ -23,6 +23,7 @@ function compile(name, deps = {}, extra = {}) {
   return exports;
 }
 const catalog = compile("ship-models.generated");
+const modelKinds = Object.keys(catalog.SHIP_MODELS);
 const policy = compile("map-ship-model-policy", { "./ship-models.generated": catalog });
 const candidate = (id, kind = "raider", more = {}) => ({ id, kind, x: 500, y: 400, canvasPx: 90,
   angle: -Math.PI / 2, alpha: .97, selected: false, escorts: 0, ...more });
@@ -34,7 +35,7 @@ for (let r = 12; r <= 22; r += .01) {
   const blend = policy.mapModelBlend(r); assert.ok(blend >= previous); previous = blend;
 }
 assert.equal(policy.MAP_MODEL_TILT, -Math.acos(.8), "live hulls lean like the battle viewer's angled view (about 37 degrees)");
-const crowd = Array.from({ length: 500 }, (_, i) => candidate(`fleet-${i}`, Object.keys(catalog.SHIP_MODELS)[i % 18],
+const crowd = Array.from({ length: 500 }, (_, i) => candidate(`fleet-${i}`, modelKinds[i % modelKinds.length],
   { canvasPx: 100 + i % 300, x: 50 + i % 900, escorts: i % 7 === 0 ? 6 : 0 }));
 crowd[499].selected = true; crowd[499].canvasPx = 40;
 const chosen = policy.pickMapModels(crowd, 1000, 800);
@@ -249,4 +250,4 @@ cancelDuringResize = new AbortController();
 await assert.rejects(() => resizeModelTextures(textured, 512, cancelDuringResize.signal), /abort/i);
 assert.ok(resizedImages.at(-1).closed); assert.equal(albedo.image.width, 1024, "aborted resize never installs partial texture");
 
-console.log("Map 3D: all 18 actual LOD2 meshes/framing, zoom transition, 500-fleet budgets, selected priority, viewport culling, loading/context fallback, stale alpha, idle cleanup, shared source ownership, abort races, texture resizing, 30fps dirty rendering, formation clones, atlas alignment and projected headings passed.");
+console.log(`Map 3D: all ${modelKinds.length} game kinds' LOD2 meshes/framing, zoom transition, 500-fleet budgets, selected priority, viewport culling, loading/context fallback, stale alpha, idle cleanup, shared source ownership, abort races, texture resizing, 30fps dirty rendering, formation clones, atlas alignment and projected headings passed.`);

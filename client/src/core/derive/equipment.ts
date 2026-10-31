@@ -1,5 +1,5 @@
 import type { GhostView, ModuleKind, ShipKind } from "../../protocol";
-import { isPlayerFreighter } from "../../protocol";
+import { isFreighterHull, isPlayerFreighter } from "../../protocol";
 import type { IconKey } from "../../icons";
 
 /** Physical equipment catalog shared by both shells. Research unlocks making
@@ -22,6 +22,7 @@ export const MODULES: { kind: ModuleKind; name: string; label: string; icon: Ico
   { kind: "warp_stabilizer", name: "Warp Stabilizer", icon: "moduleWarpStabilizer", fit: 2, role: "Escape · each one shrugs off one tackling Interceptor · on a freighter, one Interceptor of a blockade it runs" },
   { kind: "interdiction_field", name: "Interdiction Field", icon: "moduleInterdictionField", fit: 3, role: "Destroyer · raises a field that drops fleets out of warp and blocks jumps" },
   { kind: "jump_drive", name: "Jump Drive", icon: "moduleJumpDrive", fit: 2, role: "Jumps on Antimatter · any hull but ships of the line" },
+  { kind: "lance_array", name: "Lance Array", icon: "modulePrismaticLance", fit: 3, role: "Heavy beam · destroyers up · ×1.7 a gun · Reflective Plating blunts it twice" },
 ].map(entry => ({ ...entry, kind: entry.kind as ModuleKind, icon: entry.icon as IconKey, label: entry.name }));
 
 export const isBlueprintOnly = (module: ModuleKind): boolean => ["survey_drive", "nebula_spectrometer", "prismatic_lance"].includes(module);
@@ -30,17 +31,20 @@ export const utilityProgramme = (module: ModuleKind): string | null => module ==
   ? "prop_expedition_iii_extended_tanks" : module === "recon_suite" ? "comp_shadow_iv_recon_suite"
     : module === "cargo_pods" ? "hull_cargo_pods" : module === "escort_datalink" ? "hull_line_iii_escort_datalink"
       : module === "fuel_transfer_rig" ? "prop_expedition_iv_fleet_tenders"
-        : module === "jump_drive" ? "mat_foundry_vi_antimatter_synthesis" : null;
+        : module === "jump_drive" ? "mat_foundry_vi_antimatter_synthesis"
+          : module === "lance_array" ? "weap_strike_iii_lance_array" : null;
 export const moduleFitsHull = (module: ModuleKind, hull: string): boolean => module === "extended_tanks"
-  ? ["scout", "raider", "corvette"].includes(hull) || isPlayerFreighter(hull as ShipKind)
+  ? ["scout", "raider", "corvette"].includes(hull) || isFreighterHull(hull as ShipKind)
   : module === "recon_suite" ? ["scout", "raider"].includes(hull)
     : module === "survey_drive" || module === "nebula_spectrometer" ? hull === "scout"
-      : module === "cargo_pods" || module === "fuel_transfer_rig" ? isPlayerFreighter(hull as ShipKind) : module === "escort_datalink" ? hull === "corvette"
+      : module === "cargo_pods" ? isFreighterHull(hull as ShipKind)
+      : module === "fuel_transfer_rig" ? isPlayerFreighter(hull as ShipKind) : module === "escort_datalink" ? hull === "corvette"
         : module === "interdiction_field" ? hull === "destroyer"
+          : module === "lance_array" ? ["destroyer", "cruiser", "battleship", "dreadnought", "titan"].includes(hull)
           // §fuel-overhaul: any hull without built-in drives, bar the ships of the line.
           : module === "jump_drive" ? !["raider", "scout", "battleship", "dreadnought", "titan", "freighter", "survey_probe", "mining_belt_station"].includes(hull)
           // A freighter's one berth may take a stabilizer: the blockade runner.
-          : module === "warp_stabilizer" ? true : !isPlayerFreighter(hull as ShipKind);
+          : module === "warp_stabilizer" ? true : !isFreighterHull(hull as ShipKind);
 export const tankMultiplier = (modules: ModuleKind[]): number => (modules.includes("extended_tanks") ? 1.75 : 1) * (modules.includes("survey_drive") ? .6 : 1);
 export const cargoMultiplier = (modules: ModuleKind[]): number => modules.includes("cargo_pods") ? 2 : 1;
 export const utilityChange = (from: ModuleKind[], to: ModuleKind[]): boolean =>

@@ -32,6 +32,9 @@ assert.equal(hardpoints.SHIP_HARDPOINTS.mining_barge.guns.length, 0, "Mining cut
 
 assert.equal(hardpoints.SHIP_HARDPOINTS.mining_belt_station.engines.length, 0, "Station has no main engine sockets");
 assert.equal(hardpoints.SHIP_HARDPOINTS.mining_belt_station.guns.length, 0, "Station has no weapons");
+assert.equal(hardpoints.SHIP_HARDPOINTS.combat_freighter.engines.length, 3, "Combat Freighter has three authored nozzles");
+assert.equal(hardpoints.SHIP_HARDPOINTS.combat_freighter.guns.length, 0, "Prize clamps are not weapons");
+assert.equal(fx.enginePlumes("combat_freighter", 224).length, 3, "All three side-by-side drives have separate plumes");
 const ARMED = ["raider", "corvette", "destroyer", "cruiser", "battleship", "dreadnought", "titan"];
 for (const kind of kinds) {
   const h = hardpoints.SHIP_HARDPOINTS[kind];

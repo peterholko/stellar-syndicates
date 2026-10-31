@@ -87,9 +87,13 @@ pub fn powered(kind: StructureKind) -> bool {
         | K::DefensePlatform
         | K::OrbitalDefense
         | K::Garrison
+        | K::Vault
+        | K::AssemblyHall
         | K::ServiceBerth
         | K::CommandCenter
-        | K::PowerPlant => false,
+        | K::PowerPlant
+        // §asteroid-quarry: it carries its own power.
+        | K::AsteroidQuarry => false,
     }
 }
 
@@ -260,7 +264,8 @@ mod tests {
                 | StructureKind::LivingTerraces | StructureKind::Habitat | StructureKind::Warehouse
                 | StructureKind::OrbitalWarehouse | StructureKind::CommandCenter | StructureKind::ServiceBerth
                 | StructureKind::Garrison | StructureKind::OrbitalDefense | StructureKind::DefensePlatform
-                | StructureKind::SensorArray | StructureKind::PowerPlant);
+                | StructureKind::SensorArray | StructureKind::PowerPlant | StructureKind::AsteroidQuarry
+                | StructureKind::Vault | StructureKind::AssemblyHall);
             assert_eq!(powered(kind), !civic, "{kind:?}");
         }
     }

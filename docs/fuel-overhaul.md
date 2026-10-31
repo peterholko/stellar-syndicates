@@ -172,7 +172,7 @@ a unit (Machinery and up), like air freight against sea freight.
 | --- | --- | --- |
 | Ferrite Ore (50 units, 400 Cr) | about 690 Cr | loses money |
 | Alloys (1,300 Cr) | about 2,700 Cr | about 1,500 Cr |
-| Electronics (1,700 Cr) | about 3,600 Cr | about 3,300 Cr |
+| Semiconductors (1,700 Cr) | about 3,600 Cr | about 3,300 Cr |
 | Machinery (3,100 Cr) | about 6,800 Cr | about 9,600 Cr |
 
 **Mid-game: Fusion Freight.**
@@ -446,7 +446,7 @@ retired the free base: only a Command Center's planet has one, its reactor's
 9. **Early jumps:** Authority antimatter, about 120 Cr per Interceptor jump;
    or free until the last tech.
 10. **Warp Cores:** every warp hull except the Survey Probe; or the probe too.
-11. **Electronics:** stays local; or becomes a fourth core.
+11. **Semiconductors:** stays local; or becomes a fourth core.
 12. **Depot rule:** Authority freight, fuels only; or any good; or instant
     pay-at-the-pump.
 13. **Charter:** no new step; or "Build a Uranium Mill" as step 2.

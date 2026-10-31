@@ -45,7 +45,7 @@ fn a_later_stage_proves_the_steps_it_requires() {
     // The reports are not to hand: the Expansion stage still proves Raid and Pirates.
     let reached = reached_steps(&founding, 400.0);
     let mut expected = BEFORE_RAID.to_vec();
-    expected.extend([Step::Raid, Step::SellOre, Step::Power, Step::Shipyard, Step::Interceptor,
+    expected.extend([Step::Raid, Step::GunPlatform, Step::SellOre, Step::Power, Step::Shipyard, Step::Interceptor,
         Step::Privateer, Step::Den, Step::Shipment]);
     assert_eq!(steps(&reached), expected);
     assert_eq!(time(&reached, Step::Mine), Some(40.0));
@@ -63,10 +63,13 @@ fn a_fulfilled_charter_has_every_step_with_a_time() {
     let reached = reached_steps(&founding, 1_000.0);
     assert_eq!(steps(&reached), Step::ALL);
     assert!(reached.iter().all(|(_, at)| at.is_some()));
-    // A step is proved by the stage after it: the Shipyard (step 8) by step 9.
-    assert_eq!(time(&reached, Step::Shipyard), Some(80.0));
-    assert_eq!(time(&reached, Step::Survey), Some(150.0));
-    assert_eq!(time(&reached, Step::Haul), Some(180.0));
+    // A step is proved by the stage after it: the Shipyard (step 9) by step 10.
+    assert_eq!(time(&reached, Step::Shipyard), Some(90.0));
+    // §refining + §den-pocket + §gun-platform: the Gun Platform (step 6), the
+    // Smelter (step 15) and the prospecting pass (step 19) push the survey to
+    // 17 and the haul to 21.
+    assert_eq!(time(&reached, Step::Survey), Some(170.0));
+    assert_eq!(time(&reached, Step::Haul), Some(210.0));
 }
 
 #[test]
@@ -75,6 +78,8 @@ fn step_keys_round_trip_and_name_the_guide_checklist() {
         assert_eq!(Step::from_key(step.key()), Some(step));
     }
     assert_eq!(Step::Raid.label(), "Pirates raid the colony");
+    assert_eq!(Step::GunPlatform.label(), "Build a Gun Platform");
+    assert_eq!(Step::GunPlatform.chapter(), "Raid");
     assert_eq!(Step::SellOre.label(), "Sell ore to the trader");
     assert_eq!(Step::SellOre.chapter(), "Raid");
     assert_eq!(Step::Power.label(), "Power the Shipyard");
@@ -86,11 +91,19 @@ fn step_keys_round_trip_and_name_the_guide_checklist() {
     assert_eq!(Step::Den.label(), "Eliminate the privateer den");
     assert_eq!(Step::Den.chapter(), "Pirates");
     assert_eq!(Step::Research.chapter(), "Expansion");
+    assert_eq!(Step::Research.label(), "Research Enrichment");
+    assert_eq!(Step::Smelter.label(), "Build a Smelter");
+    assert_eq!(Step::Smelter.chapter(), "Expansion");
+    assert_eq!(Step::Prospect.label(), "Prospect the belt");
+    assert_eq!(Step::Prospect.chapter(), "Reach");
     assert_eq!(Step::Expansion.label(), "Expand mining operations");
     assert_eq!(Step::Haul.chapter(), "Reach");
     assert_eq!(Step::Haul.label(), "Bring the ore home");
+    assert_eq!(Step::Vendetta.chapter(), "Vendetta");
+    assert_eq!(Step::Vendetta.label(), "Defeat the privateer's uncle");
+    assert_eq!((Step::Stores.label(), Step::Stores.chapter()), ("Secure your stores", "Vendetta"));
     assert_eq!(Step::ALL.len(), S::STEPS.len() + 1, "one funnel step per charter step, after founding");
-    assert_eq!(Stage::all().count(), 21);
+    assert_eq!(Stage::all().count(), 26);
     assert_eq!(Step::from_key("beacon"), None, "records from earlier charters are skipped");
     assert_eq!(Step::from_key("semiconductors"), None, "and from the counterfeit charter");
 }
@@ -110,17 +123,17 @@ fn account(signed_up: i64, entered: Option<i64>, done: &[(Step, i64)]) -> Accoun
 #[test]
 fn the_next_step_is_the_first_one_missing_and_waits_since_the_last_progress() {
     let stuck = account(0, Some(5), &[(Step::Founded, 6), (Step::Bioharvester, 7), (Step::Habitat, 8),
-        (Step::Agroplex, 9), (Step::Mine, 12), (Step::Raid, 13), (Step::SellOre, 16), (Step::Power, 20),
-        (Step::Shipyard, 40)]);
+        (Step::Agroplex, 9), (Step::Mine, 12), (Step::Raid, 13), (Step::GunPlatform, 14), (Step::SellOre, 16),
+        (Step::Power, 20), (Step::Shipyard, 40)]);
     assert_eq!(stuck.next(), Some(Stage::Step(Step::Interceptor)));
     let summary = summary(&stuck, true);
     assert_eq!(summary.next, Some("interceptor"));
     assert_eq!(summary.next_label, Some("Build an Interceptor"));
-    assert_eq!((summary.done, summary.total), (9, 19));
+    assert_eq!((summary.done, summary.total), (10, 24));
     assert_eq!(summary.since, Some(at(40)));
-    assert_eq!(summary.steps.len(), 21);
+    assert_eq!(summary.steps.len(), 26);
     assert_eq!(summary.steps[0].key, "signed_up");
-    assert!(summary.steps[11].at.is_none());
+    assert!(summary.steps[12].at.is_none());
     assert!(summary_without_steps_is_compact(&stuck));
 
     let never_entered = account(0, None, &[]);
@@ -156,7 +169,7 @@ fn the_funnel_counts_who_reached_each_step_and_who_stopped_before_it() {
         FunnelAccount { tutorial: &finished, active: true },
     ]);
     let row = |key: &str| funnel.iter().find(|stage| stage.key == key).unwrap();
-    assert_eq!(funnel.len(), 21);
+    assert_eq!(funnel.len(), 26);
     assert_eq!(row("signed_up").reached, 4);
     assert_eq!(row("signed_up").median_seconds, None, "nothing comes before signing up");
     assert_eq!(row("entered").reached, 3);

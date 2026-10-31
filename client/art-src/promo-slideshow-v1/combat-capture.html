@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stellar Syndicates · Fleet combat capture</title><link rel="icon" href="data:,">
+<style>
+*{box-sizing:border-box}body{margin:0;background:#080d14;color:#dceaf3;font:14px Arial}main{max-width:1500px;margin:24px auto;padding:0 24px}h1{font-size:20px}button{background:#183040;color:inherit;border:1px solid #5d8197;padding:12px 20px;margin:12px 12px 0 0;border-radius:4px;cursor:pointer}button:disabled{opacity:.4;cursor:wait}canvas#output{display:block;width:100%;aspect-ratio:16/9}#source{position:absolute;width:1600px;height:900px;left:-1700px;top:0;pointer-events:none}#status{color:#a6c1d2}.bv-theater-hint,.bv-theater-tip,.bv-theater-banner,.bv-theater-view{display:none}
+</style></head><body><main>
+<h1>Stellar Syndicates · Fleet combat</h1>
+<canvas id="output" width="1920" height="1080" role="img" aria-label="Recorded mixed-fleet battle using the game’s combat renderer"></canvas>
+<button id="play" disabled>Play 16-second clip</button><button id="record" disabled>Record combat clip</button><button id="still" disabled>Save combat poster</button><button id="zoom" disabled>Tighter framing</button>
+<p id="status" role="status">Loading the game’s combat models…</p>
+<p>Mixed fleets. Recorded engine battle, rounds 45–69, rendered at 1.5 rounds per second.</p>
+</main><div id="source" aria-hidden="true"></div><script type="module" src="./combat-capture.js"></script></body></html>

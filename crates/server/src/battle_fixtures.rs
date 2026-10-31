@@ -102,7 +102,7 @@ const SCENARIOS: &[Scenario] = &[
             (K::Corvette, "point_defense_screen", 2)],
         defenders: &[(K::Destroyer, "torpedo_rack", 2), (K::Corvette, "", 2)],
         crippled: &[], withdraw: None, tiers: 0, world: true,
-        station: Some((4, &["mass_driver+mass_driver+whipple_armor", "torpedo_rack+mass_driver+reflective_plating",
+        station: Some((5, &["mass_driver+mass_driver+whipple_armor", "torpedo_rack+mass_driver+reflective_plating",
             "stasis_web+mass_driver+whipple_armor", ""])),
         relief: None },
 ];

@@ -1,0 +1,14 @@
+{
+  "ship": "second-wind",
+  "threeRevision": "180",
+  "triangles": 7778,
+  "meshes": 2,
+  "embeddedTexturesLoaded": 3,
+  "engineSockets": 2,
+  "dockingSockets": 1,
+  "utilitySockets": 1,
+  "weaponSockets": 0,
+  "allSocketTransformsFollowModel": true,
+  "dimensionsMatch": true,
+  "method": "Node GLTFLoader scene graph and PNG-header loading; separate software renders inspect decoded embedded texture pixels. Browser rendering checked separately."
+}

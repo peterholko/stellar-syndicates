@@ -1,0 +1,148 @@
+{
+  "status": "complete",
+  "masterCount": 20,
+  "optionalExtrasIncluded": false,
+  "nativeMasters": [
+    {
+      "id": "tactical-datacore",
+      "path": "client/art-src/captain-gear-v1/tactical-datacore.png",
+      "prompt": "client/art-src/captain-gear-v1/tactical-datacore.prompt.json",
+      "sha256": "111d7eaebd70808798cb5035cecdce241c3f2363f4a60de7d8a4740134a1beb2",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/captain-gear-v1/tactical-datacore.png"
+    },
+    {
+      "id": "admirals-datacore",
+      "path": "client/art-src/captain-gear-v1/admirals-datacore.png",
+      "prompt": "client/art-src/captain-gear-v1/admirals-datacore.prompt.json",
+      "sha256": "9d9f9c70ffdf5d880335e16f93d78cc32c4829495f6e3988c6c501f7a840687f",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/captain-gear-v1/admirals-datacore.png"
+    },
+    {
+      "id": "astrogation-suite",
+      "path": "client/art-src/captain-gear-v1/astrogation-suite.png",
+      "prompt": "client/art-src/captain-gear-v1/astrogation-suite.prompt.json",
+      "sha256": "04bd8bc93677ad5106e3d00162ad3ffd62060f1e8fc537a6508b59315660a5d0",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/captain-gear-v1/astrogation-suite.png"
+    },
+    {
+      "id": "pathfinders-astrolabe",
+      "path": "client/art-src/captain-gear-v1/pathfinders-astrolabe.png",
+      "prompt": "client/art-src/captain-gear-v1/pathfinders-astrolabe.prompt.json",
+      "sha256": "5e902f3605945064cd50e2ee85823d317bd418e95ca2d3abe6c9014ff014c0ba",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/captain-gear-v1/pathfinders-astrolabe.png"
+    },
+    {
+      "id": "survey-kit",
+      "path": "client/art-src/captain-gear-v1/survey-kit.png",
+      "prompt": "client/art-src/captain-gear-v1/survey-kit.prompt.json",
+      "sha256": "605b0317efadb3161292ea555b77117760cbf6a995acb0b4e67293eed9b377b9",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/captain-gear-v1/survey-kit.png"
+    },
+    {
+      "id": "precursor-lens",
+      "path": "client/art-src/captain-gear-v1/precursor-lens.png",
+      "prompt": "client/art-src/captain-gear-v1/precursor-lens.prompt.json",
+      "sha256": "201bc50a2b3f856f20b049cba622a7c4aa7a2571e35d0a7b8b567059e4ba2e5d",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/captain-gear-v1/precursor-lens.png"
+    },
+    {
+      "id": "quartermasters-ledger",
+      "path": "client/art-src/captain-gear-v1/quartermasters-ledger.png",
+      "prompt": "client/art-src/captain-gear-v1/quartermasters-ledger.prompt.json",
+      "sha256": "cb8b14f43319a31bf9c109c893bfe66ae2b771b97c253ad66a529bc10998de88",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/captain-gear-v1/quartermasters-ledger.png"
+    },
+    {
+      "id": "chandlers-seal",
+      "path": "client/art-src/captain-gear-v1/chandlers-seal.png",
+      "prompt": "client/art-src/captain-gear-v1/chandlers-seal.prompt.json",
+      "sha256": "127f443e0ecce45708d39324595ce59c121f15f0406fea8f71b4dc979278d1f7",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/captain-gear-v1/chandlers-seal.png"
+    },
+    {
+      "id": "05-season",
+      "path": "client/art-src/galaxy-map-glyphs-v1/05-season.png",
+      "prompt": "client/art-src/galaxy-map-glyphs-v1/05-season.prompt.json",
+      "sha256": "4a638429379a3369b26f0efe292dc67549b8f968d3ce6707a03b593bfab2849f",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/galaxy-map-glyphs-v1/05-season.png"
+    },
+    {
+      "id": "gate-lineup",
+      "path": "client/art-src/season-gate-v1/gate-lineup.png",
+      "prompt": "client/art-src/season-gate-v1/gate-lineup.prompt.json",
+      "sha256": "168983626d880d1ad5eb156507bbb0c4f1e8fa687f935dc4b5b376b95681ab63",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/season-gate-v1/gate-lineup.png"
+    },
+    {
+      "id": "gate-stage-1",
+      "path": "client/art-src/season-gate-v1/gate-stage-1.png",
+      "prompt": "client/art-src/season-gate-v1/gate-stage-1.prompt.json",
+      "sha256": "b6834228521ebf8b9114a29c98755af6aaa83a24d8f269f45ecd52e6726bd4fc",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/season-gate-v1/gate-stage-1.png"
+    },
+    {
+      "id": "gate-stage-2",
+      "path": "client/art-src/season-gate-v1/gate-stage-2.png",
+      "prompt": "client/art-src/season-gate-v1/gate-stage-2.prompt.json",
+      "sha256": "2869c99e30b9217f9cdf83b1ac9c5627c5b270059cfa1e31f9a924f474d0e6e4",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/season-gate-v1/gate-stage-2.png"
+    },
+    {
+      "id": "gate-stage-3",
+      "path": "client/art-src/season-gate-v1/gate-stage-3.png",
+      "prompt": "client/art-src/season-gate-v1/gate-stage-3.prompt.json",
+      "sha256": "c11baedcfd6da772036a8c31ea6bca33ee181f90598eb82fbe5bce22e0d8ae41",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/season-gate-v1/gate-stage-3.png"
+    },
+    {
+      "id": "gate-stage-4",
+      "path": "client/art-src/season-gate-v1/gate-stage-4.png",
+      "prompt": "client/art-src/season-gate-v1/gate-stage-4.prompt.json",
+      "sha256": "51b41f2e0c2532db2cf5b4ab567836bd06fce992bb017521e41666a85052e134",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/season-gate-v1/gate-stage-4.png"
+    },
+    {
+      "id": "gate-stage-5",
+      "path": "client/art-src/season-gate-v1/gate-stage-5.png",
+      "prompt": "client/art-src/season-gate-v1/gate-stage-5.prompt.json",
+      "sha256": "c194e703a1f4f64582688d5cd45ed84e9486410c93140a2b637f53b2efe7e72d",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/season-gate-v1/gate-stage-5.png"
+    },
+    {
+      "id": "pirate-reaver",
+      "path": "client/art-src/npc-ships/pirate-reaver-chroma.png",
+      "prompt": "client/art-src/npc-ships/pirate-reaver-chroma.prompt.json",
+      "sha256": "7ad1d16c7f87e89dee6d544d3435d9faa12d51da20fdd1c0f629f490031dffc6",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/npc-ships/pirate-reaver-chroma.png"
+    },
+    {
+      "id": "pirate-warbarge",
+      "path": "client/art-src/npc-ships/pirate-warbarge-chroma.png",
+      "prompt": "client/art-src/npc-ships/pirate-warbarge-chroma.prompt.json",
+      "sha256": "a92cdbf125196fef835430a1c2f8228ec5acb9bce34ed911a66d2f48dd3efe54",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/npc-ships/pirate-warbarge-chroma.png"
+    },
+    {
+      "id": "new-colony",
+      "path": "client/art-src/story-events-v1/new-colony.png",
+      "prompt": "client/art-src/story-events-v1/new-colony.prompt.json",
+      "sha256": "fd8df18ed859c2c017d1ad185a5554585da48aa2b4f52cf3cafc568e7ad6d705",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/story-events-v1/new-colony.png"
+    },
+    {
+      "id": "gate-opens",
+      "path": "client/art-src/story-events-v1/gate-opens.png",
+      "prompt": "client/art-src/story-events-v1/gate-opens.prompt.json",
+      "sha256": "99073ef0b8e50a71e65615ff51204e6b2fb3005119792c63baad3c55b979f8e9",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/story-events-v1/gate-opens.png"
+    },
+    {
+      "id": "relics-awaken",
+      "path": "client/art-src/story-events-v1/relics-awaken.png",
+      "prompt": "client/art-src/story-events-v1/relics-awaken.prompt.json",
+      "sha256": "62f6cc9caa8191e384b9ac230a8897253fdccc4e8eda6baacee2bcb30aff4feb",
+      "absolutePath": "/Users/peter/projects/stellar-syndicates/client/art-src/story-events-v1/relics-awaken.png"
+    }
+  ],
+  "projectRoot": "/Users/peter/projects/stellar-syndicates"
+}

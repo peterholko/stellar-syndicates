@@ -1,0 +1,31 @@
+{
+  "id": "relics-awaken",
+  "category": "story",
+  "destination": "client/art-src/story-events-v1/relics-awaken.png",
+  "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. Strong readable focal point, essential subjects within the central 75% of the frame, comfortable edges for responsive display. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: the galaxy's exotic nodes awaken as relics, and pirates move to claim them.\nScene/backdrop: a remote star system with a dim red sun. A shattered moonlet drifts in the foreground, its broken interior exposed.\nSubject: inside the moonlet's broken interior, a tall elongated violet crystal relic has just woken, its facets glowing with a cold violet light that lights the jagged rock walls. In the middle distance, three pirate warships in the blackened, rust-patched, orange-striped pirate style, with amber engines, close in from the dark. Their silhouettes are rim-lit violet by the relic.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: ominous and wondrous; violet relic light against the red sun and black space; a contest about to begin.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nREFERENCE ROLES: Image 1 is painting STYLE only. Images 2 and 3 are pirate SHIP DESIGN references only; show three ships in this family in believable scene perspective, not flat top-down sprites, and never copy the green background. The relic and moonlet are the foreground subject, pirates secondary in the middle distance.",
+  "references": [
+    "client/art-src/founding-intro-v1/first-landing.png",
+    "client/art-src/npc-ships/pirate-reaver-chroma.png",
+    "client/art-src/npc-ships/pirate-warbarge-chroma.png"
+  ],
+  "transparent": false,
+  "expectedSize": [
+    1672,
+    941
+  ],
+  "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-92715e94-c898-4ce6-8dbc-30e174469893.png",
+  "inspection": {
+    "width": 1672,
+    "height": 941,
+    "mode": "RGB",
+    "sha256": "62f6cc9caa8191e384b9ac230a8897253fdccc4e8eda6baacee2bcb30aff4feb"
+  },
+  "tool": "image_gen.imagegen",
+  "generatedAt": "2026-10-22",
+  "referenceSnapshots": [
+    {
+      "usedPath": "client/art-src/npc-ships/pirate-warbarge-chroma.png",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-bc2cce51-ee6e-4f96-b208-85f24bc33821.png"
+    }
+  ]
+}

@@ -17,6 +17,13 @@ use crate::standing::StandingOrder;
 #[serde(tag = "kind")]
 pub enum Command {
     FoundColony { id: PlayerId, name: String, profile: crate::settlement::FoundingProfile },
+    /// §gun-platform (Peter, Oct 30 2026: "game over and they can restart"):
+    /// a corporation whose colony fell is founded again on its home, on the
+    /// account's dealt home world. Refused unless it fell.
+    RestartCorporation { player_id: PlayerId, profile: crate::settlement::FoundingProfile },
+    /// §charter-crates: collect a released charter crate into the home
+    /// stockpile. Refused before its step or once collected.
+    CollectCharterCrate { player_id: PlayerId, charter_crate: crate::founding::CharterCrate },
     DevelopSettlement { player_id: PlayerId, system_id: EntityId, body_id: u32,
         project: crate::settlement::SettlementProject },
     SetRefiningReserve { player_id: PlayerId, system_id: EntityId, ore: u32, fuel: u32 },
@@ -315,6 +322,10 @@ pub enum Command {
     /// Spend one earned Captain point while that officer is physically berthed
     /// at the corporation's home command center. Remote training is deliberately
     /// not a hidden FTL command.
+    /// §captain-gear (R14): wear a piece from the armory (captain at home).
+    EquipGear { player_id: PlayerId, captain_id: u32, gear: crate::captain::Gear },
+    /// Return what a slot holds to the armory (captain at home).
+    UnequipGear { player_id: PlayerId, captain_id: u32, slot: u8 },
     TrainCaptain {
         player_id: PlayerId,
         captain_id: u32,
@@ -614,6 +625,12 @@ pub enum Command {
         player_id: PlayerId,
         fleet_id: EntityId,
         system_id: EntityId,
+        /// §raid-order: load until full, then bring the loot home. Needs a hold.
+        #[serde(default)]
+        raid: bool,
+        /// §player-styles: a raid that sets out again after each trip home.
+        #[serde(default)]
+        repeat: bool,
     },
 
     // ---- §TCA Part 5: PLAYER-CONVOY LOGISTICS --------------------------------
@@ -691,6 +708,23 @@ pub enum Command {
     /// the Market Hub is a settlement, and settlement is correlation (§3), not a
     /// courier. Soft-rejects (free, owner-only) if the treasury can't cover it.
     PayReinstatement { player_id: PlayerId, points: f64 },
+
+    /// §season: answer the Authority's levy rise: accept it, or refuse and see
+    /// that good embargoed for you until the arrears are paid. Travels to the
+    /// Market Hub.
+    AnswerLevy { player_id: PlayerId, accept: bool },
+    /// §season: pay the arrears that lift an embargo. Its payment leaves with it.
+    PayArrears { player_id: PlayerId, commodity: crate::cargo::Commodity },
+    /// §season: pay a requisition (goods from the Hub warehouse, or the
+    /// credits that leave with it), or refuse it.
+    AnswerRequisition { player_id: PlayerId, id: u64, pay: bool },
+
+    /// §season: feed the Keystone on a sealed world your syndicate holds,
+    /// from that world's stockpile. Feeding one is war with the Authority.
+    FeedKeystone { player_id: PlayerId, system_id: EntityId, commodity: crate::cargo::Commodity, units: u32 },
+    /// §season: Gate Step — at a completed Keystone, move a fleet at once
+    /// between the Keystone world and any relic system your syndicate holds.
+    GateStep { player_id: PlayerId, fleet_id: EntityId, system_id: EntityId },
 
     /// §TCA: toggle whether one of the player's fleets, while BLOCKADING, also
     /// engages Terran Charter Authority FREIGHTERS arriving at the strangled
@@ -912,4 +946,170 @@ pub enum Command {
     /// instant admin, any member; an empty name un-christens. The name is a
     /// LABEL — it never touches sim outcomes.
     NameFlagship { player_id: PlayerId, name: String },
+
+    /// §leave (R4): go on leave (`on`) or come back. CC-local instant admin.
+    /// Refused mid-battle, under a blockade, during the cooldown, or (to come
+    /// back) before the leave's minimum has run.
+    SetLeave { player_id: PlayerId, on: bool },
+
+    /// §research-grant (R3): buy one research-hour for the active programme.
+    /// HQ-local, like the research queue.
+    FundResearch { player_id: PlayerId },
+
+    /// §settle-near-friends (R7): hold the free home slot nearest the
+    /// caller's home for the invite `key`. Authority admin, instant.
+    ReserveHomeSlot { player_id: PlayerId, key: u64 },
+    /// Release the caller's hold for `key`.
+    CancelHomeReservation { player_id: PlayerId, key: u64 },
+    /// A newcomer redeems invite `key`: their landing takes the held slot and
+    /// joins the inviter's syndicate if it has a seat. Sent before
+    /// `FoundColony`; ignored once the corporation exists.
+    ClaimHomeInvite { player_id: PlayerId, key: u64 },
+
+    /// §syndicate-projects (R6): give `units` of the rung's goods from one of
+    /// the caller's worlds; travels to that world like any system order.
+    ContributeSyndicateProject { player_id: PlayerId, system_id: EntityId, commodity: crate::Commodity, units: u32 },
+    /// Spend project points on one bonus level (founder, officers and
+    /// quartermasters).
+    RaiseSyndicateBonus { player_id: PlayerId, bonus: crate::syndicate::SyndicateBonus },
+
+    /// §treasury: an order to the Market Hub (or a colony) carrying its
+    /// payment, taken from the treasury as it left. The sim wraps orders in
+    /// this itself; at the receiver the order spends only `payment`, and the
+    /// change travels home. Never sent by a client or a bot.
+    Paid { payment: f64, order: Box<Command> },
+}
+
+impl Command {
+    /// The corporation that sent this command.
+    pub fn issuer(&self) -> PlayerId {
+        match self {
+            Command::FoundColony { id, .. } | Command::AddPlayer { id, .. } => *id,
+            Command::ReserveHomeSlot { player_id, .. }
+            | Command::RestartCorporation { player_id, .. }
+            | Command::CollectCharterCrate { player_id, .. }
+            | Command::CancelHomeReservation { player_id, .. }
+            | Command::ClaimHomeInvite { player_id, .. }
+            | Command::ContributeSyndicateProject { player_id, .. }
+            | Command::RaiseSyndicateBonus { player_id, .. } => *player_id,
+            Command::DevelopSettlement { player_id, .. }
+            | Command::SetRefiningReserve { player_id, .. }
+            | Command::SetFreightRoute { player_id, .. }
+            | Command::DeployOutpost { player_id, .. }
+            | Command::SkimFuel { player_id, .. }
+            | Command::MineBelt { player_id, .. }
+            | Command::ProspectBelt { player_id, .. }
+            | Command::AnchorStation { player_id, .. }
+            | Command::UnanchorStation { player_id, .. }
+            | Command::StationLoad { player_id, .. }
+            | Command::ReserveProject { player_id, .. }
+            | Command::StartColonyProject { player_id, .. }
+            | Command::SetColonyProjectActive { player_id, .. }
+            | Command::MoveShip { player_id, .. }
+            | Command::HoldFleet { player_id, .. }
+            | Command::JumpShip { player_id, .. }
+            | Command::CommitRaid { player_id, .. }
+            | Command::GuardFleet { player_id, .. }
+            | Command::RefuelFleet { player_id, .. }
+            | Command::DeployInterdiction { player_id, .. }
+            | Command::DefendSystem { player_id, .. }
+            | Command::RecallRaid { player_id, .. }
+            | Command::MarketBuy { player_id, .. }
+            | Command::MerchantTrade { player_id, .. }
+            | Command::MarketSell { player_id, .. }
+            | Command::PlaceLimitOrder { player_id, .. }
+            | Command::CancelLimitOrder { player_id, .. }
+            | Command::BookFreightOut { player_id, .. }
+            | Command::SetDepotRule { player_id, .. }
+            | Command::BookFreightIn { player_id, .. }
+            | Command::ShipProduction { player_id, .. }
+            | Command::StockSystem { player_id, .. }
+            | Command::SetStandingOrder { player_id, .. }
+            | Command::ClearStandingOrder { player_id, .. }
+            | Command::DismissLostOrder { player_id, .. }
+            | Command::SetFleetDoctrine { player_id, .. }
+            | Command::RecruitCaptain { player_id, .. }
+            | Command::AssignCaptain { player_id, .. }
+            | Command::ReserveCaptain { player_id, .. }
+            | Command::TrainCaptain { player_id, .. }
+            | Command::EquipGear { player_id, .. }
+            | Command::UnequipGear { player_id, .. }
+            | Command::BuildShip { player_id, .. }
+            | Command::BuildModule { player_id, .. }
+            | Command::RefitShips { player_id, .. }
+            | Command::TransferModules { player_id, .. }
+            | Command::BuyModule { player_id, .. }
+            | Command::SellModule { player_id, .. }
+            | Command::Withdraw { player_id, .. }
+            | Command::SetFleetTransit { player_id, .. }
+            | Command::MergeFleets { player_id, .. }
+            | Command::SplitFleet { player_id, .. }
+            | Command::BuildEmplacement { player_id, .. }
+            | Command::DemolishEmplacement { player_id, .. }
+            | Command::FitStation { player_id, .. }
+            | Command::DevelopSystem { player_id, .. }
+            | Command::CancelBuild { player_id, .. }
+            | Command::SetAssignment { player_id, .. }
+            | Command::SetMigrationPolicy { player_id, .. }
+            | Command::RelocateMigrants { player_id, .. }
+            | Command::HireSpecialist { player_id, .. }
+            | Command::TrainSpecialist { player_id, .. }
+            | Command::TransferSpecialists { player_id, .. }
+            | Command::BlockadeSystem { player_id, .. }
+            | Command::HubLoad { player_id, .. }
+            | Command::HubUnload { player_id, .. }
+            | Command::SystemLoad { player_id, .. }
+            | Command::SystemUnload { player_id, .. }
+            | Command::HaulToMarketHub { player_id, .. }
+            | Command::HaulToSystem { player_id, .. }
+            | Command::RequestFuelRescue { player_id, .. }
+            | Command::PayReinstatement { player_id, .. }
+            | Command::AnswerLevy { player_id, .. }
+            | Command::PayArrears { player_id, .. }
+            | Command::AnswerRequisition { player_id, .. }
+            | Command::FeedKeystone { player_id, .. }
+            | Command::GateStep { player_id, .. }
+            | Command::SetEngageFreight { player_id, .. }
+            | Command::SetRunBlockades { player_id, .. }
+            | Command::SurveySystem { player_id, .. }
+            | Command::ExploreSite { player_id, .. }
+            | Command::AnnotateExploration { player_id, .. }
+            | Command::AnswerSignal { player_id, .. }
+            | Command::DismissSignal { player_id, .. }
+            | Command::AttackFleet { player_id, .. }
+            | Command::SetFleetPosture { player_id, .. }
+            | Command::SetFleetMission { player_id, .. }
+            | Command::CreateSyndicate { player_id, .. }
+            | Command::InviteToSyndicate { player_id, .. }
+            | Command::AcceptSyndicateInvite { player_id, .. }
+            | Command::LeaveSyndicate { player_id, .. }
+            | Command::DissolveSyndicate { player_id, .. }
+            | Command::SetSyndicateRole { player_id, .. }
+            | Command::AcceptOperation { player_id, .. }
+            | Command::AbandonOperation { player_id, .. }
+            | Command::AssignOperationFleet { player_id, .. }
+            | Command::RecoverOperation { player_id, .. }
+            | Command::ContributeOperationCargo { player_id, .. }
+            | Command::CreateSyndicateOperation { player_id, .. }
+            | Command::ProposeTreaty { player_id, .. }
+            | Command::RespondTreaty { player_id, .. }
+            | Command::DeclareWar { player_id, .. }
+            | Command::CancelTreaty { player_id, .. }
+            | Command::SetResearchQueue { player_id, .. }
+            | Command::SetDesignation { player_id, .. }
+            | Command::SaveFit { player_id, .. }
+            | Command::DeleteFit { player_id, .. }
+            | Command::NameFlagship { player_id, .. }
+            | Command::SetLeave { player_id, .. }
+            | Command::FundResearch { player_id, .. } => *player_id,
+            Command::Paid { order, .. } => order.issuer(),
+        }
+    }
+
+    /// §leave: what a corporation on leave may still send: ending the leave
+    /// and bookkeeping that gives no order.
+    pub fn allowed_on_leave(&self) -> bool {
+        matches!(self, Command::SetLeave { .. } | Command::DismissLostOrder { .. }
+            | Command::DismissSignal { .. } | Command::AnnotateExploration { .. })
+    }
 }

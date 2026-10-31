@@ -197,7 +197,7 @@ mod tests {
             let st = [Vec::new(), mounts(level, &fits)];
             project_distribution_at_world(&setup, 31, 200, &m, 1, &st).a_win_pct * 100.0
         };
-        for level in 1..=5u32 {
+        for level in 1..=crate::station::MAX_LEVEL {
             let cost = level_cost(level);
             let mut line = format!("L{level} {:<16} ({:>6.0} cr):", crate::station::level_name(level), cost);
             for (kind, fit) in [(K::Raider, "torpedo_rack"), (K::Destroyer, ""), (K::Cruiser, "mass_driver+mass_driver"),
@@ -207,11 +207,11 @@ mod tests {
             }
             eprintln!("{line}");
         }
-        let fortress = level_cost(5);
+        let fortress = level_cost(crate::station::MAX_LEVEL);
         eprintln!("Star Fortress {fortress:.0} cr vs: lone Titan {:.0}%; Titan + 3 dreadnoughts ({:.0} cr) {:.0}%; Titan + 5 dreadnoughts ({:.0} cr) {:.0}%",
-            run(vec![(K::Titan, TITAN, 1)], 5),
-            value(K::Titan) + 3.0 * value(K::Dreadnought), run(vec![(K::Titan, TITAN, 1), (K::Dreadnought, DREAD, 3)], 5),
-            value(K::Titan) + 5.0 * value(K::Dreadnought), run(vec![(K::Titan, TITAN, 1), (K::Dreadnought, DREAD, 5)], 5));
+            run(vec![(K::Titan, TITAN, 1)], 6),
+            value(K::Titan) + 3.0 * value(K::Dreadnought), run(vec![(K::Titan, TITAN, 1), (K::Dreadnought, DREAD, 3)], 6),
+            value(K::Titan) + 5.0 * value(K::Dreadnought), run(vec![(K::Titan, TITAN, 1), (K::Dreadnought, DREAD, 5)], 6));
     }
 
     /// No station, no platform, no capital: v14, step for step.
@@ -236,11 +236,11 @@ mod tests {
     #[test]
     fn hardpoints_fight_as_fitted() {
         let mut s = open(5, &[(K::Cruiser, "", 2)], &[]);
-        s.add_station(1, &mounts(4, &["mass_driver+mass_driver+whipple_armor", "", "torpedo_rack+torpedo_rack", ""]));
+        s.add_station(1, &mounts(5, &["mass_driver+mass_driver+whipple_armor", "", "torpedo_rack+torpedo_rack", ""]));
         let hp: Vec<&Combatant> = s.combatants.iter().filter(|c| c.mount.is_some()).collect();
         assert_eq!(hp.len(), 4);
-        assert!(hp.iter().all(|c| c.platform && c.side == 1 && c.max_hp == crate::station::LEVELS[3].hull));
-        assert_eq!(hp[0].mount.unwrap().aw, crate::station::LEVELS[3].aw);
+        assert!(hp.iter().all(|c| c.platform && c.side == 1 && c.max_hp == crate::station::LEVELS[4].hull));
+        assert_eq!(hp[0].mount.unwrap().aw, crate::station::LEVELS[4].aw);
         assert_eq!(s.station_health(1).len(), 4);
         let mut fired = std::collections::BTreeSet::new();
         for _ in 0..80 {
@@ -258,7 +258,7 @@ mod tests {
     fn capitals_besiege_stations() {
         let dealt = |attacker: K, breach: f64| -> f64 {
             let mut s = open(6, &[(attacker, "", 1)], &[]);
-            s.add_station(1, &mounts(5, &["", "", "", "", "", ""]));
+            s.add_station(1, &mounts(6, &["", "", "", "", "", ""]));
             let mods = [SideMods { vs_defenses: breach, ..Default::default() }, SideMods::default()];
             (0..60).map(|_| s.step(false, mods).dealt[0]).sum()
         };
@@ -274,7 +274,7 @@ mod tests {
     fn fortress_doctrine_slips_tackle() {
         let held = |fortress: bool| -> usize {
             let mut s = open(7, &[(K::Raider, "", 8)], &[(K::Battleship, "", 1)]);
-            s.add_station(1, &mounts(1, &[""]));
+            s.add_station(1, &mounts(2, &[""]));
             s.order_withdraw(1);
             let mods = [SideMods::default(), SideMods { fortress, ..Default::default() }];
             (0..60).map(|_| s.step(false, mods).tackles.len()).sum()
@@ -288,7 +288,7 @@ mod tests {
     fn netfire_widens_the_screen() {
         let intercepted = |netfire: bool| -> usize {
             let mut s = open(8, &[(K::Raider, "torpedo_rack", 12)], &[]);
-            s.add_station(1, &mounts(3, &["", "", ""]));
+            s.add_station(1, &mounts(4, &["", "", ""]));
             let mods = [SideMods::default(), SideMods { netfire, ..Default::default() }];
             (0..80).map(|_| s.step(false, mods).torp_ends.iter()
                 .filter(|e| e.end == crate::combat::TorpedoEnd::Intercepted).count()).sum()
@@ -302,7 +302,7 @@ mod tests {
         let setup = ProjSetup { a: fleet(1, &[(K::Cruiser, "", 4)]), d: fleet(2, &[(K::Destroyer, "", 1)]),
             platform_tiers: 0, raid: false, a_retreat: None, d_retreat: None };
         let none = [Vec::new(), Vec::new()];
-        let fort = [Vec::new(), mounts(4, &["", "", "", ""])];
+        let fort = [Vec::new(), mounts(5, &["", "", "", ""])];
         let m = BTreeMap::new();
         let open = project_distribution_at_world(&setup, 9, 24, &m, 1, &none);
         let held = project_distribution_at_world(&setup, 9, 24, &m, 1, &fort);

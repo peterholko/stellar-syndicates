@@ -1,0 +1,41 @@
+{
+  "id": "pathfinders-astrolabe",
+  "category": "gear",
+  "destination": "client/art-src/captain-gear-v1/pathfinders-astrolabe.png",
+  "prompt": "Use case: stylized-concept. Asset type: one transparent game UI item icon for Stellar Syndicates, a premium dark sci-fi strategy game. It joins an existing icon family; Image 1 is a member of that family, attached ONLY for style, material, camera and finish. Do not copy its subject.\nSubject: Pathfinder's Astrolabe: An ancient pathfinder's astrolabe: three thin interlocking gold-and-brass rings around a floating violet crystal core, mounted on a small dark gunmetal base. Relic grade.\nThis is a captain's personal kit, a portable object a starship captain carries or wears on duty. It is NOT a ship module, NOT a weapon, NOT a building and NOT a vehicle. Its size reads as hand-held or desk-sized.\nCamera and framing: the same elevated three-quarter view as Image 1, light from the upper left. One complete object, centred on a square 1254 x 1254 canvas. It spans about 72-80% of the canvas width and 56-68% of its height, like the family's measured icons. Bold, simple silhouette that still reads at 64 px; a few large readable forms, restrained small detail.\nStyle: crisp, professionally rendered hard-surface 3D game icon, no painterly strokes. Charcoal gunmetal, worn steel edges, small panel lines.\nGRADE:\n- FIELD grade (+1): practical issue kit. Charcoal gunmetal and steel, restrained cyan indicator lights, one small amber accent, mild wear. Rugged and functional.\n- RELIC grade (+2): the same kind of object, rare and ancient: aged gold and brass filigree inlaid in dark gunmetal, one violet precursor crystal set at its heart with a soft violet inner light, a few cyan details. Ornate but still a tool, slightly grander than its Field twin. The violet light stays inside the object; no outer halo.\nBackground: genuinely transparent PNG with real alpha; no floor, plinth, shadow plate, smoke, starfield or frame.\nConstraints: exactly one object, no text, letters, numbers, labels, logos, insignia lettering, watermark, border, badge, circle behind it or UI. No hands, people, faces or skulls. No glow halos, sparks or beams.\nFor this specific output, apply ONLY the RELIC grade treatment described above.\nFRAMING IS CRITICAL: keep the entire solid object inside x=150 to 1104 and y=210 to 1044 on the 1254-square canvas. Leave generous true-alpha padding: 12% at left and right, and at least 17% above and below. Do not zoom the object to fill the canvas.",
+  "references": [
+    "client/art-src/ui-icons/raster-masters/module-mass-driver.png"
+  ],
+  "transparent": true,
+  "expectedSize": [
+    1254,
+    1254
+  ],
+  "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-09731ca6-a3c0-444d-a21d-d3bf93c9e5c6.png",
+  "inspection": {
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "sha256": "5e902f3605945064cd50e2ee85823d317bd418e95ca2d3abe6c9014ff014c0ba",
+    "alphaExtrema": [
+      0,
+      255
+    ],
+    "alphaBounds": [
+      25,
+      20,
+      1230,
+      1254
+    ],
+    "transparentPixelFraction": 0.7023,
+    "solidBoundsAtAlpha128": [
+      238,
+      168,
+      1030,
+      1100
+    ],
+    "centerAlpha": 253
+  },
+  "tool": "image_gen.imagegen",
+  "generatedAt": "2026-10-22"
+}

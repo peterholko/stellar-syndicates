@@ -77,7 +77,13 @@ pub const TCA_SOVEREIGN_RADIUS: f64 = 900.0;
 
 /// Standing every charter is issued with, and the ceiling regen climbs back to.
 pub const TCA_STANDING_START: f64 = 100.0;
-pub const TCA_STANDING_MAX: f64 = 100.0;
+/// FULL standing: the top of the penalty bands, where regeneration stops and
+/// buying standing back (`PayReinstatement`) can reach no higher.
+pub const TCA_STANDING_FULL: f64 = 100.0;
+/// §standing-ladder (R3, Oct 22 2026): service lifts standing past full
+/// through three grades to this cap. Only service does: contracts, Signals and
+/// the ledger, never credits (docs/post-charter-loops.md).
+pub const TCA_STANDING_MAX: f64 = 200.0;
 
 /// Standing lost per INCIDENT — one Authority freighter raided or destroyed —
 /// charged in FULL to every participating corporation (no splitting: three corps
@@ -125,7 +131,7 @@ pub const TCA_REINSTATE_FEE_PER_POINT: f64 = 25.0;
 /// proscribed (measured from the end of the previous one).
 pub const TCA_ENFORCEMENT_PERIOD: f64 = 420.0;
 /// How long an expedition holds station before withdrawing. Deliberately SHORTER
-/// than a siege could ever run (`SIEGE_DURATION_BATTLE_MULT × battle_target_secs`),
+/// than a siege could ever run (`SimConfig::siege_capture_secs`),
 /// so the Authority costs a proscribed corp economy-time and never a colony —
 /// `enforcement_withdraws_before_a_siege_could_capture` asserts it.
 pub const TCA_ENFORCEMENT_DURATION: f64 = 180.0;
@@ -197,18 +203,95 @@ pub fn charter_status(standing: f64) -> CharterStatus {
 /// corp below Revoked doesn't keep escalating — the expeditions are the deeper
 /// band's answer, not an ever-steeper fee.
 fn penalty_ramp(standing: f64) -> f64 {
-    let span = TCA_STANDING_MAX - TCA_REVOKED_AT;
+    let span = TCA_STANDING_FULL - TCA_REVOKED_AT;
     if span <= 0.0 {
         return 0.0;
     }
-    ((TCA_STANDING_MAX - standing) / span).clamp(0.0, 1.0)
+    ((TCA_STANDING_FULL - standing) / span).clamp(0.0, 1.0)
+}
+
+/// §standing-ladder (R3): a corporation's GRADE above full standing. Each
+/// grade lowers the Authority's freight fee and raises its freight allotment;
+/// Preferred and above get a fifth daily board contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CharterGrade {
+    /// Full standing, 100–124 (or any standing below full: no grade perks).
+    Chartered,
+    Trusted,
+    Preferred,
+    Commissioned,
+}
+
+/// Standing a corporation can earn past full standing in one sim day, from
+/// every source together: a grade takes days of service, not one busy evening.
+pub const TCA_GRADE_EARN_PER_DAY: f64 = 8.0;
+/// Where each grade begins.
+pub const TCA_TRUSTED_AT: f64 = 125.0;
+pub const TCA_PREFERRED_AT: f64 = 150.0;
+pub const TCA_COMMISSIONED_AT: f64 = 175.0;
+
+impl CharterGrade {
+    pub fn title(self) -> &'static str {
+        match self {
+            CharterGrade::Chartered => "Chartered",
+            CharterGrade::Trusted => "Trusted",
+            CharterGrade::Preferred => "Preferred",
+            CharterGrade::Commissioned => "Commissioned",
+        }
+    }
+    /// The freight-fee multiplier the grade earns.
+    pub fn fee_mult(self) -> f64 {
+        match self {
+            CharterGrade::Chartered => 1.0,
+            CharterGrade::Trusted => 0.85,
+            CharterGrade::Preferred => 0.70,
+            CharterGrade::Commissioned => 0.50,
+        }
+    }
+    /// Units per destination per departure the Authority lifts.
+    pub fn shipment_cap(self) -> u32 {
+        match self {
+            CharterGrade::Chartered => TCA_SHIPMENT_CAP,
+            CharterGrade::Trusted => 500,
+            CharterGrade::Preferred => 600,
+            CharterGrade::Commissioned => 800,
+        }
+    }
+    /// Daily contract board size.
+    pub fn board_contracts(self) -> usize {
+        crate::operation::BOARD_CONTRACTS + usize::from(self >= CharterGrade::Preferred)
+    }
+}
+
+/// The grade at a given standing.
+pub fn charter_grade(standing: f64) -> CharterGrade {
+    if standing >= TCA_COMMISSIONED_AT {
+        CharterGrade::Commissioned
+    } else if standing >= TCA_PREFERRED_AT {
+        CharterGrade::Preferred
+    } else if standing >= TCA_TRUSTED_AT {
+        CharterGrade::Trusted
+    } else {
+        CharterGrade::Chartered
+    }
+}
+
+/// The grade ladder for DISPLAY: `(title, where it begins)`.
+pub fn grade_ladder() -> [(&'static str, f64); 4] {
+    [
+        (CharterGrade::Chartered.title(), TCA_STANDING_FULL),
+        (CharterGrade::Trusted.title(), TCA_TRUSTED_AT),
+        (CharterGrade::Preferred.title(), TCA_PREFERRED_AT),
+        (CharterGrade::Commissioned.title(), TCA_COMMISSIONED_AT),
+    ]
 }
 
 /// The FREIGHT TARIFF multiplier at a given standing: 1.0 at full standing,
 /// rising linearly to [`TCA_TARIFF_MULT_MAX`] at [`TCA_REVOKED_AT`] and clamped
-/// there. Good standing costs exactly the Phase 1 fee.
+/// there; above full standing, the grade's discount (§standing-ladder).
 pub fn tariff_mult(standing: f64) -> f64 {
-    1.0 + (TCA_TARIFF_MULT_MAX - 1.0) * penalty_ramp(standing)
+    (1.0 + (TCA_TARIFF_MULT_MAX - 1.0) * penalty_ramp(standing)) * charter_grade(standing).fee_mult()
 }
 
 /// The EXCHANGE PENALTY FEE at a given standing, as a fraction of trade value:
@@ -231,7 +314,7 @@ pub fn market_penalty_frac(standing: f64) -> f64 {
 /// two together.
 pub fn status_ladder() -> [(&'static str, f64); 5] {
     [
-        (CharterStatus::GoodStanding.title(), TCA_STANDING_MAX),
+        (CharterStatus::GoodStanding.title(), TCA_STANDING_FULL),
         (CharterStatus::Sanctioned.title(), TCA_SANCTIONED_BELOW),
         (CharterStatus::Suspended.title(), TCA_SUSPENDED_AT),
         (CharterStatus::Revoked.title(), TCA_REVOKED_AT),
@@ -566,14 +649,32 @@ mod tests {
     /// clearing tests untouched: the penalty is penalty-only, never a base fee.
     #[test]
     fn good_standing_pays_no_tariff_and_no_penalty() {
-        assert_eq!(tariff_mult(TCA_STANDING_MAX), 1.0);
+        assert_eq!(tariff_mult(TCA_STANDING_FULL), 1.0);
+        assert_eq!(market_penalty_frac(TCA_STANDING_FULL), 0.0);
+        // …and no penalty at any grade above it.
         assert_eq!(market_penalty_frac(TCA_STANDING_MAX), 0.0);
-        // …and above the ceiling too (defensive: regen clamps, but be safe).
-        assert_eq!(tariff_mult(1e9), 1.0);
         assert_eq!(market_penalty_frac(1e9), 0.0);
         // The freight fee at full standing is EXACTLY the Phase 1 fee.
         let base = freight_fee(100, 10.0, 5000.0);
-        assert_eq!(base * tariff_mult(TCA_STANDING_MAX), base);
+        assert_eq!(base * tariff_mult(TCA_STANDING_FULL), base);
+    }
+
+    /// §standing-ladder (R3): grades above full standing discount the
+    /// Authority's freight fee and raise its allotment.
+    #[test]
+    fn grades_above_full_standing_earn_cheaper_and_bigger_freight() {
+        let at = |s: f64| (charter_grade(s), tariff_mult(s), charter_grade(s).shipment_cap(), charter_grade(s).board_contracts());
+        assert_eq!(at(TCA_STANDING_FULL), (CharterGrade::Chartered, 1.0, TCA_SHIPMENT_CAP, 4));
+        assert_eq!(at(124.9), (CharterGrade::Chartered, 1.0, 400, 4));
+        assert_eq!(at(TCA_TRUSTED_AT), (CharterGrade::Trusted, 0.85, 500, 4));
+        assert_eq!(at(TCA_PREFERRED_AT), (CharterGrade::Preferred, 0.70, 600, 5));
+        assert_eq!(at(TCA_COMMISSIONED_AT), (CharterGrade::Commissioned, 0.50, 800, 5));
+        assert_eq!(at(TCA_STANDING_MAX), (CharterGrade::Commissioned, 0.50, 800, 5));
+        assert_eq!(charter_grade(50.0), CharterGrade::Chartered, "no grade perks below full");
+        let ladder = grade_ladder();
+        assert!(ladder.windows(2).all(|w| w[0].1 < w[1].1));
+        assert_eq!(ladder.iter().map(|(_, at)| charter_grade(*at)).collect::<Vec<_>>(),
+            vec![CharterGrade::Chartered, CharterGrade::Trusted, CharterGrade::Preferred, CharterGrade::Commissioned]);
     }
 
     /// Both penalties ramp linearly to their ceiling at Revoked, then CLAMP —
@@ -586,7 +687,7 @@ mod tests {
         assert!((tariff_mult(TCA_PROSCRIBED_AT - 500.0) - TCA_TARIFF_MULT_MAX).abs() < 1e-9);
         assert!((market_penalty_frac(-1e6) - TCA_MARKET_PENALTY_FEE_MAX).abs() < 1e-9);
         // Half way down the ramp is half the extra tariff and half the fee.
-        let mid = TCA_STANDING_MAX - (TCA_STANDING_MAX - TCA_REVOKED_AT) / 2.0;
+        let mid = TCA_STANDING_FULL - (TCA_STANDING_FULL - TCA_REVOKED_AT) / 2.0;
         assert!((tariff_mult(mid) - (1.0 + (TCA_TARIFF_MULT_MAX - 1.0) / 2.0)).abs() < 1e-9);
         assert!((market_penalty_frac(mid) - TCA_MARKET_PENALTY_FEE_MAX / 2.0).abs() < 1e-9);
         // Monotonic: worse standing never costs less.

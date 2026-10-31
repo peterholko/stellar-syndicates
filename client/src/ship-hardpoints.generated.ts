@@ -84,6 +84,11 @@ export const SHIP_HARDPOINTS: Record<ShipArtKind, ShipHardpoints> = {
     engines: [[-0.3298, -0.006, 1.008], [0.3324, -0.006, 1.008]],
     guns: [],
   },
+  "combat_freighter": {
+    size: [1.0597, 0.3275, 2],
+    engines: [[0, -0.0182, 1.0015], [-0.2918, -0.0182, 0.9579], [0.2867, -0.0182, 0.9579]],
+    guns: [],
+  },
   "small_freighter": {
     size: [1.1027, 0.4382, 2],
     engines: [[-0.2948, -0.0332, 1.0053], [0.2948, -0.0332, 1.0053]],
@@ -117,6 +122,21 @@ export const SHIP_HARDPOINTS: Record<ShipArtKind, ShipHardpoints> = {
   "free_trader": {
     size: [1.1972, 0.3454, 2],
     engines: [[-0.3736, -0.0065, 1.001], [0.3736, -0.0065, 1.001]],
+    guns: [],
+  },
+  "clean_slate": {
+    size: [1.2073, 0.2949, 2],
+    engines: [[-0.2427, -0.0213, 1.0053], [0.2427, -0.0213, 1.0053]],
+    guns: [],
+  },
+  "second_wind": {
+    size: [1.2907, 0.4673, 2],
+    engines: [[-0.3444, -0.0681, 1.0015], [0.3887, -0.0681, 1.0015]],
+    guns: [],
+  },
+  "small_fortune": {
+    size: [1.1709, 0.3535, 2],
+    engines: [[-0.4169, -0.0082, 1.0015], [0.4169, -0.0082, 1.0015]],
     guns: [],
   },
   "survey_probe": {

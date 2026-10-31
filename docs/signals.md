@@ -101,7 +101,7 @@ A random kind by the world's age (`draw_signal`), then what it holds by tier
 | Ghost ship | day 7 | Hazardous | A Point Defense or Reflective Plating crate; rarely a blueprint |
 | Precursor fragment | day 21 | Hazardous | A large dossier, Precision Components; rarely a Survey Drive, Nebula Spectrometer or Prismatic Lance blueprint |
 | Exotic flare | day 21 | Hazardous | Exotic Matter or a Void crystal; four times the experience |
-| Teo's lost crate | any | Routine | Semiconductors or Deuterium, and a finder's fee |
+| Teo's lost crate (named for the founder's own trader since Oct 27 2026: "Ines's lost crate", "Mags's lost crate") | any | Routine | Semiconductors or Deuterium, and a finder's fee |
 
 A dossier goes to the active programme, else the queue, else the first Tier
 I left; a blueprint to the first of its list not yet licensed.

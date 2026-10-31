@@ -1,7 +1,7 @@
 import { shipKindLabel } from "../../core/derive/fleet";
 import { fmt, informationDelay } from "../../core/derive/format";
 import { icon, type IconKey } from "../../icons";
-import { countClassLabel, fleetCargoUnits, fleetExactCount, type GhostView, type ShipKind } from "../../protocol";
+import { fleetCountLabel, fleetCargoUnits, fleetExactCount, traderShipArt, type GhostView, type ShipKind } from "../../protocol";
 
 interface FleetRowOptions {
   openAction: "roster-open" | "system-fleet-open";
@@ -20,7 +20,7 @@ export function fleetListRow(fleet: GhostView, options: FleetRowOptions): string
     .map((stack) => `${stack.count}× ${shipKindLabel(stack.kind)}`).join(" · ");
   const cargo = fleetCargoUnits(fleet);
   const summary = [
-    exact === null ? `estimated ${countClassLabel(fleet.count_class)} ships` : `${exact} ship${exact === 1 ? "" : "s"}`,
+    exact === null ? `estimated ${fleetCountLabel(fleet)} ships` : `${exact} ship${exact === 1 ? "" : "s"}`,
     composition,
     cargo > 0 ? `${fmt(cargo)} cargo` : "",
   ].filter(Boolean).join(" · ");
@@ -33,7 +33,7 @@ export function fleetListRow(fleet: GhostView, options: FleetRowOptions): string
 }
 
 function fleetListIcon(fleet: GhostView): IconKey {
-  if (fleet.merchant) return "free_trader";
+  if (fleet.merchant) return traderShipArt(fleet.trader);
   // A single hull gets its ship art; a formation keeps the multi-ship emblem.
   if (fleetExactCount(fleet) !== 1) return "fleet";
   const kind = fleet.composition?.find((stack) => stack.count === 1)?.kind ?? fleet.kind;

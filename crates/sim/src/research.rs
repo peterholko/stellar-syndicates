@@ -32,6 +32,19 @@ pub type ProgrammeId = String;
 /// Tunable cap on the work a recovered dossier can replace, per technology.
 pub const DOSSIER_WORK_FRACTION: f64 = 0.30;
 
+/// §research-grant (R3, Oct 22 2026): a CREDIT SINK. A grant buys one
+/// research-hour (at rate 1) for the active programme, priced by its tier and
+/// limited to a few a day, so credits shorten research without replacing
+/// Academies.
+pub const RESEARCH_GRANT_SECS: f64 = 3_600.0;
+pub const RESEARCH_GRANT_CR_PER_TIER: f64 = 1_000.0;
+pub const RESEARCH_GRANTS_PER_DAY: u32 = 3;
+
+/// The price of one grant toward a programme of `tier`.
+pub fn grant_price(tier: u8) -> f64 {
+    RESEARCH_GRANT_CR_PER_TIER * f64::from(tier.max(1))
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FIELDS & SCHOOLS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -158,18 +171,24 @@ impl Verb {
             Verb::DamageAbsorbed => "hull-mass absorbed",
             Verb::SuccessfulRaids => "successful raids",
             Verb::WarshipsCommissioned => "warships commissioned",
-            Verb::PopulationGrown => "migrants settled (M)",
+            Verb::PopulationGrown => "migrants settled (thousands)",
             Verb::SpecialistsTrained => "specialists trained",
             Verb::SystemsCaptured => "systems captured",
         }
     }
 }
 
+/// §research-wiring: population gates count millions internally and show
+/// thousands; everything else shows as counted.
+pub fn gate_display_scale(label: &str) -> f64 {
+    if label.ends_with("(thousands)") { 1_000.0 } else { 1.0 }
+}
+
 impl Metric {
     /// Human label for a state/sustained gate progress bar.
     pub fn label(self) -> &'static str {
         match self {
-            Metric::TotalPopulation => "total population (M)",
+            Metric::TotalPopulation => "total population (thousands)",
             Metric::WellSuppliedSystems => "WellSupplied systems",
             Metric::FusionPlants => "tier V fusion plants",
         }
@@ -353,9 +372,14 @@ pub enum Cap {
     TwinCampuses,
     CryoBerths,
     GenerationCharters,
-    // Deferred-enforcement (hidden entries)
+    // §research-wiring (Oct 22 2026): the eight once-hidden programmes.
     SalvageRigs,
     BoardingParties,
+    Beneficiation,
+    PredictivePlots,
+    GravimetricSurvey,
+    OverpressureWarheads,
+    OrbitalHabitats,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -388,14 +412,29 @@ pub enum Effect {
     Flag(Cap),
 }
 
-/// A live target a capability designates (Crown Project body, Mass Stream pair,
-/// Signature Mimicry fleet). Set via `SetDesignation`.
+/// A live target a capability designates (Crown Vein / Crown Project body, Mass
+/// Stream pair, Signature Mimicry fleet). Set via `SetDesignation`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DesignationTarget {
-    Body(EntityId),
+    /// A body, by its system and its per-system id.
+    Body { system: EntityId, body: u32 },
     SystemPair(EntityId, EntityId),
     Fleet(EntityId),
+}
+
+/// §designations (R2): a body or stream designation stays put this long once
+/// set, unless its target is lost (a fleet designation moves freely).
+pub const DESIGNATION_LOCK_S: f64 = 7.0 * 86_400.0;
+
+/// Does `target` have the shape `cap` designates?
+pub fn designation_fits(cap: Cap, target: &DesignationTarget) -> bool {
+    matches!(
+        (cap, target),
+        (Cap::CrownVein | Cap::CrownProject, DesignationTarget::Body { .. })
+            | (Cap::MassStreams, DesignationTarget::SystemPair(..))
+            | (Cap::SignatureMimicry, DesignationTarget::Fleet(_))
+    )
 }
 
 /// One authored PROGRAMME (a catalog node).
@@ -460,6 +499,9 @@ pub struct ResearchState {
     /// Capability designations (Crown Project body, Mass Stream pair, etc.).
     #[serde(default)]
     pub designations: BTreeMap<Cap, DesignationTarget>,
+    /// When each designation was last set (§designations lock).
+    #[serde(default)]
+    pub designated_at: BTreeMap<Cap, f64>,
     /// §research R2: latched STALL state — true while an available active
     /// programme has no staffed Academy contributing. Drives the fire-once
     /// `ResearchStalled`/`ResearchResumed` events. serde-default false.
@@ -473,9 +515,20 @@ pub struct ResearchState {
     /// ladder on (the `SystemsScouted` verb = this set's len; dedupes revisits).
     #[serde(default)]
     pub scouted_systems: BTreeSet<EntityId>,
+    /// §research-grant: grants bought on `grant_day` (whole sim days).
+    #[serde(default)]
+    pub grant_day: u64,
+    #[serde(default)]
+    pub grants: u32,
 }
 
 impl ResearchState {
+    /// §research-grant: grants left to buy at `now`.
+    pub fn grants_left(&self, now: f64) -> u32 {
+        let day = (now.max(0.0) / 86_400.0) as u64;
+        if self.grant_day == day { RESEARCH_GRANTS_PER_DAY.saturating_sub(self.grants) } else { RESEARCH_GRANTS_PER_DAY }
+    }
+
     /// Park work on legacy placeholder programmes instead of trapping a save's
     /// active clock behind a now-hidden node. Preserve earned work under its
     /// original id; never complete a no-op or transfer its credit to another tech.
@@ -594,9 +647,10 @@ fn field_gate(field: Field) -> Gate {
         Field::Computation => Gate::Cumulative(Verb::SystemsScouted, 10.0),
         Field::Weapons => Gate::Cumulative(Verb::BattlesFought, 5.0),
         Field::Hulls => Gate::Cumulative(Verb::WarshipsCommissioned, 15.0),
-        // Population is carried in MILLIONS internally (`Body::population`), so the
-        // "5M grown" design target is 5.0 in that unit; ditto the 20M Growth gate.
-        Field::Life => Gate::Cumulative(Verb::PopulationGrown, 5.0),
+        // Population is carried in MILLIONS internally (`Body::population`).
+        // §research-wiring (R2): rescaled to the colonies this game grows — a
+        // home starts with 6,000 people, so 100,000 migrants, not 5 million.
+        Field::Life => Gate::Cumulative(Verb::PopulationGrown, 0.1),
     }
 }
 
@@ -613,7 +667,7 @@ fn school_gate(school: School) -> Gate {
         School::Countermeasures => Gate::Cumulative(Verb::DamageAbsorbed, 150.0),
         School::Line => Gate::Cumulative(Verb::BattlesWon, 8.0),
         School::Corsair => Gate::Cumulative(Verb::SuccessfulRaids, 8.0),
-        School::Growth => Gate::State(Metric::TotalPopulation, 20.0),
+        School::Growth => Gate::State(Metric::TotalPopulation, 0.3),
         School::Talent => Gate::Cumulative(Verb::SpecialistsTrained, 8.0),
     }
 }
@@ -625,9 +679,10 @@ fn school_gate(school: School) -> Gate {
 const HOUR: f64 = 3600.0;
 
 /// Sim-units per "light-year" for the distance verbs (`LyFlown`/`WarshipLyFlown`).
-/// One galaxy crossing (~8000 su) ≈ 200 ly, so the Propulsion II gate (200 ly) is
-/// about one empire's worth of cumulative travel. Tunable.
-pub const SU_PER_LY: f64 = 40.0;
+/// §research-wiring (R2): rescaled to the real-coordinates galaxy — a home lies
+/// 125,000 su from the Hub, about 62 ly, so the Propulsion II gate (200 ly) is
+/// a few Hub round trips, not the first flight. Tunable.
+pub const SU_PER_LY: f64 = 2_000.0;
 
 /// Cost of a programme of `tier` in THROUGHPUT-SECONDS (at reference rate 1.0):
 /// a steep curve so late convergence never happens inside a season (law 6/8).
@@ -685,6 +740,18 @@ pub fn basket(field: Field, tier: u8) -> Vec<(Commodity, f64)> {
 
 /// SPECIALIST AFFINITY per field — a matching resident specialist posted to an
 /// Academy's research line multiplies its rate (the 1.75× skill factor). Tunable.
+/// An Academy's skill points on a research field: its posted specialists
+/// whose profession serves the field, experts first (§research-wiring).
+pub fn academy_skill_points(field: Field, line: Option<&crate::production::Assignment>, tier: u32) -> u32 {
+    let (mut experts, mut specialists) = (0, 0);
+    for (k, n) in line.map(|a| &a.specialists).into_iter().flatten() {
+        if field_affinity(field).contains(&k.base()) {
+            if k.is_expert() { experts += n } else { specialists += n }
+        }
+    }
+    crate::production::skill_points(experts, specialists, tier)
+}
+
 pub fn field_affinity(field: Field) -> &'static [SpecialistKind] {
     match field {
         Field::Propulsion => &[SpecialistKind::PetrochemicalEngineer],
@@ -708,16 +775,10 @@ pub fn field_affinity(field: Field) -> &'static [SpecialistKind] {
 // keys: `Mods` (mult/additive tuners), `Flag` (capability), `UnlockStructureTier`
 // (tier IV/V of an existing structure), plus physical hull/module unlocks.
 // Recon Suite, Extended Tanks and Cargo Pods are functional early equipment.
-// Unimplemented prizes retain their save ids with PENDING effects but stay
-// hidden and unresearchable until their gameplay is wired.
+// A programme whose gameplay doesn't exist yet may ship `hidden` (never
+// researchable); since Oct 22 2026 none does.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// A no-op effect list for programmes whose prize is NEW CONTENT not yet in the
-/// sim (utility modules / view features). Keeps the tree complete; each content
-/// pass swaps these for real `UnlockHull`/`UnlockModule`/`Flag` effects.
-// Deferred designs remain addressable by old save ids, but are not researchable
-// until their advertised gameplay effect exists.
-const PENDING: &[Effect] = &[Effect::Mods(&[])];
 
 pub const CATALOG: &[Programme] = &[
     // ═══════════════════ 1 · PROPULSION & LOGISTICS ═══════════════════
@@ -773,7 +834,7 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 2,
         name: "Heavy Lifters",
-        blurb: "Medium Freighter hull: 400 cargo. Colony ships seed +50% population.",
+        blurb: "Medium Freighter hull: 400 cargo. Colony ships land 2,000 settlers.",
         effects: &[Effect::UnlockHull(ShipKind::Convoy), Effect::Mods(&[(ModKey::ColonySeedPop, 1.50)])],
         hidden: false,
     },
@@ -850,7 +911,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::LineHaul),
         tier: 5,
         name: "Mass Streams",
-        blurb: "One designated owned-pair route: +40% speed (rivals can learn + interdict).",
+        blurb: "One designated pair of your systems: +40% speed between them. Interdiction and blockades stop it.",
         effects: &[Effect::Flag(Cap::MassStreams)],
         hidden: false,
     },
@@ -886,7 +947,9 @@ pub const CATALOG: &[Programme] = &[
         tier: 4,
         name: "Fleet Tenders",
         blurb: "Build Fuel Transfer Rigs: Freighters refuel owned fleets from carried Uranium, Deuterium, Helium-3 or Antimatter, outside combat.",
-        effects: &[Effect::Flag(Cap::FleetTenders), Effect::UnlockModule(crate::module::ModuleKind::FuelTransferRig)],
+        // §research-wiring: the rig is the whole effect; `Cap::FleetTenders`
+        // stays in the enum for save stability but no programme grants it.
+        effects: &[Effect::UnlockModule(crate::module::ModuleKind::FuelTransferRig)],
         hidden: false,
     },
     Programme {
@@ -915,7 +978,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Expedition),
         tier: 5,
         name: "Underway Refit",
-        blurb: "Fleet Tenders perform module refits in the field.",
+        blurb: "Fuel tenders at rest mend owned hulls beside them, from carried Alloys.",
         effects: &[Effect::Flag(Cap::UnderwayRefit)],
         hidden: false,
     },
@@ -951,7 +1014,7 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 1,
         name: "Bulk Storage",
-        blurb: "+50% Orbital Warehouse caps.",
+        blurb: "+50% Warehouse and Orbital Warehouse capacity.",
         effects: &[Effect::Mods(&[(ModKey::WarehouseCap, 1.50)])],
         hidden: false,
     },
@@ -962,9 +1025,9 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 2,
         name: "Beneficiation",
-        blurb: "Poor deposits gain a richness floor (arrives with the extraction pass).",
-        effects: PENDING,
-        hidden: true,
+        blurb: "Poor ground mines at 85% of Average at worst.",
+        effects: &[Effect::Flag(Cap::Beneficiation)],
+        hidden: false,
     },
     Programme {
         id: "mat_prefab_construction",
@@ -1044,7 +1107,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::DeepCrust),
         tier: 4,
         name: "Prospecting Charters",
-        blurb: "New colonies start at full deposit knowledge.",
+        blurb: "New and captured systems reveal every hidden belt pocket.",
         effects: &[Effect::Flag(Cap::ProspectingCharters)],
         hidden: false,
     },
@@ -1054,7 +1117,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::DeepCrust),
         tier: 5,
         name: "Mantle Taps",
-        blurb: "Extraction ignores accessibility penalties.",
+        blurb: "Poor ground mines as Average; Deep Deposits lose their tier lag.",
         effects: &[Effect::Flag(Cap::MantleTaps)],
         hidden: false,
     },
@@ -1064,7 +1127,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::DeepCrust),
         tier: 5,
         name: "Crown Vein",
-        blurb: "One designated body: deposits +1 richness band.",
+        blurb: "One designated world mines one geology band richer.",
         effects: &[Effect::Flag(Cap::CrownVein)],
         hidden: false,
     },
@@ -1136,7 +1199,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Foundry),
         tier: 5,
         name: "Flash Forges",
-        blurb: "Systems run 2 concurrent structure builds.",
+        blurb: "Each world builds 2 different structures at once.",
         effects: &[Effect::Flag(Cap::FlashForges)],
         hidden: false,
     },
@@ -1146,7 +1209,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Foundry),
         tier: 5,
         name: "Crown Project",
-        blurb: "One designated body gains +1 slot in every pool.",
+        blurb: "One designated world: +1 Industrial and +1 Infrastructure site.",
         effects: &[Effect::Flag(Cap::CrownProject)],
         hidden: false,
     },
@@ -1186,7 +1249,7 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 1,
         name: "Signal Libraries",
-        blurb: "Rival fleets bucket one class finer to you.",
+        blurb: "Rival fleet sizes read one step finer.",
         effects: &[
             Effect::Mods(&[(ModKey::BucketFineness, 1.0)]),
             Effect::UnlockStructureTier(StructureKind::ElectronicsFabricator, 1),
@@ -1199,7 +1262,7 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 1,
         name: "Survey Protocols",
-        blurb: "Deposit ladder advances faster.",
+        blurb: "Surveys and prospecting passes run 25% faster.",
         effects: &[Effect::Mods(&[(ModKey::KnowledgeLadderRate, 1.25)])],
         hidden: false,
     },
@@ -1210,9 +1273,9 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 2,
         name: "Predictive Plots",
-        blurb: "Stale-intel confidence bands (view feature; arrives with the intel pass).",
-        effects: PENDING,
-        hidden: true,
+        blurb: "Moving contacts show where they are now if they held course.",
+        effects: &[Effect::Flag(Cap::PredictivePlots)],
+        hidden: false,
     },
     Programme {
         id: "comp_deep_space_arrays",
@@ -1230,9 +1293,9 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 2,
         name: "Gravimetric Survey",
-        blurb: "Deposits read one R-level deeper at range (arrives with the explore pass).",
-        effects: PENDING,
-        hidden: true,
+        blurb: "Systems within 30,000 su of yours chart themselves.",
+        effects: &[Effect::Flag(Cap::GravimetricSurvey)],
+        hidden: false,
     },
     // ⑂ WATCH (gate: 25 systems scouted)
     Programme {
@@ -1261,7 +1324,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Watch),
         tier: 4,
         name: "Battle Archives",
-        blurb: "Third-party battle records gain bucketed kill detail.",
+        blurb: "Battles you watch from outside list each side's losses.",
         effects: &[Effect::Flag(Cap::BattleArchives)],
         hidden: false,
     },
@@ -1271,7 +1334,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Watch),
         tier: 4,
         name: "Standing Watch",
-        blurb: "Contacts persist as tracked estimates after leaving coverage.",
+        blurb: "A contact you lose stays on the map as a dead-reckoned track for 10 min.",
         effects: &[Effect::Flag(Cap::StandingWatch)],
         hidden: false,
     },
@@ -1281,7 +1344,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Watch),
         tier: 5,
         name: "Panopticon Catalog",
-        blurb: "CC auto-catalogs every battle flash whose light reaches any asset.",
+        blurb: "Every system and fleet of yours catalogs the battles in its sensor range.",
         effects: &[Effect::Flag(Cap::PanopticonCatalog)],
         hidden: false,
     },
@@ -1291,7 +1354,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Watch),
         tier: 5,
         name: "Survey Corps",
-        blurb: "Scouts auto-advance the deposit ladder in-system.",
+        blurb: "Scouts idle in an uncharted system survey it on their own.",
         effects: &[Effect::Flag(Cap::SurveyCorps)],
         hidden: false,
     },
@@ -1302,7 +1365,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Shadow),
         tier: 3,
         name: "ECM Emitters",
-        blurb: "Your fleets bucket one class coarser — sensor warfare; the combat matrix untouched.",
+        blurb: "Your fleet sizes read one step coarser to rivals.",
         effects: &[Effect::Mods(&[(ModKey::BucketCoarseness, 1.0)])],
         hidden: false,
     },
@@ -1312,7 +1375,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Shadow),
         tier: 3,
         name: "Traffic Analysis",
-        blurb: "Contacts reveal freighter manifest class: goods / personnel / modules.",
+        blurb: "Unrevealed freighters show what they carry: goods, personnel or modules.",
         effects: &[Effect::Flag(Cap::TrafficAnalysis)],
         hidden: false,
     },
@@ -1322,7 +1385,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Shadow),
         tier: 4,
         name: "Wake Analysis",
-        blurb: "Observed fleets show estimated fuel state and origin bearing.",
+        blurb: "Rival fleets you see show their fuel and the way they came.",
         effects: &[Effect::Flag(Cap::WakeAnalysis)],
         hidden: false,
     },
@@ -1342,7 +1405,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Shadow),
         tier: 5,
         name: "Signature Mimicry",
-        blurb: "A designated fleet reads one count-class smaller and can present as a freighter until it engages.",
+        blurb: "One designated fleet reads as a freighter, one size class smaller, until it fights.",
         effects: &[Effect::Flag(Cap::SignatureMimicry)],
         hidden: false,
     },
@@ -1352,7 +1415,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Shadow),
         tier: 5,
         name: "Counter-Intelligence",
-        blurb: "Rival Signal Libraries / Traffic / Wake analysis read null against you.",
+        blurb: "Rival Signal Libraries, Traffic and Wake Analysis read nothing on your fleets.",
         effects: &[Effect::Flag(Cap::CounterIntel)],
         hidden: false,
     },
@@ -1367,7 +1430,7 @@ pub const CATALOG: &[Programme] = &[
         blurb: "+10% beam damage. Build a Defense Platform: an orbital battery that guards the system.",
         effects: &[
             Effect::Mods(&[(ModKey::BeamDmg, 1.10)]),
-            Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 1),
+            Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 2),
             Effect::UnlockStructureTier(StructureKind::Garrison, 1),
         ],
         hidden: false,
@@ -1400,7 +1463,7 @@ pub const CATALOG: &[Programme] = &[
         tier: 2,
         name: "Orbital Batteries",
         blurb: "Raise a Defense Platform to an Orbital Battery: two hardpoints, each fitted with its own battery.",
-        effects: &[Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 2)],
+        effects: &[Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 3)],
         hidden: false,
     },
     Programme {
@@ -1432,7 +1495,7 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 2,
         name: "Fire Discipline",
-        blurb: "Your opening-round damage +10%.",
+        blurb: "+10% damage in a battle's opening rounds.",
         effects: &[Effect::Mods(&[(ModKey::OpeningRoundDmg, 1.10)])],
         hidden: false,
     },
@@ -1443,9 +1506,9 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Strike),
         tier: 3,
         name: "Lance Array",
-        blurb: "Heavy-beam module, doubly vulnerable to Reflective (arrives with the weapon-module pass).",
-        effects: PENDING,
-        hidden: true,
+        blurb: "Build Lance Arrays: a heavy beam for destroyers up, ×1.7 a gun; Reflective Plating blunts it twice over.",
+        effects: &[Effect::UnlockModule(crate::module::ModuleKind::LanceArray)],
+        hidden: false,
     },
     Programme {
         id: "weap_strike_iii_breaching_ordnance",
@@ -1493,9 +1556,9 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Strike),
         tier: 5,
         name: "Overpressure Warheads",
-        blurb: "Torpedo kills splash 10% into the victim's stack (arrives with the combat pass).",
-        effects: PENDING,
-        hidden: true,
+        blurb: "A torpedo kill splashes 10% of its damage into the next hull of the victim's stack.",
+        effects: &[Effect::Flag(Cap::OverpressureWarheads)],
+        hidden: false,
     },
     // ⑂ COUNTERMEASURES (gate: absorb 150 hull-mass of damage)
     Programme {
@@ -1514,8 +1577,8 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Countermeasures),
         tier: 3,
         name: "Ablative Refits",
-        blurb: "Reflective blunt 0.35 → 0.45.",
-        effects: &[Effect::Mods(&[(ModKey::ReflectBlunt, 0.45 / 0.35)])],
+        blurb: "Reflective Plating blunts 60% of a beam hit, not 50%.",
+        effects: &[Effect::Mods(&[(ModKey::ReflectBlunt, 0.60 / 0.50)])],
         hidden: false,
     },
     Programme {
@@ -1525,7 +1588,7 @@ pub const CATALOG: &[Programme] = &[
         tier: 3,
         name: "Defense Stations",
         blurb: "Raise an Orbital Battery to a Defense Station: three hardpoints. Needs an Ordnance Foundry in the system.",
-        effects: &[Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 3)],
+        effects: &[Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 4)],
         hidden: false,
     },
     Programme {
@@ -1544,8 +1607,8 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Countermeasures),
         tier: 4,
         name: "Spall Liners",
-        blurb: "Whipple blunt 0.45 → 0.55.",
-        effects: &[Effect::Mods(&[(ModKey::WhippleBlunt, 0.55 / 0.45)])],
+        blurb: "Whipple Shields blunt 70% of a driver hit, not 60%.",
+        effects: &[Effect::Mods(&[(ModKey::WhippleBlunt, 0.70 / 0.60)])],
         hidden: false,
     },
     Programme {
@@ -1555,7 +1618,7 @@ pub const CATALOG: &[Programme] = &[
         tier: 5,
         name: "Grand Batteries",
         blurb: "Raise a Defense Station to a Citadel (needs an Orbital Shipyard), and your side opens with +25% damage in battles your stations fight.",
-        effects: &[Effect::Flag(Cap::GrandBatteries), Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 4)],
+        effects: &[Effect::Flag(Cap::GrandBatteries), Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 5)],
         hidden: false,
     },
     Programme {
@@ -1565,7 +1628,7 @@ pub const CATALOG: &[Programme] = &[
         tier: 5,
         name: "Star Fortress",
         blurb: "Raise a Citadel to a Star Fortress: six heavy batteries, more than a Titan can take alone. One per corporation; needs a Capital Slipway in the system.",
-        effects: &[Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 5)],
+        effects: &[Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 6)],
         hidden: false,
     },
     Programme {
@@ -1574,7 +1637,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Countermeasures),
         tier: 5,
         name: "Citadel Compartments",
-        blurb: "Your warships' damage pools run 20% deeper.",
+        blurb: "Your warships take 20% more hitting to sink.",
         effects: &[Effect::Mods(&[(ModKey::DamagePoolDepth, 1.20)])],
         hidden: false,
     },
@@ -1621,7 +1684,7 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 1,
         name: "Reinforced Frames",
-        blurb: "Warship hull mass +10% — tougher in the attrition math.",
+        blurb: "Your warships take 10% more hitting to sink.",
         effects: &[Effect::Mods(&[(ModKey::HullMass, 1.10)])],
         hidden: false,
     },
@@ -1642,7 +1705,7 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 2,
         name: "Rapid Rearm",
-        blurb: "Damage pools recover faster at friendly Shipyards.",
+        blurb: "Yards repair your hulls 25% faster.",
         effects: &[Effect::Mods(&[(ModKey::RearmRate, 1.25)])],
         hidden: false,
     },
@@ -1665,7 +1728,7 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 2,
         name: "Compartmentalization",
-        blurb: "Warship damage pools run 10% deeper.",
+        blurb: "Your warships take 10% more hitting to sink.",
         effects: &[Effect::Mods(&[(ModKey::DamagePoolDepth, 1.10)])],
         hidden: false,
     },
@@ -1676,7 +1739,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Line),
         tier: 3,
         name: "Hardened Anchorage",
-        blurb: "Anchored fleets at owned systems take −15% damage.",
+        blurb: "Your hulls fighting at your own systems take 15% less damage.",
         effects: &[Effect::Mods(&[(ModKey::AnchoredDmgTaken, 0.85)])],
         hidden: false,
     },
@@ -1696,7 +1759,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Line),
         tier: 4,
         name: "Fleet Escorts",
-        blurb: "Freighters under Corvette escort take −25% raid damage.",
+        blurb: "Your freighters take 25% less damage while a Corvette of yours fights beside them.",
         effects: &[Effect::Mods(&[(ModKey::EscortedConvoyRaidDmg, 0.75)])],
         hidden: false,
     },
@@ -1770,7 +1833,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Corsair),
         tier: 3,
         name: "Wolfpack Doctrine",
-        blurb: "Raider stacks +15% attack per additional raider stack, capped ×2.",
+        blurb: "+15% Raider damage for each further fleet of your Raiders in a battle, to ×2.",
         effects: &[Effect::Mods(&[(ModKey::WolfpackPerStack, 1.15)])],
         hidden: false,
     },
@@ -1780,7 +1843,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Corsair),
         tier: 3,
         name: "Prize Holds",
-        blurb: "Raids steal +50% cargo.",
+        blurb: "Blockades strip 50% faster; Combat Freighters hold 50% more.",
         effects: &[Effect::Mods(&[(ModKey::RaidSteal, 1.50)])],
         hidden: false,
     },
@@ -1790,7 +1853,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Corsair),
         tier: 4,
         name: "Slip Anchors",
-        blurb: "Raiders disengage with −50% exposure.",
+        blurb: "Raiders take half damage withdrawing; Raider fleets slip away in half the time.",
         effects: &[Effect::Mods(&[(ModKey::RaiderDisengageExposure, 0.50)])],
         hidden: false,
     },
@@ -1810,9 +1873,9 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Corsair),
         tier: 5,
         name: "Salvage Rigs",
-        blurb: "Wreck module salvage (deferred).",
+        blurb: "Win a battle and your freighters haul a quarter of the enemy's lost modules out of the wrecks, as crates.",
         effects: &[Effect::Flag(Cap::SalvageRigs)],
-        hidden: true,
+        hidden: false,
     },
     Programme {
         id: "hull_corsair_v_boarding_parties",
@@ -1820,9 +1883,9 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Corsair),
         tier: 5,
         name: "Boarding Parties",
-        blurb: "Capture intercepted cargo (deferred).",
+        blurb: "A convoy your raid strips is boarded: its freighters join you as a prize fleet.",
         effects: &[Effect::Flag(Cap::BoardingParties)],
-        hidden: true,
+        hidden: false,
     },
     // ═══════════════════ 6 · LIFE & HABITATION ═══════════════════
     // Shared I
@@ -1873,7 +1936,7 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 2,
         name: "Cryo Berths",
-        blurb: "Colony ships arrive at half capacity.",
+        blurb: "Colony ships land with a Habitat I.",
         effects: &[Effect::Flag(Cap::CryoBerths)],
         hidden: false,
     },
@@ -1897,9 +1960,9 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Growth),
         tier: 3,
         name: "Orbital Habitats",
-        blurb: "Habitat buildable on station bodies (arrives with the habitat pass).",
-        effects: PENDING,
-        hidden: true,
+        blurb: "Habitats house at least as on a Marginal world, anywhere; gas giants gain a habitat site.",
+        effects: &[Effect::Flag(Cap::OrbitalHabitats)],
+        hidden: false,
     },
     Programme {
         id: "life_growth_iii_boom_charters",
@@ -1917,7 +1980,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Growth),
         tier: 4,
         name: "Xenoacclimation",
-        blurb: "Marginal body kinds become colonizable.",
+        blurb: "Your Marginal worlds count as habitable: +1 Infrastructure site, Bioharvesters, Agricultural Export.",
         effects: &[Effect::Flag(Cap::Xenoacclimation)],
         hidden: false,
     },
@@ -1947,7 +2010,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Growth),
         tier: 5,
         name: "Generation Charters",
-        blurb: "Colony ships carry one specialist and arrive WellSupplied.",
+        blurb: "Colony ships land a specialist and 30 min of Provisions.",
         effects: &[Effect::Flag(Cap::GenerationCharters)],
         hidden: false,
     },
@@ -1958,7 +2021,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Talent),
         tier: 3,
         name: "Expert Training",
-        blurb: "Unlocks the 2.25× expert specialist tier.",
+        blurb: "Academies raise specialists to experts (×2.25 at a full line).",
         effects: &[Effect::Flag(Cap::ExpertTraining)],
         hidden: false,
     },
@@ -1988,7 +2051,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Talent),
         tier: 4,
         name: "Broad Curricula",
-        blurb: "Academies run 2 concurrent training jobs.",
+        blurb: "Academies teach 2 courses at once.",
         effects: &[Effect::Flag(Cap::BroadCurricula)],
         hidden: false,
     },
@@ -1998,7 +2061,7 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Talent),
         tier: 5,
         name: "Twin Campuses",
-        blurb: "Each Habitat tier houses +1 specialist.",
+        blurb: "Each Habitat tier houses 3 specialists, not 2.",
         effects: &[Effect::Flag(Cap::TwinCampuses)],
         hidden: false,
     },
@@ -2188,6 +2251,47 @@ pub fn unlocked_structure_tier(state: &ResearchState, kind: StructureKind) -> u3
 
 #[cfg(test)]
 mod tests {
+    /// §research-wiring (R2, Oct 22 2026): every effect a visible programme
+    /// grants is read somewhere outside this file, in the sim or the server,
+    /// so no programme costs research time for nothing. A new key or flag
+    /// fails here until something reads it.
+    #[test]
+    fn every_visible_effect_has_a_reader() {
+        fn sources(dir: &std::path::Path, out: &mut String) {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    sources(&path, out);
+                } else if path.extension().is_some_and(|e| e == "rs") && !path.ends_with("research.rs") {
+                    out.push_str(&std::fs::read_to_string(&path).unwrap());
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut code = String::new();
+        sources(&root.join("src"), &mut code);
+        sources(&root.join("../server/src"), &mut code);
+        let mut inert = Vec::new();
+        for p in CATALOG.iter().filter(|p| !p.hidden) {
+            for effect in p.effects {
+                let keys: Vec<String> = match effect {
+                    Effect::Mods(mods) => mods.iter().map(|(k, _)| format!("ModKey::{k:?}")).collect(),
+                    Effect::Flag(cap) => vec![format!("Cap::{cap:?}")],
+                    _ => Vec::new(),
+                };
+                for key in keys {
+                    let read = code.match_indices(&key).any(|(at, _)| {
+                        !code[at + key.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '_')
+                    });
+                    if !read {
+                        inert.push(format!("{} ({key})", p.id));
+                    }
+                }
+            }
+        }
+        assert!(inert.is_empty(), "programmes with an effect nothing reads: {inert:#?}");
+    }
+
     use super::*;
 
     /// Metrics reader that reports nothing satisfied (for gate tests).
@@ -2308,12 +2412,11 @@ mod tests {
                 "capital tier {t} belongs to Line"
             );
         }
-        // Deferred capabilities plus the six not-yet-functional designs.
+        // §research-wiring (Oct 22 2026): nothing is hidden; every programme
+        // has its gameplay (the reader test guards the effects).
         let hidden: Vec<&str> = CATALOG.iter().filter(|p| p.hidden).map(|p| p.id).collect();
-        assert_eq!(hidden.len(), 8);
-        assert!(CATALOG.iter().filter(|p| p.effects == PENDING).all(|p| p.hidden));
-        // Every catalog id resolves and every non-hidden one is visible.
-        assert_eq!(visible_ids().count(), 111);
+        assert!(hidden.is_empty(), "{hidden:?}");
+        assert_eq!(visible_ids().count(), 119);
         let capstone = programme("mat_foundry_vi_antimatter_synthesis").unwrap();
         assert_eq!((capstone.tier, capstone.school), (6, Some(School::Foundry)));
         assert_eq!(tier_gate(Field::Materials, Some(School::Foundry), 6),
@@ -2387,7 +2490,7 @@ mod tests {
         );
         assert!(
             !is_available("hull_corsair_v_salvage_rigs", &st, &no_metrics, 0.0),
-            "hidden is never researchable"
+            "a tier V programme waits for its ladder"
         );
         assert!(!is_available("nonexistent", &st, &no_metrics, 0.0));
     }

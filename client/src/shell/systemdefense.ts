@@ -3,8 +3,8 @@ import { defenseOrderBlock, DEFENSE_RADII, systemDefense } from "../core/derive/
 import { shipKindLabel } from "../core/derive/fleet";
 import { blockadeBrief } from "../core/derive/blockade";
 import { fleetReadiness } from "../core/derive/readiness";
-import { countClassLabel, fleetExactCount, type ClientMsg, type ModuleKind, type SystemInfo, type SystemStateView } from "../protocol";
-import { MOUNT_MODULES, mountFitError, mountLabel, mountStatus, refitCrates, stationArtUrl, stationSummary } from "../core/derive/station";
+import { fleetCountLabel, fleetExactCount, type ClientMsg, type ModuleKind, type SystemInfo, type SystemStateView } from "../protocol";
+import { MOUNT_MODULES, mountFitError, mountLabel, mountStatus, refitCrates, STATION_LEVELS, stationArtUrl, stationSummary } from "../core/derive/station";
 import { label } from "../icons";
 
 /** A hardpoint refit being composed (nothing is sent before Confirm). */
@@ -35,23 +35,26 @@ export function systemDefenseHtml(st: ViewState, system: SystemInfo, report: Sys
       : post ? local ? "On station" : "Assigned · under way" : g.defend_system ? "Local · defending elsewhere" : "Local · unassigned";
     const readiness = `${r.hull === null ? "Hull unknown" : `${Math.round(r.hull * 100)}% hull`} · ${r.fuel === null ? "Fuel unknown" : `${Math.floor(r.fuel)} ${label(r.fuelKind)}`} · report ${Math.ceil(g.age)}s old`;
     const repairReason = block || (g.damage == null || g.damage <= .0001 ? "No reported damage" : "")
-      || (!yard ? "Needs a staffed, supplied Ordnance Foundry" : "")
+      || (!yard ? "Needs a staffed, supplied Shipyard or Ordnance Foundry" : "")
       || (yard && (g.docked === yard.id || g.docked === `E${yard.id}`) ? "Already at repair yard" : "");
     return `<div class="system-defense-row"><div><b>${esc(name(g))}</b><small>${status}${post ? ` · ${g.defend_system!.radius.toLocaleString()} su limit` : ""}</small><small>${esc(readiness)}</small></div><div class="system-defense-actions">${button("open", "Select", g.id)}${button("repair", "Repair", g.id, repairReason)}${post ? button("release", "Release", g.id, block) : ""}</div>${block ? `<small>${esc(block)}</small>` : ""}</div>`;
   }).join("");
   const pending = d.pending.map(o => `<div class="${muted}">Defense assignment sent · fleet ${esc(o.fleet_id)} · awaiting report</div>`).join("");
-  const contacts = d.contacts.map(g => `<div class="system-defense-row"><div><b>${g.pirate ? "Pirate" : "Rival"} ${esc(shipKindLabel(g.kind))}</b><small>${fleetExactCount(g) ?? countClassLabel(g.count_class)} ships · report ${Math.ceil(g.age)}s old</small></div></div>`).join("");
+  const contacts = d.contacts.map(g => `<div class="system-defense-row"><div><b>${g.pirate ? "Pirate" : "Rival"} ${esc(shipKindLabel(g.kind))}</b><small>${fleetExactCount(g) ?? fleetCountLabel(g)} ships · report ${Math.ceil(g.age)}s old</small></div></div>`).join("");
   const choices = d.candidates.map(g => `<div class="system-defense-row"><div><b>${esc(name(g))}</b><small>${g.defend_system ? `Defending another system` : g.guard_target ? "Guarding a fleet" : "Available assignment"}</small></div>${button("assign", "Assign", g.id, defenseOrderBlock(st, g))}</div>`).join("");
   const limits = DEFENSE_RADII.map(r => `<button type="button" ${act}="defense-radius" data-system="${esc(system.id)}" data-radius="${r}" aria-pressed="${r === radius}">${(r / 1000).toFixed(0)},000 su</button>`).join("");
+  // Known threats show only once there is one (Peter, Oct 28 2026).
+  const threats = (report.blockade && st.galaxy ? `<div class="${muted}">${esc(blockadeBrief(report.blockade, st.simTime, st.galaxy.siege_secs, report.ground?.marines_needed).title)} · reported</div>` : "")
+    + contacts
+    + (d.warning ? `<div class="system-defense-actions"><small>Raid warning received at ${Math.floor(d.warning.at_time)}s</small>${button("log", "View report")}</div>` : "");
   const fixed = report.station ? stationSummary(report.station)
     : d.platforms ? `${d.platforms} platform tier${d.platforms === 1 ? "" : "s"}` : "No station";
   return `<section class="${section} system-defense"><header><h3>Defense</h3><span>${esc(fixed)} · ${d.local.length} local fleet${d.local.length === 1 ? "" : "s"}</span></header>
     ${stationHtml(st, system, report, act, muted, draft)}
     ${rows || `<div class="${muted}">No defenders reported here.</div>`}${pending}
     ${button("toggle", assigning ? "Hide assignments" : "Assign a fleet")}${assigning ? `<div><small>New assignment · pursuit limit from this system</small><div class="system-defense-actions">${limits}</div>${choices || `<div class="${muted}">No other combat fleets.</div>`}</div>` : ""}
-    <div class="system-defense-actions">${button("build", "Build defenses")}${button("doctrine", "Retreat policy")}</div>
-    <h4>Known threats</h4>${report.blockade && st.galaxy ? `<div class="${muted}">${esc(blockadeBrief(report.blockade, st.simTime, st.galaxy.siege_secs, report.ground?.marines_needed).title)} · reported</div>` : ""}${contacts || `<div class="${muted}">No nearby armed contacts reported.</div>`}
-    ${d.warning ? `<div class="system-defense-actions"><small>Raid warning received at ${Math.floor(d.warning.at_time)}s</small>${button("log", "View report")}</div>` : ""}
+    <div class="system-defense-actions">${button("doctrine", "Retreat policy")}</div>
+    ${threats ? `<h4>Known threats</h4>${threats}` : ""}
     </section>`;
 }
 
@@ -62,17 +65,15 @@ function stationHtml(st: ViewState, system: SystemInfo, report: SystemStateView,
   const station = report.station;
   const option = st.galaxy?.build_options?.find((o) => o.key === "orbital_defense");
   const done = (id: string | null | undefined): boolean => !id || !!st.research?.programmes.some((p) => p.id === id && p.state === "completed");
-  const researchName = (id: string) => st.research?.programmes.find((p) => p.id === id)?.name ?? label(id);
   const button = (action: string, text: string, extra = "", reason = "") =>
     `<button type="button" ${act}="defense-${action}" data-system="${esc(system.id)}"${extra}${reason ? ` disabled title="${esc(reason)}"` : ""}>${esc(text)}</button>`;
   const next = option?.tiers?.find((t) => t.tier === (station?.level ?? 0) + 1);
-  const nextNeeds = next ? [
-    !done(next.research_prerequisite) ? `${researchName(next.research_prerequisite!)} research` : "",
-    next.requires && (report.structures?.[next.requires.yard] ?? 0) < next.requires.tier ? `${label(next.requires.yard)} tier ${next.requires.tier} in the system` : "",
-  ].filter(Boolean) : [];
-  const nextHtml = next
-    ? `<div class="system-station-next"><small>Next: <b>${esc(next.label)}</b> · ${esc(next.description)}${nextNeeds.length ? ` Needs ${esc(nextNeeds.join(" and "))}.` : ""}</small>${button("build", station ? `Raise to ${next.label}` : `Build a ${next.label}`)}</div>`
-    : station ? `<small class="${muted}">The Star Fortress is the top of the ladder.</small>` : "";
+  // §unlocks: a level research hasn't opened isn't shown (Peter, Oct 28 2026);
+  // the build sheet explains anything else (a yard).
+  const nextHtml = !next ? station ? `<small class="${muted}">The Star Fortress is the top of the ladder.</small>` : ""
+    : done(next.research_prerequisite)
+      ? `<div class="system-station-next"><small title="${esc(next.description)}">Next: <b>${esc(next.label)}</b></small>${button("build", station ? `Raise to ${next.label}` : `Build a ${next.label}`)}</div>`
+      : "";
   if (!station) return nextHtml;
   const lances = done("weap_strike_iv_platform_lances");
   const foundry = (report.structures?.ordnance_foundry ?? 0) > 0;
@@ -99,7 +100,7 @@ function stationHtml(st: ViewState, system: SystemInfo, report: SystemStateView,
       ${blocked ? `<small>${esc(blocked)}</small>` : ""}
       <div class="system-defense-actions">${button("refit-confirm", `Refit hardpoint ${i + 1}`, ` data-mount="${i}"`, blocked)}${button("refit-cancel", "Cancel")}</div></div>`;
   }).join("");
-  return `<div class="system-station"><img src="${stationArtUrl(station.level, 256)}" alt="${esc(station.name)}" width="72" height="72"><div><b>${esc(station.name)}</b><small>Level ${station.level} of 5 · ${esc(stationSummary(station))}</small></div></div>${rows}${nextHtml}`;
+  return `<div class="system-station"><img src="${stationArtUrl(station.level, 256)}" alt="${esc(station.name)}" width="72" height="72"><div><b>${esc(station.name)}</b><small>Level ${station.level} of ${STATION_LEVELS} · ${esc(stationSummary(station))}</small></div></div>${rows}${nextHtml}`;
 }
 
 /** The refit editor's actions, shared by both shells: the next draft (null

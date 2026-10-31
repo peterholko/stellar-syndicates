@@ -9,7 +9,7 @@ import { Application, Assets, ColorMatrixFilter, Container, Graphics, Sprite, Te
 import { label } from "./icons";
 import { battleRecordMarkKey, reportMarkKey } from "./battlehistory";
 import type { BodyView, GalaxyInfo, GhostView, NebulaInfo, NebulaKind, PathPointView, ShipKind, SystemInfo, SystemStateView, Vec2 } from "./protocol";
-import { countClassLabel, fleetCargoManifest, fleetExactCount, PLAYER_FREIGHTERS, isPlayerFreighter } from "./protocol";
+import { fleetCountLabel, fleetCargoManifest, fleetExactCount, PLAYER_FREIGHTERS, isPlayerFreighter, TRADER_SHIP_ART, traderShipArt, type TraderShipArt } from "./protocol";
 import { JUMP_DEPARTURE_TTL_S, liveSimTime, type ViewState } from "./state";
 import { hashId } from "./prng";
 import { STAR_TYPES, starTypeFor } from "./stars";
@@ -17,10 +17,17 @@ import { starArtwork } from "./starart";
 import { StarTextureCache } from "./startextures";
 import { COMBAT_HULL_LENGTH_SCALE, fleetArtKind, shipArtwork, shipArtUrl, type ShipArtKind } from "./shipart";
 import { SHIP_FORMATIONS } from "./ship-art.generated";
-import { buildVisualSystem, SystemViewScene, type CameraRect, type SystemBodyDetail, type SystemScenePick } from "./systemview";
-import { deriveSystemPicture, type SystemPicture } from "./systemtraffic";
-import { DOCK_RADIUS_SU, NEAR_INNER, NEAR_ZONE_SU, ORBIT_TILT, nearRadius, orbitalAngle, planetPeriod, systemShipPx } from "./systemlayout";
-import { terminatorTexture, towardStarRotation } from "./systembodyfx";
+import { beltChunkUrl, beltKind, buildVisualSystem, SystemViewScene, type CameraRect, type SystemBodyDetail, type SystemScenePick } from "./systemview";
+import { TrackingInset, type TrackingTarget, type TrackingWork } from "./trackinginset";
+import { deriveSystemPicture, trackedHull, type SystemPicture } from "./systemtraffic";
+import { traderOf } from "./core/derive/trader";
+import { contactBadgePx } from "./core/derive/map-markers";
+import { pirateNames, PRIVATEER_HUNT_SU } from "./core/derive/vendetta";
+import { searchZone } from "./core/derive/season";
+import { NEAR_ZONE_SU, ORBIT_TILT, SYSTEM_UNIT_SU, orbitalAngle, planetPeriod, systemShipPx } from "./systemlayout";
+import { ringSlot } from "./systemtrafficlayer";
+import { loadNameLayers, nameLayerOf, type NameLayers } from "./core/map-layers";
+import { terminatorTexture } from "./systembodyfx";
 import { starSpinAngle } from "./systemstarfx";
 import { planetArtwork } from "./planetart";
 import { shipKindLabel } from "./core/derive/fleet";
@@ -51,6 +58,17 @@ export type MapViewMode =
 // the established 480ms click/Esc/battle motion; a system handoff can instead
 // let the wheel drive the same progress, easing, camera, and alpha curves.
 const TRANS_MS = 480;
+/** Nebula haze over a star inside public nebula terrain, by nebula kind. */
+const NEBULA_HAZE: Partial<Record<NebulaKind, number>> = {
+  molecular_cloud: 0x68b8a7, ion_nebula: 0x65aee8, dust_cloud: 0x98745f,
+  supernova_remnant: 0xe27a55, precursor_cloud: 0xa887e8,
+};
+/** §raid-camera: the longest it follows a raid (ms), and how long it waits
+ * for a raider gone from the picture (destroyed, or lost) before ending. */
+const RAID_CAMERA_MAX_MS = 5 * 60_000;
+const RAID_CAMERA_LOST_MS = 10_000;
+/** §raid-camera: its first frame places the hull, then frames its length. */
+const RAID_FIRST_LOOK: TrackingTarget = { x: 0, y: 0, px: 36, lx: 0, ly: 0, title: "", color: 0 };
 const GALAXY_OVERSHOOT = 1.6; // system handoff: separations keep opening as the galaxy fades
 const SCHEMATIC_GROW_FROM = 0.35; // system handoff: planets arrive outward from their star
 const easeInOut = (t: number): number => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
@@ -96,6 +114,9 @@ const COL_TCA = 0x7fa6c8;
 // §node: EXOTIC NODES — a VIOLET exotic accent, distinct from every faction hue.
 // The glyph marks a node; ownership stays on the system label.
 const COL_NODE = 0xb98cff;
+/** §season: bearings, their search zone and the sealed Precursor worlds. */
+const COL_BEARING = 0xe8c26a;
+const COL_PRECURSOR = 0xf0d48a;
 const COL_ANCHOR_OWN = 0x9be7ff;
 const COL_ANCHOR_OTHER = 0xcf9b6b;
 const COL_COMMAND = 0xc56bff; // outbound order comet (violet)
@@ -146,6 +167,24 @@ const SYSTEM_FADE_SPLIT = 0.6;
 // galaxy origin. At 4× the home, its sensor neighbourhood, and usually
 // the Market Hub all read together on both desktop and portrait phones.
 const INITIAL_HOME_ZOOM_FACTOR = 4;
+/// §home-step: an automatic fly-in to a star's doorway zooms at an even pace,
+/// this long per doubling (within the bounds), then the handoff unfolds the
+/// System View over FLY_HANDOFF_MS.
+const FLY_MS_PER_DOUBLING = 300;
+const FLY_MIN_MS = 600;
+const FLY_MAX_MS = 1_800;
+const FLY_HANDOFF_MS = 600;
+/// §raid-frame (Peter, Oct 27 2026): the raid's first sighting flies the map
+/// once onto the raided home's star and the raider, in the map below the raid
+/// window: the flight's length, the share of that space their separation
+/// spans, its margin (px), and its deepest zoom: short of the 96× doorway (the
+/// System View stays the player's), past where hulls near a star have shrunk
+/// to its scale (64×), so a raider a few thousand su out never covers the
+/// star. Tunable.
+const RAID_FRAME_MS = 800;
+const RAID_FRAME_SHARE = 0.5;
+const RAID_FRAME_MARGIN = 12;
+const RAID_FRAME_MAX_ZOOM = 80;
 const MACHINE_ZOOM_END = 24;
 // Battle markers keep the old semantic doorway (0.62 × the former 24× max).
 // Extending the system approach must not push battle entry four times deeper.
@@ -301,7 +340,7 @@ const SHIP_SYSTEM_SCALE_FULL = 64;
 // Fully system-sized inside the star's near zone; back to full size this far out.
 const SHIP_SYSTEM_CLEAR_SU = 4 * NEAR_ZONE_SU;
 // §hub-approach: beside the Market Hub hulls take the same System View size,
-// so the Authority Nexus dwarfs the fleets around it. Measured in the station's
+// so the Wormhole Hub dwarfs the fleets around it. Measured in the station's
 // displayed radii (the zone follows the station the player sees): eased fully
 // within this many radii of its centre, back to full size by the outer bound.
 const HUB_NEAR_RADII = 3;
@@ -318,6 +357,7 @@ const SHIP_CLASS_MAX_PX: Partial<Record<ShipKind, number>> = {
   // §belts: the barge (mass 3,500) sits between the Small and Medium Freighters;
   // the station (12,000) between the Large and Heavy.
   mining_barge: 110, mining_belt_station: 180,
+  combat_freighter: 90, // §holds: mass 2,000, between the Tiny and Small
   scout: 72,
   ...Object.fromEntries(Object.entries(COMBAT_HULL_LENGTH_SCALE)
     .filter(([kind]) => kind !== "raider")
@@ -346,10 +386,15 @@ const BATTLE_MARKER_PX = 44; // capture icon size on screen
 const BATTLE_MARKER_TTL_S = 1800; // hide CAPTURE markers learned > 30 min ago (tunable)
 const BATTLE_MARKER_HIT_PX = 24; // capture-marker click radius
 const BATTLE_ONGOING_PX = 72; // resting map footprint; active pulse peaks at ~86px
+/** Distinct fights in one place fan out to at most this many extra slots. */
+const BATTLE_FAN_MAX = 2;
+/** A concluded battle's map marker lasts this many sim seconds after its last
+ * round, fading over the final third; the Log's Battles tab keeps the record. */
+const BATTLE_HISTORY_TTL_S = 1_800;
 const BATTLE_PULSE_PERIOD_MS = 1_400; // noticeable, smooth active-battle breathing, in wall time
 const BATTLE_PULSE_SCALE = 0.20; // 20% growth stays within the fixed hit radius; history stays fixed
-// §aftermath-fade (captures only — battle markers are steady and live as long
-// as their record is served): a capture marker fades with time since the
+// §aftermath-fade (captures only — battle markers keep their own clock,
+// BATTLE_HISTORY_TTL_S): a capture marker fades with time since the
 // viewer's report ARRIVED — full (with the fresh pulse) at first, a smooth
 // decay over AFTERMATH_FADE_SECS down to AFTERMATH_FLOOR_ALPHA, then held at
 // that floor (still selectable) until BATTLE_MARKER_TTL_S removes it. Tunable.
@@ -452,9 +497,10 @@ const HUB_SIZE_STOPS = [
   { zoom: MACHINE_ZOOM_END, px: 120 },
   { zoom: SYSTEM_ZOOM_FACTOR, px: 180 },
 ] as const;
-// The Authority Nexus top-down sprite: widest visible span at alpha >= 128 /
-// canvas width. Keep this measured calibration separate from the display sizes.
-const HUB_ART_FILL = 1198 / 1254;
+// The Wormhole Hub's top-down sprite: widest visible span at alpha >= 128 (its
+// spires, top to bottom) / canvas width. Keep this measured calibration
+// separate from the display sizes.
+const HUB_ART_FILL = 1230 / 1254;
 
 export class Renderer {
   private app = new Application();
@@ -475,6 +521,15 @@ export class Renderer {
   private explorationLayer = new ExplorationLayer();
   private signalMarkers = new SignalMarkerLayer();
   private lastSignals: ViewState["signals"] | null = null;
+  /** §privateer-hunt: the privateer's last known position, an amber "?". */
+  /** §season: relic bearings, the search zone and sealed worlds. */
+  private seasonLayer = new Container();
+  private seasonGfx = new Graphics();
+  private seasonLabels: Text[] = [];
+  private lastSeenLayer = new Container();
+  private lastSeenGfx = new Graphics();
+  private lastSeenMark = new Text({ text: "?", style: { fontFamily: "sans-serif", fontSize: 11, fontWeight: "700", fill: COL_PIRATE } });
+  private lastSeenLabel = new Text({ text: "", style: { fontFamily: "sans-serif", fontSize: 11, fill: COL_PIRATE } });
   private nebulaSprites = new Map<number, NebulaSprite>();
   private nebulaTex = new Map<NebulaKind, Texture>();
   /// §emplacements: coverage/fallback glyphs, dedicated structure art, then
@@ -541,6 +596,10 @@ export class Renderer {
   private captureHits: { id: number; sx: number; sy: number }[] = []; // §Part 2 capture markers
   private ghostsLayer = new Container();
   private reacquireGfx = new Graphics();
+  /** §research-wiring Predictive Plots: moving rivals projected to now. */
+  private projectionGfx = new Graphics();
+  /** §raid-frame: the tracked raider's course to the home it closes on. */
+  private raidCourseGfx = new Graphics();
   private reacquireFx: ReacquireFx[] = [];
   private rivalJumpArrivalGfx = new Graphics();
   private rivalJumpArrivalFx: RivalJumpArrivalFx[] = [];
@@ -553,6 +612,8 @@ export class Renderer {
   // renderer remains pixel-identical for mobile and the legacy shell.
   private deckSaliencyGfx = new Graphics();
   private deckSaliencyEnabled = false;
+  /// §map-layers: which systems' names the map shows (yours always).
+  private nameLayers: NameLayers = loadNameLayers();
   private deckWorldPing: { pos: Vec2; startedMs: number } | null = null;
   private ghosts = new Map<string, GhostSprite>();
   private shipModels = new MapShipModels();
@@ -586,7 +647,8 @@ export class Renderer {
   private freightTextures = new Map<ShipKind, Texture | null>();
   private texAuthorityFreighter: Texture | null = null;
   /** §merchant: the free trader's own hull art (it flies an Authority Freighter). */
-  private texFreeTrader: Texture | null = null;
+  /** §traders: each free trader's own ship, by its art kind. */
+  private traderTextures = new Map<TraderShipArt, Texture | null>();
   private texRaider: Texture | null = null;
   private texPrivateer: Texture | null = null;
   private texPirateCorsair: Texture | null = null;
@@ -622,6 +684,16 @@ export class Renderer {
 
   // The schematic System View scene (its own camera). Presentation only.
   private systemScene = new SystemViewScene();
+  /// §tracking: the System View's small zoomed camera on the selected fleet
+  /// (the desktop deck turns it on). It draws a scene of its own, kept in step
+  /// with the orrery's data but never with its camera.
+  private trackingInset = new TrackingInset();
+  private trackingScene = new SystemViewScene({ tracking: true });
+  private trackingInsetOn = false;
+  /// §raid-camera: the incoming raider the tracking window follows, and its home.
+  private raid: { id: string; systemId: string; sinceMs: number; seenMs: number } | null = null;
+  /// §raid-frame: the window's note while the raider is still inbound.
+  private raidNote: string | null = null;
   private mode: MapViewMode = { type: "galaxy" };
   private transition: Transition | null = null;
   /// Semantic progress: 0 = galaxy endpoint, 1 = system/battle endpoint. Timed
@@ -643,7 +715,16 @@ export class Renderer {
   private renderedFrames = 0;
   private cx = 0;
   private cy = 0;
-  private cameraTween: { fromX: number; fromY: number; toX: number; toY: number; started: number; duration: number } | null = null;
+  /// A timed camera move: `anchor` (a world point) slides on screen from
+  /// where `from` draws it to where `to` does while the zoom changes at an
+  /// even pace, so a pan alone moves the map in a straight line.
+  private cameraTween: { from: { cx: number; cy: number; scale: number }; to: { cx: number; cy: number; scale: number };
+    anchor: Vec2; started: number; duration: number } | null = null;
+  /// §home-step: a fly-in to a star's doorway (`flyIntoSystem`), then the
+  /// handoff it hands on to, paced by the clock rather than a wheel.
+  private flight: { sys: SystemInfo; bodies: BodyView[]; from: { cx: number; cy: number; scale: number }; fromStar: Vec2;
+    started: number; duration: number } | null = null;
+  private flightHandoff: { started: number } | null = null;
   /// The first served View for a login establishes the useful home-region
   /// camera once. Ordinary reconnects retain the player's pan/zoom; an explicit
   /// sign-out clears playerId and arms the next login again.
@@ -665,6 +746,10 @@ export class Renderer {
   /// owned by main.ts; the range ring always anchors to its served ghost.
   jumpAimingShipId: string | null = null;
   private lastStateVersion = -1;
+  /// §real-coordinates: this frame's view, and the system pictures computed
+  /// for stars being dived into (where their resting ships sit in the rings).
+  private frameState: ViewState | null = null;
+  private divePictures = new Map<string, SystemPicture | null>();
   private lastSelShip: string | null = null;
   private lastMultiSel = "";
   private lastSelSystem: string | null = null;
@@ -708,11 +793,15 @@ export class Renderer {
       this.operationLayer.root, // known contract/objective sites, under routes and fleets
       this.explorationLayer.root,
       this.signalMarkers.root, // §signals: private contacts near home
+      this.lastSeenLayer, // §privateer-hunt
+      this.seasonLayer, // §season: bearings and sealed worlds
       this.routesGfx, // visible convoy routes, under ghosts
       this.orderLayer,
       this.battleGfx, // battle selection brackets, under the ghosts
       this.aftermathLayer, // §battle-aftermath markers, under the ghosts
       this.reacquireGfx, // served jump discontinuity, beneath the fresh marker
+      this.projectionGfx, // §research-wiring Predictive Plots, under the ghosts
+      this.raidCourseGfx, // §raid-frame, under the ghosts
       this.ghostsLayer,
       this.rivalJumpArrivalGfx, // warning chevrons must remain legible over the arrival
       this.signalsLayer,
@@ -728,8 +817,13 @@ export class Renderer {
     // Stage: persistent starfield (bottom) · galaxy scene · system scene (top,
     // hidden until entered). The HUD/breadcrumb/panels are DOM (the "hudRoot"),
     // and persist across both scenes.
-    this.app.stage.addChild(this.starfield, this.galaxyRoot, this.systemScene.root);
+    this.app.stage.addChild(this.starfield, this.galaxyRoot, this.systemScene.root, this.trackingInset.root);
     this.signalsLayer.addChild(this.signalsGfx);
+    this.lastSeenMark.anchor.set(0.5);
+    this.lastSeenLabel.anchor.set(0.5, 0);
+    this.lastSeenLayer.addChild(this.lastSeenGfx, this.lastSeenMark, this.lastSeenLabel);
+    this.seasonLayer.addChild(this.seasonGfx);
+    this.lastSeenLayer.visible = false;
     this.drawStarfield();
     // Load the art set (transparent PNGs from /art, bundled by Vite in dev + dist).
     // Non-blocking: the map draws (primitives) immediately and swaps to sprites the
@@ -785,6 +879,12 @@ export class Renderer {
     this.deckSaliencyEnabled = enabled;
     this.deckWorldPing = null;
     this.deckSaliencyGfx.clear();
+    this.stateVersion++;
+  }
+
+  /// §map-layers: show or hide system names by layer; redraws at once.
+  setNameLayers(layers: NameLayers): void {
+    this.nameLayers = { ...layers };
     this.stateVersion++;
   }
 
@@ -898,20 +998,20 @@ export class Renderer {
     this.texConvoy = convoy;
     this.texMiningBarge = miningBarge;
     this.texMiningBeltStation = miningBeltStation;
-    await Promise.all(PLAYER_FREIGHTERS.filter(kind => kind !== "convoy").map(async kind => {
+    const freightArtKinds: ShipKind[] = [...PLAYER_FREIGHTERS.filter(kind => kind !== "convoy"), "combat_freighter"];
+    await Promise.all(freightArtKinds.map(async kind => {
       this.freightTextures.set(kind, await loadShip(kind));
     }));
     this.texAuthorityFreighter = authorityFreighter;
     this.texRaider = raider;
     this.texPrivateer = privateer;
-    const [pirateCorsair, pirateBoarding, freeTrader] = await Promise.all([
+    const [pirateCorsair, pirateBoarding] = await Promise.all([
       load("/art/ship_sprites/npc-contractors/pirate_corsair.png"),
       load("/art/ship_sprites/npc-contractors/pirate_boarding_raider.png"),
-      loadShip("freighter", "free_trader"),
+      ...Object.values(TRADER_SHIP_ART).map(async art => this.traderTextures.set(art, await loadShip("freighter", art))),
     ]);
     this.texPirateCorsair = pirateCorsair;
     this.texPirateBoarding = pirateBoarding;
-    this.texFreeTrader = freeTrader;
     this.texCorvette = corvette;
     this.texColony = colony;
     this.texScout = scout;
@@ -1110,6 +1210,7 @@ export class Renderer {
   zoomAt(screenX: number, screenY: number, factor: number): void {
     if (!this.galaxy || this.isSystemScrubbing()) return;
     this.cameraTween = null;
+    this.flight = null;
     const before = this.screenToWorld(screenX, screenY);
     this.scale = this.clampScale(this.scale * factor);
     this.cx = screenX - before.x * this.scale;
@@ -1126,6 +1227,7 @@ export class Renderer {
   panBy(dx: number, dy: number): void {
     if (this.isSystemScrubbing()) return;
     this.cameraTween = null;
+    this.flight = null;
     this.cx += dx;
     this.cy += dy;
     this.userView = true;
@@ -1135,13 +1237,14 @@ export class Renderer {
   resetView(): void {
     if (this.isSystemScrubbing()) return;
     this.cameraTween = null;
+    this.flight = null;
     this.userView = false;
     this.recompute();
   }
 
-  private beginCameraTween(toX: number, toY: number, duration = 320): void {
+  private beginCameraTween(to: { cx: number; cy: number; scale: number }, anchor: Vec2, duration = 320): void {
     this.cameraTween = {
-      fromX: this.cx, fromY: this.cy, toX, toY,
+      from: { cx: this.cx, cy: this.cy, scale: this.scale }, to, anchor,
       started: performance.now(), duration,
     };
   }
@@ -1149,20 +1252,21 @@ export class Renderer {
   /// Smoothly focus a served world position without changing zoom. Roster rows
   /// use this rather than teleporting the map; any direct drag/zoom cancels it.
   centerOnWorld(pos: Vec2, duration = 320): void {
-    if (this.mode.type !== "galaxy" || this.transition || this.isSystemScrubbing()) return;
+    if (this.mode.type !== "galaxy" || this.transition || this.flight || this.isSystemScrubbing()) return;
     const rect = this.cameraRect;
     this.userView = true;
-    this.beginCameraTween(
-      rect.x + rect.w / 2 - pos.x * this.scale,
-      rect.y + rect.h / 2 - pos.y * this.scale,
-      duration,
-    );
+    this.beginCameraTween({
+      cx: rect.x + rect.w / 2 - pos.x * this.scale,
+      cy: rect.y + rect.h / 2 - pos.y * this.scale,
+      scale: this.scale,
+    }, pos, duration);
   }
 
   /** Keep an inspected target legible after chrome changes with the minimum
-   * possible pan. Zoom and every already-visible world point remain untouched. */
+   * possible pan. Zoom and every already-visible world point remain untouched.
+   * A camera move under way already brings it in. */
   ensureWorldVisible(pos: Vec2, margin = 48): void {
-    if (this.mode.type !== "galaxy" || this.transition || this.isSystemScrubbing()) return;
+    if (this.mode.type !== "galaxy" || this.transition || this.flight || this.cameraTween || this.isSystemScrubbing()) return;
     const rect = this.cameraRect;
     const shown = this.worldToScreen(pos);
     const left = rect.x + Math.min(margin, rect.w * 0.2);
@@ -1179,13 +1283,55 @@ export class Renderer {
     this.viewDirty = true;
   }
 
+  /// §raid-frame (Peter, Oct 27 2026): one camera move to a raid's first
+  /// sighting, holding the raided home's star and the raider together in the
+  /// map below the raid window. A way out of a System View (or a theater)
+  /// under way lands on it; on the galaxy it is one flight. The camera then
+  /// holds while the window follows the raider; a drag or zoom takes over.
+  frameRaid(raider: Vec2, home: Vec2): void {
+    const tr = this.transition;
+    if (this.mode.type !== "galaxy" || (tr && (tr.dir !== "out" || tr.driver !== "autopilot"))) return;
+    const to = this.raidFrameCamera(raider, home);
+    this.userView = true;
+    if (tr) {
+      tr.camTo = to;
+      if (tr.target === "system") tr.growFrom = this.handoffGrowFrom(to);
+      return;
+    }
+    this.flight = null;
+    this.beginCameraTween(to, { x: (raider.x + home.x) / 2, y: (raider.y + home.y) / 2 }, RAID_FRAME_MS);
+  }
+
+  /// §raid-frame: the camera centring `home` and `raider` in the map below the
+  /// raid window (all of it without one), their separation about half that
+  /// space, never deeper than RAID_FRAME_MAX_ZOOM.
+  private raidFrameCamera(raider: Vec2, home: Vec2): { cx: number; cy: number; scale: number } {
+    const rect = this.cameraRect;
+    const inset = this.trackingInsetOn ? this.trackingInset.place(rect, "center") : null;
+    const top = inset ? inset.y + inset.h : rect.y;
+    const w = Math.max(1, rect.w - 2 * RAID_FRAME_MARGIN);
+    const h = Math.max(1, rect.y + rect.h - top - 2 * RAID_FRAME_MARGIN);
+    const fit = RAID_FRAME_SHARE * Math.min(w / Math.max(1, Math.abs(raider.x - home.x)), h / Math.max(1, Math.abs(raider.y - home.y)));
+    const scale = this.clampScale(Math.min(fit, this.fitScale() * RAID_FRAME_MAX_ZOOM));
+    return {
+      cx: rect.x + rect.w / 2 - (raider.x + home.x) / 2 * scale,
+      cy: top + RAID_FRAME_MARGIN + h / 2 - (raider.y + home.y) / 2 * scale,
+      scale,
+    };
+  }
+
   private tickCameraTween(now: number): void {
     const tween = this.cameraTween;
     if (!tween) return;
     const raw = Math.max(0, Math.min(1, (now - tween.started) / Math.max(1, tween.duration)));
     const p = easeInOut(raw);
-    this.cx = tween.fromX + (tween.toX - tween.fromX) * p;
-    this.cy = tween.fromY + (tween.toY - tween.fromY) * p;
+    const { from, to, anchor } = tween;
+    // The anchor's place on screen at either end.
+    const start = { x: from.cx + anchor.x * from.scale, y: from.cy + anchor.y * from.scale };
+    const end = { x: to.cx + anchor.x * to.scale, y: to.cy + anchor.y * to.scale };
+    this.scale = from.scale * Math.pow(to.scale / from.scale, p);
+    this.cx = start.x + (end.x - start.x) * p - anchor.x * this.scale;
+    this.cy = start.y + (end.y - start.y) * p - anchor.y * this.scale;
     this.viewDirty = true;
     if (raw >= 1) this.cameraTween = null;
   }
@@ -1208,17 +1354,28 @@ export class Renderer {
     return this.scale >= this.fitScale() * SYSTEM_ZOOM_FACTOR - 1e-3;
   }
 
-  /// The approach preview's scale as a share of the System View's at rest:
-  /// SCHEMATIC_GROW_FROM at the 96× doorway, growing with the camera beyond
-  /// it, never past the System View's own fit. A handoff from any depth
-  /// starts where the preview stands, so the orbits never shrink on entry.
-  private approachGrowth(zoom: number): number {
-    return Math.min(1, SCHEMATIC_GROW_FROM * Math.max(0, zoom) / SYSTEM_ZOOM_FACTOR);
+  /// The schematic's starting scale for a handoff whose galaxy end is `cam`:
+  /// §real-coordinates: the true scale its orbit preview has there, so the
+  /// System View takes over the picture exactly as drawn.
+  private handoffGrowFrom(cam: { scale: number }): number {
+    return Math.max(0.05, cam.scale * SYSTEM_UNIT_SU / Math.max(1e-6, this.systemScene.restScale()));
   }
 
-  /// The schematic's starting scale for a handoff whose galaxy end is `cam`.
-  private handoffGrowFrom(cam: { scale: number }): number {
-    return Math.max(SCHEMATIC_GROW_FROM, this.approachGrowth(cam.scale / this.fitScale()));
+  /// §real-coordinates: px per System View unit for a star's orbit preview:
+  /// the map's own true scale, or the schematic's while that star hands off.
+  private previewScale(systemId: string): number {
+    return this.handoffGrowth?.id === systemId
+      ? this.systemScene.restScale() * this.handoffGrowth.scale
+      : this.scale * SYSTEM_UNIT_SU;
+  }
+
+  /// §real-coordinates: how much of the System View's tilted plane applies
+  /// near stars: none below 40×, all of it by the 96× doorway and through a
+  /// handoff.
+  private diveTilt(): number {
+    if (this.handoffGrowth) return 1;
+    const zoom = this.scale / this.fitScale();
+    return smooth01((zoom - APPROACH_HINT_START) / (SYSTEM_ZOOM_FACTOR - APPROACH_HINT_START));
   }
 
   /// §system-approach: the system whose orbit preview lies under a screen
@@ -1228,7 +1385,7 @@ export class Renderer {
   approachSystemAt(sx: number, sy: number): SystemInfo | null {
     const zoom = this.zoomFactor();
     if (!this.galaxy || zoom < APPROACH_HINT_START) return null;
-    const k = this.systemScene.restScale() * this.approachGrowth(zoom);
+    const squash = 1 - this.diveTilt() * (1 - ORBIT_TILT);
     let best: SystemInfo | null = null;
     let bestDistance = Infinity;
     for (const sys of this.galaxy.systems) {
@@ -1238,15 +1395,16 @@ export class Renderer {
       const distance = Math.hypot(dx, dy);
       if (distance >= bestDistance) continue;
       const vis = this.approachVisuals.get(sys.id)?.vis;
+      const k = this.previewScale(sys.id);
       let reachX = APPROACH_REACH_MIN;
-      let reachY = APPROACH_REACH_MIN * ORBIT_TILT;
+      let reachY = APPROACH_REACH_MIN * squash;
       for (const p of vis?.planets ?? []) {
         reachX = Math.max(reachX, p.orbitRadius + p.radius);
-        reachY = Math.max(reachY, p.orbitRadius * ORBIT_TILT + p.radius);
+        reachY = Math.max(reachY, p.orbitRadius * squash + p.radius);
       }
       for (const belt of vis?.asteroidBelts ?? []) {
         reachX = Math.max(reachX, belt.radius + belt.width / 2);
-        reachY = Math.max(reachY, (belt.radius + belt.width / 2) * ORBIT_TILT);
+        reachY = Math.max(reachY, (belt.radius + belt.width / 2) * squash);
       }
       const rx = reachX * k + APPROACH_PICK_SLACK_PX;
       const ry = reachY * k + APPROACH_PICK_SLACK_PX;
@@ -1290,7 +1448,8 @@ export class Renderer {
     const art = starArtwork("system", st.slug);
     const loaded = this.starTextures.get("system", st.slug,
       this.systemScene.starVisibleDiameterPx(), this.app.renderer.resolution);
-    this.systemScene.setSystem(buildVisualSystem(sys, bodies), loaded?.texture ?? null, art);
+    const vis = buildVisualSystem(sys, bodies);
+    this.systemScene.setSystem(vis, loaded?.texture ?? null, art);
     // Re-entering a star never resumes an old orrery zoom: the handoff meets
     // the System View at rest, where the galaxy's preview of it stands.
     this.systemScene.resetZoom(true);
@@ -1395,6 +1554,54 @@ export class Renderer {
     return true;
   }
 
+  /// §home-step (Peter, Oct 21 2026): fly the galaxy camera into a star at an
+  /// even zoom while it slides to the centre, then hand off into its System
+  /// View exactly as the wheel does at the doorway. A pan or zoom on the way
+  /// takes over; Back returns to where the flight began.
+  flyIntoSystem(sys: SystemInfo, bodies: BodyView[]): boolean {
+    if (this.mode.type !== "galaxy" || this.transition || this.flight) return false;
+    const from = { cx: this.cx, cy: this.cy, scale: this.scale };
+    this.cameraTween = null;
+    this.userView = true;
+    const doorway = this.fitScale() * SYSTEM_ZOOM_FACTOR;
+    const doublings = Math.log2(doorway / Math.max(1e-9, this.scale));
+    this.flight = { sys, bodies, from, fromStar: this.worldToScreen(sys.pos), started: performance.now(),
+      duration: doublings > 0 ? Math.min(FLY_MAX_MS, Math.max(FLY_MIN_MS, doublings * FLY_MS_PER_DOUBLING)) : 0 };
+    return true;
+  }
+
+  private tickFlight(now: number): void {
+    if (this.flightHandoff) {
+      // The clock drives the handoff's target as a wheel would. Never 0: a
+      // scrub resting at 0 has ended back on the galaxy.
+      if (this.isSystemScrubbing()) {
+        this.transitionTargetRaw = Math.max(1e-3, smooth01((now - this.flightHandoff.started) / FLY_HANDOFF_MS));
+      } else this.flightHandoff = null;
+      return;
+    }
+    const f = this.flight;
+    if (!f) return;
+    if (this.mode.type !== "galaxy" || this.transition) {
+      this.flight = null;
+      return;
+    }
+    const raw = f.duration > 0 ? clamp01((now - f.started) / f.duration) : 1;
+    const p = easeInOut(raw);
+    const rect = this.cameraRect;
+    const doorway = this.fitScale() * SYSTEM_ZOOM_FACTOR;
+    this.scale = raw >= 1 ? Math.max(doorway, f.from.scale) : f.from.scale * Math.pow(doorway / f.from.scale, p);
+    const star = { x: f.fromStar.x + (rect.x + rect.w / 2 - f.fromStar.x) * p, y: f.fromStar.y + (rect.y + rect.h / 2 - f.fromStar.y) * p };
+    this.cx = star.x - f.sys.pos.x * this.scale;
+    this.cy = star.y - f.sys.pos.y * this.scale;
+    this.viewDirty = true;
+    if (raw < 1) return;
+    this.flight = null;
+    if (!this.beginSystemScrubIn(f.sys, f.bodies)) return;
+    this.savedGalaxyCam = f.from;
+    this.flightHandoff = { started: now };
+    this.tickFlight(now);
+  }
+
   /// Start a wheel retreat from System View. A system reached by wheel reverses
   /// to its exact max-zoom approach camera; a timed/click entry lands on a fresh
   /// max-zoom camera centered on the star rather than restoring a shallower view.
@@ -1426,12 +1633,20 @@ export class Renderer {
 
   adjustSystemScrub(delta: number): void {
     if (!this.isSystemScrubbing()) return;
+    this.flightHandoff = null;
     this.transitionTargetRaw = clamp01(this.transitionTargetRaw + delta);
   }
 
-  /// Esc in the handoff band completes the retreat to the galaxy endpoint.
+  /// Esc in the handoff band completes the retreat to the galaxy endpoint;
+  /// on a fly-in's way there, the camera stops where it is.
   cancelSystemScrub(): void {
+    this.flight = null;
+    this.flightHandoff = null;
     if (this.isSystemScrubbing()) this.transitionTargetRaw = 0;
+  }
+
+  isFlying(): boolean {
+    return this.flight !== null;
   }
 
   consumeSystemScrubEndpoint(): { type: "system"; systemId: string } | { type: "galaxy" } | null {
@@ -1485,13 +1700,17 @@ export class Renderer {
   /// Everything clickable in the System View: fleets, battle sites, wrecks,
   /// landings, then worlds. Presentation targets of served objects only.
   systemScenePick(sx: number, sy: number): SystemScenePick | null {
-    if (this.mode.type !== "system" || this.transition) return null;
+    if (this.mode.type !== "system" || this.transition || this.trackingInset.contains(sx, sy)) return null;
     return this.systemScene.pick(sx, sy);
   }
 
   /// Hover copy for the System View (null over empty space).
   systemHover(sx: number, sy: number): string | null {
     if (this.mode.type !== "system" || this.transition) return null;
+    if (this.trackingInset.contains(sx, sy)) {
+      this.systemScene.clearHover();
+      return null;
+    }
     return this.systemScene.hover(sx, sy);
   }
   /** The pointer left the map: drop the System View's hover-only drawing. */
@@ -1549,12 +1768,13 @@ export class Renderer {
   /// inside public nebula terrain.
   private dressSystemScene(sys: SystemInfo): void {
     this.systemScene.setShipArt((ghost) => this.fleetMarker(ghost), () => this.texBattleOngoing);
+    this.systemScene.setHaze(this.hazeFor(sys));
+  }
+
+  /// A star's nebula haze colour, or null outside public nebula terrain.
+  private hazeFor(sys: SystemInfo): number | null {
     const region = this.galaxy?.nebulas.find((nebula) => nebulaContains(nebula, sys.pos));
-    const haze: Partial<Record<NebulaKind, number>> = {
-      molecular_cloud: 0x68b8a7, ion_nebula: 0x65aee8, dust_cloud: 0x98745f,
-      supernova_remnant: 0xe27a55, precursor_cloud: 0xa887e8,
-    };
-    this.systemScene.setHaze(region ? haze[region.kind] ?? 0xa887e8 : null);
+    return region ? NEBULA_HAZE[region.kind] ?? 0xa887e8 : null;
   }
 
   /// §management-home: forward the OWNER-ONLY development tiers to the scene's
@@ -1578,6 +1798,13 @@ export class Renderer {
   /// §body-management: pulse a body sprite (the chip-click affordance).
   pulseSystemBody(bodyId: string): void {
     this.systemScene.pulseBody(bodyId);
+  }
+
+  /// One selection in the System View (Peter, Oct 21 2026): while a fleet is
+  /// selected, no world keeps its ring or pulse. A world taking the selection
+  /// deselects fleets instead (`intent.deselectFleets`).
+  private syncSystemSelection(state: ViewState): void {
+    if (state.selectedShipId || state.selectedShipIds.size) this.systemScene.clearSelection();
   }
 
   setGalaxy(galaxy: GalaxyInfo): void {
@@ -1929,9 +2156,12 @@ export class Renderer {
       }
       const col = mine ? COL_OWN : ally ? COL_ALLY : rival ? COL_OTHER : 0x55657f;
       const t = e.label;
+      const layer = nameLayerOf(owner, mine, ally, dyn?.deposits != null);
+      t.visible = layer === null || this.nameLayers[layer] || selected;
       t.text = txt;
       t.style.fill = col;
-      t.style.fontSize = mine || rival ? 10 : 8;
+      // Your systems' names lead a size up (Peter, Oct 22 2026).
+      t.style.fontSize = mine ? 12 : rival ? 10 : 8;
       t.position.set(s.x + richnessRadius + 2 + extra, s.y); // +extra: rides the grown rim at deep zoom
       t.alpha = mine ? (this.deckSaliencyEnabled ? 1 : 0.95) : ally ? 0.9 : rival ? 0.88 : selected ? 0.8 : 0.5;
 
@@ -1941,7 +2171,7 @@ export class Renderer {
       e.berth.visible = hulls > 0;
       if (hulls > 0) {
         e.berth.text = `⚓ ${hulls}`;
-        e.berth.position.set(s.x + richnessRadius + 2 + extra, s.y + 12);
+        e.berth.position.set(s.x + richnessRadius + 2 + extra, s.y + (mine ? 14 : 12));
         e.berth.alpha = 0.9;
       }
       // §system-approach: the orbits fade in over the final dive, posed as the
@@ -2061,15 +2291,15 @@ export class Renderer {
     this.systemsAnimating = animating;
   }
 
-  /// Faint tilted orbits and the System View's own worlds around a star during
-  /// the final dive: the same art and size, lit from the star with the night
-  /// side away from it (a grey dot until the art loads). At the 96× doorway
-  /// they sit where the System View's schematic begins its grow-in
-  /// (SCHEMATIC_GROW_FROM), and deeper in they keep growing up to the System
-  /// View's own fit (approachGrowth), so the handoff reads as one continuous
-  /// zoom from any depth. Moons,
-  /// rings and city lights wait for the System View itself.
-  private drawApproachHint(g: Graphics, e: SystemGfx, sys: SystemInfo, bodies: BodyView[], s: { x: number; y: number }, alpha: number, zoom: number, state: ViewState): void {
+  /// Faint orbits and the System View's own worlds around a star during the
+  /// final dive: the same art and size, lit from the star with the night side
+  /// away from it (a grey dot until the art loads). §real-coordinates: drawn
+  /// to the map's true scale (where the ships at those worlds really are),
+  /// tilting into the System View's plane over the dive, and riding the
+  /// schematic's own scale through a handoff, so it reads as one continuous
+  /// zoom from any depth. Moons, rings and city lights wait for the System
+  /// View itself.
+  private drawApproachHint(g: Graphics, e: SystemGfx, sys: SystemInfo, bodies: BodyView[], s: { x: number; y: number }, alpha: number, _zoom: number, state: ViewState): void {
     const sig = `${bodies.length}:${bodies.map((b) => b.id).join(",")}`;
     let cached = this.approachVisuals.get(sys.id);
     if (!cached || cached.sig !== sig) {
@@ -2078,9 +2308,9 @@ export class Renderer {
     }
     // Mid-handoff this star's preview rides the schematic's own scale, so the
     // two pictures coincide while they crossfade.
-    const growth = this.handoffGrowth?.id === sys.id ? this.handoffGrowth.scale : this.approachGrowth(zoom);
-    const k = this.systemScene.restScale() * growth;
+    const k = this.previewScale(sys.id);
     if (k < 4) return;
+    const squash = 1 - this.diveTilt() * (1 - ORBIT_TILT);
     const age = state.commandCenter && this.galaxy
       ? Math.hypot(sys.pos.x - state.commandCenter.x, sys.pos.y - state.commandCenter.y) / this.galaxy.c : 0;
     const time = liveSimTime() - age;
@@ -2090,10 +2320,10 @@ export class Renderer {
     e.orbits.visible = true;
     for (const p of cached.vis.planets) {
       const rx = p.orbitRadius * k;
-      e.orbits.ellipse(s.x, s.y, rx, rx * ORBIT_TILT).stroke({ width: 1, color: 0x3a4d6c, alpha: 0.5 * alpha });
-      const a = orbitalAngle(p.angle, planetPeriod(p.orbitRadius), time);
+      e.orbits.ellipse(s.x, s.y, rx, rx * squash).stroke({ width: 1, color: 0x3a4d6c, alpha: 0.5 * alpha });
+      const a = orbitalAngle(p.angle, p.period ?? planetPeriod(p.orbitRadius), time);
       const x = s.x + Math.cos(a) * rx;
-      const y = s.y + Math.sin(a) * rx * ORBIT_TILT;
+      const y = s.y + Math.sin(a) * rx * squash;
       const radius = p.radius * k;
       const tex = radius >= 1.5 ? this.systemScene.planetTexture(p.kind) : null;
       if (!tex) {
@@ -2110,7 +2340,8 @@ export class Renderer {
       world.art.texture = tex;
       world.art.anchor.set(art.anchor[0], art.anchor[1]);
       world.art.scale.set((2 * radius) / (art.visualRatio * tex.width));
-      world.art.rotation = towardStarRotation(toStar);
+      // Match the System View's fixed surface orientation through the dive.
+      world.art.rotation = 0;
       world.art.position.set(x, y);
       world.art.alpha = alpha;
       world.art.visible = true;
@@ -2201,11 +2432,14 @@ export class Renderer {
     // §one-battle-one-icon: two SEPARATE engagements whose anchors nearly
     // coincide fan out slightly so they stay two icons (a merged fight is one
     // engagement id → one icon already).
+    // The fan-out stops at BATTLE_FAN_MAX: further fights in the same place
+    // stack on the last slot instead of running in a line off the map.
     const slotByCell = new Map<string, number>();
+    const cellOf = (pos: { x: number; y: number }): string => `${Math.round(pos.x / 50)},${Math.round(pos.y / 50)}`;
     const place = (pos: { x: number; y: number }): { sx: number; sy: number } => {
       const base = this.worldToScreen(pos);
-      const cell = `${Math.round(pos.x / 50)},${Math.round(pos.y / 50)}`;
-      const slot = slotByCell.get(cell) ?? 0;
+      const cell = cellOf(pos);
+      const slot = Math.min(slotByCell.get(cell) ?? 0, BATTLE_FAN_MAX);
       slotByCell.set(cell, slot + 1);
       return { sx: base.x + slot * (BATTLE_ONGOING_PX * 0.85), sy: base.y - slot * 4 };
     };
@@ -2280,17 +2514,36 @@ export class Renderer {
     // Concluded battles: same icon, grey and steady (no pulse, no alert ring) — history
     // you can open, not an alarm. Dismissing the battle's report (the button on
     // its report page) hides the marker; the record itself keeps the replay.
+    // One marker per place: the newest concluded fight there. The rest stay in
+    // the log (a raid that kept reopening its fight left dozens at one home).
+    // Gone from the map BATTLE_HISTORY_TTL_S after the last arrived round.
+    const simNow = liveSimTime();
+    const markerLife = (rec: { started_at: number; light_frontier_tick?: number; rounds: { tick: number }[] }): number => {
+      const last = Math.max(rec.light_frontier_tick ?? 0, rec.rounds[rec.rounds.length - 1]?.tick ?? 0);
+      const age = simNow - (last > 0 ? last / (state.tickHz || 30) : rec.started_at);
+      const fadeFrom = BATTLE_HISTORY_TTL_S * 2 / 3;
+      return age >= BATTLE_HISTORY_TTL_S ? 0 : age <= fadeFrom ? 1 : 1 - (age - fadeFrom) / (BATTLE_HISTORY_TTL_S - fadeFrom);
+    };
+    const newestByCell = new Map<string, { id: string; at: number }>();
+    for (const rec of state.battleRecords) {
+      if (rec.outcome === null || live.has(rec.id) || markerLife(rec) <= 0) continue;
+      const cell = cellOf(rec.pos);
+      const held = newestByCell.get(cell);
+      if (!held || rec.started_at > held.at || (rec.started_at === held.at && rec.id > held.id)) newestByCell.set(cell, { id: rec.id, at: rec.started_at });
+    }
     for (const rec of state.battleRecords) {
       if (rec.outcome === null || live.has(rec.id)) continue;
+      if (newestByCell.get(cellOf(rec.pos))?.id !== rec.id) continue;
       // Dismiss THIS engagement only, even after its separate report expires.
       if (state.battleDismissed.has(battleRecordMarkKey(rec.id))) continue;
+      const life = markerLife(rec);
       const { sx, sy } = place(rec.pos);
       live.add(rec.id);
       if (this.texBattleConcluded) {
         const sp = pooled(rec.id, this.texBattleConcluded);
         sp.position.set(sx, sy);
         sp.scale.set(BATTLE_ONGOING_PX / this.texBattleConcluded.width);
-        sp.alpha = 0.85;
+        sp.alpha = 0.85 * life;
       } else {
         const sp = this.battleSprites.get(rec.id);
         if (sp) sp.visible = false; // no stale colored sprite over the grey fallback
@@ -2300,8 +2553,8 @@ export class Renderer {
           const a = (i / 8) * Math.PI * 2;
           g.moveTo(sx + Math.cos(a) * r * 0.5, sy + Math.sin(a) * r * 0.5).lineTo(sx + Math.cos(a) * r, sy + Math.sin(a) * r);
         }
-        g.stroke({ width: 1.5, color: grey, alpha: 0.45 });
-        g.circle(sx, sy, 3.2).fill({ color: grey, alpha: 0.55 });
+        g.stroke({ width: 1.5, color: grey, alpha: 0.45 * life });
+        g.circle(sx, sy, 3.2).fill({ color: grey, alpha: 0.55 * life });
       }
       if (rec.own_side !== null) ownPip(sx, sy);
       selection(rec.id, sx, sy);
@@ -2768,7 +3021,7 @@ export class Renderer {
   /// The hub's broad station silhouette stays legible without dominating the
   /// chart. Its own curve controls visible size; texture padding is calibrated
   /// out. The old mining-station sprite remains the 28px loading fallback. Up
-  /// close, the baked station art hands over to the live 3D Nexus above it.
+  /// close, the baked station art hands over to the live 3D hub above it.
   private drawHubBody(): void {
     const tex = this.texHub ?? this.texStation;
     if (!this.galaxy || !tex) return;
@@ -2800,7 +3053,7 @@ export class Renderer {
   /// Stops are smoothstepped in log-zoom space (the wheel is multiplicative),
   /// distributing growth across the approach with zero-slope joins up to 180px
   /// at 96×. Beyond it the station grows with the camera, exactly as hulls do
-  /// (720px at 384×), so a close look shows the live Nexus in detail and keeps
+  /// (720px at 384×), so a close look shows the live hub in detail and keeps
   /// its proportion to nearby fleets. Source resolution and the star's late
   /// bloom are independent.
   private hubRenderedPx(): number {
@@ -2830,7 +3083,7 @@ export class Renderer {
     switch (kind) {
       case "convoy": return this.texConvoy;
       case "tiny_freighter": case "small_freighter": case "large_freighter":
-      case "heavy_freighter": case "bulk_freighter": return this.freightTextures.get(kind) ?? null;
+      case "heavy_freighter": case "bulk_freighter": case "combat_freighter": return this.freightTextures.get(kind) ?? null;
       case "raider": return this.texRaider;
       case "corvette": return this.texCorvette;
       case "colony": return this.texColony;
@@ -2866,6 +3119,7 @@ export class Renderer {
       case "survey_probe": return null;
       case "mining_barge": return null;
       case "mining_belt_station": return null;
+      case "combat_freighter": return null;
       case "colony": return null;
       // §ground: a landing force draws its dedicated single hull + count badge.
       case "transport": return null;
@@ -2948,11 +3202,12 @@ export class Renderer {
       return this.texColony ? { tex: this.texColony, mult: art.calib, anchor: art.anchor } : null;
     }
     // §merchant: the free trader flies an Authority Freighter hull in the sim
-    // but wears its own striped market deck, at that hull's footprint. Until
-    // its art loads it shows as the Authority Freighter.
-    if (ghost.merchant && this.texFreeTrader) {
-      const art = shipArtwork("free_trader");
-      return { tex: this.texFreeTrader, mult: art.calib, anchor: art.anchor };
+    // but wears its trader's own ship (§traders), at that hull's footprint.
+    // Until its art loads it shows as the Authority Freighter.
+    const traderTex = ghost.merchant ? this.traderTextures.get(traderShipArt(ghost.trader)) : null;
+    if (ghost.merchant && traderTex) {
+      const art = shipArtwork(traderShipArt(ghost.trader));
+      return { tex: traderTex, mult: art.calib, anchor: art.anchor };
     }
     // §fleet-lod: far zoomed out, a single matching hull replaces the formation
     // (fine formation detail is not legible there; the count badge still conveys
@@ -3058,6 +3313,130 @@ export class Renderer {
       newPos: { ...newPos },
       startedMs: performance.now(),
     });
+  }
+
+  /** §privateer-hunt (Peter, Oct 27 2026): after its raid the privateer lies
+   * quiet where it went to ground. Until it is in view again, the map marks
+   * the spot: an amber "?" with its name. Oct 30 2026 (Peter: "a Galaxy Map
+   * marker that indicates the area of last known pirate contact, i.e. the
+   * hunting area"): ringed by the area an Interceptor lies in wait in. */
+  private drawPrivateerLastSeen(state: ViewState): void {
+    const f = state.founding;
+    const at = f?.privateer_last_seen;
+    const show = !!f && !!at && !!f.privateer && !state.ghosts.some((ghost) => ghost.id === f.privateer);
+    this.lastSeenLayer.visible = show;
+    if (!show || !f || !at) return;
+    const p = this.worldToScreen(at);
+    const r = Math.max(8, contactBadgePx(this.zoomFactor()) * 0.45);
+    const area = Math.max(PRIVATEER_HUNT_SU * this.scale, r * 2.5);
+    let segments = Math.max(24, Math.min(256, Math.ceil(Math.PI * 2 * area / 9)));
+    if (segments % 2 !== 0) segments += 1;
+    const g = this.lastSeenGfx.clear();
+    g.circle(p.x, p.y, area).fill({ color: COL_PIRATE, alpha: 0.07 });
+    dashedCircle(g, p.x, p.y, area, segments);
+    g.stroke({ color: COL_PIRATE, width: 1.2, alpha: 0.8 });
+    g.poly([p.x, p.y - r, p.x + r, p.y, p.x, p.y + r, p.x - r, p.y], true)
+      .fill({ color: 0x05070d, alpha: 0.85 }).stroke({ color: COL_PIRATE, width: 1.5, alpha: 0.95 });
+    this.lastSeenMark.position.set(p.x, p.y);
+    const names = pirateNames(f);
+    const label = `Hunting area · ${names.family ? names.privateer : "Privateer"}`;
+    if (this.lastSeenLabel.text !== label) this.lastSeenLabel.text = label;
+    this.lastSeenLabel.position.set(p.x, p.y + area + 3);
+  }
+
+  /** §season (docs/endgame-keystone.md): each bearing a faint amber wedge
+   * from its relic; where two cross, the search zone's systems ringed; the
+   * sealed worlds you found (and every one landed on) marked and named. */
+  private drawSeason(state: ViewState): void {
+    const season = state.season;
+    const g = this.seasonGfx;
+    g.clear();
+    const show = !!season && (season.bearings.length > 0 || season.precursors.length > 0);
+    this.seasonLayer.visible = show;
+    if (!show || !season || !this.galaxy) return;
+    const reach = 260_000;
+    for (const b of season.bearings) {
+      const from = this.worldToScreen(b.from);
+      const edge = (angle: number) => this.worldToScreen({ x: b.from.x + Math.cos(angle) * reach, y: b.from.y + Math.sin(angle) * reach });
+      const left = edge(b.angle - b.spread), right = edge(b.angle + b.spread);
+      g.poly([from.x, from.y, left.x, left.y, right.x, right.y], true).fill({ color: COL_BEARING, alpha: 0.05 });
+      g.moveTo(from.x, from.y).lineTo(left.x, left.y).moveTo(from.x, from.y).lineTo(right.x, right.y)
+        .stroke({ color: COL_BEARING, width: 1, alpha: 0.4 });
+    }
+    const systems = this.galaxy.systems;
+    const zone = new Set(searchZone(season.bearings, systems));
+    const r = Math.max(7, contactBadgePx(this.zoomFactor()) * 0.4);
+    for (const sys of systems) {
+      if (!zone.has(sys.id)) continue;
+      const p = this.worldToScreen(sys.pos);
+      g.circle(p.x, p.y, r).stroke({ color: COL_BEARING, width: 1.2, alpha: 0.8 });
+    }
+    let used = 0;
+    for (const precursor of season.precursors) {
+      const sys = systems.find((entry) => entry.id === precursor.system);
+      if (!sys) continue;
+      const p = this.worldToScreen(sys.pos);
+      const d = r * 1.5;
+      g.poly([p.x, p.y - d, p.x + d, p.y, p.x, p.y + d, p.x - d, p.y], true)
+        .stroke({ color: COL_PRECURSOR, width: 2, alpha: 0.95 });
+      const label = this.seasonLabels[used] ?? (() => {
+        const text = new Text({ text: "", style: { fontFamily: "sans-serif", fontSize: 11, fill: COL_PRECURSOR } });
+        text.anchor.set(0.5, 0);
+        this.seasonLayer.addChild(text);
+        this.seasonLabels.push(text);
+        return text;
+      })();
+      used += 1;
+      const text = precursor.landed_by ? "Keystone world" : precursor.guarded ? "Sealed world · guarded" : "Sealed world";
+      if (label.text !== text) label.text = text;
+      label.visible = true;
+      label.position.set(p.x, p.y + d + 3);
+    }
+    for (let i = used; i < this.seasonLabels.length; i += 1) this.seasonLabels[i].visible = false;
+  }
+
+  /** §research-wiring Predictive Plots: a faint dashed line from each moving
+   * rival to where it is now if it held course, and a hollow ring there. */
+  private drawProjections(state: ViewState, screenById: Map<string, { x: number; y: number }>): void {
+    const g = this.projectionGfx;
+    g.clear();
+    for (const ghost of state.ghosts) {
+      const from = screenById.get(ghost.id);
+      if (!ghost.projected || ghost.own || !from) continue;
+      const to = this.worldToScreen(ghost.projected);
+      const dx = to.x - from.x, dy = to.y - from.y;
+      const length = Math.hypot(dx, dy);
+      if (length < 6) continue;
+      const color = ghost.pirate ? COL_PIRATE : COL_OTHER;
+      for (let t = 0; t < length; t += 10) {
+        const a = t / length, b = Math.min(length, t + 5) / length;
+        g.moveTo(from.x + dx * a, from.y + dy * a).lineTo(from.x + dx * b, from.y + dy * b);
+      }
+      g.stroke({ width: 1, color, alpha: 0.45 });
+      g.circle(to.x, to.y, 5).stroke({ width: 1, color, alpha: 0.6 });
+    }
+  }
+
+  /** §raid-frame (Peter, Oct 27 2026): while the raid camera tracks it, a
+   * dashed amber line from the raider to the home star it closes on, ending
+   * at the star's disc. */
+  private drawRaidCourse(screenById: Map<string, { x: number; y: number }>): void {
+    const g = this.raidCourseGfx;
+    g.clear();
+    const raid = this.raid;
+    const from = raid ? screenById.get(raid.id) : undefined;
+    const home = raid ? this.galaxy?.systems.find((s) => s.id === raid.systemId) : undefined;
+    if (!from || !home) return;
+    const to = this.worldToScreen(home.pos);
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const length = Math.hypot(dx, dy) - this.systemHitRadius(home) - 4;
+    if (length < 12) return;
+    const total = Math.hypot(dx, dy);
+    for (let t = 0; t < length; t += 10) {
+      const a = t / total, b = Math.min(length, t + 6) / total;
+      g.moveTo(from.x + dx * a, from.y + dy * a).lineTo(from.x + dx * b, from.y + dy * b);
+    }
+    g.stroke({ width: 1.5, color: COL_PIRATE, alpha: 0.75 });
   }
 
   private updateReacquisitions(): void {
@@ -3198,7 +3577,7 @@ export class Renderer {
   private shipSizePx(kind: ShipKind, pirate = false, nearStar = 0, nearHub = 0): number {
     // §ladder: preserve the established normal-zoom capital indicators.
     const capital: Partial<Record<ShipKind, number>> = { destroyer: 52, cruiser: 60, battleship: 70, dreadnought: 82, titan: 96 };
-    const freight: Partial<Record<ShipKind, number>> = { tiny_freighter: 42, small_freighter: 52, mining_barge: 54, large_freighter: 78, mining_belt_station: 86, heavy_freighter: 92, bulk_freighter: 108 };
+    const freight: Partial<Record<ShipKind, number>> = { tiny_freighter: 42, combat_freighter: 46, small_freighter: 52, mining_barge: 54, large_freighter: 78, mining_belt_station: 86, heavy_freighter: 92, bulk_freighter: 108 };
     const base = capital[kind] ?? freight[kind]
       ?? (kind === "convoy" || kind === "freighter" ? SHIP_PX_CONVOY
         : kind === "raider" ? SHIP_PX_RAIDER
@@ -3219,10 +3598,12 @@ export class Renderer {
     const near = Math.min(1, Math.max(nearStar, nearHub));
     if (near <= 0) return full;
     // Near a star a hull holds the System View's proportion to the orbit
-    // preview (SCHEMATIC_GROW_FROM of the System View at the doorway, growing
-    // with zoom), never smaller than its System View size. Beside the hub it
-    // takes the same size, small beside the station.
-    const preview = SCHEMATIC_GROW_FROM * Math.min(r, ZOOM_MAX_FACTOR) / SYSTEM_ZOOM_FACTOR;
+    // preview (its true scale over the System View's), never smaller than its
+    // System View size. Beside the hub it takes the same size, small beside
+    // the station, growing past the doorway as it always has.
+    const preview = nearHub > nearStar
+      ? SCHEMATIC_GROW_FROM * Math.min(r, ZOOM_MAX_FACTOR) / SYSTEM_ZOOM_FACTOR
+      : this.scale * SYSTEM_UNIT_SU / Math.max(1e-6, this.systemScene.restScale());
     const system = Math.min(full, systemShipPx(kind) * Math.max(1, preview));
     return full + (system - full) * near;
   }
@@ -3242,7 +3623,7 @@ export class Renderer {
   /// §hub-approach: how far a fleet marker at `pos` has eased toward its size
   /// beside the Market Hub: over the same zoom window as a star's approach, and
   /// by its distance in the station's displayed radii, so a hull arriving at
-  /// the Nexus shrinks into it and grows back as it leaves.
+  /// the hub shrinks into it and grows back as it leaves.
   private nearHubBlend(pos: Vec2): number {
     const r = this.scale / this.fitScale();
     const approach = smooth01((r - APPROACH_HINT_START) / (SHIP_SYSTEM_SCALE_FULL - APPROACH_HINT_START));
@@ -3291,34 +3672,71 @@ export class Renderer {
   /// system and corporation-wide Fleet panels remain the roster.
   fleetScreenPosition(ghost: GhostView): { x: number; y: number } {
     const placed = this.shipScreen(ghost.pos);
-    return { x: placed.x, y: placed.y };
+    const ring = this.restingRingOffset(ghost);
+    return { x: placed.x + ring.x, y: placed.y + ring.y };
+  }
+
+  /// §real-coordinates: a ship resting at a world (a visitor, a blockader, a
+  /// berth under blockade) is drawn in the System View in a ring about that
+  /// world. Over the final dive it moves into the same slot here, to the
+  /// preview's scale, so the handoff doesn't move it. Zero elsewhere.
+  private restingRingOffset(ghost: GhostView): { x: number; y: number } {
+    const none = { x: 0, y: 0 };
+    const dive = this.diveTilt();
+    const state = this.frameState;
+    if (dive <= 0 || !state || !this.galaxy || Math.hypot(ghost.vel.x, ghost.vel.y) > 1) return none;
+    let sys: SystemInfo | null = null;
+    let d = Infinity;
+    for (const candidate of this.galaxy.systems) {
+      const distance = Math.hypot(candidate.pos.x - ghost.pos.x, candidate.pos.y - ghost.pos.y);
+      if (distance < d) { d = distance; sys = candidate; }
+    }
+    if (!sys || d > NEAR_ZONE_SU) return none;
+    let picture = this.divePictures.get(sys.id);
+    if (picture === undefined) {
+      const dyn = state.systems.find((s) => s.id === sys!.id);
+      picture = dyn?.bodies?.length ? deriveSystemPicture({
+        system: sys, dynamic: dyn, galaxy: this.galaxy, ghosts: state.ghosts, battles: state.battles,
+        battleRecords: state.battleRecords, groundRecords: state.groundRecords, battleDismissed: state.battleDismissed,
+        commandCenter: state.commandCenter, playerId: state.playerId, simTime: liveSimTime(),
+        selectedShipId: state.selectedShipId, selectedShipIds: state.selectedShipIds, selectedBattleId: this.selectedBattleId,
+      }) : null;
+      this.divePictures.set(sys.id, picture);
+    }
+    const p = picture?.fleets.find((f) => f.id === ghost.id)?.placement;
+    if (!p || (p.mode !== "berth" && p.mode !== "cordon") || p.body === null) return none;
+    const vis = this.approachVisuals.get(sys.id)?.vis;
+    const id = String(p.body);
+    const body = vis?.planets.find((w) => w.id === id) ?? vis?.planets.flatMap((w) => w.moons).find((w) => w.id === id);
+    if (!body) return none;
+    // The System View's ring at rest, scaled to this preview.
+    const rest = this.systemScene.restScale();
+    const scale = this.previewScale(sys.id) / Math.max(1e-6, rest) * dive;
+    const { a, rx, ry } = ringSlot(p.mode, p.slot, p.slots, Math.max(body.radius * rest, 6), 1, performance.now() / 1000);
+    return { x: Math.cos(a) * rx * scale, y: Math.sin(a) * ry * scale };
   }
 
   /// §system-approach: where the map draws served route geometry near a star:
-  /// the same mapping as `shipScreen`, except that a point inside the docking
-  /// radius (a route's end at the star) stays at the star rather than on the
-  /// band.
+  /// the same mapping as `shipScreen`.
   private routeScreen(pos: Vec2): { x: number; y: number } {
-    const placed = this.nearStarPlacement(pos, true);
+    const placed = this.nearStarPlacement(pos);
     return { x: placed.x, y: placed.y };
   }
 
-  /// §system-approach: where the map draws a hull travelling near a star.
-  /// Over the final dive (40→96×, as the orbit preview fades in) a fleet in
-  /// a star's near zone slides from its true position to where the System
-  /// View will draw it: its distance mapped into the band just outside the
-  /// outermost orbit (`nearRadius`), on the tilted plane, at its true
-  /// bearing. So it doesn't jump at the handoff. Farther out the mapping eases
-  /// back to true; below 40× every hull is drawn true. `tilt` is how much of
-  /// the plane's foreshortening applies, for the heading.
+  /// §system-approach: where the map draws a hull near a star. §real-
+  /// coordinates: at its true place, always, the same place the System View
+  /// draws it; over the final dive (40→96×, as the orbit preview fades in)
+  /// the plane around the star tilts into the System View's, and through a
+  /// handoff it rides the schematic's own scale. Farther out the tilt eases
+  /// back to flat. `tilt` is how much of the plane's foreshortening applies,
+  /// for the heading.
   private shipScreen(pos: Vec2): { x: number; y: number; tilt: number } {
-    return this.nearStarPlacement(pos, false);
+    return this.nearStarPlacement(pos);
   }
 
-  private nearStarPlacement(pos: Vec2, route: boolean): { x: number; y: number; tilt: number } {
+  private nearStarPlacement(pos: Vec2): { x: number; y: number; tilt: number } {
     const truth = this.worldToScreen(pos);
-    const zoom = this.scale / this.fitScale();
-    const dive = smooth01((zoom - APPROACH_HINT_START) / (SYSTEM_ZOOM_FACTOR - APPROACH_HINT_START));
+    const dive = this.diveTilt();
     if (dive <= 0 || !this.galaxy) return { ...truth, tilt: 0 };
     let sys: SystemInfo | null = null;
     let d = Infinity;
@@ -3326,31 +3744,19 @@ export class Renderer {
       const distance = Math.hypot(candidate.pos.x - pos.x, candidate.pos.y - pos.y);
       if (distance < d) { d = distance; sys = candidate; }
     }
-    if (!sys) return { ...truth, tilt: 0 };
-    // The preview's scale for this star: the schematic's own mid-handoff.
-    const growth = this.handoffGrowth?.id === sys.id ? this.handoffGrowth.scale : this.approachGrowth(zoom);
-    const k = this.systemScene.restScale() * growth;
-    const outer = this.systemScene.nearOuterRadius();
-    const edge = outer * k;
-    // Back to true by here; never so close that the band would fold over.
-    const clear = Math.max(SHIP_SYSTEM_CLEAR_SU, 2 * edge / this.scale);
-    if (d >= clear || k <= 0) return { ...truth, tilt: 0 };
-    let px: number;
-    let w = 1;
-    if (route && d < DOCK_RADIUS_SU) {
-      px = d / DOCK_RADIUS_SU * NEAR_INNER * k;
-    } else if (d <= NEAR_ZONE_SU) {
-      px = nearRadius(d, NEAR_INNER, outer) * k;
-    } else {
-      w = (clear - d) / (clear - NEAR_ZONE_SU);
-      px = edge + (d - NEAR_ZONE_SU) / (clear - NEAR_ZONE_SU) * (clear * this.scale - edge);
-    }
+    if (!sys || d >= SHIP_SYSTEM_CLEAR_SU) return { ...truth, tilt: 0 };
+    // Full inside the near zone, easing back to the flat map by the clear line.
+    const w = d <= NEAR_ZONE_SU ? 1 : (SHIP_SYSTEM_CLEAR_SU - d) / (SHIP_SYSTEM_CLEAR_SU - NEAR_ZONE_SU);
+    // The preview's scale against the map's: 1 except through a handoff.
+    const ratio = this.previewScale(sys.id) / (this.scale * SYSTEM_UNIT_SU);
+    const grow = 1 + (ratio - 1) * w;
+    const squash = 1 - dive * w * (1 - ORBIT_TILT);
     const star = this.worldToScreen(sys.pos);
-    const bearing = Math.atan2(pos.y - sys.pos.y, pos.x - sys.pos.x);
-    const squash = 1 - w * (1 - ORBIT_TILT);
-    const x = star.x + Math.cos(bearing) * px;
-    const y = star.y + Math.sin(bearing) * px * squash;
-    return { x: truth.x + (x - truth.x) * dive, y: truth.y + (y - truth.y) * dive, tilt: dive * w };
+    return {
+      x: star.x + (truth.x - star.x) * grow,
+      y: star.y + (truth.y - star.y) * grow * squash,
+      tilt: dive * w,
+    };
   }
 
   /// §emplacements: MIRRORS `emplace::site_check` IN THE SIM.
@@ -3479,7 +3885,8 @@ export class Renderer {
       }
     }
     const placed = this.shipScreen(sp.shown);
-    const s = { x: placed.x, y: placed.y };
+    const ring = this.restingRingOffset(ghost);
+    const s = { x: placed.x + ring.x, y: placed.y + ring.y };
     sp.container.position.set(s.x, s.y);
     sp.nearStar = this.nearStarBlend(sp.shown);
     sp.nearHub = this.nearHubBlend(sp.shown);
@@ -3774,9 +4181,10 @@ export class Renderer {
       col = COL_TCA;
       lalpha = 0.9;
     }
-    sp.label.text = txt;
+    // §research-wiring Standing Watch: a lost contact's dead-reckoned track.
+    sp.label.text = ghost.tracked != null ? `${txt} · TRACK ${Math.round(ghost.tracked)}s` : txt;
     sp.label.style.fill = col;
-    sp.label.alpha = lalpha;
+    sp.label.alpha = ghost.tracked != null ? lalpha * 0.6 : lalpha;
     sp.label.position.set(11, -10);
 
     // FLEET COUNT BADGE (§13.1 intel ladder). Exact Σ when the composition is
@@ -3790,8 +4198,8 @@ export class Renderer {
       badgeStr = "";
     } else if (exact !== null) {
       if (exact > 1) badgeStr = String(exact);
-    } else if (ghost.count_class !== "one") {
-      badgeStr = countClassLabel(ghost.count_class);
+    } else if (ghost.count_class !== "one" || ghost.count_range) {
+      badgeStr = fleetCountLabel(ghost);
       estimate = true;
     }
     sp.badge.clear();
@@ -3884,14 +4292,17 @@ export class Renderer {
   update(state: ViewState): void {
     this.shipModels.beginFrame();
     this.hubModel.beginFrame();
-    if (!state.galaxy) { this.shipModels.suspend(); this.hubModel.suspend(); return; }
+    if (!state.galaxy) { this.shipModels.suspend(); this.hubModel.suspend(); this.trackingInset.hide(); return; }
     this.renderedFrames++;
+    this.frameState = state;
+    this.divePictures.clear();
     if (this.galaxy !== state.galaxy) this.setGalaxy(state.galaxy);
     this.focusHomeOnFirstView(state);
 
     // Advance any galaxy⇄system transition (camera push + crossfade), and decide
     // which scene(s) to draw this frame. Only one scene is "live" at rest; during
     // a transition BOTH draw so the crossfade reads.
+    this.tickFlight(performance.now());
     const { drawGalaxy, drawSystem } = this.tickTransition();
     if (drawSystem) this.refreshSystemStar();
     if (!this.transition && this.mode.type === "galaxy") this.tickCameraTween(performance.now());
@@ -3952,9 +4363,11 @@ export class Renderer {
         this.lastExplorationSelection = state.selectedExplorationSiteId;
       }
       if (geomDirty || this.lastSignals !== state.signals) {
-        this.signalMarkers.draw(state.signals, pos => this.worldToScreen(pos), this.zoomFactor());
+        this.signalMarkers.draw(state.signals, pos => this.worldToScreen(pos), this.zoomFactor(), traderOf(state.founding));
         this.lastSignals = state.signals;
       }
+      this.drawPrivateerLastSeen(state);
+      this.drawSeason(state);
       this.drawRoutes(state);
       this.drawAnchors(state);
 
@@ -4003,7 +4416,8 @@ export class Renderer {
           continue; // not in screenById → no order line either
         }
         const sp0 = this.ghosts.get(ghost.id);
-        if (ghost.docked && !besieged.has(ghost.docked)) {
+        // DockSite reaches the client as "E29"; SystemInfo ids are "29".
+        if (ghost.docked && !besieged.has(ghost.docked.startsWith("E") ? ghost.docked.slice(1) : ghost.docked)) {
           const sp = this.ghosts.get(ghost.id);
           if (sp) { sp.seen = true; sp.container.visible = false; } // keep pooled, hidden
           continue;
@@ -4026,6 +4440,8 @@ export class Renderer {
       }
       this.updateReacquisitions();
       this.updateRivalJumpArrivals();
+      this.drawProjections(state, screenById);
+      this.drawRaidCourse(screenById);
 
       this.drawOrders(state, orderFleetIds);
       this.drawBattles(state);
@@ -4044,7 +4460,10 @@ export class Renderer {
     }
 
     let systemModels = false;
+    // §raid-camera: an incoming raid takes the tracking window first.
+    let tracked: string | null = this.updateRaidCamera(state);
     if (drawSystem) {
+      this.syncSystemSelection(state);
       // Every dynamic input comes from the SAME light-gated per-player view the
       // galaxy map reads (ownership, ghosts, battles, records, the system
       // report) — so the System View is fogged identically and leaks nothing.
@@ -4072,7 +4491,12 @@ export class Renderer {
       const report = demo?.report ?? dyn ?? null;
       const shown = demo?.picture ?? picture;
       const mine = !!report && report.owner !== null && report.owner === state.playerId;
-      this.systemScene.setReport(report, mine);
+      // §charting: a pirate base our intel knows sits on the system's belt,
+      // named as the galaxy map names it.
+      const enclave = report?.intel?.enclave_tier ?? 0;
+      const pirate = !report || enclave <= 0 ? null : state.founding?.den === report.id ? "☠ PRIVATEER DEN"
+        : enclave >= 5 ? "REGIONAL STRONGHOLD" : enclave === 4 ? "PIRATE DEPOT" : `☠ HIDEOUT T${enclave}`;
+      this.systemScene.setReport(report, mine, pirate);
       this.systemScene.setPicture(shown);
       // A remote star is posed at its OBSERVED time: its picture runs behind.
       const observed = liveSimTime() - (shown?.age ?? 0);
@@ -4082,6 +4506,10 @@ export class Renderer {
           this.shipModels.add(candidate);
           systemModels = true;
         }
+        if (!tracked) {
+          tracked = this.updateTrackingScene(state, dyn, report, mine, shown, observed);
+          if (tracked) systemModels = true;
+        }
       }
     }
     // The shared live-3D atlas serves galaxy close-ups, and in the System View
@@ -4089,6 +4517,151 @@ export class Renderer {
     const modelZoom = drawGalaxy ? this.zoomFactor() : systemModels ? MAP_MODEL_FULL : 0;
     this.shipModels.endFrame(modelZoom, this.viewW, this.viewH, performance.now());
     this.hubModel.endFrame(this.viewW, this.viewH, performance.now());
+    this.renderTrackingInset(tracked, tracked ? this.trackingWork(state, tracked) : null);
+  }
+
+  /// §tracking: a tracked Mining Barge cutting ore: its belt's rock art, so
+  /// the inset shows it at work (Peter, Oct 28 2026).
+  private trackingWork(state: ViewState, id: string): TrackingWork | null {
+    const ghost = state.ghosts.find((entry) => entry.id === id && entry.own);
+    const work = ghost?.industry?.kind === "mine" ? ghost.industry : null;
+    if (!work || work.status !== "mining") return null;
+    const belt = state.systems.find((system) => system.id === work.system)?.bodies?.find((body) => body.id === work.body)?.belt;
+    return { rockUrl: beltChunkUrl(beltKind(belt?.kind)) };
+  }
+
+  /// §tracking: the tracking scene, framed on the selected fleet by the
+  /// inset's own camera (a fixed scale, locked on the fleet), so the orrery's
+  /// pans and zooms never reframe it. Its live 3D hull joins the atlas under
+  /// a key of its own. The fleet's id, or null when nothing is tracked.
+  private updateTrackingScene(state: ViewState, dyn: SystemStateView | undefined, report: SystemStateView | null,
+    mine: boolean, picture: SystemPicture | null, observed: number): string | null {
+    const id = this.trackingInsetOn && this.mode.type === "system" ? state.selectedShipId : null;
+    const seen = id ? this.systemScene.trackTarget(id) : null;
+    const sys = this.galaxy?.systems.find((s) => s.id === this.systemScene.currentId());
+    if (!id || !seen || !sys) return null;
+    this.showTrackingSystem(sys, dyn);
+    if (!this.trackingInset.prepare(this.trackingScene, id, seen, this.cameraRect)) return null;
+    this.trackingScene.setReport(report, mine);
+    this.trackingScene.setPicture(picture);
+    this.trackingScene.update(report?.owner ?? null, state.playerId, performance.now(), observed);
+    const at = this.trackingInset.center();
+    for (const candidate of this.trackingScene.modelCandidates()) {
+      this.shipModels.add({ ...candidate, id: `tracking:${candidate.id}`, x: at.x, y: at.y });
+    }
+    return id;
+  }
+
+  /// §raid-camera (Peter, Oct 27 2026): from the raid's first sighting until
+  /// its "Pirate raid" story opens (boot.ts), the tracking window follows the
+  /// incoming raider, centred over the map wherever the player looks. It draws
+  /// the raided home with the raider where it really is, however far out (the
+  /// orrery shows only an edge arrow there). Pirate hulls are culture art, so
+  /// no live 3D hull joins the atlas. The raider's id, or null.
+  private updateRaidCamera(state: ViewState): string | null {
+    const raid = this.raid;
+    this.raidNote = null;
+    if (!raid || !this.galaxy) return null;
+    const now = performance.now();
+    const ghost = state.ghosts.find((g) => g.id === raid.id);
+    if (ghost) raid.seenMs = now;
+    const sys = this.galaxy.systems.find((s) => s.id === raid.systemId);
+    if (!sys || now - raid.sinceMs > RAID_CAMERA_MAX_MS || now - raid.seenMs > RAID_CAMERA_LOST_MS) {
+      this.raid = null;
+      return null;
+    }
+    if (!ghost || !this.trackingInsetOn || this.mode.type === "battle") return null;
+    // §raid-frame (Peter, Oct 27 2026): "Raider detected on course for
+    // <System>", until it crosses the hyperlimit to loot.
+    if (Math.hypot(ghost.pos.x - sys.pos.x, ghost.pos.y - sys.pos.y) > this.galaxy.hyperlimit) {
+      this.raidNote = `RAIDER DETECTED · ON COURSE FOR ${sys.name.toUpperCase()}`;
+    }
+    const dyn = state.systems.find((s) => s.id === sys.id);
+    this.showTrackingSystem(sys, dyn);
+    const picture = trackedHull(deriveSystemPicture({
+      system: sys,
+      dynamic: dyn,
+      galaxy: this.galaxy,
+      ghosts: state.ghosts,
+      battles: state.battles,
+      battleRecords: state.battleRecords,
+      groundRecords: state.groundRecords,
+      battleDismissed: state.battleDismissed,
+      commandCenter: state.commandCenter,
+      playerId: state.playerId,
+      simTime: liveSimTime(),
+      selectedShipId: raid.id,
+      selectedShipIds: new Set(),
+      selectedBattleId: null,
+    }), ghost, sys.pos);
+    const mine = !!dyn && dyn.owner !== null && dyn.owner === state.playerId;
+    const frame = (seen: TrackingTarget): boolean => {
+      if (!this.trackingInset.prepare(this.trackingScene, raid.id, seen, this.cameraRect, "center")) return false;
+      this.trackingScene.setReport(dyn ?? null, mine);
+      this.trackingScene.setPicture(picture);
+      this.trackingScene.update(dyn?.owner ?? null, state.playerId, performance.now(), liveSimTime() - picture.age);
+      return true;
+    };
+    const last = this.trackingScene.trackTarget(raid.id);
+    if (!last) this.trackingInset.hide();
+    if (!frame(last ?? RAID_FIRST_LOOK)) return null;
+    const placed = last ? null : this.trackingScene.trackTarget(raid.id);
+    if (placed && !frame(placed)) return null;
+    return raid.id;
+  }
+
+  /// §tracking: the tracking scene shows one system at a time, the orrery's
+  /// or the raided home's, from the same light-gated view the orrery reads.
+  private showTrackingSystem(sys: SystemInfo, dyn: SystemStateView | undefined): void {
+    const st = starTypeFor(sys.id);
+    const loaded = this.starTextures.get("system", st.slug,
+      this.trackingScene.starVisibleDiameterPx(), this.app.renderer.resolution);
+    if (this.trackingScene.currentId() !== sys.id) {
+      this.trackingScene.setSystem(buildVisualSystem(sys, dyn?.bodies ?? []), loaded?.texture ?? null, starArtwork("system", st.slug));
+      this.trackingScene.setShipArt((ghost) => this.fleetMarker(ghost), () => this.texBattleOngoing);
+      this.trackingScene.setHaze(this.hazeFor(sys));
+    } else if (loaded) {
+      this.trackingScene.setStarArt(loaded.texture, loaded.art);
+    }
+    this.trackingScene.setDynamic(dyn?.bodies ?? [],
+      (dyn?.builds ?? []).map((build) => ({ key: build.key, body_id: build.body_id })), dyn?.habitat_fed ?? true);
+  }
+
+  /// §raid-camera: follow an incoming raider to its home in the tracking
+  /// window (desktop deck) and its course line on the map (both shells), or
+  /// stop (null).
+  trackRaid(id: string | null, systemId: string | null = null): void {
+    const now = performance.now();
+    this.raid = id && systemId ? { id, systemId, sinceMs: now, seenMs: now } : null;
+  }
+
+  /// §tracking: draw the tracking scene into the inset, after the live 3D
+  /// hulls so it carries them too. Hidden with nothing tracked.
+  private renderTrackingInset(id: string | null, work: TrackingWork | null = null): void {
+    const target = id ? this.trackingScene.trackTarget(id) : null;
+    if (!target) {
+      this.trackingInset.hide();
+      return;
+    }
+    try {
+      this.trackingInset.render(this.app.renderer, this.trackingScene.root, target, id === this.raid?.id ? this.raidNote : null, work);
+    } catch (error) {
+      // A failed close picture never costs the map its frame.
+      this.trackingInset.hide();
+      console.warn("Tracking inset unavailable this frame.", error);
+    }
+  }
+
+  /// §tracking: the desktop deck shows the System View's tracking inset.
+  setTrackingInset(on: boolean): void {
+    this.trackingInsetOn = on;
+    if (!on) this.trackingInset.hide();
+  }
+
+  /// §tracking: a screen point on the tracking inset (its own picture: clicks,
+  /// hovers and the wheel never reach the orrery beneath it).
+  trackingInsetAt(sx: number, sy: number): boolean {
+    return this.trackingInset.contains(sx, sy);
   }
 
   /** Desktop Deck awareness layer: minimum own labels are handled at their

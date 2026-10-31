@@ -243,6 +243,7 @@ pub(super) fn gun_weight(kind: ShipKind, family: DamageType, target: Option<(f64
 /// batteries.
 pub(super) fn fires_batteries(kind: ShipKind, fit: &Loadout, family: DamageType) -> bool {
     kind == ShipKind::Destroyer && family == DamageType::Beam && !fit.modules().contains(&ModuleKind::PrismaticLance)
+        && !fit.modules().contains(&ModuleKind::LanceArray)
 }
 
 /// A battery shot's chance to hit: the beam's base, no mass term, and little
@@ -311,7 +312,8 @@ pub(super) fn battery_volley(state: &mut TacticalState, i: usize, cands: &[(u32,
         let mut dmg = base * (BATTERY_DAMAGE / BATTERY_SHOTS as f64) * battery_armor(mass, platform, math)
             * state.rng.range(DMG_VAR.0, DMG_VAR.1);
         if reflects {
-            dmg *= 1.0 - (reflect * hull_affinity(kind, Family::Protection)).min(0.95);
+            // §research-wiring Ablative Refits: the target side's plating.
+            dmg *= 1.0 - (reflect * state.research.mods[1 - side as usize].reflect() * hull_affinity(kind, Family::Protection)).min(0.95);
         }
         let damage = if connects { state.apply_damage(to, dmg, out, side) } else { 0.0 };
         out.gunfire.push(crate::combat::KfGunfire { side, from, to, weapon: DamageType::Beam, damage: damage as f32 });

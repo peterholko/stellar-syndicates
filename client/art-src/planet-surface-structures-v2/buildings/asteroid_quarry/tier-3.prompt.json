@@ -1,0 +1,32 @@
+{
+  "id": "asteroid_quarry/tier-3",
+  "mode": "built-in image_gen",
+  "prompt": "Use case: stylized-concept.\nAsset type: ONE standalone structure sprite for the asteroid-belt view of Stellar Syndicates, a space strategy game: an Asteroid Quarry, a self-contained zero-gravity mine that clamps onto an asteroid and carries its own crew quarters and power. Square transparent PNG, 1254 x 1254.\nPurpose: the game places this sprite on top of a large rock in a separately painted asteroid field. Draw the quarry ONLY: no asteroid, rock, rubble, dust, cut terraces, pit, crater, terrain, base plate, stars, planet or background. Genuine zero-alpha transparency around the structure; keep a translucent soft contact shadow under its feet.\nInput images: Image 1 is the approved design for tier 1: one articulated arm whose bell-shaped sealed cutter head works the rock, a ribbed flexible hose carrying the cuttings to a low module that holds the processing plant and crew quarters, an upright solar panel on its roof, and a long docking boom. Keep its design, proportions and cream-white finish at every tier, but draw no rock and no ship at the boom. Image 2 is the game's approved orbital fusion plant: match its rendering, materials, lighting and finish, not its ring or layout. Image 3, when attached, is this quarry's tier just below: keep everything in it and grow from it. Image 4, attached for tier 6 only, is the reference for the full-grown mine: take its machinery, not its asteroid, ships, drones, people or photographic look.\nZero gravity: everything is held by structure. The quarry rests on short anchor feet clamped at the foot line, its cutter heads are sealed against the rock, and ore moves only through hoses, pipes and sealed containers. No ore heaps, chutes, open conveyors, smoke stacks, sparks, beams, glow haze or flying debris.\nStyle: near-future frontier engineering. Soft semi-realistic 3D game rendering; cream-white and pale grey modules and arms with amber-yellow trim, graphite steel trusses and hoses, dark blue-grey solar panels, pale radiator panels, restrained warm amber window and work lights, a few cyan docking lights. Large readable forms that still read at 100 px, realistic restrained detail; no ink outlines, cel shading, plastic gloss, extreme contrast or neon. No text, logos, numerals, UI, people, vehicles or spacecraft.\nCamera and lighting: elevated front-left three-quarter view, about 40 degrees above the surface the quarry stands on; mild perspective; front and right sides visible. Upper-left sunlight with crisp, soft-edged shadows and a cool neutral fill; the contact shadow falls to the lower right.\nFraming/alignment (match the game's other buildings): solid structure width about 94% of the canvas (x about 3-97%), centred at x=50%: the arms on the left, the modules in the middle, the docking boom reaching the right edge. The anchor feet and cutter heads, the lowest solid points, at y about 88%. At least 3% transparent margin above the tallest point. Same footprint and overall width at every tier: new parts grow upward and fill in, so nothing shrinks. Never crop.\nOutput exactly one structure, no tier lineup/contact sheet.\nSubject: ASTEROID QUARRY, the structure only - TIER 3 of 6.\nThis tier specifically: keep all of tier 2; add a crew habitat cylinder with a row of lit windows, joined to the module by a short tube; the solar panels become a four-panel array on a short mast; add two tall pale radiator fins at the rear.\nTier family progression for context (do NOT draw a lineup): 1: one arm, one module with crew quarters, one solar panel and a docking boom; 2: a second arm, a second solar panel and an ore tank; 3: a crew habitat cylinder, a four-panel solar array and two radiator fins; 4: a raised processing deck, a third arm and ore containers along the boom; 5: tall ore silos, a radiator bank, a beacon mast and more anchor feet; 6: the full-grown mine of Image 4: a monumental processing block, three tall silos and four arms, on the same compact site.\nOutput: exactly the requested tier alone, genuine transparent PNG.\nImage 3 is the exact tier-2 sprite to extend, preserving its two articulated arms, two bell-shaped capture hoods, their connected hoses, main building, round ore tank and long empty docking boom. Keep the original component scale, camera, overall 94% canvas width and lower baseline. Grow into the empty space ABOVE and BEHIND existing modules; do not shift the whole sprite lower or make it smaller. Add a distinct horizontal cream crew habitat cylinder with a clear row of warm windows, attached to the main module by a short pressurized tube; place it behind the main module so it is readable. Replace the two solar panels with a tidy 2-by-2 array of FOUR dark blue solar panel sections on a short supported mast. Add exactly TWO distinct pale vertical radiator fins at the rear, visibly different from the dark solar panels. Do not add another mining arm: two arms total. No upper processing deck, tall silos, container rows or tall beacon mast yet. Preserve empty space around individual silhouettes. All parts must be physically connected and supported. Keep lowest solid points around y=1104 on the 1254-square transparent canvas; at least 3% clear margin on all sides. No asteroid, no terrain, no ship.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/belt-view/asteroid-quarry-tier1-reference.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/power_plant/orbital-fusion.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/asteroid_quarry/tier-2.png"
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a16e80-dfb6-7831-ba23-bfa68b894aef/exec-94331a6e-5cd2-436e-b2c8-7fb7a3ba7964.png",
+  "file": "buildings/asteroid_quarry/tier-3.png",
+  "source_brief": "docs/asteroid-quarry.md",
+  "verification": {
+    "size": [
+      1254,
+      1254
+    ],
+    "mode": "RGBA",
+    "fullyTransparentPixels": 927319,
+    "partiallyTransparentPixels": 644770,
+    "solidBounds": [
+      27,
+      251,
+      1221,
+      1078
+    ],
+    "solidWidthFraction": 0.9522,
+    "lowestSolidFraction": 0.8596,
+    "sha256": "db3db7f13618eedaeec3ce28856b85a617febc8804a7917d4e09973999dbebd8"
+  }
+}

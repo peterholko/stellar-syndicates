@@ -131,6 +131,19 @@ for (const mutate of [
   assert.equal(unavailable.sent.length, 0);
   assert.match(unavailable.html(), /Repairs need a staffed/);
 }
+// §repair: a staffed, supplied Shipyard is a repair yard too (Oct 21 2026).
+{
+  const yard = fixture();
+  yard.state.systems.forEach((r) => {
+    r.structures = { shipyard: 2 };
+    r.bodies = [{ id: 0, parent: null, structures: { shipyard: 2 } }];
+    r.assignments = [{ structure: "shipyard", body_id: 0, staffing: 1, skill: 1 }];
+  });
+  assert.ok(helpers.nearestRepairYard(yard.state, yard.state.ghosts[0]), "the yard that builds an Interceptor mends it");
+  assert.doesNotMatch(yard.html(), /Repairs need a staffed/);
+  yard.state.systems.forEach((r) => { r.assignments[0].staffing = 0; });
+  assert.equal(helpers.nearestRepairYard(yard.state, yard.state.ghosts[0]), undefined, "unstaffed, it mends nothing");
+}
 const lost = fixture();
 lost.report.outcome = "attacker_destroyed"; lost.report.aftermath.survivors = [];
 assert.match(lost.html(), />Defeat</);

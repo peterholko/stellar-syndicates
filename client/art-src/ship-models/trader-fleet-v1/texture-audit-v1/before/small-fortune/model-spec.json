@@ -1,0 +1,167 @@
+{
+  "name": "Small Fortune",
+  "owner": "Rafi Mensah",
+  "center": [
+    262,
+    429
+  ],
+  "regions": {
+    "top": [
+      36,
+      47,
+      490,
+      810
+    ],
+    "bottom": [
+      533,
+      48,
+      980,
+      811
+    ],
+    "front": [
+      1067,
+      49,
+      1681,
+      280
+    ],
+    "back": [
+      1062,
+      327,
+      1682,
+      540
+    ],
+    "side": [
+      1019,
+      608,
+      1756,
+      800
+    ]
+  },
+  "sideBaseline": 753,
+  "sideHeightScale": 42,
+  "sideRegistration": [
+    [
+      47,
+      321,
+      810
+    ],
+    [
+      1025,
+      1198,
+      1750
+    ]
+  ],
+  "frontBaseline": 229,
+  "backBaseline": 478,
+  "elevationScale": 42,
+  "starboardSide": [
+    1234,
+    630,
+    1420,
+    779
+  ],
+  "engineSide": [
+    1486,
+    638,
+    1752,
+    783
+  ],
+  "paintCrop": [
+    164,
+    268,
+    223,
+    326
+  ],
+  "accentCrop": [
+    251,
+    273,
+    272,
+    330
+  ],
+  "glassCrop": [
+    269,
+    162,
+    281,
+    172
+  ],
+  "cyanCrop": [
+    1155,
+    473,
+    1170,
+    484
+  ],
+  "engineWallCrop": [
+    1556,
+    714,
+    1680,
+    754
+  ],
+  "counts": {
+    "cargoBays": 4,
+    "dockingCollars": 1,
+    "mainEngines": 2,
+    "bridges": 1,
+    "cranes": 0,
+    "guns": 0
+  },
+  "id": "small-fortune",
+  "pixelsPerUnit": [
+    38,
+    38
+  ],
+  "reference": "small-fortune-reference-v1/small-fortune-reference.png",
+  "triangleBudget": [
+    3500,
+    11000
+  ],
+  "patches": {
+    "silver": [
+      2,
+      962,
+      254,
+      1214
+    ],
+    "dark": [
+      274,
+      962,
+      526,
+      1214
+    ],
+    "brass": [
+      546,
+      962,
+      798,
+      1214
+    ],
+    "paint": [
+      816.5,
+      960.5,
+      874.5,
+      1017.5
+    ],
+    "accent": [
+      1088.5,
+      960.5,
+      1108.5,
+      1016.5
+    ],
+    "glass": [
+      1360.5,
+      960.5,
+      1371.5,
+      969.5
+    ],
+    "cyan": [
+      1632.5,
+      960.5,
+      1646.5,
+      970.5
+    ],
+    "enginewall": [
+      816.5,
+      1232.5,
+      939.5,
+      1271.5
+    ]
+  }
+}

@@ -19,6 +19,67 @@ use sim::{
     TradeEvent, TransitMode, Vec2,
 };
 
+/// v78: §gun-platform — the `build_gun_platform` founding stage (step 6; the
+/// charter has 22 steps), the six-level station ladder from the Gun Platform,
+/// `VendettaView.fallen`, `StrikeView.target` and `.wrecked`, the
+/// `freighter` strike, and `ClientMsg::RestartCorporation`.
+/// v77: §vendetta-campaign — `VendettaView.deadline_at` and `.strikes`, the
+/// `mine_strike` and `barge_strike` beats.
+/// v76: §refining + §den-pocket — the `build_smelter` and `prospect_belt`
+/// founding stages (steps 14 and 18; the charter has 21 steps).
+/// v75: §season — `Sections.season`: galaxy maturity and the Authority's grip
+/// from the census this corporation has heard, and the Galactic News Network
+/// items whose light from the Hub has reached it; the `decree` log line.
+/// v74: §scouting — `SystemStateView.scouted_stores` (a scout's look at a rival's
+/// stores in raiders' reach and its Vault) and counter-scouting log entries.
+/// v73: §vault + §raid-order — the Vault structure (`vault`), `BlockadeSystem.raid`,
+/// an owner-only fleet `raiding` flag and the `needs_hold` refusal.
+/// v72: §unlocks — `ResearchView.structure_tiers`: the highest level of each
+/// structure this corporation may build now, so the client renders nothing
+/// research hasn't unlocked (station levels, tiers V–VI, gated buildings).
+/// v71: §log — `TimelineEntry` gains `id`, `kind`, `group`, `phase`, `refs`
+/// and `data`; the journal keeps 300 entries or 7 days; operation churn,
+/// order echoes and pirate-raid lines are merged or dropped at the source.
+/// v70: §traders — `GhostView.trader`: which free trader flies a merchant
+/// ship, so each draws its own ship (Long Odds, Clean Slate, Second Wind,
+/// Small Fortune).
+/// v69: §holds — the `combat_freighter` hull: a raiding freighter whose
+/// hold takes only plunder, seized cargo and finds.
+/// v68: §treasury — `WalletView.credits` is the treasury at the command
+/// center, known at once (it was the Hub's light-delayed report); an order to
+/// the Hub takes its payment as it leaves. Same shape, new meaning: clients
+/// stop holding credits for orders in flight.
+/// v67: §traders — `FoundingView.trader`: which of four free traders
+/// (`teo`, `ines`, `mags`, `rafi`) flies this founder's merchant.
+/// §privateer-hunt — `FoundingView.privateer_last_seen`: the privateer's
+/// hiding spot once the raid is over (it is tracked only during the raid).
+/// v66: §charter-gates — `FoundingView.charter_gates`: the structures the
+/// charter has yet to open, by step.
+/// v65: Shipyard I builds the Interceptor (`raider`); the guide skips
+/// Shipyard II.
+/// v64: §asteroid-quarry — the `asteroid_quarry` structure (a belt's one
+/// structure) and the `no_supplies` line state.
+/// v63: §vendetta — the `vendetta` founding stage (step 19),
+/// `FoundingView.pirates` and `FoundingView.vendetta`.
+/// v62: §node — `SystemInfo.exotic`: the server decides which stars are
+/// exotic (a home never is), and the client's star art follows it.
+/// v61: §social (R5) the syndicate channel, mail, mute/report and
+/// `Sections.social`; §welcome (R9) `Timeline.welcome`; §settle-near-friends
+/// (R7) CreateInvite/RevokeInvite/RedeemInvite, `InviteStatus` and
+/// `SocialView.invites`; §syndicate-projects (R6) `SyndicateView.projects`,
+/// ContributeSyndicateProject, RaiseSyndicateBonus and
+/// `Sections.syndicate_rankings`.
+/// v60: §research-wiring — the eight once-hidden programmes: the
+/// `lance_array` module and `GhostView.projected` (Predictive Plots).
+/// v59: §research-wiring (R2) — `ClientMsg::SetDesignation` and
+/// `ResearchView.designations`; research effects served where they show.
+/// v58: §leave + §tier-curve (R1/R4) — `ClientMsg::SetLeave` and the owner's
+/// `View.leave`; structure tiers past II follow the tier curve (client mirror).
+/// v57: §founding — the home world's type is dealt, not chosen:
+/// `FoundingOffer.profile` names it and `FoundColony` carries no choice.
+/// v56: §real-coordinates — `BodyView.orbit`: every charted world's orbit
+/// (radius, angle at time 0, period), so worlds and the ships at them are
+/// drawn where the sim has them; belts carry their laid-out ring.
 /// v55: §signals — `View.signals`, AnswerSignal, DismissSignal, the
 /// `signal` expedition task and `CaptainRosterView.hurt_until`; the first
 /// finds' news lines retired into the signals' first ten.
@@ -47,16 +108,29 @@ use sim::{
 /// v45: §pockets — ProspectBelt, MineBelt `pocket`, belt pocket rows and the
 /// six pocket commodities.
 /// v34: advanced industry goods and static factory recipes/research prerequisites.
+/// v80: §player-styles — the daily loot cap (`View.raid_losses`), the rival
+/// raid warning (`RaidSighted` lines), repeating raids (`BlockadeSystem.repeat`,
+/// `GhostView.raid_trip`) and personal pirate hideouts.
+/// v79: §charter-crates — the charter's supplies as crates released a
+/// chapter at a time (`FoundingView.crates`, `ClientMsg::CollectCharterCrate`)
+/// and the "Secure your stores" step (`secure_stores`).
 /// Binary MessagePack transport: bump the WebSocket subprotocol and the
 /// client's wire version together; old text clients must refresh, not silently
 /// misinterpret binary data. Welcome retains the version for the UI contract.
-pub const PROTOCOL_VERSION: u32 = 55;
+pub const PROTOCOL_VERSION: u32 = 80;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientMsg {
-    FoundColony { profile: sim::settlement::FoundingProfile },
+    /// Land on the home world the server dealt (`ServerMsg::FoundingOffer`).
+    FoundColony,
+    /// §gun-platform: found the corporation again on its home once its colony
+    /// fell to the uncle (`VendettaView.fallen`). Refused otherwise.
+    RestartCorporation,
+    /// §charter-crates: collect a released charter crate into the home
+    /// stockpile (`FoundingView.crates`). Refused before its step.
+    CollectCharterCrate { charter_crate: sim::CharterCrate },
     DevelopSettlement { system_id: EntityId, body_id: u32, project: sim::settlement::SettlementProject },
     SetRefiningReserve { system_id: EntityId, ore: u32, fuel: u32 },
     SetFreightRoute { fleet_id: EntityId, route: Option<sim::industry::FreightRoute> },
@@ -226,6 +300,32 @@ pub enum ClientMsg {
     /// clamped to the ceiling — you pay only for points actually restored).
     PayReinstatement {
         points: f64,
+    },
+
+    /// §season (v75): answer the Authority's levy rise (refused, the good is
+    /// embargoed until the arrears are paid).
+    AnswerLevy {
+        accept: bool,
+    },
+    /// §season (v75): pay the arrears that lift an embargo.
+    PayArrears {
+        commodity: Commodity,
+    },
+    /// §season (v75): pay a requisition, or refuse it.
+    AnswerRequisition {
+        id: u64,
+        pay: bool,
+    },
+    /// §season (v75): feed the Keystone on a sealed world from its stockpile.
+    FeedKeystone {
+        system_id: EntityId,
+        commodity: Commodity,
+        units: u32,
+    },
+    /// §season (v75): Gate Step a fleet to the Keystone world or a held relic.
+    GateStep {
+        fleet_id: EntityId,
+        system_id: EntityId,
     },
 
     /// §TCA: toggle whether one of the player's BLOCKADING fleets also engages
@@ -490,6 +590,12 @@ pub enum ClientMsg {
     BlockadeSystem {
         fleet_id: EntityId,
         system_id: EntityId,
+        /// §raid-order (v73): load until full, then bring the loot home.
+        #[serde(default)]
+        raid: bool,
+        /// §player-styles (v80): a raid that sets out again after each trip.
+        #[serde(default)]
+        repeat: bool,
     },
 
     /// SURVEY a system's exact geology (§explore Part 2): order one of the
@@ -598,6 +704,16 @@ pub enum ClientMsg {
     CreateSyndicateOperation {
         system_id: EntityId,
     },
+    /// §syndicate-projects (R6): give the rung's goods from one of your worlds.
+    ContributeSyndicateProject {
+        system_id: EntityId,
+        commodity: Commodity,
+        units: u32,
+    },
+    /// Spend project points on a bonus level.
+    RaiseSyndicateBonus {
+        bonus: sim::syndicate::SyndicateBonus,
+    },
 
     // ---- DIPLOMACY ----------------------------------------------------------
     ProposeTreaty {
@@ -640,6 +756,35 @@ pub enum ClientMsg {
     NameFlagship {
         name: String,
     },
+    /// §leave (R4): go on leave (`on`) or come back.
+    SetLeave {
+        on: bool,
+    },
+    /// §research-grant (R3): buy one research-hour for the active programme.
+    FundResearch,
+    /// §designations (R2): point a researched capability at its target.
+    SetDesignation {
+        cap: sim::research::Cap,
+        target: sim::research::DesignationTarget,
+    },
+    /// §social (R5): a line on the syndicate channel.
+    SyndicateSay { text: String },
+    /// §social: mail another corporation, by its name.
+    SendMail { to: String, subject: String, body: String },
+    MarkMailRead { id: u64 },
+    DeleteMail { id: u64 },
+    /// §social: hide (or show again) a corporation's lines and mail.
+    MuteCorp { player: PlayerId, mute: bool },
+    /// §social: report a channel line (`kind` "chat") or a received mail
+    /// ("mail") to the operators.
+    ReportMessage { kind: String, id: u64, reason: String },
+    /// §settle-near-friends (R7): a link that holds the free home slot nearest
+    /// the caller's home, for a friend.
+    CreateInvite,
+    RevokeInvite { code: String },
+    /// A newcomer's link, before `FoundColony`: the landing takes the held
+    /// slot and joins the inviter's syndicate. Answered with `InviteStatus`.
+    RedeemInvite { code: String },
 
     /// Application-level keepalive (optional; the client may send periodically).
     Ping,
@@ -734,6 +879,131 @@ pub struct CharterView {
     pub market_penalty_frac: f64,
     /// Credits per standing point to buy back through reinstatement.
     pub reinstate_cost_per_point: f64,
+    /// §standing-ladder (R3): full standing, where buying back stops; grades
+    /// lie above it, to `max_standing`.
+    pub full_standing: f64,
+    pub grade: sim::tca::CharterGrade,
+    pub grade_title: &'static str,
+    /// The next grade and the standing it begins at.
+    pub next_grade: Option<NextGradeView>,
+    /// Standing earned past full today, against `earn_per_day`.
+    pub earned_today: f64,
+    pub earn_per_day: f64,
+    /// Units per destination per departure the Authority lifts at this grade.
+    pub shipment_cap: u32,
+    /// §season (v75): the levy on this corporation's Hub trades (a fraction),
+    /// on top of `market_penalty_frac`, and the squeeze it has heard of.
+    pub levy_frac: f64,
+    pub squeeze: SqueezeView,
+}
+
+/// §season (v75): the Authority's demands on one corporation, as heard.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SqueezeView {
+    /// The base levy at the grip heard; `levy_frac` adds this corp's rises.
+    pub base: f64,
+    pub rise: Option<LevyRiseView>,
+    pub embargoes: Vec<EmbargoView>,
+    pub requisitions: Vec<RequisitionView>,
+    /// Requisitions refused this season (three bring a squadron).
+    pub refusals: u32,
+    pub levy_paid: f64,
+    pub enforced_until: Option<f64>,
+    /// §season phase 3: this corporation's Resolve, 0–1, and whether that
+    /// makes it a loyalist.
+    pub resolve: f64,
+    pub loyal: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LevyRiseView {
+    pub points: f64,
+    pub commodity: Commodity,
+    pub trade: f64,
+    /// Accepted by default after this.
+    pub due: f64,
+    /// What refusing would owe to lift the embargo.
+    pub arrears: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EmbargoView {
+    pub commodity: Commodity,
+    pub arrears: f64,
+    pub since: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RequisitionView {
+    pub id: u64,
+    pub demand: sim::season::Demand,
+    /// Refused by default after this.
+    pub due: f64,
+}
+
+impl SqueezeView {
+    /// What `player` at `cc` has heard of its squeeze by `now`: demands once
+    /// their light from the Hub has arrived.
+    pub fn heard(world: &sim::World, player: PlayerId, cc: Vec2) -> SqueezeView {
+        let lag = sim::transit::delay(world.hub, cc, world.config.c);
+        let now = world.time;
+        let grip = world.season.census_for(cc, world.hub, world.config.c, now).map_or(sim::season::Grip::Charter, |c| c.grip);
+        let Some(sq) = world.season.squeeze.get(&player) else {
+            return SqueezeView { base: sim::season::LEVY_BY_GRIP[grip as usize], loyal: true, ..Default::default() };
+        };
+        SqueezeView {
+            base: sim::season::LEVY_BY_GRIP[grip as usize],
+            rise: sq.rise.as_ref().filter(|r| r.at + lag <= now).map(|r| LevyRiseView {
+                points: r.points, commodity: r.commodity, trade: r.trade, due: r.due,
+                arrears: (r.trade * sim::season::ARREARS_FRAC).round(),
+            }),
+            embargoes: sq.embargoes.iter().map(|(c, e)| EmbargoView { commodity: *c, arrears: e.arrears, since: e.since }).collect(),
+            requisitions: sq.requisitions.iter().filter(|r| r.at + lag <= now)
+                .map(|r| RequisitionView { id: r.id, demand: r.demand, due: r.due }).collect(),
+            refusals: sq.refusals,
+            levy_paid: sq.levy_paid,
+            enforced_until: (sq.enforced_until > now).then_some(sq.enforced_until),
+            resolve: sq.resolve,
+            loyal: world.loyal(player),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NextGradeView {
+    pub title: &'static str,
+    pub at: f64,
+}
+
+/// §leave (R4): the owner's leave, current or last, and its fixed terms.
+#[derive(Debug, Clone, Serialize)]
+pub struct LeaveView {
+    /// On leave now.
+    pub on: bool,
+    /// When the current leave ends by itself.
+    pub until: Option<f64>,
+    /// The earliest early return from the current leave.
+    pub earliest_return: Option<f64>,
+    /// When a new leave may start (0 if never taken).
+    pub next_start: f64,
+    pub min_secs: f64,
+    pub max_secs: f64,
+    pub cooldown_secs: f64,
+}
+
+impl LeaveView {
+    pub fn of(leave: &sim::leave::Leave, now: f64) -> Self {
+        let on = leave.active(now);
+        LeaveView {
+            on,
+            until: on.then_some(leave.until).flatten(),
+            earliest_return: on.then(|| leave.earliest_return()).flatten(),
+            next_start: leave.next_start(),
+            min_secs: sim::leave::LEAVE_MIN_S,
+            max_secs: sim::leave::LEAVE_MAX_S,
+            cooldown_secs: sim::leave::LEAVE_COOLDOWN_S,
+        }
+    }
 }
 
 /// Owner-only opening programme. This is a projection of sim state, never a
@@ -777,11 +1047,103 @@ pub struct FoundingView {
     /// §charter-v4: the charter's land grant has opened the rest of the home
     /// system ("Expand mining operations"); until then only the landing world.
     pub land_grant_open: bool,
+    /// §charter-gates: the structures the charter has yet to open, each with
+    /// the step that opens it (`founding::charter_step`). Empty once open.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub charter_gates: BTreeMap<&'static str, usize>,
     /// §charter-v4: the privateer den's system, once the privateer's kill
     /// report (its log names the den) has reached command.
     pub den: Option<EntityId>,
     /// §charter-v4: the report that the den fell has reached command.
     pub den_cleared: bool,
+    /// §vendetta: the pirate family this founder crossed: the raiding
+    /// nephew, his uncle and his brother.
+    pub pirates: Option<PirateFamilyView>,
+    /// §traders: who flies this founder's free trader (`teo`, `ines`,
+    /// `mags` or `rafi`): its name, face and voice in the client.
+    pub trader: &'static str,
+    /// §privateer-hunt: where the privateer went to ground, from the raid's
+    /// report until its kill's report: the hunt's "last seen" marker.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub privateer_last_seen: Option<Vec2>,
+    /// §vendetta: the uncle's revenge, once his oath has reached command.
+    pub vendetta: Option<VendettaView>,
+    /// §charter-crates: the crates still sealed, in charter order: released
+    /// ones wait to be collected; the rest are what the builds ahead can
+    /// count on.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub crates: Vec<CharterCrateView>,
+}
+
+/// §player-styles: the daily loot cap, as its owner sees it.
+#[derive(Debug, Clone, Serialize)]
+pub struct RaidLossView {
+    /// Units raids and blockades took over the last day.
+    pub taken: u32,
+    /// The day's limit; None while no cap applies (three days without an order).
+    pub cap: Option<u32>,
+}
+
+/// §charter-crates: one sealed charter crate.
+#[derive(Debug, Clone, Serialize)]
+pub struct CharterCrateView {
+    pub id: sim::CharterCrate,
+    /// Its step has come: it can be collected.
+    pub released: bool,
+    /// The charter step that releases it.
+    pub step: usize,
+    pub goods: BTreeMap<Commodity, u32>,
+}
+
+/// §vendetta: a founder's pirate family (`docs/pirate-vendetta.md`). The
+/// family's personality (`showboat`, `hothead`, `collector`, `scrapper` or
+/// `fatalist`) picks its portraits and lines; the names are full names.
+#[derive(Debug, Clone, Serialize)]
+pub struct PirateFamilyView {
+    pub family: &'static str,
+    pub surname: &'static str,
+    pub nephew: String,
+    pub uncle: String,
+    pub brother: String,
+}
+
+/// §vendetta: the uncle's revenge as command knows it.
+#[derive(Debug, Clone, Serialize)]
+pub struct VendettaView {
+    /// When his pack sets out for the colony, once it is raised (step 19).
+    pub depart_at: Option<f64>,
+    /// His pack, once it is in this viewer's picture.
+    pub fleet: Option<EntityId>,
+    /// He is over the colony.
+    pub arrived: bool,
+    /// How it ended, once its report reached command: true when he died.
+    pub won: Option<bool>,
+    /// §gun-platform: he sacked the colony: game over until a restart.
+    pub fallen: bool,
+    /// §vendetta-campaign: the latest he sets out, online or not (his
+    /// countdown runs only while the founder is online).
+    pub deadline_at: Option<f64>,
+    /// §vendetta-campaign: his strikes on the founder's expanded mining.
+    pub strikes: Vec<StrikeView>,
+}
+
+/// §vendetta-campaign: one strike as command knows it.
+#[derive(Debug, Clone, Serialize)]
+pub struct StrikeView {
+    pub kind: sim::founding::StrikeKind,
+    /// The mine's world, or the barge's belt.
+    pub system: EntityId,
+    pub body: u32,
+    /// Its raiders, once they are in this viewer's picture.
+    pub fleet: Option<EntityId>,
+    /// Over the mine's world, on the light of it.
+    pub over: bool,
+    /// Gone home, called off, or killed.
+    pub done: bool,
+    /// §gun-platform: the freighter a freighter strike hunts.
+    pub target: Option<EntityId>,
+    /// §gun-platform: what a mine strike wrecked, in order (structure slugs).
+    pub wrecked: Vec<&'static str>,
 }
 
 /// §belts: a belt by its system and its body id within that system.
@@ -859,7 +1221,10 @@ pub struct LedgerGoalView {
     pub metric: sim::charter::LedgerMetric,
     pub progress: f64,
     pub target: f64,
-    pub reward: f64,
+    /// §standing-ladder (R3): what the goal pays: standing, and a research
+    /// dossier as a fraction of a programme.
+    pub standing: f64,
+    pub research: f64,
 }
 
 /// §TCA: one entry of an Authority freighter's MANIFEST, as a viewer may read it.
@@ -1098,6 +1463,130 @@ pub struct TimelineEntry {
     pub at_time: f64,
     pub severity: TimelineSeverity,
     pub text: String,
+    /// §log (v71): stable per entry, for read marks. 0 on entries saved before.
+    #[serde(default, skip_serializing_if = "is_zero_id")]
+    pub id: u64,
+    /// §log: what the entry is about (the Log's filters, glyphs and reports).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<LogKind>,
+    /// §log: entries about one real-world thing (a raid on a home, a
+    /// blockade, a construction) share a group; the client shows an episode
+    /// as one row, split at its terminal phase.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<LogPhase>,
+    /// §log: what the entry names, for links.
+    #[serde(default, skip_serializing_if = "LogRefs::is_empty")]
+    pub refs: LogRefs,
+    /// §log: the numbers behind the text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<Box<LogData>>,
+}
+
+fn is_zero_id(n: &u64) -> bool {
+    *n == 0
+}
+
+/// §log (v71): what a timeline entry is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogKind {
+    /// Pirate raids on a home, the founding raid and pirate dens.
+    Raid,
+    Blockade,
+    Battle,
+    /// Captures, landings and claims of territory.
+    Capture,
+    Trade,
+    Freight,
+    /// The traveling merchant.
+    Trader,
+    Build,
+    /// Production stopping and starting, power and food.
+    Production,
+    Research,
+    Survey,
+    Signal,
+    /// Exotic nodes and rival claims.
+    Territory,
+    Operation,
+    Diplomacy,
+    Syndicate,
+    /// Fleet status: fuel, rescue, repairs, jumps, arrivals.
+    Fleet,
+    /// Refused orders, builds and trades.
+    Refusal,
+    /// Authority stipends, citations and enforcement.
+    Charter,
+    Vendetta,
+    Medal,
+    /// Leave and other corporation administration.
+    Admin,
+}
+
+/// §log (v71): where an entry's episode stands. Terminal phases end it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogPhase {
+    Inbound,
+    Attacking,
+    Raiding,
+    Ended,
+    Contested,
+    Held,
+    Lifted,
+    Offered,
+    Active,
+    Completed,
+    Failed,
+    Expired,
+    Started,
+    Done,
+}
+
+/// §log (v71): the things an entry names.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
+pub struct LogRefs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<EntityId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fleet: Option<EntityId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation: Option<sim::OperationId>,
+    /// The battle record a combat line reports (opens its replay).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battle: Option<EntityId>,
+}
+
+impl LogRefs {
+    pub fn is_empty(&self) -> bool {
+        self.system.is_none() && self.fleet.is_none() && self.operation.is_none() && self.battle.is_none()
+    }
+}
+
+/// §log (v71): the numbers an entry reports, from this player's side.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
+pub struct LogData {
+    /// Goods the event moved for this player: negative is lost.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub goods: BTreeMap<Commodity, i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ships: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credits: Option<f64>,
+    /// How many like events this entry stands for (merged at the source).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+    /// The ids those events concern ("O12793"…).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ids: Vec<String>,
+    /// Sim-time something is expected to arrive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eta: Option<f64>,
+    /// Seconds it lasted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<f64>,
 }
 
 /// One resource deposit on a system, as the client sees it. §explore: NO LONGER
@@ -1128,6 +1617,10 @@ pub struct SystemInfo {
     /// §explore: the public richness band slug — "poor" | "fair" | "rich".
     pub band: &'static str,
     pub claim_cost: f64,
+    /// §node: the star is exotic (`World::exotic_bonus`). The client's star
+    /// art follows this rather than its own roll of the id, since a home is
+    /// never exotic.
+    pub exotic: bool,
 }
 
 /// Static public deep-space terrain. Geometry is the exact rotated ellipse used
@@ -1248,6 +1741,10 @@ pub struct BuildOptionView {
     pub conversion: Option<ConversionRecipeView>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub refining_recipes: Vec<ConversionRecipeView>,
+    /// §asteroid-quarry: what one tier eats a second from its system's stock,
+    /// all or nothing (`[commodity, units/s]`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub upkeep: Vec<(Commodity, f64)>,
 }
 
 /// Explicit level-specific structure recipe and benefit, sent with Welcome.
@@ -1419,6 +1916,18 @@ pub struct BuildWorkView {
     pub at_time: f64,
 }
 
+/// §scouting (v74): a scout's look at a RIVAL system's stores, Travian's
+/// "resources" report, as delivered to the scout's owner and nobody else.
+#[derive(Debug, Clone, Serialize)]
+pub struct ScoutedStoresView {
+    /// Whole units of each good in raiders' reach, dearest first.
+    pub reach: Vec<StockSlot>,
+    /// The system's Vault room (units), whatever it holds.
+    pub vault: u32,
+    /// Sim-time of the look; the readout ages from it.
+    pub observed_at: f64,
+}
+
 /// A stored SCOUT-INTEL snapshot of a RIVAL system's fortifications (§scout
 /// part 2), as delivered to the scout's owner — and to nobody else. It is a
 /// SNAPSHOT: `observed_at` is when the scout saw it (the client ages it); it is
@@ -1462,6 +1971,11 @@ pub struct SystemStateView {
     pub industry: Option<sim::industry::SiteIndustry>,
     pub owner: Option<PlayerId>,
     pub stockpile: Option<Vec<StockSlot>>,
+    /// §vault (v73): owner-only — the whole units of each good raiders can't
+    /// reach (the settlers' rations and what the Vaults hold), from the same
+    /// report as `stockpile`. Empty for rivals.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub vault: Vec<StockSlot>,
     /// Owner-only: the SOONEST in-progress build at this system (§step1), if
     /// any. Like `stockpile`, never present for a rival — build state never
     /// leaks. Kept alongside `builds` for the single-job consumers.
@@ -1559,6 +2073,12 @@ pub struct SystemStateView {
     /// TOTAL storage capacity (units, summed across commodities; §buildings step 2)
     /// — owner-only; rivals always see 0.
     pub storage_cap: u32,
+    /// §research-wiring Bulk Storage: the warehouse multiple (owner-only; 1 for rivals).
+    pub storage_mult: f64,
+    /// §research-wiring Flash Forges: structures each world builds at once.
+    pub structure_slots: u32,
+    /// §research-wiring: specialists the system houses (owner-only; 0 for rivals).
+    pub specialist_housing: u32,
     /// Units currently stored against that cap — owner-only; rivals always see 0.
     /// (May exceed `storage_cap` for a grandfathered pre-cap stockpile.)
     pub storage_used: u32,
@@ -1567,6 +2087,11 @@ pub struct SystemStateView {
     /// center (§scout part 2). Never present on the viewer's own systems, and a
     /// scouted rival never sees anything here about being scouted.
     pub intel: Option<IntelView>,
+    /// §scouting (v74): what the viewer's own scouts last saw of this RIVAL
+    /// system's stores, once that light reached its command center. Injected
+    /// by the game loop; absent on your own systems.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scouted_stores: Option<ScoutedStoresView>,
     /// True if this system's (light-gated known) owner is a SYNDICATE ally as the
     /// viewer knows it (§syndicates Part 1). Drives the friendly ally tint; does
     /// NOT grant any owner-only data (stockpile/tiers stay private in Part 1).
@@ -1661,6 +2186,51 @@ pub struct SyndicateView {
     #[serde(default)]
     pub flagship_name: Option<String>,
     pub my_role: sim::SyndicateRole,
+    /// §syndicate-projects (R6): the week's ladder and the bonuses.
+    pub projects: SyndicateProjectsView,
+}
+
+/// §syndicate-projects (R6): one rung of the week's ladder.
+#[derive(Debug, Clone, Serialize)]
+pub struct RungView {
+    pub goods: Commodity,
+    pub goal: u32,
+    pub points: u32,
+}
+
+/// One bonus track: the syndicate's level and the level that has reached you.
+#[derive(Debug, Clone, Serialize)]
+pub struct BonusView {
+    pub bonus: sim::syndicate::SyndicateBonus,
+    pub level: u8,
+    pub mine: u8,
+    /// The gain per level, as a fraction.
+    pub per_level: f64,
+    /// Points for the next level; None at the top.
+    pub next_cost: Option<u32>,
+    /// Seconds until your next level arrives, while you wait for one.
+    pub next_in: Option<f64>,
+}
+
+/// §syndicate-projects (R6): the week's ladder, points and bonuses.
+#[derive(Debug, Clone, Serialize)]
+pub struct SyndicateProjectsView {
+    pub week: u32,
+    /// Seconds until the week closes.
+    pub week_ends_in: f64,
+    /// The rung in progress (0-based); `rungs.len()` once the ladder is done.
+    pub rung: usize,
+    pub progress: u32,
+    pub rungs: Vec<RungView>,
+    pub points: u32,
+    pub week_points: u32,
+    pub bonuses: Vec<BonusView>,
+    /// Goods each member gave this week, most first.
+    pub given: Vec<(String, u32)>,
+    /// Weekly project medals: gold, silver, bronze.
+    pub medals: [u32; 3],
+    /// Whether you may spend points.
+    pub may_raise: bool,
 }
 
 /// §fitting: one saved doctrine fit on the wire (modules sorted, never empty —
@@ -1755,7 +2325,10 @@ pub struct ContractBoardView {
     /// Contracts from this day's board paid out so far.
     pub done: u32,
     pub needed: u32,
-    pub bonus_credits: f64,
+    /// §standing-ladder (R3): the bonus pays standing and a dossier
+    /// (fraction of a programme), not credits.
+    pub bonus_standing: f64,
+    pub bonus_dossier: f64,
     pub bonus_paid: bool,
 }
 
@@ -1811,6 +2384,34 @@ pub struct ResearchView {
     /// §perf Part B: the DYNAMIC per-node slice only (state + gate) — the static
     /// catalog (names/blurbs/topology/cost) went once in Welcome.
     pub programmes: Vec<ProgrammeDynView>,
+    /// §research-grant (R3): buying research-hours with credits.
+    pub grant: ResearchGrantView,
+    /// §designations (R2): where each researched capability points.
+    pub designations: Vec<DesignationView>,
+    /// §unlocks (v72): the highest level of each structure (by slug) this
+    /// corporation may build now, `build::max_buildable_tier` on its research.
+    /// 0: not unlocked yet. The client shows nothing above it.
+    pub structure_tiers: std::collections::BTreeMap<String, u32>,
+}
+
+/// §designations: one capability's target, whether it is live (target still
+/// held), and when it may next move (None: free now).
+#[derive(Debug, Clone, Serialize)]
+pub struct DesignationView {
+    pub cap: sim::research::Cap,
+    pub target: sim::research::DesignationTarget,
+    pub live: bool,
+    pub locked_until: Option<f64>,
+}
+
+/// §research-grant: one grant's price for the active programme (None with
+/// nothing running), its research seconds, and how many are left today.
+#[derive(Debug, Clone, Serialize)]
+pub struct ResearchGrantView {
+    pub price: Option<f64>,
+    pub secs: f64,
+    pub left: u32,
+    pub per_day: u32,
 }
 
 /// §research R6: the active programme banner data.
@@ -1903,6 +2504,10 @@ pub struct BodyView {
     /// §belts: an asteroid belt's type and picture. Belts are withheld until
     /// the viewer has charted (surveyed) the system.
     pub belt: Option<BeltView>,
+    /// §real-coordinates: where it goes round (System View units, 1 =
+    /// `sim::body::SYSTEM_UNIT_SU`): about its star, or its planet for a moon.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orbit: Option<OrbitView>,
     pub habitable: bool,
     pub size: String,
     pub environment: String,
@@ -1924,6 +2529,9 @@ pub struct BodyView {
     pub resource_slots: Option<u32>,
     pub industrial_slots: Option<u32>,
     pub infrastructure_slots: Option<u32>,
+    /// §research-wiring Xenoacclimation: a Marginal world that counts as
+    /// habitable for its owner (owner-only).
+    pub acclimated: bool,
     /// Survey-gated because Low Gravity is itself surveyed.
     pub ship_build_time_mult: Option<f64>,
     /// This body's deposits — survey-gated like the system list.
@@ -1975,6 +2583,15 @@ pub struct BeltView {
     pub width: f64,
 }
 
+/// §real-coordinates: a world's orbit — radius (System View units), angle at
+/// sim time 0 (radians) and seconds per turn (0 for a belt).
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct OrbitView {
+    pub radius: f64,
+    pub angle: f64,
+    pub period: f64,
+}
+
 /// §economy Part 6: a colony's workforce numbers — owner-only.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct WorkforceView {
@@ -2011,6 +2628,8 @@ pub struct AssignmentView {
     /// Planetary geology/special factor. Age/crew thresholds never enter it.
     pub site: f64,
     pub recovery: f64,
+    /// §research-wiring: the input basket's multiple (Autoforges, crops).
+    pub input_mult: f64,
     /// Net output lines at those factors (commodity, units/s) — extraction
     /// lists each deposit's commodity; a converter lists its output.
     pub outputs: Vec<(Commodity, f64)>,
@@ -2033,6 +2652,7 @@ pub struct ConverterStatusView {
     pub rated_output: f64,
     pub site: f64,
     pub recovery: f64,
+    pub input_mult: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2138,6 +2758,9 @@ pub enum BattleFidelity {
     Participant,
     /// A third party covering the site: the bucketed spine only.
     Bucket,
+    /// §research-wiring Battle Archives: a third party's bucketed spine with
+    /// each round's losses, bucketed.
+    Archive,
 }
 
 /// One `(kind, strength)` entry of a recorded side. `exact` is present ONLY at
@@ -2509,6 +3132,15 @@ pub struct CaptainRosterView {
     pub report: Option<CaptainView>,
 }
 
+/// §research-wiring Wake Analysis: a contact's tank in quarters (0–1) and the
+/// bearing it came from (radians, to the nearest sixteenth of a turn; None
+/// while it holds still).
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct WakeView {
+    pub fuel: f64,
+    pub from: Option<f64>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct GhostView {
     pub id: EntityId,
@@ -2590,6 +3222,14 @@ pub struct GhostView {
     pub antimatter: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub antimatter_capacity: Option<f64>,
+    /// §syndicate-projects (R6): owner-only, the Freight bonus on player
+    /// freighter holds (absent at 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cargo_mult: Option<f64>,
+    /// §holds: owner-only, Prize Holds' bonus on Combat Freighter holds
+    /// (absent at 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prize_mult: Option<f64>,
     /// Owner-only: this sighting found the fleet held for lack of carried fuel.
     #[serde(default)]
     pub stalled: bool,
@@ -2606,6 +3246,10 @@ pub struct GhostView {
     /// §merchant: public role identity for the traveling merchant's ship.
     #[serde(default)]
     pub merchant: bool,
+    /// §traders: the free trader flying the merchant's ship (`teo`, `ines`,
+    /// `mags`, `rafi`), so the map draws that trader's own ship.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trader: Option<String>,
     /// An observable convoy route (waypoints), light-delayed like its position.
     /// A silent rival convoy has no ghost at all outside detection coverage.
     pub route: Option<Vec<Vec2>>,
@@ -2752,19 +3396,48 @@ pub struct GhostView {
     /// outside (on the standoff ring, its delivery still open).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held_outside: Option<EntityId>,
+    /// §raid-order: OWNER-ONLY — this blockading fleet is on a RAID: it brings
+    /// its loot home when its holds fill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raiding: Option<bool>,
+    /// §player-styles (v80): a repeating raid's trip, this one included.
+    /// Owner-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raid_trip: Option<u32>,
     /// §light-delayed controls: owner-only served transit setting. Unlike a
     /// local button latch, this can reconcile a pending request after the
     /// fleet's own report returns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transit: Option<sim::ship::TransitMode>,
+    /// §research-wiring Signal Libraries / ECM Emitters: the size estimate as a
+    /// range one step finer or coarser than `count_class` (low, high; None:
+    /// open-ended). Absent: read `count_class`.
+    #[serde(default)]
+    pub count_range: Option<(u32, Option<u32>)>,
+    /// §research-wiring Traffic Analysis: what an unrevealed freighter carries:
+    /// goods, personnel, modules or empty.
+    #[serde(default)]
+    pub manifest_class: Option<String>,
+    /// §research-wiring Wake Analysis: its tank and the way it came.
+    #[serde(default)]
+    pub wake: Option<WakeView>,
+    /// §research-wiring Standing Watch: a lost contact's dead-reckoned
+    /// estimate — seconds since its last fix.
+    #[serde(default)]
+    pub tracked: Option<f64>,
+    /// §research-wiring Predictive Plots: where a moving rival is now if it
+    /// held course since its light left it.
+    #[serde(default)]
+    pub projected: Option<Vec2>,
 }
 
 /// Messages pushed by the server to a single player's connection.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub enum ServerMsg {
-    /// The authenticated account has not founded a corporation in this galaxy.
-    FoundingOffer,
+    /// The authenticated account has not founded a corporation in this galaxy;
+    /// `profile` is the home world it has been dealt there.
+    FoundingOffer { profile: sim::settlement::FoundingProfile },
     /// Sent once, immediately after a successful join.
     Welcome {
         player_id: PlayerId,
@@ -2784,6 +3457,8 @@ pub enum ServerMsg {
         /// (title, standing at/below which it applies), sent once here instead
         /// of inside every 10 Hz View.
         charter_ladder: Vec<(&'static str, f64)>,
+        /// §standing-ladder (R3): the grades above full standing.
+        grade_ladder: Vec<(&'static str, f64)>,
         /// §perf Part B: the static research programme catalog (names, blurbs,
         /// board topology, costs) — the game's public rulebook, identical for
         /// everyone. The View carries only the per-node dynamic slice.
@@ -2846,6 +3521,11 @@ pub enum ServerMsg {
         /// guarded export). Owner-only.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         charter_ledger: Option<CharterLedgerView>,
+        /// §leave (R4): the viewer's own leave. Owner-only.
+        leave: LeaveView,
+        /// §player-styles: what raids and blockades took from the viewer
+        /// today, against its daily loot cap. Owner-only.
+        raid_losses: RaidLossView,
         /// §merchant: the traveling merchant serving the viewer's home.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         merchant: Option<MerchantView>,
@@ -2923,6 +3603,15 @@ pub enum ServerMsg {
         /// on a close, which is exactly when it re-sends.
         #[serde(skip_serializing_if = "Option::is_none")]
         rankings: Option<Vec<RankingRow>>,
+        /// §syndicate-projects (R6): the syndicates' table, sent with it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        syndicate_rankings: Option<Vec<sim::rankings::SyndicateRankingRow>>,
+        /// §social (R5): the syndicate channel, mail and member presence.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        social: Option<crate::social::SocialView>,
+        /// §season (v75): the season as this corporation has heard it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        season: Option<SeasonView>,
     },
 
     /// §perf Part A: incremental battle-record delivery (was: every record's full
@@ -2963,6 +3652,10 @@ pub enum ServerMsg {
     Timeline {
         entries: Vec<TimelineEntry>,
         away_since: f64,
+        /// §welcome (R9): the report on return, on the connect digest only,
+        /// after an absence of ten minutes or more.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        welcome: Option<crate::welcome::WelcomeBackView>,
     },
 
     /// Economy news for this player (§9): a buy settled, a delivery arrived, a
@@ -3034,6 +3727,22 @@ pub enum ServerMsg {
 
     /// A protocol-level error (e.g. a malformed first message).
     Error { message: String },
+
+    /// §settle-near-friends (R7): the answer to `RedeemInvite`.
+    InviteStatus {
+        ok: bool,
+        /// The inviting corporation.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
+        /// Its syndicate, which the newcomer joins seat permitting.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        syndicate: Option<String>,
+        /// The held home system.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        near: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
 }
 
 /// Legacy deterministic IDs for simulation fixtures ONLY. Live accounts have
@@ -3203,5 +3912,303 @@ mod wire_contract {
         let encoded = serde_json::to_value(confirmed).unwrap();
         assert_eq!(encoded["type"], "OrderConfirmed");
         assert_eq!(encoded["order_id"], 17);
+    }
+}
+
+/// §season (v75): the season as one corporation has heard it from the Hub.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SeasonView {
+    /// Galaxy maturity, 0–1, at the census heard.
+    pub maturity: f64,
+    pub grip: sim::season::Grip,
+    /// When that census was taken (sim time).
+    pub census_at: f64,
+    /// Galactic News Network items heard, newest first.
+    pub news: Vec<NewsView>,
+    /// §season phase 3: the galaxy's Resolve and the Authority's war fleet
+    /// (hulls), as of the census heard.
+    pub galaxy_resolve: f64,
+    pub war_fleet: u32,
+    /// Crackdowns heard and still in force, or with evidence still to find.
+    pub crackdowns: Vec<CrackdownView>,
+    /// §season phase 4: relics awake (heard), with your resonance on yours.
+    pub relics: Vec<RelicView>,
+    /// Bearings you and your syndicate drew (their worlds are never served).
+    pub bearings: Vec<BearingView>,
+    /// Sealed worlds your circle found, and every one landed on.
+    pub precursors: Vec<PrecursorView>,
+    /// The spy's leak: the Authority knows then.
+    pub war_at: Option<f64>,
+    /// You are at war with the Authority (since then).
+    pub rebel_since: Option<f64>,
+    /// Corporations at war with the Authority (heard).
+    pub rebels: Vec<PlayerId>,
+    /// The race began then (the first sealed world found).
+    pub race_since: Option<f64>,
+    /// §season phase 5: every Keystone's level and holder (public).
+    pub keystones: Vec<KeystoneView>,
+    /// Your syndicate's Keystone: what its next level takes, and its powers.
+    pub keystone: Option<MyKeystoneView>,
+    /// The season ends then if no Seal fires (the race, or the backstop).
+    pub ends_at: Option<f64>,
+    pub ending: Option<EndingView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeystoneView {
+    pub system: EntityId,
+    pub holder: Option<PlayerId>,
+    pub holder_name: Option<String>,
+    pub level: u32,
+    /// The Seal fires then, if it holds.
+    pub seal_at: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MyKeystoneView {
+    pub system: EntityId,
+    pub level: u32,
+    /// The next level's goods: (good, needed, paid).
+    pub basket: Vec<(Commodity, f64, f64)>,
+    pub relics_needed: usize,
+    pub relics_held: usize,
+    /// The four powers are yours.
+    pub powers: bool,
+    /// Gate Step's gates: the Keystone world and the relics held.
+    pub gates: Vec<EntityId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EndingView {
+    /// "sovereign" or "charter_holds".
+    pub kind: String,
+    pub at: f64,
+    pub holder: Option<String>,
+    pub system: Option<EntityId>,
+    pub winners: Vec<String>,
+    /// You are among the winners (or the Sovereign).
+    pub won: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelicView {
+    pub system: EntityId,
+    pub awake_at: f64,
+    /// Your attunement, 0–1, on a relic you hold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resonance: Option<f64>,
+    /// You drew its bearing.
+    pub drawn: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BearingView {
+    pub relic: EntityId,
+    pub from: Vec2,
+    pub angle: f64,
+    /// Half-width of the wedge (radians).
+    pub spread: f64,
+    pub by: PlayerId,
+    pub at: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PrecursorView {
+    pub system: EntityId,
+    pub body: u32,
+    pub found_at: Option<f64>,
+    pub landed_by: Option<PlayerId>,
+    pub guarded: bool,
+}
+
+/// §season phase 3: a crackdown as heard. Whether it was staged is never
+/// served, only whether it was exposed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CrackdownView {
+    pub id: u64,
+    pub kind: sim::season::CrackdownKind,
+    pub at: f64,
+    pub until: f64,
+    pub pos: Vec2,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<EntityId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<PlayerId>,
+    /// Evidence at the scene until then (0: none).
+    pub evidence_until: f64,
+    pub exposed: bool,
+    /// This corporation's Scouts already read it.
+    pub read: bool,
+}
+
+/// §season (v75): one GNN or Free Signal item as heard at a command center.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NewsView {
+    pub id: u64,
+    /// When its light reached this command center.
+    pub heard_at: f64,
+    pub source: sim::season::NewsSource,
+    pub kind: sim::season::NewsKind,
+    pub headline: String,
+    /// The story names the viewer's corporation.
+    pub about_you: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<EntityId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fleet: Option<EntityId>,
+}
+
+/// GNN items served to each corporation.
+pub const NEWS_SERVED: usize = 40;
+
+impl SeasonView {
+    /// The season `player` at `cc` has heard by `now`.
+    pub fn heard(world: &sim::World, player: PlayerId, cc: Vec2) -> SeasonView {
+        let (hub, c, now) = (world.hub, world.config.c, world.time);
+        let census = world.season.census_for(cc, hub, c, now);
+        let lag = sim::transit::delay(hub, cc, c);
+        let heard_at = now - lag;
+        let c = world.config.c;
+        let circle = world.circle(player);
+        let sys_pos = |id: EntityId| world.systems.iter().find(|s| s.id == id).map(|s| s.pos);
+        let holder = |id: EntityId| world.systems.iter().find(|s| s.id == id).and_then(|s| s.owner);
+        let relics = world.season.relics.iter()
+            .filter_map(|(id, r)| {
+                let awake = r.awake_at?;
+                let pos = sys_pos(*id)?;
+                (awake + sim::transit::delay(pos, cc, c) <= now).then(|| RelicView {
+                    system: *id, awake_at: awake,
+                    resonance: (holder(*id) == Some(player)).then(|| if r.attuner == Some(player) { r.resonance } else { 0.0 }),
+                    drawn: r.bearings_to.contains(&player),
+                })
+            }).collect();
+        let bearings = world.season.bearings.iter()
+            .filter(|b| circle.contains(&b.corp) && b.at + sim::transit::delay(b.from, cc, c) <= now)
+            .map(|b| BearingView { relic: b.relic, from: b.from, angle: b.angle, spread: sim::season::BEARING_SPREAD, by: b.corp, at: b.at })
+            .collect();
+        let precursors = world.season.precursors.iter()
+            .filter_map(|(id, p)| {
+                let pos = sys_pos(*id)?;
+                let heard = |t: f64| t + sim::transit::delay(pos, cc, c) <= now;
+                let found_at = p.found.iter().filter(|(who, at)| circle.contains(who) && heard(*at)).map(|(_, at)| *at)
+                    .min_by(|a, b| a.total_cmp(b));
+                let landed = p.landed.filter(|(_, at)| heard(*at));
+                (found_at.is_some() || landed.is_some()).then(|| PrecursorView {
+                    system: *id, body: p.body, found_at, landed_by: landed.map(|(who, _)| who),
+                    guarded: world.precursor_guarded(*id),
+                })
+            }).collect();
+        let name_of = |p: PlayerId| world.players.get(&p).map(|c| c.name.clone());
+        let keystones = world.season.precursors.iter()
+            .filter_map(|(id, p)| {
+                let k = p.keystone.as_ref().filter(|k| k.level > 0)?;
+                let holder = world.systems.iter().find(|s| s.id == *id).and_then(|s| s.owner);
+                Some(KeystoneView { system: *id, holder, holder_name: holder.and_then(name_of), level: k.level,
+                    seal_at: k.charge_since.map(|t| t + sim::season::CHARGE_S) })
+            }).collect();
+        let keystone = world.season.precursors.iter()
+            .find(|(id, p)| (p.found.iter().any(|(f, _)| circle.contains(f)) || p.landed.is_some())
+                && world.systems.iter().any(|s| s.id == **id && s.owner.is_some_and(|o| circle.contains(&o))))
+            .map(|(id, p)| {
+                let level = p.keystone.as_ref().map_or(0, |k| k.level);
+                let scale = (world.home_slots.len() as f64 / 20.0).max(0.25);
+                let next = (level + 1).min(sim::season::KEYSTONE_LEVELS);
+                let paid = |c: Commodity| p.keystone.as_ref().and_then(|k| k.paid.get(&c)).copied().unwrap_or(0.0);
+                let held: Vec<EntityId> = world.season.relics.iter()
+                    .filter(|(rid, r)| r.awake_at.is_some()
+                        && world.systems.iter().any(|s| s.id == **rid && s.owner.is_some_and(|o| circle.contains(&o))))
+                    .map(|(rid, _)| *rid).collect();
+                let powers = world.keystone_powers(player);
+                MyKeystoneView {
+                    system: *id, level,
+                    basket: if level >= sim::season::KEYSTONE_LEVELS { Vec::new() } else {
+                        sim::season::keystone_basket(next, scale).into_iter().map(|(c, n)| (c, n, paid(c))).collect()
+                    },
+                    relics_needed: sim::season::keystone_relics(next),
+                    relics_held: held.len(),
+                    powers,
+                    gates: if powers { std::iter::once(*id).chain(held).collect() } else { Vec::new() },
+                }
+            });
+        let ends_at = world.season.first_found_at.map(|t| t + sim::season::RACE_S)
+            .or_else(|| world.season.started_at.map(|t| t + sim::season::BACKSTOP_S));
+        let ending = world.season.ended.as_ref().map(|e| match e {
+            sim::season::Ending::Sovereign { holder, system, at } => EndingView {
+                kind: "sovereign".into(), at: *at, holder: name_of(*holder), system: Some(*system),
+                winners: name_of(*holder).into_iter().collect(), won: circle.contains(holder),
+            },
+            sim::season::Ending::CharterHolds { at, winners } => EndingView {
+                kind: "charter_holds".into(), at: *at, holder: None, system: None,
+                winners: winners.iter().filter_map(|w| name_of(*w)).collect(), won: winners.contains(&player),
+            },
+        });
+        SeasonView {
+            keystones,
+            keystone,
+            ends_at,
+            ending,
+            relics,
+            bearings,
+            precursors,
+            war_at: world.season.leaks.iter().find(|l| circle.contains(&l.corp)).map(|l| l.at),
+            rebel_since: world.season.rebels.get(&player).copied(),
+            rebels: world.season.rebels.iter().filter(|(_, at)| **at <= heard_at).map(|(p, _)| *p).collect(),
+            race_since: world.season.first_found_at.filter(|at| *at <= heard_at),
+            galaxy_resolve: world.season.galaxy_resolve,
+            war_fleet: world.season.war_fleet,
+            crackdowns: world.season.crackdowns.iter()
+                .filter(|c| c.at <= heard_at && (c.until > now || c.evidence_until > now))
+                .map(|c| CrackdownView {
+                    id: c.id, kind: c.kind, at: c.at, until: c.until, pos: c.pos, system: c.system, target: c.target,
+                    evidence_until: c.evidence_until, exposed: c.exposed, read: c.investigated.contains(&player),
+                }).collect(),
+            maturity: census.map_or(0.0, |r| r.maturity),
+            grip: census.map_or_else(Default::default, |r| r.grip),
+            census_at: census.map_or(0.0, |r| r.at),
+            news: world.season.news_for(cc, hub, c, now, NEWS_SERVED).into_iter().map(|n| NewsView {
+                id: n.id,
+                heard_at: n.at + lag,
+                source: n.source,
+                kind: n.kind,
+                headline: n.headline.clone(),
+                about_you: n.corps.contains(&player),
+                system: n.system,
+                fleet: n.fleet,
+            }).collect(),
+        }
+    }
+
+    /// A cheap change signature: the census heard and the newest item.
+    pub fn signature(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.census_at.to_bits().hash(&mut h);
+        (self.grip as u8).hash(&mut h);
+        self.news.first().map(|n| n.id).hash(&mut h);
+        self.news.len().hash(&mut h);
+        self.war_fleet.hash(&mut h);
+        self.galaxy_resolve.to_bits().hash(&mut h);
+        for c in &self.crackdowns {
+            (c.id, c.until.to_bits(), c.evidence_until.to_bits(), c.exposed, c.read).hash(&mut h);
+        }
+        for r in &self.relics {
+            (r.system, r.resonance.map(|x| (x * 100.0) as u32), r.drawn).hash(&mut h);
+        }
+        (self.bearings.len(), self.precursors.len(), self.rebels.len()).hash(&mut h);
+        for p in &self.precursors {
+            (p.system, p.landed_by, p.guarded).hash(&mut h);
+        }
+        (self.war_at.map(f64::to_bits), self.rebel_since.map(f64::to_bits), self.race_since.map(f64::to_bits)).hash(&mut h);
+        for k in &self.keystones {
+            (k.system, k.level, k.seal_at.map(f64::to_bits)).hash(&mut h);
+        }
+        if let Some(k) = &self.keystone {
+            (k.system, k.level, k.relics_held, k.powers).hash(&mut h);
+            for (_, need, paid) in &k.basket {
+                (need.to_bits(), paid.to_bits()).hash(&mut h);
+            }
+        }
+        (self.ending.as_ref().map(|e| e.at.to_bits()), self.ends_at.map(f64::to_bits)).hash(&mut h);
+        h.finish()
     }
 }

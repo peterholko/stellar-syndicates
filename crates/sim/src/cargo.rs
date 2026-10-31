@@ -180,6 +180,46 @@ impl Commodity {
     }
 
     /// The snake_case wire slug (matches `rename_all = "snake_case"`).
+    /// Human name for prose (news, the log); the wire uses [`Self::slug`].
+    pub fn name(self) -> &'static str {
+        match self {
+            Commodity::MetallicOre => "ferrite ore",
+            Commodity::RareElements => "rare elements",
+            Commodity::Silicates => "silicates",
+            Commodity::Volatiles => "volatiles",
+            Commodity::Biomass => "biomass",
+            Commodity::Alloys => "alloys",
+            Commodity::Electronics => "semiconductors",
+            Commodity::Polymers => "polymers",
+            Commodity::Deuterium => "deuterium",
+            Commodity::Provisions => "provisions",
+            Commodity::Machinery => "machinery",
+            Commodity::Armaments => "armaments",
+            Commodity::Composites => "composites",
+            Commodity::HullSections => "hull sections",
+            Commodity::PrecisionComponents => "precision components",
+            Commodity::WarpCore => "warp cores",
+            Commodity::CupriteOre => "cuprite ore",
+            Commodity::TitaniumOre => "titanium ore",
+            Commodity::CrystallineOre => "crystalline ore",
+            Commodity::RareMetalOre => "rare-metal ore",
+            Commodity::ConductiveMetals => "conductive metals",
+            Commodity::Titanium => "titanium",
+            Commodity::OlivineOre => "olivine ore",
+            Commodity::BorniteOre => "bornite ore",
+            Commodity::IlmeniteOre => "ilmenite ore",
+            Commodity::IridiumOre => "iridium ore",
+            Commodity::Helium3Ice => "helium-3 ice",
+            Commodity::VoidCrystal => "void crystal",
+            Commodity::Iridium => "iridium",
+            Commodity::Helium3 => "helium-3",
+            Commodity::ExoticMatter => "exotic matter",
+            Commodity::Uranium => "uranium",
+            Commodity::Antimatter => "antimatter",
+            Commodity::FusionCore => "fusion cores",
+        }
+    }
+
     pub fn slug(self) -> &'static str {
         match self {
             Commodity::MetallicOre => "metallic_ore",

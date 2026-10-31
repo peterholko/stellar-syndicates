@@ -1,0 +1,53 @@
+{
+  "name": "Wormhole Hub",
+  "triangles": 33000,
+  "renderSections": 10,
+  "sourceComponents": 813,
+  "materials": 9,
+  "embeddedTextures": 8,
+  "bounds": {
+    "min": [
+      -8.550000190734863,
+      -8.670000076293945,
+      -1.600000023841858
+    ],
+    "max": [
+      8.550000190734863,
+      8.670000076293945,
+      0.8650000095367432
+    ]
+  },
+  "dimensionsXYZ": [
+    17.100000381469727,
+    17.34000015258789,
+    2.4649999141693115
+  ],
+  "ringOuterDiameter": 10.42,
+  "apertureDiameter": 7.33,
+  "clearPassageDiameter": 7.21,
+  "portalProfile": {
+    "radius": 3.685,
+    "depth": 1.6,
+    "segments": 128,
+    "radialRings": 32,
+    "coreTint": [
+      0.3,
+      0.44,
+      0.68
+    ]
+  },
+  "axes": "Y up; ring in XY; front +Z; passage along Z",
+  "units": "Relative modeling units; physical size unspecified",
+  "assemblies": [
+    "station-hardware",
+    "containment-field",
+    "wormhole"
+  ],
+  "animations": [
+    "PortalClose"
+  ],
+  "construction": "Reference-guided procedural polygon mesh, not a photogrammetry scan",
+  "texturing": "Unmodified front image projected onto armor and portal; locally unwrapped project metal and reactor textures on remaining surfaces",
+  "sourceReference": "reference-sheet.png",
+  "note": "Front artwork defines circular proportions; depth and rear details are interpreted from the multi-view concept. Hardware is merged by material; OBJ keeps named components."
+}

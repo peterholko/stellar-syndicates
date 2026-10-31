@@ -38,8 +38,10 @@ pub const BOARD_DAY_S: f64 = 24.0 * 60.0 * 60.0;
 pub const BOARD_CONTRACTS: usize = 4;
 /// Finishing this many of one day's contracts pays the bonus.
 pub const BOARD_BONUS_AFTER: u32 = 3;
-pub const BOARD_BONUS_CREDITS: f64 = 1_000.0;
-pub const BOARD_BONUS_STANDING: f64 = 2.0;
+/// §standing-ladder (R3): the day's bonus pays research, not credits: this
+/// fraction of a programme as a dossier.
+pub const BOARD_BONUS_DOSSIER: f64 = 0.05;
+pub const BOARD_BONUS_STANDING: f64 = 3.0;
 pub const BOARD_SURVEY_CREDITS: f64 = 400.0;
 pub const BOARD_SURVEY_STANDING: f64 = 2.0;
 pub const BOARD_DELIVERY_CREDITS_PER_UNIT: f64 = 8.0;

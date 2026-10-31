@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pirate portrait expressions</title>
+<style>
+  :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101317; color: #f1ede6; }
+  * { box-sizing: border-box; }
+  body { max-width: 1200px; margin: auto; padding: 28px; }
+  h1 { margin: 0 0 7px; font-size: 27px; }
+  p { margin: 0; line-height: 1.5; color: #b9b5af; }
+  a { color: #edbd98; }
+  .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin: 22px 0 30px; }
+  label { font-size: 13px; color: #b9b5af; }
+  select, button { color: #f1ede6; background: #21262c; border: 1px solid #49433d; border-radius: 6px; padding: 8px 11px; font: inherit; font-size: 13px; }
+  select { margin-left: 6px; }
+  button { cursor: pointer; }
+  nav { display: flex; gap: 6px; }
+  button[aria-pressed="true"] { background: #8b432c; border-color: #c0754e; }
+  :focus-visible { outline: 2px solid #f6ba6d; outline-offset: 4px; }
+  section { border-top: 3px solid var(--accent); margin-bottom: 30px; padding-top: 12px; }
+  h2 { font-size: 17px; margin: 0 0 14px; }
+  h2 span { color: #b9b5af; font-size: 13px; font-weight: normal; margin-left: 8px; }
+  .row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+  figure { margin: 0; }
+  .portrait { display: block; position: relative; width: 100%; aspect-ratio: 1; overflow: hidden; border-radius: 12px; background: #24292e; box-shadow: 0 0 0 1px #ffffff16; }
+  img { display: block; position: absolute; width: 100%; height: 100%; max-width: none; }
+  main[data-mode="crop"] img, main[data-mode="72"] img, main[data-mode="112"] img { width: 133.333333%; height: 133.333333%; left: -19.066667%; top: -15.066667%; }
+  main[data-mode="72"] .portrait { width: 72px; }
+  main[data-mode="112"] .portrait { width: 112px; }
+  figcaption { color: #b9b5af; margin-top: 8px; font-size: 12px; }
+  footer { border-top: 1px solid #34383e; padding-top: 16px; font-size: 12px; color: #b9b5af; }
+  [hidden] { display: none !important; }
+  @media (max-width: 600px) { body { padding: 16px; } .row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 12px; } }
+</style>
+<header>
+  <h1>Pirate portrait expressions</h1>
+  <p>Smug introductions, angry revenge, and shocked reversals for all ten characters.</p>
+  <p><a href="../preview.html">Back to the family portrait gallery</a></p>
+</header>
+<div class="toolbar">
+  <label>Family <select id="family" aria-label="Family"><option value="all">All families</option><option value="showboat">Showboat</option><option value="hothead">Hothead</option><option value="collector">Collector</option><option value="scrapper">Scrapper</option><option value="fatalist">Fatalist</option></select></label>
+  <nav aria-label="Portrait framing"><button type="button" data-mode="full" aria-pressed="true">Full portraits</button><button type="button" data-mode="crop" aria-pressed="false">Face crop</button><button type="button" data-mode="72" aria-pressed="false">72 px</button><button type="button" data-mode="112" aria-pressed="false">112 px</button></nav>
+</div>
+<main data-mode="full"></main>
+<footer>All 30 expression variants are separate opaque PNG masters. Each edit starts from the original portrait. Crop previews use Teo’s 75% square at 14.3% left and 11.3% top. <a href="generation.json">Exact prompts and generation record</a>.</footer>
+<script>
+  const families = [
+    ['showboat', 'Showboat', '#bc6543'], ['hothead', 'Hothead', '#c19a42'],
+    ['collector', 'Collector', '#934a52'], ['scrapper', 'Scrapper', '#59948a'],
+    ['fatalist', 'Fatalist', '#c7bfae']
+  ];
+  const moods = [['original', 'Original'], ['smug', 'Smug · first encounter'], ['angry', 'Angry · revenge'], ['shocked', 'Shocked · reversal']];
+  const gallery = document.querySelector('main');
+  for (const [family, name, accent] of families) {
+    for (const relative of ['nephew', 'uncle']) {
+      const slug = family + (relative === 'uncle' ? '-uncle' : '');
+      const section = document.createElement('section');
+      section.dataset.family = family;
+      section.style.setProperty('--accent', accent);
+      const heading = document.createElement('h2');
+      heading.textContent = `${name} ${relative}`;
+      section.append(heading);
+      const row = document.createElement('div'); row.className = 'row';
+      for (const [mood, label] of moods) {
+        const src = mood === 'original' ? `../${slug}.png` : `${slug}-${mood}.png`;
+        const figure = document.createElement('figure');
+        const link = document.createElement('a'); link.className = 'portrait'; link.href = src;
+        const img = document.createElement('img'); img.src = src; img.alt = `${name} ${relative}: ${label}`; img.decoding = 'async';
+        link.append(img);
+        const caption = document.createElement('figcaption'); caption.textContent = label;
+        figure.append(link, caption); row.append(figure);
+      }
+      section.append(row); gallery.append(section);
+    }
+  }
+  document.querySelector('#family').addEventListener('change', event => {
+    for (const section of gallery.children) section.hidden = event.target.value !== 'all' && section.dataset.family !== event.target.value;
+  });
+  for (const button of document.querySelectorAll('button[data-mode]')) {
+    button.addEventListener('click', () => {
+      gallery.dataset.mode = button.dataset.mode;
+      for (const other of document.querySelectorAll('button[data-mode]')) other.setAttribute('aria-pressed', String(other === button));
+    });
+  }
+</script>
+</html>

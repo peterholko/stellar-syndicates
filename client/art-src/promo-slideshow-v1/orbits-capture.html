@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stellar Syndicates · Star system orbits</title><link rel="icon" href="data:,">
+<style>
+*{box-sizing:border-box}body{margin:0;background:#080d14;color:#dceaf3;font:14px Arial}main{max-width:1500px;margin:24px auto;padding:0 24px}h1{font-size:20px}button{background:#183040;color:inherit;border:1px solid #5d8197;padding:12px 20px;margin:12px 12px 0 0;border-radius:4px;cursor:pointer}button:disabled{opacity:.4;cursor:wait}#scene canvas{display:block;width:100%;aspect-ratio:16/9}#seek{display:block;width:100%;margin-top:18px}#status{color:#a6c1d2}a{color:#bce7f2}
+</style></head><body><main>
+<h1>Stellar Syndicates · Star system orbits</h1>
+<div id="scene" role="img" aria-label="Four planets orbiting Aster, with a moon orbiting the gas giant"></div>
+<input id="seek" type="range" min="0" max="12" step="0.1" value="0" aria-label="Clip time" disabled>
+<button id="play" disabled>Play 12-second clip</button><button id="record" disabled>Record orbital clip</button><button id="still" disabled>Save orbital poster</button>
+<p id="status" role="status">Loading the game’s star system renderer…</p><p id="download"></p>
+<p>Production system renderer · Demonstration system · Orbital time-lapse at 40× speed</p>
+</main><script type="module" src="./orbits-capture.js"></script></body></html>

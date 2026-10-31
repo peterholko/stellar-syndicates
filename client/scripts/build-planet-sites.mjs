@@ -37,9 +37,25 @@ export const PAINTINGS = {
   // The open ground between the lava channels is dark basalt, so only very dark
   // rock counts as rough there.
   lava: { file: "surfaces/lava-surface-v1.png", darkV: .13 },
-  barren: { file: "surfaces/barren-surface-v1.png" },
+  // v2 (Oct 28 2026): the v1 painting's baked-in pads, roads, lights and quarry removed.
+  barren: { file: "surfaces/barren-surface-v2.png" },
   marginal: { file: "surfaces/marginal-surface-v1.png" },
+  // §belt-view: a belt holds only a few structures (a Mining Complex per deposit,
+  // at most four, and its power plant), so each field names six sites by hand on
+  // the tops of its largest rocks, nearest first: the first building most belts
+  // get stands large in the foreground. Belt fields are painted at the
+  // orbit size; the 16:9 ground frame is their bottom rows.
+  "stony-belt": { file: "../belt-view/stony-belt-v1.png", belt: [[24, 61], [78, 71], [46, 51], [34, 65], [88, 72], [65, 35]] },
+  "metallic-belt": { file: "../belt-view/metallic-belt-v1.png", belt: [[15, 64], [60, 73], [43, 48], [77, 65], [77, 37], [9, 50]] },
+  "icy-belt": { file: "../belt-view/icy-belt-v1.png", belt: [[16, 56], [85, 63], [57, 52], [29, 59], [75, 31], [31, 42]] },
+  "shattered-belt": { file: "../belt-view/shattered-belt-v1.png", belt: [[66, 59], [16, 50], [79, 57], [28, 51], [51, 30], [38, 49]] },
 };
+/** Belt masters seen this run, so the review overlay crops them the same way. */
+const PAINTINGS_BELT = new Set();
+/** A belt field's space rows above its 16:9 ground frame. */
+const BELT_SPACE_ROWS = 240;
+/** The 16:9 ground frame every site is measured in: a belt field's bottom rows. */
+const frame = (file, belt) => belt ? sharp(file).extract({ left: 0, top: BELT_SPACE_ROWS, width: 1672, height: 941 }) : sharp(file);
 
 // ---- Geometry shared with planet.ts / planet-panel.css ----------------------
 /** A scale-1 sprite is 7.5% of the plane's width (--planet-building: 7.5cqw). */
@@ -98,6 +114,7 @@ async function classify(file, overrides) {
     L[i] = l; L2[i] = l * l;
   }
   const m1 = boxMean(L, o.radius), m2 = boxMean(L2, o.radius);
+
   const wf = boxMean(water, o.radius), lf = boxMean(lava, o.radius), df = boxMean(dark, o.radius), gf = boxMean(grass, o.radius);
   const cls = new Uint8Array(N);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -199,7 +216,7 @@ function placeColony(cls) {
 }
 
 async function review(file, cls, sites, out) {
-  const base = await sharp(file).resize(W * 2, H * 2).removeAlpha().raw().toBuffer();
+  const base = await frame(file, PAINTINGS_BELT.has(file)).resize(W * 2, H * 2).removeAlpha().raw().toBuffer();
   const tint = { [WATER]: [40, 110, 255], [LAVA]: [255, 140, 0], [DARK]: [120, 0, 160], [ROUGH]: [230, 30, 60], [SKY]: [60, 60, 60] };
   for (let y = 0; y < H * 2; y++) for (let x = 0; x < W * 2; x++) {
     const c = cls[(y >> 1) * W + (x >> 1)];
@@ -224,23 +241,39 @@ export async function buildPlanetSites({ reviewDir } = {}) {
   for (const [surface, { file, ...overrides }] of Object.entries(PAINTINGS)) {
     const source = path.join(artRoot, file), bytes = await readFile(source);
     const meta = await sharp(bytes).metadata();
-    assert.ok(Math.abs(meta.width / meta.height - 16 / 9) < .01, `${file}: 16:9 master`);
-    const cls = await classify(source, overrides);
-    const { sites, spacing } = placeColony(cls);
+    let cls, sites, spacing;
+    if (overrides.belt) {
+      // Hand-picked rock tops: copied, checked to stand inside the frame and
+      // apart, and drawn on the review overlay like any other painting's sites.
+      assert.ok(meta.width === 1672 && meta.height === 941 + BELT_SPACE_ROWS, `${file}: a 1672 × 1181 belt field`);
+      PAINTINGS_BELT.add(source);
+      sites = overrides.belt.map(([x, y]) => ({ x: x / 100 * W, y: y / 100 * H, fp: SPRITE * W * siteScale(y), tier: 0 }));
+      assert.ok(sites.every(c => c.x - c.fp / 2 >= 0 && c.x + c.fp / 2 <= W && c.y - c.fp / 2 >= 0 && c.y + c.fp / 2 <= H), `${surface}: sites inside the frame`);
+      assert.ok(sites.every((a, i) => sites.every((b, j) => i === j || Math.abs(a.x - b.x) >= HIT.w * (a.fp + b.fp) / 2
+        || Math.abs(a.y - b.y) >= HIT.h * (a.fp + b.fp) / 2)), `${surface}: sites never overlap`);
+      cls = new Uint8Array(W * H);
+      spacing = 0;
+    } else {
+      assert.ok(Math.abs(meta.width / meta.height - 16 / 9) < .01, `${file}: 16:9 master`);
+      cls = await classify(source, overrides);
+      ({ sites, spacing } = placeColony(cls));
+    }
     const rough = sites.map((c, slot) => c.tier <= 1 ? -1 : slot).filter(slot => slot >= 0);
     table[surface] = {
       source: createHash("sha256").update(bytes).digest("hex"),
       rough,
-      sites: sites.map(c => [+(100 * c.x / W).toFixed(1), +(100 * c.y / H).toFixed(1)]),
+      sites: overrides.belt ?? sites.map(c => [+(100 * c.x / W).toFixed(1), +(100 * c.y / H).toFixed(1)]),
     };
-    report.push(`${surface}: spacing ${spacing}, ${24 - rough.length}/24 on clean open land`);
+    report.push(overrides.belt ? `${surface}: ${sites.length} rock-top sites by hand`
+      : `${surface}: spacing ${spacing}, ${24 - rough.length}/24 on clean open land`);
     if (reviewDir) await review(source, cls, sites, path.join(reviewDir, `${surface}.jpg`));
   }
   const body = Object.entries(table).map(([surface, t]) =>
     `  ${JSON.stringify(surface)}: {\n    source: ${JSON.stringify(t.source)},\n    rough: ${JSON.stringify(t.rough)},\n    sites: [${t.sites.map(([x, y]) => `[${x}, ${y}]`).join(", ")}],\n  },`).join("\n");
   const text = `// Generated by scripts/build-planet-sites.mjs from the painting masters. Do not edit.
 // Each painting lists 24 footprint anchors [x%, y%] indexed by site slot, placed on
-// open land. Slots 0, 1, 2, 3, 7 and 18 hold the opening colony. \`rough\` lists the
+// open land; a belt field lists six, on rock tops, used in order. Slots 0, 1, 2, 3,
+// 7 and 18 hold the opening colony. \`rough\` lists the
 // slots whose base could not be kept on clean open land because the painting has
 // too little room; \`source\` is the master's sha256.
 export interface PlanetSiteTable { source: string; rough: readonly number[]; sites: readonly (readonly [number, number])[] }

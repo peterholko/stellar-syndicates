@@ -1,0 +1,313 @@
+{
+  "method": "Visible-object checks use alpha >= 8 to exclude faint segmentation speckle in the generated alpha. Source PNGs are preserved byte for byte.",
+  "sheets": {
+    "stony": {
+      "size": [
+        1536,
+        1024
+      ],
+      "mode": "RGBA",
+      "sha256": "dbfd08215de460e529350070cce0d8233d2321fb0e8a8233106cb385a881762a",
+      "fully_transparent_pixels": 937463,
+      "alpha_range": [
+        0,
+        254
+      ],
+      "visible_alpha_threshold": 8,
+      "rock_count": 6,
+      "rocks": [
+        {
+          "area": 81620,
+          "bbox": [
+            72,
+            71,
+            465,
+            468
+          ]
+        },
+        {
+          "area": 112259,
+          "bbox": [
+            570,
+            76,
+            965,
+            464
+          ]
+        },
+        {
+          "area": 91013,
+          "bbox": [
+            1094,
+            71,
+            1479,
+            460
+          ]
+        },
+        {
+          "area": 91571,
+          "bbox": [
+            63,
+            570,
+            472,
+            952
+          ]
+        },
+        {
+          "area": 109978,
+          "bbox": [
+            565,
+            576,
+            974,
+            944
+          ]
+        },
+        {
+          "area": 101435,
+          "bbox": [
+            1092,
+            572,
+            1488,
+            943
+          ]
+        }
+      ],
+      "minimum_gap_lower_bound_px": 93.0,
+      "cell_boundary_max_alpha": {
+        "x512": 1,
+        "x1024": 1,
+        "y512": 1
+      }
+    },
+    "metallic": {
+      "size": [
+        1536,
+        1024
+      ],
+      "mode": "RGBA",
+      "sha256": "de224cdce102a2d29843ca50eb411b4185f12691b224403e209d029c28895117",
+      "fully_transparent_pixels": 1015339,
+      "alpha_range": [
+        0,
+        254
+      ],
+      "visible_alpha_threshold": 8,
+      "rock_count": 6,
+      "rocks": [
+        {
+          "area": 65070,
+          "bbox": [
+            92,
+            108,
+            479,
+            463
+          ]
+        },
+        {
+          "area": 106235,
+          "bbox": [
+            582,
+            97,
+            971,
+            478
+          ]
+        },
+        {
+          "area": 85307,
+          "bbox": [
+            1085,
+            108,
+            1450,
+            479
+          ]
+        },
+        {
+          "area": 81630,
+          "bbox": [
+            75,
+            590,
+            483,
+            910
+          ]
+        },
+        {
+          "area": 100513,
+          "bbox": [
+            580,
+            569,
+            991,
+            928
+          ]
+        },
+        {
+          "area": 85822,
+          "bbox": [
+            1102,
+            570,
+            1464,
+            910
+          ]
+        }
+      ],
+      "minimum_gap_lower_bound_px": 91.0,
+      "cell_boundary_max_alpha": {
+        "x512": 1,
+        "x1024": 0,
+        "y512": 1
+      }
+    },
+    "icy": {
+      "size": [
+        1536,
+        1024
+      ],
+      "mode": "RGBA",
+      "sha256": "80b9a1d85fa01a38e0a9170074618e171e5a247e00813b44a362390c7f8bc776",
+      "fully_transparent_pixels": 1137044,
+      "alpha_range": [
+        0,
+        254
+      ],
+      "visible_alpha_threshold": 8,
+      "rock_count": 6,
+      "rocks": [
+        {
+          "area": 46729,
+          "bbox": [
+            81,
+            175,
+            447,
+            410
+          ]
+        },
+        {
+          "area": 67759,
+          "bbox": [
+            617,
+            129,
+            925,
+            433
+          ]
+        },
+        {
+          "area": 62053,
+          "bbox": [
+            1141,
+            125,
+            1455,
+            433
+          ]
+        },
+        {
+          "area": 62579,
+          "bbox": [
+            90,
+            624,
+            462,
+            884
+          ]
+        },
+        {
+          "area": 83769,
+          "bbox": [
+            580,
+            606,
+            980,
+            920
+          ]
+        },
+        {
+          "area": 73016,
+          "bbox": [
+            1132,
+            604,
+            1449,
+            908
+          ]
+        }
+      ],
+      "minimum_gap_lower_bound_px": 118.0,
+      "cell_boundary_max_alpha": {
+        "x512": 1,
+        "x1024": 1,
+        "y512": 1
+      }
+    },
+    "shattered": {
+      "size": [
+        1536,
+        1024
+      ],
+      "mode": "RGBA",
+      "sha256": "797cbd9618b6325e9d8a5d0c4d5288f07c56d6488724df3d23bb0b803ae593f3",
+      "fully_transparent_pixels": 1275067,
+      "alpha_range": [
+        0,
+        254
+      ],
+      "visible_alpha_threshold": 8,
+      "rock_count": 6,
+      "rocks": [
+        {
+          "area": 41698,
+          "bbox": [
+            95,
+            150,
+            409,
+            387
+          ]
+        },
+        {
+          "area": 49525,
+          "bbox": [
+            638,
+            140,
+            910,
+            401
+          ]
+        },
+        {
+          "area": 35898,
+          "bbox": [
+            1177,
+            142,
+            1418,
+            405
+          ]
+        },
+        {
+          "area": 42856,
+          "bbox": [
+            96,
+            638,
+            406,
+            880
+          ]
+        },
+        {
+          "area": 66246,
+          "bbox": [
+            619,
+            625,
+            957,
+            887
+          ]
+        },
+        {
+          "area": 41217,
+          "bbox": [
+            1167,
+            634,
+            1426,
+            884
+          ]
+        }
+      ],
+      "minimum_gap_lower_bound_px": 210.0,
+      "cell_boundary_max_alpha": {
+        "x512": 0,
+        "x1024": 1,
+        "y512": 1
+      }
+    }
+  }
+}

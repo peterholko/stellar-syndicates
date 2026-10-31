@@ -1,0 +1,23 @@
+{
+  "id": "pirate-reaver",
+  "category": "pirate",
+  "destination": "client/art-src/npc-ships/pirate-reaver-chroma.png",
+  "prompt": "Use case: stylized-concept.\nAsset type: one production-quality spaceship hull sprite for Stellar Syndicates, a premium space strategy game, on a chroma-key background.\nInput image: Image 1 is an existing pirate hull, attached ONLY as the pirate fleet's style, material and finish reference. Do not copy its silhouette.\nPrimary request: design a NEW pirate warship of the line, clearly heavier and more dangerous than Image 1, that reads as a capital-class threat both as a 40-90 pixel galaxy-map sprite and in a closer view.\nComposition: strict orthographic TOP-DOWN plan view, camera directly overhead; the nose points exactly UP and the engines point DOWN. One complete centred craft on a square 1254 x 1254 canvas. Its length spans about 92% of the canvas height with even margins above the nose and below the engines.\nVisual style: the pirate hull culture of Image 1: blackened gunmetal with layered salvaged plates, rust streaks, rivets, mismatched repair patches in burnt orange and worn mustard, dull bronze piping, amber-lit RECESSED engine mouths with no exhaust plumes. Hard-surface game art, crisp readable large forms, restrained secondary detail, soft upper-left light, strong value separation for a dark navy map.\nBackground: one flat pure chroma green (#00FF00) filling the whole canvas, with no shadows, gradients or green anywhere on the ship.\nConstraints: exactly one craft; no text, numbers, labels, logos, skulls, insignia, watermark, border or UI; no weapons fire, beams or smoke; no recognizable franchise design.\n\nSubject and distinguishing silhouette (takes priority):\nA PIRATE REAVER, destroyer class: a long, narrow armored blade of a hull, about 0.45 width-to-length ratio, built around ONE heavy spinal mass driver whose barrel runs out past the nose. Two short scythe-curved armored fins at mid-hull; one armored sponson on each flank, each with a rack of FOUR torpedo tubes. THREE recessed amber engines across the stern, the middle one set farther back. Patched plating and one long burnt-orange stripe down the port side.",
+  "references": [
+    "client/art-src/npc-ships/pirate-corsair-chroma.png"
+  ],
+  "transparent": false,
+  "expectedSize": [
+    1254,
+    1254
+  ],
+  "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-94670adb-041f-4dff-83b0-a4de7a32699b.png",
+  "inspection": {
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGB",
+    "sha256": "7ad1d16c7f87e89dee6d544d3435d9faa12d51da20fdd1c0f629f490031dffc6"
+  },
+  "tool": "image_gen.imagegen",
+  "generatedAt": "2026-10-22"
+}

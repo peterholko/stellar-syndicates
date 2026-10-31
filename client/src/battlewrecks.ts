@@ -10,9 +10,10 @@ import { mulberry32 } from "./prng";
 
 /// Sections a hull breaks into (0 = it shatters into debris only).
 export const WRECK_PIECES: Record<ShipArtKind, number> = {
-  raider: 0, scout: 0, survey_probe: 0, tiny_freighter: 0,
+  raider: 0, scout: 0, survey_probe: 0, tiny_freighter: 0, combat_freighter: 0,
   corvette: 2, small_freighter: 2, builder: 2, destroyer: 2, mining_barge: 2, mining_belt_station: 4,
   cruiser: 3, convoy: 3, colony: 3, transport: 3, freighter: 3, free_trader: 3, battleship: 3, large_freighter: 3,
+  clean_slate: 3, second_wind: 3, small_fortune: 3,
   heavy_freighter: 4, dreadnought: 4, bulk_freighter: 4,
   titan: 5,
 };

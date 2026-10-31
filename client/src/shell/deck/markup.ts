@@ -1,4 +1,4 @@
-import { accountBackdrop, accountFields, accountProfile } from "../account";
+import { accountBackdrop, accountFields, accountLogo, accountProfile } from "../account";
 
 export function mountDeckMarkup(root: HTMLElement): void {
   root.innerHTML = `
@@ -6,10 +6,9 @@ export function mountDeckMarkup(root: HTMLElement): void {
       <header id="deck-topbar" class="deck-topbar">
         <button type="button" id="deck-identity" class="deck-identity" title="Corporation card"><b id="deck-corp">—</b><span id="deck-corp-id">—</span></button>
         <div id="deck-stats" class="deck-stats">
-          <span>Credits <b id="deck-credits">—</b><small id="deck-reserved"></small></span>
+          <span>Credits <b id="deck-credits">—</b></span>
           <span>Equity <b id="deck-equity">—</b></span>
           <span>Game <b id="deck-tick">—</b></span>
-          <span id="deck-pacing"></span>
           <span id="deck-link">offline</span>
         </div>
         <div id="deck-construction-chip" class="deck-construction-chip" hidden></div>
@@ -24,18 +23,21 @@ export function mountDeckMarkup(root: HTMLElement): void {
           ${navButton("officers", "Officers")}
           ${navButton("operations", "Operations")}
           ${navButton("syndicate", "Syndicate")}
+          ${navButton("comms", "Comms")}
           ${navButton("faction", "Faction")}
           ${navButton("log", "Log")}
           <button id="deck-nav-more" class="deck-nav__more" type="button" data-deck-act="nav-more" aria-expanded="false" aria-controls="deck-nav-overflow">More ···</button>
         </nav>
         <button id="deck-profile-open" type="button">Profile</button>
       </header>
+      <div id="deck-stores" class="deck-stores" role="region" aria-label="Stores" hidden><div id="deck-stores-main" class="deck-stores__main"></div><button type="button" id="deck-news" class="deck-news" hidden></button></div>
       <div id="deck-construction-menu" class="deck-construction-menu" role="menu" aria-label="Construction across your worlds" hidden></div>
       <div id="deck-nav-overflow" class="deck-nav-overflow" role="menu" hidden>
         ${overflowButton("research", "Research")}
         ${overflowButton("officers", "Officers")}
         ${overflowButton("operations", "Operations")}
         ${overflowButton("syndicate", "Syndicate")}
+        ${overflowButton("comms", "Comms")}
         ${overflowButton("faction", "Faction")}
         ${overflowButton("log", "Log")}
         ${overflowButton("rankings", "Rankings")}
@@ -44,6 +46,7 @@ export function mountDeckMarkup(root: HTMLElement): void {
         <div id="deck-planet-stage-body" class="deck-planet-stage__body"></div>
       </section>
       <aside id="deck-workspace" class="deck-workspace" aria-hidden="true">
+        <div class="deck-workspace__scene" aria-hidden="true"><img src="/art/derived/hub-visit/hub-visit-v1.webp" alt="" decoding="async" loading="lazy"></div>
         <header class="deck-workspace__header">
           <button type="button" data-deck-act="back" aria-label="Back">←</button>
           <nav id="deck-breadcrumb" class="deck-breadcrumb" aria-label="Breadcrumb"></nav>
@@ -73,6 +76,16 @@ export function mountDeckMarkup(root: HTMLElement): void {
         </header>
         <div id="deck-fleet-workbench-body" class="deck-build-workbench__body deck-fleet-workbench__body"></div>
       </section>
+      <section id="deck-stores-workbench" class="deck-build-workbench deck-stores-workbench" aria-labelledby="deck-stores-workbench-title" tabindex="-1" hidden>
+        <header class="deck-build-workbench__header">
+          <div>
+            <span>Stores</span>
+            <h2 id="deck-stores-workbench-title">Stores</h2>
+          </div>
+          <button type="button" data-deck-act="stores-close" aria-label="Close stores">✕</button>
+        </header>
+        <div id="deck-stores-workbench-body" class="deck-build-workbench__body"></div>
+      </section>
       <aside id="deck-welcome" class="deck-welcome" aria-label="Welcome back report" hidden></aside>
       <section id="deck-toast-lane" class="deck-toast-lane" aria-live="polite"></section>
       <div id="deck-bottom-band" class="deck-bottom-band">
@@ -83,17 +96,22 @@ export function mountDeckMarkup(root: HTMLElement): void {
           <button type="button" data-deck-act="zoom-in" aria-label="Zoom in">+</button>
           <button type="button" data-deck-act="zoom-fit" aria-label="Fit galaxy">⊡</button>
           <button type="button" data-deck-act="zoom-out" aria-label="Zoom out">−</button>
+          <button type="button" data-deck-act="layers" aria-label="Map layers" aria-expanded="false" aria-controls="deck-layers" title="Layers"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5 1.8 5.8 8 9.1l6.2-3.3Z"/><path d="m1.8 8.6 6.2 3.3 6.2-3.3"/></svg></button>
           <button type="button" data-deck-act="help" aria-label="Keyboard shortcuts">?</button>
         </div>
+        <div id="deck-layers" class="deck-layers" role="group" aria-label="Map layers" hidden></div>
       </div>
       <div id="deck-hover" class="deck-hover" hidden></div>
       ${accountProfile("deck")}
       <div id="deck-overlays" class="deck-overlays">
         <section id="deck-join" class="deck-overlay deck-join" aria-labelledby="deck-join-title">
           ${accountBackdrop("deck")}
-          <form id="deck-join-form" class="deck-join__card account-card" data-account-mode="signin">
-            ${accountFields("deck")}
-          </form>
+          <div class="account-stage">
+            ${accountLogo()}
+            <form id="deck-join-form" class="deck-join__card account-card" data-account-mode="signin">
+              ${accountFields("deck")}
+            </form>
+          </div>
         </section>
         <section id="deck-help" class="deck-overlay deck-help" aria-labelledby="deck-help-title" hidden>
           <div class="deck-help__card">
@@ -112,10 +130,19 @@ export function mountDeckMarkup(root: HTMLElement): void {
               <kbd>M V T R P</kbd><span>Market · Fleets · Logistics · Research · Officers</span>
               <kbd>U Y C K L</kbd><span>Operations · Syndicate · Faction · Rankings · Log</span>
               <kbd>S</kbd><span>Open the selected system's workspace</span>
+              <kbd>I</kbd><span>Stores: every good in the system</span>
               <kbd>Esc</kbd><span>Cancel one layer: order · aim · scrub · overlay · workspace · selection</span>
               <kbd>?</kbd><span>Open or close this shortcuts overlay</span>
             </div>
             <p>Shortcuts accelerate controls that remain visible in the Command Deck.</p>
+          </div>
+        </section>
+        <section id="deck-fallen" class="deck-overlay deck-fallen" aria-labelledby="deck-fallen-title" hidden>
+          <div class="deck-fallen__card">
+            <div class="deck-eyebrow">Game over</div>
+            <h1 id="deck-fallen-title">The colony has fallen</h1>
+            <p id="deck-fallen-line"></p>
+            <button type="button" class="is-primary" data-deck-act="restart-corporation" title="Found your corporation again on your home world.">Restart</button>
           </div>
         </section>
         <section id="deck-battle-theater" class="deck-overlay deck-theater-overlay" aria-label="Battle theater" hidden>
@@ -132,7 +159,7 @@ export function mountDeckMarkup(root: HTMLElement): void {
 
 /** Top-bar destinations that fold into More first when the row runs out of
  * room; Command, Fleets, Logistics and Market always stay. */
-const NAV_FOLD_ORDER = ["faction", "syndicate", "operations", "officers", "log", "research"];
+const NAV_FOLD_ORDER = ["faction", "comms", "syndicate", "operations", "officers", "log", "research"];
 
 /** Keep every destination reachable: when the row would clip (window width,
  * credit digits, the construction chip), fold the least-used destinations into

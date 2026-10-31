@@ -1,0 +1,125 @@
+{
+  "date": "2026-10-27",
+  "mode": "built-in image_gen",
+  "assets": [
+    {
+      "filename": "ines-varga.png",
+      "prompt": "Use case: character-portrait\nAsset type: one square character portrait for the trading panel of Stellar Syndicates, a persistent science-fiction colony and trading game. It is shown small, 72 to 96 pixels, beside the trader's spoken lines.\nInput image 1: STYLE reference only, one of the game's approved captain portraits. Match its realistic painterly digital portrait style, head-and-shoulders framing, soft directional light and restrained detail. Do not copy that person, the navy uniform or the bridge.\nInput image 2: SERIES reference, the approved portrait of Teo Brannick, another of the game's free traders. Match its framing, head size, camera distance, eye height and painterly finish exactly, so the traders read as one set and share one crop. Do not copy his person, clothing, palette or background.\nComposition/framing: one opaque square portrait, exactly 1024 x 1024 pixels. Head and shoulders plus one raised hand; the face a little above center, turned three-quarters toward the viewer, the eyes about 38% from the top. Keep the face, hair, spectacles and raised hand inside the central 80% so the portrait survives a rounded-square crop. It must read at 72 pixels: a strong silhouette and clear light-dark separation between the face and an uncluttered background.\nSubject: Ines Varga, an independent free trader in her fifties and a former Authority customs auditor: slim, upright and composed; olive skin with fine lines at the eyes; dark, steady eyes; a sharp silver-grey chin-length bob; thin round steel spectacles; small silver stud earrings. An immaculate high-collared charcoal spacer's coat with a single row of plain steel buttons and slim teal piping, a folded teal pocket square, a slim steel stylus clipped to the lapel. One hand is raised beside the face, holding up a small dark semiconductor module between two fingers and examining it with an auditor's cool interest. Expression: calm and exact, the faintest dry half-smile; she already knows the price.\nBackground: the Clean Slate's cargo hold, softly out of focus: sealed grey cargo cases in perfectly straight rows, clean white wall panels, a cool teal status light, one warm work lamp far off to one side.\nStyle/medium: high-end realistic digital painting matching the game's captain portraits and Teo Brannick's portrait; grounded materials (fine wool, brushed steel, glass), believable anatomy and hands. Not a cartoon, not a photograph, not a poster.\nLighting/mood: cool white key light from above and in front, a teal rim on the far side, a small warm accent from the distant lamp; composed, exacting, quietly formidable.\nConstraints: absolutely no text, letters, numbers, logos, labels, watermark, borders, frames or interface. No weapons. Exactly one person. Deliver exactly one finished portrait.\nProduction clarifications: Generate a new, original person. The references are only for painting style, framing and finish. Keep every prop completely blank and unmarked, with no glyphs or pseudo-writing. The raised hand is anatomically correct with five fingers including the thumb. Output a single finished opaque 1024 x 1024 image.",
+      "references": [
+        {
+          "path": "client/public/art/captains/astrid_nystrom_senior.png",
+          "role": "style reference"
+        },
+        {
+          "path": "client/art-src/free-trader-portrait-v1/teo-brannick.png",
+          "role": "framing and finish reference"
+        }
+      ],
+      "initial_generated_source": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-8a32c64d-367c-43b7-9918-62f6ca412a34.png",
+      "revisions": [
+        {
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET: the newly generated neutral portrait of Ines Varga. Input image 2 is Teo Brannick, a framing and camera-distance reference only. Preserve her exact identity and age, olive skin, silver-grey bob, round spectacles, silver stud, calm dry half-smile, charcoal coat, teal piping and pocket square, steel buttons and stylus, her one raised hand holding the semiconductor module, all materials, background and lighting.\nMake only this framing correction: pull back and move her down so the eyes sit 38% from the top. The current portrait is too tightly framed. Scale the entire person and her held prop down to approximately 75% of their current size relative to the square canvas, then position her so the midpoint between her eyes is at y=389 in a 1024 x 1024 image. Match Teo's generous headroom and camera distance. Keep the face, all hair or cap, and the complete hand and prop inside the central 80% of the frame. Extend the existing clothing and cargo-hold background naturally to fill the newly revealed space. Do not add another person, hand or prop. Do not crop or change her identity or expression. Keep the existing realistic painterly digital finish.\nDeliver exactly one opaque square PNG portrait at precisely 1024 x 1024 pixels. No text, letters, numbers, logos, glyphs, labels, borders, frames, interface or weapons.",
+          "input": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-8a32c64d-367c-43b7-9918-62f6ca412a34.png",
+          "framing_reference": "client/art-src/free-trader-portrait-v1/teo-brannick.png",
+          "output": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-5dbf3335-2883-463d-bdb9-72ba32c105ac.png"
+        },
+        {
+          "prompt": "Use case: precise-object-edit\nThe input image is the EDIT TARGET, Ines Varga's neutral portrait. Preserve this exact person, head size, anatomy, pose, facial expression, silver bob, spectacles, semiconductor and raised hand, coat and every accessory, painterly finish, colors and lighting.\nMake a small vertical composition correction only. Move the entire person and held semiconductor straight downward by 5% of the image height. Do not zoom, scale, rotate or change the camera distance. Her eyes are currently approximately 34% from the top and must be approximately 39% from the top. Preserve her horizontal placement and the size and proportions of the head and hand. Naturally restore the small exposed area of background. Keep the background composition otherwise unchanged. Retain generous headroom. Keep one person and exactly one visible anatomically correct hand with five digits, holding the same plain unmarked module.\nOutput exactly one finished opaque 1024 x 1024 square portrait. No text, numbers, glyphs, logos, labels, watermark, border, frame, interface or weapons.",
+          "input": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-5dbf3335-2883-463d-bdb9-72ba32c105ac.png",
+          "output": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-143d1da1-6267-4795-a89f-9589d37cf180.png"
+        }
+      ],
+      "selected_generated_source": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-143d1da1-6267-4795-a89f-9589d37cf180.png",
+      "saved_path": "client/art-src/free-trader-portrait-v1/ines-varga.png"
+    },
+    {
+      "filename": "ines-varga-pleased.png",
+      "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET: Ines Varga's neutral portrait. Keep the same identity, head size, framing, camera, clothing, silver bob, round steel spectacles, earrings, stylus and pocket square, lighting, colors and background. Change only the facial expression and the hand gesture, with the least movement they need. Do not zoom or reframe.\nExpression: a small, satisfied smile, one eyebrow lifted in approval, eyes warmer behind the spectacles: the numbers close.\nGesture: remove the semiconductor; the raised hand makes a neat, precise 'agreed' sign at shoulder height, thumb and forefinger touching in a small ring and the other fingers straight. Reposition the forearm and sleeve naturally and restore whatever background or clothing the old pose covered. One visible hand with five anatomically correct digits, and no duplicate limbs. Keep the whole gesture inside the central 80% and readable at 72 to 96 pixels; do not cover the face.\nOutput: one opaque 1024 x 1024 square portrait. Realistic painterly digital finish. No text, letters, numbers, glyphs, logos, labels, watermark, borders, frames, interface or weapons.",
+      "references": [
+        {
+          "path": "client/art-src/free-trader-portrait-v1/ines-varga.png",
+          "role": "neutral portrait edit target"
+        }
+      ],
+      "initial_generated_source": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-86933dc7-1365-4abf-82f2-65eca927f408.png",
+      "revisions": [],
+      "selected_generated_source": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-86933dc7-1365-4abf-82f2-65eca927f408.png",
+      "saved_path": "client/art-src/free-trader-portrait-v1/ines-varga-pleased.png"
+    },
+    {
+      "filename": "ines-varga-scoff.png",
+      "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET: Ines Varga's neutral portrait. Keep the same identity, head size, framing, camera, clothing, silver bob, round steel spectacles, earrings, stylus and pocket square, lighting, colors and background. Change only the facial expression and the hand gesture, with the least movement they need. Do not zoom or reframe.\nExpression: unimpressed: the spectacles slid a little down her nose as she looks over them, one brow arched, lips pressed thin.\nGesture: remove the semiconductor; the raised hand is held up flat at shoulder height, palm toward the viewer, a polite but final 'no'. Reposition the forearm and sleeve naturally and restore whatever background or clothing the old pose covered. One visible hand with five anatomically correct digits, and no duplicate limbs. Keep the whole gesture inside the central 80% and readable at 72 to 96 pixels; do not cover the face.\nOutput: one opaque 1024 x 1024 square portrait. Realistic painterly digital finish. No text, letters, numbers, glyphs, logos, labels, watermark, borders, frames, interface or weapons.",
+      "references": [
+        {
+          "path": "client/art-src/free-trader-portrait-v1/ines-varga.png",
+          "role": "neutral portrait edit target"
+        }
+      ],
+      "initial_generated_source": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-633ff021-0499-4855-96fb-ae51099ee4bf.png",
+      "revisions": [],
+      "selected_generated_source": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-633ff021-0499-4855-96fb-ae51099ee4bf.png",
+      "saved_path": "client/art-src/free-trader-portrait-v1/ines-varga-scoff.png"
+    },
+    {
+      "filename": "mags-halloran.png",
+      "prompt": "Use case: character-portrait\nAsset type: one square character portrait for the trading panel of Stellar Syndicates, a persistent science-fiction colony and trading game. It is shown small, 72 to 96 pixels, beside the trader's spoken lines.\nInput image 1: STYLE reference only, one of the game's approved captain portraits. Match its realistic painterly digital portrait style, head-and-shoulders framing, soft directional light and restrained detail. Do not copy that person, the navy uniform or the bridge.\nInput image 2: SERIES reference, the approved portrait of Teo Brannick, another of the game's free traders. Match its framing, head size, camera distance, eye height and painterly finish exactly, so the traders read as one set and share one crop. Do not copy his person, clothing, palette or background.\nComposition/framing: one opaque square portrait, exactly 1024 x 1024 pixels. Head and shoulders plus one raised hand; the face a little above center, turned three-quarters toward the viewer, the eyes about 38% from the top. Keep the face, hair, cap and raised hand inside the central 80% so the portrait survives a rounded-square crop. It must read at 72 pixels: a strong silhouette and clear light-dark separation between the face and an uncluttered background.\nSubject: Mags Halloran, an independent free trader in her seventies and a retired long-haul freight captain: short, sturdy and round-faced; fair, freckled, wind-burned skin with deep smile lines; bright, shrewd blue eyes; a thick white braid pinned up under a battered moss-green knitted cap; small gold hoop earrings. A heavy, much-mended moss-green spacer's coat with patched elbows over a rust-orange knitted jumper, a soft patterned wool shawl around her shoulders, fingerless knitted gloves. One gloved hand is raised beside the face, holding up a dented, steaming plain tin mug of tea as if offering it in welcome. Expression: warm, motherly and a little mischievous; kind, and shrewder than she looks.\nBackground: the Second Wind's cargo nook, softly out of focus: crates lashed under a patched canvas tarp, a sagging string of warm bulbs, a hanging kettle, a cool blue-white glow from a small porthole at one edge.\nStyle/medium: high-end realistic digital painting matching the game's captain portraits and Teo Brannick's portrait; grounded materials (knitted wool, worn canvas, dented tin), believable anatomy and hands. Not a cartoon, not a photograph, not a poster.\nLighting/mood: warm golden key light from the string of bulbs, a cool blue-white rim from the porthole on the far side; cosy, homely and quietly canny.\nConstraints: absolutely no text, letters, numbers, logos, labels, watermark, borders, frames or interface. No weapons. Exactly one person. Deliver exactly one finished portrait.\nProduction clarifications: Generate a new, original person. The references are only for painting style, framing and finish. Keep every prop completely blank and unmarked, with no glyphs or pseudo-writing. The raised hand is anatomically correct with five fingers including the thumb. Output a single finished opaque 1024 x 1024 image.",
+      "references": [
+        {
+          "path": "client/public/art/captains/astrid_nystrom_senior.png",
+          "role": "style reference"
+        },
+        {
+          "path": "client/art-src/free-trader-portrait-v1/teo-brannick.png",
+          "role": "framing and finish reference"
+        }
+      ],
+      "initial_generated_source": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-a2db963d-3b4a-4f68-bf53-35cf8401a93e.png",
+      "revisions": [
+        {
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET: the newly generated neutral portrait of Mags Halloran. Input image 2 is Teo Brannick, a framing and camera-distance reference only. Preserve her exact identity and age, freckled weathered face, blue eyes, white braid and moss knitted cap, small gold hoop earrings, warm mischievous smile, patched moss coat, rust jumper, patterned wool shawl, fingerless glove and one raised hand offering the plain tin mug, all materials, background and lighting.\nMake only this framing correction: pull back and move her down so the eyes sit 38% from the top. The current portrait is too tightly framed. Scale the entire person and her held prop down to approximately 75% of their current size relative to the square canvas, then position her so the midpoint between her eyes is at y=389 in a 1024 x 1024 image. Match Teo's generous headroom and camera distance. Keep the face, all hair or cap, and the complete hand and prop inside the central 80% of the frame. Extend the existing clothing and cargo-hold background naturally to fill the newly revealed space. Do not add another person, hand or prop. Do not crop or change her identity or expression. Keep the existing realistic painterly digital finish.\nDeliver exactly one opaque square PNG portrait at precisely 1024 x 1024 pixels. No text, letters, numbers, logos, glyphs, labels, borders, frames, interface or weapons.",
+          "input": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-a2db963d-3b4a-4f68-bf53-35cf8401a93e.png",
+          "framing_reference": "client/art-src/free-trader-portrait-v1/teo-brannick.png",
+          "output": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-32a132d4-847d-4491-8cec-d58abba16480.png"
+        }
+      ],
+      "selected_generated_source": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-32a132d4-847d-4491-8cec-d58abba16480.png",
+      "saved_path": "client/art-src/free-trader-portrait-v1/mags-halloran.png"
+    },
+    {
+      "filename": "mags-halloran-pleased.png",
+      "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET: Mags Halloran's neutral portrait. Keep the same identity, head size, framing, camera, clothing, knitted cap, white braid, gold hoops, shawl and fingerless gloves, lighting, colors and background. Change only the facial expression and the hand gesture, with the least movement they need. Do not zoom or reframe.\nExpression: a hearty, wheezing laugh, eyes creased nearly shut, cheeks rosy: a good bit of business.\nGesture: remove the mug; the raised hand is laid flat on her chest over her heart, delighted. Reposition the forearm and sleeve naturally and restore whatever background or clothing the old pose covered. One visible hand with five anatomically correct digits, and no duplicate limbs. Keep the whole gesture inside the central 80% and readable at 72 to 96 pixels; do not cover the face.\nOutput: one opaque 1024 x 1024 square portrait. Realistic painterly digital finish. No text, letters, numbers, glyphs, logos, labels, watermark, borders, frames, interface or weapons.",
+      "references": [
+        {
+          "path": "client/art-src/free-trader-portrait-v1/mags-halloran.png",
+          "role": "neutral portrait edit target"
+        }
+      ],
+      "initial_generated_source": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-50dd5888-e6e1-4bb2-b541-f9fb2a1927b3.png",
+      "revisions": [],
+      "selected_generated_source": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-50dd5888-e6e1-4bb2-b541-f9fb2a1927b3.png",
+      "saved_path": "client/art-src/free-trader-portrait-v1/mags-halloran-pleased.png"
+    },
+    {
+      "filename": "mags-halloran-scoff.png",
+      "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET: Mags Halloran's neutral portrait. Keep the same identity, head size, framing, camera, clothing, knitted cap, white braid, gold hoops, shawl and fingerless gloves, lighting, colors and background. Change only the facial expression and the hand gesture, with the least movement they need. Do not zoom or reframe.\nExpression: a skeptical squint, lips pursed, one brow raised: not today.\nGesture: remove the mug; the raised hand wags a single gloved forefinger at shoulder height, the other fingers curled. Reposition the forearm and sleeve naturally and restore whatever background or clothing the old pose covered. One visible hand with five anatomically correct digits, and no duplicate limbs. Keep the whole gesture inside the central 80% and readable at 72 to 96 pixels; do not cover the face.\nOutput: one opaque 1024 x 1024 square portrait. Realistic painterly digital finish. No text, letters, numbers, glyphs, logos, labels, watermark, borders, frames, interface or weapons.",
+      "references": [
+        {
+          "path": "client/art-src/free-trader-portrait-v1/mags-halloran.png",
+          "role": "neutral portrait edit target"
+        }
+      ],
+      "initial_generated_source": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-23d8e5a2-b198-4a0d-9666-8e81957c78ea.png",
+      "revisions": [],
+      "selected_generated_source": "/Users/peter/.codex/generated_images/01a17efb-7499-7c61-a58c-8112b8b6628b/exec-23d8e5a2-b198-4a0d-9666-8e81957c78ea.png",
+      "saved_path": "client/art-src/free-trader-portrait-v1/mags-halloran-scoff.png"
+    }
+  ],
+  "delivery": {
+    "width": 1024,
+    "height": 1024,
+    "format": "PNG",
+    "opaque": true,
+    "normalization": "Generated 1254 × 1254 outputs were downsampled to 1024 × 1024 with macOS sips; no cropping.",
+    "derivatives": "Not generated; user will derive and inspect the crop."
+  }
+}

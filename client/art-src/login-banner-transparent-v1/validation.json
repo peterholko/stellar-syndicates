@@ -1,0 +1,34 @@
+{
+  "format": "png",
+  "width": 1937,
+  "height": 748,
+  "channels": 4,
+  "has_alpha": true,
+  "corner_alpha": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "fully_transparent_pixels": 951005,
+  "visible_pixels": 497871,
+  "crop": {
+    "left": 17,
+    "top": 29,
+    "width": 1937,
+    "height": 748
+  },
+  "bytes": 1219170,
+  "sha256": "de88844b56743a104421284c283d7ca071efaa32681b9618cd6d8f8c155275ee",
+  "public_url": "/art/stellar_syndicates_login_banner_v1.png",
+  "alpha_samples": {
+    "between_emblem_and_text": 0,
+    "lower_line_d_counter": 0,
+    "exterior_lower_right": 0
+  },
+  "browser_preview": {
+    "status": "not_run",
+    "reason": "Browser policy blocks file: URLs; no browser workaround attempted."
+  },
+  "direct_image_inspection": "Completed; single-S emblem, correct two-line title, restrained wordmark glow, and no page background."
+}

@@ -1,5 +1,5 @@
 // Galaxy map glyphs: flat white silhouettes the map tints by meaning (contacts
-// cyan, contracts by issuer). Sliced from the four generated sheets in
+// cyan, contracts by issuer). Sliced from the five generated sheets in
 // art-src/galaxy-map-glyphs-v1 (white on black, 3 × 2 cells of 512 px). Black
 // becomes transparency, the generator's grey fringes snap to a clean edge, and
 // every glyph is trimmed and fitted to the same box so the set reads evenly.
@@ -24,6 +24,7 @@ export const GLYPH_SHEETS = [
   ["02-contracts-part-1.png", ["contract-bounty", "contract-patrol", "contract-salvage", "contract-escort", "contract-combat", "contract-enforcement"]],
   ["03-contracts-part-2.png", ["contract-control", "contract-mandate", "contract-megaproject", "contract-survey", "contract-delivery", "pin-flag"]],
   ["04-contract-issuers.png", ["issuer-market", "issuer-survey-office", "issuer-salvage-office", "issuer-regional-council", "issuer-syndicate", "issuer-authority"]],
+  ["05-season.png", ["gate-construction", "gate-open", "relic", "pirate-assault", "derelict-colony", "season-emblem"]],
 ];
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 async function writeChanged(file, data) {

@@ -1,6 +1,6 @@
 // Start this loopback-only baker, then open its printed URL in a browser. It
-// renders the Authority Nexus with real WebGL (the live map's lighting, camera
-// and still vortex phase) and then builds the web assets. No proxy, no game.
+// renders the Wormhole Hub with real WebGL (the live map's lighting, camera and
+// still portal phase) and then builds the web assets. No proxy, no game.
 import { createServer } from "vite";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -14,7 +14,7 @@ await mkdir(output, { recursive: true });
 const PORT = 8783;
 const SIZES = { top: [1254, 1254], hero: [1024, 768] };
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
-const manifest = { recipe: "nexus-ortho-top-perspective-hero-v1", source: HUB_SOURCE,
+const manifest = { recipe: "wormhole-hub-ortho-top-perspective-hero-v1", source: HUB_SOURCE,
   sourceSha256: hash(await readFile(path.join(root, HUB_SOURCE))) };
 const server = await createServer({ root, configFile: false,
   server: { host: "127.0.0.1", port: PORT, strictPort: true },

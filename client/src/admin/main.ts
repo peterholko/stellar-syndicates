@@ -3,6 +3,7 @@
 // player-supplied string reaches the page through textContent, never as HTML.
 import "../styles/tokens.css";
 import "../styles/admin.css";
+import { accounts } from "../auth";
 import * as fmt from "./format";
 import { tutorialRank } from "./tutorial";
 
@@ -29,7 +30,7 @@ interface Overview {
   generated_at: string;
   server: {
     started_at: string; online_players: number; connections: number; bot_players: number; bot_commands: number;
-    corporations: number; galaxy_systems: number; tick: number; sim_time: number; holdings: boolean;
+    corporations: number; galaxy_systems: number; tick: number; sim_time: number; holdings: boolean; pacing_scale: number;
   };
   totals: { accounts: number; registered: number; guests: number; founded: number; online: number; new_24h: number; active_24h: number; active_7d: number };
   funnel: Funnel | null;
@@ -182,6 +183,7 @@ function renderSummary(overview: Overview, now: number): void {
   byId("admin-server").replaceChildren(
     h("span", null, "Tick ", h("b", null, fmt.count(server.tick))),
     h("span", null, "Sim ", h("b", null, fmt.duration(server.sim_time))),
+    h("span", { title: "SIM_PACING: game seconds per real second" }, "Speed ", h("b", null, `×${server.pacing_scale}`)),
     h("span", { title: fmt.dateTime(server.started_at) }, "Up ", h("b", null, fmt.duration((now - Date.parse(server.started_at)) / 1000))),
     h("span", null, "Systems ", h("b", null, fmt.count(server.galaxy_systems))),
   );
@@ -397,14 +399,37 @@ function renderError(): void {
   const error = state.error;
   box.hidden = error === null;
   byId("admin-content").hidden = error !== null && state.overview === null;
-  if (!error) return;
-  const action = error.code === "sign_in"
-    ? h("a", { href: "/", class: "admin-button" }, "Open the game to sign in")
-    : error.code === "not_operator" || error.code === "off"
+  if (!error) { delete box.dataset.code; return; }
+  const signIn = error.code === "sign_in" || error.code === "not_operator";
+  // Keep a half-typed sign-in when the same answer comes back.
+  if (signIn && box.dataset.code === error.code) return;
+  box.dataset.code = error.code;
+  const action = signIn
+    ? signInForm()
+    : error.code === "off"
       ? null
       : h("button", { type: "button", class: "admin-button", onclick: () => void refresh() }, "Try again");
-  fill(box, h("b", null, error.code === "sign_in" ? "Sign in first" : error.code === "not_operator" ? "Operators only" : error.code === "off" ? "Dashboard off" : "Server unavailable"),
-    h("p", null, error.message), action);
+  fill(box, h("b", null, error.code === "sign_in" ? "Operator sign-in" : error.code === "not_operator" ? "Operators only" : error.code === "off" ? "Dashboard off" : "Server unavailable"),
+    error.code === "sign_in" ? null : h("p", null, error.message), action);
+}
+
+/** Signs this browser in with the game's account API, then loads the dashboard. */
+function signInForm(): HTMLFormElement {
+  const login = h("input", { name: "username", type: "text", required: true, maxlength: 254, autocomplete: "username", autocapitalize: "none", spellcheck: "false", placeholder: "Login", "aria-label": "Login" });
+  const password = h("input", { name: "password", type: "password", required: true, maxlength: 128, autocomplete: "current-password", placeholder: "Passphrase", "aria-label": "Passphrase" });
+  const submit = h("button", { type: "submit", class: "admin-button", title: "Signs this browser in as that account, game included" }, "Sign in");
+  const failure = h("p", { class: "admin-note", role: "alert" });
+  return h("form", {
+    class: "admin-signin",
+    onsubmit: (event: Event) => {
+      event.preventDefault();
+      submit.disabled = true;
+      failure.textContent = "";
+      accounts.signIn(login.value, password.value)
+        .then(() => void refresh(), (error: unknown) => { failure.textContent = error instanceof Error ? error.message : "Sign-in failed."; })
+        .finally(() => { password.value = ""; submit.disabled = false; });
+    },
+  }, login, password, submit, failure);
 }
 
 async function refresh(): Promise<void> {

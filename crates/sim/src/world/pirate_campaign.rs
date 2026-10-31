@@ -2,7 +2,7 @@
 //! sidecar: reconnaissance creates immutable offers on the scout's wavefront,
 //! and progress/rewards use the existing arrived Operation reports.
 use super::*;
-use crate::pirate::{BaseNetwork, CombatObjective as Goal, PirateFaction, SupportSite};
+use crate::pirate::{BaseNetwork, CombatObjective as Goal, ObjectiveActors, PirateFaction, SupportSite};
 use crate::operation::{FollowUpKind, OperationBriefing, OperationIssuer, OperationKind,
     OperationReward, OperationScope, OperationState};
 
@@ -205,34 +205,18 @@ impl World {
             let home = c.home;
             // The Authority's fixed rescue sites are advertised contract terms,
             // not generated from an unseen player movement or unseen casualty.
+            // §contract-props: an offer puts nothing in space; its pirate and
+            // liner arrive when it is accepted (`stage_rescue`).
             let Some(home_id) = c.home_system else { continue; };
-            let axis = (self.hub - home).normalized();
-            let across = Vec2::new(-axis.y, axis.x);
             for (i, goal) in [Goal::HoldExtraction, Goal::ProtectEvacuation].into_iter().enumerate() {
-                let pos = home + axis * 28_000.0 + across * (24_000.0 + 18_000.0 * i as f64);
-                if self.in_sovereign_zone(pos) || self.home_slots.iter().any(|h| h.pos.distance(pos) < 20_000.0) { continue; }
+                let Some(pos) = self.rescue_site(home, i) else { continue; };
                 let extraction = goal == Goal::HoldExtraction;
-                let prior = self.operations.values().rev().find(|o| matches!(o.scope, OperationScope::Private { player } if player == owner)
-                    && matches!(o.kind, OperationKind::CombatObjective { objective, site, .. } if objective == goal && site == home_id)).map(|o| o.id);
-                let old_actors = prior.and_then(|id| self.pirate_campaign.missions.get(&id)).cloned();
-                let Some(id) = self.offer_combat_objective(owner, goal, home_id, pos, (!extraction).then_some(self.hub),
+                self.offer_combat_objective(owner, goal, home_id, pos, (!extraction).then_some(self.hub),
                     if extraction { pirate::EXTRACTION_HOLD_S } else { 1 }, if extraction { 1100.0 } else { 1500.0 },
                     if extraction { "Hold the recovery zone" } else { "Protect the evacuation" },
                     "Moderate · objective victory", "Healthy Interceptors; screening Corvette recommended",
                     if extraction { "Hold the zone unopposed for 60s while salvagers recover a cache. Leaving or renewed attack resets the hold; surviving pirates need not be hunted down. 40 Alloys remain on-site for collection." }
-                    else { "Meet the stranded Authority liner. Your assigned escort takes up Guard automatically on arrival; protect it to Market. Enemy destruction is optional. Passenger loss fails the contract." }.into(), self.hub, events) else { continue; };
-                let mut actors = old_actors.unwrap_or_default();
-                actors.pirates.retain(|id| self.fleets.contains_key(id));
-                if actors.pirates.is_empty() {
-                    actors.pirates.push(self.spawn_faction_patrol(if extraction { PirateFaction::Ironclad } else { PirateFaction::Rift }, 1, pos + across * 6_000.0));
-                }
-                if !extraction && actors.evacuees.is_none_or(|f| !self.fleets.contains_key(&f)) {
-                    let liner = self.alloc_entity_id();
-                    self.fleets.insert(liner, Fleet::single(liner, PlayerId::TCA, ShipKind::Freighter, pos, FleetOrder::Idle, None));
-                    actors.evacuees = Some(liner); actors.launched = false; actors.arrived = false;
-                }
-                self.pirate_campaign.missions.insert(id, actors);
-                if let Some(old) = prior { self.pirate_campaign.missions.remove(&old); }
+                    else { "Meet the stranded Authority liner. Your assigned escort takes up Guard automatically on arrival; protect it to Market. Enemy destruction is optional. Passenger loss fails the contract." }.into(), self.hub, events);
             }
             let blockades: Vec<_> = self.systems.iter().filter(|s| s.owner == Some(owner) && s.blockade.is_some()).map(|s| (s.id, s.pos)).collect();
             for (system, pos) in blockades {
@@ -243,6 +227,39 @@ impl World {
         }
     }
 
+    /// §contract-props: rescue site `i` (the recovery zone, then the
+    /// evacuation) stands 37k or 50k su off the home, toward the Hub and to
+    /// one side. Within 20k su of another home it turns about the home in 30°
+    /// steps (inner-row homes used to lose the evacuation to their neighbour).
+    fn rescue_site(&self, home: Vec2, i: usize) -> Option<Vec2> {
+        let axis = (self.hub - home).normalized();
+        let offset = axis * 28_000.0 + Vec2::new(-axis.y, axis.x) * (24_000.0 + 18_000.0 * i as f64);
+        let bearing = offset.y.atan2(offset.x);
+        (0..12).map(|k| {
+            let turn = ((k + 1) / 2) as f64 * std::f64::consts::PI / 6.0;
+            home + Vec2::from_polar(if k % 2 == 1 { bearing - turn } else { bearing + turn }, offset.length())
+        }).find(|&p| !self.in_sovereign_zone(p) && self.home_slots.iter().all(|h| h.pos.distance(p) >= 20_000.0))
+    }
+
+    /// §contract-props: accepted, a rescue contract stages its actors: one
+    /// pirate 6k su off the site and, for an evacuation, the stranded liner,
+    /// transponder off until an escort's sensors find it.
+    fn stage_rescue(&mut self, id: OperationId, player: PlayerId, objective: Goal, pos: Vec2) {
+        let home = self.players.get(&player).map_or(pos, |c| c.home);
+        let axis = (self.hub - home).normalized();
+        let extraction = objective == Goal::HoldExtraction;
+        let pirate = self.spawn_faction_patrol(if extraction { PirateFaction::Ironclad } else { PirateFaction::Rift },
+            1, pos + Vec2::new(-axis.y, axis.x) * 6_000.0);
+        let evacuees = (!extraction).then(|| {
+            let liner = self.alloc_entity_id();
+            let mut f = Fleet::single(liner, PlayerId::TCA, ShipKind::Freighter, pos, FleetOrder::Idle, None);
+            f.silent = true;
+            self.fleets.insert(liner, f);
+            liner
+        });
+        self.pirate_campaign.missions.insert(id, ObjectiveActors { pirates: vec![pirate], evacuees, launched: false, arrived: false });
+    }
+
     pub(super) fn contract_guard_authorized(&self, owner: PlayerId, target: EntityId) -> bool {
         self.pirate_campaign.missions.iter().any(|(id, m)| m.evacuees == Some(target)
             && self.operations.get(id).is_some_and(|o| o.participants.contains(&owner) && !o.state.terminal()))
@@ -251,8 +268,8 @@ impl World {
     fn tick_combat_objectives(&mut self, events: &mut Vec<Event>) {
         // Arrival belongs to the passenger hull, even if its guard subsequently
         // died, was reassigned, or the contract expired. Retire only at the real
-        // berth; terminal contracts never pay again. The sidecar remains bounded
-        // to the newest pair of repeatable objectives per corporation.
+        // berth; terminal contracts never pay again. The sidecar holds only
+        // accepted contracts until their actors are gone.
         let arrivals: Vec<_> = self.pirate_campaign.missions.iter().filter_map(|(&id, m)| {
             let liner = m.evacuees?;
             (m.launched && !m.arrived && self.fleets.get(&liner).is_some_and(|f|
@@ -268,14 +285,35 @@ impl World {
             }
             self.fleets.remove(&liner);
         }
+        // §contract-props: a contract's actors leave with it. Lapsed, failed,
+        // abandoned or done, its pirate and a liner still waiting for its
+        // escort are withdrawn once out of any fight; a launched liner flies
+        // on to Market and retires there.
+        let ended: Vec<_> = self.pirate_campaign.missions.keys().copied().filter(|id| !self.operations.get(id)
+            .is_some_and(|o| o.state == OperationState::Active && self.time <= o.expires_at)).collect();
+        for id in ended {
+            let m = self.pirate_campaign.missions[&id].clone();
+            for f in m.pirates.iter().chain(m.evacuees.filter(|_| !m.launched).iter()) {
+                if !self.campaign_engaged(*f) { self.fleets.remove(f); }
+            }
+            let fleets = &self.fleets;
+            let m = self.pirate_campaign.missions.get_mut(&id).unwrap();
+            m.pirates.retain(|f| fleets.contains_key(f));
+            if m.pirates.is_empty() && !m.evacuees.is_some_and(|f| fleets.contains_key(&f)) {
+                self.pirate_campaign.missions.remove(&id);
+            }
+        }
         let ids: Vec<_> = self.operations.values().filter(|o| matches!(o.kind, OperationKind::CombatObjective { .. }) && !o.state.terminal()).map(|o| o.id).collect();
         for id in ids {
             let op = self.operations[&id].clone();
             let OperationKind::CombatObjective { objective, site, pos, destination } = op.kind else { continue; };
             let OperationScope::Private { player } = op.scope else { continue; };
             if op.state != OperationState::Active || self.time > op.expires_at { continue; }
+            if matches!(objective, Goal::HoldExtraction | Goal::ProtectEvacuation) && !self.pirate_campaign.missions.contains_key(&id) {
+                self.stage_rescue(id, player, objective, pos);
+            }
             if objective == Goal::ProtectEvacuation && self.pirate_campaign.missions.get(&id)
-                .is_some_and(|m| m.evacuees.is_none_or(|f| !self.fleets.contains_key(&f))) {
+                .is_some_and(|m| !m.arrived && m.evacuees.is_none_or(|f| !self.fleets.contains_key(&f))) {
                 self.fail_combat_objective(id, player, pos, events); continue;
             }
             let Some(fid) = op.assigned_fleets.get(&player).copied() else { continue; };
@@ -351,9 +389,11 @@ impl World {
         for fid in leaving {
             let Some(f) = self.fleets.get(&fid) else { continue; };
             let owner = f.owner;
-            let destination = self.players.get(&owner).map(|c| c.home).or_else(|| self.enclaves.iter()
-                .find(|(_, e)| e.pack == Some(fid)).and_then(|(id, _)| self.systems.iter().find(|s| s.id == *id).map(|s| s.pos)))
-                .unwrap_or(f.pos + Vec2::new(20_000.0, 0.0));
+            // §pirate-dens: a pirate retreats to its den. With nowhere to go it
+            // holds where it broke off, never a point off in empty space.
+            let destination = self.players.get(&owner).map(|c| c.home)
+                .or_else(|| owner.is_pirate().then(|| self.pirate_den_pos(fid)).flatten())
+                .unwrap_or(f.pos);
             let departure = self.aftermath_fleet(owner, fid, true, None);
             for e in self.engagements.values_mut() {
                 let side = if e.attackers.contains(&fid) { 0 } else if e.defenders.contains(&fid) { 1 } else { continue; };
@@ -544,9 +584,8 @@ mod tests {
         let id = w.operations.values().find(|o| matches!(o.kind, OperationKind::CombatObjective { objective: Goal::ProtectEvacuation, .. })).unwrap().id;
         let pos = w.operations[&id].kind.target_pos(&[], w.hub);
         let f = fleet(&mut w, p, ShipKind::Raider, pos); assign(&mut w, p, id, f);
-        let liner = w.pirate_campaign.missions[&id].evacuees.unwrap();
-        assert!(matches!(w.fleets[&liner].order, FleetOrder::Idle));
         w.tick_combat_objectives(&mut vec![]);
+        let liner = w.pirate_campaign.missions[&id].evacuees.unwrap();
         assert!(matches!(w.fleets[&liner].order, FleetOrder::MoveTo { dest } if dest == w.hub));
         assert!(matches!(w.fleets[&f].order, FleetOrder::Guard { target } if target == liner));
         assert!(w.contract_guard_authorized(p, liner));
@@ -600,16 +639,79 @@ mod tests {
     }
 
     #[test]
+    fn an_untaken_rescue_parks_nothing_and_a_lapsed_one_withdraws_its_actors() {
+        // §contract-props (Oct 30 2026): Peter found an Authority freighter
+        // idling near Peacock, the liner of another corporation's untaken
+        // contract; every offer also parked a pirate. "They should appear or
+        // spawn when the player accepts them, not litter the galaxy map."
+        let (mut w, p) = scene();
+        let fleets = w.fleets.len();
+        w.offer_campaign_contracts(&mut vec![]);
+        let id = w.operations.values().find(|o| matches!(o.kind, OperationKind::CombatObjective { objective: Goal::ProtectEvacuation, .. })).unwrap().id;
+        let pos = w.operations[&id].kind.target_pos(&[], w.hub);
+        w.tick_combat_objectives(&mut vec![]);
+        assert_eq!(w.fleets.len(), fleets, "offers park nothing in space");
+        assert!(w.pirate_campaign.missions.is_empty());
+        let home = w.players[&p].home;
+        let f = fleet(&mut w, p, ShipKind::Raider, home); assign(&mut w, p, id, f);
+        w.tick_combat_objectives(&mut vec![]);
+        let m = w.pirate_campaign.missions[&id].clone();
+        let liner = m.evacuees.expect("accepted, the liner is staged");
+        assert_eq!(w.fleets[&liner].pos, pos);
+        assert!(matches!(w.fleets[&liner].order, FleetOrder::Idle), "it waits for the escort");
+        assert!(!w.fleets[&liner].broadcasts(), "only sensors find it");
+        assert!(m.pirates.len() == 1 && w.fleets[&m.pirates[0]].owner.is_pirate() && w.fleets[&m.pirates[0]].pos.distance(pos) < 7_000.0);
+        w.time = w.operations[&id].expires_at + 1.0;
+        w.tick_combat_objectives(&mut vec![]);
+        assert!(!w.fleets.contains_key(&liner) && !w.fleets.contains_key(&m.pirates[0]), "lapsed, the contract takes its actors along");
+        assert!(!w.pirate_campaign.missions.contains_key(&id));
+        assert_eq!(w.fleets.len(), fleets + 1, "only the corporation's own escort is left");
+    }
+
+    #[test]
+    fn a_launched_liner_outlives_its_lapsed_contract_to_market() {
+        let (mut w, p) = scene();
+        w.offer_campaign_contracts(&mut vec![]);
+        let id = w.operations.values().find(|o| matches!(o.kind, OperationKind::CombatObjective { objective: Goal::ProtectEvacuation, .. })).unwrap().id;
+        let pos = w.operations[&id].kind.target_pos(&[], w.hub);
+        let f = fleet(&mut w, p, ShipKind::Raider, pos); assign(&mut w, p, id, f);
+        w.tick_combat_objectives(&mut vec![]);
+        let m = w.pirate_campaign.missions[&id].clone();
+        let liner = m.evacuees.unwrap();
+        w.time = w.operations[&id].expires_at + 1.0;
+        w.tick_combat_objectives(&mut vec![]);
+        assert!(matches!(w.fleets[&liner].order, FleetOrder::MoveTo { dest } if dest == w.hub), "launched, it still flies to Market");
+        assert!(!w.fleets.contains_key(&m.pirates[0]), "its pirate has gone");
+        w.fleets.get_mut(&liner).unwrap().pos = w.hub;
+        w.tick_combat_objectives(&mut vec![]);
+        assert!(!w.fleets.contains_key(&liner) && !w.pirate_campaign.missions.contains_key(&id), "it retires at Market");
+    }
+
+    #[test]
+    fn a_rescue_site_turns_clear_of_a_neighbouring_home() {
+        let (mut w, p) = scene();
+        let home = w.players[&p].home;
+        let blocked = w.rescue_site(home, 1).unwrap();
+        let mut neighbour = w.home_slots[0].clone();
+        neighbour.pos = blocked + Vec2::new(5_000.0, 0.0);
+        w.home_slots.push(neighbour);
+        let site = w.rescue_site(home, 1).expect("the evacuation turns, it is not dropped");
+        assert!(site.distance(blocked) > 10_000.0);
+        assert!(w.home_slots.iter().all(|h| h.pos.distance(site) >= 20_000.0));
+        assert!((site.distance(home) - blocked.distance(home)).abs() < 1.0, "same distance from home");
+    }
+
+    #[test]
     fn evacuation_success_uses_the_arrival_report_and_cannot_pay_twice() {
         let (mut w, p) = scene();
         w.offer_campaign_contracts(&mut vec![]);
         let id = w.operations.values().find(|o| matches!(o.kind, OperationKind::CombatObjective { objective: Goal::ProtectEvacuation, .. })).unwrap().id;
         let pos = w.operations[&id].kind.target_pos(&[], w.hub);
         let f = fleet(&mut w, p, ShipKind::Raider, pos); assign(&mut w, p, id, f);
-        let liner = w.pirate_campaign.missions[&id].evacuees.unwrap();
         let credits = w.players[&p].credits;
         w.tick_combat_objectives(&mut vec![]);
         assert_eq!(w.operations[&id].state, OperationState::Active);
+        let liner = w.pirate_campaign.missions[&id].evacuees.unwrap();
         w.fleets.get_mut(&liner).unwrap().pos = w.hub;
         w.tick_combat_objectives(&mut vec![]);
         assert_eq!(w.operations[&id].state, OperationState::Completed);

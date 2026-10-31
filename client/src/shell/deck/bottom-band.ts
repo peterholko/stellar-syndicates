@@ -1,8 +1,13 @@
 const px = (value: string): number => Number.parseFloat(value) || 0;
+/** The strip's widest (deck.css) and narrowest workable width (px): below the
+ * latter its 320 px layout no longer holds the Transit control. */
+const STRIP_MAX_PX = 720;
+const STRIP_MIN_PX = 280;
 
 /** Owns the fixed map chrome as one collision-free band. The strip stays
  * centered in the unobscured map while space permits; when either side rail
- * would touch it, the strip docks above the bottom row. At the narrowest map
+ * would touch it, it squeezes into the bottom row between them, and docks
+ * above that row only when the gap is too narrow. At the narrowest map
  * widths zoom takes a second row above Founding, never a z-index gamble. */
 export class DeckBottomBand {
   private frame: number | null = null;
@@ -42,35 +47,46 @@ export class DeckBottomBand {
   private layout(): void {
     const width = this.root.clientWidth;
     const gap = px(getComputedStyle(document.documentElement).getPropertyValue("--space-3"));
-    const stripWidth = this.strip.hidden ? 0 : this.strip.offsetWidth;
     const stripHeight = this.strip.hidden ? 0 : this.strip.offsetHeight;
     const foundingWidth = this.founding.hidden ? 0 : this.founding.offsetWidth;
     const foundingHeight = this.founding.hidden ? 0 : this.founding.offsetHeight;
     const zoomWidth = this.zoom.hidden ? 0 : this.zoom.offsetWidth;
     const zoomHeight = this.zoom.hidden ? 0 : this.zoom.offsetHeight;
 
-    const stripLeft = (width - stripWidth) / 2;
-    const stripRight = stripLeft + stripWidth;
     const zoomLeft = width - zoomWidth;
     const foundingTouchesZoom = foundingWidth > 0 && zoomWidth > 0 && foundingWidth + gap > zoomLeft;
     const zoomBottom = foundingTouchesZoom ? foundingHeight + gap : 0;
-    const stripTouchesBottom = stripWidth > 0 && (
-      (foundingWidth > 0 && foundingWidth + gap > stripLeft)
-      || (zoomWidth > 0 && stripRight + gap > zoomLeft)
-    );
     const bottomExtent = Math.max(foundingHeight, zoomBottom + zoomHeight);
-    const stripBottom = stripTouchesBottom ? bottomExtent + gap : 0;
-    const occupiedHeight = Math.max(bottomExtent, stripBottom + stripHeight);
+    // The strip is centred while it clears Founding and zoom. Otherwise it
+    // squeezes into the bottom row between them, narrower and taller (Peter,
+    // Oct 27 2026: not "floating in the middle", but "at the bottom beside
+    // the tutorial panel"). Only a gap narrower than its narrowest layout
+    // sends it above the bottom row. Zoom never moves for it. A hidden strip
+    // keeps its place, so it appears there at once.
+    const natural = Math.min(STRIP_MAX_PX, width - 2 * gap);
+    const centred = (width - natural) / 2;
+    const zoomInRow = zoomWidth > 0 && zoomBottom === 0;
+    const clears = (foundingWidth === 0 || foundingWidth + gap <= centred)
+      && (!zoomInRow || centred + natural + gap <= zoomLeft);
+    const slotLeft = foundingWidth > 0 ? foundingWidth + gap : 0;
+    const slot = (zoomInRow ? zoomLeft - gap : width) - slotLeft;
+    const squeezed = !clears && slot >= STRIP_MIN_PX;
+    const stripWidth = squeezed ? Math.min(natural, slot) : natural;
+    const stripLeft = squeezed ? slotLeft + (slot - stripWidth) / 2 : centred;
+    const stripBottom = !clears && !squeezed ? bottomExtent + gap : 0;
+    const occupiedHeight = Math.max(bottomExtent, stripHeight > 0 ? stripBottom + stripHeight : 0);
 
+    this.root.style.setProperty("--deck-strip-left", `${stripLeft}px`);
+    this.root.style.setProperty("--deck-strip-width", `${stripWidth}px`);
     this.root.style.setProperty("--deck-strip-bottom", `${stripBottom}px`);
     this.root.style.setProperty("--deck-zoom-bottom", `${zoomBottom}px`);
     this.root.style.setProperty("--deck-bottom-band-height", `${occupiedHeight}px`);
-    // The planet view keeps its height whatever the tutorial's: Founding (and
-    // a strip docked above it) overlaps the scene, which clears only the
-    // bottom row and the band's own offset from the window edge.
+    // The merchant and shipyard pop-outs stand above the bottom row, whatever
+    // the tutorial's height. (The planet view reserves a fixed control row
+    // instead: it resizes only with the window.)
     const row = Math.max(stripHeight, zoomHeight);
     document.documentElement.style.setProperty("--deck-bottom-row-inset", `${row > 0 ? row + gap : 0}px`);
-    const signature = [width, stripWidth, stripHeight, foundingWidth, foundingHeight, zoomWidth, zoomHeight, stripBottom, zoomBottom].join(":");
+    const signature = [width, stripLeft, stripWidth, stripHeight, foundingWidth, foundingHeight, zoomWidth, zoomHeight, stripBottom, zoomBottom].join(":");
     if (signature !== this.layoutSignature) {
       this.layoutSignature = signature;
       this.onLayout();
@@ -82,6 +98,8 @@ export class DeckBottomBand {
     if (this.frame !== null) cancelAnimationFrame(this.frame);
     this.frame = null;
     this.layoutSignature = "";
+    this.root.style.removeProperty("--deck-strip-left");
+    this.root.style.removeProperty("--deck-strip-width");
     this.root.style.removeProperty("--deck-strip-bottom");
     this.root.style.removeProperty("--deck-zoom-bottom");
     this.root.style.removeProperty("--deck-bottom-band-height");

@@ -1,3 +1,4 @@
+import { hubCut, isEmbargoed } from "../../core/derive/season";
 import { hubDockedFleets, shipKindLabel } from "../../core/derive/fleet";
 import { agoLabel, fmt, fmtDur, informationDelay, rejectText, trend } from "../../core/derive/format";
 import { systemName } from "../../core/derive/geo";
@@ -11,8 +12,8 @@ import {
   moduleRecipeValue,
   pruneMarketReservations,
   recentMarketOrders,
+  PAYMENT_MARGIN,
   recordRecentMarketOrder,
-  reservedMarketCredits,
   reserveMarketOrder,
   settleMarketReservation,
   spendableMarketCredits,
@@ -22,9 +23,8 @@ import { projectedBand } from "../../core/derive/research";
 import { requestTransactions } from "../../core/derive/transactions";
 import type { CoreEvent } from "../../core/events";
 import { commodityIcon, icon, label, type IconKey } from "../../icons";
-import { HUB_MODEL } from "../../hub-model.generated";
 import {
-  countClassLabel,
+  fleetCountLabel,
   fleetCargoManifest,
   fleetExactCount,
   freightFee,
@@ -151,8 +151,8 @@ export class DeckMarketRoutes {
       const id = Number(button.dataset.order);
       if (Number.isFinite(id)) {
         this.ctx.send({ type: "CancelLimitOrder", order_id: id });
-        this.feedback = "Cancellation sent · awaiting the Market Hub account report.";
-        this.hooks.notice(`<b>Cancellation sent</b> · awaiting delayed Market Hub light.`);
+        this.feedback = "Cancellation sent.";
+        this.hooks.notice(`<b>Cancellation sent</b>.`);
       }
     } else if (action === "market-hire") {
       this.hireSpecialist(button.dataset.specialist);
@@ -237,7 +237,6 @@ export class DeckMarketRoutes {
     const state = this.ctx.state;
     const account = this.accountReport();
     const stale = state.market?.staleness ?? 0;
-    const reserved = reservedMarketCredits();
     const tabs = (["exchange", "warehouse", "specialists", "modules", "transactions"] as DeckMarketTab[])
       .map((tab) => `<button type="button" data-deck-act="market-tab" data-tab="${tab}" aria-selected="${this.tab === tab}">${esc(label(tab))}</button>`).join("");
     // Ticker, account and fleet reports arrive independently. A missing account
@@ -249,7 +248,7 @@ export class DeckMarketRoutes {
         : this.tab === "specialists" ? this.specialistsHtml()
           : this.modulesHtml();
     return `<section class="deck-page deck-market">` +
-      `<div class="deck-stat-grid deck-market__stats">${stat("Spendable credits", account ? `${reserved > 0 ? "~" : ""}${fmt(spendableMarketCredits())} Cr` : "—")}${stat("Reserved in flight", `${fmt(reserved)} Cr`, reserved > 0 ? "warn" : "")}${stat("Equity", account ? `${fmt(account.valuation)} Cr` : "—")}${stat("Market report", state.market ? informationDelay(stale) : "—", stale > 0.5 ? "stale" : "")}</div>` +
+      `<div class="deck-stat-grid deck-market__stats">${stat("Credits", state.credits !== null ? `${fmt(spendableMarketCredits())} Cr` : "—")}${stat("Equity", account ? `${fmt(account.valuation)} Cr` : "—")}${stat("Market report", state.market ? informationDelay(stale) : "—", stale > 0.5 ? "stale" : "")}</div>` +
       `<nav class="deck-tabs" aria-label="Market sections">${tabs}</nav>${!account ? `<div class="deck-market-feedback" role="status">Account report pending · balances and trading unlock when its light arrives.</div>` : ""}${this.feedback ? `<div class="deck-market-feedback">${esc(this.feedback)}</div>` : ""}${body}</section>`;
   }
 
@@ -276,18 +275,20 @@ export class DeckMarketRoutes {
     const account = this.accountReport();
     const quote = this.ctx.state.market?.prices.find((entry) => entry.commodity === this.commodity);
     const average = quote ? marketAverageQuote(quote.price, this.quantity, this.side, quote.depth) : null;
-    const penalty = !account || average === null ? 0 : this.quantity * average * (this.ctx.state.charter?.market_penalty_frac ?? 0);
+    const penalty = !account || average === null ? 0 : this.quantity * average * hubCut(this.ctx.state.charter);
+    const embargoed = isEmbargoed(this.ctx.state.charter, this.commodity);
     const held = warehouseUnits(this.commodity);
     const liquidity = quote ? (this.side === "buy" ? quote.available_buy : quote.available_sell) : 0;
     const warnings: string[] = [];
     if (!quote) warnings.push("No observed quote yet.");
     if (quote && this.quantity > liquidity) warnings.push(`Observed ${this.side === "buy" ? "supply" : "demand"} is ${liquidity}.`);
     if (account && this.side === "sell" && held < this.quantity) warnings.push(`Warehouse holds ${held} — ${this.quantity - held} short.`);
-    if (penalty > 0.005) warnings.push(`${fmt(penalty)} Cr charter penalty ${this.side === "buy" ? "included" : "deducted"}.`);
+    if (penalty > 0.005) warnings.push(`${fmt(penalty)} Cr levy and penalties ${this.side === "buy" ? "included" : "deducted"}.`);
+    if (embargoed) warnings.push("Embargoed · pay the arrears on the Faction page.");
     const limitReady = !this.limitOn || this.limitPrice > 0;
     const stockReady = this.side === "buy" || held >= this.quantity;
-    const canSubmit = !!account && !!quote && limitReady && stockReady;
-    const total = !account || average === null ? null : this.quantity * average * (1 + (this.side === "buy" ? 1 : -1) * (this.ctx.state.charter?.market_penalty_frac ?? 0));
+    const canSubmit = !!account && !!quote && limitReady && stockReady && !embargoed;
+    const total = !account || average === null ? null : this.quantity * average * (1 + (this.side === "buy" ? 1 : -1) * hubCut(this.ctx.state.charter));
     const button = this.limitOn
       ? `Place limit ${this.side}`
       : `${label(this.side)} ${this.quantity} ${label(this.commodity)}${total === null ? "" : ` · ~${fmt(total)} Cr`}`;
@@ -323,12 +324,11 @@ export class DeckMarketRoutes {
       const unloadQueued = (this.ctx.state.pendingOrders.get(fleet.id) ?? []).some((order) => !order.lost && order.kind === "unload");
       const cargo = manifest.length ? manifest.map((stack) => `${fmt(stack.units)} ${label(stack.commodity)}`).join(" · ") : "hold empty";
       const exact = fleetExactCount(fleet);
-      const count = exact === null ? `est. ${countClassLabel(fleet.count_class)} ships` : `${exact} ship${exact === 1 ? "" : "s"}`;
+      const count = exact === null ? `est. ${fleetCountLabel(fleet)} ships` : `${exact} ship${exact === 1 ? "" : "s"}`;
       return `<article class="deck-berth"><button type="button" data-deck-act="market-hub-fleet" data-fleet="${esc(fleet.id)}">${icon("manifest", "md")}<span><b>${esc(shipKindLabel(fleet.kind))} fleet</b><small>${esc(count)} · ${esc(cargo)}</small></span><em>›</em></button>${manifest.length ? `<button type="button" data-deck-act="market-hub-unload" data-fleet="${esc(fleet.id)}" ${unloadQueued ? "disabled" : ""}>${icon("unload", "sm")} ${unloadQueued ? "Unload queued" : "Unload all"}</button>` : ""}</article>`;
     }).join("");
     const shipments = (this.ctx.state.freight?.shipments ?? []).map((shipment) => `<div class="deck-order-row"><span>${icon("authorityFreighter", "sm")}<span><b>${shipment.units} ${esc(label(shipment.commodity))} ${shipment.direction === "outbound" ? "→" : "←"} ${esc(systemName(shipment.system))}</b><small>${shipment.aboard ? "aboard" : "awaiting departure"}${shipment.direction === "inbound" && shipment.sell_on_arrival ? " · sells on arrival" : ""}</small></span></span></div>`).join("");
-    return `<section class="deck-section deck-market-hub"><img src="${HUB_MODEL.hero}" alt=""/><div><h3>Authority market station</h3><p>Your goods and docked fleets at the wormhole terminus.</p></div></section>` +
-      `<div class="deck-market-warehouse"><div class="deck-market-column"><section class="deck-section"><header><h3>Market Warehouse</h3><b>${account ? holdings.reduce((sum, row) => sum + row.units, 0) : "—"}</b></header><div class="deck-ledger">${ledger || (account ? `<span><small>Warehouse</small><b>empty</b></span>` : `<span>Awaiting account report.</span>`)}</div></section>` +
+    return `<div class="deck-market-warehouse"><div class="deck-market-column"><section class="deck-section"><header><h3>Market Warehouse</h3><b>${account ? holdings.reduce((sum, row) => sum + row.units, 0) : "—"}</b></header><div class="deck-ledger">${ledger || (account ? `<span><small>Warehouse</small><b>empty</b></span>` : `<span>Awaiting account report.</span>`)}</div></section>` +
       `<section class="deck-section"><header><h3>Shipments</h3><b>${this.ctx.state.freight?.shipments.length ?? 0}</b></header>${shipments || `<div class="deck-empty-inline">No freight booked.</div>`}</section></div>` +
       `<div class="deck-market-column"><section class="deck-section"><header><h3>Docked fleets</h3><b>${hubDockedFleets().length}</b></header><div class="deck-berth-list">${berths || `<div class="deck-empty-inline">No fleets reported docked.</div>`}</div></section>` +
       `${this.freightHtml()}</div></div>`;
@@ -388,7 +388,7 @@ export class DeckMarketRoutes {
       const value = moduleRecipeValue(module.kind);
       const buy = value === null || isBlueprintOnly(module.kind) ? null : value * MODULE_BUY_MULT;
       const sell = value === null ? null : value * MODULE_SELL_MULT;
-      return `<article class="deck-service-row"><span>${icon(module.icon, "md")}<span><b>${esc(module.name)}</b><small>${esc(module.role)} · held ${held[module.kind] ?? 0}</small></span></span><div><button type="button" data-deck-act="market-module-buy" data-module="${module.kind}" ${account && home && buy !== null && spendableMarketCredits() >= buy ? "" : "disabled"}>${isBlueprintOnly(module.kind) ? "Blueprint only" : `Buy ${buy === null ? "—" : `~${fmt(buy)} Cr`}`}</button><button type="button" data-deck-act="market-module-sell" data-module="${module.kind}" ${account && (held[module.kind] ?? 0) > 0 ? "" : "disabled"}>Sell ${sell === null ? "—" : `~${fmt(sell)} Cr`}</button></div></article>`;
+      return `<article class="deck-service-row"><span>${icon(module.icon, "md")}<span><b>${esc(module.name)}</b><small>${esc(module.role)} · held ${held[module.kind] ?? 0}</small></span></span><div><button type="button" data-deck-act="market-module-buy" data-module="${module.kind}" ${account && home && buy !== null && spendableMarketCredits() >= buy * (1 + PAYMENT_MARGIN) ? "" : "disabled"}>${isBlueprintOnly(module.kind) ? "Blueprint only" : `Buy ${buy === null ? "—" : `~${fmt(buy)} Cr`}`}</button><button type="button" data-deck-act="market-module-sell" data-module="${module.kind}" ${account && (held[module.kind] ?? 0) > 0 ? "" : "disabled"}>Sell ${sell === null ? "—" : `~${fmt(sell)} Cr`}</button></div></article>`;
     }).join("");
     return `<section class="deck-section"><header><div><h3>Combat modules</h3><p>Sol modules ship as physical crates. Local manufacture at an Armaments Complex remains cheaper.</p></div></header><div class="deck-service-list deck-market-services">${rows}</div></section>`;
   }
@@ -397,14 +397,15 @@ export class DeckMarketRoutes {
     const quote = this.ctx.state.market?.prices.find((entry) => entry.commodity === this.commodity);
     if (!quote) return;
     const quantity = Math.max(1, Math.floor(this.quantity));
+    let paid: number;
     if (this.limitOn && this.limitPrice > 0) {
       this.ctx.send({ type: "PlaceLimitOrder", side: this.side, commodity: this.commodity, units: quantity, limit_price: this.limitPrice });
       reserveMarketOrder({
         kind: "limit", side: this.side, commodity: this.commodity, orderUnits: quantity,
         units: this.side === "sell" ? quantity : 0,
-        credits: this.side === "buy" ? quantity * this.limitPrice : 0,
         limitPrice: this.limitPrice,
       });
+      paid = this.side === "buy" ? quantity * this.limitPrice : 0;
     } else {
       const average = marketAverageQuote(quote.price, quantity, this.side, quote.depth);
       const protection = average * (this.side === "buy" ? 1 + MARKET_PROTECTION_FRAC : 1 - MARKET_PROTECTION_FRAC);
@@ -414,11 +415,13 @@ export class DeckMarketRoutes {
       reserveMarketOrder({
         kind: "market", side: this.side, commodity: this.commodity, orderUnits: quantity,
         units: this.side === "sell" ? quantity : 0,
-        credits: this.side === "buy" ? quantity * protection * (1 + (this.ctx.state.charter?.market_penalty_frac ?? 0)) : 0,
       });
+      paid = this.side === "buy" ? quantity * protection * (1 + hubCut(this.ctx.state.charter)) : 0;
     }
-    this.feedback = `${label(this.side)} order sent · awaiting the Market Hub account report.`;
-    this.hooks.notice(`<b>${esc(label(this.side))} order sent</b> · ${quantity} ${esc(label(this.commodity))} · awaiting delayed Market Hub light.`);
+    // §treasury: a buy pays as it leaves; its change comes back with the receipt.
+    const sent = paid > 0 ? ` · ${fmt(paid)} Cr paid` : "";
+    this.feedback = `${label(this.side)} order sent${sent}.`;
+    this.hooks.notice(`<b>${esc(label(this.side))} order sent</b> · ${quantity} ${esc(label(this.commodity))}${sent}.`);
   }
 
   private submitFreight(): void {

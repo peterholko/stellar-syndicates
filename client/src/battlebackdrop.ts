@@ -1,7 +1,7 @@
 import type { BattleRecordView } from "./protocol";
 import type { ViewState } from "./state";
 import { starTypeFor } from "./stars";
-import { buildVisualSystem, type VisualSystem } from "./systemview";
+import { beltKind, buildVisualSystem, type BeltKindName, type VisualSystem } from "./systemview";
 import type { PlanetArtKind } from "./planetart";
 import { ORBIT_TILT, PLATFORM_COVER_SU, defendedWorld, orbitalAngle, planetPeriod, siegeTarget, type AnchorBody } from "./systemlayout";
 import { hasRings } from "./systembodyfx";
@@ -68,6 +68,10 @@ export interface BattleBackdropPlan {
   starBearing: number;
   /** The world beneath the fight — public art only, no administration. */
   world: { kind: PlanetArtKind; seed: number; ringed: boolean } | null;
+  /** §den (Oct 29 2026): a fight in a system with belts and no world (a
+   * pirate den's) stands in its asteroid field: no world, the belt's rocks,
+   * its star far off. The sim places no world there either. */
+  belt?: { kind: BeltKindName; seed: number } | null;
 }
 
 export function battleBackdropPlan(
@@ -94,6 +98,11 @@ export function battleBackdropPlan(
   }));
   const worldId = report?.blockade ? siegeTarget(anchors) : defendedWorld(anchors);
   const body = bodies.find((b) => b.id === worldId);
+  const belt = bodies.find((b) => b.kind === "asteroid_belt");
+  if (belt && !bodies.some((b) => b.kind !== "asteroid_belt")) {
+    return { systemId: rec.system, starSlug, starBearing: distance > 1 ? Math.atan2(-dy, -dx) : fallbackBearing, world: null,
+      belt: { kind: beltKind(belt.belt?.kind), seed: hashId(`${rec.id}:belt`) } };
+  }
   if (!body) return { systemId: rec.system, starSlug, starBearing: fallbackBearing, world: null };
   // Pose the world as the System View posed it when the fight began; its star
   // then lies back along that orbital radius (in the tilted view).

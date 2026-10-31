@@ -1,18 +1,24 @@
 import "../../styles/mobile.css";
+import { commsBadge } from "../../core/derive/social";
 import { bindAccountForm } from "../account";
 
 import { intentReadinessWarnings } from "../../core/derive/readiness";
+import { raidableIntent } from "../../core/derive/blockade";
+import { NAME_LAYERS, loadNameLayers, saveNameLayers, type NameLayers } from "../../core/map-layers";
 import { intentSummary } from "../../core/derive/orders";
-import { reservedMarketCredits, spendableMarketCredits } from "../../core/derive/market";
+import { spendableMarketCredits } from "../../core/derive/market";
 import { label } from "../../icons";
 import { formatId } from "../../protocol";
 import { battleNotice, reportNotice } from "../../core/derive/battlenotice";
-import { fmtHours } from "../../core/derive/founding";
-import { foundingHomeSystemId } from "../../core/derive/geo";
+import { fmtHours, homeStepSystem, noteHomeOpened, noteHomeWorldOpened } from "../../core/derive/founding";
+import { foundingHomeSystemId, systemName } from "../../core/derive/geo";
+import { logToast } from "../../core/derive/history";
 import { requestTransactions } from "../../core/derive/transactions";
 import { WELCOME_MIN_AWAY_S, welcomeReport } from "../../core/derive/welcome";
 import type { CoreEvent } from "../../core/events";
 import { installPressGuard } from "../dom";
+import { tickLiveProgress } from "../liveprogress";
+import { liveSimTime } from "../../state";
 import type { CoreContext, Rect, Shell } from "../types";
 import { MobileBattleTheater } from "./battle";
 import { MobileGroundTheater } from "./ground";
@@ -50,8 +56,6 @@ class MobileShell implements Shell {
   private viewportFrame = 0;
   private viewportSettleTimer: number | null = null;
   private cameraRectSynced = false;
-  private unreadReports = 0;
-  private readonly readDecisionKeys = new Set<string>();
 
   async mount(root: HTMLElement, ctx: CoreContext): Promise<void> {
     this.root = root;
@@ -83,6 +87,7 @@ class MobileShell implements Shell {
     this.map = new MobileMapInteraction(ctx, {
       openSheet: (entry) => this.openSheet(entry),
       onSemanticChange: (mode) => this.semanticChanged(mode),
+      diveOnSelect: (id) => homeStepSystem(ctx.state, foundingHomeSystemId()) === id,
       notice: (html) => this.notices?.push(html),
     }, signal);
     this.surfaces = new MobileSurfaces(ctx, this.sheets, {
@@ -91,12 +96,14 @@ class MobileShell implements Shell {
       focusSystem: (id) => this.map?.focusSystem(id),
       armMove: (id) => this.map?.armMove(id),
       enterSystem: (id) => this.map?.enterSystem(id),
+      flyIntoSystem: (id) => { if (!this.map?.flyInto(id)) this.map?.enterSystem(id); },
       exitSemantic: () => this.map?.exitSemanticView(),
       notice: (html) => this.notices?.push(html),
     });
     this.parity = new MobileParitySurfaces(ctx, this.sheets, {
       openSheet: (entry) => this.openSheet(entry),
       focusFleet: (id) => this.map?.focusFleet(id),
+      deselectFleets: () => this.map?.deselectFleets(),
       focusSystem: (id) => this.map?.focusSystem(id),
       enterSystem: (id) => this.map?.enterSystem(id),
       exitSemantic: () => this.map?.exitSemanticView(),
@@ -115,12 +122,23 @@ class MobileShell implements Shell {
       if (me !== null) this.openSheet({ id: "rankings", props: { corp: String(me) } });
     }, { signal });
     byId("m-armed-cancel").addEventListener("click", () => this.map?.cancelArmedMode(), { signal });
+    // §map-layers: which systems' names the map shows.
+    const layers = loadNameLayers();
+    byId("m-name-layers").insertAdjacentHTML("beforeend", NAME_LAYERS.map(({ id, label }) =>
+      `<label><input type="checkbox" data-name-layer="${id}"${layers[id] ? " checked" : ""}> ${label}</label>`).join(""));
+    byId("m-name-layers").addEventListener("change", () => {
+      const next = { ...layers } as NameLayers;
+      for (const box of byId("m-name-layers").querySelectorAll<HTMLInputElement>("input[data-name-layer]")) {
+        next[box.dataset.nameLayer as keyof NameLayers] = box.checked;
+      }
+      saveNameLayers(next);
+      ctx.renderer.setNameLayers(next);
+    }, { signal });
     bindAccountForm("m", ctx, signal);
     byId("m-tabs").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("button[data-destination]");
       if (!button) return;
       const destination = button.dataset.destination as SheetEntry["id"];
-      if (destination === "log") this.markLogRead();
       if (this.sheets?.current?.id === destination) this.sheets.closeAll();
       else if (this.sheets?.current) replaceSheet(destination);
       else pushSheet(destination);
@@ -133,7 +151,13 @@ class MobileShell implements Shell {
       if (this.surfaces?.handleClick(event)) return;
       const action = (event.target as Element).closest<HTMLButtonElement>("button[data-mobile-act]")?.dataset.mobileAct;
       if (action === "confirm-intent") ctx.intent.confirmPendingIntent();
-      else if (action === "cancel-intent") ctx.intent.clearPendingIntent();
+      else if ((action === "confirm-raid" || action === "confirm-raid-repeat") && ctx.state.pendingIntent?.verb === "blockade") {
+        // §raid-order: the same blockade, marked to come home when full;
+        // §player-styles: and to set out again after each trip.
+        ctx.state.pendingIntent.raid = true;
+        ctx.state.pendingIntent.repeat = action === "confirm-raid-repeat";
+        ctx.intent.confirmPendingIntent();
+      } else if (action === "cancel-intent") ctx.intent.clearPendingIntent();
     }, { signal });
     byId("m-founding").addEventListener("click", (event) => { this.surfaces?.handleClick(event); }, { signal });
     for (const kind of ["input", "change"] as const) byId("m-sheet-body").addEventListener(kind, event => {
@@ -158,6 +182,25 @@ class MobileShell implements Shell {
     };
   }
 
+  /** §raid-focus (Oct 26 2026): the galaxy map, the raider selected (its
+   * sheet open) and one camera move framing it with the home it closes on
+   * (§raid-frame, Oct 27) above the sheet, with the news as a notice (the
+   * deck's tracking window carries it). A battle keeps the player. */
+  focusRaid(id: string, homeId: string): void {
+    const renderer = this.ctx?.renderer;
+    const raider = this.ctx?.state.ghosts.find((entry) => entry.id === id);
+    const home = this.ctx?.state.galaxy?.systems.find((entry) => entry.id === homeId);
+    if (!renderer || !this.map || !raider || !home || renderer.viewMode.type === "battle") return;
+    if (renderer.viewMode.type === "system") {
+      renderer.exitSystemView();
+      renderer.setSystemDynamic([], [], true);
+    }
+    this.sheets?.closeAll();
+    this.map.focusFleet(id);
+    renderer.frameRaid(raider.pos, home.pos);
+    this.notices?.push({ html: `<b>Raider detected</b> · on course for ${escapeHtml(home.name)}`, tone: "bad", durationMs: 20_000 });
+  }
+
   onCore(events: CoreEvent[]): void {
     let refreshSheet = false;
     for (const event of events) {
@@ -178,21 +221,21 @@ class MobileShell implements Shell {
         this.map?.showNotice(`<span class="warn">${escapeHtml(event.message)}</span>`);
       } else if (event.kind === "TradeSettled") {
         this.surfaces?.onTrade(event.trade);
-      } else if (event.kind === "PirateRaidWarning") {
-        this.unreadReports++;
-        this.notices?.push({ html: `<b>${escapeHtml(event.message)}</b>`, tone: "bad",
-          destination: { id: "log" }, durationMs: 20_000 });
+      } else if (event.kind === "LogToast") {
+        const toast = logToast(event.entry, systemName, liveSimTime());
+        if (toast) {
+          this.notices?.push({ html: `<b>${escapeHtml(toast.title)}</b> — ${escapeHtml(toast.message)}`, tone: toast.tone === "warn" ? "info" : toast.tone,
+            destination: { id: "log", props: event.entry.phase === "inbound" ? { tab: "inbox" } : { tab: "history", filter: "raids" } }, durationMs: 20_000 });
+        }
       } else if (event.kind === "SignalNews") {
         this.notices?.push({ html: `<b>${escapeHtml(event.title)}</b> — ${escapeHtml(event.message)}`, tone: event.tone === "good" ? "good" : undefined,
           destination: { id: "signals" }, durationMs: event.tone === "good" ? 16_000 : 10_000 });
       } else if (event.kind === "CharterMilestone") {
-        this.unreadReports++;
         this.notices?.push({ html: `<b>${escapeHtml(event.title)}</b> — ${escapeHtml(event.message)}`, tone: event.tone ?? "good",
           destination: { id: "log" }, durationMs: event.tone === "bad" ? 24_000 : 16_000 });
       } else if (event.kind === "ReportArrived") {
-        const report = reportNotice(event.report, this.ctx?.state.galaxy?.pirate_id, this.ctx?.state.founding?.privateer ?? this.ctx?.state.lastFoundingPrivateer);
-        this.unreadReports++;
-        this.surfaces?.recordReport(report.text, report.tone === "bad" ? "bad" : "good");
+        const report = reportNotice(event.report, this.ctx?.state.galaxy?.pirate_id, this.ctx?.state.founding?.privateer ?? this.ctx?.state.lastFoundingPrivateer,
+          this.ctx?.state.founding?.pirates?.nephew);
         if (this.sheets?.current?.id === "log") refreshSheet = true;
         this.notices?.push({
           html: `<b>${escapeHtml(report.text)}</b> <span class="m-muted">· delayed ${Math.round(event.report.age)}s</span>`,
@@ -202,8 +245,6 @@ class MobileShell implements Shell {
       } else if (event.kind === "BattleConcluded") {
         const record = this.ctx?.state.battleRecords.find((candidate) => candidate.id === event.recordId);
         const outcome = battleNotice(event.outcome, record);
-        this.unreadReports++;
-        this.surfaces?.recordReport(`Battle concluded — ${outcome.text}`, outcome.tone === "bad" ? "bad" : outcome.tone === "good" ? "good" : "warn");
         if (this.sheets?.current?.id === "log") refreshSheet = true;
         this.notices?.push({
           html: `<b>${escapeHtml(outcome.title)}</b> — ${escapeHtml(outcome.text)}`,
@@ -256,6 +297,20 @@ class MobileShell implements Shell {
     if (!ctx || this.welcomePhase === "done") return;
     const st = ctx.state;
     if (!st.awaySet || st.playerId === null || !st.systems.length) return;
+    if (st.welcome) {
+      // §welcome (R9): the server's report; the full card leads the Log.
+      this.welcomePhase = "done";
+      const report = st.welcome;
+      const lines = [...report.happened, ...report.waiting].slice(0, 3).map((line) => escapeHtml(line.text)).join(" · ");
+      const next = report.next[0];
+      this.notices?.push({
+        html: `<b>Welcome back · away ${escapeHtml(fmtHours(report.away))}</b>${lines ? ` — ${lines}` : ""}${next ? ` <span class="m-muted">· Next: ${escapeHtml(next.label)}</span>` : ""}`,
+        tone: report.happened.some((line) => line.severity === "bad") ? "bad" : "info",
+        destination: { id: "log" },
+        durationMs: 30_000,
+      });
+      return;
+    }
     if (st.awaySince <= 0 || st.simTime - st.awaySince < WELCOME_MIN_AWAY_S) {
       this.welcomePhase = "done";
       return;
@@ -282,9 +337,19 @@ class MobileShell implements Shell {
   onViewTick(): void {
     this.renderStatus();
     this.map?.tick();
+    const mode = this.ctx?.renderer.viewMode;
+    // §home-step: the guide's first step is done once home's System View is open.
+    if (this.ctx && mode?.type === "system" && !this.ctx.state.homeOpened
+      && noteHomeOpened(this.ctx.state, mode.systemId, foundingHomeSystemId())) this.surfaces?.refreshFounding();
+    // §home-world-step: the second once one of its worlds' sheet is open.
+    const sheet = this.sheets?.current;
+    if (this.ctx && sheet?.id === "planet" && !this.ctx.state.homeWorldOpened
+      && noteHomeWorldOpened(this.ctx.state, (sheet.props as { systemId?: string } | undefined)?.systemId ?? null, foundingHomeSystemId())) this.surfaces?.refreshFounding();
     this.map?.syncArmedChip();
     this.battle?.tick();
     this.ground?.tick();
+    // §live-progress: construction bars glide between their sheets' redraws.
+    tickLiveProgress(document, liveSimTime());
   }
 
   framePolicy() {
@@ -348,28 +413,26 @@ class MobileShell implements Shell {
     this.battle?.sync(entry);
     this.ground?.sync(entry);
     const destination = entry?.id ?? "";
-    if (destination === "log") this.markLogRead();
+    if (destination === "log") this.syncLogBadge();
+    else this.surfaces?.log.closed();
     for (const button of byId("m-tabs").querySelectorAll<HTMLButtonElement>("button[data-destination]")) {
       if (button.dataset.destination === destination) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
   }
 
-  private markLogRead(): void {
-    this.unreadReports = 0;
-    for (const key of this.surfaces?.decisionKeys() ?? []) this.readDecisionKeys.add(key);
-    this.syncLogBadge();
-  }
-
   private syncLogBadge(): void {
+    // §social (R5): unread mail and unseen channel lines.
+    const comms = document.getElementById("m-comms-badge");
+    if (comms && this.ctx) {
+      const n = commsBadge(this.ctx.state.social, this.ctx.state.playerId);
+      comms.textContent = n > 99 ? "99+" : String(n);
+      comms.hidden = n === 0;
+    }
     const badge = document.getElementById("m-log-badge");
     if (!badge) return;
-    if (this.sheets?.current?.id === "log") {
-      this.unreadReports = 0;
-      for (const key of this.surfaces?.decisionKeys() ?? []) this.readDecisionKeys.add(key);
-    }
-    const unreadDecisions = (this.surfaces?.decisionKeys() ?? []).filter((key) => !this.readDecisionKeys.has(key)).length;
-    const count = this.unreadReports + unreadDecisions;
+    // §log: new inbox rows plus unread warn-or-worse news.
+    const count = this.surfaces?.log.badgeCount(this.sheets?.current?.id === "log") ?? 0;
     badge.textContent = count > 99 ? "99+" : String(count);
     badge.hidden = count === 0;
   }
@@ -423,15 +486,17 @@ class MobileShell implements Shell {
       officers: ["Officers", "Captain roster"],
       operations: ["Operations", "Contracts · objectives"],
       syndicate: ["Syndicate", "Alliance network"],
+      comms: ["Comms", "Authority relay"],
       faction: ["Faction", "Authority charter"],
       rankings: ["Rankings", "Published campaign ledger"],
       logistics: ["Auto-supply", "Standing logistics orders"],
       doctrine: ["Fleet Doctrine", "Corporate fleet policy"],
-      log: ["Check-in", "Decision inbox"],
+      log: ["Log", "Inbox · history"],
       system: ["System", "System management"],
       planet: ["World", "Planet management"],
       build: ["Build", "Structure construction"],
       shipyard: ["Shipyard", "Hull construction"],
+      yard: ["Shipyard", "In the yard"],
       hub: ["Wormhole Hub", "Market infrastructure"],
       ship: ["Fleet", "Fleet command"],
       battle: ["Battle", "Observed theater"],
@@ -482,7 +547,9 @@ class MobileShell implements Shell {
           `<small>Destination</small><b>${destination}</b></div>`) +
         intentReadinessWarnings(this.ctx!.state, intent).map(w => `<div class="m-warning">${escapeHtml(w)}</div>`).join("") +
         `<div class="m-sheet-actions"><button type="button" data-mobile-act="cancel-intent">Cancel</button>` +
-        `<button type="button" class="is-primary" data-mobile-act="confirm-intent" data-coach="confirm-order">Confirm order</button></div></div>`,
+        (!intent.raid && raidableIntent(this.ctx!.state, intent) ? `<button type="button" data-mobile-act="confirm-raid">Raid</button>` : "") +
+        (intent.verb === "blockade" && (intent.raid || raidableIntent(this.ctx!.state, intent)) ? `<button type="button" data-mobile-act="confirm-raid-repeat">Raid ↻</button>` : "") +
+        `<button type="button" class="is-primary" data-mobile-act="confirm-intent" data-coach="confirm-order">${intent.verb === "blockade" && intent.raid ? "Raid" : raidableIntent(this.ctx!.state, intent) ? "Blockade" : "Confirm order"}</button></div></div>`,
     };
   }
 
@@ -557,10 +624,7 @@ class MobileShell implements Shell {
   private renderStatus(force = false): void {
     const state = this.ctx?.state;
     if (!state) return;
-    const reserved = reservedMarketCredits();
-    const credits = state.wallet
-      ? `${reserved > 0 ? "~" : ""}${Math.round(spendableMarketCredits()).toLocaleString()}`
-      : "—";
+    const credits = state.credits !== null ? Math.round(spendableMarketCredits()).toLocaleString() : "—";
     const link = state.link === "online"
       ? `● ${state.tick.toLocaleString()}`
       : state.link === "reconnecting"
@@ -568,7 +632,7 @@ class MobileShell implements Shell {
         : state.link === "connecting"
           ? "connecting…"
           : "offline";
-    const values = [credits, reserved, link, state.ghosts.length, state.name, state.playerId, state.simTime, state.corpsInView, state.wallet?.credits, state.wallet?.valuation];
+    const values = [credits, link, state.ghosts.length, state.name, state.playerId, state.simTime, state.corpsInView, state.credits, state.wallet?.valuation];
     const signature = values.join("|");
     if (!force && signature === this.statusSignature) return;
     this.statusSignature = signature;
@@ -583,8 +647,6 @@ class MobileShell implements Shell {
     byId("m-time").textContent = state.link === "online" ? `${state.simTime.toFixed(1)}s` : "—";
     byId("m-corps").textContent = state.link === "online" ? String(state.corpsInView) : "—";
     byId("m-equity").textContent = state.wallet ? Math.round(state.wallet.valuation).toLocaleString() : "—";
-    byId("m-account-credits").textContent = state.wallet ? Math.round(state.wallet.credits).toLocaleString() : "—";
-    byId("m-reserved-credits").textContent = state.wallet ? Math.round(reserved).toLocaleString() : "—";
   }
 }
 

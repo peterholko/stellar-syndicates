@@ -1,0 +1,60 @@
+{
+  "status": "passed",
+  "sourceSHA256": "397e64c8da32b5de3d579057a739dc5d354e7b0749150d754b46fe023d602049",
+  "productionSHA256": "5f96eff184e00ee1872566ed6738cbaed094239f8a3b4f0eed9ad810a9a39f51",
+  "sourceTriangles": 5746,
+  "LOD0Triangles": 5746,
+  "LOD1Triangles": 5100,
+  "LOD2Triangles": 4630,
+  "renderSections": 2,
+  "embedded2048pxPBRMaps": 3,
+  "featureCounts": {
+    "cargoCitadels": 1,
+    "holdDoors": 2,
+    "grappleArms": 4,
+    "grappleFingers": 12,
+    "mainEngines": 3,
+    "guns": 0
+  },
+  "engineSockets": [
+    "socket.engine.port",
+    "socket.engine.centre",
+    "socket.engine.starboard"
+  ],
+  "gltfErrors": 0,
+  "gltfWarnings": 0,
+  "existingProductionAssetsPreserved": 96,
+  "newBakedViews": 3,
+  "existingBakedViewsPreserved": 72,
+  "commandsPassed": [
+    "npm run test:ship-models",
+    "node scripts/test-map-ship-models.mjs",
+    "npm run test:battle-models",
+    "npm run test:industry",
+    "npm run test:progression",
+    "npm run test:planet-panel",
+    "npm run test:fleet-lists",
+    "npm run test:live-battle",
+    "npm run test:shipyard-view",
+    "npm run build"
+  ],
+  "buildNotes": [
+    "Vite reports large-chunk/plugin-timing warnings; compilation and bundling succeed."
+  ],
+  "browserChecks": [
+    "Dedicated map sprite between Tiny and Small Freighters",
+    "Production orbit and dedicated underside",
+    "Three aligned circular exhausts",
+    "Live map: one LOD2 model, 4630 triangles",
+    "Self-contained full-detail viewer"
+  ],
+  "browserWarningsAndErrors": [],
+  "screenshots": {
+    "production-bottom.png": "474b30ed40a7999b2a9279f7bc3ed1d8aa9fa591793ac68ec47039846293b80f",
+    "live-map-model.png": "72a852f8ff210629a9f4785fc63f6356efd126725fdf784025be36c0c2806adf",
+    "map-comparison.png": "8be657b053ba3c3ac3595bcdbea5a8a4a4506b65312b412221610f184c99b369",
+    "production-preview.png": "587ca2e19cc359f5105aae178881987d42a89042a9f50bd97102a3a99d37f218",
+    "production-back.png": "0c20ecb088c0c15f17b5b8803d3a011c6aa108cacfdd0b5ade10383ebeedb754",
+    "viewer.png": "40d0e1a41284e07cfe3de6f142ccb92142186a7f0a84cc07fcc0c4bf4e534d63"
+  }
+}

@@ -107,7 +107,7 @@ fn all_structure_unlocks_gate_receipt_until_research_is_completed() {
     // The legacy platform is never built, research or not.
     let gated: Vec<_> = K::ALL.into_iter()
         .filter(|kind| kind.research_prerequisite().is_some() && *kind != K::DefensePlatform).collect();
-    assert_eq!(gated.len(), 19, "§fuel-overhaul: + the Antimatter Plant");
+    assert_eq!(gated.len(), 18, "§fuel-overhaul: + the Antimatter Plant; §gun-platform: − the station");
     for kind in gated {
         let (mut w, owner, home) = rig();
         let research = kind.research_prerequisite().unwrap();

@@ -1,0 +1,17 @@
+{
+  "sources": [
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/combat-freighter-reference-v1/combat-freighter-reference.png",
+      "sha256": "3a90f03b26d2f2937abfd2f5f9d6e7ce7552f99daaea0cb010342c54cf1b4bff"
+    },
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/combat-freighter-reference-v1/combat-freighter.png",
+      "sha256": "4e58a5ae0ca4c32f358cc25822168302ebf03f7e74e24061a86839ebf225c0b3"
+    },
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/mining-fleet-v1/material-strip.png",
+      "sha256": "4aae3c2d5a5c996895db0ca7f608f518e59f66544d21ec45b887da45de0145e8"
+    }
+  ],
+  "handling": "Read-only reference pixels packed at native scale; source images copied unchanged."
+}

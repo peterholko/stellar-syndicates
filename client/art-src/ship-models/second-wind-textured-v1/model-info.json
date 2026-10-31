@@ -1,0 +1,108 @@
+{
+  "name": "Second Wind",
+  "triangles": 7778,
+  "renderSections": 2,
+  "sourceComponents": 96,
+  "materials": 2,
+  "embeddedTextures": 3,
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "dimensionsXYZ": [
+    12.7886,
+    4.63,
+    19.8158
+  ],
+  "axes": "Y up, -Z forward",
+  "units": "Relative model units; gameplay scale is assigned at integration",
+  "sockets": [
+    {
+      "name": "socket.docking.port",
+      "translation": [
+        -6.484736842105263,
+        0.05,
+        0.15789473684210525
+      ],
+      "extras": {
+        "role": "customer-shuttle-docking",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ]
+      }
+    },
+    {
+      "name": "socket.utility.crane",
+      "translation": [
+        5.894736842105263,
+        1.32,
+        -2.006315789473684
+      ],
+      "extras": {
+        "role": "salvage-tool-grip",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.port",
+      "translation": [
+        -3.5526315789473686,
+        0.03,
+        9.857105263157894
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.starboard",
+      "translation": [
+        3.710526315789474,
+        0.03,
+        9.857105263157894
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "geometryCounts": {
+    "cargoBays": 1,
+    "dockingCollars": 1,
+    "mainEngines": 2,
+    "bridges": 1,
+    "cranes": 1,
+    "guns": 0
+  },
+  "triangleBudget": [
+    3500,
+    11000
+  ],
+  "generator": "Python/NumPy, existing fleet reconstruction workflow; no Blender",
+  "textures": "Approved native deck/belly reference pixels plus ImageGen material trims for exposed walls, glazing and fittings. Physically scaled UV charts, registered belly projection, cylindrical/radial fittings. Three embedded 2048px PBR maps; no upscaling.",
+  "optimization": "Static parts merged by material; exact vertex deduplication; 16-bit indices",
+  "note": "Static concept reconstruction. TOP defines footprint and part stations; elevations guide height. Major reference features are geometry. Exact gameplay scale, LODs and game integration are separate.",
+  "owner": "Mags Halloran",
+  "textureRevision": 2,
+  "uvFallbackPolicy": "Build fails on collapsed charts; no silent replacement materials.",
+  "sourceImages": [
+    "second-wind-reference-v1/second-wind-reference.png"
+  ],
+  "paintEmissive": false
+}

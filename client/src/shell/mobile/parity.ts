@@ -1,15 +1,17 @@
 import { captainTitle, captainXpFloor, fleetCommandLoad, officerFleetName } from "../../core/derive/captains";
+import { ago, INVITES_MAX, inviteLink, markChannelSeen, presenceText } from "../../core/derive/social";
 import { blockadeBrief } from "../../core/derive/blockade";
 import { constructionStock, dockedAtSystem, guardCapable, shipKindLabel, systemFleetsAt, surveyCapable } from "../../core/derive/fleet";
 import { colonyPurpose } from "../../core/derive/colony";
 import { anchorStatus, beltActions, pocketLeft, prospectLine } from "../../core/derive/belts";
-import { isStructureJob, jobTag, jobTitle, slotLine, structureQueue, yardStatus, type StructureJob } from "../../core/derive/worldbuild";
+import { COURSE, freeSpecialists, isStructureJob, jobTag, jobTitle, SENDING, slotLine, SPECIALIST_KINDS, specialistAffine, structureQueue, WORKFORCE_STRUCTURES, yardStatus, type StructureJob } from "../../core/derive/worldbuild";
 import { fleetReadiness } from "../../core/derive/readiness";
 import { postVictoryHandoff } from "../../core/derive/handoff";
+import { campOpen } from "../../core/derive/founding";
 import { explorationHtml, explorationFocused, handleExplorationAction } from "../exploration";
 import { focusIndustryFleet, industryHtml, industryServedSignature, industryStandingVisible, industryUiSignature, handleIndustryAction, handleIndustryInput } from "../industry";
 import { refiningComparison } from "../refining";
-import { allySystems, foundingHomeSystemId, ownedSystems, systemName } from "../../core/derive/geo";
+import { allySystems, commandDelayTo, foundingHomeSystemId, ownedSystems, systemName } from "../../core/derive/geo";
 import {
   bodyPoolUsage,
   buildOption,
@@ -22,6 +24,7 @@ import {
   MODULE_SLOTS,
   moduleLedgerAt,
   moduleBuildReason,
+  moduleResearched,
   POOL_LABEL,
   POOL_OF,
   poolUsage,
@@ -29,7 +32,7 @@ import {
   YARD_TITLE,
   shipOption,
   structOption,
-  structureResearched,
+  structureUnlocked,
   structureLevel,
   structureBuildSeconds,
   openingBuild,
@@ -37,10 +40,13 @@ import {
   type Pool,
 } from "../../core/derive/market";
 import { fmtBuildDur, fmtEta, operationCopy, operationReward, operationTitle } from "../../core/derive/format";
-import { commodityIcon, structureImage } from "../../icons";
-import { nodeBonusDesc, nodeLabel, researchSuppliesPerHour, supplyAmount } from "../../core/derive/research";
+import { commodityIcon, label, structureImage } from "../../icons";
+import { bonusLine, currentRung, givingWorlds, roman } from "../../core/derive/projects";
+import { nodeBonusDesc, nodeLabel, researched, researchSuppliesPerHour, supplyAmount } from "../../core/derive/research";
+import { hullFigures } from "../../core/derive/orders";
 import { gridLine } from "../../core/derive/worldbuild";
 import type {
+  CharterView,
   BodyView,
   CaptainAttribute,
   CaptainRosterView,
@@ -56,16 +62,23 @@ import type {
   StandingEndpoint,
   StandingOrder,
   StandingTrigger,
+  SyndicateBonus,
+  SyndicateProjectsView,
   SyndicateRole,
   SystemStateView,
 } from "../../protocol";
 import { liveSimTime } from "../../state";
+import { crackdownTitle, DECREE_TEXT, demandText, gripNumeral, gripTitle, keystoneFeed, RESOLVE_BAND, resolveBand } from "../../core/derive/season";
+import "../../ship-construction-view";
+import { liveProgressAttr } from "../../core/derive/construction";
+import { pickYardJob, yardFallback, yardJobs, type YardJob } from "../../core/derive/shipyard";
+import { HULL_YARD } from "../../shipyard-scene";
 import type { SystemBodyDetail } from "../../systemview";
 import { captainPortrait } from "../art";
-import { corpCard } from "../../core/derive/medals";
-import { boardLine, boardSummary } from "../../core/derive/board";
+import { corpCard, fmtDays } from "../../core/derive/medals";
+import { boardLine, boardSummary, serviceReward } from "../../core/derive/board";
 import { signalsSummary } from "../../core/derive/signals";
-import { corpCardHtml, medalChipsHtml } from "../corpcard";
+import { corpCardHtml, medalChipsHtml, medalCountsHtml } from "../corpcard";
 import type { CoreContext } from "../types";
 import type { SheetEntry, SheetView } from "./sheets";
 import { SheetStack } from "./sheets";
@@ -74,6 +87,7 @@ import { sheetFingerprint } from "../signature";
 interface ParityHooks {
   openSheet(entry: SheetEntry): void;
   focusFleet(id: string): void;
+  deselectFleets(): void;
   focusSystem(id: string): void;
   enterSystem(id: string): void;
   exitSemantic(): void;
@@ -89,7 +103,7 @@ const FIELD_TITLE: Record<string, string> = {
   propulsion: "Propulsion", materials: "Materials", computation: "Computation",
   weapons: "Weapons", hulls: "Hulls", life: "Life",
 };
-const SHIP_ORDER: ShipKind[] = ["scout", "survey_probe", "corvette", "raider", "tiny_freighter", "small_freighter", "convoy", "mining_barge", "large_freighter", "heavy_freighter", "bulk_freighter", "colony", "destroyer", "cruiser", "battleship", "dreadnought", "titan"];
+const SHIP_ORDER: ShipKind[] = ["scout", "survey_probe", "corvette", "raider", "combat_freighter", "tiny_freighter", "small_freighter", "convoy", "mining_barge", "large_freighter", "heavy_freighter", "bulk_freighter", "colony", "destroyer", "cruiser", "battleship", "dreadnought", "titan"];
 const SHIP_KEYS = new Set<string>(SHIP_ORDER);
 import { MODULES, moduleFitsHull } from "../../core/derive/equipment";
 const PRODUCER_STRUCTURES = new Set([
@@ -118,6 +132,14 @@ const RANK_CATS: RankCat[] = [
   { slug: "recovery", label: "Recovery", value: (r) => r.recovery, text: (r) => `${fmt(r.recovery)} Cr` },
 ];
 
+/** §hull stats (Peter, Oct 27 2026): the hull's figures under its 3D model, in
+ * the yard and the ship builder. */
+function hullStatsHtml(kind: string): string {
+  const figures = hullFigures(kind);
+  return figures.length ? `<div class="m-stat-grid m-hull-stats">${figures.map(([name, value]) =>
+    `<span><small>${esc(name)}</small><b>${esc(value)}</b></span>`).join("")}</div>` : "";
+}
+
 const esc = (value: string): string => value.replace(
   /[&<>\"]/g,
   (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '\"': "&quot;" })[character]!,
@@ -145,11 +167,21 @@ export class MobileParitySurfaces {
   private systemTab: SystemTab = "worlds";
   private planetTab: PlanetTab = "economy";
   private rankingCategory = "valuation";
+  // §social (R5): the Comms sheet's tab, open mail and compose draft.
+  private commsTab: "channel" | "inbox" | "sent" = "channel";
+  private commsMail: number | null = null;
+  private commsCompose: { to: string; subject: string } | null = null;
+  /** The pushed Comms entry whose `tab` prop was applied (once per push). */
+  private commsEntry: SheetEntry | null = null;
   private selectedBuild = "";
   /** §construction: the structure order whose Cancel awaits a Confirm. */
   private cancelArmed: number | null = null;
   private readonly cancelSent = new Set<number>();
   private selectedHull: ShipKind | "" = "";
+  /** §shipyard-view: the hull picked in the yard sheet. */
+  private yardPicked: string | null = null;
+  /** Hulls the yard sheet opened on that a report has shown building. */
+  private readonly yardSeen = new Set<string>();
   private pendingFit: ModuleKind[] = [];
 
   constructor(
@@ -165,6 +197,15 @@ export class MobileParitySurfaces {
       case "officers": view = this.renderOfficers(); break;
       case "operations": view = this.renderOperations(); break;
       case "syndicate": view = this.renderSyndicate(); break;
+      case "comms": {
+        const tab = (entry.props as { tab?: string } | undefined)?.tab;
+        if (entry !== this.commsEntry) {
+          this.commsEntry = entry;
+          if (tab === "inbox") { this.commsTab = "inbox"; this.commsMail = null; this.commsCompose = null; }
+        }
+        view = this.renderComms();
+        break;
+      }
       case "faction": view = this.renderFaction(); break;
       case "rankings": view = this.renderRankings(entry); break;
       case "logistics": view = this.renderLogistics(); break;
@@ -173,6 +214,7 @@ export class MobileParitySurfaces {
       case "planet": view = this.renderPlanet(entry); break;
       case "build": view = this.renderBuild(entry); break;
       case "shipyard": view = this.renderShipyard(entry); break;
+      case "yard": view = this.renderYard(entry); break;
       case "hub": view = this.renderHub(); break;
       default: return null;
     }
@@ -235,6 +277,10 @@ export class MobileParitySurfaces {
         break;
       case "research-add":
         if (button.dataset.id) this.changeResearchQueue("add", button.dataset.id);
+        break;
+      case "research-grant":
+        this.ctx.send({ type: "FundResearch" });
+        this.hooks.notice("<b>Research grant sent</b> · paid at command.");
         break;
       case "research-up": case "research-down": case "research-remove":
         this.changeResearchQueue(action.slice(9) as "up" | "down" | "remove", Number(button.dataset.index));
@@ -307,6 +353,57 @@ export class MobileParitySurfaces {
         this.ctx.send({ type: "ContributeOperationCargo", operation_id: id, commodity, units });
         break;
       }
+      case "comms-tab":
+        this.commsTab = button.dataset.tab === "inbox" || button.dataset.tab === "sent" ? button.dataset.tab : "channel";
+        this.commsMail = null;
+        this.commsCompose = null;
+        break;
+      case "comms-say": {
+        const input = document.getElementById("m-chat-input") as HTMLInputElement | null;
+        const text = input?.value.trim();
+        if (text) this.ctx.send({ type: "SyndicateSay", text });
+        if (input) input.value = "";
+        break;
+      }
+      case "comms-open": {
+        const id = Number(button.dataset.id);
+        if (button.dataset.unread) this.ctx.send({ type: "MarkMailRead", id });
+        this.commsMail = id;
+        break;
+      }
+      case "comms-back": this.commsMail = null; this.commsCompose = null; break;
+      case "comms-compose": this.commsCompose = { to: button.dataset.to ?? "", subject: button.dataset.subject ?? "" }; this.commsMail = null; break;
+      case "comms-send": {
+        const value = (id: string) => (document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | null)?.value.trim() ?? "";
+        const to = value("m-mail-to"), body = value("m-mail-body");
+        if (!to || !body) break;
+        this.ctx.send({ type: "SendMail", to, subject: value("m-mail-subject"), body });
+        this.commsCompose = null;
+        this.commsTab = "sent";
+        break;
+      }
+      case "comms-delete": this.ctx.send({ type: "DeleteMail", id: Number(button.dataset.id) }); this.commsMail = null; break;
+      case "comms-mute": if (button.dataset.player) this.ctx.send({ type: "MuteCorp", player: button.dataset.player, mute: button.dataset.mute === "1" }); break;
+      case "comms-report":
+        if (button.dataset.kind === "chat" || button.dataset.kind === "mail") {
+          this.ctx.send({ type: "ReportMessage", kind: button.dataset.kind, id: Number(button.dataset.id), reason: "reported in Comms" });
+          if (button instanceof HTMLButtonElement) button.disabled = true;
+          button.textContent = "Reported";
+        }
+        break;
+      case "invite-new":
+        this.ctx.send({ type: "CreateInvite" });
+        break;
+      case "invite-revoke":
+        if (button.dataset.code) this.ctx.send({ type: "RevokeInvite", code: button.dataset.code });
+        break;
+      case "invite-copy":
+        if (button.dataset.code) {
+          void navigator.clipboard?.writeText(inviteLink(button.dataset.code)).then(() => { button.textContent = "Copied"; }, () => {
+            button.closest(".m-invite-row")?.querySelector<HTMLInputElement>("input")?.select();
+          });
+        }
+        break;
       case "syndicate-create": {
         const name = element<HTMLInputElement>("m-syndicate-name")?.value.trim();
         if (name) this.ctx.send({ type: "CreateSyndicate", name });
@@ -328,11 +425,16 @@ export class MobileParitySurfaces {
         if (member && isSyndicateRole(role)) this.ctx.send({ type: "SetSyndicateRole", member, role });
         break;
       }
-      case "syndicate-project": {
-        const system = element<HTMLSelectElement>("m-syndicate-project-system")?.value;
-        if (system) this.ctx.send({ type: "CreateSyndicateOperation", system_id: system });
+      case "project-give": {
+        const rung = this.ctx.state.syndicate?.projects && currentRung(this.ctx.state.syndicate.projects);
+        const system_id = element<HTMLSelectElement>("m-project-system")?.value;
+        const units = Math.floor(Number(element<HTMLInputElement>("m-project-units")?.value));
+        if (rung && system_id && units > 0) this.ctx.send({ type: "ContributeSyndicateProject", system_id, commodity: rung.goods, units });
         break;
       }
+      case "bonus-raise":
+        if (button.dataset.bonus) this.ctx.send({ type: "RaiseSyndicateBonus", bonus: button.dataset.bonus as SyndicateBonus });
+        break;
       case "diplomacy-propose": case "diplomacy-ceasefire": case "diplomacy-war": {
         const name = element<HTMLInputElement>("m-diplomacy-name")?.value.trim();
         if (!name) break;
@@ -358,6 +460,24 @@ export class MobileParitySurfaces {
         this.ctx.send({ type: "PayReinstatement", points });
         break;
       }
+      // §season: the Authority's demands.
+      case "faction-levy":
+        this.ctx.send({ type: "AnswerLevy", accept: button.dataset.accept === "1" });
+        this.hooks.notice(`Levy ${button.dataset.accept === "1" ? "accepted" : "refused"} · answer on its way to the Hub.`);
+        break;
+      case "faction-arrears":
+        if (button.dataset.commodity) this.ctx.send({ type: "PayArrears", commodity: button.dataset.commodity as Commodity });
+        this.hooks.notice("Arrears paid · on their way to the Hub.");
+        break;
+      case "faction-feed":
+        if (button.dataset.system && button.dataset.commodity) this.ctx.send({ type: "FeedKeystone", system_id: button.dataset.system,
+          commodity: button.dataset.commodity as Commodity, units: Number(button.dataset.units ?? 0) });
+        this.hooks.notice("Keystone fed · on its way.");
+        break;
+      case "faction-requisition":
+        if (button.dataset.id) this.ctx.send({ type: "AnswerRequisition", id: Number(button.dataset.id), pay: button.dataset.pay === "1" });
+        this.hooks.notice(`Requisition ${button.dataset.pay === "1" ? "paid" : "refused"} · answer on its way to the Hub.`);
+        break;
       case "open-rankings": this.hooks.openSheet({ id: "rankings" }); break;
       // §medals: a corporation's card, from the published table.
       case "corp-card": if (button.dataset.id) this.hooks.openSheet({ id: "rankings", props: { corp: button.dataset.id } }); break;
@@ -412,6 +532,16 @@ export class MobileParitySurfaces {
         this.sheets.refresh();
         break;
       case "worker-set": this.setWorkers(button); break;
+      // §research-wiring Talent: post or recall a specialist; Academy courses.
+      case "specialist-set": this.setSpecialist(button); break;
+      case "stream": if (button.dataset.system && button.dataset.to) {
+        this.ctx.send({ type: "SetDesignation", cap: "mass_streams", target: { system_pair: [button.dataset.system, button.dataset.to] } });
+      } break;
+      case "train": if (button.dataset.system && button.dataset.kind) this.ctx.send({ type: "TrainSpecialist", system_id: button.dataset.system, specialist: button.dataset.kind }); break;
+      // §designations: a crown on this world.
+      case "crown": if (button.dataset.system && (button.dataset.cap === "crown_vein" || button.dataset.cap === "crown_project")) {
+        this.ctx.send({ type: "SetDesignation", cap: button.dataset.cap, target: { body: { system: button.dataset.system, body: Number(button.dataset.body) } } });
+      } break;
       case "refining-select": {
         const ore = button.dataset.ore as Commodity;
         if (buildOption("smelter")?.refining_recipes?.some(r => r.inputs[0][0] === ore)) {
@@ -520,6 +650,16 @@ export class MobileParitySurfaces {
         break;
       case "ship-fit-save": this.saveFit(); break;
       case "ship-queue": this.queueShips(button); break;
+      case "open-yard":
+        if (button.dataset.system) {
+          this.yardPicked = null;
+          this.hooks.openSheet({ id: "yard", props: { systemId: button.dataset.system, kind: button.dataset.kind } });
+        }
+        break;
+      case "yard-pick":
+        this.yardPicked = button.dataset.job ?? null;
+        this.sheets.refresh();
+        break;
       case "hub-market": this.hooks.openSheet({ id: "market" }); break;
       case "hub-fleet":
         if (button.dataset.id) this.hooks.focusFleet(button.dataset.id);
@@ -547,7 +687,7 @@ export class MobileParitySurfaces {
   }
 
   private ownsAction(action: string): boolean {
-    return /^(open-signals|research|officer|operation|syndicate|diplomacy|flagship|faction|open-rankings|ranking|system|open-ground|open-planet|open-build|open-shipyard|open-logistics|open-doctrine|planet|worker|refining|migration|module-build|build|ship-|hub-|logistics|doctrine)/.test(action);
+    return /^(open-signals|research|officer|operation|syndicate|diplomacy|flagship|faction|open-rankings|ranking|system|open-ground|open-planet|open-build|open-shipyard|open-yard|yard-pick|open-logistics|open-doctrine|planet|worker|refining|migration|module-build|build|ship-|hub-|logistics|doctrine)/.test(action);
   }
 
   private renderResearch(): SheetView {
@@ -559,7 +699,9 @@ export class MobileParitySurfaces {
     const active = research.active
       ? `<article class="m-feature-card"><small>ACTIVE · ${research.rate.toFixed(2)}/s</small><b>${esc(research.active.name)}</b>` +
         `<div class="m-progress"><i style="width:${Math.min(100, research.active.progress / Math.max(1, research.active.cost) * 100).toFixed(1)}%"></i></div>` +
-        `<span>${fmt(research.active.progress)} / ${fmt(research.active.cost)} · ${research.active.eta_secs == null ? (research.stalled ? "stalled" : "awaiting supply") : `ETA ${fmtEta(research.active.eta_secs)}`}</span></article>`
+        `<span>${fmt(research.active.progress)} / ${fmt(research.active.cost)} · ${research.active.eta_secs == null ? (research.stalled ? "stalled" : "awaiting supply") : `ETA ${fmtEta(research.active.eta_secs)}`}</span>` +
+        // §research-grant (R3): credits buy a research-hour, a few a day.
+        (research.grant?.price != null ? `<button type="button" data-mobile-act="research-grant" ${research.grant.left > 0 ? "" : "disabled"}>Fund ${fmtEta(research.grant.secs)} · ${fmt(research.grant.price)} Cr · ${research.grant.left}/${research.grant.per_day} today</button>` : "") + `</article>`
       : `<div class="m-empty">No active programme. Add an available programme below.</div>`;
     const queueRows = queue.map((id, index) => {
       const programme = research.programmes.find((candidate) => candidate.id === id);
@@ -656,7 +798,7 @@ export class MobileParitySurfaces {
     const training = report && report.unspent > 0
       ? `<div class="m-chip-actions">${(["command", "navigation", "fieldcraft", "logistics"] as CaptainAttribute[]).map((attribute) => `<button type="button" data-mobile-act="officer-train" data-captain="${entry.id}" data-attribute="${attribute}" ${canTrain ? "" : "disabled"}>+ ${human(attribute)}</button>`).join("")}</div>` : "";
     return `<article class="m-officer-card">${captainPortrait(entry.portrait, age, `Portrait of ${titled}`, "m-officer-portrait", true)}<div><header><b>${esc(titled)}</b><em>${esc(status + hurt)}</em></header>` +
-      (report ? `<small>Level ${report.level} · authority ${report.command_capacity}</small><div class="m-progress"><i style="width:${progress.toFixed(1)}%"></i></div><p>Cmd ${report.attributes.command} · Nav ${report.attributes.navigation} · Field ${report.attributes.fieldcraft} · Log ${report.attributes.logistics}</p>` : `<p>Personnel light has not reached command.</p>`) +
+      (report ? `<small>Level ${report.level}</small><div class="m-progress"><i style="width:${progress.toFixed(1)}%"></i></div><p>Cmd ${report.attributes.command} · Nav ${report.attributes.navigation} · Field ${report.attributes.fieldcraft} · Log ${report.attributes.logistics}</p>` : `<p>Personnel light has not reached command.</p>`) +
       training + assign + (entry.assigned_fleet && local ? `<button type="button" data-mobile-act="officer-reserve" data-captain="${entry.id}">Return to reserve</button>` : "") +
       (assigned ? `<button type="button" data-mobile-act="officer-fleet" data-id="${esc(assigned.id)}">Select formation</button>` : "") + `</div></article>`;
   }
@@ -712,7 +854,7 @@ export class MobileParitySurfaces {
     return `<section class="m-section"><h3>Charter ledger · ${ledger.done}/${ledger.total}</h3>${ledger.goals.map(goal => {
       const pct = Math.min(100, goal.target > 0 ? (goal.progress / goal.target) * 100 : 0);
       const open = sheets[goal.metric];
-      return `<article class="m-feature-card"><small>+${goal.reward.toLocaleString()} Cr · paid once</small><b>${esc(goal.title)}</b><span>${esc(goal.detail)}</span>` +
+      return `<article class="m-feature-card"><small>${esc(serviceReward(goal.standing, goal.research))} · paid once</small><b>${esc(goal.title)}</b><span>${esc(goal.detail)}</span>` +
         `<small>${Math.floor(goal.progress).toLocaleString()} / ${Math.floor(goal.target).toLocaleString()} · ${Math.round(pct)}%</small>` +
         (open ? `<button type="button" data-mobile-act="operation-ledger" data-sheet="${open[0]}">${esc(open[1])}</button>` : "") + `</article>`;
     }).join("")}</section>`;
@@ -777,17 +919,75 @@ export class MobileParitySurfaces {
         return `<div class="m-member"><span><b>${esc(member.name)}</b><small>${member.id === this.ctx.state.playerId ? "you · " : ""}${human(member.role)}</small></span>${roles}</div>`;
       }).join("");
       const canInvite = ["founder", "officer"].includes(syndicate.my_role);
-      const canProject = ["founder", "officer", "quartermaster"].includes(syndicate.my_role);
-      const projectSystems = this.ctx.state.systems.filter((system) => system.owner === this.ctx.state.playerId || system.ally).map((system) => option(system.id, systemName(system.id))).join("");
       const titan = this.ctx.state.ghosts.some((fleet) => fleet.own && fleet.composition?.some((stack) => stack.kind === "titan" && stack.count > 0));
       membership = `<article class="m-feature-card"><small>${esc(human(syndicate.my_role))}</small><b>${esc(syndicate.name)}</b><span>${syndicate.members.length} members · mutual non-engagement</span></article>` +
         `<section class="m-section"><h3>Roster</h3>${members}</section>` +
         (canInvite ? `<section class="m-trade-card"><h3>Invite corporation</h3><label>Corporation name<input id="m-syndicate-invite" maxlength="32"></label><button type="button" data-mobile-act="syndicate-invite">Invite</button></section>` : "") +
-        (canProject ? `<section class="m-trade-card"><h3>Shared operation</h3><label>Host system<select id="m-syndicate-project-system">${projectSystems}</select></label><button type="button" data-mobile-act="syndicate-project" ${projectSystems ? "" : "disabled"}>Start project</button></section>` : "") +
+        (syndicate.projects ? this.projectsBlock(syndicate.projects) : "") +
         (titan ? `<section class="m-trade-card"><h3>Flagship</h3><label>Name<input id="m-flagship-name" maxlength="32" value="${esc(syndicate.flagship_name ?? "")}"></label><button type="button" data-mobile-act="flagship-name">Set name</button></section>` : "") +
         `<div class="m-action-grid"><button type="button" data-mobile-act="syndicate-leave">Leave</button>${syndicate.is_founder ? `<button type="button" class="m-danger" data-mobile-act="syndicate-dissolve">Dissolve</button>` : ""}</div>`;
     }
-    return { title: syndicate?.name ?? "Syndicate", eyebrow: "Alliance network · formal diplomacy", html: membership + this.diplomacyBlock() };
+    return { title: syndicate?.name ?? "Syndicate", eyebrow: "Alliance network · formal diplomacy", html: membership + this.friendInvitesBlock() + this.diplomacyBlock() };
+  }
+
+  /** §syndicate-projects (R6): the week's ladder, points and bonuses. */
+  private projectsBlock(p: SyndicateProjectsView): string {
+    const st = this.ctx.state;
+    const rung = currentRung(p);
+    const steps = p.rungs.map((_, i) => `<li class="${i < p.rung ? "is-done" : i === p.rung ? "is-current" : ""}">${i < p.rung ? "✓" : i + 1}</li>`).join("");
+    let give = `<div class="m-muted">Ladder done · next week ${esc(fmtDays(p.week_ends_in))}</div>`;
+    if (rung) {
+      const worlds = givingWorlds(st.systems, st.playerId, rung.goods);
+      const need = rung.goal - p.progress;
+      give = `<div class="m-order"><b>${esc(label(rung.goods))} ${fmt(p.progress)} / ${fmt(rung.goal)}</b><span>+${rung.points} pts</span></div>` +
+        (worlds.length ? `<label>From<select id="m-project-system">${worlds.map(([s, n]) => option(s.id, `${systemName(s.id)} · ${fmt(n)}`)).join("")}</select></label><label>Units<input id="m-project-units" type="number" min="1" inputmode="numeric" max="${need}" value="${Math.min(need, worlds[0][1])}"></label><button type="button" class="m-primary" data-mobile-act="project-give">Give</button>`
+          : `<div class="m-muted">No ${esc(label(rung.goods))} on your worlds.</div>`);
+    }
+    const bonuses = p.bonuses.map((b) => {
+      const wait = b.next_in !== null ? `<small>yours ${roman(b.mine)} · ${roman(b.mine + 1)} in ${esc(fmtDays(b.next_in))}</small>` : "";
+      const raise = p.may_raise && b.next_cost !== null ? `<button type="button" data-mobile-act="bonus-raise" data-bonus="${b.bonus}" ${p.points >= b.next_cost ? "" : "disabled"}>${roman(b.level + 1)} · ${b.next_cost} pts</button>` : "";
+      return `<div class="m-service-row"><span><b>${esc(bonusLine(b))}</b>${wait}</span>${raise}</div>`;
+    }).join("");
+    const given = p.given.length ? `<div class="m-muted">This week · ${p.given.map(([name, n]) => `${esc(name)} ${fmt(n)}`).join(" · ")}</div>` : "";
+    return `<section class="m-trade-card"><h3>Projects · week ${p.week} · ${p.points} pts${medalCountsHtml(p.medals)}</h3><small>Closes in ${esc(fmtDays(p.week_ends_in))}</small><ol class="m-ladder">${steps}</ol>${give}</section>` +
+      `<section class="m-section"><h3>Bonuses</h3>${bonuses}${given}</section>`;
+  }
+
+  /** §settle-near-friends (R7): links that hold a home near this corporation. */
+  private friendInvitesBlock(): string {
+    const open = this.ctx.state.social?.invites ?? [];
+    const rows = open.map((invite) => `<div class="m-invite-row"><input readonly value="${esc(inviteLink(invite.code))}" aria-label="Invite link"><small>${esc(invite.near)} · ${fmtDays(Math.max(0, invite.until - liveSimTime()))}</small><div class="m-chip-actions"><button type="button" data-mobile-act="invite-copy" data-code="${esc(invite.code)}">Copy</button><button type="button" class="m-danger" data-mobile-act="invite-revoke" data-code="${esc(invite.code)}">Revoke</button></div></div>`).join("");
+    return `<section class="m-section"><h3>Invite a friend · ${open.length}/${INVITES_MAX}</h3>${rows}<button type="button" class="m-primary" data-mobile-act="invite-new" ${open.length >= INVITES_MAX ? "disabled" : ""}>New invite link</button></section>`;
+  }
+
+  /** §social (R5): the syndicate channel and corporation mail. */
+  private renderComms(): SheetView {
+    const st = this.ctx.state, social = st.social, me = st.playerId;
+    const tabs = `<div class="m-chip-actions">${(["channel", "inbox", "sent"] as const).map((tab) => `<button type="button" data-mobile-act="comms-tab" data-tab="${tab}" aria-pressed="${this.commsTab === tab}">${tab === "channel" ? "Channel" : tab === "inbox" ? `Inbox${social?.unread ? ` · ${social.unread}` : ""}` : "Sent"}</button>`).join("")}<button type="button" class="m-primary" data-mobile-act="comms-compose">New mail</button></div>`;
+    let body = "";
+    if (this.commsCompose) {
+      const names = [...new Set(st.rankings.filter((r) => r.player_id !== me).map((r) => r.name))].sort();
+      body = `<section class="m-trade-card"><h3>New mail</h3><label>To<input id="m-mail-to" list="m-mail-corps" maxlength="40" value="${esc(this.commsCompose.to)}"></label><datalist id="m-mail-corps">${names.map((n) => `<option value="${esc(n)}"></option>`).join("")}</datalist><label>Subject<input id="m-mail-subject" maxlength="80" value="${esc(this.commsCompose.subject)}"></label><label>Message<textarea id="m-mail-body" maxlength="2000" rows="6"></textarea></label><div class="m-action-grid"><button type="button" class="m-primary" data-mobile-act="comms-send">Send</button><button type="button" data-mobile-act="comms-back">Cancel</button></div></section>`;
+    } else if (this.commsTab === "channel") {
+      if (!st.syndicate) body = `<div class="m-muted">Join a syndicate to use its channel.</div>`;
+      else {
+        markChannelSeen(social);
+        const muted = new Set(social?.muted ?? []);
+        const members = (social?.members ?? []).map((m) => `<div class="m-service-row"><span><b>${m.online ? "● " : ""}${esc(m.name)}</b><small>${esc(presenceText(m))}</small></span>${m.player !== me ? `<button type="button" data-mobile-act="comms-mute" data-player="${esc(m.player)}" data-mute="${muted.has(m.player) ? "0" : "1"}">${muted.has(m.player) ? "Unmute" : "Mute"}</button>` : ""}</div>`).join("");
+        const lines = (social?.channel ?? []).map((line) => `<div class="m-chat-line"><b>${esc(line.author_name)}</b> <small>${ago(line.at)}</small>${line.author !== me ? ` <button type="button" class="m-chat-report" data-mobile-act="comms-report" data-kind="chat" data-id="${line.id}">⚑</button>` : ""}<p>${esc(line.text)}</p></div>`).join("");
+        body = `<section class="m-section"><div class="m-chat-log">${lines || `<div class="m-muted">No messages yet.</div>`}</div><div class="m-chat-compose"><input id="m-chat-input" maxlength="400" placeholder="Message ${esc(st.syndicate.name)}"><button type="button" class="m-primary" data-mobile-act="comms-say">Send</button></div></section><section class="m-section"><h3>Members</h3>${members}</section>`;
+      }
+    } else {
+      const mails = (this.commsTab === "sent" ? social?.sent : social?.inbox) ?? [];
+      const open = mails.find((m) => m.id === this.commsMail);
+      if (open) {
+        const reply = this.commsTab === "inbox" ? `<button type="button" class="m-primary" data-mobile-act="comms-compose" data-to="${esc(open.from_name)}" data-subject="${esc(open.subject.startsWith("Re: ") ? open.subject : `Re: ${open.subject}`)}">Reply</button><button type="button" data-mobile-act="comms-report" data-kind="mail" data-id="${open.id}">Report</button>` : "";
+        body = `<article class="m-mail-open"><b>${esc(open.subject)}</b><small>${esc(this.commsTab === "sent" ? `To ${open.to_name}` : `From ${open.from_name}`)} · ${ago(open.at)} ago</small><p>${esc(open.body)}</p><div class="m-action-grid">${reply}<button type="button" data-mobile-act="comms-back">Back</button><button type="button" class="m-danger" data-mobile-act="comms-delete" data-id="${open.id}">Delete</button></div></article>`;
+      } else {
+        body = mails.map((m) => `<button type="button" class="m-list-row${this.commsTab === "inbox" && !m.read ? " is-unread" : ""}" data-mobile-act="comms-open" data-id="${m.id}" data-unread="${this.commsTab === "inbox" && !m.read ? "1" : ""}"><span class="m-list-row__main"><b>${esc(this.commsTab === "sent" ? m.to_name : m.from_name)}</b><small>${esc(m.subject)}</small></span><span class="m-list-row__meta"><small>${ago(m.at)}</small></span></button>`).join("") || `<div class="m-muted">${this.commsTab === "sent" ? "Nothing sent." : "No mail."}</div>`;
+      }
+    }
+    return { title: "Comms", eyebrow: "Authority relay · no light lag", html: tabs + body };
   }
 
   private diplomacyBlock(): string {
@@ -802,14 +1002,65 @@ export class MobileParitySurfaces {
     const charter = this.ctx.state.charter;
     if (!charter) return { title: "Faction", eyebrow: "Terran Charter Authority", html: `<div class="m-empty">No charter on file.</div>` };
     const ladder = this.ctx.state.charterLadder.map(([title, threshold]) => `<div class="m-order${title === charter.title ? " is-current" : ""}"><b>${title === charter.title ? "▸ " : ""}${esc(title)}</b><span>${fmt(threshold)} standing</span></div>`).join("");
-    const shortfall = Math.max(0, charter.max_standing - charter.standing);
+    // §standing-ladder (R3): buying back stops at full standing.
+    const full = charter.full_standing ?? charter.max_standing;
+    const shortfall = Math.max(0, full - charter.standing);
+    const grades = this.ctx.state.gradeLadder.map(([title, at]) => `<div class="m-order${title === charter.grade_title ? " is-current" : ""}"><b>${title === charter.grade_title ? "▸ " : ""}${esc(title)}</b><span>${fmt(at)} standing</span></div>`).join("");
+    const next = charter.next_grade ? `Next ${esc(charter.next_grade.title)} at ${fmt(charter.next_grade.at)}` : "Top grade";
+    const gradeHtml = charter.grade_title ? `<section class="m-section"><h3>Grade · ${esc(charter.grade_title)}</h3><p>${next} · today ${fmt(Math.min(charter.earned_today, charter.earn_per_day))}/${fmt(charter.earn_per_day)} · freight ×${charter.tariff_mult.toFixed(2)} · ${fmt(charter.shipment_cap)} per lift</p>${grades}</section>` : "";
     const pay = shortfall > 0 ? `<section class="m-trade-card"><h3>Reinstatement</h3><label>Standing points<input id="m-faction-points" type="number" min="1" max="${Math.ceil(shortfall)}" value="${Math.ceil(Math.min(shortfall, 20))}"></label><p>${fmt(charter.reinstate_cost_per_point)} Cr per point</p><button type="button" data-mobile-act="faction-pay">Pay Authority</button></section>` : "";
     return {
       title: "Terran Charter Authority",
       eyebrow: `${charter.title} · legal standing`,
       html: `<div class="m-stat-grid"><span><small>Standing</small><b>${charter.standing.toFixed(0)}/${charter.max_standing.toFixed(0)}</b></span><span><small>Tariff</small><b>×${charter.tariff_mult.toFixed(2)}</b></span><span><small>Exchange penalty</small><b>${(charter.market_penalty_frac * 100).toFixed(1)}%</b></span><span><small>Status</small><b>${human(charter.status)}</b></span></div>` +
-        `<section class="m-section"><h3>Standing bands</h3>${ladder}</section>${pay}<button type="button" class="m-wide-button" data-mobile-act="open-rankings">Open published rankings</button>`,
+        `${this.gripHtml(charter)}<section class="m-section"><h3>Standing bands</h3>${ladder}</section>${gradeHtml}${pay}<button type="button" class="m-wide-button" data-mobile-act="open-rankings">Open published rankings</button>`,
     };
+  }
+
+  /** §season phase 5: your Keystone and the race's clock. */
+  private keystoneHtml(): string {
+    const season = this.ctx.state.season;
+    if (!season) return "";
+    const now = liveSimTime();
+    const mine = season.keystone;
+    const clock = !season.ending && season.ends_at ? `<p>The season ends in ${fmtBuildDur(Math.max(0, season.ends_at - now))} if no Seal fires.</p>` : "";
+    if (!mine) return season.keystones.length || clock ? `<section class="m-section"><h3>The race</h3>${clock}${season.keystones.map((k) =>
+      `<div class="m-order"><b>${esc(systemName(k.system))} · level ${k.level}/10</b><span>${esc(k.holder_name ?? "unheld")}${k.seal_at ? ` · Seal in ${fmtBuildDur(Math.max(0, k.seal_at - now))}` : ""}</span></div>`).join("")}</section>` : "";
+    const world = this.ctx.state.systems.find((system) => system.id === mine.system);
+    const rows = keystoneFeed(season, (world?.stockpile ?? {}) as Partial<Record<Commodity, number>>).map(([good, need, paid, have]) => {
+      const units = Math.max(0, Math.min(need - paid, have));
+      return `<div class="m-order"><b>${esc(label(good))} · ${fmt(paid)} / ${fmt(need)}</b><span>${fmt(have)} here</span>`
+        + `<div class="m-chip-actions"><button type="button" class="m-primary" data-mobile-act="faction-feed" data-system="${esc(mine.system)}" data-commodity="${esc(good)}" data-units="${Math.floor(units)}" ${units >= 1 ? "" : "disabled"}>Feed ${fmt(units)}</button></div></div>`;
+    }).join("");
+    return `<section class="m-section"><h3>Keystone · ${esc(systemName(mine.system))} · level ${mine.level}/10</h3><p>${mine.powers ? "Network Sight · Instant Command · Gate Step · Precursor Fleet" : "Feeding it is war with the Authority."}</p>${clock}`
+      + `${mine.relics_needed ? `<p>Relics held ${mine.relics_held} / ${mine.relics_needed}</p>` : ""}${rows}</section>`;
+  }
+
+  /** §season: the grip in force, the levy and the Authority's demands. */
+  private gripHtml(charter: CharterView): string {
+    const season = this.ctx.state.season;
+    const sq = charter.squeeze;
+    const now = liveSimTime();
+    const grip = season?.grip ?? "charter";
+    const levy = charter.levy_frac ?? 0;
+    const pct = (f: number) => `${(f * 100).toFixed(f * 100 % 1 ? 1 : 0)}%`;
+    const rows: string[] = [];
+    if (sq?.rise) rows.push(`<div class="m-order"><b>Levy rise · +${pct(sq.rise.points)}</b><span>${esc(label(sq.rise.commodity))} · ${fmtBuildDur(Math.max(0, sq.rise.due - now))} to answer</span>`
+      + `<div class="m-chip-actions"><button type="button" class="m-primary" data-mobile-act="faction-levy" data-accept="1">Accept</button><button type="button" data-mobile-act="faction-levy" data-accept="0">Refuse</button></div></div>`);
+    for (const req of sq?.requisitions ?? []) rows.push(`<div class="m-order"><b>Requisition · ${esc(demandText(req.demand, label))}</b><span>${fmtBuildDur(Math.max(0, req.due - now))} left</span>`
+      + `<div class="m-chip-actions"><button type="button" class="m-primary" data-mobile-act="faction-requisition" data-id="${req.id}" data-pay="1">Pay</button><button type="button" data-mobile-act="faction-requisition" data-id="${req.id}" data-pay="0">Refuse</button></div></div>`);
+    for (const embargo of sq?.embargoes ?? []) rows.push(`<div class="m-order"><b>Embargo · ${esc(label(embargo.commodity))}</b><span>Arrears ${fmt(embargo.arrears)} Cr</span>`
+      + `<div class="m-chip-actions"><button type="button" class="m-primary" data-mobile-act="faction-arrears" data-commodity="${esc(embargo.commodity)}">Pay arrears</button></div></div>`);
+    if (season?.rebel_since != null) rows.unshift(`<div class="m-order"><b>At war with the Authority</b><span>No Hub · no Authority freight · bounties on your hulls</span></div>`);
+    else if (season?.war_at != null && season.war_at > now) rows.unshift(`<div class="m-order"><b>An Authority spy</b><span>War in ${fmtBuildDur(season.war_at - now)}</span></div>`);
+    for (const c of season?.crackdowns ?? []) {
+      const evidence = c.evidence_until > now && !c.exposed ? (c.read ? "evidence read" : `Scout within ${fmtBuildDur(c.evidence_until - now)}`) : "";
+      rows.push(`<div class="m-order"><b>${esc(crackdownTitle(c.kind))}${c.exposed ? " · exposed" : ""}</b><span>${[c.until > now && !c.exposed ? `${fmtBuildDur(c.until - now)} left` : "", evidence].filter(Boolean).join(" · ")}</span></div>`);
+    }
+    return `<section class="m-section"><h3>Grip ${gripNumeral(grip)} · ${esc(gripTitle(grip))}</h3><p>${esc(DECREE_TEXT[grip])}</p>`
+      + `<div class="m-stat-grid"><span><small>Levy</small><b>${levy > 0 ? pct(levy) : "None"}</b></span><span><small>Maturity</small><b>${season ? `${Math.round(season.maturity * 100)}%` : "—"}</b></span>`
+      + `<span><small>Resolve</small><b>${Math.round((sq?.resolve ?? 0) * 100)}% ${esc(RESOLVE_BAND[resolveBand(sq?.resolve ?? 0)])}</b></span><span><small>Refusals</small><b>${sq?.refusals ?? 0} / 3</b></span>`
+      + `<span><small>Levy paid</small><b>${fmt(sq?.levy_paid ?? 0)} Cr</b></span><span><small>War fleet</small><b>${season?.war_fleet ?? 0} hulls</b></span></div>${rows.join("")}</section>${this.keystoneHtml()}`;
   }
 
   private renderRankings(entry: SheetEntry): SheetView {
@@ -824,7 +1075,10 @@ export class MobileParitySurfaces {
     const category = RANK_CATS.find((candidate) => candidate.slug === this.rankingCategory) ?? RANK_CATS[0];
     const chips = RANK_CATS.map((candidate) => `<button type="button" data-mobile-act="ranking-category" data-category="${candidate.slug}" aria-selected="${candidate.slug === category.slug}">${candidate.label}</button>`).join("");
     const rows = [...this.ctx.state.rankings].sort((a, b) => category.value(b) - category.value(a)).map((row, index) => `<button type="button" class="m-ranking-row${row.player_id === this.ctx.state.playerId ? " is-me" : ""}" data-mobile-act="corp-card" data-id="${esc(String(row.player_id))}"><strong>${index + 1}</strong><span><b>${esc(row.name)}${medalChipsHtml(row)}</b><small>${row.titles.map(human).join(" · ") || (row.player_id === this.ctx.state.playerId ? "your corporation" : "")}</small></span><em>${esc(category.text(row))}</em></button>`).join("");
-    return { title: "Rankings", eyebrow: `Published ledger · ${category.label}`, html: `<div class="m-scroll-tabs m-scroll-tabs--compact">${chips}</div>${rows || `<div class="m-empty">No ledger has been published yet.</div>`}` };
+    // §syndicate-projects (R6): the syndicates' table below the corporations'.
+    const mine = this.ctx.state.syndicate?.id;
+    const syndicates = this.ctx.state.syndicateRankings.map((row, index) => `<div class="m-ranking-row${row.id === mine ? " is-me" : ""}"><strong>${index + 1}</strong><span><b>${esc(row.name)}${medalCountsHtml(row.medals)}</b><small>${row.members} members · ${row.week_points} pts this week</small></span><em>${fmt(row.valuation)} Cr</em></div>`).join("");
+    return { title: "Rankings", eyebrow: `Published ledger · ${category.label}`, html: `<div class="m-scroll-tabs m-scroll-tabs--compact">${chips}</div>${rows || `<div class="m-empty">No ledger has been published yet.</div>`}${syndicates ? `<section class="m-section"><h3>Syndicates</h3>${syndicates}</section>` : ""}` };
   }
 
   private renderSystem(entry: SheetEntry): SheetView {
@@ -873,6 +1127,7 @@ export class MobileParitySurfaces {
     return purposeHtml + `<div class="m-stat-grid"><span><small>Owner</small><b>${mine ? "Your corporation" : dynamic?.owner ? "Rival" : "Unclaimed"}</b></span><span><small>Worlds</small><b>${dynamic && dynamic.deposits == null && !mine ? "Uncharted" : dynamic?.bodies.length ?? 0}</b></span>${node}` +
       (mine ? `<span><small>Population</small><b>${fmtPopulation(dynamic?.population ?? 0)}</b></span><span><small>Storage</small><b>${fmt(dynamic?.storage_used ?? 0)}/${fmt(dynamic?.storage_cap ?? 0)}</b></span>` : "") + `</div>` +
       (mine ? `<section class="m-section"><h3>Development pools</h3><div class="m-ledger">${(["resource", "industrial", "infrastructure"] as Pool[]).map((pool) => `<span>${POOL_LABEL[pool]}<b>${pools[pool].used}/${pools[pool].total}</b></span>`).join("")}</div>${this.developmentPoolHelp()}</section>` : "") +
+      (mine ? this.streamHtml(systemId) : "") +
       `<section class="m-section"><h3>Fleets at ${esc(name)}</h3><div class="m-list">${fleetRows || `<div class="m-muted">No own fleets in the served picture.</div>`}</div></section>` +
       this.groundAction(systemId) +
       `<button type="button" class="m-wide-button" data-mobile-act="system-focus" data-id="${esc(systemId)}">Center on map</button>`;
@@ -899,14 +1154,15 @@ export class MobileParitySurfaces {
     const worlds = dynamic.bodies.map((body) => {
       const line = structureQueue(dynamic, body, catalog, now);
       const yard = dynamic.builds.filter((job) => job.body_id === body.id && !isStructureJob(job.key))
-        .map((job) => `<small>${esc(buildOption(job.key)?.label ?? human(job.key))} · ${yardStatus(job, now)}</small>`).join("");
-      return `<div class="m-service-row"><span><b>${esc(body.name)}</b><small>${esc(slotLine(line[0] ?? null, line.length - 1))}</small>${yard}</span><div><button type="button" data-mobile-act="open-build" data-system="${esc(systemId)}" data-body="${body.id}">Structures</button>${(body.structures.shipyard ?? 0) > 0 ? `<button type="button" data-mobile-act="open-shipyard" data-system="${esc(systemId)}" data-body="${body.id}">Ships</button>` : ""}</div></div>`;
+        .map((job) => `<button type="button" class="m-yard-line" data-mobile-act="open-yard" data-system="${esc(systemId)}" data-kind="${esc(job.key)}">${esc(buildOption(job.key)?.label ?? human(job.key))} · ${yardStatus(job, now)}</button>`).join("");
+      return `<div class="m-service-row"><span><b>${esc(body.name)}</b><small>${esc(slotLine(line[0] ?? null, line.filter((entry, index) => index > 0 && !entry.active).length))}</small>${yard}</span><div><button type="button" data-mobile-act="open-build" data-system="${esc(systemId)}" data-body="${body.id}">Structures</button>${(body.structures.shipyard ?? 0) > 0 ? `<button type="button" data-mobile-act="open-shipyard" data-system="${esc(systemId)}" data-body="${body.id}">Ships</button>` : ""}</div></div>`;
     }).join("");
     return `<section class="m-section m-section--first"><h3>Construction by world</h3>${worlds}</section>` +
       `<div class="m-action-grid"><button type="button" data-mobile-act="system-ship-production" data-id="${esc(systemId)}">Ship production to Hub</button><button type="button" data-mobile-act="open-logistics">Auto-supply rules</button></div>`;
   }
 
   private openPlanet(systemId: string, bodyId: number): void {
+    this.hooks.deselectFleets();
     this.ctx.renderer.pulseSystemBody(String(bodyId));
     this.planetTab = "economy";
     this.hooks.openSheet({ id: "planet", props: { systemId, bodyId, detail: this.ctx.renderer.systemBodyDetail(String(bodyId)) } });
@@ -930,7 +1186,7 @@ export class MobileParitySurfaces {
     const ground = this.groundAction(systemId);
     if (!mine) return { title: body.name, eyebrow: `${human(body.kind)} · observed world`, html: publicData + beltWork + ground };
     const active = this.planetTab === "economy" ? this.planetEconomy(systemId, dynamic, body) : this.planetTab === "population" ? this.planetPopulation(systemId, body) : this.planetInfrastructure(systemId, dynamic, body);
-    const camp = body.founding_camp ? `<section class="camp-summary"><b>Founding Camp · ${body.founding_camp.completed.length}/4 developments</b><p>Housing ${Math.round((body.population_capacity ?? .003) * 1e6).toLocaleString()} · System storage ${dynamic.storage_cap}</p><button type="button" data-settlement-open data-coach="settlement-projects" data-system="${esc(systemId)}" data-body="${body.id}">Settlement projects</button></section>` : "";
+    const camp = body.founding_camp && campOpen(this.ctx.state) ? `<section class="camp-summary"><b>Founding Camp · ${body.founding_camp.completed.length}/4 developments</b><p>Housing ${Math.round((body.population_capacity ?? .003) * 1e6).toLocaleString()} · System storage ${dynamic.storage_cap}</p><button type="button" data-settlement-open data-coach="settlement-projects" data-system="${esc(systemId)}" data-body="${body.id}">Settlement projects</button></section>` : "";
     // §power: this planet's grid.
     const grid = gridLine(body);
     const gridHtml = grid ? `<div class="m-grid-line${grid.short ? " is-short" : ""}" title="${esc(grid.tip)}">${esc(grid.text)}</div>` : "";
@@ -975,13 +1231,73 @@ export class MobileParitySurfaces {
     const currentCore = assignments.find(a => a.structure === "drive_works")?.refining_ore ?? "warp_core";
     const coreDraft = this.coreDraft?.system === systemId && this.coreDraft.body === body.id ? this.coreDraft : null;
     const product = cores.length ? `<section class="m-section"><h3>Drive Works product</h3><small>Current: ${human(currentCore)}</small><div class="m-chip-actions">${cores.map(r => `<button type="button" data-mobile-act="refining-core-select" data-system="${esc(systemId)}" data-body="${body.id}" data-product="${r.output}" aria-pressed="${(coreDraft?.product ?? currentCore) === r.output}">${human(r.output)}</button>`).join("")}</div>${coreDraft ? `<small>Takes effect after the order arrives.</small><div class="m-chip-actions"><button type="button" data-mobile-act="refining-core-confirm">Confirm product</button><button type="button" data-mobile-act="refining-cancel">Cancel</button></div>` : ""}</section>` : "";
-    return `<section class="m-section m-section--first"><h3>Built here</h3><div class="m-ledger">${built || `<span>Undeveloped</span>`}</div></section>${refining}${comparison}${product}<section class="m-section"><h3>Workforce assignments</h3>${rows + idle || `<div class="m-muted">No production structures.</div>`}</section>`;
+    return `<section class="m-section m-section--first"><h3>Built here</h3><div class="m-ledger">${built || `<span>Undeveloped</span>`}</div></section>${this.crownsHtml(systemId, body)}${refining}${comparison}${product}<section class="m-section"><h3>${body.belt ? "Production" : "Workforce assignments"}</h3>${rows + idle || `<div class="m-muted">No production structures.</div>`}</section>${(body.structures.academy ?? 0) > 0 ? this.coursesHtml(systemId, dynamic) : ""}`;
   }
 
   private assignmentRow(systemId: string, bodyId: number, structure: string, title: string, workers: number, specialists: Record<string, number>, outputs: [Commodity, number][], suspended: string | null, canAdd = true): string {
     const output = outputs.map(([commodity, rate]) => `+${rate.toFixed(2)} ${human(commodity)}/s`).join(" · ") || "idle";
+    // §asteroid-quarry: a quarry has no crew to post; it eats its upkeep.
+    if (!WORKFORCE_STRUCTURES.has(structure)) {
+      const tier = this.ctx.state.systems.find((candidate) => candidate.id === systemId)?.bodies.find((body) => body.id === bodyId)?.structures[structure] ?? 0;
+      const upkeep = (buildOption(structure)?.upkeep ?? []).map(([commodity, rate]) => `−${Number((rate * tier * 60).toFixed(2))} ${human(commodity)}`).join(" · ");
+      return `<div class="m-assignment"><span><b>${esc(title)}</b><small>${upkeep ? `${esc(upkeep)} / min` : "No crew"}${suspended ? ` · ${human(suspended)}` : ""}</small><em>${esc(output)}</em></span></div>`;
+    }
     const specialistsText = Object.entries(specialists).filter(([, n]) => n > 0).map(([kind, n]) => `${n} ${human(kind)}`).join(" · ");
-    return `<div class="m-assignment"><span><b>${esc(title)}</b><small>${workers} workforce${specialistsText ? ` · ${esc(specialistsText)}` : ""}${suspended ? ` · ${human(suspended)}` : ""}</small><em>${esc(output)}</em></span><div><button type="button" data-mobile-act="worker-set" data-system="${esc(systemId)}" data-body="${bodyId}" data-structure="${esc(structure)}" data-workers="${Math.max(0, workers - 1)}" ${workers <= 0 ? "disabled" : ""}>−</button><button type="button" data-mobile-act="worker-set" data-system="${esc(systemId)}" data-body="${bodyId}" data-structure="${esc(structure)}" data-workers="${workers + 1}" ${canAdd ? "" : "disabled"}>+</button></div></div>`;
+    return `<div class="m-assignment"><span><b>${esc(title)}</b><small>${workers} workforce${specialistsText ? ` · ${esc(specialistsText)}` : ""}${suspended ? ` · ${human(suspended)}` : ""}</small><em>${esc(output)}</em></span><div><button type="button" data-mobile-act="worker-set" data-system="${esc(systemId)}" data-body="${bodyId}" data-structure="${esc(structure)}" data-workers="${Math.max(0, workers - 1)}" ${workers <= 0 ? "disabled" : ""}>−</button><button type="button" data-mobile-act="worker-set" data-system="${esc(systemId)}" data-body="${bodyId}" data-structure="${esc(structure)}" data-workers="${workers + 1}" ${canAdd ? "" : "disabled"}>+</button></div></div>${this.specialistChips(systemId, bodyId, structure, specialists)}`;
+  }
+
+  /** §research-wiring Talent: one chip per profession the system holds, to
+   * post (+) or recall (−) one on this line (★ where its skill serves it). */
+  private specialistChips(systemId: string, bodyId: number, structure: string, posted: Record<string, number>): string {
+    const dynamic = this.ctx.state.systems.find((candidate) => candidate.id === systemId);
+    if (!dynamic) return "";
+    const kinds = [...new Set([...Object.keys(dynamic.specialists ?? {}).filter(kind => (dynamic.specialists[kind] ?? 0) > 0), ...Object.keys(posted)])];
+    if (!kinds.length) return "";
+    return `<div class="m-chip-actions">${kinds.map(kind => {
+      const n = posted[kind] ?? 0;
+      const free = freeSpecialists(dynamic, kind, bodyId, structure);
+      const name = `${human(kind)}${specialistAffine(kind, structure) ? " ★" : ""}`;
+      return `<button type="button" data-mobile-act="specialist-set" data-system="${esc(systemId)}" data-body="${bodyId}" data-structure="${esc(structure)}" data-kind="${esc(kind)}" data-n="${n - 1}" ${n <= 0 ? "disabled" : ""}>− ${esc(name)} ${n}</button><button type="button" data-mobile-act="specialist-set" data-system="${esc(systemId)}" data-body="${bodyId}" data-structure="${esc(structure)}" data-kind="${esc(kind)}" data-n="${n + 1}" ${n >= free ? "disabled" : ""}>+</button>`;
+    }).join("")}</div>`;
+  }
+
+  private setSpecialist(button: HTMLElement): void {
+    const system = button.dataset.system;
+    const body = Number(button.dataset.body);
+    const structure = button.dataset.structure;
+    const kind = button.dataset.kind;
+    const dynamic = system ? this.ctx.state.systems.find((candidate) => candidate.id === system) : undefined;
+    const line = dynamic?.assignments.find((candidate) => candidate.body_id === body && candidate.structure === structure);
+    if (!system || !structure || !kind || !line || !Number.isFinite(body)) return;
+    const specialists = { ...line.specialists, [kind]: Math.max(0, Number(button.dataset.n) || 0) };
+    if (!specialists[kind]) delete specialists[kind];
+    this.ctx.send({ type: "SetAssignment", system_id: system, structure, workers: line.workers, specialists, body_id: body });
+  }
+
+  /** §research-wiring Talent: the Academy's courses, and raising experts. */
+  private coursesHtml(systemId: string, dynamic: SystemStateView): string {
+    const expert = researched("life_talent_iii_expert_training");
+    const slots = researched("life_talent_iv_broad_curricula") ? 2 : 1;
+    const train = SPECIALIST_KINDS.map(kind => `<button type="button" data-mobile-act="train" data-system="${esc(systemId)}" data-kind="${kind}">${esc(human(kind))}</button>`).join("");
+    const raise = expert ? SPECIALIST_KINDS.filter(kind => (dynamic.specialists?.[kind] ?? 0) > 0)
+      .map(kind => `<button type="button" data-mobile-act="train" data-system="${esc(systemId)}" data-kind="expert_${kind}">${esc(human(`expert_${kind}`))}</button>`).join("") : "";
+    const courses = dynamic.builds.filter(job => SPECIALIST_KINDS.some(kind => job.key === kind || job.key === `expert_${kind}`))
+      .map(job => `<div class="m-order"><span><b>${esc(human(job.key))}</b></span><span>${job.queued ? "waiting" : yardStatus(job, liveSimTime())}</span></div>`).join("");
+    return `<section class="m-section"><h3>Academy courses · ${slots} at a time</h3><small>${COURSE.base.costs} · ${COURSE.base.seconds} s · housed ${dynamic.specialist_housing ?? 0}</small><div class="m-chip-actions">${train}</div>${raise ? `<small>Raise to expert · ${COURSE.expert.costs}</small><div class="m-chip-actions">${raise}</div>` : ""}${courses}</section>`;
+  }
+
+  /** §designations: Crown Vein / Crown Project on this world. */
+  private crownsHtml(systemId: string, body: BodyView): string {
+    if (body.belt) return "";
+    const crowns = ([["crown_vein", "Crown Vein", "mat_deepcrust_v_crown_vein"], ["crown_project", "Crown Project", "mat_foundry_v_crown_project"]] as const)
+      .filter(([, , programme]) => researched(programme));
+    if (!crowns.length) return "";
+    return `<section class="m-section"><h3>Crowns</h3><div class="m-chip-actions">${crowns.map(([cap, title]) => {
+      const current = this.ctx.state.research?.designations?.find(d => d.cap === cap);
+      const here = !!current?.live && "body" in current.target && current.target.body.system === systemId && current.target.body.body === body.id;
+      const locked = (current?.locked_until ?? 0) > liveSimTime();
+      return here ? `<span>♛ ${esc(title)}</span>` : `<button type="button" data-mobile-act="crown" data-system="${esc(systemId)}" data-body="${body.id}" data-cap="${cap}" ${locked ? "disabled" : ""}>♛ ${esc(title)}</button>`;
+    }).join("")}</div></section>`;
   }
 
   private planetPopulation(systemId: string, body: BodyView): string {
@@ -1000,11 +1316,11 @@ export class MobileParitySurfaces {
     // §construction: this world's work slot in order; only the order building
     // now has a bar and a time. Hulls and modules follow on their yards.
     const queue = line.map((job) => job.position === 1
-      ? `<div class="m-order m-order--head"><span><b>${esc(jobTitle(job))}</b>${job.active && job.progress !== null ? `<div class="m-progress"><i style="width:${job.progress.toFixed(1)}%"></i></div>` : ""}</span><span>${!job.active ? "Starting…" : job.readyIn === null ? "—" : job.readyIn <= 0.5 ? "completing" : fmtBuildDur(job.readyIn)}</span>${this.cancelControl(systemId, job)}</div>`
+      ? `<div class="m-order m-order--head"><span><b>${esc(jobTitle(job))}</b>${job.active && job.progress !== null ? `<div class="m-progress"${liveProgressAttr(job.line)}><i style="width:${job.progress.toFixed(1)}%"></i></div>` : ""}</span><span>${!job.active ? "Starting…" : job.readyIn === null ? "—" : job.readyIn <= 0.5 ? "completing" : fmtBuildDur(job.readyIn)}</span>${this.cancelControl(systemId, job)}</div>`
       : `<div class="m-order"><span><b>#${job.position} ${esc(jobTitle(job))}</b></span><span>${job.startsIn === null ? "after the jobs ahead" : job.startsIn > 0.5 ? `starts in ${fmtBuildDur(job.startsIn)}` : "starts next"}</span>${this.cancelControl(systemId, job)}</div>`).join("")
       + dynamic.builds.filter((job) => job.body_id === body.id && !isStructureJob(job.key))
-        .map((job) => `<div class="m-order"><span><b>${esc(buildOption(job.key)?.label ?? human(job.key))}</b></span><span>${yardStatus(job, now)}</span></div>`).join("");
-    const modules = (body.structures.armaments_complex ?? 0) > 0 || (body.structures.shipyard ?? 0) > 0 ? `<section class="m-section"><h3>Equipment</h3>${MODULES.map((module) => {
+        .map((job) => `<button type="button" class="m-order m-order--hull" data-mobile-act="open-yard" data-system="${esc(systemId)}" data-kind="${esc(job.key)}"><span><b>${esc(buildOption(job.key)?.label ?? human(job.key))}</b></span><span>${yardStatus(job, now)}</span></button>`).join("");
+    const modules = (body.structures.armaments_complex ?? 0) > 0 || (body.structures.shipyard ?? 0) > 0 ? `<section class="m-section"><h3>Equipment</h3>${MODULES.filter((module) => moduleResearched(module.kind)).map((module) => {
       const recipe = buildOption(`module:${module.kind}`);
       const reason = moduleBuildReason(dynamic, module.kind);
       return `<div class="m-service-row"><span><b>${module.name}</b><small>${esc(module.role)}</small><small>Stock ${dynamic.modules?.[module.kind] ?? 0} · ${recipe?.costs.map((cost) => `${cost.units} ${human(cost.commodity)}`).join(" + ") ?? "recipe unavailable"}${reason ? ` · ${reason}` : ""}</small></span><button type="button" data-mobile-act="module-build" data-system="${esc(systemId)}" data-module="${module.kind}" ${reason ? "disabled" : ""}>Build</button></div>`;
@@ -1012,6 +1328,19 @@ export class MobileParitySurfaces {
     return `<section class="m-section m-section--first"><h3>Body slot pools</h3><div class="m-ledger">${(["resource", "industrial", "infrastructure"] as Pool[]).map((pool) => `<span>${POOL_LABEL[pool]}<b>${pools[pool].used}/${pools[pool].total}</b></span>`).join("")}</div>${this.developmentPoolHelp()}</section>` +
       `<div class="m-action-grid"><button type="button" class="m-primary" data-mobile-act="open-build" data-system="${esc(systemId)}" data-body="${body.id}">Build structure</button>${(body.structures.shipyard ?? 0) > 0 ? `<button type="button" data-mobile-act="open-shipyard" data-system="${esc(systemId)}" data-body="${body.id}">Build ship</button>` : ""}</div>` +
       `<section class="m-section"><h3>Construction</h3>${queue || `<div class="m-muted">Build slot free</div>`}</section>${modules}`;
+  }
+
+  /** §designations Mass Streams: the stream through this system, or where it could run. */
+  private streamHtml(systemId: string): string {
+    if (!researched("prop_line_mass_streams")) return "";
+    const current = this.ctx.state.research?.designations?.find(d => d.cap === "mass_streams");
+    const pair = current && "system_pair" in current.target ? current.target.system_pair : null;
+    const locked = (current?.locked_until ?? 0) > liveSimTime();
+    const status = pair ? `<p>${esc(systemName(pair[0]))} ⇄ ${esc(systemName(pair[1]))}${current?.live ? "" : " · broken"}</p>` : "";
+    const options = pair?.includes(systemId) || locked ? "" : this.ctx.state.systems
+      .filter(s => s.owner === this.ctx.state.playerId && s.id !== systemId)
+      .map(s => `<button type="button" data-mobile-act="stream" data-system="${esc(systemId)}" data-to="${esc(s.id)}">⇄ ${esc(systemName(s.id))}</button>`).join("");
+    return `<section class="m-section"><h3>Mass Stream</h3>${status}${options ? `<div class="m-chip-actions">${options}</div>` : ""}</section>`;
   }
 
   private developmentPoolHelp(): string {
@@ -1042,7 +1371,8 @@ export class MobileParitySurfaces {
     if (!systemId || !dynamic || !body) return { title: "Build", eyebrow: "Structure construction", html: `<div class="m-empty">Build context is unavailable.</div>` };
     const pools = bodyPoolUsage(body, dynamic);
     const options = (this.ctx.state.galaxy?.build_options ?? []).filter((candidate) => !SHIP_KEYS.has(candidate.key)
-      && !candidate.key.startsWith("module:") && !!POOL_OF[candidate.key] && structureResearched(candidate)) as BuildOpt[];
+      && !candidate.key.startsWith("module:") && !!POOL_OF[candidate.key] && structureUnlocked(candidate)
+      && !structOption(candidate as BuildOpt, dynamic, body, pools).capped) as BuildOpt[];
     if (this.selectedBuild && !options.some((candidate) => candidate.key === this.selectedBuild)) this.selectedBuild = "";
     const rows = options.map((candidate) => {
       const state = structOption(candidate, dynamic, body, pools);
@@ -1059,7 +1389,7 @@ export class MobileParitySurfaces {
     if (state.maxed) return `<article class="m-build-detail"><header>${structureImage(build.key, state.targetTier, "md", undefined, "m-structure-icon")}<span><small>Maximum level built or queued</small><h3>${esc(build.label)}</h3></span></header><p>${esc(build.description ?? "")}</p><div class="m-warning">${esc(state.reason)}</div></article>`;
     const attachment = build.key === "service_berth";
     const heading = attachment ? "Warehouse attachment" : `${POOL_LABEL[state.pool]} · ${state.tierUp ? `upgrade to Tier ${state.targetTier}` : "new structure"}`;
-    const slot = build.key === "command_center" ? " Dedicated civic footprint; no extra slot." : build.key === "power_plant" ? " Own slot; one per planet." : attachment ? " Attached to Warehouse; no extra slot." : state.foundsNew ? ` Claims one ${POOL_LABEL[state.pool].toLowerCase()} slot.` : " Deepens in place without another slot.";
+    const slot = build.key === "command_center" ? " Dedicated civic footprint; no extra slot." : build.key === "power_plant" ? " Own slot; one per planet." : build.key === "vault" ? " Under the Command Center; no slot." : build.key === "assembly_hall" ? " At the Command Center; no slot." : attachment ? " Attached to Warehouse; no extra slot." : state.foundsNew ? ` Claims one ${POOL_LABEL[state.pool].toLowerCase()} slot.` : " Deepens in place without another slot.";
     const supply = constructionStock(dynamic).available;
     const costs = build.costs.map((cost) => `<div class="m-order"><b>${human(cost.commodity)}</b><span>need ${cost.units} · have ${fmt(supply.get(cost.commodity as Commodity) ?? 0)}</span></div>`).join("");
     // §construction: an order already on this world holds the button's spot,
@@ -1106,7 +1436,45 @@ export class MobileParitySurfaces {
     }).join("");
     const selected = options.find((candidate) => candidate.key === this.selectedHull);
     const detail = selected ? this.shipDetail(systemId, dynamic, body, selected) : `<div class="m-empty">Choose a hull to inspect its recipe, fitting and batch controls.</div>`;
-    return { title: `Shipyard · ${body.name}`, eyebrow: "Hull construction · local supply", html: `<div class="m-build-list">${rows}</div>${detail}` };
+    const inYard = yardJobs(dynamic, liveSimTime());
+    const peek = inYard.length ? `<button type="button" class="m-yard-peek" data-mobile-act="open-yard" data-system="${esc(systemId)}"><b>In the yard</b><span>${inYard.slice(0, 2).map((job) => esc(`${job.title} ${job.progress !== null ? `${Math.round(job.progress * 100)}%` : job.status}`)).join(" · ")}${inYard.length > 2 ? ` · +${inYard.length - 2}` : ""}</span></button>` : "";
+    return { title: `Shipyard · ${body.name}`, eyebrow: "Hull construction · local supply", html: `${peek}<div class="m-build-list">${rows}</div>${detail}` };
+  }
+
+  /** §shipyard-view: a hull under construction in its yard's interior, as
+   * the Deck's Shipyard pop-out shows it. */
+  private renderYard(entry: SheetEntry): SheetView {
+    const { systemId = "", kind, sent } = propsOf<{ systemId: string; kind?: string; sent?: number }>(entry);
+    const dynamic = this.ctx.state.systems.find((system) => system.id === systemId);
+    const now = liveSimTime();
+    const jobs = yardJobs(dynamic, now);
+    const ordered = kind && HULL_YARD[kind as ShipKind] ? kind as ShipKind : null;
+    // As the Deck's pop-out: the hull it opened on keeps the bay unless a tab
+    // is picked; an order on its way shows as a blueprint; seen building and
+    // then gone, it launched.
+    const picked = jobs.find((entry) => entry.key === this.yardPicked) ?? null;
+    const watch = ordered ? `${systemId}|${ordered}|${sent ?? ""}` : null;
+    const inYard = jobs.some((entry) => entry.kind === ordered);
+    if (watch && inYard) this.yardSeen.add(watch);
+    const pos = this.ctx.state.galaxy?.systems.find((system) => system.id === systemId)?.pos;
+    const fallback = !picked && watch && !inYard ? yardFallback(this.yardSeen.has(watch), sent ?? null, pos ? commandDelayTo(pos) ?? 0 : 0, now) : null;
+    const job = picked ?? (fallback ? null : pickYardJob(jobs, null, ordered));
+    const yardBody = dynamic?.bodies.find((body) => (body.structures.shipyard ?? 0) > 0);
+    const build = yardBody ? `<div class="m-action-grid"><button type="button" data-mobile-act="open-shipyard" data-system="${esc(systemId)}" data-body="${yardBody.id}">Build ships</button></div>` : "";
+    if (!job && !fallback) return { title: "Shipyard", eyebrow: systemName(systemId), html: `<div class="m-empty">No hulls in the yard.</div>${build}` };
+    const hull = job?.kind ?? ordered!;
+    const progress = job ? job.progress : fallback?.state === "launched" ? 1 : null;
+    const tab = (entry: YardJob) => `<button type="button" data-mobile-act="yard-pick" data-job="${esc(entry.key)}" aria-pressed="${entry === job}"><b>${esc(entry.title)}</b><small>${esc(entry.progress !== null ? `${Math.round(entry.progress * 100)}%` : entry.status)}</small></button>`;
+    const tabs = jobs.length > 1 ? `<div class="m-yard-tabs">${jobs.map(tab).join("")}</div>` : "";
+    const bar = job?.progress == null ? "" : `<div class="m-progress"${liveProgressAttr(job.line)}><i style="width:${(job.progress * 100).toFixed(1)}%"></i></div>`;
+    const yard = job?.yard ?? HULL_YARD[hull] ?? "shipyard";
+    const view = `<ship-construction-view id="m-yard-view" kind="${esc(hull)}" yard="${yard}"${progress === null ? "" : ` progress="${progress.toFixed(4)}"`}></ship-construction-view>`;
+    const note = fallback?.state === "silent"
+      ? `<small class="is-warn">No report yet · it may have been refused</small>`
+      : `<small>${esc(job?.where ?? YARD_TITLE[yard] ?? "Shipyard")}</small>`;
+    const status = job ? job.status : fallback?.state === "launched" ? "Launched" : fallback?.state === "sending" ? SENDING : "";
+    const info = `<div class="m-yard-info"><span><b>${esc(job?.title ?? shipKindLabel(hull))}</b>${note}</span><em>${esc(status)}</em></div>`;
+    return { title: "Shipyard", eyebrow: systemName(systemId), html: `${tabs}${view}${info}${bar}${hullStatsHtml(hull)}${build}` };
   }
 
   private shipDetail(systemId: string, dynamic: SystemStateView, body: BodyView, build: BuildOpt): string {
@@ -1120,7 +1488,7 @@ export class MobileParitySurfaces {
     const costs = build.costs.map((cost) => `<div class="m-order"><b>${human(cost.commodity)}</b><span>${cost.units} each · have ${fmt(supply.get(cost.commodity as Commodity) ?? 0)}</span></div>`).join("");
     const modules = slots ? MODULES.filter((module) => (ledger[module.kind] ?? 0) > 0 && moduleFitsHull(module.kind, hull)).map((module) => `<button type="button" data-mobile-act="ship-fit" data-module="${module.kind}" aria-pressed="${this.pendingFit.includes(module.kind)}">${esc(module.name)} · ${ledger[module.kind]}</button>`).join("") : "";
     const fits = (this.ctx.state.syndicate?.fits ?? []).filter((fit) => fit.kind === hull).map((fit) => `<span class="m-saved-fit"><button type="button" data-mobile-act="ship-fit-pick" data-name="${esc(fit.name)}">${esc(fit.name)}</button><button type="button" data-mobile-act="ship-fit-delete" data-name="${esc(fit.name)}">×</button></span>`).join("");
-    return `<article id="m-ship-detail" class="m-build-detail"><small>${human(SHIP_YARD[hull]?.yard ?? "shipyard")} · ${slots} module slots · ${FITTING_POINTS[hull] ?? 0} fit points</small><h3>${esc(build.label)}</h3><ship-model-preview kind="${hull}"></ship-model-preview>${costs}` +
+    return `<article id="m-ship-detail" class="m-build-detail"><small>${human(SHIP_YARD[hull]?.yard ?? "shipyard")} · ${slots} module slots · ${FITTING_POINTS[hull] ?? 0} fit points</small><h3>${esc(build.label)}</h3><ship-model-preview kind="${hull}"></ship-model-preview>${hullStatsHtml(hull)}${costs}` +
       `<label>Quantity<input id="m-ship-qty" type="number" min="1" max="${Math.max(1, state.maxAff)}" inputmode="numeric" value="1"></label>` +
       (slots ? `<section class="m-section"><h3>Fit next build</h3><div class="m-chip-actions">${modules || `<span class="m-muted">No modules in this system ledger.</span>`}</div>${!fitOkay ? `<div class="m-warning">This fit exceeds the hull budget.</div>` : ""}</section>` : "") +
       (this.ctx.state.syndicate ? `<section class="m-section"><h3>Syndicate fits</h3><div class="m-saved-fits">${fits || `<span class="m-muted">No saved fits for this hull.</span>`}</div><div class="m-inline-form"><input id="m-fit-name" maxlength="24" placeholder="Fit name"><button type="button" data-mobile-act="ship-fit-save" ${effectiveFit.length && fitOkay ? "" : "disabled"}>Save fit</button></div></section>` : "") +
@@ -1147,6 +1515,9 @@ export class MobileParitySurfaces {
     if (!state.buildable || quantity < 1 || (fit.length > 0 && !fitLegal(this.selectedHull, fit))) return;
     for (let i = 0; i < quantity; i++) this.ctx.send({ type: "BuildShip", system_id: system, ship_kind: this.selectedHull, loadout: fit.length ? fit : undefined });
     this.hooks.notice(`${quantity}× ${shipKindLabel(this.selectedHull)} queued.`);
+    // §shipyard-view: the hull on order appears in its yard at once.
+    this.yardPicked = null;
+    this.hooks.openSheet({ id: "yard", props: { systemId: system, kind: this.selectedHull, sent: liveSimTime() } });
   }
 
   private buildContext(entry: SheetEntry): { systemId?: string; bodyId?: number; dynamic?: SystemStateView; body?: BodyView } {
@@ -1227,11 +1598,13 @@ export class MobileParitySurfaces {
       case "operations":
         return sheetFingerprint([clock, this.operationTab, this.handoffContract, state.midgameStage, state.operations, state.board, state.explorationSites, state.explorationJournal, state.selectedExplorationSiteId, state.ghosts.filter((fleet) => fleet.own), state.founding, state.systems, state.research, state.charterLedger, state.syndicateInvites]);
       case "syndicate":
-        return sheetFingerprint([clock, state.syndicate, state.syndicateInvites, state.diplomacy, state.systems, state.ghosts.filter((fleet) => fleet.own)]);
+        return sheetFingerprint([clock, state.syndicate, state.syndicateInvites, state.diplomacy, state.systems, state.ghosts.filter((fleet) => fleet.own), state.social?.members, state.social?.invites]);
+      case "comms":
+        return sheetFingerprint([state.social, state.syndicate, this.commsTab, this.commsMail, this.commsCompose, state.rankings.length]);
       case "faction":
         return sheetFingerprint([clock, state.charter, state.charterLadder]);
       case "rankings":
-        return sheetFingerprint([clock, this.rankingCategory, state.rankings, state.playerId, props]);
+        return sheetFingerprint([clock, this.rankingCategory, state.rankings, state.syndicateRankings, state.syndicate?.id, state.playerId, props]);
       case "logistics":
         return sheetFingerprint([clock, state.standingOrders, state.systems, state.ghosts.filter(g => g.own), state.research, industryUiSignature(state), industryServedSignature(state)]);
       case "doctrine":
@@ -1264,6 +1637,10 @@ export class MobileParitySurfaces {
           state.research?.programmes.map((p) => [p.id, p.state]),
           state.systems.find((system) => system.id === systemId), state.syndicate?.fits,
         ]);
+      }
+      case "yard": {
+        const { systemId } = propsOf<{ systemId: string }>(entry);
+        return sheetFingerprint([clock, props, this.yardPicked, state.systems.find((system) => system.id === systemId)?.builds]);
       }
       case "hub":
         return sheetFingerprint([clock, state.ghosts.filter((fleet) => fleet.own && fleet.docked === "hub")]);

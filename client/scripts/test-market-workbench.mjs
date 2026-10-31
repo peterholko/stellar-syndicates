@@ -76,6 +76,8 @@ deps["../../hub-model.generated"] = compile("hub-model.generated.ts");
 deps["./equipment"] = deps["../../core/derive/equipment"] = compile("core/derive/equipment.ts");
 deps["../core/derive/format"] = deps["../../core/derive/format"] = compile("core/derive/format.ts");
 deps["../../core/derive/geo"] = { systemName: () => "Freya" };
+deps["./format"] = deps["../core/derive/format"];
+deps["../../core/derive/season"] = compile("core/derive/season.ts");
 const market = deps["../../core/derive/market"] = compile("core/derive/market.ts");
 deps["../transactions"] = compile("shell/transactions.ts");
 deps["../signature"] = { sheetFingerprint: JSON.stringify };
@@ -117,6 +119,9 @@ assert.equal(sent.at(-1).commodity, "metallic_ore");
 assert.equal(market.marketReservations.length, 1, "dispatch remains incoming, not an immediate execution");
 assert.equal(market.recentMarketOrders.length, 0);
 assert.match(root.innerHTML, /sent · awaiting Market Hub/);
+// §treasury: a buy pays as it leaves; nothing is "reserved" against the credits.
+assert.match(root.innerHTML, /order sent · [\d,.]+ Cr paid\./);
+assert.doesNotMatch(root.innerHTML, /Reserved in flight|Spendable credits/);
 assert.doesNotMatch(root.innerHTML, /data-market-input="trade-limit"/, "the inactive limit-price field does not crowd the ticket");
 controller.handleInput(new Input({ marketInput: "trade-limit-on" }, "", true), route);
 assert.match(root.innerHTML, /data-market-input="trade-limit"/);
@@ -157,8 +162,7 @@ for (const pendingWallet of [null, { ...arrivedWallet, report_pending: true }]) 
   click("market-tab", { tab: "warehouse" });
   assert.match(root.innerHTML, /Docked fleets/);
   assert.match(root.innerHTML, /data-deck-act="market-hub-unload"/);
-  assert.match(root.innerHTML, /deck-market-hub"><img src="\/art\/derived\/hub-model\/v1\/authority-nexus-hero-512\.webp\?v=[0-9a-f]{12}"/,
-    "the station panel shows the Authority Nexus baked from its model");
+  assert.doesNotMatch(root.innerHTML, /deck-market-hub|Authority market station/, "the arrival picture beside the Market shows the hub, not a second hero");
   assert.doesNotMatch(root.innerHTML, /<b>empty<\/b>|Alloys<\/small><b>\d+/, "unknown warehouse is not empty or current truth");
   click("freight-submit");
   click("market-tab", { tab: "specialists" });
@@ -186,17 +190,22 @@ assert.doesNotMatch(root.innerHTML, /Account report pending|data-deck-act="marke
 assert.match(root.innerHTML, /data-market-input="trade-quantity"[^>]+value="12"/);
 marketDocument.activeElement = null;
 const css = src("styles/deck.css");
-assert.match(css, /\.deck-build-workbench, \.deck-workspace:is\(\[data-route="market"\], \[data-route="logistics"\], \[data-route="merchant"\]\).*var\(--deck-build-workbench-max\)/,
-  "Market, the merchant and Build share the same floating size rule");
-assert.match(css, /\.deck-workspace\[data-route="logistics"\] \{ width: min\(var\(--deck-workspace-wide\)/,
-  "Logistics floats in the same frame, wider for its route planner");
-assert.match(src("shell/deck/workspace.ts"), /POPOUTS: ReadonlySet<DeckRoute\["name"\]> = new Set\(\["market", "logistics", "merchant"\]\)/,
+assert.match(css, /\.deck-build-workbench, \.deck-workspace:is\(\[data-route="market"\], \[data-route="logistics"\], \[data-route="merchant"\], \[data-route="signals"\], \[data-route="shipyard"\]\).*var\(--deck-build-workbench-max\)/,
+  "Market, the merchant, the Shipyard and Build share the same floating size rule (Stores is a workbench, so it rides the first selector)");
+assert.match(css, /\.deck-workspace:is\(\[data-route="logistics"\], \[data-route="signals"\]\) \{ width: min\(var\(--deck-workspace-wide\)/,
+  "Logistics (and Signals) float in the same frame, wider for the route planner");
+assert.match(src("shell/deck/workspace.ts"), /POPOUTS: ReadonlySet<DeckRoute\["name"\]> = new Set\(\["market", "logistics", "merchant", "signals", "shipyard"\]\)/,
   "pop-out routes never reserve a right rail from the map camera");
 const deckMarkup = src("shell/deck/markup.ts");
+assert.match(deckMarkup, /<aside id="deck-workspace"[^>]*>\n\s*<div class="deck-workspace__scene" aria-hidden="true"><img src="\/art\/derived\/hub-visit\/hub-visit-v1\.webp"/,
+  "the Market's arrival picture rides the workspace, outside its scrolling body");
+assert.match(css, /@media \(min-width: 1280px\) \{\n\s*\.deck-workspace\[data-route="market"\] \{ --deck-hub-scene-width: 320px; width: min\(calc\(var\(--deck-build-workbench-max\) \+ var\(--deck-hub-scene-width\)\)/,
+  "the panel widens by the column, which shows only while the Market keeps its own width");
+assert.match(css, /\.deck-workspace__scene \{ display: none; \}/, "no other route shows the picture");
 assert.match(deckMarkup, /navButton\("fleets", "Fleets"\)\}\n\s*\$\{navButton\("logistics", "Logistics"\)\}/, "Logistics sits beside Fleets in the top bar");
 assert.match(deckMarkup, /<kbd>M V T R P<\/kbd><span>Market · Fleets · Logistics · Research · Officers<\/span>/, "the shortcut is listed");
 assert.match(src("shell/deck/index.ts"), /t: "logistics"/, "T opens Logistics");
-assert.match(deckMarkup, /const NAV_FOLD_ORDER = \["faction", "syndicate", "operations", "officers", "log", "research"\]/,
+assert.match(deckMarkup, /const NAV_FOLD_ORDER = \["faction", "comms", "syndicate", "operations", "officers", "log", "research"\]/,
   "the top bar folds its least-used destinations into More instead of clipping them");
 console.log("PASS: centered Market layout, tabs, incoming trades, pending-account isolation, action guards and automatic report arrival while editing.");
 

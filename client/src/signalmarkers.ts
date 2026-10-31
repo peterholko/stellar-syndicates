@@ -1,7 +1,8 @@
 import { Container, Graphics, Text } from "pixi.js";
 import type { SignalsView, Vec2 } from "./protocol";
 import { CONTACT_LABEL_ZOOM, contactBadgePx, hitMarker, type MarkerHit } from "./core/derive/map-markers";
-import { SIGNAL_INFO } from "./core/derive/signals";
+import { signalInfo } from "./core/derive/signals";
+import type { Trader } from "./core/derive/trader";
 
 const ROUTINE = 0x8fd3ff;
 const HAZARD = 0xffb454;
@@ -16,7 +17,7 @@ export class SignalMarkerLayer {
   private hits: MarkerHit[] = [];
   constructor() { this.root.addChild(this.gfx); }
 
-  draw(view: SignalsView | null, project: (pos: Vec2) => Vec2, zoom = 1): void {
+  draw(view: SignalsView | null, project: (pos: Vec2) => Vec2, zoom = 1, trader?: Trader): void {
     const open = view?.signals.filter((s) => !s.report) ?? [];
     const ids = new Set(open.map((s) => s.id));
     for (const [id, text] of this.labels) if (!ids.has(id)) { text.destroy(); this.labels.delete(id); }
@@ -36,7 +37,7 @@ export class SignalMarkerLayer {
         this.root.addChild(text);
         this.labels.set(signal.id, text);
       }
-      text.text = SIGNAL_INFO[signal.kind].name;
+      text.text = signalInfo(signal.kind, trader).name;
       text.position.set(p.x, p.y + r + 3);
       text.visible = zoom >= CONTACT_LABEL_ZOOM;
       this.hits.push({ id: signal.id, x: p.x - r, y: p.y - r, w: 2 * r, h: 2 * r });

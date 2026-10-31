@@ -1,0 +1,690 @@
+{
+  "date": "2026-10-22",
+  "nativeMasters": 20,
+  "derivativePngs": 52,
+  "passed": true,
+  "checks": [
+    {
+      "id": "tactical-datacore",
+      "size": 64,
+      "solidBounds": [
+        7,
+        14,
+        57,
+        51
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "243d24d9fe176bee656e1d30ec249434c9eedc29ad3d727577d18f3193f6243f"
+    },
+    {
+      "id": "tactical-datacore",
+      "size": 128,
+      "solidBounds": [
+        14,
+        27,
+        114,
+        101
+      ],
+      "centerAlpha": 252,
+      "visibleGreenPixels": 0,
+      "sha256": "590bd0cef0760e3fb24125714b769d07c62c937d281e6abdd17e13befe620419"
+    },
+    {
+      "id": "tactical-datacore",
+      "size": 256,
+      "solidBounds": [
+        29,
+        54,
+        227,
+        201
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "908b6c068b2e6e93673f6096c183a1b5988cb3ca7871f2c37ef4854bc9f89ad8"
+    },
+    {
+      "id": "admirals-datacore",
+      "size": 64,
+      "solidBounds": [
+        7,
+        15,
+        57,
+        50
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "6640565ca1075c19566027b5b533da0124bc5d6ba07515f7d0a25b872fa0c6e3"
+    },
+    {
+      "id": "admirals-datacore",
+      "size": 128,
+      "solidBounds": [
+        14,
+        29,
+        114,
+        99
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "71888efa2b8127b68c3ce0fea1dfb9635b1248ecc604c78b4838638353493030"
+    },
+    {
+      "id": "admirals-datacore",
+      "size": 256,
+      "solidBounds": [
+        29,
+        59,
+        227,
+        197
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "e7f4f4ad31a31e7580b223a6c0a21f6743e3a966942acf8af54caff9d55f9a5d"
+    },
+    {
+      "id": "astrogation-suite",
+      "size": 64,
+      "solidBounds": [
+        7,
+        13,
+        57,
+        52
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "dc7c0b00594fdd66ec0b8a65edac4eb4eaa6daec9c0c8388f871c7ea8ce12984"
+    },
+    {
+      "id": "astrogation-suite",
+      "size": 128,
+      "solidBounds": [
+        14,
+        25,
+        114,
+        103
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "40e99a15a24e440db45e586633ffab99b9ca1db1f0f09dafffce1ad7c6679961"
+    },
+    {
+      "id": "astrogation-suite",
+      "size": 256,
+      "solidBounds": [
+        29,
+        51,
+        227,
+        205
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "7ea81588e2ef0399230e690c1d2180ce94f214c585daea35d78cf952add62a4d"
+    },
+    {
+      "id": "pathfinders-astrolabe",
+      "size": 64,
+      "solidBounds": [
+        14,
+        10,
+        51,
+        54
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "fac4131f059d3feb28ce19f3f9795f042488c82595da65f51c72a951e2eeb685"
+    },
+    {
+      "id": "pathfinders-astrolabe",
+      "size": 128,
+      "solidBounds": [
+        27,
+        21,
+        101,
+        108
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "5d8fd67b621fc722e2980d411200551debaf0f9f72f353f508d22225cbf70a51"
+    },
+    {
+      "id": "pathfinders-astrolabe",
+      "size": 256,
+      "solidBounds": [
+        55,
+        42,
+        201,
+        214
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "80fcf1ad60be87cc722c31aed9a1d370abe4298f92ba08820c662d3b11b7f1bd"
+    },
+    {
+      "id": "survey-kit",
+      "size": 64,
+      "solidBounds": [
+        9,
+        10,
+        55,
+        54
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "ef57b1e72f5e5cc674795006798532ffb4cc0ef311724b0433d63cb6e8643a13"
+    },
+    {
+      "id": "survey-kit",
+      "size": 128,
+      "solidBounds": [
+        18,
+        21,
+        110,
+        108
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "d19a642b7b53d075953d33fe01d97a14016d141db8a7b28dab7d7156fd78d78f"
+    },
+    {
+      "id": "survey-kit",
+      "size": 256,
+      "solidBounds": [
+        37,
+        42,
+        219,
+        214
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "92590351828ca9a107d82ce864e2f5c5cc43b8f36c4c2f5f5fddce57ce73a62b"
+    },
+    {
+      "id": "precursor-lens",
+      "size": 64,
+      "solidBounds": [
+        7,
+        15,
+        57,
+        50
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "211819f85908369d5842a88d0fe86211cb585ad8181f8fea1ed6ed169707d829"
+    },
+    {
+      "id": "precursor-lens",
+      "size": 128,
+      "solidBounds": [
+        14,
+        29,
+        114,
+        98
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "875afba5eb05806e0e0625292484dc180cfac77d27010f1cf61d98d3348d5dcf"
+    },
+    {
+      "id": "precursor-lens",
+      "size": 256,
+      "solidBounds": [
+        29,
+        59,
+        227,
+        198
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "388331f059a29486d31e6a392d0e540fb6929e5b3d60f1b0ac3b5dba53f675ff"
+    },
+    {
+      "id": "quartermasters-ledger",
+      "size": 64,
+      "solidBounds": [
+        7,
+        13,
+        57,
+        52
+      ],
+      "centerAlpha": 252,
+      "visibleGreenPixels": 0,
+      "sha256": "d062ba25a70cbe0277ccaa153ed8d0b93121577d85b4ebbfc69e38326527f0ad"
+    },
+    {
+      "id": "quartermasters-ledger",
+      "size": 128,
+      "solidBounds": [
+        14,
+        25,
+        114,
+        103
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "f3eeee62c25b8774221a4cfcb460164c4c7b48366743aa5050ae0e7fb5f848d4"
+    },
+    {
+      "id": "quartermasters-ledger",
+      "size": 256,
+      "solidBounds": [
+        29,
+        51,
+        227,
+        205
+      ],
+      "centerAlpha": 253,
+      "visibleGreenPixels": 0,
+      "sha256": "142504ec4c3def9050546c20ab0f56528bf4d0c8885064eac669124fb2cab3aa"
+    },
+    {
+      "id": "chandlers-seal",
+      "size": 64,
+      "solidBounds": [
+        7,
+        14,
+        57,
+        51
+      ],
+      "centerAlpha": 255,
+      "visibleGreenPixels": 0,
+      "sha256": "7b5e801e053d923843ad701a2678f4a44dcb83664d27aaefd2c79316125c81a3"
+    },
+    {
+      "id": "chandlers-seal",
+      "size": 128,
+      "solidBounds": [
+        14,
+        28,
+        114,
+        100
+      ],
+      "centerAlpha": 249,
+      "visibleGreenPixels": 0,
+      "sha256": "3c6263d58f5980b910e0826ace4bf4995f951730c9d5aba405c22c7bff37839f"
+    },
+    {
+      "id": "chandlers-seal",
+      "size": 256,
+      "solidBounds": [
+        29,
+        56,
+        227,
+        201
+      ],
+      "centerAlpha": 252,
+      "visibleGreenPixels": 0,
+      "sha256": "2f2711c9a30368ab4776f612227be112c4af354de6ac8143173939353a4fb471"
+    },
+    {
+      "id": "gate-stage-1",
+      "size": 64,
+      "solidBounds": [
+        4,
+        4,
+        60,
+        59
+      ],
+      "centerAlpha": 0,
+      "visibleGreenPixels": 0,
+      "sha256": "0306a22779c94c6b0b183b2120c4b2a24a029682b16c64532a9ab7c02d27b636"
+    },
+    {
+      "id": "gate-stage-1",
+      "size": 128,
+      "solidBounds": [
+        8,
+        8,
+        121,
+        118
+      ],
+      "centerAlpha": 0,
+      "visibleGreenPixels": 0,
+      "sha256": "6a5ebd87d13dfc5f8a9db731c9a5d0ca6c2a7f9d67e2f1050f531fd10961d2e9"
+    },
+    {
+      "id": "gate-stage-1",
+      "size": 256,
+      "solidBounds": [
+        16,
+        17,
+        241,
+        236
+      ],
+      "centerAlpha": 0,
+      "visibleGreenPixels": 0,
+      "sha256": "9f215e312c4efa9b76a5cb20de0c96caefa64a4918f9d4738830d0245c8ba9a8"
+    },
+    {
+      "id": "gate-stage-1",
+      "size": 512,
+      "solidBounds": [
+        32,
+        34,
+        482,
+        472
+      ],
+      "centerAlpha": 0,
+      "visibleGreenPixels": 0,
+      "sha256": "d86ea4362ab9283db4b94de7b9a90c02719ca3ba442579504abd60d31cabb24c"
+    },
+    {
+      "id": "gate-stage-2",
+      "size": 64,
+      "solidBounds": [
+        4,
+        4,
+        60,
+        59
+      ],
+      "centerAlpha": 0,
+      "visibleGreenPixels": 0,
+      "sha256": "402d78dbced46a6f9c590a5fe31ae91f12fa9915cbd7a2ccbeadbab1c13609c3"
+    },
+    {
+      "id": "gate-stage-2",
+      "size": 128,
+      "solidBounds": [
+        7,
+        7,
+        121,
+        119
+      ],
+      "centerAlpha": 0,
+      "visibleGreenPixels": 0,
+      "sha256": "bc5618a52f91598681ddcfa14c95a14d4f109300cb76f02b045075ed50e58203"
+    },
+    {
+      "id": "gate-stage-2",
+      "size": 256,
+      "solidBounds": [
+        15,
+        15,
+        241,
+        237
+      ],
+      "centerAlpha": 0,
+      "visibleGreenPixels": 0,
+      "sha256": "c755850fd30e6f251392dcd951edae01e40f25e9c449d8b3ed9f20586a9608d8"
+    },
+    {
+      "id": "gate-stage-2",
+      "size": 512,
+      "solidBounds": [
+        29,
+        29,
+        483,
+        475
+      ],
+      "centerAlpha": 0,
+      "visibleGreenPixels": 2,
+      "sha256": "d82025fc9a5a4a2e741ac537be2e811c2261c22caba8258515a4f7dbd63ac921"
+    },
+    {
+      "id": "gate-stage-3",
+      "size": 64,
+      "solidBounds": [
+        4,
+        4,
+        60,
+        59
+      ],
+      "centerAlpha": 0,
+      "visibleGreenPixels": 0,
+      "sha256": "5de8000ea2009b48788a4d08195b8e03548fd68d964e6bd05fbfea4a7ee52935"
+    },
+    {
+      "id": "gate-stage-3",
+      "size": 128,
+      "solidBounds": [
+        7,
+        8,
+        121,
+        119
+      ],
+      "centerAlpha": 0,
+      "visibleGreenPixels": 0,
+      "sha256": "c0d6034b08e3af89092502de39e0a6d1a8e316e0a40bd3761f03d9067f81044b"
+    },
+    {
+      "id": "gate-stage-3",
+      "size": 256,
+      "solidBounds": [
+        15,
+        15,
+        241,
+        237
+      ],
+      "centerAlpha": 0,
+      "visibleGreenPixels": 0,
+      "sha256": "b0dd73778d65813845d0ec293e1e6aec03e544735f18bf8ae8d347b9839dd8b3"
+    },
+    {
+      "id": "gate-stage-3",
+      "size": 512,
+      "solidBounds": [
+        29,
+        30,
+        483,
+        475
+      ],
+      "centerAlpha": 0,
+      "visibleGreenPixels": 0,
+      "sha256": "358709fc38d8d5fbc042609406a14101c4e9c7e1febfafbdab9057fb4cec5e62"
+    },
+    {
+      "id": "gate-stage-4",
+      "size": 64,
+      "solidBounds": [
+        3,
+        4,
+        61,
+        59
+      ],
+      "centerAlpha": 151,
+      "visibleGreenPixels": 0,
+      "sha256": "5e47eab3ac1bb9e4d929fb476bba7150e1ce98422cd846cecf716c5f82b1e5ab"
+    },
+    {
+      "id": "gate-stage-4",
+      "size": 128,
+      "solidBounds": [
+        7,
+        7,
+        121,
+        119
+      ],
+      "centerAlpha": 138,
+      "visibleGreenPixels": 0,
+      "sha256": "35483a7196e603865841ae43e2bf0ba984a078aa8176ecf2cf9c620398187bf1"
+    },
+    {
+      "id": "gate-stage-4",
+      "size": 256,
+      "solidBounds": [
+        14,
+        14,
+        242,
+        238
+      ],
+      "centerAlpha": 141,
+      "visibleGreenPixels": 0,
+      "sha256": "4d90b9a74f51c686e4a3320c8d0a07a53d2db13614d574258ce8563b9949a43d"
+    },
+    {
+      "id": "gate-stage-4",
+      "size": 512,
+      "solidBounds": [
+        28,
+        28,
+        484,
+        476
+      ],
+      "centerAlpha": 143,
+      "visibleGreenPixels": 2,
+      "sha256": "52fe7b1850d6d10d6745ce722138eef21a4cc316545c6d67129e71328c1d833c"
+    },
+    {
+      "id": "gate-stage-5",
+      "size": 64,
+      "solidBounds": [
+        4,
+        4,
+        60,
+        59
+      ],
+      "centerAlpha": 254,
+      "visibleGreenPixels": 0,
+      "sha256": "f803b3ff48aee670f90322cb5a61a3381c5dbc0535f4daf1a5efdbf402f10fe3"
+    },
+    {
+      "id": "gate-stage-5",
+      "size": 128,
+      "solidBounds": [
+        7,
+        7,
+        121,
+        119
+      ],
+      "centerAlpha": 254,
+      "visibleGreenPixels": 0,
+      "sha256": "7504c5f426e97b82c238c04139a4e38d02559c94797b1c26bf0fd042fff2fbc2"
+    },
+    {
+      "id": "gate-stage-5",
+      "size": 256,
+      "solidBounds": [
+        14,
+        15,
+        242,
+        238
+      ],
+      "centerAlpha": 254,
+      "visibleGreenPixels": 2,
+      "sha256": "68ab0d324a1c8d3b4b4197b7d1158eb8cbe535936ab1cd950231d9eab18fc660"
+    },
+    {
+      "id": "gate-stage-5",
+      "size": 512,
+      "solidBounds": [
+        28,
+        29,
+        484,
+        475
+      ],
+      "centerAlpha": 254,
+      "visibleGreenPixels": 5,
+      "sha256": "cd5d40c8e0a2312c0d37b56ea4e055f3e305cb3decdb7ec91d32cccb98fa6e36"
+    },
+    {
+      "id": "pirate-reaver",
+      "size": 128,
+      "solidBounds": [
+        32,
+        5,
+        97,
+        123
+      ],
+      "centerAlpha": 255,
+      "visibleGreenPixels": 0,
+      "sha256": "f05d71f3eb420e86409e030e74a1c944b851dc02ee937f28a2f35d308118465c"
+    },
+    {
+      "id": "pirate-reaver",
+      "size": 256,
+      "solidBounds": [
+        64,
+        11,
+        192,
+        245
+      ],
+      "centerAlpha": 255,
+      "visibleGreenPixels": 0,
+      "sha256": "65496f5c9f275f185e93700f5940320c5f2effa3bbda495b8517ce76ea7e29e5"
+    },
+    {
+      "id": "pirate-reaver",
+      "size": 512,
+      "solidBounds": [
+        128,
+        21,
+        384,
+        491
+      ],
+      "centerAlpha": 255,
+      "visibleGreenPixels": 0,
+      "sha256": "939301bf91319064ce73db99c8326b0c832219b19857e03f2b9a8d61ea187209"
+    },
+    {
+      "id": "pirate-reaver",
+      "size": 1254,
+      "solidBounds": [
+        313,
+        53,
+        941,
+        1201
+      ],
+      "centerAlpha": 255,
+      "visibleGreenPixels": 0,
+      "sha256": "74b53b6538e5114a11daac608c8c05cdef8fde0ad97ad9f8b79693866e4c2dbf"
+    },
+    {
+      "id": "pirate-warbarge",
+      "size": 128,
+      "solidBounds": [
+        22,
+        5,
+        105,
+        123
+      ],
+      "centerAlpha": 255,
+      "visibleGreenPixels": 0,
+      "sha256": "beddb33d043c61d589eb3dd346b103c81c5116403fda44df3f1d2d2554a33403"
+    },
+    {
+      "id": "pirate-warbarge",
+      "size": 256,
+      "solidBounds": [
+        45,
+        11,
+        211,
+        245
+      ],
+      "centerAlpha": 255,
+      "visibleGreenPixels": 0,
+      "sha256": "08f81494ad3ae556a26f8e8c590487441ef1f1ee199e6b94b4fc20ce7fe854a0"
+    },
+    {
+      "id": "pirate-warbarge",
+      "size": 512,
+      "solidBounds": [
+        90,
+        22,
+        422,
+        490
+      ],
+      "centerAlpha": 255,
+      "visibleGreenPixels": 0,
+      "sha256": "164117fd29ceabbc98cb91f9241d0eabe31ff80f41ab0f53eec4f0403e8e2422"
+    },
+    {
+      "id": "pirate-warbarge",
+      "size": 1254,
+      "solidBounds": [
+        221,
+        53,
+        1034,
+        1200
+      ],
+      "centerAlpha": 255,
+      "visibleGreenPixels": 0,
+      "sha256": "74f1f1ad4f3cc10b35b2dd9990833608fb8e278a8fc5e70e2190a07d8e794df9"
+    }
+  ],
+  "existingChecks": [
+    "npm run assets:derive",
+    "node scripts/test-map-markers.mjs",
+    "node scripts/test-story-events.mjs",
+    "tsc --noEmit"
+  ]
+}

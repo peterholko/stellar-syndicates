@@ -1,0 +1,18 @@
+{
+  "id": "gate-lineup",
+  "category": "gate",
+  "destination": "client/art-src/season-gate-v1/gate-lineup.png",
+  "prompt": "Use case: stylized-concept. Asset type: design lineup sheet for a five-stage construction progression of one megastructure in the dark sci-fi strategy game Stellar Syndicates.\nShow FIVE images of the SAME jump gate in one row on a plain white 3:1 landscape sheet, left to right, each the next construction stage. All five use the SAME camera: a three-quarter view tilted back about 37 degrees from top-down, seen from the near (bottom) edge, light from the upper left, and ONE consistent scale, so every stage has the same ring diameter. Every stage is fully visible with clear space between them.\nSUBJECT: the Terran Charter Authority's new jump gate: one large circular ring built from EIGHT equal armored segments, its radial width about 14% of its radius, with the aperture filling the rest. FOUR slender anchor pylons stand just outside the ring on the diagonals, linked to it by short struts. Ivory ceramic armor plates with machined brass inlay over graphite truss, small cyan running lights. The same family as a premium Authority station: precise, civic, monumental, not military.\nSTAGES:\n1. FOUNDATION: the four anchor pylons complete; only HALF of the ring exists, as bare graphite truss arcs with no armor. ONE small boxy construction tender clamped onto the end of the truss arc, with a short crane arm.\n2. FRAME: the whole ring exists as bare graphite truss; the upper third of it is clad in ivory armor segments with brass seams.\n3. CLAD: the whole ring is clad in ivory armor; EIGHT field-emitter modules (squat brass-and-cyan cylinders) mounted around its inner edge, all DARK.\n4. CHARGING: identical to stage 3, but all eight emitters glow cyan and a thin translucent white-gold film stretches across the aperture.\n5. OPEN: the finished gate; the aperture is a blazing white-gold vortex of light with a bright core, its light held tightly inside the ring; cyan emitters at full power. No beams leaving the gate.\nSTYLE: precise colored hard-surface 3D game concept rendering, clean contours, fine panel lines, mild wear, soft neutral illumination, no harsh shadows. Each silhouette must read clearly from above at small size.\nNo stars, nebula, planets, ships (except the one construction tender at stage 1), people, scale bars, logos or watermark. No franchise design: no chevrons or dialling ring, no Mass Effect relay arms, no Death Star.\nText exactly once each, small and charcoal, centered under each stage: \"FOUNDATION\", \"FRAME\", \"CLAD\", \"CHARGING\", \"OPEN\".",
+  "references": [],
+  "transparent": false,
+  "expectedAspect": "3:1",
+  "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-d41f1bad-62dc-4e8b-a28d-08370585fbb1.png",
+  "inspection": {
+    "width": 2172,
+    "height": 724,
+    "mode": "RGB",
+    "sha256": "168983626d880d1ad5eb156507bbb0c4f1e8fa687f935dc4b5b376b95681ab63"
+  },
+  "tool": "image_gen.imagegen",
+  "generatedAt": "2026-10-22"
+}

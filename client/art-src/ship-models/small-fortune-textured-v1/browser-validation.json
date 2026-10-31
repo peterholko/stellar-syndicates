@@ -1,0 +1,14 @@
+{
+  "ship": "small-fortune",
+  "textureRevision": 2,
+  "checkedAt": "2026-10-28T04:21:47.225845+00:00",
+  "modelSHA256": "52b8c285669d214bba4f1a1e30430a43058967cf3ea7af082f51463393d79faf",
+  "url": "http://127.0.0.1:8789/small-fortune-textured-v1/viewer.html",
+  "method": "Live in-app-browser WebGL orbit screenshot and console inspection; nine additional unlit software views inspect the actual exported GLB.",
+  "trianglesDisplayed": 7764,
+  "drawCallsDisplayed": 2,
+  "consoleErrors": 0,
+  "consoleWarnings": 0,
+  "screenshot": "previews/webgl-preview.png",
+  "softwareAudit": "../trader-fleet-v1/texture-audit-v1/after/small-fortune/nine-view-audit.png"
+}

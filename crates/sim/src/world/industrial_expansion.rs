@@ -14,7 +14,7 @@ impl World {
                 owner,
                 fleet,
                 target: None,
-                reason: crate::event::OrderRejectReason::DeliveryConditionsChanged,
+                reason: crate::event::OrderRejectReason::IndustryRefused,
             },
         ));
     }
@@ -52,7 +52,7 @@ impl World {
             tenders::hold(f);
             return;
         };
-        let capacity = self.fleets[&id].cargo_capacity() as u64;
+        let capacity = self.fleets[&id].trade_capacity() as u64;
         let return_trip = !route.repeat && route.stops.len() == 3
             && route.stops[0].port == route.stops[2].port;
         let valid = (2..=MAX_STOPS).contains(&route.stops.len())
@@ -319,7 +319,8 @@ impl World {
             return;
         }
         let pos = s.pos;
-        if self.fleets[&id].pos.distance(pos) > SKIM_RANGE_SU {
+        // §real-coordinates: works once at its point on the belt.
+        if !self.fleet_at_spot(id, &self.fleets[&id], s) {
             return; // still on the way
         }
         let hostile = self.belt_unsafe(s);
@@ -341,7 +342,7 @@ impl World {
         let f = self.fleets.get_mut(&id).unwrap();
         f.order = FleetOrder::Idle;
         tenders::hold(f);
-        let free = f.cargo_capacity().saturating_sub(f.cargo_units());
+        let free = f.trade_capacity().saturating_sub(f.cargo_units());
         let mut cut = 0.0;
         let mut to_stock = 0.0;
         let mut to_station = 0;
@@ -490,7 +491,7 @@ impl World {
 
     /// §pockets: a find sets out for the corporation's command center at light
     /// speed. It is private: no ally relay.
-    fn send_pocket_report(&mut self, owner: PlayerId, (system, body): (EntityId, u32), found: Vec<C>, pos: Vec2, strike: bool) {
+    pub(super) fn send_pocket_report(&mut self, owner: PlayerId, (system, body): (EntityId, u32), found: Vec<C>, pos: Vec2, strike: bool) {
         if let Some(cc) = self.players.get(&owner).map(|p| p.command_center) {
             self.pending_pocket_reports.push(crate::world::PocketReport {
                 recipient: owner,
@@ -545,7 +546,9 @@ impl World {
         let f = self.fleets.get_mut(&fleet).unwrap();
         f.mission = None;
         f.defense = None;
-        f.industry = Some(FleetIndustry::Prospect { system, body, dwell: 0.0, status: "travelling".into() });
+        let need = self.prospect_secs(owner);
+        let f = self.fleets.get_mut(&fleet).unwrap();
+        f.industry = Some(FleetIndustry::Prospect { system, body, dwell: 0.0, need, status: "travelling".into() });
         f.order = FleetOrder::MoveTo { dest: pos };
     }
 
@@ -561,6 +564,7 @@ impl World {
         mut dwell: f64,
         events: &mut Vec<Event>,
     ) {
+        let need = self.prospect_secs(owner);
         let Some(s) = self.systems.iter().find(|s| s.id == system) else {
             self.fleets.get_mut(&id).unwrap().industry = None;
             return;
@@ -570,8 +574,7 @@ impl World {
             self.fleets.get_mut(&id).unwrap().industry = None;
             return;
         }
-        let pos = s.pos;
-        let travelling = f.pos.distance(pos) > SKIM_RANGE_SU;
+        let travelling = !self.fleet_at_spot(id, f, s);
         let hostile = !travelling && self.belt_unsafe(s);
         let f = self.fleets.get_mut(&id).unwrap();
         let status = if travelling {
@@ -587,14 +590,16 @@ impl World {
                 "prospecting"
             }
         };
-        if dwell + 1e-9 < PROSPECT_SECS {
-            f.industry = Some(FleetIndustry::Prospect { system, body, dwell, status: status.into() });
+        if dwell + 1e-9 < need {
+            f.industry = Some(FleetIndustry::Prospect { system, body, dwell, need, status: status.into() });
             return;
         }
         f.industry = None;
         let at = f.pos;
         let unfound = self.unfound_pockets(owner, system, body);
         let seed = self.config.seed;
+        // §den-pocket: what a den guarded is found on the first pass.
+        let den = self.home_slots.iter().any(|h| h.den_system == Some(system));
         let Some(belt) = self
             .systems
             .iter_mut()
@@ -615,7 +620,8 @@ impl World {
             .pockets
             .iter()
             .filter_map(|p| {
-                let hit = rng.next_f64() < POCKET_FIND_CHANCE;
+                let hit = rng.next_f64() < POCKET_FIND_CHANCE
+                    || den && p.deposit.resource == crate::founding::DEN_POCKET_ORE;
                 (hit && unfound.contains(&p.deposit.resource)).then_some(p.deposit.resource)
             })
             .collect();
@@ -685,7 +691,7 @@ impl World {
         let suitable = match kind {
             ColonyProjectKind::OrbitalAssembly => fusion && b.tier(crate::StructureKind::Shipyard) >= 2,
             ColonyProjectKind::AgriculturalExport => {
-                b.habitable && b.deposits.iter().any(|d| d.resource == C::Biomass)
+                b.settles() && b.deposits.iter().any(|d| d.resource == C::Biomass)
             }
             ColonyProjectKind::DeepExtraction => b.deposits.iter().any(|d| {
                 d.resource == commodity
@@ -745,11 +751,7 @@ impl World {
         for f in self.fleets.values() {
             if let Some(FleetIndustry::Mine { system, body, ore, pocket, status, .. }) = &f.industry
                 && matches!(status.as_str(), "mining" | "travelling")
-                && self
-                    .systems
-                    .iter()
-                    .find(|s| s.id == *system)
-                    .is_some_and(|s| f.pos.distance(s.pos) <= SKIM_RANGE_SU)
+                && f.at_world.is_some_and(|a| a.system == *system)
             {
                 *crews.entry((*system, *body, *ore, *pocket)).or_insert(0) += f.count(ShipKind::MiningBarge);
             }
@@ -774,7 +776,7 @@ impl World {
                     let Some(s) = self.systems.iter().find(|s| s.id == system) else {
                         continue;
                     };
-                    if self.fleets[&id].pos.distance(s.pos) > crate::ship::DOCK_RADIUS {
+                    if !self.fleet_at_dock(&self.fleets[&id], s.pos) {
                         continue;
                     }
                     if s.owner.is_some() || s.blockade.is_some() {
@@ -841,7 +843,8 @@ impl World {
                     let Some(s) = self.systems.iter().find(|s| s.id == system) else {
                         continue;
                     };
-                    if self.fleets[&id].pos.distance(s.pos) > SKIM_RANGE_SU {
+                    // §real-coordinates: skims once beside the gas giant.
+                    if !self.fleet_at_spot(id, &self.fleets[&id], s) {
                         continue;
                     }
                     let hostile = s.blockade.is_some()
@@ -866,10 +869,10 @@ impl World {
                         }
                         amount -= tank;
                         harvested += tank;
-                        if f.has_freighter() && f.cargo_units() < f.cargo_capacity() {
+                        if f.has_freighter() && f.cargo_units() < f.trade_capacity() {
                             cargo_fraction += amount;
                             let n = (cargo_fraction.floor() as u32)
-                                .min(f.cargo_capacity() - f.cargo_units());
+                                .min(f.trade_capacity() - f.cargo_units());
                             f.add_cargo(C::Helium3, n);
                             cargo_fraction -= n as f64;
                             harvested += n as f64;
@@ -877,7 +880,7 @@ impl World {
                         let tank_full = !f.fuel_research.helium3 || f.fusion_room() <= 1e-9;
                         if tank_full
                             && (!f.has_freighter()
-                                || f.cargo_units() >= f.cargo_capacity())
+                                || f.cargo_units() >= f.trade_capacity())
                         {
                             "full"
                         } else {
@@ -922,7 +925,7 @@ impl World {
         let Some(pos) = self.freight_port_pos(stop.port) else {
             return;
         };
-        if self.fleets[&id].pos.distance(pos) > crate::ship::DOCK_RADIUS {
+        if !self.fleet_at_dock(&self.fleets[&id], pos) {
             // A local manual order clears this sidecar; combat simply pauses it.
             // Do not inspect a distant port's true owner, blockade or stock.
             if run.phase == RoutePhase::Dispatch {
@@ -1020,7 +1023,7 @@ impl World {
             for (&c, left) in &mut run.remaining_load {
                 let room = {
                     let f = &self.fleets[&id];
-                    f.cargo_capacity().saturating_sub(f.cargo_units())
+                    f.trade_capacity().saturating_sub(f.cargo_units())
                 };
                 let n = (*left).min(room).min(self.fleets[&sid].cargo_amount(c));
                 if n > 0 {
@@ -1036,7 +1039,7 @@ impl World {
                 run.phase = RoutePhase::Fuel;
             } else {
                 run.hold = Some(
-                    if self.fleets[&id].cargo_units() >= self.fleets[&id].cargo_capacity() {
+                    if self.fleets[&id].cargo_units() >= self.fleets[&id].trade_capacity() {
                         "Cargo space full; revise the unload manifest"
                     } else {
                         "Waiting for ore at the station"
@@ -1069,9 +1072,11 @@ impl World {
             for (&c, left) in &mut run.remaining_load {
                 if system.is_none() && let Some(budget) = run.route.shopping_budget {
                     let stocked = self.players[&owner].warehouse.get(&c).copied().unwrap_or(0);
-                    let room = self.fleets[&id].cargo_capacity().saturating_sub(self.fleets[&id].cargo_units());
+                    let room = self.fleets[&id].trade_capacity().saturating_sub(self.fleets[&id].cargo_units());
                     let need = (*left).min(room).saturating_sub(stocked);
-                    let cash = (budget - run.shopping_spent).max(0.0).min((self.players[&owner].credits - bunker_cash).max(0.0));
+                    // §treasury: this visit's sales are still on their way
+                    // home; the Hub nets the shopping out of them.
+                    let cash = (budget - run.shopping_spent).max(0.0).min((self.reachable_at_hub(owner) - bunker_cash).max(0.0));
                     let mut lo = 0;
                     let mut hi = need.min(self.market.available_to_buy(c));
                     while lo < hi {
@@ -1080,9 +1085,10 @@ impl World {
                         if cost + self.exchange_penalty(owner, cost) <= cash { lo = n; } else { hi = n - 1; }
                     }
                     if lo > 0 {
-                        let before = self.players[&owner].credits;
-                        self.apply_now(&Command::MarketBuy { player_id: owner, commodity: c, units: lo, max_unit_price: Some(self.market.quote_buy(c, lo).unit_price) }, events);
-                        run.shopping_spent += (before - self.players[&owner].credits).max(0.0);
+                        let before = self.reachable_at_hub(owner);
+                        let buy = Command::MarketBuy { player_id: owner, commodity: c, units: lo, max_unit_price: Some(self.market.quote_buy(c, lo).unit_price) };
+                        self.at_hub(owner, |w| w.apply_now(&buy, events));
+                        run.shopping_spent += (before - self.reachable_at_hub(owner)).max(0.0);
                     }
                 }
                 let available = system
@@ -1100,7 +1106,7 @@ impl World {
                 let f = &self.fleets[&id];
                 let n = (*left)
                     .min(available)
-                    .min(f.cargo_capacity().saturating_sub(f.cargo_units()));
+                    .min(f.trade_capacity().saturating_sub(f.cargo_units()));
                 if n > 0 {
                     let before = self.fleets[&id].cargo_amount(c);
                     self.apply_logistics_load(owner, id, system, c, n, events);
@@ -1114,7 +1120,7 @@ impl World {
                 run.phase = RoutePhase::Fuel;
             } else {
                 run.hold = Some(
-                    if self.fleets[&id].cargo_units() >= self.fleets[&id].cargo_capacity() {
+                    if self.fleets[&id].cargo_units() >= self.fleets[&id].trade_capacity() {
                         "Cargo space full; revise the unload manifest"
                     } else {
                         "Waiting for unreserved cargo"
@@ -1236,7 +1242,7 @@ impl World {
             let f = &self.fleets[&id];
             let n = (*left)
                 .min(available)
-                .min(f.cargo_capacity().saturating_sub(f.cargo_units()));
+                .min(f.trade_capacity().saturating_sub(f.cargo_units()));
             if n > 0 {
                 let before = self.fleets[&id].cargo_amount(c);
                 self.apply_logistics_load(owner, id, Some(sid), c, n, events);
@@ -1546,14 +1552,17 @@ mod tests {
         let bought=w.fleets[&id].cargo_amount(C::Alloys);
         assert!(bought>0 && bought<40);
         assert!(run(&w,id).shopping_spent>0.0 && run(&w,id).shopping_spent<=100.0);
-        assert!(w.players[&owner].credits>0.0);
+        // §treasury: the sale paid for the shopping at the Hub; the rest is
+        // on its way home.
+        let banked = |w: &World| w.players[&owner].credits + w.players[&owner].incoming();
+        assert!(banked(&w)>0.0);
         assert_eq!(run(&w,id).stop,2, "an unaffordable remainder must not strand the hull");
         assert!(events.iter().any(|e| matches!(e.payload, EventPayload::Trade(TradeEvent::Bought { .. }))));
-        let before=w.players[&owner].credits;
+        let before=banked(&w);
         let mut w: World=serde_json::from_slice(&serde_json::to_vec(&w).unwrap()).unwrap();
         pump(&mut w,10);
-        assert_eq!(w.players[&owner].credits,before, "reload never buys the same manifest twice");
-        w.fleets.get_mut(&id).unwrap().pos=Vec2::ZERO;
+        assert_eq!(banked(&w),before, "reload never buys the same manifest twice");
+        w.park_at_system(id, home);
         pump(&mut w,1);
         assert_eq!(site(&w,home).stockpile[&C::Alloys],f64::from(bought));
         assert_eq!(w.fleets[&id].cargo_units(),0);
@@ -1618,7 +1627,7 @@ mod tests {
         let mut w: World = serde_json::from_str(&saved).unwrap();
         pump(&mut w, 3);
         assert_eq!(w.players[&owner].warehouse[&C::MetallicOre], 10);
-        w.fleets.get_mut(&id).unwrap().pos = Vec2::ZERO;
+        w.park_at_system(id, home);
         pump(&mut w, 1);
         assert_eq!(site(&w, home).stockpile[&C::Alloys], 7.0);
         assert_eq!(site(&w, home).stockpile[&C::MetallicOre], 80.0);
@@ -1874,7 +1883,6 @@ mod tests {
             b.population = 0.0;
         }
         let body = s.bodies[0].id;
-        let pos = s.pos;
         w.players.get_mut(&owner).unwrap().surveyed.insert(target);
         w.legacy_test_bootstrap = true;
         // Only the onboarding state is advanced in the fixture, not a tunable.
@@ -1893,7 +1901,7 @@ mod tests {
             &mut vec![],
         );
         assert!(site(&w, target).owner.is_none());
-        w.fleets.get_mut(&id).unwrap().pos = pos;
+        w.park_at_system(id, target);
         pump(&mut w, (OUTPOST_BUILD_S / DT).ceil() as u32 + 2);
         assert_eq!(site(&w, target).owner, Some(owner));
         assert_eq!(site(&w, target).population(), 0.0);
@@ -2018,7 +2026,7 @@ mod tests {
         w.start_skimming(owner, id, home, &mut vec![]);
         pump(&mut w, 30);
         assert_eq!(w.fleets[&id].fuel, before, "no remote fuel creation");
-        w.fleets.get_mut(&id).unwrap().pos = Vec2::ZERO;
+        w.park_at_system(id, home);
         // 18 s on station: 3 Helium-3, all cargo before Fusion Reactors.
         pump(&mut w, 540);
         let f = &w.fleets[&id];
@@ -2061,6 +2069,7 @@ mod tests {
         let mut f = Fleet::single(fleet, owner, ShipKind::MiningBarge, site(&w, system).pos, FleetOrder::Idle, None);
         f.add(ShipKind::MiningBarge, barges - 1);
         w.fleets.insert(fleet, f);
+        w.park_at(fleet, system, body);
         (w, owner, system, body, ore, fleet)
     }
     /// Units a second that `barges` barges alone may cut from the deposit.
@@ -2115,6 +2124,7 @@ mod tests {
         let mut f = Fleet::single(second, owner, ShipKind::MiningBarge, pos, FleetOrder::Idle, None);
         f.add(ShipKind::MiningBarge, 3);
         w.fleets.insert(second, f);
+        w.park_at(second, system, body);
         w.start_belt_mining(owner, fleet, system, body, (ore, false), &mut vec![]);
         w.start_belt_mining(owner, second, system, body, (ore, false), &mut vec![]);
         pump(&mut w, seconds(10.0));
@@ -2162,6 +2172,7 @@ mod tests {
         };
         let fleet = w.alloc_entity_id();
         w.fleets.insert(fleet, Fleet::single(fleet, owner, ShipKind::MiningBarge, Vec2::ZERO, FleetOrder::Idle, None));
+        w.park_at(fleet, home, belt);
         w.start_belt_mining(owner, fleet, home, belt, (ore, false), &mut vec![]);
         pump(&mut w, seconds(10.0));
         let stocked = site(&w, home).stockpile.get(&ore).copied().unwrap_or(0.0);
@@ -2194,6 +2205,7 @@ mod tests {
         w.players.get_mut(&owner).unwrap().surveyed.insert(system);
         let fleet = w.alloc_entity_id();
         w.fleets.insert(fleet, Fleet::single(fleet, owner, kind, site(&w, system).pos, FleetOrder::Idle, None));
+        w.park_at(fleet, system, body);
         (w, owner, system, body, fleet)
     }
     fn belt(w: &World, system: EntityId, body: u32) -> &crate::Body {

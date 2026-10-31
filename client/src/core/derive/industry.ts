@@ -1,6 +1,6 @@
 import type { ColonyProjectKind, Commodity, EntityId, FreightRoute, GhostView, Manifest, ProjectTarget, SystemStateView, TransitMode } from "../../protocol";
 import type { ViewState } from "../../state";
-import { slowCapable, fleetBaseSpeed, fleetCargoCapacity, fleetFuelCapacity, transitSpeedMultiplier, WARP_FACTOR } from "./fleet";
+import { slowCapable, fleetBaseSpeed, fleetFuelCapacity, fleetTradeCapacity, transitSpeedMultiplier, WARP_FACTOR } from "./fleet";
 import { assignedRecipe, marketAverageQuote } from "./market";
 
 export const projectName = (target: ProjectTarget): string => target.kind === "development"
@@ -45,7 +45,7 @@ export const routePortPosition = (st: ViewState, port: FreightRoute["stops"][num
  * the basket at home. Stop 1 also unloads whatever is already aboard, to make
  * room for the ore. */
 export function firstShipmentRoute(home: SystemStateView, freighter: GhostView, escort: EntityId | null, basket: Manifest, cap: number): FreightRoute {
-  const ore = Math.min(50, fleetCargoCapacity(freighter));
+  const ore = Math.min(50, fleetTradeCapacity(freighter));
   const goods: Manifest = Object.fromEntries(Object.entries(basket).filter(([,n]) => (n ?? 0) > 0));
   const aboard = freighter.cargo_manifest?.length ? freighter.cargo_manifest : freighter.cargo ? [freighter.cargo] : [];
   return { name: "First shipment", transit: "slow", repeat: false, shopping_budget: cap, escort,
@@ -106,12 +106,12 @@ export function routeAboard(route: FreightRoute, start: Manifest = {}): number[]
   });
 }
 export function freightRouteReason(st: ViewState, g: GhostView, r: FreightRoute): string | null {
-  if (!g.own || g.tca || fleetCargoCapacity(g) <= 0) return "Choose an owned Freighter.";
+  if (!g.own || g.tca || fleetTradeCapacity(g) <= 0) return "Choose an owned Freighter.";
   if (r.transit === "slow" && !slowCapable(g)) return "Ships of the line cannot fly Slow.";
   if (!r.name.trim() || r.name.length > 48) return "Name the route (up to 48 characters).";
   if (r.stops.length < 2 || r.stops.length > 8) return "Use 2–8 stops.";
   const returnTrip = !r.repeat && r.stops.length === 3 && routePortId(r.stops[0].port) === routePortId(r.stops[2].port);
-  if (r.stops.length > 2 && !returnTrip && !st.research?.programmes.some(p => p.id === "prop_line_autonomous_freight" && p.state === "completed")) return "More than two stops requires Autonomous Freight research (a one-off return to the first port is allowed).";
+  if (r.stops.length > 2 && !returnTrip && !st.research?.programmes.some(p => p.id === "prop_line_autonomous_freight" && p.state === "completed")) return "Three stops end at the first port, one trip.";
   if (r.shopping_budget != null && (!Number.isFinite(r.shopping_budget) || r.shopping_budget < 0 || r.shopping_budget > 1e9)) return "Enter a valid Hub shopping cap.";
   if (!Number.isFinite(r.fuel_reserve) || r.fuel_reserve < 0 || r.fuel_reserve > fleetFuelCapacity(g)) return "Fuel reserve exceeds the tank.";
   for (const [i, stop] of r.stops.entries()) {
@@ -120,7 +120,7 @@ export function freightRouteReason(st: ViewState, g: GhostView, r: FreightRoute)
     if (stop.port.kind === "station" && Object.values(stop.unload).some(n => (n ?? 0) > 0)) return `Stop ${i + 1}: a station stop only loads.`;
     for (const manifest of [stop.load, stop.unload]) {
       if (Object.values(manifest).some(n => !Number.isInteger(n) || n! < 0)) return "Cargo quantities must be whole units.";
-      if (Object.values(manifest).reduce((sum, n) => sum + (n ?? 0), 0) > fleetCargoCapacity(g)) return `Stop ${i + 1} exceeds cargo capacity.`;
+      if (Object.values(manifest).reduce((sum, n) => sum + (n ?? 0), 0) > fleetTradeCapacity(g)) return `Stop ${i + 1} exceeds cargo capacity.`;
     }
   }
   return null;
@@ -171,7 +171,7 @@ export function productionPlan(st: ViewState, s: SystemStateView, output: Commod
       const conv = assignedRecipe(recipes.find(r => r.key === a.structure), a.refining_ore);
       // Replace this colony's existing target line with the plan, rather than
       // charging both its old consumption and the planned output's inputs.
-      if (conv && !(site.id === s.id && conv.output === output)) n -= (a.outputs.find(([g]) => g === conv.output)?.[1] ?? 0) / Math.max(.001, a.site * (a.recovery ?? 1)) * (conv.inputs.find(([g]) => g === c)?.[1] ?? 0);
+      if (conv && !(site.id === s.id && conv.output === output)) n -= (a.outputs.find(([g]) => g === conv.output)?.[1] ?? 0) / Math.max(.001, a.site * (a.recovery ?? 1)) * (conv.inputs.find(([g]) => g === c)?.[1] ?? 0) * (a.input_mult ?? 1);
     }
     for (const p of site.industry?.projects ?? []) if (p.supplied) {
       n += p.outputs.find(([g]) => g === c)?.[1] ?? 0;
@@ -183,8 +183,10 @@ export function productionPlan(st: ViewState, s: SystemStateView, output: Commod
   // Use the least efficient active line for an intentionally cautious shopping
   // list. The UI says rated: research, food changes, combat and travel can differ.
   const siteYield = built.length ? Math.min(...built.map(a => (a.site ?? 1) * (a.recovery ?? 1))) : lines.length ? Math.min(...lines.map(a => a.site * (a.recovery ?? 1))) : 1;
+  // §research-wiring: Autoforges / crop research shrink the basket.
+  const inputMult = built.length ? Math.max(...built.map(a => a.input_mult ?? 1)) : lines.length ? Math.max(...lines.map(a => a.input_mult ?? 1)) : 1;
   const inputs = (recipe?.conversion?.inputs ?? []).map(([commodity, units]) => {
-    const needed = Math.max(0, perMinute - secondary) / Math.max(.001, siteYield) * units;
+    const needed = Math.max(0, perMinute - secondary) / Math.max(.001, siteYield) * units * inputMult;
     const local = Math.max(0, net(s, commodity));
     const shortfall = Math.max(0, needed - local);
     const suppliers = st.systems.filter(x => x.id !== s.id && x.owner === st.playerId).map(x => ({

@@ -9,7 +9,7 @@
 .deck-disabled-reason { display: block; margin-top: var(--space-1); color: var(--negative); font-size: var(--fs-fine); }
 .deck :is(button, a[href], input, select, textarea, [tabindex]):focus-visible { outline: var(--deck-focus-ring) solid var(--accent); outline-offset: var(--space-1); }
 .deck [hidden] { display: none !important; }
-.deck-topbar { position: fixed; z-index: var(--z-chrome); inset: 0 0 auto; height: var(--deck-topbar-height); display: flex; min-width: 0; align-items: center; gap: var(--space-3); padding: var(--space-1) var(--space-3); border-bottom: 1px solid var(--border); background: var(--panel-bg); overflow: hidden; pointer-events: auto; }
+.deck-topbar { position: fixed; z-index: var(--z-chrome); inset: 0 0 auto; height: var(--deck-topbar-row); display: flex; min-width: 0; align-items: center; gap: var(--space-3); padding: var(--space-1) var(--space-3); border-bottom: 1px solid var(--border); background: var(--panel-bg); overflow: hidden; pointer-events: auto; }
 .deck-identity { display: flex; align-items: baseline; gap: var(--space-2); font-size: var(--fs-em); white-space: nowrap; padding: 0; border: 0; background: none; color: inherit; font-family: inherit; cursor: pointer; }
 .deck-identity:hover b { color: var(--accent); }
 .deck-identity b { max-width: min(18vw, 180px); overflow: hidden; text-overflow: ellipsis; }
@@ -38,15 +38,95 @@
 .deck-nav__badge { position: absolute; top: calc(var(--space-1) * -1); right: calc(var(--space-1) * -1); min-width: var(--space-4); padding-inline: var(--space-1); border-radius: var(--space-3); background: var(--negative); color: var(--bg); font-size: var(--fs-fine); font-weight: 800; text-align: center; }
 .deck-workspace { position: fixed; z-index: var(--z-workspace); top: var(--deck-topbar-height); right: 0; bottom: 0; width: min(var(--deck-workspace-standard), calc(100vw - var(--space-6) - var(--space-1))); display: grid; grid-template-rows: auto minmax(0, 1fr); border-left: 1px solid var(--border); background: var(--panel-bg); box-shadow: var(--panel-shadow); pointer-events: auto; }
 .deck-workspace[aria-hidden="true"] { display: none; }
-.deck-workspace:is([data-route="system"], [data-route="world"], [data-route="build"], [data-route="fleet"], [data-route="fleets"])[data-width="standard"] { width: min(var(--deck-workspace-system), calc(100vw - var(--space-6) - var(--space-1))); }
+.deck-workspace:is([data-route="system"], [data-route="world"], [data-route="build"], [data-route="fleet"], [data-route="fleets"])[data-width="standard"] { width: var(--deck-system-rail); }
 .deck-workspace[data-width="wide"] { width: min(65vw, var(--deck-workspace-wide), calc(100vw - var(--space-6) - var(--space-1))); }
 /* Shared floating-panel base; planet-panel.css makes World details full-screen. */
-.deck-build-workbench, .deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"]) { position: fixed; z-index: var(--z-workspace); top: calc(var(--deck-topbar-height) + var(--space-3)); right: auto; bottom: max(calc(var(--deck-control-height) + var(--space-6)), calc(var(--deck-workbench-bottom-inset, 0px) + var(--space-3))); left: calc((100vw - var(--deck-workspace-inset, 0px)) / 2); width: min(var(--deck-build-workbench-max), calc(100vw - var(--deck-workspace-inset, 0px) - var(--space-6))); min-width: 0; transform: translateX(-50%); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); pointer-events: auto; }
-.deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"])[aria-hidden="true"] { display: none; }
-.deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"]) .deck-workspace__header { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto; }
-.deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"]) .deck-workspace__header > [data-deck-act="back"], .deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"]) .deck-workspace__header h1 { grid-row: 1; }
-.deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"]) .deck-workspace__header > [data-deck-act="close"] { grid-column: 3; grid-row: 1; }
-.deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"]) .deck-breadcrumb, .deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"]) [data-deck-act="width"] { display: none; }
+.deck-build-workbench, .deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"], [data-route="shipyard"]) { position: fixed; z-index: var(--z-workspace); top: calc(var(--deck-topbar-height) + var(--space-3)); right: auto; bottom: max(calc(var(--deck-control-height) + var(--space-6)), calc(var(--deck-workbench-bottom-inset, 0px) + var(--space-3))); left: calc((100vw - var(--deck-workspace-inset, 0px)) / 2); width: min(var(--deck-build-workbench-max), calc(100vw - var(--deck-workspace-inset, 0px) - var(--space-6))); min-width: 0; transform: translateX(-50%); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); pointer-events: auto; }
+/* The trader's table and the Shipyard keep their full height: an open guide
+   floats over them (Peter, Oct 21 2026). Only the bottom row is cleared. */
+.deck-workspace:is([data-route="merchant"], [data-route="shipyard"]) { bottom: max(calc(var(--deck-control-height) + var(--space-6)), calc(var(--deck-bottom-row-inset, 0px) + var(--space-3))); }
+.deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"], [data-route="shipyard"])[aria-hidden="true"] { display: none; }
+.deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"], [data-route="shipyard"]) .deck-workspace__header { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto; }
+.deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"], [data-route="shipyard"]) .deck-workspace__header > [data-deck-act="back"], .deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"], [data-route="shipyard"]) .deck-workspace__header h1 { grid-row: 1; }
+.deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"], [data-route="shipyard"]) .deck-workspace__header > [data-deck-act="close"] { grid-column: 3; grid-row: 1; }
+.deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"], [data-route="shipyard"]) .deck-breadcrumb, .deck-workspace:is([data-route="market"], [data-route="logistics"], [data-route="merchant"], [data-route="signals"], [data-route="shipyard"]) [data-deck-act="width"] { display: none; }
+/* §hub-visit: the Market Hub as an arriving freighter sees it, a full-height
+   picture on the Market's left (Peter, Oct 28 2026). The panel widens by the
+   column, which only shows while the Market keeps its own 920 px beside it. */
+.deck-workspace__scene { display: none; }
+@media (min-width: 1280px) {
+  .deck-workspace[data-route="market"] { --deck-hub-scene-width: 320px; width: min(calc(var(--deck-build-workbench-max) + var(--deck-hub-scene-width)), calc(100vw - var(--deck-workspace-inset, 0px) - var(--space-6))); padding-left: var(--deck-hub-scene-width); }
+  .deck-workspace[data-route="market"] > .deck-workspace__scene { display: block; position: absolute; inset: 0 auto 0 0; width: var(--deck-hub-scene-width); border-right: 1px solid var(--border); background: #05070d; }
+  .deck-workspace__scene img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 62% 50%; }
+}
+/* §battle-archive: the Log's Battles list. */
+.deck-battle-list { display: grid; gap: 2px; }
+.deck-battle-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-2); min-height: 40px; padding: 2px var(--space-1); border-radius: var(--deck-radius); }
+.deck-battle-row:hover { background: var(--field-bg); }
+.deck-battle-row > span { display: grid; min-width: 0; }
+.deck-battle-row > span > :is(b, small) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deck-battle-row small { color: var(--dim); font-size: var(--fs-fine); }
+.deck-battle-row > em { font-style: normal; font-size: var(--fs-fine); color: var(--dim); }
+.deck-battle-row.is-good > em { color: var(--positive); }
+.deck-battle-row.is-bad > em { color: var(--negative); }
+.deck-battle-row.is-live > em { color: var(--warn); }
+/* §stores: the stores bar under the top bar and its pop-out (docs/stores.md). */
+.deck.has-stores { --deck-topbar-height: calc(var(--deck-topbar-row) + var(--deck-stores-height)); }
+.deck-stores { position: fixed; z-index: var(--z-chrome); top: var(--deck-topbar-row); left: 0; right: 0; height: var(--deck-stores-height); display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 0 var(--space-3); border-bottom: 1px solid var(--border); background: var(--panel-bg); font-size: var(--fs-fine); overflow: hidden; pointer-events: auto; }
+.deck-stores[hidden] { display: none; }
+.deck-stores__main { display: contents; }
+/* §season: the GNN headline ticker closes the bar; it gives way first. */
+.deck .deck-news { flex: 0 8 380px; min-width: 0; display: inline-flex; align-items: center; gap: var(--space-2); margin-left: var(--space-2); border-left: 1px solid var(--border); border-radius: 0; padding-left: var(--space-3); color: var(--dim); }
+.deck .deck-news[hidden] { display: none; }
+.deck-news > img { flex: 0 0 auto; width: 18px; height: 18px; }
+.deck-news > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.deck-news.is-yours > span { color: var(--warn); }
+.deck-news > small { flex: 0 0 auto; color: var(--dim); }
+.deck-stores__system { flex: 0 0 auto; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+select.deck-stores__system { height: 24px; padding: 0 var(--space-1); border: 1px solid var(--field-bd); border-radius: var(--deck-radius); background: var(--field-bg); color: inherit; font: inherit; }
+.deck-stores__goods { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; }
+.deck-stores button { flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--space-1); height: 26px; min-height: 0; padding: 0 var(--space-2); border: 1px solid transparent; border-radius: var(--deck-radius); background: transparent; color: inherit; font: inherit; white-space: nowrap; cursor: pointer; }
+.deck-stores button:hover { border-color: var(--border); background: var(--field-bg); }
+.deck-stores .icon--resource, .deck-stores .icon { width: 20px; height: 20px; }
+.deck-stores b { font-variant-numeric: tabular-nums; }
+.deck-stores small, .deck-stores-pop small { font-size: var(--fs-fine); }
+.deck-stores .is-up, .deck-stores-row__rate.is-up { color: var(--positive); }
+.deck-stores .is-down, .deck-stores-row__rate.is-down { color: var(--negative); }
+.deck-stores__good.is-low :is(b, small) { color: var(--warn); }
+.deck-stores__storage { margin-left: auto; }
+.deck-stores__storage > small, .deck-stores-pop__storage > small { color: var(--dim); }
+.deck-stores__meter { position: relative; flex: 0 0 auto; width: 64px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.deck-stores__meter i { position: absolute; inset: 0 auto 0 0; background: var(--accent); }
+.is-warn > .deck-stores__meter i { background: var(--warn); }
+.is-full > .deck-stores__meter i { background: var(--negative); }
+.is-full > b { color: var(--negative); }
+.deck-stores__all { color: var(--accent); }
+/* §stores: a workbench over the map; the workspace stays (Peter, Oct 28 2026). */
+/* Sized to its rows, never lower than the construction workbench's edge
+ * above the command/tutorial stack. */
+.deck-stores-workbench { bottom: auto; max-height: calc(100dvh - var(--deck-topbar-height) - var(--space-3) - max(calc(var(--deck-control-height) + var(--space-6)), calc(var(--deck-workbench-bottom-inset, 0px) + var(--space-3)))); width: min(760px, calc(100vw - var(--deck-workspace-inset, 0px) - var(--space-6))); }
+.deck-stores-pop { display: grid; gap: var(--space-3); }
+.deck-stores-pop__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.deck-stores-pop__storage { display: inline-flex; align-items: center; gap: var(--space-2); margin-left: auto; }
+/* §vault: the Vault's room beside the storage meter. */
+.deck-stores-pop__vault { display: inline-flex; align-items: center; gap: var(--space-2); margin-left: auto; }
+.deck-stores-pop__vault > small { color: var(--dim); }
+.deck-stores-pop__vault + .deck-stores-pop__storage { margin-left: var(--space-3); }
+.deck-stores-pop__raided { display: inline-flex; align-items: center; gap: var(--space-2); margin-left: var(--space-3); color: var(--warn); }
+.deck-stores-pop__raided > small { color: var(--dim); }
+.deck-stores-pop__storage.is-warn > b { color: var(--warn); }
+.deck-stores-group { display: grid; gap: 2px; }
+.deck-stores-group h3 { margin: 0 0 var(--space-1); color: var(--dim); font-size: var(--fs-fine); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+/* Larger rows and icons (Peter, Oct 28 2026): 760 px wide, 32 px goods. */
+.deck-stores-row { display: grid; grid-template-columns: 32px minmax(0, 1fr) 72px 72px 80px 80px 28px; align-items: center; gap: var(--space-2); min-height: 40px; padding: 0 var(--space-1); border-radius: var(--deck-radius); }
+.deck-stores-row:hover { background: var(--field-bg); }
+.deck-stores-row .icon--resource, .deck-stores-row .icon { width: 32px; height: 32px; }
+.deck-stores-row > b, .deck-stores-row__rate { text-align: right; font-variant-numeric: tabular-nums; }
+.deck-stores-row__held, .deck-stores-row__eta { color: var(--dim); font-size: var(--fs-fine); text-align: right; }
+.deck-stores-row__rate { font-size: var(--fs-fine); }
+.deck-stores-row.is-low :is(b, .deck-stores-row__eta) { color: var(--warn); }
+.deck .deck-stores-row__pin { width: 28px; height: 24px; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--dim); font-size: 16px; cursor: pointer; }
+.deck .deck-stores-row__pin[aria-pressed="true"] { color: var(--warn); }
 /* §logistics: route planning needs more room than the Market's workbench. */
 .deck-workspace:is([data-route="logistics"], [data-route="signals"]) { width: min(var(--deck-workspace-wide), calc(100vw - var(--deck-workspace-inset, 0px) - var(--space-6))); }
 .deck-build-workbench[hidden] { display: none; }
@@ -107,6 +187,14 @@
 .deck-world small, .deck-world__meta, .deck-world__deposits { color: var(--dim); font-size: var(--fs-fine); }
 .deck-world__deposits { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
 .deck-world__deposits > span { color: var(--ink); }
+/* One chip per deposit (icon + name), and one size for every world's picture,
+   so a belt's rock art and the deposit icons can't blow the row up. */
+.deck-world__deposit { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
+.deck .deck-world__deposit .icon--resource { width: 20px; height: 20px; }
+.deck-world__identity > .icon { width: 40px; height: 40px; flex: none; object-fit: contain; }
+/* Each world's own System View art; the belt's rocks fill ~43% of their
+   square, a planet's disc ~95%. */
+.deck-world__identity > .icon.is-belt { transform: scale(2.2); }
 .deck-world__meta { text-align: right; }
 .deck-world__grid { font-variant-numeric: tabular-nums; }
 .deck-world__grid.is-short { color: var(--warn); }
@@ -129,7 +217,10 @@
 /* Production lines are read-only roll-ups that open their world; workforce is edited there. */
 .deck button.deck-assignment { width: 100%; text-align: left; background: var(--field-bg); }
 .deck button.deck-assignment:hover { background: var(--btn-bg-hover); }
-.deck-assignment__workers { display: grid; justify-items: end; gap: var(--space-1); }
+.deck-assignment__workers { display: inline-flex; align-items: center; gap: var(--space-1); }
+.deck-assignment__output { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
+.deck-assignment__good { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
+.deck .deck-assignment__good .icon--resource { width: 18px; height: 18px; }
 .deck-assignment__workers b { font-size: var(--fs-em); font-variant-numeric: tabular-nums; }
 .deck-stepper { display: grid; grid-template-columns: var(--deck-control-height) minmax(var(--deck-control-height), auto) var(--deck-control-height); align-items: center; text-align: center; }
 .deck-stepper button { padding: 0; }
@@ -138,6 +229,8 @@
 .deck-slot-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2); align-items: center; padding: var(--space-1) var(--space-2); border-radius: var(--space-1); background: var(--field-bg); }
 .deck-slot-row > span { display: grid; min-width: 0; }
 .deck-slot-row small { color: var(--dim); font-size: var(--fs-fine); }
+.deck-slot-row__hull { min-height: 0; padding: 0; border: 0; background: none; color: var(--dim); font-size: var(--fs-fine); text-align: left; text-decoration: underline dotted; cursor: pointer; }
+.deck-slot-row__hull:hover { color: var(--accent); }
 .deck-slot-row.is-idle .deck-slot-row__slot { color: var(--warn); }
 .deck-queue-progress { display: block; width: 100%; height: var(--space-1); overflow: hidden; border-radius: var(--space-1); background: var(--border); }
 .deck-queue-progress i { display: block; height: 100%; background: var(--positive); }
@@ -219,7 +312,8 @@
 .deck-quantity > span { margin-right: auto; color: var(--dim); font-size: var(--fs-fine); }
 .deck-quantity button { min-width: var(--deck-control-height); padding-inline: var(--space-2); }
 .deck-quantity button[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
-.deck-hull-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-1); }
+/* §hull stats: one row, four cells (five with Cargo). */
+.deck-hull-stats { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: var(--space-1); }
 .deck-fit, .deck-module-forge { display: grid; gap: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--border); }
 .deck-fit-bar { position: relative; height: var(--deck-control-height); overflow: hidden; border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
 .deck-fit-bar > span { position: absolute; inset: 0 auto 0 0; background: rgba(79, 195, 255, .22); }
@@ -283,11 +377,25 @@
 .deck-market-board__head { padding-inline: var(--space-2); color: var(--dim); font-size: var(--fs-fine); text-transform: uppercase; letter-spacing: .06em; }
 .deck-market-row { width: 100%; padding: var(--space-2); text-align: left; }
 .deck-market-row > *, .deck-market-row b { min-width: 0; overflow-wrap: anywhere; }
-/* §merchant: the free trader's stall. §persona: a negotiation with Teo
-   Brannick: his portrait and his word on the offer, then your side and his. */
+/* §merchant: the free trader's stall. §traders: a negotiation with the
+   founder's own trader: the portrait and their word on the offer, then your
+   side and theirs. */
+/* §shipyard-view: a hull under construction in its yard, then its line. */
+.deck-shipyard { display: grid; gap: var(--space-3); }
+.deck-shipyard__tabs { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.deck-shipyard__tabs button { display: grid; gap: 2px; padding: var(--space-1) var(--space-2); text-align: left; }
+.deck-shipyard__tabs button[aria-pressed="true"] { border-color: var(--accent); }
+.deck-shipyard__tabs small, .deck-shipyard__info small { color: var(--dim); }
+.deck-shipyard__info { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, 2fr) auto; align-items: center; gap: var(--space-3); }
+.deck-shipyard__info > div { display: grid; gap: 2px; min-width: 0; }
+.deck-shipyard__info em { color: var(--ink); font-style: normal; white-space: nowrap; }
+.deck-shipyard__dock { display: flex; justify-content: flex-end; }
+/* The bay keeps 16:9 and leaves room for its line on a short window. */
+.deck-shipyard ship-construction-view { width: min(100%, calc((100dvh - 430px) * 16 / 9)); justify-self: center; }
 .deck-merchant { display: grid; gap: var(--space-3); }
-.deck-merchant__trader { display: grid; grid-template-columns: 112px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); column-gap: var(--space-3); row-gap: var(--space-2); align-items: start; }
-.deck-merchant__portrait { grid-row: 1 / 3; width: 112px; height: 112px; border: 1px solid var(--border); border-radius: var(--deck-radius); object-fit: cover; background: var(--field-bg); }
+.deck-merchant__trader { display: grid; grid-template-columns: 210px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); column-gap: var(--space-3); row-gap: var(--space-2); align-items: start; }
+/* 210 px: half as large again (Peter, Oct 28 2026). */
+.deck-merchant__portrait { grid-row: 1 / 3; width: 210px; height: 210px; border: 1px solid var(--border); border-radius: var(--deck-radius); object-fit: cover; background: var(--field-bg); }
 .deck-merchant__portrait.is-interim { object-fit: contain; padding: var(--space-1); }
 .deck-merchant__who { display: grid; gap: 2px; }
 .deck-merchant__who b { font-size: var(--fs-em); }
@@ -301,11 +409,14 @@
 @media (max-width: 640px) { .deck-merchant__table { grid-template-columns: minmax(0, 1fr); } }
 /* The terms and the handshake pinned to the pop-out's foot (its body scrolls). */
 .deck-merchant__dock { position: sticky; bottom: calc(var(--space-3) * -1); z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); margin: 0 calc(var(--space-3) * -1) calc(var(--space-3) * -1); padding: var(--space-3); border-top: 1px solid var(--border); background: var(--panel); }
+/* The total sits by its button: an open guide floats over the dock's left. */
+.deck-merchant__dock .deck-ticket-quote { text-align: right; }
 .deck-merchant-row small { color: var(--dim); }
 .deck-merchant-row small.deck-merchant-row__held { color: var(--ink); }
 .deck-merchant-row { display: grid; grid-template-columns: auto minmax(0, 1fr) 6.5rem; align-items: center; gap: var(--space-2); padding: var(--space-2); }
 .deck-merchant-row > span { display: grid; min-width: 0; }
 .deck-merchant-row input { width: 100%; }
+.deck-merchant-row__amount { display: grid; gap: var(--space-1); }
 /* §signals: the Signals pop-out — cards with paintings on the left, the chosen
    signal on the right. */
 .deck-signals { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: var(--space-3); min-height: 100%; }
@@ -395,11 +506,6 @@
 .deck-order-row > span { display: flex; min-width: 0; align-items: center; gap: var(--space-2); }
 .deck-order-row > span > span { display: grid; min-width: 0; gap: var(--space-1); }
 .deck-order-row small { color: var(--dim); font-size: var(--fs-fine); }
-.deck-market-hub { grid-template-columns: minmax(0, calc(var(--space-6) * 5)) minmax(0, 1fr); align-items: center; }
-.deck-market-hub img { display: block; width: 100%; max-height: calc(var(--space-6) * 5); object-fit: contain; }
-.deck-market-hub > div { display: grid; gap: var(--space-2); }
-.deck-market-hub h3, .deck-market-hub p { margin: 0; }
-.deck-market-hub p { color: var(--dim); line-height: 1.4; }
 .deck-berth-list, .deck-service-list, .deck-freight-manifest { display: grid; gap: var(--space-1); }
 .deck-berth { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-1); }
 .deck-berth > button:first-child { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); padding: var(--space-2); text-align: left; }
@@ -648,7 +754,9 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 }
 .deck-bottom-band { position: fixed; z-index: var(--z-command); left: var(--space-3); right: calc(var(--deck-workspace-inset, 0px) + var(--space-3)); bottom: var(--space-3); height: 0; pointer-events: none; }
 .deck:has(.deck-overlay:not([hidden])) .deck-bottom-band { visibility: hidden; pointer-events: none; }
-.deck-command-strip { position: absolute; left: 50%; bottom: var(--deck-strip-bottom, 0px); width: min(720px, calc(100% - var(--space-6))); transform: translateX(-50%); pointer-events: auto; container: deck-strip / inline-size; }
+/* The bottom band places the strip (bottom-band.ts): centred, or squeezed
+   between Founding and zoom. These defaults are its centred place. */
+.deck-command-strip { position: absolute; left: var(--deck-strip-left, calc((100% - min(720px, calc(100% - var(--space-6)))) / 2)); bottom: var(--deck-strip-bottom, 0px); width: var(--deck-strip-width, min(720px, calc(100% - var(--space-6)))); pointer-events: auto; container: deck-strip / inline-size; }
 .deck-command-strip__frame { display: grid; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); }
 .deck-command-strip__frame--intent, .deck-command-strip__frame--armed { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
 .deck-command-strip__frame:is(.deck-command-strip__frame--intent, .deck-command-strip__frame--armed) .deck-command-strip__summary { grid-column: 1 / -1; grid-row: 2; }
@@ -697,7 +805,9 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
   .deck-command-strip__frame--intent, .deck-command-strip__frame--armed { grid-template-columns: minmax(0, 1fr); }
   .deck-command-strip__frame:is(.deck-command-strip__frame--intent, .deck-command-strip__frame--armed) .deck-command-strip__actions { grid-column: 1; grid-row: 3; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
 }
-@container deck-strip (max-width: 320px) {
+/* Below the bottom band's narrowest squeeze (280 px), whose one-line Transit
+   (about 230 px) and three verb columns still fit. */
+@container deck-strip (max-width: 260px) {
   .deck-command-strip__verbs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .deck-fleet-chip { grid-template-columns: minmax(0, 1fr) auto auto; }
   .deck-fleet-chip > span:first-child { grid-column: 1; grid-row: 1; }
@@ -772,30 +882,85 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 .deck-objective > span { display: grid; gap: var(--space-1); }
 .deck-objective small, .deck-objective em { color: var(--dim); font-size: var(--fs-fine); font-style: normal; }
 .deck-section-link { width: 100%; color: var(--accent) !important; }
-.deck-inbox, .deck-timeline { display: grid; gap: var(--space-2); }
-.deck-inbox-card { display: grid; gap: var(--space-2); padding: var(--space-3); border-left: var(--space-1) solid var(--accent); background: var(--field-bg); }
-.deck-inbox-card.is-negative { border-color: var(--negative); }
-.deck-inbox-card.is-warn { border-color: var(--warn); }
-.deck-inbox-card > header { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: var(--space-2); }
-.deck-inbox-card > header > div { display: grid; gap: var(--space-1); }
-.deck-inbox-card p { margin: 0; color: var(--dim); line-height: 1.4; }
-.deck-inbox__age, .deck-inbox__confidence { color: var(--dim); font-size: var(--fs-fine); }
-.deck-inbox__confidence { display: flex; align-items: center; gap: var(--space-1); }
-.deck-inbox__actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-.deck-inbox__actions button { display: flex; align-items: center; gap: var(--space-1); padding-inline: var(--space-2); }
-.deck-inbox__actions button > span { display: grid; gap: var(--space-1); text-align: left; }
-.deck-inbox__actions button small { color: var(--dim); font-size: var(--fs-fine); }
-.deck-inbox__actions button.is-primary { border-color: var(--accent); color: var(--accent); }
-.deck-inbox__actions button.is-danger { border-color: var(--negative); color: var(--negative); }
+/* §log (Oct 28 2026): Inbox and History, one compact line a row; the stripe
+   carries severity (bad red, warn amber, good green, info blue). */
+.deck-log { gap: var(--space-2); }
+.deck-log__tabs em { margin-left: var(--space-1); color: var(--accent); font-size: var(--fs-fine); font-style: normal; }
+.deck-log__tabs em:empty { display: none; }
+/* §season: the News tab. */
+.deck-news-head { margin: 0 0 var(--space-2); color: var(--dim); font-size: var(--fs-fine); letter-spacing: .04em; }
+.deck-logrow.deck-newsrow { grid-template-columns: 3px 20px minmax(0, 1fr) auto; }
+.deck-newsrow__source { width: 20px; height: 20px; }
+.deck-newsrow.is-yours .deck-logrow__text b { color: var(--warn); }
+.deck-log__list { display: grid; gap: 2px; }
+.deck-log__group, .deck-log__day { display: flex; align-items: baseline; justify-content: space-between; margin: var(--space-2) 0 var(--space-1); color: var(--dim); font-size: var(--fs-fine); font-weight: 400; letter-spacing: .06em; text-transform: uppercase; }
+.deck-log__group:first-child, .deck-log__day:first-child { margin-top: 0; }
+.deck-log__group b { color: var(--ink); font-weight: 400; }
+.deck-log__filters { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.deck-chip { min-height: calc(var(--space-6) - 2px); padding: 0 var(--space-2); border-radius: 999px; color: var(--dim); font-size: var(--fs-fine); }
+.deck-chip.is-on { border-color: var(--accent); color: var(--accent); }
+.deck-chip.is-bad { border-color: rgba(255, 107, 107, .4); color: var(--negative); }
+.deck-chip.is-warn { border-color: rgba(255, 180, 84, .4); color: var(--warn); }
+.deck-chip.is-good { border-color: rgba(95, 208, 138, .4); color: var(--positive); }
 .deck-log-clear { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); color: var(--positive); }
-.deck-timeline__heading { margin: var(--space-2) 0 0; color: var(--dim); font-size: var(--fs-fine); letter-spacing: .06em; text-transform: uppercase; }
-.deck-timeline__row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: var(--space-2); padding: var(--space-2); border-left: var(--space-1) solid var(--border); background: var(--field-bg); }
-.deck-timeline__row.is-good { border-color: var(--positive); }
-.deck-timeline__row.is-bad { border-color: var(--negative); }
-.deck-timeline__row.is-warn { border-color: var(--warn); }
-.deck-timeline__row time { color: var(--dim); font-size: var(--fs-fine); white-space: nowrap; }
+.deck-log__more { width: 100%; min-height: var(--deck-control-height); border-style: dashed; color: var(--dim); }
+.deck-logrow { position: relative; display: grid; grid-template-columns: 3px var(--space-6) minmax(0, 1fr) auto auto; align-items: center; column-gap: var(--space-2); min-height: 36px; padding-right: var(--space-1); border-radius: var(--deck-radius); background: var(--field-bg); }
+.deck-logrow.is-bad { background: rgba(255, 107, 107, .06); }
+.deck-logrow.is-warn { background: rgba(255, 180, 84, .05); }
+.deck-logrow__bar { align-self: stretch; border-radius: var(--deck-radius) 0 0 var(--deck-radius); background: var(--border); }
+.deck-logrow.is-bad .deck-logrow__bar { background: var(--negative); }
+.deck-logrow.is-warn .deck-logrow__bar { background: var(--warn); }
+.deck-logrow.is-good .deck-logrow__bar { background: var(--positive); }
+.deck-logrow.is-info .deck-logrow__bar { background: var(--info); }
+.deck-logrow__icon { display: grid; place-items: center; }
+.deck-logrow__icon .icon { width: 18px; height: 18px; }
+.deck-logrow__text { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.deck-logrow__text b { flex: 0 1 auto; overflow: hidden; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.deck-logrow.is-unread .deck-logrow__text b { color: #fff; font-weight: 600; }
+.deck-logrow__text small { flex: 1 1 0; min-width: 0; overflow: hidden; color: var(--dim); font-size: var(--fs-fine); text-overflow: ellipsis; white-space: nowrap; }
+.deck-logrow time { color: var(--dim); font-size: var(--fs-fine); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.deck-logrow__act { min-height: 28px; padding-inline: var(--space-2); border-color: var(--accent); color: var(--accent); white-space: nowrap; }
+.deck-logrow__act.is-danger { border-color: var(--negative); color: var(--negative); }
+.deck-logrow__menu > summary { display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--deck-radius); color: var(--dim); cursor: pointer; list-style: none; }
+.deck-logrow__menu > summary::-webkit-details-marker { display: none; }
+.deck-logrow__menu > summary:hover, .deck-logrow__menu[open] > summary { background: var(--btn-bg-hover); color: var(--ink); }
+.deck-logrow__menu > div { position: absolute; z-index: var(--z-hover); top: calc(100% - 2px); right: 0; display: grid; min-width: calc(var(--space-6) * 6); padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); }
+.deck-logrow__menu > div button { justify-content: flex-start; border-color: transparent; background: transparent; text-align: left; }
+.deck-logrow__menu > div button:hover { background: var(--btn-bg-hover); }
+/* A History row is one button over the grid; its report opens beneath. */
+.deck-logrow:has(> .deck-logrow__main) { display: block; padding: 0; }
+.deck-logrow__main { display: grid; grid-template-columns: 3px var(--space-6) minmax(0, 1fr) auto; align-items: center; column-gap: var(--space-2); width: 100%; min-height: 36px; padding: 0 var(--space-2) 0 0; border: 0; border-radius: var(--deck-radius); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.deck-logrow__main:hover { background: rgba(255, 255, 255, .03); }
+.deck-logrow__main .deck-logrow__bar { min-height: 36px; }
+.deck-logrow.is-open { outline: 1px solid var(--border); }
+.deck-logreport { display: grid; gap: var(--space-2); padding: var(--space-1) var(--space-2) var(--space-2) calc(var(--space-6) + var(--space-2) * 2 + 3px); }
+.deck-logreport__facts { margin: 0; color: var(--dim); font-size: var(--fs-fine); }
+.deck-logreport__lines { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: var(--fs-fine); }
+.deck-logreport__lines li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-2); }
+.deck-logreport__lines time { color: var(--dim); font-variant-numeric: tabular-nums; }
+.deck-logreport__goods { width: 100%; border-collapse: collapse; font-size: var(--fs-fine); }
+.deck-logreport__goods th { color: var(--dim); font-weight: 400; text-align: left; }
+.deck-logreport__goods :is(th, td) { padding: 2px var(--space-1); }
+.deck-logreport__goods .is-num, .deck-logreport__goods th:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+.deck-logreport__goods .is-neg { color: var(--negative); }
+.deck-logreport__goods tfoot td { border-top: 1px solid var(--border); color: var(--ink); }
+.deck-logreport__acts { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.deck-logreport__acts button { min-height: 28px; padding-inline: var(--space-2); }
+.deck-logreport__acts button.is-primary { border-color: var(--accent); color: var(--accent); }
+.deck-log__away { display: grid; gap: var(--space-1); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--deck-radius); background: rgba(4, 8, 16, .34); }
+.deck-log__away > header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.deck-log__away > header button { min-height: 24px; padding: 0 var(--space-1); border-color: transparent; background: transparent; color: var(--dim); }
+.deck-log__chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.deck-log__chips .deck-chip { display: inline-flex; align-items: center; border: 1px solid var(--border); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .deck-zoom { position: absolute; z-index: 1; right: 0; bottom: var(--deck-zoom-bottom, 0px); display: flex; align-items: center; gap: var(--space-1); pointer-events: auto; }
 .deck-zoom__level { min-width: calc(var(--space-6) * 2); padding-inline: var(--space-2); color: var(--dim); font-size: var(--fs-fine); text-align: right; }
+.deck-zoom [data-deck-act="layers"] { display: grid; place-items: center; }
+.deck-zoom [data-deck-act="layers"][aria-expanded="true"] { border-color: var(--accent, #4fc3ff); }
+/* §map-layers: which systems' names the map shows. */
+.deck-layers { position: absolute; z-index: 1; right: 0; bottom: calc(var(--deck-zoom-bottom, 0px) + var(--deck-control-height) + var(--space-2)); min-width: calc(var(--space-6) * 5); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); pointer-events: auto; }
+.deck-layers:not([hidden]) { display: grid; gap: var(--space-1); }
+.deck-layers small { color: var(--dim); font-size: var(--fs-fine); letter-spacing: .08em; text-transform: uppercase; }
+.deck-layers label { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; }
 .deck-overlays { position: fixed; z-index: var(--z-overlay); inset: 0; pointer-events: none; }
 .deck-overlay { position: absolute; inset: 0; display: grid; place-items: center; padding: var(--space-6); background: rgba(3, 6, 12, .82); pointer-events: auto; }
 .deck-join { isolation: isolate; background: var(--bg); }
@@ -808,6 +973,11 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 .deck-help__card header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .deck-help__card h1 { margin: 0; font-size: var(--fs-page); }
 .deck-help__card p { margin: 0; color: var(--dim); }
+/* §gun-platform: game over, and a restart. */
+.deck-fallen__card { width: min(420px, calc(100vw - var(--space-6) * 2)); display: grid; gap: var(--space-3); justify-items: center; padding: var(--space-6); border: 1px solid var(--negative); border-radius: var(--deck-radius); background: var(--panel-bg); box-shadow: var(--panel-shadow); text-align: center; }
+.deck-fallen__card h1 { margin: 0; font-size: var(--fs-page); }
+.deck-fallen__card p { margin: 0; color: var(--dim); }
+.deck-fallen__card button { min-width: calc(var(--space-6) * 4); }
 .deck-help__grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-2) var(--space-3); align-items: center; }
 .deck-help__grid kbd { min-width: calc(var(--space-6) * 2); padding: var(--space-1) var(--space-2); border: 1px solid var(--field-bd); border-radius: var(--deck-radius); background: var(--field-bg); color: var(--accent); font: inherit; font-size: var(--fs-fine); text-align: center; }
 .deck-help__grid span { color: var(--dim); }
@@ -850,7 +1020,18 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 .deck-member-row { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
 .deck-member-row > span { display: flex; min-width: 0; align-items: center; gap: var(--space-2); }
 .deck-member-row > span > i { width: var(--space-2); height: var(--space-2); border-radius: 50%; background: var(--positive); box-shadow: 0 0 var(--space-2) var(--positive); }
+.deck-member-row.is-offline > span > i { background: var(--dim); box-shadow: none; }
 .deck-member-row > span > span { display: grid; min-width: 0; gap: var(--space-1); }
+.deck-invite-row { flex-wrap: wrap; }
+.deck-ladder { display: flex; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.deck-ladder li { flex: 1; display: grid; place-items: center; min-height: 24px; border: 1px solid var(--border); border-radius: var(--deck-radius); color: var(--dim); font-size: var(--fs-fine); }
+.deck-ladder li.is-done { border-color: var(--positive); color: var(--positive); }
+.deck-ladder li.is-current { border-color: var(--accent); color: var(--accent); }
+.deck-project-rung { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.deck-project-rung small, .deck-projects header p { color: var(--dim); }
+.deck-projects header p .medals { margin-left: var(--space-2); }
+.deck-invite-row input { flex: 1 1 220px; min-width: 0; font-family: var(--font-mono, monospace); font-size: var(--fs-fine); }
+.deck-invite-row small { color: var(--dim); font-size: var(--fs-fine); }
 .deck-member-row small { color: var(--dim); font-size: var(--fs-fine); }
 .deck-role-actions, .deck-danger-row, .deck-diplomacy-form { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .deck-role-actions button { min-height: 0; padding: var(--space-1) var(--space-2); font-size: var(--fs-fine); }
@@ -859,6 +1040,12 @@ button.deck-fleet-order { grid-template-columns: auto minmax(0, 1fr); }
 .deck-diplomacy-form input { min-width: min(100%, calc(var(--space-6) * 4)); flex: 1; }
 
 .deck-charter-ladder { display: grid; gap: var(--space-1); }
+/* §season: the Authority's demands on the Faction page. */
+.deck-demand { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-2); padding: var(--space-2); border-left: var(--space-1) solid var(--warn); background: var(--field-bg); margin-top: var(--space-2); }
+.deck-demand > span { display: grid; gap: 2px; min-width: 0; }
+.deck-demand.is-war { border-left-color: var(--negative); }
+.deck-demand small { color: var(--dim); }
+.deck-grip .deck-stat dd small { color: var(--warn); font-size: var(--fs-fine); }
 .deck-charter-row { display: flex; justify-content: space-between; gap: var(--space-2); padding: var(--space-2); border-left: var(--space-1) solid transparent; color: var(--dim); }
 .deck-charter-row.is-active { border-color: var(--warn); background: var(--field-bg); color: var(--ink); }
 .deck-reinstatement { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-2); }
@@ -1049,15 +1236,13 @@ button.deck-ranking-row:hover { border-color: color-mix(in srgb, var(--accent) 6
 .deck-founding__next > p { margin: 0; color: var(--dim); line-height: 1.4; }
 .deck-founding__next > button.is-primary { border-color: var(--positive); color: var(--positive); }
 /* §charter-v5: a goal beyond the next step (the den's belt), quieter than it. */
-.deck-founding__goal { display: grid; gap: var(--space-1); padding: var(--space-2); border: 1px dashed var(--border); border-radius: var(--deck-radius); }
-.deck-founding__goal > small { color: var(--accent); font-size: var(--fs-fine); text-transform: uppercase; letter-spacing: .06em; }
-.deck-founding__goal > p { margin: 0; color: var(--dim); line-height: 1.4; }
 .deck-founding__waiting { display: grid; gap: var(--space-1); }
 .deck-founding__waiting > button:not(.deck-founding__waiting-toggle) { display: grid; text-align: left; padding: var(--space-2); }
 .deck-founding__waiting > button > span { display: grid; gap: 2px; }
 .deck-founding__waiting small { color: var(--dim); font-size: var(--fs-fine); }
 .deck-founding__waiting-toggle { justify-self: start; color: var(--dim); font-size: var(--fs-fine); }
-/* §founding R5: a build workbench needs the height; the card shrinks to its header. */
+/* §founding R5: a build workbench needs the height; the card shrinks to its
+   header. So does Logistics. */
 .deck:is(:has(#deck-build-workbench:not([hidden])), :has(.deck-workspace[data-route="logistics"]:not([aria-hidden="true"]))) .deck-founding .deck-founding__body { display: none; }
 .deck:is(:has(#deck-build-workbench:not([hidden])), :has(.deck-workspace[data-route="logistics"]:not([aria-hidden="true"]))) .deck-founding { width: min(300px, 100%); }
 .deck-founding > header > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1089,6 +1274,10 @@ button.deck-ranking-row:hover { border-color: color-mix(in srgb, var(--accent) 6
 .deck-welcome__body li { position: relative; padding-left: 14px; line-height: 1.4; }
 .deck-welcome__body li::before { content: "▸"; position: absolute; left: 0; color: var(--accent); }
 .deck-welcome__body p { margin: 0; color: var(--dim); line-height: 1.4; }
+.deck-welcome__body li.is-bad::before { color: var(--negative); }
+.deck-welcome__body li.is-warn::before { color: var(--warn); }
+.deck .deck-welcome__line { min-height: 0; padding: 0; border: 0; border-radius: 0; background: none; color: inherit; font: inherit; text-align: left; line-height: 1.4; cursor: pointer; }
+.deck .deck-welcome__line:hover, .deck .deck-welcome__line:focus-visible { background: none; color: var(--accent); text-decoration: underline; }
 .deck-welcome__next { padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
 .deck-welcome__body footer { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .deck-welcome__body footer .is-primary { border-color: var(--positive); color: var(--positive); }
@@ -1111,3 +1300,60 @@ button.deck-ranking-row:hover { border-color: color-mix(in srgb, var(--accent) 6
 .deck-construction-menu__row.is-idle small { color: var(--warn); }
 .deck .deck-signals-link { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); color: inherit; text-align: left; }
 .deck .deck-signals-link span { color: var(--dim); font-size: var(--fs-fine); }
+
+/* §research-grant (R3): the Fund button under the active programme. */
+.deck-research-grant { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+.deck-research-grant small { color: var(--text-muted, #8aa0b2); }
+/* §designations Mass Streams: the systems a stream could run to. */
+.deck-stream-options { display: flex; flex-wrap: wrap; gap: var(--space-1, 4px); }
+/* §research-wiring: intel research read off a rival contact. */
+.deck-fleet-intel { display: grid; gap: 2px; margin-top: var(--space-1, 4px); }
+.deck-fleet-intel b { margin-right: 6px; color: var(--text-muted, #8aa0b2); font-weight: 600; }
+/* §research-wiring Battle Archives: a third party's tally of losses. */
+.deck-theater-losses { display: grid; gap: 2px; font-size: 12px; margin-top: var(--space-1, 4px); }
+.deck-theater-losses b { margin-right: 6px; }
+/* §social (R5): the Comms page — channel, members and mail. */
+.deck-comms__members { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-bottom: var(--space-2, 8px); }
+.deck-comms__member { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.deck-comms__member i, .deck-member-row i { width: 7px; height: 7px; border-radius: 50%; background: #4b5866; display: inline-block; }
+.deck-comms__member.is-online i, .deck-member-row.is-online i { background: #5fd38b; }
+.deck-comms__member small { color: var(--text-muted, #8aa0b2); }
+.deck-comms__member button { padding: 0 6px; font-size: 11px; }
+.deck-comms__log { display: flex; flex-direction: column; gap: 6px; max-height: 52vh; overflow-y: auto; padding: 4px 0; }
+.deck-chat-line { display: grid; grid-template-columns: auto auto 1fr; align-items: baseline; gap: 2px 8px; }
+.deck-chat-line p { grid-column: 1 / -1; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.deck-chat-line small { color: var(--text-muted, #8aa0b2); }
+.deck-chat-line.is-own b { color: #4fc3ff; }
+.deck-chat-report { justify-self: end; padding: 0 4px; font-size: 11px; opacity: .55; }
+.deck-chat-report:hover { opacity: 1; }
+.deck-comms__compose { display: flex; gap: 6px; margin-top: var(--space-2, 8px); }
+.deck-comms__compose input { flex: 1; min-width: 0; }
+.deck-comms__folders { display: flex; gap: 6px; margin-bottom: var(--space-2, 8px); }
+.deck-comms__folders .is-primary { margin-left: auto; }
+.deck-mail-list { display: flex; flex-direction: column; gap: 2px; }
+.deck-mail-row { display: grid; grid-template-columns: minmax(80px, 30%) 1fr auto; gap: 8px; text-align: left; }
+.deck-mail-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deck-mail-row small { color: var(--text-muted, #8aa0b2); }
+.deck-mail-row.is-unread b, .deck-mail-row.is-unread span { font-weight: 700; color: #e8f1f7; }
+.deck-mail-open header { display: flex; gap: 8px; align-items: center; }
+.deck-mail-open header small { display: block; color: var(--text-muted, #8aa0b2); }
+.deck-mail-open p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.deck-mail-open footer, .deck-comms__compose-actions { display: flex; gap: 6px; }
+.deck-mail-compose { display: grid; gap: 8px; }
+.deck-mail-compose label { display: grid; gap: 4px; }
+.deck-mail-compose textarea { resize: vertical; }
+/* §traders: a merchant ship's panel names the trader who flies it. */
+.deck-fleet-trader { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-3); align-items: start; }
+.deck-fleet-trader > img { width: 72px; height: 72px; border-radius: var(--deck-radius); object-fit: cover; }
+.deck-fleet-trader > div { display: grid; gap: var(--space-1); }
+.deck-fleet-trader small, .deck-fleet-trader p { margin: 0; color: var(--dim); }
+.deck-fleet-trader small { font-size: var(--fs-fine); }
+.deck-fleet-trader button { justify-self: start; }
+/* §scouting: the scout report on a rival system. */
+.deck-scout-report > header { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.deck-scout-report > header small { color: var(--dim); }
+.deck-scout-report__reach { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.deck-scout-report__reach > small { color: var(--dim); }
+.deck-scout-report__reach > span { display: inline-flex; align-items: center; gap: 4px; }
+.deck-scout-report__reach .icon--resource, .deck-scout-report__reach .icon { width: 20px; height: 20px; }
+.deck-scout-report__reach > em { margin-left: auto; color: var(--dim); font-style: normal; }

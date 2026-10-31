@@ -166,7 +166,7 @@ impl World {
                 StudyRequirement::Scout => fleet.contains(ShipKind::Scout),
                 StudyRequirement::ResearchTeam => fleet.contains(ShipKind::Scout)
                     && (fleet.has_recon() || fleet.has_spectrometer() || self.active_captain_for_fleet(player, id)
-                        .is_some_and(|c| c.attributes.fieldcraft >= 2)),
+                        .is_some_and(|c| c.effective().fieldcraft >= 2)),
                 StudyRequirement::FuelledFreighter | StudyRequirement::ShieldedFreighter => fleet.has_freighter(),
             }
             && opportunity.costs.iter().all(|(c, n)| fleet.cargo_stacks().iter()

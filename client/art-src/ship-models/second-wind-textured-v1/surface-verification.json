@@ -1,0 +1,202 @@
+{
+  "triangles": 7778,
+  "components": 96,
+  "closedComponents": 96,
+  "dedicatedBottomTriangles": 724,
+  "finiteAttributes": true,
+  "unitNormals": true,
+  "consistentWinding": true,
+  "nondegenerateTriangles": true,
+  "noncollapsedBottomUVs": true,
+  "positiveVolumes": {
+    "hull.workshop": 210.16395207,
+    "ventral.reinforced-keel": 31.10650901,
+    "cradle.port.rail": 14.91031758,
+    "cradle.port.nose-cap": 0.48755739,
+    "cradle.port.wear-plate": 0.27097142,
+    "cradle.starboard.rail": 15.14468745,
+    "cradle.starboard.nose-cap": 0.49845059,
+    "cradle.starboard.wear-plate": 0.27612171,
+    "cargo.pallet-module.0": 1.9926216,
+    "cargo.pallet-module.1": 1.9171523,
+    "bridge.glazing": 10.81737769,
+    "bridge.roof-console": 0.04790256,
+    "docking.port.housing": 5.74662317,
+    "cargo.workshop.lid": 3.17373632,
+    "armor.replacement-panel.0": 1.88114695,
+    "armor.replacement-panel.1": 0.9332096,
+    "armor.replacement-panel.2": 0.56352565,
+    "hull.starboard-loading-hatch": 4.10129887,
+    "engine.port.housing": 29.14965582,
+    "engine.port.service-panel": 0.20802549,
+    "engine.starboard.housing": 25.99845818,
+    "engine.starboard.service-panel": 0.20802544,
+    "ventral.cargo-hatch.0": 0.79927345,
+    "ventral.cargo-hatch.1": 0.79927341,
+    "ventral.cargo-hatch.2": 0.79927341,
+    "cradle.port.fastener.0": 0.00064109,
+    "cradle.port.fastener.1": 0.0006411,
+    "cradle.port.fastener.2": 0.00064109,
+    "cradle.port.fastener.3": 0.0006411,
+    "cradle.starboard.fastener.0": 0.0006411,
+    "cradle.starboard.fastener.1": 0.0006411,
+    "cradle.starboard.fastener.2": 0.0006411,
+    "cradle.starboard.fastener.3": 0.0006411,
+    "cargo.pallet-frame": 9.34077684,
+    "cargo.pallet-lock.0": 0.01530767,
+    "cargo.pallet-lock.1": 0.01530766,
+    "cargo.pallet-lock.2": 0.01530769,
+    "cargo.pallet-lock.3": 0.01530768,
+    "bridge.antenna-mount.0": 0.00793512,
+    "bridge.antenna.0": 0.00692399,
+    "bridge.antenna-mount.1": 0.0079351,
+    "bridge.antenna.1": 0.00601891,
+    "docking.port.rim": 0.39951629,
+    "docking.port.door": 0.08142151,
+    "docking.port.latch.0": 0.00097015,
+    "docking.port.latch.1": 0.00097015,
+    "docking.port.latch.2": 0.00097015,
+    "docking.port.latch.3": 0.00097015,
+    "cargo.workshop.coaming": 4.95744697,
+    "cargo.workshop.fastener.0": 0.00100171,
+    "cargo.workshop.fastener.1": 0.00100171,
+    "cargo.workshop.fastener.2": 0.00100171,
+    "cargo.workshop.fastener.3": 0.00100171,
+    "crane.base": 0.28560366,
+    "crane.arm.0": 0.24881458,
+    "crane.hydraulic.0": 0.02204465,
+    "crane.arm.1": 0.23561606,
+    "crane.hydraulic.1": 0.02087529,
+    "crane.arm.2": 0.15098347,
+    "crane.hydraulic.2": 0.01815441,
+    "crane.pivot.0": 0.08297804,
+    "crane.pivot-cap.0": 0.00253498,
+    "crane.pivot.1": 0.082978,
+    "crane.pivot-cap.1": 0.00253501,
+    "crane.pivot.2": 0.08297808,
+    "crane.pivot-cap.2": 0.00253498,
+    "crane.pivot.3": 0.082978,
+    "crane.pivot-cap.3": 0.00253499,
+    "crane.wrist": 0.03435805,
+    "crane.jaw.-1.root": 0.01033049,
+    "crane.jaw.-1.tip": 0.00769002,
+    "crane.jaw.1.root": 0.01033051,
+    "crane.jaw.1.tip": 0.00769002,
+    "hull.port.engine-mount": 4.41698819,
+    "engine.port.coupling-band.0": 0.15388016,
+    "engine.port.coupling-band.1": 0.15387967,
+    "engine.port.nozzle-fin.0": 0.07094379,
+    "engine.port.nozzle-fin.1": 0.0582181,
+    "engine.port.nozzle-rim": 0.58513541,
+    "engine.port.aperture": 0.0816181,
+    "machinery.port.feed-pipe": 0.12224215,
+    "hull.starboard.engine-mount": 4.41698819,
+    "engine.starboard.inner-core": 29.14965564,
+    "engine.starboard.nozzle-fin.0": 0.07094377,
+    "engine.starboard.nozzle-fin.1": 0.05821806,
+    "engine.starboard.nozzle-rim": 0.58513545,
+    "engine.starboard.aperture": 0.08161809,
+    "machinery.starboard.feed-pipe": 0.12224209,
+    "ventral.brace.-1.0": 0.07970714,
+    "ventral.brace.-1.1": 0.09812387,
+    "ventral.brace.1.0": 0.07970714,
+    "ventral.brace.1.1": 0.09812387,
+    "machinery.reservoir.0": 0.09975786,
+    "machinery.reservoir.1": 0.09975787,
+    "machinery.reservoir.2": 0.09975791,
+    "machinery.reservoir.3": 0.0997579
+  },
+  "method": "Independent checks on exported GLB buffers; welded position topology per authored component",
+  "observedFeatureCounts": {
+    "cargoBays": 1,
+    "dockingCollars": 1,
+    "mainEngines": 2,
+    "bridges": 1,
+    "cranes": 1,
+    "guns": 0
+  },
+  "allPhysicalTrianglesTextured": true,
+  "allPhysicalTrianglesHaveAreaUVs": true,
+  "minimumUVTriangleArea": 8.111938143429143e-08,
+  "texturedDownwardTriangles": 1752,
+  "socketNodes": [
+    {
+      "name": "socket.docking.port",
+      "translation": [
+        -6.484736842105263,
+        0.05,
+        0.15789473684210525
+      ],
+      "extras": {
+        "role": "customer-shuttle-docking",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ]
+      }
+    },
+    {
+      "name": "socket.utility.crane",
+      "translation": [
+        5.894736842105263,
+        1.32,
+        -2.006315789473684
+      ],
+      "extras": {
+        "role": "salvage-tool-grip",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.port",
+      "translation": [
+        -3.5526315789473686,
+        0.03,
+        9.857105263157894
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.starboard",
+      "translation": [
+        3.710526315789474,
+        0.03,
+        9.857105263157894
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "clearOpenings": [
+    {
+      "referencePixel": [
+        278,
+        222
+      ],
+      "modelXZ": [
+        0.0,
+        -5.657894736842105
+      ],
+      "clear": true
+    }
+  ],
+  "sourceReferencesUnchanged": true
+}

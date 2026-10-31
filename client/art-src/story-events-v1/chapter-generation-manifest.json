@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "tool": "image_gen__imagegen",
+  "mode": "built-in",
+  "prompt_document": "docs/chapter-art-prompts.md",
+  "postprocessing": "None. Selected PNGs were copied byte-for-byte from the built-in generator, without cropping or resizing.",
+  "assets": [
+    {
+      "slug": "chapter-pirates",
+      "file": "client/art-src/story-events-v1/chapter-pirates.png",
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "transparent_background": false,
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/story-events-v1/free-trader-inbound.png",
+        "client/art-src/interceptor-reference-v1/interceptor-reference.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the COLONY reference only: the white landed colony ship that serves as the command center, its habitat and farm modules and the dusk highland plain. Use it for the colony's look; never copy its composition or its ship.\nInput image 3: the colony's INTERCEPTOR design reference only: a slim white swept-wing fighter with twin engines and blue running lights, in top, front and side views. Show it in believable scene perspective, never as a flat reference-sheet view, and never copy the white sheet background or labels.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: The colony arms itself: its new Shipyard starts the first warship to hunt the privateer who raided it.\nScene/backdrop: The colony at dusk, as in Image 2: the white landed colony ship that serves as its command center, habitat and farm modules, the highland plain. Beside it now stands a new open-air Shipyard: a cradle of charcoal-metal gantries and cranes under hard white floodlights.\nSubject: In the Shipyard's cradle, the colony's first Interceptor (Image 3) nears completion, seen in believable three-quarter perspective: a slim white swept-wing fighter with twin engines and blue running lights, a few hull panels still open, welding sparks falling from the gantry arms. A handful of colonists in work suits watch from the yard's edge. High in the darkening sky, far beyond the colony, a tiny orange engine trail: the privateer, still out there.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Resolve; floodlight white and welding sparks against blue dusk; the colony arming itself.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: one opaque PNG, landscape 1536 x 1024 pixels (3:2). Crop safety: keep the entire featured ship silhouette, its wings or cutter arms, and every important narrative detail inside x=125..1410 and y=130..890. Only expendable scenery may extend outside that safe band. Preserve all ship design details from the designated ship reference; do not borrow the flying ship from the colony reference.",
+      "revisions": [
+        {
+          "kind": "edit",
+          "prompt": "Edit this existing chapter painting with one localized crop-safety correction. Preserve the entire shipyard, Interceptor fighter, workers, colony, mountains, sunset, colours and composition unchanged. Move ONLY the tiny distant privateer and its thin orange engine trail in the upper-right sky downward: its bright engine and entire trail should be centered around y=155 on this 1536 x 1024 canvas, with no part of that small subject above y=135. Keep its horizontal position, tiny size and restrained orange glow. Fill its old location with matching blue sky. Keep the new trail above the mountain ridge in open sky. No other changes. One opaque PNG at 1536 x 1024, no text or border.",
+          "reference_images": [
+            "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-6013ce6e-5cc5-4080-bc3d-20a9d04d7bfe.png"
+          ]
+        }
+      ],
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-0084c18d-ac5c-428f-8b69-8b93edfcc554.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "41e49e00a58b4614cf8cca6c00f02b8fea660a808889a6afae962e195eb5ace2",
+        "bytes": 2650831,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "chapter-expansion",
+      "file": "client/art-src/story-events-v1/chapter-expansion.png",
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "transparent_background": false,
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/story-events-v1/free-trader-inbound.png",
+        "client/art-src/freighters-2026-09-16/tiny-freighter.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the COLONY reference only: the white landed colony ship that serves as the command center, its habitat and farm modules and the dusk highland plain. Use it for the colony's look; never copy its composition or its ship.\nInput image 3: the colony's TINY FREIGHTER design reference only: white cargo blocks with yellow edge trim behind a small command nose, and two rear engines. Show it in believable scene perspective, never as a flat top-down sprite.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: With the pirate den destroyed, the colony's first freighter carries its ore toward the distant Market Hub.\nScene/backdrop: The same colony at sunrise, as in Image 2, grown since the landing: a mine's headframe and ore conveyors, a field of solar arrays, the Shipyard's gantries, warm lights in the habitats.\nSubject: The colony's Tiny Freighter (Image 3), in believable perspective, lifts off from a landing pad loaded with sealed ore containers, its two engines glowing as it climbs into the morning sky. Dock crew and colonists watch from beside stacked ore. High in the pale sky, a faint cyan glint marks the far-off Market Hub.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Hopeful dawn; warm sunrise on the colony and the climbing freighter; the lanes open at last.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: one opaque PNG, landscape 1536 x 1024 pixels (3:2). Crop safety: keep the entire featured ship silhouette, its wings or cutter arms, and every important narrative detail inside x=125..1410 and y=130..890. Only expendable scenery may extend outside that safe band. Preserve all ship design details from the designated ship reference; do not borrow the flying ship from the colony reference.",
+      "revisions": [
+        {
+          "kind": "edit",
+          "prompt": "Make one localized correction to this existing Expansion chapter painting. Preserve the freighter, its exact design, colony, people, ore cargo, industry, sunrise, mountains, colours and composition unchanged. In the upper-right sky, REMOVE the entire visible space station, its long horizontal ring, vertical towers and tall light streak. Fill all of that station's former area with naturally continuous sky and distant planetary atmosphere matching the surrounding image. The Market Hub is vastly farther away than this: show it only as ONE tiny faint cyan star-like glint, about 6 pixels across, centered at approximately x=1305,y=175 on the 1536 x 1024 canvas. No visible station architecture, no ring, no towers, no portal disc, no long streak around that glint. No other changes. Deliver one opaque PNG, 1536 x 1024, no text, no borders.",
+          "reference_images": [
+            "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-dd65780d-d6fc-4076-a925-3bcb3a545328.png"
+          ]
+        }
+      ],
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-270da19b-f012-4486-ac48-9fd297d99bc1.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "fcea3bc529536a0bc81c0b59fe32a7d533dc0dce7e540a968b2ef38ac393fd1f",
+        "bytes": 2714087,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "chapter-reach",
+      "file": "client/art-src/story-events-v1/chapter-reach.png",
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "transparent_background": false,
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/mining-barge-reference-v1/mining-barge-reference.png",
+        "client/art-src/belt-view/stony-belt-v1.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the colony's MINING BARGE design reference only: a heavy white-and-yellow hull with a central ore hold and two forward cutter arms ending in toothed cutting heads, in top, bottom, front, back and side views. Show it in believable scene perspective, never as a flat reference-sheet view, and never copy the white sheet background or labels.\nInput image 3: the ASTEROID BELT reference only: its pitted grey-brown boulders and scattered rubble. Use it for the belt's rocks and their scale; never copy its composition or camera.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: The colony reaches past its own sky: its first Mining Barge works the rich asteroid belt where the pirate den once stood.\nScene/backdrop: A quiet asteroid belt in a neighbouring system, its rocks as in Image 3: drifting boulders of pitted stone and rubble, a small distant star throwing long cold light across them. Far off among the rocks drifts the dark, broken wreck of the pirate den.\nSubject: The colony's Mining Barge (Image 2), in believable three-quarter perspective, holds beside a large ore-rich asteroid; its two forward cutter arms bite into the rock with bright cutting beams, and glittering ore fragments drift toward its open hold.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Quiet ambition; cold distant starlight and the warm glow of cutting; the colony's reach widening.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: one opaque PNG, landscape 1536 x 1024 pixels (3:2). Crop safety: keep the entire featured ship silhouette, its wings or cutter arms, and every important narrative detail inside x=125..1410 and y=130..890. Only expendable scenery may extend outside that safe band. Preserve all ship design details from the designated ship reference.",
+      "revisions": [],
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-0619810b-ab75-47ae-b73c-2273d130a3d5.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "79ba06b25ea9e85e22d52748722103cded569be61f86b99a7db6ad8538853bef",
+        "bytes": 3045013,
+        "matches_generated_original": true
+      }
+    }
+  ]
+}

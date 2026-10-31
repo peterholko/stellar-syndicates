@@ -99,6 +99,13 @@ export const SHIP_MODELS = {
     "url": "/art/derived/ship-models/v1/tiny-freighter-lod2.glb?v=167b0775b5c3",
     "poster": "/art/derived/ships/models-v1/previews/tiny_freighter-768.webp"
   },
+  "combat_freighter": {
+    "id": "combat-freighter",
+    "title": "Combat Freighter",
+    "triangles": 4630,
+    "url": "/art/derived/ship-models/v1/combat-freighter-lod2.glb?v=5f96eff184e0",
+    "poster": "/art/derived/ships/models-v1/previews/combat_freighter-768.webp"
+  },
   "small_freighter": {
     "id": "small-freighter",
     "title": "Small Freighter",
@@ -147,6 +154,27 @@ export const SHIP_MODELS = {
     "triangles": 4354,
     "url": "/art/derived/ship-models/v1/free-trader-lod2.glb?v=aee828a50a5b",
     "poster": "/art/derived/ships/models-v1/previews/free_trader-768.webp"
+  },
+  "clean_slate": {
+    "id": "clean-slate",
+    "title": "Clean Slate",
+    "triangles": 3964,
+    "url": "/art/derived/ship-models/v1/clean-slate-lod2.glb?v=53061a72342d",
+    "poster": "/art/derived/ships/models-v1/previews/clean_slate-768.webp"
+  },
+  "second_wind": {
+    "id": "second-wind",
+    "title": "Second Wind",
+    "triangles": 3968,
+    "url": "/art/derived/ship-models/v1/second-wind-lod2.glb?v=008389ccc611",
+    "poster": "/art/derived/ships/models-v1/previews/second_wind-768.webp"
+  },
+  "small_fortune": {
+    "id": "small-fortune",
+    "title": "Small Fortune",
+    "triangles": 3894,
+    "url": "/art/derived/ship-models/v1/small-fortune-lod2.glb?v=07e70126e26e",
+    "poster": "/art/derived/ships/models-v1/previews/small_fortune-768.webp"
   },
   "survey_probe": {
     "id": "scout",

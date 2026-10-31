@@ -1,7 +1,11 @@
 // Account requests stay on the page's origin (Vite proxies them in development).
 // Passwords never go over the game socket; session tokens are HttpOnly cookies,
 // never localStorage, URL parameters, game state, or JavaScript-readable tokens.
-export interface Account { id: string; corporation_name: string; is_guest: boolean }
+/** §front-door: `game_url`, the game socket when it has its own host. */
+export interface Account { id: string; corporation_name: string; is_guest: boolean; game_url?: string }
+
+/** The account service is unreachable (the server is down, or the network). */
+export const NO_SIGNAL = "No signal from Charter Command. Standing by…";
 
 async function request(path: string, body?: object): Promise<Response> {
   return fetch(`/api/account/${path}`, {
@@ -11,16 +15,17 @@ async function request(path: string, body?: object): Promise<Response> {
     cache: "no-store",
     headers: { "Content-Type": "application/json", "X-Stellar-Client": "1" },
     body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  }).catch(() => { throw new Error(NO_SIGNAL); });
 }
 
 async function checked(response: Response): Promise<Account> {
   const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(data?.error ?? "Account service unavailable. Please try again.");
+  if (!response.ok) throw new Error(data?.error ?? NO_SIGNAL);
   if (typeof data?.id !== "string" || typeof data?.corporation_name !== "string") {
-    throw new Error("Account service unavailable. Please try again.");
+    throw new Error(NO_SIGNAL);
   }
-  return { id: data.id, corporation_name: data.corporation_name, is_guest: data.is_guest === true };
+  return { id: data.id, corporation_name: data.corporation_name, is_guest: data.is_guest === true,
+    game_url: typeof data.game_url === "string" ? data.game_url : undefined };
 }
 
 export const accounts = {

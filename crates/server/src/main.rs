@@ -23,6 +23,8 @@
 //!   dashboard at /admin.html (sign-ins, play sessions, commands, holdings).
 //!   Unset turns the dashboard off; the audit trail is recorded either way.
 //! Full saves every 15 wall minutes + shutdown; `--reset-galaxy` archives them.
+//! `server reset-passphrase <login>` sets a registered account's passphrase
+//! from the terminal and ends its sign-in; it needs only the account DB.
 
 mod activity;
 mod admin;
@@ -33,6 +35,9 @@ mod persistence;
 mod protocol;
 mod reports;
 mod session;
+mod notify;
+mod social;
+mod welcome;
 mod timeline;
 mod transactions;
 mod tutorial;
@@ -115,6 +120,12 @@ fn pacing_scale() -> f64 {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // The operator's command runs before logging, the galaxy or the port.
+    if args.first().is_some_and(|arg| arg == "reset-passphrase") {
+        anyhow::ensure!(args.len() == 2, "usage: server reset-passphrase <login>");
+        return auth::reset_passphrase(&args[1]).await;
+    }
     // Logging: respect RUST_LOG, default to info.
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
@@ -133,7 +144,7 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("BOT_PLAYERS must be a non-negative integer"))?;
     let pacing_scale = pacing_scale();
     let mut reset_galaxy = false;
-    for arg in std::env::args().skip(1) {
+    for arg in &args {
         anyhow::ensure!(arg == "--reset-galaxy", "unknown server argument: {arg}");
         reset_galaxy = true;
     }
@@ -224,6 +235,8 @@ async fn main() -> anyhow::Result<()> {
         result = &mut game_task => return result?,
     }
 
+    // §notifications (R8): opt-in alerts and digests (log-only until configured).
+    let notify = notify::Notify::start(auth.clone(), handle.clone()).await?;
     let tutorial = tutorial::TutorialRecorder::new(auth.pool());
     tutorial.spawn_poller(handle.clone());
     let admin = admin::AdminState::new(
@@ -233,6 +246,7 @@ async fn main() -> anyhow::Result<()> {
         status_rx.clone(),
         tutorial,
         admin::operators_from(&std::env::var("ADMIN_LOGINS").unwrap_or_default()),
+        pacing_scale,
     );
     let state = AppState {
         game: handle,
@@ -248,6 +262,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/ws", get(ws::ws_handler))
         .with_state(state)
         .merge(auth::routes(auth))
+        .merge(notify.routes())
         .merge(admin::routes(admin))
         // Serve a production client build if present (one-command run); during
         // development the client is served by Vite on its own port instead.

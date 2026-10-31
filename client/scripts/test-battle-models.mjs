@@ -279,14 +279,14 @@ bridge.close();
 class Graphics extends Container { clear() { return this; } }
 for (const fn of ["poly", "fill", "stroke", "circle", "ellipse", "roundRect", "rect", "star", "moveTo", "lineTo"]) Graphics.prototype[fn] = function () { return this; };
 class Text extends Container { constructor({ text, style }) { super(); this.text = text; this.style = style; this.anchor = new Point(); } }
-const art = compile("shipart", { "./ship-art.generated": compile("ship-art.generated") });
+const art = compile("shipart", { "./ship-art.generated": compile("ship-art.generated"), "./protocol": compile("protocol") });
 const fire = compile("battlefire");
 const hardpoints = compile("ship-hardpoints.generated");
 const battlefx = compile("battlefx", { "./prng": prng, "./ship-hardpoints.generated": hardpoints });
 const fxsprites = compile("battlefxsprites", { "pixi.js": { Sprite, Texture } });
 class Rectangle { constructor(x, y, width, height) { Object.assign(this, { x, y, width, height }); } }
 const theaterDeps = { "pixi.js": { Container, Sprite, Texture, Graphics, Text, TextStyle: class {}, Rectangle, Assets: { load: () => new Promise(() => {}) } },
-  "./prng": prng, "./stars": {}, "./systemview": {}, "./battlebackdrop": {}, "./systembodyfx": {}, "./planetart": {}, "./render": { COL_OWN: 0x72cfff, COL_OTHER: 0xff6655 },
+  "./prng": prng, "./stars": {}, "./starart": {}, "./systemview": {}, "./battlebackdrop": {}, "./systembodyfx": {}, "./planetart": {}, "./render": { COL_OWN: 0x72cfff, COL_OTHER: 0xff6655 },
   "./battlefire": fire, "./shipart": art, "./battle-models": { BattleModels }, "./battlefx": battlefx, "./battlefxsprites": fxsprites,
   "./battlewrecks": wrecks, "./core/derive/station": compile("core/derive/station") };
 const theater = compile("battletheater", theaterDeps, {}, `
@@ -759,7 +759,7 @@ assert.ok(Math.cos(station[0]) > 0.99, "…facing the enemy it first saw");
 // its art rather than in the engine's line, never move, carry no hull art,
 // and go up like a heavy hull when knocked out.
 {
-  const mount = (cid, y) => ({ cid, side: 1, kind: "corvette", plat: true, station: 3, x: 400, y, hp: 1 });
+  const mount = (cid, y) => ({ cid, side: 1, kind: "corvette", plat: true, station: 4, x: 400, y, hp: 1 });
   const line = [mount(10, -20), mount(11, 0), mount(12, 20)];
   const raider = { cid: 1, side: 0, kind: "raider", x: -300, y: 0, hp: 1 };
   const stationCounts = [[{ kind: "raider", exact: 1 }], []];

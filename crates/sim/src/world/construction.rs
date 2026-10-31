@@ -1,5 +1,7 @@
-//! A planet has one structure work slot. Hulls, modules and Academy courses
-//! use their existing independent facilities and never occupy that slot.
+//! A planet has one structure work slot (two with Flash Forges, never two
+//! orders for the same structure). Hulls and modules use their existing
+//! independent facilities and never occupy that slot. Academy courses keep a
+//! line of their own: one at a time, two with Broad Curricula.
 
 use super::*;
 use crate::build::{BuildKind, BuildWork};
@@ -16,16 +18,52 @@ impl World {
 
         // Job ids are receipt order, independent of deadlines or Vec layout.
         // Include system id: body ids are local, not galaxy-wide identifiers.
-        let mut heads: BTreeMap<(EntityId, u32), u64> = BTreeMap::new();
+        // §research-wiring Flash Forges: a second slot, for a different
+        // structure (a second order for the same one builds on the first).
+        // §research-wiring Broad Curricula: a course line, keyed apart.
+        let lined = |what: &BuildKind| matches!(what, BuildKind::Upgrade { .. } | BuildKind::Founding { .. } | BuildKind::Train { .. });
+        let mut lines: BTreeMap<(EntityId, u32, bool), Vec<(u64, BuildKind, PlayerId)>> = BTreeMap::new();
         for job in &self.build_queue {
-            if matches!(job.what, BuildKind::Upgrade { .. } | BuildKind::Founding { .. }) {
-                heads.entry((job.system, job.body_id))
-                    .and_modify(|id| *id = (*id).min(job.id)).or_insert(job.id);
+            if lined(&job.what) {
+                let course = matches!(job.what, BuildKind::Train { .. });
+                lines.entry((job.system, job.body_id, course)).or_default().push((job.id, job.what, job.owner));
+            }
+        }
+        let mut heads: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+        for (&(_, _, course), line) in lines.iter_mut() {
+            line.sort_by_key(|(id, ..)| *id);
+            let cap = if course { crate::research::Cap::BroadCurricula } else { crate::research::Cap::FlashForges };
+            let slots = if self.research_flag(line[0].2, cap) { 2 } else { 1 };
+            let mut building: Vec<BuildKind> = Vec::new();
+            for (id, what, _) in line.iter() {
+                if building.len() == slots {
+                    break;
+                }
+                // Two courses may teach one profession; two orders for one
+                // structure may not build at once.
+                if course || !building.contains(what) {
+                    building.push(*what);
+                    heads.insert(*id);
+                }
+            }
+        }
+        // §charter-gates: the charter's mine, starting now, sets the raid moving
+        // and is built in the privateer's flight time.
+        let starting_mines: Vec<(u64, PlayerId, EntityId)> = self.build_queue.iter()
+            .filter(|job| heads.contains(&job.id)
+                && job.what == (BuildKind::Upgrade { upgrade: crate::StructureKind::MiningComplex })
+                && job.structure_work.as_ref().is_none_or(|work| work.rate == 0.0))
+            .map(|job| (job.id, job.owner, job.system))
+            .collect();
+        let mut flights: BTreeMap<u64, f64> = BTreeMap::new();
+        for (id, owner, system) in starting_mines {
+            if let Some(secs) = self.raid_on_mine_start(owner, system) {
+                flights.insert(id, secs);
             }
         }
         for job in &mut self.build_queue {
-            if !matches!(job.what, BuildKind::Upgrade { .. } | BuildKind::Founding { .. }) { continue; }
-            let active = heads.get(&(job.system, job.body_id)) == Some(&job.id);
+            if !lined(&job.what) { continue; }
+            let active = heads.contains(&job.id);
             let work = job.structure_work.get_or_insert_with(|| {
                 // Older snapshots allowed parallel timers. Preserve their earned
                 // work, then serialize only the remainder. Unknown legacy starts
@@ -41,6 +79,9 @@ impl World {
             });
             let activating = active && work.rate == 0.0;
             work.set_rate(self.tick, if active { 1.0 } else { 0.0 });
+            if let Some(secs) = flights.get(&job.id).filter(|_| activating) {
+                work.required = work.completed + (secs * crate::config::TICK_HZ as f64).ceil().max(1.0);
+            }
             if activating && job.started_tick.is_none() && job.queued_tick.is_some() {
                 job.started_tick = Some(self.tick);
             }
@@ -234,6 +275,41 @@ mod tests {
         assert_eq!(stock(&w).0, start.0 - warehouse, "only the waiting Warehouse is still paid for");
         w.step(&[]);
         assert!(!job(&w, store).is_queued_structure(), "the next order builds");
+    }
+
+    #[test]
+    fn tiers_past_two_cost_more_take_longer_and_refund_what_they_cost() {
+        // §tier-curve (R1): I and II share the base recipe, III costs ×1.6 and
+        // takes ×20, VI takes ×2,700; explicit ladders keep their own recipes.
+        use crate::build::{recipe_for, recipe_for_tier, COMMAND_CENTER_RECIPES, DEUTERIUM_FUSION_PLANT_RECIPE};
+        let mine = BuildKind::Upgrade { upgrade: K::MiningComplex };
+        let base = recipe_for(mine);
+        assert_eq!(recipe_for_tier(mine, 1), recipe_for_tier(mine, 2), "the charter's tiers are untouched");
+        let third = recipe_for_tier(mine, 3);
+        assert_eq!(third.costs, base.costs.iter().map(|&(c, n)| (c, (n * 1.6).round())).collect::<Vec<_>>());
+        assert_eq!(third.build_ticks, base.build_ticks * 20);
+        assert_eq!(recipe_for_tier(mine, 4).build_ticks, base.build_ticks * 180);
+        assert_eq!(recipe_for_tier(mine, 6).build_ticks, base.build_ticks * 2_700);
+        let cc = recipe_for_tier(BuildKind::Upgrade { upgrade: K::CommandCenter }, 3);
+        assert_eq!((cc.costs.as_slice(), cc.build_ticks), (COMMAND_CENTER_RECIPES[2].costs, COMMAND_CENTER_RECIPES[2].build_ticks));
+        let plant = recipe_for_tier(BuildKind::Upgrade { upgrade: K::PowerPlant }, 3);
+        assert_eq!((plant.costs.as_slice(), plant.build_ticks), (DEUTERIUM_FUSION_PLANT_RECIPE.costs, DEUTERIUM_FUSION_PLANT_RECIPE.build_ticks));
+
+        // A real third tier debits the scaled price, takes ×20 the work of the
+        // first, and a cancel hands back exactly what it cost.
+        let (mut w, owner, home, body) = planet_queue();
+        let alloys = |w: &World| w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Alloys];
+        let first = queue(&mut w, owner, home, body, K::MiningComplex);
+        queue(&mut w, owner, home, body, K::MiningComplex);
+        let before = alloys(&w);
+        let third_job = queue(&mut w, owner, home, body, K::MiningComplex);
+        let base_alloys = base.costs.iter().find(|(c, _)| *c == Commodity::Alloys).unwrap().1;
+        assert_eq!(before - alloys(&w), (base_alloys * 1.6).round());
+        let required = |id| job(&w, id).structure_work.as_ref().unwrap().required;
+        assert!((required(third_job) / required(first) - 20.0).abs() < 1e-6, "{} vs {}", required(third_job), required(first));
+        let events = cancel(&mut w, owner, home, third_job);
+        assert!(events.iter().any(|e| matches!(&e.payload, EventPayload::BuildCancelled { .. })));
+        assert_eq!(alloys(&w), before, "the refund is the scaled price");
     }
 
     #[test]

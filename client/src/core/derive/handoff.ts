@@ -3,8 +3,9 @@ import type { BodyView, OperationView } from "../../protocol";
 import { constructionStock } from "./fleet";
 import { foundingHomeSystemId } from "./geo";
 import { SHIP_YARD } from "./market";
+import { SETTLEMENT_PROJECTS } from "../../settlement";
 
-export type HandoffGoalId = "colony" | "upgrade";
+export type HandoffGoalId = "colony" | "upgrade" | "camp";
 export type HandoffAction =
   | { kind: "build"; system: string; body: number; mode: "ships" | "structures"; select: string }
   | { kind: "fleet"; id: string }
@@ -96,5 +97,21 @@ export function postVictoryHandoff(): HandoffGoal[] {
     funding: funding("escort"),
     prospect: null,
   };
-  return [colony, upgrade];
+  // §camp (Oct 28 2026, Peter): the Founding Camp's projects open with the
+  // charter's end, offered here until all four are done.
+  const campBody = home.bodies.find(b => b.founding_camp);
+  const completed = campBody?.founding_camp?.completed ?? [];
+  const camp: HandoffGoal | null = campBody ? {
+    id: "camp", title: "Develop your settlement", done: completed.length >= SETTLEMENT_PROJECTS.length,
+    status: `${completed.length}/${SETTLEMENT_PROJECTS.length} projects`,
+    summary: "Four projects on your home world.",
+    requirements: SETTLEMENT_PROJECTS.map(p => ({ text: p.title, met: completed.includes(p.id) })),
+    costs: [],
+    payoff: "+50% Ferrite · storage 1,300 · housing 6,000",
+    action: { kind: "world", system: home.id, body: campBody.id },
+    actionLabel: "Settlement projects",
+    funding: null,
+    prospect: null,
+  } : null;
+  return camp ? [colony, upgrade, camp] : [colony, upgrade];
 }

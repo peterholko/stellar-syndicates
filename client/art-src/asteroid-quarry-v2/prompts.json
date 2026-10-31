@@ -1,0 +1,227 @@
+{
+  "generationMethod": "built-in image_gen",
+  "requestedSize": [
+    1672,
+    941
+  ],
+  "requestedBackground": "transparent",
+  "editPrompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET. Keep everything else in it exactly as it is: the asteroid, all machinery, panels and booms, the lighting, colors, camera, framing, size and position.\nChange only two things. Remove the black space so the output is a PNG with a genuinely transparent background (zero alpha) everywhere outside the asteroid and its machinery, including the gaps between ring segments, trusses and panels; remove the small loose rocks floating around it. And remove every docked ship or craft at the ends of the docking booms, leaving the empty docking clamps.\nKeep the asteroid's dark shadow side fully opaque and as dark as it is now. Add no rim light, glow, outline, halo, drop shadow or new background.\nOutput: one 1672 x 941 transparent PNG. No text, logos or borders.",
+  "newTierPrompt": "Use case: stylized-concept\nInput image 1 is tier 4, the Refinery Complex. Input image 2 is tier 6, the Asteroid Foundry. Both come from the same set: the same asteroid, camera, lighting, materials and rendering.\nCreate tier 5, the step between them: keep everything in Image 1 at the same size and position, and grow about halfway toward Image 2. Add the first arc of the industrial ring along the near side of the asteroid (about a third of the ring, carried on trusses anchored to the rock), two more refinery towers, a deeper excavation terrace and two more solar arrays. Leave the closed ring and the central domed hub for tier 6.\nKeep the same asteroid shape, camera, upper-left sunlight, cream-white machinery with amber work lights and graphite panels. Everything is attached to rock or trusses; ore moves in enclosed conveyors; no smoke or haze. No ships or craft docked at the booms: leave the docking clamps empty.\nComposition: 1672 x 941, the asteroid the same size and position as in Image 1, with all machinery inside the frame and margin on every side. Transparent background (zero alpha) around the asteroid and machinery; keep its shadow side opaque; add no glow, outline or rim.\nNo text, captions, numbers, logos, interface, watermark or border. One image, not a lineup.",
+  "outputs": [
+    {
+      "tier": 1,
+      "input": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-1-prospecting-outpost.png",
+      "output": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-1.png",
+      "attempts": [
+        {
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET. Keep everything else in it exactly as it is: the asteroid, all machinery, panels and booms, the lighting, colors, camera, framing, size and position.\nChange only two things. Remove the black space so the output is a PNG with a genuinely transparent background (zero alpha) everywhere outside the asteroid and its machinery, including the gaps between ring segments, trusses and panels; remove the small loose rocks floating around it. And remove every docked ship or craft at the ends of the docking booms, leaving the empty docking clamps.\nKeep the asteroid's dark shadow side fully opaque and as dark as it is now. Add no rim light, glow, outline, halo, drop shadow or new background.\nOutput: one 1672 x 941 transparent PNG. No text, logos or borders.",
+          "referenced_image_paths": [
+            "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-1-prospecting-outpost.png"
+          ],
+          "transparent_background": true,
+          "generated_path": "/Users/peter/.codex/generated_images/01a16ea8-be10-7dc0-8199-1846860a7e9f/exec-9b66193b-ddb0-4ffa-be9c-905e70014250.png",
+          "saved_path": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-1-attempt-1.png",
+          "status": "failed_validation",
+          "failure": "Solid asteroid interior alpha is 252\u2013254 instead of fully opaque 255."
+        },
+        {
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET. Keep everything else in it exactly as it is: the asteroid, all machinery, panels and booms, the lighting, colors, camera, framing, size and position.\nChange only two things. Remove the black space so the output is a PNG with a genuinely transparent background (zero alpha) everywhere outside the asteroid and its machinery, including the gaps between ring segments, trusses and panels; remove the small loose rocks floating around it. And remove every docked ship or craft at the ends of the docking booms, leaving the empty docking clamps.\nKeep the asteroid's dark shadow side fully opaque and as dark as it is now. Add no rim light, glow, outline, halo, drop shadow or new background.\nOutput: one 1672 x 941 transparent PNG. No text, logos or borders.\nTechnical correction requirements: Produce a straight-alpha PNG. Every pixel belonging to solid asteroid rock or solid machinery must have alpha exactly 255, including the entire darkest underside; do not use 252, 253 or 254 for solid interiors. Only the one-pixel anti-aliased silhouette may use intermediate alpha. Empty space is exactly alpha 0, including holes through trusses. Do not leave any isolated matte specks or colored fringes. Preserve the original input's actual surface detail, contrast and geometry; do not enlarge, recenter, smooth, repaint or change the exposure of the preserved subject. The transparent background must not affect the RGB values of the asteroid.",
+          "referenced_image_paths": [
+            "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-1-prospecting-outpost.png"
+          ],
+          "transparent_background": true,
+          "generated_path": "/Users/peter/.codex/generated_images/01a16ea8-be10-7dc0-8199-1846860a7e9f/exec-4f76061d-3a05-4de3-a11c-9019befb4a5c.png",
+          "saved_path": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-1-attempt-2.png",
+          "status": "failed_validation",
+          "failure": "Solid interiors still have alpha values below 255; transparent output did not meet the requested opacity condition."
+        },
+        {
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET, not merely a design reference. Edit this existing picture. Preserve the existing subject and its actual rock textures, machinery details, geometry, positions, size, lighting and exposure. Do not redraw, smooth, recenter, zoom, enlarge or reimagine the object.\nChange only two things:\n1. Replace the black empty space with a flat solid pure green #00FF00 background, RGB exactly (0,255,0), everywhere outside the asteroid and its machinery. This includes holes and gaps between ring segments, trusses, panels and docking clamps. Remove every small loose floating rock. The green is a flat chroma-key backdrop only, not a light source: absolutely no green lighting, reflections, color spill, haze, glow, rim light, outline, halo or drop shadow on the subject. Keep the asteroid's darkest shadow side just as dark and fully opaque as in the input.\n2. Remove every docked ship or craft at the ends of the docking booms, leaving the existing booms terminating in compact EMPTY docking clamps. Retain all permanent buildings, panels, cranes and structural modules. The docking arms must not be extended to fill the area where a ship was removed.\nKeep everything else exactly as it is in the input: asteroid outline and shape, all fixed machinery, panels, booms, lighting, colors, camera, framing, scale and position.\nOutput: one 1672 x 941 PNG with a perfectly flat pure green #00FF00 background and fully opaque subject. No text, logos or borders.",
+          "referenced_image_paths": [
+            "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-1-prospecting-outpost.png"
+          ],
+          "transparent_background": false,
+          "status": "artwork_ready_background_requires_cleanup",
+          "generated_path": "/Users/peter/.codex/generated_images/01a16ea8-be10-7dc0-8199-1846860a7e9f/exec-e469fd5b-9083-4201-8fe3-1e62e5a898e7.png",
+          "saved_path": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-1-attempt-3.png",
+          "validationNote": "Subject is opaque and craft/loose rocks removed. Green background has small RGB variations rather than exact #00FF00."
+        }
+      ],
+      "final_file": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-1.png",
+      "final_status": "ready_for_user_review"
+    },
+    {
+      "tier": 2,
+      "input": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-2-automated-mine.png",
+      "output": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-2.png",
+      "attempts": [
+        {
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET. Keep everything else in it exactly as it is: the asteroid, all machinery, panels and booms, the lighting, colors, camera, framing, size and position.\nChange only two things. Remove the black space so the output is a PNG with a genuinely transparent background (zero alpha) everywhere outside the asteroid and its machinery, including the gaps between ring segments, trusses and panels; remove the small loose rocks floating around it. And remove every docked ship or craft at the ends of the docking booms, leaving the empty docking clamps.\nKeep the asteroid's dark shadow side fully opaque and as dark as it is now. Add no rim light, glow, outline, halo, drop shadow or new background.\nOutput: one 1672 x 941 transparent PNG. No text, logos or borders.",
+          "referenced_image_paths": [
+            "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-2-automated-mine.png"
+          ],
+          "transparent_background": true,
+          "generated_path": "/Users/peter/.codex/generated_images/01a16ea8-be10-7dc0-8199-1846860a7e9f/exec-737193c3-51e1-40f9-ab4a-3e9944b576f4.png",
+          "saved_path": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-2-attempt-1.png",
+          "status": "failed_validation",
+          "failure": "Solid asteroid interior alpha is 252\u2013254 instead of fully opaque 255."
+        },
+        {
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET, not merely a design reference. Edit this existing picture. Preserve the existing subject and its actual rock textures, machinery details, geometry, positions, size, lighting and exposure. Do not redraw, smooth, recenter, zoom, enlarge or reimagine the object.\nChange only two things:\n1. Replace the black empty space with a flat solid pure green #00FF00 background, RGB exactly (0,255,0), everywhere outside the asteroid and its machinery. This includes holes and gaps between ring segments, trusses, panels and docking clamps. Remove every small loose floating rock. The green is a flat chroma-key backdrop only, not a light source: absolutely no green lighting, reflections, color spill, haze, glow, rim light, outline, halo or drop shadow on the subject. Keep the asteroid's darkest shadow side just as dark and fully opaque as in the input.\n2. Remove every docked ship or craft at the ends of the docking booms, leaving the existing booms terminating in compact EMPTY docking clamps. Retain all permanent buildings, panels, cranes and structural modules. The docking arms must not be extended to fill the area where a ship was removed.\nKeep everything else exactly as it is in the input: asteroid outline and shape, all fixed machinery, panels, booms, lighting, colors, camera, framing, scale and position.\nOutput: one 1672 x 941 PNG with a perfectly flat pure green #00FF00 background and fully opaque subject. No text, logos or borders.",
+          "referenced_image_paths": [
+            "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-2-automated-mine.png"
+          ],
+          "transparent_background": false,
+          "status": "artwork_ready_background_requires_cleanup",
+          "generated_path": "/Users/peter/.codex/generated_images/01a16ea8-be10-7dc0-8199-1846860a7e9f/exec-3d0bc4b9-cc2d-4466-a300-209416f78ffc.png",
+          "saved_path": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-2-attempt-2.png",
+          "validationNote": "Subject is opaque and craft/loose rocks removed. Green background has small RGB variations rather than exact #00FF00."
+        }
+      ],
+      "final_file": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-2.png",
+      "final_status": "ready_for_user_review"
+    },
+    {
+      "tier": 3,
+      "input": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-3-deep-core-quarry.png",
+      "output": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-3.png",
+      "attempts": [
+        {
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET. Keep everything else in it exactly as it is: the asteroid, all machinery, panels and booms, the lighting, colors, camera, framing, size and position.\nChange only two things. Remove the black space so the output is a PNG with a genuinely transparent background (zero alpha) everywhere outside the asteroid and its machinery, including the gaps between ring segments, trusses and panels; remove the small loose rocks floating around it. And remove every docked ship or craft at the ends of the docking booms, leaving the empty docking clamps.\nKeep the asteroid's dark shadow side fully opaque and as dark as it is now. Add no rim light, glow, outline, halo, drop shadow or new background.\nOutput: one 1672 x 941 transparent PNG. No text, logos or borders.",
+          "referenced_image_paths": [
+            "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-3-deep-core-quarry.png"
+          ],
+          "transparent_background": true,
+          "generated_path": "/Users/peter/.codex/generated_images/01a16ea8-be10-7dc0-8199-1846860a7e9f/exec-d222e2a4-ec94-4f9d-b02c-8c6616ea4200.png",
+          "saved_path": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-3-attempt-1.png",
+          "status": "failed_validation",
+          "failure": "Solid asteroid interior alpha is 252\u2013254 instead of fully opaque 255."
+        },
+        {
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET, not merely a design reference. Edit this existing picture. Preserve the existing subject and its actual rock textures, machinery details, geometry, positions, size, lighting and exposure. Do not redraw, smooth, recenter, zoom, enlarge or reimagine the object.\nChange only two things:\n1. Replace the black empty space with a flat solid pure green #00FF00 background, RGB exactly (0,255,0), everywhere outside the asteroid and its machinery. This includes holes and gaps between ring segments, trusses, panels and docking clamps. Remove every small loose floating rock. The green is a flat chroma-key backdrop only, not a light source: absolutely no green lighting, reflections, color spill, haze, glow, rim light, outline, halo or drop shadow on the subject. Keep the asteroid's darkest shadow side just as dark and fully opaque as in the input.\n2. Remove every docked ship or craft at the ends of the docking booms, leaving the existing booms terminating in compact EMPTY docking clamps. Retain all permanent buildings, panels, cranes and structural modules. The docking arms must not be extended to fill the area where a ship was removed.\nKeep everything else exactly as it is in the input: asteroid outline and shape, all fixed machinery, panels, booms, lighting, colors, camera, framing, scale and position.\nOutput: one 1672 x 941 PNG with a perfectly flat pure green #00FF00 background and fully opaque subject. No text, logos or borders.",
+          "referenced_image_paths": [
+            "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-3-deep-core-quarry.png"
+          ],
+          "transparent_background": false,
+          "status": "artwork_ready_background_requires_cleanup",
+          "generated_path": "/Users/peter/.codex/generated_images/01a16ea8-be10-7dc0-8199-1846860a7e9f/exec-49ec2f80-8e11-49ba-b3f0-2484ad70b5a8.png",
+          "saved_path": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-3-attempt-2.png",
+          "validationNote": "Subject is opaque and craft/loose rocks removed. Green background has small RGB variations rather than exact #00FF00."
+        }
+      ],
+      "final_file": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-3.png",
+      "final_status": "ready_for_user_review"
+    },
+    {
+      "tier": 4,
+      "input": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-4-refinery-complex.png",
+      "output": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-4.png",
+      "attempts": [
+        {
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET. Keep everything else in it exactly as it is: the asteroid, all machinery, panels and booms, the lighting, colors, camera, framing, size and position.\nChange only two things. Remove the black space so the output is a PNG with a genuinely transparent background (zero alpha) everywhere outside the asteroid and its machinery, including the gaps between ring segments, trusses and panels; remove the small loose rocks floating around it. And remove every docked ship or craft at the ends of the docking booms, leaving the empty docking clamps.\nKeep the asteroid's dark shadow side fully opaque and as dark as it is now. Add no rim light, glow, outline, halo, drop shadow or new background.\nOutput: one 1672 x 941 transparent PNG. No text, logos or borders.",
+          "referenced_image_paths": [
+            "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-4-refinery-complex.png"
+          ],
+          "transparent_background": true,
+          "generated_path": "/Users/peter/.codex/generated_images/01a16ea8-be10-7dc0-8199-1846860a7e9f/exec-40748913-d875-43a4-a640-e636fa5a16b6.png",
+          "saved_path": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-4-attempt-1.png",
+          "status": "failed_validation",
+          "failure": "Solid asteroid interior alpha is 252\u2013254 instead of fully opaque 255."
+        },
+        {
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET, not merely a design reference. Edit this existing picture. Preserve the existing subject and its actual rock textures, machinery details, geometry, positions, size, lighting and exposure. Do not redraw, smooth, recenter, zoom, enlarge or reimagine the object.\nChange only two things:\n1. Replace the black empty space with a flat solid pure green #00FF00 background, RGB exactly (0,255,0), everywhere outside the asteroid and its machinery. This includes holes and gaps between ring segments, trusses, panels and docking clamps. Remove every small loose floating rock. The green is a flat chroma-key backdrop only, not a light source: absolutely no green lighting, reflections, color spill, haze, glow, rim light, outline, halo or drop shadow on the subject. Keep the asteroid's darkest shadow side just as dark and fully opaque as in the input.\n2. Remove every docked ship or craft at the ends of the docking booms, leaving the existing booms terminating in compact EMPTY docking clamps. Retain all permanent buildings, panels, cranes and structural modules. The docking arms must not be extended to fill the area where a ship was removed.\nKeep everything else exactly as it is in the input: asteroid outline and shape, all fixed machinery, panels, booms, lighting, colors, camera, framing, scale and position.\nOutput: one 1672 x 941 PNG with a perfectly flat pure green #00FF00 background and fully opaque subject. No text, logos or borders.",
+          "referenced_image_paths": [
+            "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-4-refinery-complex.png"
+          ],
+          "transparent_background": false,
+          "status": "artwork_ready_background_requires_cleanup",
+          "generated_path": "/Users/peter/.codex/generated_images/01a16ea8-be10-7dc0-8199-1846860a7e9f/exec-c36a1306-bf02-492d-be01-ce39eaa3893b.png",
+          "saved_path": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-4-attempt-2.png",
+          "validationNote": "Subject is opaque and craft/loose rocks removed. Green background has small RGB variations rather than exact #00FF00."
+        }
+      ],
+      "final_file": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-4.png",
+      "final_status": "ready_for_user_review"
+    },
+    {
+      "tier": 5,
+      "input": [
+        "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-4.png",
+        "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-6.png"
+      ],
+      "output": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-5.png",
+      "attempts": [
+        {
+          "prompt": "Use case: stylized-concept\nInput image 1 is tier 4, the Refinery Complex. Input image 2 is tier 6, the Asteroid Foundry. Both come from the same set: the same asteroid, camera, lighting, materials and rendering.\nCreate tier 5, the step between them: keep everything in Image 1 at the same size and position, and grow about halfway toward Image 2. Add the first arc of the industrial ring along the near side of the asteroid (about a third of the ring, carried on trusses anchored to the rock), two more refinery towers, a deeper excavation terrace and two more solar arrays. Leave the closed ring and the central domed hub for tier 6.\nKeep the same asteroid shape, camera, upper-left sunlight, cream-white machinery with amber work lights and graphite panels. Everything is attached to rock or trusses; ore moves in enclosed conveyors; no smoke or haze. No ships or craft docked at the booms: leave the docking clamps empty.\nComposition: 1672 x 941, the asteroid the same size and position as in Image 1, with all machinery inside the frame and margin on every side. Use the authorized chroma-key fallback: a perfectly flat pure green #00FF00 background, RGB (0,255,0), around the asteroid and machinery and inside structural gaps. The green is only a backdrop, never a light source; no green light, reflections or spill on the subject. Keep its shadow side fully opaque and dark; add no glow, outline or rim.\nNo text, captions, numbers, logos, interface, watermark or border. One image, not a lineup.",
+          "referenced_image_paths": [
+            "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-4.png",
+            "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-6.png"
+          ],
+          "transparent_background": false,
+          "status": "artwork_ready_background_requires_cleanup",
+          "generated_path": "/Users/peter/.codex/generated_images/01a16ea8-be10-7dc0-8199-1846860a7e9f/exec-95bd8e97-8373-4b17-9ec5-f3d5562aded6.png",
+          "saved_path": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-5-attempt-1.png"
+        }
+      ],
+      "final_file": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-5.png",
+      "final_status": "ready_for_user_review"
+    },
+    {
+      "tier": 6,
+      "input": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-5-asteroid-foundry.png",
+      "output": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-6.png",
+      "attempts": [
+        {
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET. Keep everything else in it exactly as it is: the asteroid, all machinery, panels and booms, the lighting, colors, camera, framing, size and position.\nChange only two things. Remove the black space so the output is a PNG with a genuinely transparent background (zero alpha) everywhere outside the asteroid and its machinery, including the gaps between ring segments, trusses and panels; remove the small loose rocks floating around it. And remove every docked ship or craft at the ends of the docking booms, leaving the empty docking clamps.\nKeep the asteroid's dark shadow side fully opaque and as dark as it is now. Add no rim light, glow, outline, halo, drop shadow or new background.\nOutput: one 1672 x 941 transparent PNG. No text, logos or borders.",
+          "referenced_image_paths": [
+            "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-5-asteroid-foundry.png"
+          ],
+          "transparent_background": true,
+          "generated_path": "/Users/peter/.codex/generated_images/01a16ea8-be10-7dc0-8199-1846860a7e9f/exec-44088eca-de03-477d-b0d6-59e3f0ef35fc.png",
+          "saved_path": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-6-attempt-1.png",
+          "status": "failed_validation",
+          "failure": "Solid asteroid interior alpha is 252\u2013254 instead of fully opaque 255. The fixed starter building and its solar panel were incorrectly removed."
+        },
+        {
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET. Keep everything else in it exactly as it is: the asteroid, all machinery, panels and booms, the lighting, colors, camera, framing, size and position.\nChange only two things. Remove the black space so the output is a PNG with a genuinely transparent background (zero alpha) everywhere outside the asteroid and its machinery, including the gaps between ring segments, trusses and panels; remove the small loose rocks floating around it. And remove every docked ship or craft at the ends of the docking booms, leaving the empty docking clamps.\nKeep the asteroid's dark shadow side fully opaque and as dark as it is now. Add no rim light, glow, outline, halo, drop shadow or new background.\nOutput: one 1672 x 941 transparent PNG. No text, logos or borders.\nTechnical correction requirements: Produce a straight-alpha PNG. Every pixel belonging to solid asteroid rock or solid machinery must have alpha exactly 255, including the entire darkest underside; do not use 252, 253 or 254 for solid interiors. Only the one-pixel anti-aliased silhouette may use intermediate alpha. Empty space is exactly alpha 0, including holes through trusses. Do not leave any isolated matte specks or colored fringes. Preserve the original input's actual surface detail, contrast and geometry; do not enlarge, recenter, smooth, repaint or change the exposure of the preserved subject. The transparent background must not affect the RGB values of the asteroid.\nObject identification for this specific image: the small fixed white rectangular STARTER BUILDING and its upright dark rectangular solar panel on the upper-right rocky shoulder are permanent infrastructure and MUST remain exactly as they appear in the input. The small craft at the far tip of the narrow boom extending rightward from that building is the ship to remove. Also remove the two large white freighters at the lower-left and lower-right ends of the large ring's docking arms. Preserve the docking arms and the permanent white modules within those arms; finish each arm with an empty compact docking clamp, not another ship-shaped structure. There are exactly three ship/craft removals.",
+          "referenced_image_paths": [
+            "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-5-asteroid-foundry.png"
+          ],
+          "transparent_background": true,
+          "generated_path": "/Users/peter/.codex/generated_images/01a16ea8-be10-7dc0-8199-1846860a7e9f/exec-ceeae4c5-c549-49a8-b625-a3c2e388c58a.png",
+          "saved_path": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-6-attempt-2.png",
+          "status": "failed_validation",
+          "failure": "Solid interiors still have alpha values below 255; transparent output did not meet the requested opacity condition."
+        },
+        {
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET, not merely a design reference. Edit this existing picture. Preserve the existing subject and its actual rock textures, machinery details, geometry, positions, size, lighting and exposure. Do not redraw, smooth, recenter, zoom, enlarge or reimagine the object.\nChange only two things:\n1. Replace the black empty space with a flat solid pure green #00FF00 background, RGB exactly (0,255,0), everywhere outside the asteroid and its machinery. This includes holes and gaps between ring segments, trusses, panels and docking clamps. Remove every small loose floating rock. The green is a flat chroma-key backdrop only, not a light source: absolutely no green lighting, reflections, color spill, haze, glow, rim light, outline, halo or drop shadow on the subject. Keep the asteroid's darkest shadow side just as dark and fully opaque as in the input.\n2. Remove every docked ship or craft at the ends of the docking booms, leaving the existing booms terminating in compact EMPTY docking clamps. Retain all permanent buildings, panels, cranes and structural modules. The docking arms must not be extended to fill the area where a ship was removed.\nKeep everything else exactly as it is in the input: asteroid outline and shape, all fixed machinery, panels, booms, lighting, colors, camera, framing, scale and position.\nOutput: one 1672 x 941 PNG with a perfectly flat pure green #00FF00 background and fully opaque subject. No text, logos or borders.\nFor this ringed tier specifically: retain the small fixed white rectangular starter outpost AND its upright dark solar panel on the upper-right rocky shoulder. Remove only the small spacecraft at the far end of that outpost's thin boom, plus the two large white freighters at the lower-left and lower-right ring berths. Keep the large white structural modules at the bases of those ring berths. There are exactly THREE craft removals; the fixed starter outpost is NOT a spacecraft.",
+          "referenced_image_paths": [
+            "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-mining-tiers-v1/tier-5-asteroid-foundry.png"
+          ],
+          "transparent_background": false,
+          "status": "artwork_ready_background_requires_cleanup",
+          "generated_path": "/Users/peter/.codex/generated_images/01a16ea8-be10-7dc0-8199-1846860a7e9f/exec-e11766bc-a63f-4e3f-9bac-f1a0751e7ec4.png",
+          "saved_path": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/attempts/tier-6-attempt-3.png",
+          "validationNote": "Subject is opaque and craft/loose rocks removed. Green background has small RGB variations rather than exact #00FF00."
+        }
+      ],
+      "final_file": "/Users/peter/projects/stellar-syndicates/client/art-src/asteroid-quarry-v2/tier-6.png",
+      "final_status": "ready_for_user_review"
+    }
+  ],
+  "finalBackground": "transparent, with fully opaque solid interiors",
+  "fallbackReason": "Repeated transparent image edits returned alpha 252\u2013254 over solid interior regions, failing the required fully opaque asteroid criterion.",
+  "finalValidationStatus": "Passed dimensions, RGBA transparency, opaque solid interiors, shadow preservation, green-fringe checks, and visual review.",
+  "postprocessing": {
+    "script": "cleanup_alpha.py",
+    "authorization": "User reply: Yes, use a script for precise transparency cleanup",
+    "operations": [
+      "Chroma-key generated green background without keying dark rock.",
+      "Set solid interiors to alpha 255 and empty space to alpha 0.",
+      "Unmatte antialiased silhouette pixels; remove isolated matte noise.",
+      "Remove dark-green matte remnants in structural openings and suppress residual green edge spill.",
+      "Restore unchanged original RGB interiors except edited docking-clamp regions."
+    ],
+    "pixelPreservation": "Original RGB pixels restored in unchanged opaque interiors for tiers 1\u20134 and 6. Edited clamps and antialiased boundary regions retain the edited rendering."
+  }
+}

@@ -8,7 +8,7 @@ enough to do widely, without risking Scouts.
 
 ## Rules
 
-- **Build:** at a Shipyard I. Alloys 6, Electronics 4 and Fuel 3, in 10 s, so
+- **Build:** at a Shipyard I. Alloys 6, Semiconductors 4 and Fuel 3, in 10 s, so
   it costs well under half a Scout. No research is needed.
 - **Hull:** crewless (so no Provisions upkeep), no guns, no armour, no cargo
   and no module slots. Speed 120, just faster than a Scout. Its signature is
@@ -25,6 +25,21 @@ enough to do widely, without risking Scouts.
 
 The code is `ShipKind::SurveyProbe` in `crates/sim/src/ship.rs`, its recipe and
 yard in `build.rs`, and the gate and spending in `World::resolve_surveys`.
+
+## Charting by arrival (Oct 28 2026)
+
+Peter: "the asteroid belt should be visible when the interceptor arrives."
+Any fleet of a corporation inside a system's hyperlimit (900 su) charts it for
+that corporation (`World::chart_arrivals`, once a sim second;
+`Corporation.charted` keeps when and where). Its worlds, moons and belts show
+once that light reaches command (`view::filter_charted_systems`); geology,
+deposits and richness still need a survey, so the Survey Probe keeps its job:
+reading a system from afar without going there. The overview reads
+"Unsurveyed" for a charted system and "Uncharted" for an unseen one.
+
+A pirate base the corporation's intel knows (the founding den included) is
+drawn on the system's first belt in the System View: the galaxy map's dashed
+ring and name ("☠ PRIVATEER DEN"). No probe is needed to fight the den.
 
 ## Art
 

@@ -36,6 +36,7 @@ pub enum Step {
     Agroplex,
     Mine,
     Raid,
+    GunPlatform,
     SellOre,
     Power,
     Shipyard,
@@ -44,23 +45,28 @@ pub enum Step {
     Den,
     Shipment,
     Research,
+    Smelter,
     Expansion,
     Survey,
     Barge,
+    Prospect,
     BeltMining,
     Haul,
+    Stores,
+    Vendetta,
 }
 
 impl Step {
-    /// §charter-v5: Founded, then the charter's eighteen steps in play order
-    /// (`FoundingStage::STEPS`).
-    pub const ALL: [Step; 19] = [
+    /// §charter-v5: Founded, then the charter's twenty-three steps in play
+    /// order (`FoundingStage::STEPS`).
+    pub const ALL: [Step; 24] = [
         Step::Founded,
         Step::Bioharvester,
         Step::Habitat,
         Step::Agroplex,
         Step::Mine,
         Step::Raid,
+        Step::GunPlatform,
         Step::SellOre,
         Step::Power,
         Step::Shipyard,
@@ -69,11 +75,15 @@ impl Step {
         Step::Den,
         Step::Shipment,
         Step::Research,
+        Step::Smelter,
         Step::Expansion,
         Step::Survey,
         Step::Barge,
+        Step::Prospect,
         Step::BeltMining,
         Step::Haul,
+        Step::Stores,
+        Step::Vendetta,
     ];
 
     pub fn key(self) -> &'static str {
@@ -84,6 +94,7 @@ impl Step {
             Step::Agroplex => "agroplex",
             Step::Mine => "mine",
             Step::Raid => "raid",
+            Step::GunPlatform => "gun_platform",
             Step::SellOre => "sell_ore",
             Step::Power => "power",
             Step::Shipyard => "shipyard",
@@ -92,11 +103,15 @@ impl Step {
             Step::Den => "den",
             Step::Shipment => "shipment",
             Step::Research => "research",
+            Step::Smelter => "smelter",
             Step::Expansion => "expansion",
             Step::Survey => "survey",
             Step::Barge => "barge",
+            Step::Prospect => "prospect",
             Step::BeltMining => "belt_mining",
             Step::Haul => "haul",
+            Step::Stores => "stores",
+            Step::Vendetta => "vendetta",
         }
     }
 
@@ -115,6 +130,7 @@ impl Step {
             Step::Agroplex => "Make provisions",
             Step::Mine => "Bring the mine online",
             Step::Raid => "Pirates raid the colony",
+            Step::GunPlatform => "Build a Gun Platform",
             Step::SellOre => "Sell ore to the trader",
             Step::Power => "Power the Shipyard",
             Step::Shipyard => "Build a Shipyard",
@@ -122,12 +138,16 @@ impl Step {
             Step::Privateer => "Destroy the privateer",
             Step::Den => "Eliminate the privateer den",
             Step::Shipment => "Export your ore",
-            Step::Research => "Start research",
+            Step::Research => "Research Enrichment",
+            Step::Smelter => "Build a Smelter",
             Step::Expansion => "Expand mining operations",
             Step::Survey => "Chart a nearby system",
             Step::Barge => "Build a Mining Barge",
+            Step::Prospect => "Prospect the belt",
             Step::BeltMining => "Mine the belt",
             Step::Haul => "Bring the ore home",
+            Step::Stores => "Secure your stores",
+            Step::Vendetta => "Defeat the privateer's uncle",
         }
     }
 
@@ -135,10 +155,11 @@ impl Step {
         match self {
             Step::Founded => "Founding",
             Step::Bioharvester | Step::Habitat | Step::Agroplex | Step::Mine => "Landfall",
-            Step::Raid | Step::SellOre | Step::Power | Step::Shipyard => "Raid",
+            Step::Raid | Step::GunPlatform | Step::SellOre | Step::Power | Step::Shipyard => "Raid",
             Step::Interceptor | Step::Privateer | Step::Den => "Pirates",
-            Step::Shipment | Step::Research | Step::Expansion | Step::Survey => "Expansion",
-            Step::Barge | Step::BeltMining | Step::Haul => "Reach",
+            Step::Shipment | Step::Research | Step::Smelter | Step::Expansion | Step::Survey => "Expansion",
+            Step::Barge | Step::Prospect | Step::BeltMining | Step::Haul => "Reach",
+            Step::Stores | Step::Vendetta => "Vendetta",
         }
     }
 
@@ -186,6 +207,7 @@ pub fn reached_steps(founding: &FoundingProgram, now: f64) -> Vec<(Step, Option<
                 Step::Den => arrived(founding.den_report_at),
                 Step::Shipment => arrived(founding.export_dispatched_at),
                 Step::Haul => arrived(founding.haul_report_at),
+                Step::Vendetta => arrived(founding.vendetta.as_ref().and_then(|v| v.report_at)),
                 _ => None,
             };
             let gate = proved(step.gate());
@@ -270,6 +292,13 @@ impl TutorialRecorder {
             {
                 known.insert(snapshot.galaxy_id.clone());
             }
+        }
+        // §season: the hall of fame keeps each galaxy's ending.
+        if let Some(entry) = &snapshot.ending {
+            let _ = sqlx::query("INSERT INTO hall_of_fame (galaxy_id, ending, holder, world, winners) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (galaxy_id) DO NOTHING")
+                .bind(&snapshot.galaxy_id).bind(&entry.ending).bind(&entry.holder).bind(&entry.world)
+                .bind(sqlx::types::Json(&entry.winners))
+                .execute(&self.0.pool).await;
         }
         let fresh: Vec<(u64, Step, Option<f64>)> = {
             let Ok(written) = self.0.written.lock() else { return };

@@ -1,0 +1,49 @@
+{
+  "id": "asteroid_quarry/tier-1",
+  "mode": "built-in image_gen",
+  "prompt": "Use case: stylized-concept.\nAsset type: ONE standalone structure sprite for the asteroid-belt view of Stellar Syndicates, a space strategy game: an Asteroid Quarry, a self-contained zero-gravity mine that clamps onto an asteroid and carries its own crew quarters and power. Square transparent PNG, 1254 x 1254.\nPurpose: the game places this sprite on top of a large rock in a separately painted asteroid field. Draw the quarry ONLY: no asteroid, rock, rubble, dust, cut terraces, pit, crater, terrain, base plate, stars, planet or background. Genuine zero-alpha transparency around the structure; keep a translucent soft contact shadow under its feet.\nInput images: Image 1 is the approved design for tier 1: one articulated arm whose bell-shaped sealed cutter head works the rock, a ribbed flexible hose carrying the cuttings to a low module that holds the processing plant and crew quarters, an upright solar panel on its roof, and a long docking boom. Keep its design, proportions and cream-white finish at every tier, but draw no rock and no ship at the boom. Image 2 is the game's approved orbital fusion plant: match its rendering, materials, lighting and finish, not its ring or layout. Image 3, when attached, is this quarry's tier just below: keep everything in it and grow from it. Image 4, attached for tier 6 only, is the reference for the full-grown mine: take its machinery, not its asteroid, ships, drones, people or photographic look.\nZero gravity: everything is held by structure. The quarry rests on short anchor feet clamped at the foot line, its cutter heads are sealed against the rock, and ore moves only through hoses, pipes and sealed containers. No ore heaps, chutes, open conveyors, smoke stacks, sparks, beams, glow haze or flying debris.\nStyle: near-future frontier engineering. Soft semi-realistic 3D game rendering; cream-white and pale grey modules and arms with amber-yellow trim, graphite steel trusses and hoses, dark blue-grey solar panels, pale radiator panels, restrained warm amber window and work lights, a few cyan docking lights. Large readable forms that still read at 100 px, realistic restrained detail; no ink outlines, cel shading, plastic gloss, extreme contrast or neon. No text, logos, numerals, UI, people, vehicles or spacecraft.\nCamera and lighting: elevated front-left three-quarter view, about 40 degrees above the surface the quarry stands on; mild perspective; front and right sides visible. Upper-left sunlight with crisp, soft-edged shadows and a cool neutral fill; the contact shadow falls to the lower right.\nFraming/alignment (match the game's other buildings): solid structure width about 94% of the canvas (x about 3-97%), centred at x=50%: the arms on the left, the modules in the middle, the docking boom reaching the right edge. The anchor feet and cutter heads, the lowest solid points, at y about 88%. At least 3% transparent margin above the tallest point. Same footprint and overall width at every tier: new parts grow upward and fill in, so nothing shrinks. Never crop.\nOutput exactly one structure, no tier lineup/contact sheet.\nSubject: ASTEROID QUARRY, the structure only - TIER 1 of 6.\nThis tier specifically: exactly the design of Image 1, without its rock and ship: one articulated arm on a turntable at the left, its bell-shaped cutter head lowered to the foot line; a ribbed hose from the head to a low cream-white module with amber-lit windows (processing plant and crew quarters); one upright solar panel on the module's roof; a long docking boom reaching right to an empty berth with a cyan light; short anchor feet under the module.\nTier family progression for context (do NOT draw a lineup): 1: one arm, one module with crew quarters, one solar panel and a docking boom; 2: a second arm, a second solar panel and an ore tank; 3: a crew habitat cylinder, a four-panel solar array and two radiator fins; 4: a raised processing deck, a third arm and ore containers along the boom; 5: tall ore silos, a radiator bank, a beacon mast and more anchor feet; 6: the full-grown mine of Image 4: a monumental processing block, three tall silos and four arms, on the same compact site.\nOutput: exactly the requested tier alone, genuine transparent PNG.\nImage 1 is a design reference, not the desired background or photographic rendering. Convert its mining structure into the square transparent game sprite. Image 2 controls the softer 3D game material finish. The hood's flexible bottom rim and short anchor feet end on an implied surface that is NOT rendered. Lower the overall composition into the canvas so the lowest solid point lands at y=88%, leaving generous headroom for later tiers. Do not center the structure vertically. Keep the docking boom as the same long rectangular truss with an empty berth; absolutely no attached ship. Only one arm, one hood and one solar panel in tier 1.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/belt-view/asteroid-quarry-tier1-reference.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/power_plant/orbital-fusion.png"
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a16e80-dfb6-7831-ba23-bfa68b894aef/exec-3c7e8f8b-d4b3-4a30-8ec8-a5cff6ce5bab.png",
+  "file": "buildings/asteroid_quarry/tier-1.png",
+  "source_brief": "docs/asteroid-quarry.md",
+  "refinements": [
+    {
+      "prompt": "Use case: precise-object-edit.\nImage 1 is the original mining outpost design reference. Image 2 is the game rendering reference. Image 3 is the TARGET sprite to edit. Preserve image 3 exactly in design, machinery counts, scale, width, viewing angle, proportions, colors, materials, lighting and genuine background transparency.\nMake only this framing correction to Image 3: translate the ENTIRE structure and its soft contact shadow straight DOWN by 100 pixels on the same 1254 by 1254 transparent canvas. Do not scale, rotate, recenter vertically or redraw the layout. Its current solid horizontal bounds are approximately x=32 to1213; preserve them. Its current lowest solid pixel is about y=1008; the corrected lowest solid point should be about y=1108 (88.4% of canvas). The top of the highest arm should consequently be at about y=599. This deliberate large transparent headroom is required for higher game tiers. All feet, cutter hood, processing building, solar panel, transfer hose and empty docking boom move together. No rock, ground, baseplate, ship, people, labels, text, new parts or background. Keep the entire existing object in frame. Output one 1254x1254 transparent PNG.",
+      "refs": [
+        "/Users/peter/projects/stellar-syndicates/client/art-src/belt-view/asteroid-quarry-tier1-reference.png",
+        "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/power_plant/orbital-fusion.png",
+        "/Users/peter/.codex/generated_images/01a16e80-dfb6-7831-ba23-bfa68b894aef/exec-b46b27f8-1d6e-4217-9a5c-4d0024949124.png"
+      ]
+    },
+    {
+      "prompt": "Use case: precise-object-edit. Image 3 is the exact sprite to preserve; image 1 is the original design and image 2 is the established game materials.\nOne correction only to Image 3: move the whole sprite UP a small amount, approximately 50 pixels, keeping scale and horizontal positioning identical. The image should have roughly 12% transparent space below the LOWEST SOLID part (the tip of the docking boom), rather than the current roughly 6%. Aim for lowest solid pixel at y=1104 on the 1254-square canvas. Do not center vertically or increase the size. Preserve the existing large empty headroom, identical arm, capture hood, one hose, one module, single solar panel, anchor feet, long empty docking boom, amber details and cyan berth light. No new parts, no rock, no ground, no ship, no people, no labels. Only the small upward translation. Keep genuine zero-alpha transparency around the structure and a subtle translucent contact shadow. Output 1254x1254 transparent PNG.",
+      "refs": [
+        "/Users/peter/projects/stellar-syndicates/client/art-src/belt-view/asteroid-quarry-tier1-reference.png",
+        "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/power_plant/orbital-fusion.png",
+        "/Users/peter/.codex/generated_images/01a16e80-dfb6-7831-ba23-bfa68b894aef/exec-8ff22d33-f288-47d6-8818-aec680f50f48.png"
+      ]
+    }
+  ],
+  "verification": {
+    "size": [
+      1254,
+      1254
+    ],
+    "mode": "RGBA",
+    "fullyTransparentPixels": 1249826,
+    "partiallyTransparentPixels": 322296,
+    "solidBounds": [
+      31,
+      551,
+      1221,
+      1069
+    ],
+    "solidWidthFraction": 0.949,
+    "lowestSolidFraction": 0.8525,
+    "sha256": "5674aaea96988f5063ea8da39c3eeea2a56074bfa34bcde2a60a453e87e3779a"
+  }
+}

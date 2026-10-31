@@ -47,7 +47,19 @@
       "nonBinaryPixels": 471388,
       "exactBinaryPalette": false,
       "dimensionsCorrect": true
+    },
+    {
+      "file": "05-season.png",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "mode": "RGB",
+      "sha256": "4a638429379a3369b26f0efe292dc67549b8f968d3ce6707a03b593bfab2849f",
+      "nonBinaryPixels": 485423,
+      "exactBinaryPalette": false,
+      "dimensionsCorrect": true
     }
   ],
-  "note": "Source art is complete. Exact two-color palette cleanup remains; no raster pixels were changed programmatically."
+  "note": "Five native generated source sheets retained unchanged. build-map-glyphs.mjs derives pure-white glyphs and alpha from luminance; generated source sheets contain non-binary edge and texture pixels."
 }

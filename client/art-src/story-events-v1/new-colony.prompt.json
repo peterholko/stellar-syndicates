@@ -1,0 +1,23 @@
+{
+  "id": "new-colony",
+  "category": "story",
+  "destination": "client/art-src/story-events-v1/new-colony.png",
+  "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. Strong readable focal point, essential subjects within the central 75% of the frame, comfortable edges for responsive display. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: a corporation's colony ship sets down on a newly chartered world, the start of a second settlement far from home.\nScene/backdrop: a broad rocky plateau on an untouched world at first light, under an unfamiliar sky with a ringed gas giant low on the horizon and one bright distant star (home). Thin mist in the valleys below, sparse hardy vegetation between the rocks.\nSubject: the white colony ship, the same design as in Image 1, a few metres above the ground on final descent. Its landing struts are extended and its downwash raises a ring of dust. Two small survey drones with cyan lights fly ahead of it over the landing zone, and four ground beacons with amber lights mark the zone. One planted pole stands at the plateau's edge with a small plain pennant (no emblem, no text). No people yet.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: cool dawn light with warm amber beacons; quiet, hopeful, the scale of a new beginning.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.",
+  "references": [
+    "client/art-src/founding-intro-v1/first-landing.png"
+  ],
+  "transparent": false,
+  "expectedSize": [
+    1672,
+    941
+  ],
+  "generatedSource": "/Users/peter/.codex/generated_images/01a16175-9fd0-7830-a903-376d2daadb90/exec-451ee5de-6e8e-46d5-b469-fcb1b8072e2d.png",
+  "inspection": {
+    "width": 1672,
+    "height": 941,
+    "mode": "RGB",
+    "sha256": "fd8df18ed859c2c017d1ad185a5554585da48aa2b4f52cf3cafc568e7ad6d705"
+  },
+  "tool": "image_gen.imagegen",
+  "generatedAt": "2026-10-22"
+}

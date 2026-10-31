@@ -60,7 +60,8 @@ impl Bot {
                 continue;
             }
             if f.damage.unwrap_or(0.0) > 0.2 && !p.at_den(f) {
-                let yard = p.sites.iter().filter(|s| s.system.tier(K::OrdnanceFoundry) > 0
+                // §repair: a Shipyard mends hulls as a Foundry does.
+                let yard = p.sites.iter().filter(|s| sim::build::REPAIR_YARDS.iter().any(|&k| s.system.tier(k) > 0)
                     && p.enough_fuel(f, s.system.pos)).min_by(|a, b|
                         f.pos.distance(a.system.pos).total_cmp(&f.pos.distance(b.system.pos)));
                 if let Some(yard) = yard {
@@ -68,7 +69,7 @@ impl Bot {
                     if self.returns.contains_key(&f.id) { continue; }
                     self.wait(key, p, f.pos);
                     self.returns.insert(f.id, ReturnTrip { destination: yard.system.pos, issued_at: p.now });
-                    self.status = "returning for paid foundry repairs".into();
+                    self.status = "returning for paid yard repairs".into();
                     return Some(Command::MoveShip { player_id: p.owner, ship_id: f.id, dest: yard.system.pos });
                 }
             }
@@ -98,9 +99,12 @@ impl Bot {
                 }
             }
             if captain.available_in_reserve() {
+                // §charter: step 9's Interceptor takes the founding captain.
+                let charter = p.founding_stage == sim::FoundingStage::BuildInterceptor;
                 if let Some(f) = p.own().filter(|f| f.captain.is_none() && f.kind != H::Transport && f.vel.length_sq() < 1.0
                     && (!f.kind.is_combatant() || self.campaign_fleet(f.id) || f.guard_target.is_some()
-                        || f.defend_system.is_some() || composition(f).values().sum::<u32>() > 1)
+                        || f.defend_system.is_some() || composition(f).values().sum::<u32>() > 1
+                        || charter && composition(f).contains_key(&H::Raider))
                     && captain.stationed_system.is_some_and(|id| f.docked.as_deref() == Some(id.to_string().as_str()))
                     && captain.can_command(&composition(f)))
                     .max_by_key(|f| (f.kind.is_combatant(), f.kind == H::Scout)) {
@@ -112,7 +116,9 @@ impl Bot {
         let free = p.captains.iter().filter(|c| c.available_in_reserve() && !c.missing()).count();
         let uncommanded = p.own().filter(|f| f.captain.is_none() && f.kind != H::Transport).count();
         let costs = sim::build::recipe_for(BuildKind::RecruitCaptain { serial: 0 });
-        if self.ready("recruit", p.now) && free < uncommanded && p.home.system.tier(K::Academy) > 0
+        // §charter: the kit's semiconductors are the charter's; recruits wait.
+        let in_charter = p.local_opening && p.founding_stage != sim::FoundingStage::Complete;
+        if self.ready("recruit", p.now) && !in_charter && free < uncommanded && p.home.system.tier(K::Academy) > 0
             && p.home.builds.is_empty() && !self.recovering(p)
             && costs.costs.iter().all(|(c, n)| p.stock(*c) >= *n) {
             self.wait("recruit".into(), p, p.cc);
@@ -193,7 +199,7 @@ impl Bot {
                     let aboard = composition(into).get(&H::Transport).copied().unwrap_or(0) * sim::ship::marine_capacity(H::Transport);
                     if aboard as f64 >= need { continue; }
                     if let Some(from) = transports.iter().find(|f| f.id != into.id && f.docked == into.docked
-                        && f.pos.distance(into.pos) <= sim::ship::COLONY_CLAIM_RADIUS) {
+                        && f.pos.distance(into.pos) <= sim::transit::HYPERLIMIT * 2.0) {
                         self.wait(format!("fleet:{}", into.id), p, into.pos);
                         self.wait(format!("fleet:{}", from.id), p, from.pos);
                         return Some(Command::MergeFleets { player_id: p.owner, into: into.id, from: from.id });
@@ -207,7 +213,7 @@ impl Bot {
                         let marines: u32 = composition(troop).iter().map(|(k, n)| sim::ship::marine_capacity(*k) * n).sum();
                         let need = sim::ground::break_even_marines(site.intel.garrison_tier as f64, 0.0);
                         if self.ready(&key, p.now) && !p.fighting.contains(&troop.id) && troop.vel.length_sq() < 1.0
-                            && troop.pos.distance(site.pos) > sim::ship::COLONY_CLAIM_RADIUS
+                            && troop.pos.distance(site.pos) > sim::transit::HYPERLIMIT
                             && marines as f64 >= need * 1.5 && p.enough_fuel(troop, site.pos) {
                             self.wait(key, p, troop.pos);
                             return Some(Command::MoveShip { player_id: p.owner, ship_id: troop.id, dest: site.pos });
@@ -245,7 +251,7 @@ impl Bot {
                 && self.site_strength(p, s).is_some_and(|enemy| self.can_sortie(p, fleet, s.pos, enemy))
                 && (s.intel.enclave_tier > 0 || s.owner.is_some_and(|o| p.relations.get(&o) == Some(&RelationState::War))))
                 .min_by(|a, b| fleet.pos.distance(a.pos).total_cmp(&fleet.pos.distance(b.pos))) {
-                let command = if site.owner.is_some() { Command::BlockadeSystem { player_id: p.owner, fleet_id: fleet.id, system_id: site.id } }
+                let command = if site.owner.is_some() { Command::BlockadeSystem { player_id: p.owner, fleet_id: fleet.id, system_id: site.id, raid: false, repeat: false } }
                     else { Command::MoveShip { player_id: p.owner, ship_id: fleet.id, dest: site.pos } };
                 return Some(self.begin_campaign(p, fleet, Target::System(site.id), site.pos, command));
             }
@@ -257,7 +263,7 @@ impl Bot {
             for from in &fighters {
                 if from.id == into.id || from.docked != into.docked || from.docked.as_deref() == Some("hub")
                     || from.vel.length_sq() > 1.0 || into.vel.length_sq() > 1.0
-                    || into.pos.distance(from.pos) > sim::ship::COLONY_CLAIM_RADIUS
+                    || into.pos.distance(from.pos) > sim::transit::HYPERLIMIT * 2.0
                     || into.captain.is_some() && from.captain.is_some() { continue; }
                 let load = sim::captain::command_load(&composition(into)) + sim::captain::command_load(&composition(from));
                 if into.captain.as_ref().or(from.captain.as_ref()).is_some_and(|c| load > c.command_capacity) { continue; }

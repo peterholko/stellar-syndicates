@@ -110,6 +110,15 @@ impl Bot {
                 continue;
             }
             if self.returns.contains_key(&guard.id) { continue; }
+            // §charter (Peter, Oct 30 2026): step 9's Interceptor waits at
+            // rest at home for its captain; one already on duty comes home.
+            if p.founding_stage == sim::FoundingStage::BuildInterceptor && guard.captain.is_none() {
+                if guard.guard_target.is_some() || guard.defend_system.is_some() {
+                    self.wait(key, p, guard.pos);
+                    return Some(Command::MoveShip { player_id: p.owner, ship_id: guard.id, dest: p.home.system.pos });
+                }
+                continue;
+            }
             // §charter-v4: the den step takes the Interceptor off escort duty.
             if p.den.is_some() { continue; }
             // Preserve assignments when a different formation merges or is
@@ -264,7 +273,7 @@ impl Bot {
             // Give a hub pickup's load/sale and its account report one round
             // trip before booking the same warehouse goods on another carrier.
             if at_hub { self.wait("market".into(), p, p.hub); }
-            if let Some(budget) = shopping { self.spend(p, budget); }
+            if let Some(budget) = shopping { self.hold_for_route(p, budget); }
             if shopping.is_some() || fuel_run { self.wait("fuel-run".into(), p, p.hub); }
             self.route_visits.insert(fleet.id, 0);
             self.status = if shopping.is_some() { "bringing fuel home on the return leg" }

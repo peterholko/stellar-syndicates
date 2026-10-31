@@ -29,9 +29,7 @@ fn connect(id: u64, player: u64, divisor: u64) -> GameInput {
 fn confirm_landing(conn_id: u64) -> GameInput {
     GameInput::Intent {
         conn_id,
-        msg: ClientMsg::FoundColony {
-            profile: sim::settlement::FoundingProfile::MineralHighlands,
-        },
+        msg: ClientMsg::FoundColony,
     }
 }
 
@@ -44,6 +42,11 @@ fn ticks(game: &mut GameLoop, n: u64) {
 fn normalize(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
+            // §social: presence is wall-clock, stamped on a disconnect the
+            // restored copy never saw.
+            if let Some(social) = map.get_mut("social").and_then(|s| s.as_object_mut()) {
+                social.remove("last_seen");
+            }
             for (key, value) in map {
                 if matches!(key.as_str(), "frontiers" | "observed_order_plans") {
                     if let Some(array) = value.as_array_mut() {

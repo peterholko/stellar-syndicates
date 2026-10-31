@@ -214,19 +214,44 @@ pub struct ColonyOpportunity {
 /// matching special + matching system trait. This is the ONE stacking path used
 /// by production, the owner factor-chain readout and survey opportunity scores.
 pub fn extraction_site_mult(body: &Body, resource: Commodity, trait_: Option<SystemTrait>) -> f64 {
+    extraction_site_mult_with(body, resource, trait_, GeologyMods::default())
+}
+
+/// §research-wiring: an owner's research on one body's geology band.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct GeologyMods {
+    /// Mantle Taps: poor and ultra-poor ground mines as Average.
+    pub floor_average: bool,
+    /// Crown Vein: this is the designated body, one band richer.
+    pub crown: bool,
+    /// Beneficiation: mineral ground mines at no less than
+    /// [`BENEFICIATION_FLOOR`] of Average.
+    pub beneficiation: bool,
+}
+
+/// §research-wiring Beneficiation: the worst poor ground mines at.
+pub const BENEFICIATION_FLOOR: f64 = 0.85;
+
+/// [`extraction_site_mult`] after the owner's geology research.
+pub fn extraction_site_mult_with(body: &Body, resource: Commodity, trait_: Option<SystemTrait>, geo: GeologyMods) -> f64 {
     let trait_mult = match trait_ {
         Some(SystemTrait::BonusVein { commodity }) if commodity == resource => BONUS_VEIN_MULT,
         Some(SystemTrait::DeepDeposits) => DEEP_DEPOSITS_BASE_MULT,
         _ => 1.0,
     };
-    (body.extraction_mult(resource) * trait_mult).min(NATURAL_SPECIALTY_CAP)
+    (body.extraction_mult_with(resource, geo) * trait_mult).min(NATURAL_SPECIALTY_CAP)
 }
 
 /// Natural tier-I output for one deposit, capped against the home reference.
 /// Raw richness participates in the rating, so a truly rich frontier vein is
 /// exciting; no lucky combination can exceed ×3 before player investment.
 pub fn natural_extraction_rate(body: &Body, deposit: &Deposit, trait_: Option<SystemTrait>) -> f64 {
-    (deposit.richness * extraction_site_mult(body, deposit.resource, trait_))
+    natural_extraction_rate_with(body, deposit, trait_, GeologyMods::default())
+}
+
+/// [`natural_extraction_rate`] after the owner's geology research.
+pub fn natural_extraction_rate_with(body: &Body, deposit: &Deposit, trait_: Option<SystemTrait>, geo: GeologyMods) -> f64 {
+    (deposit.richness * extraction_site_mult_with(body, deposit.resource, trait_, geo))
         .min(crate::galaxy::DEPOSIT_BASE_RICHNESS * NATURAL_SPECIALTY_CAP)
 }
 

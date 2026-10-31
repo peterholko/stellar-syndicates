@@ -130,6 +130,15 @@ const resolveAt = zoom => { const t = Math.min(Math.max((zoom - 40) / (96 - 40),
 const ids = new Map();
 for (let i = 0; ids.size < 10 && i < 10000; i++) ids.set(stars.starTypeFor(String(i)).slug, String(i));
 assert.equal(ids.size, 10);
+// §node: the served chart decides which stars are exotic (a home never is).
+// Production's Alphard, id 37, rolls a pulsar.
+assert.equal(stars.starTypeFor("37").slug, "neutron_star");
+stars.chartStars([{ id: "37", exotic: false }, { id: ids.get("magnetar"), exotic: true }]);
+assert.equal(stars.starTypeFor("37").exotic, false, "a served ordinary star is ordinary");
+assert.equal(stars.starTypeFor(ids.get("magnetar")).slug, "magnetar");
+assert.equal(stars.starTypeFor(ids.get("black_hole")).slug, "black_hole", "outside the chart the roll stands");
+stars.chartStars([]);
+assert.equal(stars.starTypeFor("37").slug, "neutron_star", "a new chart replaces the old");
 let cases = 0;
 for (const [width, height, resolution] of [[390, 844, 2], [1366, 768, 1], [1920, 1080, 2], [3840, 2160, 2]]) {
   for (const st of stars.STAR_TYPES) {

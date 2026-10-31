@@ -1,4 +1,5 @@
 import { isPlayerFreighter } from "../../protocol";
+import { introduceCaptainFor } from "../../captain-intro";
 import { fmtDur, operationTitle } from "../../core/derive/format";
 import { foundingHomeSystemId } from "../../core/derive/geo";
 import { nextDecisionLabel } from "../../core/derive/orders";
@@ -23,6 +24,8 @@ interface CommandHooks {
   focusFleet(id: string): void;
   /** Open a fleet's details workbench (equipment lives there). */
   openFleetDetails?(id: string): void;
+  /** §home-step: fly into a system's System View. */
+  flyIntoSystem(id: string): void;
   notice(html: string): void;
   inbox(): DeckInboxItem[];
   runInboxPrimary(key: string): void;
@@ -189,17 +192,20 @@ export class DeckCommandRoutes {
     const header = `<header><span>${plan.chapter.name} ${plan.chapter.done}/${plan.chapter.total}</span><em title="${esc(shield.detail)}">${esc(shield.label)}</em><button type="button" data-deck-act="founding-toggle" aria-expanded="${expanded}" aria-label="${expanded ? "Minimize" : "Expand"} founding guide">${expanded ? "−" : "+"}</button></header>`;
     const progress = plan.progress.length
       ? `<ul class="deck-founding__progress" aria-label="Under way">${plan.progress.map((line) => `<li>${esc(line)}</li>`).join("")}</ul>` : "";
-    const action = p?.alternatives ? this.businessActions(p.alternatives)
-      : p ? `<button type="button" class="is-primary" data-deck-act="founding-action" data-action="${esc(p.action)}" ${this.foundingActionAvailable(p.action, founding) ? "" : "disabled"}>${esc(p.label)}</button>` : "";
-    const next = p ? `<div class="deck-founding__next${plan.blocked ? " is-blocked" : ""}"><small>${plan.blocked ? "Needs attention" : "Next"}</small><b>${esc(p.title)}</b>${p.reason ? `<em>${esc(p.reason)}</em>` : ""}<p>${esc(p.copy)}</p>${prospects}${action}</div>` : "";
+    // §founding copy (Oct 27 2026): no "Next" eyebrow, the card is always next;
+    // choices are buttons that say the whole step, the card's copy above them.
+    const button = (action: string, text: string, primary: boolean) =>
+      `<button type="button"${primary ? ` class="is-primary"` : ""} data-deck-act="founding-action" data-action="${esc(action)}" ${this.foundingActionAvailable(action, founding) ? "" : "disabled"}>${esc(text)}</button>`;
+    const action = p?.alternatives?.length ? p.alternatives.map((choice, i) => button(choice.action, choice.label, i === 0)).join("")
+      : p ? button(p.action, p.label, true) : "";
+    const next = p ? `<div class="deck-founding__next${plan.blocked ? " is-blocked" : ""}">${plan.blocked ? "<small>Needs attention</small>" : ""}`
+      + `<b${p.hint ? ` title="${esc(p.hint)}"` : ""}>${esc(p.status ?? p.title)}</b>${p.reason ? `<em>${esc(p.reason)}</em>` : ""}`
+      + `${p.copy ? `<p>${esc(p.copy)}</p>` : ""}${prospects}${action}</div>` : "";
     const waiting = plan.waiting.length
-      ? `<div class="deck-founding__waiting"><button type="button" class="deck-founding__waiting-toggle" data-deck-act="founding-waiting" aria-expanded="${this.waitingOpen}">While you wait · ${plan.waiting.length}</button>${this.waitingOpen ? plan.waiting.map((step) => `<button type="button" data-deck-act="founding-action" data-action="${esc(step.action)}"><span><b>${esc(step.label)}</b><small>${esc(step.copy)}</small></span></button>`).join("") : ""}</div>` : "";
-    const g = plan.goal;
-    const goal = g ? `<div class="deck-founding__goal"><small>Long-term goal</small><b>${esc(g.title)}</b><p>${esc(g.copy)}</p>`
-      + `<button type="button" data-deck-act="founding-action" data-action="${esc(g.action)}" ${this.foundingActionAvailable(g.action, founding) ? "" : "disabled"}>${esc(g.label)}</button></div>` : "";
+      ? `<div class="deck-founding__waiting"><button type="button" class="deck-founding__waiting-toggle" data-deck-act="founding-waiting" aria-expanded="${this.waitingOpen}">While you wait · ${plan.waiting.length}</button>${this.waitingOpen ? plan.waiting.map((step) => `<button type="button" data-deck-act="founding-action" data-action="${esc(step.action)}"><span><b>${esc(step.title)}</b>${step.copy ? `<small>${esc(step.copy)}</small>` : ""}</span></button>`).join("") : ""}</div>` : "";
     const rewards = founding.stage === "complete" && postVictoryHandoff().some(g => !g.done)
       ? `<button type="button" data-deck-act="handoff-details">Next objectives &amp; rewards</button>` : "";
-    return header + `<div class="deck-founding__body">${progress}${next}${goal}${waiting}${rewards}</div>`;
+    return header + `<div class="deck-founding__body">${progress}${next}${waiting}${rewards}</div>`;
   }
 
   private commandHtml(): string {
@@ -213,13 +219,13 @@ export class DeckCommandRoutes {
       : "") + (founding?.stage === "grow_business" ? this.businessActions(foundingBusinessGoals(this.ctx.state, this.homeDynamic())) : "")
       + charterLedgerHtml(this.ctx.state) + handoffHtml(true);
     const decisions = this.decisions.length
-      ? this.decisions.map((decision, index) => `<article class="deck-decision is-${decision.tone === "negative" ? "bad" : decision.tone}"><span>${icon(decision.icon, "md")}</span><div><b>${esc(decision.headline)}</b><p>${esc(decision.stakes ?? "Served information needs your attention.")}</p></div>${decision.actions.length ? `<button type="button" data-deck-act="command-decision" data-index="${index}">${esc((decision.actions.find((action) => action.primary) ?? decision.actions[0]).label)}</button>` : ""}</article>`).join("")
+      ? this.decisions.map((decision, index) => `<article class="deck-decision is-${decision.tone}" title="${esc(decision.hint)}"><span>${icon(decision.icon, "md")}</span><div><b>${esc(decision.title)}</b>${decision.facts ? `<p>${esc(decision.facts)}</p>` : ""}</div>${decision.actions.length ? `<button type="button" data-deck-act="command-decision" data-index="${index}">${esc(decision.actions[0].label)}</button>` : ""}</article>`).join("")
       : `<div class="deck-command-clear">${icon("success", "md")}<span><b>Command picture clear</b><small>${esc(nextDecisionLabel())}</small></span></div>`;
     const operations = this.ctx.state.operations.filter((entry) => entry.state === "active" || entry.state === "offered").slice(0, 3);
     const objectives = operations.length
       ? operations.map((entry) => `<button type="button" class="deck-objective" data-deck-act="command-operations"><span><b>${esc(operationTitle(entry))}</b><small>${esc(label(entry.state))} · ${entry.progress}/${entry.goal}</small></span><em>${entry.expires_at > this.ctx.state.simTime ? fmtDur(entry.expires_at - this.ctx.state.simTime) : "closing"}</em></button>`).join("")
       : `<div class="deck-empty-inline">No active or offered operations.</div>`;
-    return `<section class="deck-page deck-command-home"><header class="deck-page__lead"><span>Served command picture</span><h2>${esc(this.ctx.state.name || "Corporation")}</h2><p>${esc(label(this.ctx.state.midgameStage))} · ${esc(nextDecisionLabel())}</p></header>${foundingCard}<section class="deck-section"><header><div><h3>Decision digest</h3><p>The four highest-pressure facts already visible in your delayed picture.</p></div><b>${this.decisions.length}</b></header><div class="deck-decision-list">${decisions}</div></section><section class="deck-section"><header><div><h3>Fleet policy</h3><p>Automate physical supply routes and set the corporation's default autonomous behavior.</p></div></header><div class="deck-policy-links"><button type="button" data-deck-act="command-logistics">${icon("freightRoute", "sm")} Logistics</button><button type="button" data-deck-act="command-doctrine">${icon("doctrine", "sm")} Fleet doctrine</button></div></section><section class="deck-section"><header><div><h3>Objectives</h3><p>Contracts and strategic work visible to the corporation.</p></div></header>${objectives}<button type="button" class="deck-section-link" data-deck-act="command-operations">Open Operations</button></section></section>`;
+    return `<section class="deck-page deck-command-home"><header class="deck-page__lead"><span>Served command picture</span><h2>${esc(this.ctx.state.name || "Corporation")}</h2><p>${esc(label(this.ctx.state.midgameStage))} · ${esc(nextDecisionLabel())}</p></header>${foundingCard}<section class="deck-section"><header><div><h3>Decision digest</h3></div><b>${this.decisions.length}</b></header><div class="deck-decision-list">${decisions}</div></section><section class="deck-section"><header><div><h3>Fleet policy</h3><p>Automate physical supply routes and set the corporation's default autonomous behavior.</p></div></header><div class="deck-policy-links"><button type="button" data-deck-act="command-logistics">${icon("freightRoute", "sm")} Logistics</button><button type="button" data-deck-act="command-doctrine">${icon("doctrine", "sm")} Fleet doctrine</button></div></section><section class="deck-section"><header><div><h3>Objectives</h3><p>Contracts and strategic work visible to the corporation.</p></div></header>${objectives}<button type="button" class="deck-section-link" data-deck-act="command-operations">Open Operations</button></section></section>`;
   }
 
   private foundingContent(founding: FoundingView): FoundingContent {
@@ -235,11 +241,12 @@ export class DeckCommandRoutes {
       build_habitat: { title: "Build a Habitat", copy: "Your settlers move out of the colony ship.", action: "build-habitat", label: "Build Habitat" },
       build_agroplex: { title: "Build an Agroplex", copy: "It turns Biomass into Provisions. Staff it when it stands.", action: "build-agroplex", label: "Build Agroplex" },
       pirate_raid: { title: "The mine is running", copy: "Ferrite Ore is coming in.", action: "mine", label: "Open the mine" },
+      build_gun_platform: { title: "Build a Gun Platform", copy: "Pirates leave defended worlds alone.", action: "build-gun-platform", label: "Build Gun Platform" },
       sell_ore: { title: "Find semiconductors", copy: "The Solar Array needs them.", action: "market", label: "Open Market" },
       power_shipyard: { title: "Build a Solar Array", copy: "A Shipyard needs more than the Command Center's 1 MW.", action: "build-power", label: "Build Solar Array" },
       buy_semiconductors: { title: "Build a Solar Array", copy: "A Shipyard needs more than the Command Center's 1 MW.", action: "build-power", label: "Build Solar Array" },
-      build_freighter: { title: "Build an Interceptor", copy: "Shipyard II, then the Interceptor. It hunts the privateer.", action: "build-interceptor", label: "Build Interceptor" },
-      build_interceptor: { title: "Build an Interceptor", copy: "Shipyard II, then the Interceptor. It hunts the privateer.", action: "build-interceptor", label: "Build Interceptor" },
+      build_freighter: { title: "Build an Interceptor", copy: "It hunts the privateer.", action: "build-interceptor", label: "Build Interceptor" },
+      build_interceptor: { title: "Build an Interceptor", copy: "Then assign its captain.", action: "build-interceptor", label: "Build Interceptor" },
       expand_mining: { title: "Expand mining operations", copy: "A Solar Array and a Mining Complex on another world of your system.", action: "build-expansion-power", label: "Build Solar Array" },
       local_recovery: { title: "Export your ore", copy: "Load Ferrite Ore and send the Freighter to the Market Hub.", action: "opening-imports", label: "Plan the shipment" },
       prepare_export: { title: "Export your ore", copy: "Load Ferrite Ore and send the Freighter to the Market Hub.", action: "opening-imports", label: "Plan the shipment" },
@@ -257,12 +264,16 @@ export class DeckCommandRoutes {
       build_academy: academyBody
         ? { title: academyStaffed ? "Academy staffed" : "Assign workforce to Academy I", copy: academyStaffed ? "Its first research report is reaching command." : "An unstaffed Academy produces no research.", action: "academy", label: `Open ${academyBody.name}` }
         : { title: "Establish Academy I", copy: "Build and staff an Academy for your first research programme.", action: "build-academy", label: "Build Academy" },
-      first_research: { title: "Start research", copy: "Build and staff an Academy, then choose any Tier I programme.", action: "research", label: "Open Research" },
+      first_research: { title: "Research Enrichment", copy: "Build and staff an Academy, then research Enrichment.", action: "research", label: "Open Research" },
+      build_smelter: { title: "Build a Smelter", copy: "Ferrite Ore → Alloys. Staff it when it stands.", action: "build-smelter", label: "Build Smelter" },
       build_scout: foundingScoutGoal(home),
       survey_candidates: { title: "Chart a nearby system", copy: "Build a Survey Probe and send it to the assigned stop. Its report charts a belt for your first Mining Barge.", action: "build-probe", label: "Build Survey Probe" },
       build_barge: foundingBargeGoal(home, foundingBelt(this.ctx.state)?.name ?? "the charted belt"),
+      prospect_belt: { title: "Prospect the belt", copy: "A prospecting pass finds its hidden pockets.", action: "prospect-belt", label: "Prospect" },
       mine_belt: { title: "Send the barge to the belt", copy: "Mine the belt your survey charted. This step completes when command hears it cutting ore.", action: "mine-belt", label: "Send Mining Barge" },
       haul_ore: { title: "Bring the ore home", copy: "Send the barge home and unload its ore, or sell it at the Market Hub.", action: "barge-home", label: "Send the barge home" },
+      secure_stores: { title: "Secure your stores", copy: "A Warehouse for room, a Vault raiders can't reach.", action: "build-store-warehouse", label: "Build Warehouse" },
+      vendetta: { title: "Defeat the privateer's uncle", copy: "Keep two Interceptors at home. He attacks your strongest warship.", action: "attack-uncle", label: "Attack" },
       build_colony: { title: "Founding complete", copy: "Develop home and grow your trade routes.", action: "command", label: "Open Command" },
       establish_colony: { title: "Founding complete", copy: "Develop home and grow your trade routes.", action: "command", label: "Open Command" },
       complete: { title: "Founding complete", copy: "Develop home, grow your trade routes, or take a contract.", action: "operations", label: "Choose next objective" },
@@ -271,10 +282,26 @@ export class DeckCommandRoutes {
   }
 
   private runFoundingAction(action: string, founding: FoundingView): void {
+    if (action === "restart-corporation") {
+      // §gun-platform: the sim refuses it unless the colony fell.
+      this.ctx.send({ type: "RestartCorporation" });
+      return;
+    }
+    if (action === "collect-crate") {
+      // §charter-crates: the first crate its step has released.
+      const crate = founding.crates?.find(c => c.released);
+      if (crate) this.ctx.send({ type: "CollectCharterCrate", charter_crate: crate.id });
+      return;
+    }
     const homeId = foundingHomeSystemId();
     const home = this.homeDynamic();
     const system = homeId ? this.ctx.state.galaxy?.systems.find((entry) => entry.id === homeId) : undefined;
     const commands = foundingCommands(action, this.ctx.state, home);
+    // §captain-intro: the captain is introduced first; Assign sends the order.
+    if (commands && introduceCaptainFor(this.ctx.state, commands, () => {
+      this.ctx.intent.beginFleetCommand(commands);
+      this.ctx.intent.confirmPendingIntent();
+    })) return;
     if (commands) {
       if (action === "guarded-recovery") {
         this.ctx.state.selectedExplorationSiteId = founding.recovery_site ?? null;
@@ -284,7 +311,9 @@ export class DeckCommandRoutes {
       coach("confirm-order", "Check the order, then confirm it here.", "above");
       return;
     }
-    if (action === "home-development" && home && system) {
+    if (action === "open-home" && homeId) {
+      this.hooks.flyIntoSystem(homeId);
+    } else if (action === "home-development" && home && system) {
       const body = home.bodies.find(b => b.founding_camp);
       if (body) this.openWorld(system, body);
       coach("settlement-projects", "Settlement projects are here.");
@@ -334,7 +363,7 @@ export class DeckCommandRoutes {
     } else if (action === "shipment-trip") {
       const fleet = this.fleetOfKind("convoy");
       this.hooks.go(fleet ? { name: "logistics", query: { fleet: fleet.id } } : { name: "logistics" });
-    } else if (action === "convoy" || action === "scout" || action === "colony" || action === "barge" || action === "probe") {
+    } else if (action === "convoy" || action === "scout" || action === "colony" || action === "barge" || action === "probe" || action === "raider") {
       const fleet = this.fleetOfKind(action);
       if (fleet) this.hooks.focusFleet(fleet.id);
       // The Recon fit is done in the fleet details, where the refits live.
@@ -348,13 +377,14 @@ export class DeckCommandRoutes {
 
   private foundingActionAvailable(action: string, founding: FoundingView): boolean {
     if (["market", "research", "command", "operations"].includes(action)) return true;
-    if (action.startsWith("build-") || STAFF_STRUCTURE[action] || ["expansion-mine", "home-world"].includes(action)) return !!foundingHomeSystemId();
+    if (action.startsWith("build-") || STAFF_STRUCTURE[action] || ["expansion-mine", "home-world", "open-home"].includes(action)) return !!foundingHomeSystemId();
     if (action === "privateer") return !!founding.privateer && this.ctx.state.ghosts.some((entry) => entry.id === founding.privateer);
     if (action === "den") return !!founding.den;
-    if (["mine-belt", "survey-stop", "barge-home", "barge-unload", "attack-privateer", "assign-captain", "assault-den"].includes(action)) {
+    if (["mine-belt", "prospect-belt", "survey-stop", "barge-home", "barge-unload", "attack-privateer", "hunt-privateer", "attack-uncle", "attack-strike", "defend-barge", "assign-captain", "interceptor-captain", "assault-den"].includes(action)) {
       return !!foundingCommands(action, this.ctx.state, this.homeDynamic());
     }
-    return action === "convoy" || action === "scout" || action === "colony" || action === "barge" || action === "probe" ? !!this.fleetOfKind(action) : true;
+    return action === "convoy" || action === "scout" || action === "colony" || action === "barge" || action === "probe" || action === "raider"
+      ? !!this.fleetOfKind(action) : true;
   }
 
   private businessActions(goals: FoundingContent[]): string {
@@ -376,6 +406,7 @@ export class DeckCommandRoutes {
 
   private openBuild(system: SystemInfo, body: BodyView, mode: "structures" | "ships", select: string): void {
     this.focusSystem(system.id);
+    this.ctx.intent.deselectFleets();
     this.ctx.renderer.pulseSystemBody(String(body.id));
     this.hooks.go({ name: "build", params: { systemId: system.id, systemLabel: system.name }, query: { body: String(body.id), mode, select } });
   }
@@ -405,7 +436,7 @@ export class DeckCommandRoutes {
     return id ? this.ctx.state.systems.find((entry) => entry.id === id) : undefined;
   }
 
-  private fleetOfKind(kind: "convoy" | "scout" | "colony" | "barge" | "probe"): GhostView | undefined {
+  private fleetOfKind(kind: "convoy" | "scout" | "colony" | "barge" | "probe" | "raider"): GhostView | undefined {
     const wanted = kind === "barge" ? "mining_barge" : kind === "probe" ? "survey_probe" : kind;
     return this.ctx.state.ghosts.find((entry) => entry.own && entry.composition?.some((stack) => (kind === "convoy" ? isPlayerFreighter(stack.kind) : stack.kind === wanted) && stack.count > 0));
   }

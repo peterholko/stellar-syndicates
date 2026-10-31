@@ -1,5 +1,8 @@
 import "../styles/account.css";
-import { accounts, type Account } from "../auth";
+import { accounts, NO_SIGNAL, type Account } from "../auth";
+import { ALERT_KINDS, notifications, type NotifyPrefs } from "../notifications";
+import { fmtBuildDur } from "../core/derive/format";
+import { liveSimTime } from "../state";
 import type { CoreContext } from "./types";
 
 const CHARTER_REQUIRED = "Accept the Authority charter to register.";
@@ -71,14 +74,20 @@ export function accountBackdrop(prefix: string): string {
   </div>`;
 }
 
+// The game's logo above the sign-in card in both shells (account-stage).
+export function accountLogo(): string {
+  const src = (width: number) => `/art/derived/login/stellar-syndicates-banner-v1-${width}.webp`;
+  return `<img class="account-logo" src="${src(960)}" srcset="${src(480)} 480w, ${src(960)} 960w, ${src(1440)} 1440w" sizes="(max-width: 528px) calc(100vw - 48px), 480px" alt="Stellar Syndicates" width="1879" height="576" decoding="async" fetchpriority="high">`;
+}
+
 // The two shells share the same credential workflow. Only account creation asks
 // for a public corporation name; knowing that name is never authentication.
 export function accountFields(prefix: string): string {
   return `
     <header class="account-heading">
       <div class="account-authority">
-        <img class="account-authority__seal" src="/art/derived/authority-v2/terran-charter-authority-seal-192.webp" srcset="/art/derived/authority-v2/terran-charter-authority-seal-96.webp 1x, /art/derived/authority-v2/terran-charter-authority-seal-192.webp 2x, /art/derived/authority-v2/terran-charter-authority-seal-288.webp 3x, /art/derived/authority-v2/terran-charter-authority-seal-384.webp 4x" alt="Terran Charter Authority seal" width="96" height="96">
-        <div><small>Terran Charter Authority</small><h1 id="${prefix}-join-title">Charter Command</h1></div>
+        <img class="account-authority__seal" src="/art/derived/authority-v2/terran-charter-authority-seal-192.webp" srcset="/art/derived/authority-v2/terran-charter-authority-seal-96.webp 1x, /art/derived/authority-v2/terran-charter-authority-seal-192.webp 2x, /art/derived/authority-v2/terran-charter-authority-seal-288.webp 3x, /art/derived/authority-v2/terran-charter-authority-seal-384.webp 4x" alt="Terran Authority seal" width="96" height="96">
+        <div><small>Terran Authority</small><h1 id="${prefix}-join-title">Charter Command</h1></div>
       </div>
       <p class="account-lore" data-account-intro>Access your charter’s command center.</p>
     </header>
@@ -106,6 +115,41 @@ export function accountFields(prefix: string): string {
     </div>`;
 }
 
+// §front-door (docs/front-door.md): whether Charter Command, the account
+// service, answers. The page loads from Cloudflare even while the game server
+// is down; until the service answers, the sign-in card's buttons wait and the
+// page asks again every 10 s.
+const SIGNAL_RETRY_MS = 10_000;
+let signalLost = false;
+let signalTimer: ReturnType<typeof setTimeout> | null = null;
+let onSignalBack: ((account: Account | null) => void) | null = null;
+const signalListeners = new Set<() => void>();
+
+/** No answer from the account service: the sign-in card waits until it
+ * answers. `back` then runs with the session the service reports. */
+export function loseSignal(back?: (account: Account | null) => void): void {
+  if (back) onSignalBack = back;
+  if (!signalLost) {
+    signalLost = true;
+    signalListeners.forEach(listener => listener());
+  }
+  signalTimer ??= setTimeout(seekSignal, SIGNAL_RETRY_MS);
+}
+
+async function seekSignal(): Promise<void> {
+  signalTimer = null;
+  try {
+    const account = await accounts.session();
+    signalLost = false;
+    signalListeners.forEach(listener => listener());
+    const back = onSignalBack;
+    onSignalBack = null;
+    back?.(account);
+  } catch {
+    signalTimer = setTimeout(seekSignal, SIGNAL_RETRY_MS);
+  }
+}
+
 export function bindAccountForm(prefix: string, ctx: CoreContext, signal: AbortSignal): void {
   const form = document.getElementById(`${prefix}-join-form`) as HTMLFormElement;
   const login = form.querySelector<HTMLInputElement>("[name=username]")!;
@@ -118,18 +162,24 @@ export function bindAccountForm(prefix: string, ctx: CoreContext, signal: AbortS
   signal.addEventListener("abort", () => { password.value = ""; }, { once: true });
   let registering = false;
   const charter = bindCharterAgreement(form, signal, () => {
-    submit.disabled = form.dataset.busy === "true" || (registering && !charter.accept.checked);
+    settle();
     if (charter.accept.checked && error.textContent === CHARTER_REQUIRED) error.textContent = "";
   });
+  /** The buttons wait while a request is out or there is no signal. */
+  function settle(): void {
+    const busy = form.dataset.busy === "true";
+    submit.disabled = busy || signalLost || (registering && !charter.accept.checked);
+    toggle.disabled = guest.disabled = busy || signalLost;
+    charter.accept.disabled = busy || !registering;
+  }
   function presentMode(): void {
     form.dataset.accountMode = registering ? "register" : "signin";
     form.querySelectorAll<HTMLElement>("[data-register-field]").forEach(el => { el.hidden = !registering; });
     corporation.required = registering;
     corporation.disabled = !registering;
     charter.accept.required = registering;
-    charter.accept.disabled = !registering;
     if (!registering) charter.reset();
-    submit.disabled = registering && !charter.accept.checked;
+    settle();
     password.autocomplete = registering ? "new-password" : "current-password";
     password.minLength = registering ? 8 : 1;
     form.querySelector("h1")!.textContent = registering ? "Stellar charter" : "Charter Command";
@@ -150,8 +200,7 @@ export function bindAccountForm(prefix: string, ctx: CoreContext, signal: AbortS
   async function authenticate(action: () => Promise<Account>): Promise<void> {
     if (form.dataset.busy === "true") return;
     form.dataset.busy = "true";
-    submit.disabled = toggle.disabled = guest.disabled = true;
-    charter.accept.disabled = true;
+    settle();
     error.textContent = "";
     try {
       await action();
@@ -161,13 +210,12 @@ export function bindAccountForm(prefix: string, ctx: CoreContext, signal: AbortS
       location.reload();
     } catch (failure) {
       if (!signal.aborted) error.textContent = failure instanceof Error ? failure.message : "Unable to sign in.";
+      if (failure instanceof Error && failure.message === NO_SIGNAL) loseSignal();
     } finally {
       // Clear the field even when a request fails or the shell changes.
       password.value = "";
       delete form.dataset.busy;
-      toggle.disabled = guest.disabled = false;
-      charter.accept.disabled = !registering;
-      submit.disabled = registering && !charter.accept.checked;
+      settle();
     }
   }
   form.addEventListener("submit", event => {
@@ -184,6 +232,15 @@ export function bindAccountForm(prefix: string, ctx: CoreContext, signal: AbortS
   }, { signal });
   // A button, not a form submit: an empty username/password never blocks entry.
   guest.addEventListener("click", () => authenticate(() => accounts.guest()), { signal });
+  // Every card, including one a layout switch builds, shows the signal.
+  function showSignal(): void {
+    if (signalLost) error.textContent = NO_SIGNAL;
+    else if (error.textContent === NO_SIGNAL) error.textContent = "";
+    settle();
+  }
+  signalListeners.add(showSignal);
+  signal.addEventListener("abort", () => signalListeners.delete(showSignal), { once: true });
+  showSignal();
   bindAccountProfile(prefix, ctx, signal);
 }
 
@@ -205,6 +262,21 @@ export function accountProfile(prefix: string): string {
       ${charterAgreement(`${prefix}-profile`)}
       <button type="submit" class="account-profile__primary">Complete registration</button>
     </form>
+    <section class="account-leave" aria-labelledby="${prefix}-leave-title">
+      <h3 id="${prefix}-leave-title">Leave</h3>
+      <p data-leave-status></p>
+      <button type="button" data-leave-toggle title="Nobody can attack you and you give no orders. Production, freight routes and standing rules keep running.">Take leave</button>
+      <p class="account-leave__confirm" data-leave-confirm hidden><span data-leave-confirm-text></span>
+        <button type="button" data-leave-yes>Take leave</button><button type="button" data-leave-no>Cancel</button></p>
+    </section>
+    <section class="account-notify" aria-labelledby="${prefix}-notify-title">
+      <h3 id="${prefix}-notify-title">Alerts</h3>
+      <p data-notify-status>While you're away.</p>
+      <div class="account-notify__kinds">${ALERT_KINDS.map(([slug, label]) => `<label><input type="checkbox" data-notify-kind="${slug}">${label}</label>`).join("")}</div>
+      <button type="button" data-notify-push>Push on this device</button>
+      <label class="account-notify__digest"><input type="checkbox" data-notify-digest>Daily email digest</label>
+      <input type="email" data-notify-email maxlength="254" placeholder="Email for the digest" autocomplete="email" aria-label="Email for the digest">
+    </section>
     <p data-profile-error role="alert"></p>
     <div data-profile-leave hidden>
       <p>Signing out loses access to this guest corporation. Register first to keep it.</p>
@@ -242,9 +314,57 @@ export function bindAccountProfile(prefix: string, ctx: CoreContext, signal: Abo
     signOut.disabled = leaveConfirm.disabled = charter.accept.disabled = value;
     submit.disabled = value || !charter.accept.checked;
   };
+  // §leave (R4): the corporation's leave, from the served View.
+  const leaveStatus = dialog.querySelector<HTMLElement>("[data-leave-status]")!;
+  const leaveToggle = dialog.querySelector<HTMLButtonElement>("[data-leave-toggle]")!;
+  const leaveConfirm2 = dialog.querySelector<HTMLElement>("[data-leave-confirm]")!;
+  const leaveConfirmText = dialog.querySelector<HTMLElement>("[data-leave-confirm-text]")!;
+  let profileLabel = "Profile";
+  function renderLeave(): void {
+    const view = ctx.state?.leave;
+    const label = view?.on ? `${profileLabel} · On leave` : profileLabel;
+    if (open.textContent !== label) open.textContent = label;
+    if (!dialog.open) return;
+    if (!view) {
+      leaveStatus.textContent = "—";
+      leaveToggle.disabled = true;
+      return;
+    }
+    const now = liveSimTime();
+    const days = (secs: number) => fmtBuildDur(Math.max(0, secs));
+    if (view.on) {
+      const left = (view.until ?? now) - now;
+      const wait = (view.earliest_return ?? now) - now;
+      leaveStatus.textContent = `On leave · ${days(left)} left`;
+      leaveToggle.textContent = wait > 0 ? `Return in ${days(wait)}` : "Return";
+      leaveToggle.disabled = wait > 0;
+      leaveConfirm2.hidden = true;
+    } else {
+      const wait = view.next_start - now;
+      leaveStatus.textContent = `${days(view.max_secs)} max · ${days(view.min_secs)} minimum`;
+      leaveToggle.textContent = wait > 0 ? `Next leave in ${days(wait)}` : "Take leave";
+      leaveToggle.disabled = wait > 0;
+      leaveConfirmText.textContent = `No orders for ${days(view.min_secs)}.`;
+    }
+  }
+  leaveToggle.addEventListener("click", () => {
+    const view = ctx.state?.leave;
+    if (!view || leaveToggle.disabled) return;
+    if (view.on) ctx.send({ type: "SetLeave", on: false });
+    else leaveConfirm2.hidden = false;
+  }, { signal });
+  dialog.querySelector("[data-leave-yes]")!.addEventListener("click", () => {
+    leaveConfirm2.hidden = true;
+    ctx.send({ type: "SetLeave", on: true });
+  }, { signal });
+  dialog.querySelector("[data-leave-no]")!.addEventListener("click", () => { leaveConfirm2.hidden = true; }, { signal });
+  const leaveTimer = setInterval(renderLeave, 1000);
+  signal.addEventListener("abort", () => clearInterval(leaveTimer), { once: true });
   function present(value: Account | null): void {
     account = value;
-    open.textContent = value?.is_guest ? "Profile · Guest" : "Profile";
+    profileLabel = value?.is_guest ? "Profile · Guest" : "Profile";
+    open.textContent = profileLabel;
+    renderLeave();
     dialog.querySelector<HTMLElement>("[data-profile-corporation]")!.textContent = value?.corporation_name ?? "";
     form.hidden = !value?.is_guest;
     signOut.disabled = busy || !value;
@@ -260,10 +380,11 @@ export function bindAccountProfile(prefix: string, ctx: CoreContext, signal: Abo
     } catch (failure) {
       if (!signal.aborted && request === generation && dialog.open) {
         status.textContent = "Could not load your account. Close Profile and try again.";
-        error.textContent = failure instanceof Error ? failure.message : "Account service unavailable.";
+        error.textContent = failure instanceof Error ? failure.message : NO_SIGNAL;
       }
     }
   }
+  const loadAlerts = bindAlerts(dialog, error, signal);
   open.addEventListener("click", async () => {
     if (dialog.open) return;
     error.textContent = "";
@@ -273,7 +394,10 @@ export function bindAccountProfile(prefix: string, ctx: CoreContext, signal: Abo
     status.textContent = "Loading account…";
     form.hidden = true;
     signOut.disabled = true;
+    leaveConfirm2.hidden = true;
     dialog.showModal(); // Browser-managed focus trap; underlying map is inert.
+    renderLeave();
+    void loadAlerts();
     await refresh();
   }, { signal });
   dialog.querySelector("[data-profile-close]")!.addEventListener("click", () => dialog.close(), { signal });
@@ -341,4 +465,53 @@ export function bindAccountProfile(prefix: string, ctx: CoreContext, signal: Abo
     login.focus();
   }, { signal });
   void refresh(); // One account request per shell mount, never per View/tick.
+}
+
+/** §notifications (R8): the Profile's Alerts section. Kinds and the digest
+ * save as they change; push is per browser. Returns a loader run on open. */
+function bindAlerts(dialog: HTMLDialogElement, error: HTMLElement, signal: AbortSignal): () => Promise<void> {
+  const section = dialog.querySelector<HTMLElement>(".account-notify")!;
+  const status = section.querySelector<HTMLElement>("[data-notify-status]")!;
+  const kinds = [...section.querySelectorAll<HTMLInputElement>("[data-notify-kind]")];
+  const push = section.querySelector<HTMLButtonElement>("[data-notify-push]")!;
+  const digest = section.querySelector<HTMLInputElement>("[data-notify-digest]")!;
+  const email = section.querySelector<HTMLInputElement>("[data-notify-email]")!;
+  let prefs: NotifyPrefs | null = null;
+  let saving: ReturnType<typeof setTimeout> | undefined;
+  const fail = (failure: unknown) => { if (!signal.aborted) error.textContent = failure instanceof Error ? failure.message : "Notifications are unavailable right now."; };
+  async function renderPush(): Promise<void> {
+    const device = await notifications.device().catch(() => null);
+    push.textContent = device ? "Push on · turn off" : "Push on this device";
+    push.disabled = !notifications.pushSupported() || !prefs;
+    const off = [prefs && !prefs.push_live ? "server push off" : "", prefs && !prefs.email_live ? "email off" : ""].filter(Boolean);
+    status.textContent = `While you're away${off.length ? ` · ${off.join(" · ")}` : ""}.`;
+  }
+  function save(): void {
+    clearTimeout(saving);
+    saving = setTimeout(() => {
+      const picked = kinds.filter((box) => box.checked).map((box) => box.dataset.notifyKind!);
+      notifications.save(picked, email.value.trim() || null, digest.checked).then(() => { error.textContent = ""; }, fail);
+    }, 500);
+  }
+  for (const box of [...kinds, digest]) box.addEventListener("change", save, { signal });
+  email.addEventListener("input", save, { signal });
+  push.addEventListener("click", async () => {
+    if (!prefs) return;
+    push.disabled = true;
+    try {
+      if (await notifications.device()) await notifications.unsubscribe();
+      else await notifications.subscribe(prefs.public_key);
+    } catch (failure) { fail(failure); }
+    await renderPush();
+  }, { signal });
+  signal.addEventListener("abort", () => clearTimeout(saving), { once: true });
+  return async () => {
+    try {
+      prefs = await notifications.get();
+      for (const box of kinds) box.checked = prefs.kinds.includes(box.dataset.notifyKind!);
+      digest.checked = prefs.email_digest;
+      email.value = prefs.email ?? "";
+    } catch (failure) { fail(failure); }
+    await renderPush();
+  };
 }

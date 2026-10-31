@@ -46,7 +46,19 @@ pub struct LedgerGoal {
     pub detail: &'static str,
     pub metric: LedgerMetric,
     pub target: f64,
+    /// The goal's weight, in the credits it once paid. §standing-ladder (R3):
+    /// it now pays [`LEDGER_STANDING`] and a dossier of [`ledger_dossier`].
     pub reward: f64,
+}
+
+/// §standing-ladder (R3): standing every ledger goal pays (before the daily
+/// allowance).
+pub const LEDGER_STANDING: f64 = 3.0;
+
+/// The research dossier a goal pays, as a fraction of a programme: its weight
+/// over 10,000 (a 400-weight goal is 4%, a 2,000-weight one 20%).
+pub fn ledger_dossier(goal: &LedgerGoal) -> f64 {
+    goal.reward / 10_000.0
 }
 
 const fn goal(

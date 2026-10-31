@@ -24,9 +24,13 @@ const market = deps["../../core/derive/market"] = compile("core/derive/market.ts
 const colony = compile("core/derive/colony.ts");
 const { DeckEmpireRoutes } = compile("shell/deck/empire.ts");
 deps["./market"] = market;
-deps["./construction"] = compile("core/derive/construction.ts");
+deps["./construction"] = deps["../../core/derive/construction"] = compile("core/derive/construction.ts");
 deps["./format"] = deps["../../core/derive/format"];
-deps["../../core/derive/worldbuild"] = compile("core/derive/worldbuild.ts");
+deps["./station"] ??= compile("core/derive/station.ts");
+deps["../../core/derive/worldbuild"] = deps["./worldbuild"] = compile("core/derive/worldbuild.ts");
+deps["./fleet"].shipKindLabel ??= kind => kind;
+deps["../../shipyard-scene"] = compile("shipyard-scene.ts");
+deps["../../core/derive/shipyard"] = compile("core/derive/shipyard.ts");
 const { MobileParitySurfaces } = compile("shell/mobile/parity.ts");
 // The mobile builder reads the served line for an order's Cancel.
 const mobileThis = () => Object.assign(Object.create(MobileParitySurfaces.prototype), { ctx: { state }, cancelSent: new Set(), cancelArmed: null });
@@ -36,6 +40,23 @@ const fixtures = [
   ["precision_works", "precision_components", "mat_autoforges", .2, [["electronics", 1], ["machinery", .5], ["rare_elements", .5]]],
   ["drive_works", "warp_core", "mat_foundry_iv_fusion_reactors", .12, [["precision_components", 1.25], ["composites", .82], ["iridium", .1]]],
 ];
+// §charter-gates: a structure the charter hasn't reached yet waits, its step named.
+{
+  const opt = { key: "shipyard", label: "Shipyard", build_secs: 20, costs: [{ commodity: "alloys", units: 40 }] };
+  const body = { id: 0, structures: {}, industrial_slots: 3, construction_time_mult: 1 };
+  const system = { id: "home", owner: "1", structures: {}, builds: [], bodies: [body], stockpile: [{ commodity: "alloys", units: 40 }] };
+  const pools = market.bodyPoolUsage(body, system);
+  state.founding = { stage: "build_bioharvester", charter_gates: { shipyard: 8, power_plant: 7 } };
+  const gated = market.structOption(opt, system, body, pools);
+  assert.equal(gated.buildable, false);
+  assert.equal(gated.reason, "The charter opens this at step 8.");
+  assert.equal(gated.gate, "Charter step 8");
+  state.founding = { stage: "build_shipyard" };
+  assert.equal(market.structOption(opt, system, body, pools).buildable, true, "its step reached, it opens");
+  state.founding = { stage: "build_bioharvester", charter_gates: { shipyard: 8 } };
+  assert.equal(market.structOption(opt, { ...system, owner: "2" }, body, pools).reason.includes("charter"), false, "only the founder's own worlds");
+  delete state.founding;
+}
 for (const [key, output, research, rate, inputs] of fixtures) {
   const opt = { key, label: icons.label(key), build_secs: 30,
     costs: [{ commodity: "alloys", units: 30 }], research_prerequisite: research,
@@ -149,12 +170,13 @@ for (const id of [orbitalOption.research_prerequisite, ...orbitalOption.research
 // research and yard, one station per system, one Star Fortress per corporation.
 {
   const level = (tier, label, research, requires = null) => ({ tier, label, costs: [], research_prerequisite: research, requires });
-  const ladder = { key: "orbital_defense", costs: [], research_prerequisite: "weap_fire_control", tiers: [
-    level(1, "Defense Platform", "weap_fire_control"), level(2, "Orbital Battery", "weap_orbital_batteries"),
-    level(3, "Defense Station", "weap_cm_iii_defense_stations", { yard: "ordnance_foundry", tier: 1 }),
-    level(4, "Citadel", "weap_cm_v_grand_batteries", { yard: "naval_drydock", tier: 1 }),
-    level(5, "Star Fortress", "weap_cm_v_star_fortress", { yard: "capital_slipway", tier: 1 })] };
-  const world = { ...body, id: 0, structures: { orbital_defense: 2 } };
+  // §gun-platform: six levels, the first needing no research.
+  const ladder = { key: "orbital_defense", costs: [], research_prerequisite: null, tiers: [
+    level(1, "Gun Platform", null), level(2, "Defense Platform", "weap_fire_control"), level(3, "Orbital Battery", "weap_orbital_batteries"),
+    level(4, "Defense Station", "weap_cm_iii_defense_stations", { yard: "ordnance_foundry", tier: 1 }),
+    level(5, "Citadel", "weap_cm_v_grand_batteries", { yard: "naval_drydock", tier: 1 }),
+    level(6, "Star Fortress", "weap_cm_v_star_fortress", { yard: "capital_slipway", tier: 1 })] };
+  const world = { ...body, id: 0, structures: { orbital_defense: 3 } };
   const moon = { ...body, id: 7, structures: {} };
   const fort = { id: "fort", owner: "1", structures: { naval_drydock: 1 }, builds: [], bodies: [world, moon], stockpile: [] };
   const gate = (b = world) => market.structOption(ladder, fort, b, market.bodyPoolUsage(b, fort));
@@ -169,18 +191,37 @@ for (const id of [orbitalOption.research_prerequisite, ...orbitalOption.research
   fort.builds.push({ key: "orbital_defense", body_id: 0 });
   assert.equal(gate(moon).buildable, false, "a queued level holds the station's world too");
   fort.builds = [];
-  world.structures.orbital_defense = 4;
+  world.structures.orbital_defense = 5;
   assert.match(gate().reason, /Capital Slipway tier 1/);
   fort.structures.capital_slipway = 1;
   assert.equal(gate().buildable, true);
-  state.systems = [fort, { id: "far", owner: "1", station: { level: 4, name: "Citadel", mounts: [] },
+  state.systems = [fort, { id: "far", owner: "1", station: { level: 5, name: "Citadel", mounts: [] },
     builds: [{ key: "orbital_defense", body_id: 3 }] }];
   assert.equal(gate().reason, "Your corporation already has its Star Fortress.", "one standing or rising");
   state.systems[1].builds = [];
   assert.equal(gate().buildable, true, "a Citadel elsewhere isn't a fortress");
-  state.systems[1] = { id: "rival", owner: "2", station: { level: 5, name: "Star Fortress", mounts: [] }, builds: [] };
+  // §unlocks (v72): the served ceiling caps what is offered. Above it a level
+  // is `capped` (the sheets leave the building out); with no level open the
+  // building isn't catalogued.
+  state.research.structure_tiers = { orbital_defense: 5 };
+  assert.equal(gate().capped, true, "level VI is above a ceiling of V");
+  assert.equal(gate().buildable, false);
+  assert.equal(market.structureUnlocked(ladder), true);
+  state.research.structure_tiers.orbital_defense = 0;
+  assert.equal(market.structureUnlocked(ladder), false, "no level open: not catalogued");
+  state.research.structure_tiers.orbital_defense = 6;
+  assert.equal(gate().capped, false);
+  assert.equal(gate().buildable, true);
+  delete state.research.structure_tiers;
+  assert.equal(market.structureCeiling("orbital_defense"), Infinity, "unknown until research arrives");
+  // A module whose programme isn't done stays out of the forges.
+  assert.equal(market.moduleResearched("extended_tanks"), false);
+  state.research.programmes.push({ id: "prop_expedition_iii_extended_tanks", state: "completed" });
+  assert.equal(market.moduleResearched("extended_tanks"), true);
+  assert.equal(market.moduleResearched("mass_driver"), true, "no programme, no gate");
+  state.systems[1] = { id: "rival", owner: "2", station: { level: 6, name: "Star Fortress", mounts: [] }, builds: [] };
   assert.equal(gate().buildable, true, "a rival's fortress doesn't count");
-  world.structures.orbital_defense = 5;
+  world.structures.orbital_defense = 6;
   assert.equal(gate().reason, "The Star Fortress is the station's top level.");
   state.systems = [];
   state.research.programmes = [];
@@ -325,11 +366,14 @@ console.log("Command Center desktop/mobile panels: exact next-level identity, du
   const mobile = mobileThis();
   const world = mobile.planetInfrastructure("home", system, body);
   assert.equal(world.match(/class="m-progress"/g)?.length, 1, "one bar: the order building now");
-  assert.match(world, /m-order--head"><span><b>Mining Complex II<\/b><div class="m-progress"><i style="width:33\.3%"><\/i><\/div><\/span><span>40s<\/span><button type="button" data-mobile-act="build-cancel" data-job="7">Cancel</);
+  // §live-progress: the bar carries its line (from -20 s, 100% over 60 s), so
+  // each frame redraws it.
+  assert.match(world, /m-order--head"><span><b>Mining Complex II<\/b><div class="m-progress" data-live-progress="-20 0 1\.6666666666666667"><i style="width:33\.3%"><\/i><\/div><\/span><span>40s<\/span><button type="button" data-mobile-act="build-cancel" data-job="7">Cancel</);
   assert.match(world, /<b>#2 Habitat I<\/b><\/span><span>starts in 40s<\/span>/);
   assert.match(world, /<b>Tiny Freighter<\/b><\/span><span>paused · needs workforce<\/span>/);
   const sheet = mobile.systemConstruction("home", system);
-  assert.match(sheet, /<b>Freya I<\/b><small>Mining Complex II · 40s · \+1 queued<\/small><small>Tiny Freighter · paused · needs workforce<\/small>/);
+  assert.match(sheet, /<b>Freya I<\/b><small>Mining Complex II · 40s · \+1 queued<\/small><button type="button" class="m-yard-line" data-mobile-act="open-yard" data-system="home" data-kind="tiny_freighter">Tiny Freighter · paused · needs workforce<\/button>/,
+    "a hull line opens its yard (§shipyard-view)");
   assert.doesNotMatch(sheet, /m-progress/, "the system sheet draws no bar");
 }
 console.log("Mobile construction: one bar on the order building now, places for the rest, one line per world.");
@@ -347,6 +391,11 @@ console.log("Mobile construction: one bar on the order building now, places for 
   }
   assert.equal(market.structureBuildSeconds(mine, land, market.openingBuild("mining_complex", 1, "home", land)), 10);
   assert.equal(market.structureBuildSeconds(mine, land), 18);
+  // §charter-gates: step 4's mine rises in the privateer's flight.
+  state.founding.stage = "build_mine";
+  assert.equal(market.structureBuildSeconds(mine, land, market.openingBuild("mining_complex", 1, "home", land)), 30);
+  assert.equal(market.structureBuildSeconds({ key: "habitat", build_secs: 20, costs: [] }, land, true), 10, "the others keep ten");
+  state.founding.stage = "build_bioharvester";
   assert.equal(market.openingBuild("mining_complex", 2, "home", land), false, "level II keeps its time");
   assert.equal(market.openingBuild("smelter", 1, "home", land), false, "only the five opening buildings");
   assert.equal(market.openingBuild("mining_complex", 1, "home", moon), false, "only the Command Center's world");

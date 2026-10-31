@@ -6,6 +6,7 @@ import {
   signalsSummary, type SignalCard,
 } from "../../core/derive/signals";
 import { shipKindLabel } from "../../core/derive/fleet";
+import { traderOf } from "../../core/derive/trader";
 import { systemName } from "../../core/derive/geo";
 import type { SignalKind, SignalView } from "../../protocol";
 import { liveSimTime } from "../../state";
@@ -50,7 +51,7 @@ export class MobileSignals {
     const view = st.signals;
     if (!view) return { title: "Signals", html: `<div class="m-empty">No signals yet.</div>` };
     const now = liveSimTime();
-    const cards = signalCards(view, st.ghosts, st.commandCenter, now);
+    const cards = signalCards(view, st.ghosts, st.commandCenter, now, traderOf(st.founding));
     const chosen = this.open ? cards.find((c) => c.signal.id === this.open) : undefined;
     if (!chosen) this.open = null;
     const strip = firstTenStrip(view);

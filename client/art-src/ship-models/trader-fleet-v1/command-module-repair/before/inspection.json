@@ -1,0 +1,22 @@
+{
+  "modelSHA256": "a3bdbced7740f086af83e55747c54290972db5f62f0c98783eac08de9f8fab53",
+  "method": "Actual exported bridge triangles and embedded texture, unlit, four angles",
+  "views": [
+    "port-forward",
+    "port-aft",
+    "starboard-aft",
+    "top"
+  ],
+  "windowAlignment": {
+    "windscreenPlaneError": 0.1109133,
+    "roofHeightRange": 0.2898656,
+    "maximumSourcePixelError": 1e-05,
+    "windscreenSampleHeights": [
+      2.1,
+      2.1,
+      2.1,
+      1.63663
+    ]
+  },
+  "nonBridgeGeometryAndUVsUnchanged": null
+}

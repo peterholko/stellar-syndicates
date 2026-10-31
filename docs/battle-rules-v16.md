@@ -79,3 +79,22 @@ either build:
 ```bash
 BATTLE_FIXTURES_WRITE=1 cargo test -p server battle_fixtures
 ```
+
+## Close quarters (Oct 28 2026)
+
+Peter: "during the first combat between the player's interceptor and the
+pirate, can we reduce the range of the lasers so they fight closer?"
+
+- `SideMods::range_scale` (0 reads 1) scales a side's weapon reach
+  (`weapon_reach`, the targeting band), its holding band (`preferred_band`)
+  and the attackers' rally/anchor. `TacticalState::close_quarters(scale)`
+  opens the fight that much nearer the anchor.
+- The world sets it to `CHARTER_CLOSE_QUARTERS` (0.4) on both sides when a
+  fight involves the founding privateer or a founding den's guard
+  (`World::charter_fight`). In a Raider duel the opening distance drops from
+  about 278 to about 141 units (`close_quarters_hold_a_duel_nearer`).
+- The vendetta's finale keeps the usual ranges: at close quarters one
+  Interceptor beat the uncle in one galaxy of six, breaking its measured
+  sizing (two win, one never does).
+- Every other battle, and every recorded one, is unchanged: the field reads 1
+  when absent, so rules fingerprints and replays hold.

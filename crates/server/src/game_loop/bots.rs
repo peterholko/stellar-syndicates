@@ -26,7 +26,7 @@ struct ReturnTrip { destination: Vec2, issued_at: f64 }
 
 // Accounts use positive PostgreSQL i64 ids. This separate, non-sentinel namespace
 // cannot collide with an authenticated account or impersonate an existing player.
-const BOT_ID_BASE: u64 = 0xB070_0000_0000_0000;
+const BOT_ID_BASE: u64 = PlayerId::BOT_BASE;
 /// §fuel-overhaul: the two fuels a bot keeps stocked.
 const FUELS: [C; 2] = [C::Uranium, C::Deuterium];
 const THINK_SECONDS: f64 = 4.0;
@@ -108,10 +108,14 @@ struct Observation {
     ghosts: Vec<GhostView>,
     fighting: BTreeSet<EntityId>,
     account: Option<MarketAccountSample>,
-    market_at: f64,
+    /// §treasury: the treasury, at the command center: known at once.
+    credits: f64,
     exported: bool,
     founding_stage: sim::FoundingStage,
     local_opening: bool,
+    /// §charter-crates: goods the Authority still holds sealed for the
+    /// charter (bots collect a crate as it is released).
+    sealed_crates: BTreeMap<C, f64>,
     /// §charter-v4: the charter's land grant has opened the home's other
     /// worlds; until then the bot builds only on its landing world.
     land_grant_open: bool,
@@ -121,13 +125,18 @@ struct Observation {
     /// §charter-v5: during "Destroy the privateer", the privateer the colony
     /// has tracked since its raid.
     privateer: Option<EntityId>,
+    /// §privateer-hunt: during "Destroy the privateer", where it went to
+    /// ground once its raid was over (it is tracked only during the raid).
+    privateer_last_seen: Option<Vec2>,
     opening_recovered: bool,
     recovery_site: Option<sim::sites::SiteReport>,
     expansion_unlocked: bool,
     survey_candidates: Vec<EntityId>,
     /// §belts: during the charter's barge lesson, the charted belt it points
     /// at, the ore worth cutting there and the system's position.
-    belt_lesson: Option<(EntityId, u32, C, Vec2)>,
+    /// The charter's belt, its ore, its position, and whether that ore is a
+    /// found pocket's.
+    belt_lesson: Option<(EntityId, u32, C, Vec2, bool)>,
     /// §belts phase 6: every charted belt, from arrived reports, with the
     /// pockets this corporation has found there.
     belts: Vec<belts::BeltSite>,
@@ -175,6 +184,13 @@ impl GameLoop {
             tracing::warn!(ships = ?kinds, "DEV_START_SHIPS: new founders get these hulls at home");
         }
         self.world.dev_start_ships = kinds;
+        // Dev only: `DEV_PVP_SANDBOX=1` founds new corporations past the
+        // charter and without the founder shield, to playtest raids between
+        // new players. Read on each start; never saved.
+        self.world.dev_pvp_sandbox = std::env::var("DEV_PVP_SANDBOX").is_ok_and(|v| v == "1");
+        if self.world.dev_pvp_sandbox {
+            tracing::warn!("DEV_PVP_SANDBOX: new founders skip the charter and its shield");
+        }
         Ok(())
     }
 
@@ -261,7 +277,7 @@ impl GameLoop {
         revealed.extend(view::tracked_contacts(&self.world, owner, now));
         let mut ghosts = self.history.view_for_with_arrays(owner, cc, c, now,
             &arrays, &revealed,
-            view::NodeEffects { veil: &veil, deep_scan: &deep_scan });
+            view::NodeEffects { veil: &veil, deep_scan: &deep_scan, ..Default::default() });
         ghosts.sort_by_key(|g| g.id);
         let market_time = now - sim::transit::delay(self.world.hub, cc, c);
         let military_sites = intel.iter().filter_map(|(&id, intel)| {
@@ -280,12 +296,13 @@ impl GameLoop {
         Some(Observation {
             owner, capital: home_id, now, cc, hub: self.world.hub, c, siege_secs: self.world.siege_duration_secs(), home, sites, prospects, ghosts, fighting,
             account: self.market_accounts.at(owner, market_time).cloned(),
-            market_at: market_time,
+            credits: corp.credits,
             exported: corp.founding.sale_report_at.is_some(),
             // These are the same CC tutorial ledger and public candidate ids
             // served in FoundingView, not an early read of survey geology.
             founding_stage: corp.founding.stage,
             local_opening: corp.founding.local_opening,
+            sealed_crates: corp.founding.sealed_goods(),
             land_grant_open: corp.founding.land_grant_open(),
             den: (corp.founding.stage == sim::FoundingStage::EliminateDen
                     && corp.founding.privateer_report_at.is_some_and(|at| at <= now)
@@ -294,23 +311,31 @@ impl GameLoop {
                 .and_then(|id| self.world.systems.iter().find(|s| s.id == id).map(|s| (id, s.pos))),
             privateer: (corp.founding.stage == sim::FoundingStage::DefeatPrivateer)
                 .then_some(corp.founding.privateer).flatten(),
+            privateer_last_seen: (corp.founding.stage == sim::FoundingStage::DefeatPrivateer)
+                .then(|| crate::view::privateer_last_seen(&self.world, owner, now)).flatten(),
             opening_recovered: corp.founding.recovery_report_at.is_some_and(|at| at <= now),
             recovery_site: corp.founding.recovery_site.and_then(|id| self.world.exploration.sites.get(&id)).and_then(|s| s.known.get(&owner)).cloned(),
             expansion_unlocked: corp.founding.expansion_unlocked(),
             survey_candidates: corp.founding.survey_candidates.clone(),
             // The programme's own target: a belt this corporation charted.
             belt_lesson: matches!(corp.founding.stage,
-                    sim::FoundingStage::BuildBarge | sim::FoundingStage::MineBelt | sim::FoundingStage::HaulOre)
+                    sim::FoundingStage::BuildBarge | sim::FoundingStage::ProspectBelt
+                    | sim::FoundingStage::MineBelt | sim::FoundingStage::HaulOre)
                 .then_some(corp.founding.belt_target).flatten()
                 .and_then(|(system_id, body_id)| {
                     let system = self.world.systems.iter().find(|s| s.id == system_id)?;
                     let belt = system.bodies.iter().find(|b| b.id == body_id)?;
+                    // §den-pocket: a pocket this corporation has found comes first.
+                    if let Some(found) = belt.pockets.iter()
+                        .find(|k| k.found_by.contains(&owner) && k.deposit.reserves.is_none_or(|r| r > 1e-9)) {
+                        return Some((system_id, body_id, found.deposit.resource, system.pos, true));
+                    }
                     let ore = belt.deposits.iter().max_by(|a, b| {
                         let value = |d: &sim::galaxy::Deposit| d.richness
                             * sim::production::ore_bulk_ratio(d.resource) * sim::market::base_price(d.resource);
                         value(a).total_cmp(&value(b))
                     })?.resource;
-                    Some((system_id, body_id, ore, system.pos))
+                    Some((system_id, body_id, ore, system.pos, false))
                 }),
             belts: corp.surveyed.iter().filter_map(|id| self.world.information.site(*id, cc, c, now))
                 .flat_map(|report| {
@@ -426,7 +451,9 @@ impl Observation {
     fn cruise_mult_on(&self, ghost: &GhostView, uranium: bool) -> f64 {
         let mods = sim::research::mods(&self.research);
         let freight = mods.get(&sim::research::ModKey::FreighterFusionBurn).copied().unwrap_or(1.0);
-        let torch = mods.get(&sim::research::ModKey::WarshipBurn).copied().unwrap_or(1.0);
+        // Torch Regime's thirst, eased by Long Patrol (ship.rs cruise_mult_for).
+        let torch = mods.get(&sim::research::ModKey::WarshipBurn).copied().unwrap_or(1.0)
+            * mods.get(&sim::research::ModKey::FuelOffensive).copied().unwrap_or(1.0);
         let regime = |freighter: bool| if uranium { sim::fuel::SLOW_FUEL_MULT }
             else if freighter { freight } else { 1.0 };
         let stacks = || ghost.composition.iter().flatten().filter(|s| s.count > 0);
@@ -501,6 +528,7 @@ impl Observation {
 
     /// §power: build or raise that planet's plant, within its research cap.
     pub(super) fn power_project(&self) -> Option<Project> {
+        if !self.charter_allows(K::PowerPlant) { return None; }
         let (body, _) = self.power_shortfall()?;
         if self.home.builds.iter().any(|b| b.what == BuildKind::Upgrade { upgrade: K::PowerPlant }) { return None; }
         let tier = self.home.system.bodies.iter().find(|b| b.id == body)?.tier(K::PowerPlant) + 1;
@@ -508,9 +536,15 @@ impl Observation {
         (tier <= cap).then_some(Project { what: BuildKind::Upgrade { upgrade: K::PowerPlant }, body })
     }
 
+    /// §charter-gates: the charter has opened `kind` (sim
+    /// `FoundingProgram::allows`), so an order isn't refused.
+    pub(super) fn charter_allows(&self, kind: K) -> bool {
+        !self.local_opening || sim::founding::charter_step(kind).is_none_or(|step| self.founding_stage.step() >= step)
+    }
+
     fn structure(&self, kind: K, tier: u32) -> Option<Project> {
         // §power: plants are per planet; `power_project` places them.
-        if kind == K::PowerPlant { return None; }
+        if kind == K::PowerPlant || !self.charter_allows(kind) { return None; }
         let system = &self.home.system;
         if system.tier(kind) >= tier || self.home.builds.iter()
             .any(|b| b.what == BuildKind::Upgrade { upgrade: kind }) { return None; }
@@ -524,7 +558,8 @@ impl Observation {
             // §charter-v4: inside the land grant, only the landing world.
             if !self.land_grant_open && b.tier(K::CommandCenter) == 0 { return false; }
             let extraction = matches!(kind, K::MiningComplex | K::Bioharvester | K::VolatileHarvester);
-            (kind != K::CommandCenter || b.population >= sim::build::COMMAND_CENTER_MIN_POPULATION
+            // §asteroid-quarry: a belt takes its quarry and nothing else.
+            kind.suits(b) && (kind != K::CommandCenter || b.population >= sim::build::COMMAND_CENTER_MIN_POPULATION
                 && b.kind != sim::body::BodyKind::GasGiant)
                 && (!extraction || b.has_deposit_for(kind)) && (!kind.uses_slot() || b.tier(kind) > 0
                 || b.pool_slots_built(kind.slot_pool()) < b.pool_slots(kind.slot_pool()))

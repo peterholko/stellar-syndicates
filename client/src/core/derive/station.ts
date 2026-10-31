@@ -5,14 +5,19 @@
 
 import type { ModuleKind, StationView } from "../../protocol";
 
-/** The ladder's names, level 1 to 5 (the served catalog carries the same). */
-export const STATION_NAMES = ["Defense Platform", "Orbital Battery", "Defense Station", "Citadel", "Star Fortress"];
+/** The ladder's names, level 1 to 6 (the served catalog carries the same).
+ * §gun-platform: the charter's Gun Platform comes first. */
+export const STATION_NAMES = ["Gun Platform", "Defense Platform", "Orbital Battery", "Defense Station", "Citadel", "Star Fortress"];
+export const STATION_LEVELS = STATION_NAMES.length;
 
-export const stationName = (level: number): string => STATION_NAMES[Math.max(1, Math.min(5, Math.floor(level))) - 1];
+/** A level clamped to the ladder. */
+export const stationLevel = (level: number): number => Math.max(1, Math.min(STATION_LEVELS, Math.floor(level)));
 
-/** The station's art at `level` (1–5), from the derived station sprites. */
+export const stationName = (level: number): string => STATION_NAMES[stationLevel(level) - 1];
+
+/** The station's art at `level` (1–6), from the derived station sprites. */
 export function stationArtUrl(level: number, size: 128 | 256 | 512 = 128): string {
-  return `/art/derived/stations/v1/level-${Math.max(1, Math.min(5, Math.floor(level)))}-${size}.webp`;
+  return `/art/derived/stations/v2/level-${stationLevel(level)}-${size}.webp`;
 }
 
 /** A hardpoint's budget: three slots, eight fitting points (a destroyer's). */

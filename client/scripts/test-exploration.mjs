@@ -117,7 +117,8 @@ action("back"); assert.equal(st.selectedExplorationSiteId, null);
 Object.assign(st, { battles: [], battleRecords: [], jumpDepartures: [], emplacements: [],
   selectedShipId: "scout", anchors: [] });
 Object.assign(renderer, { worldToScreen: p => p, fleetScreenPosition: g => g.pos,
-  fleetHitRadius: () => 24, battlePick: () => null, operationPick: () => null, signalPick: () => null });
+  fleetHitRadius: () => 24, battlePick: () => null, operationPick: () => null, signalPick: () => null,
+  trackingInsetAt: () => false });
 const beltsDerive = load("core/derive/belts.ts", { "../../protocol": protocol, "../../icons": icons, "./fleet": fleets });
 const map = load("core/mapclick.ts", { "../protocol": protocol, "../state": clock,
   "./derive/fleet": fleets, "./derive/exploration": exploration, "./derive/belts": beltsDerive,
@@ -192,7 +193,8 @@ st.systems.find(sys => sys.id === "sif").bodies[0].deposits = [
 const merchants = load("core/derive/merchant.ts", { "./industry": {
   availableStock: (s, c) => Math.max(0, s.stockpile?.find(x => x.commodity === c)?.units ?? 0) } });
 const guide = load("core/derive/founding.ts", { "../../protocol": protocol, "./fleet": fleets,
-  "./format": { fmtDur: n => `${Math.round(n)}s` }, "../../icons": icons, "./merchant": merchants });
+  "./format": { fmtDur: n => `${Math.round(n)}s` }, "../../icons": icons, "./merchant": merchants,
+  "./vendetta": load("core/derive/vendetta.ts") });
 const yardHome = { id: "home", owner: "1", bodies: [{ id: 0, name: "Home", structures: { shipyard: 1 } }],
   assignments: [{ body_id: 0, structure: "shipyard", workers: 1, specialists: {} }], builds: [],
   storage_used: 10, storage_cap: 500 };
@@ -206,7 +208,7 @@ st.founding = { stage: "survey_candidates", local_opening: true, survey_candidat
 const barge = st.ghosts.pop();
 let plan = guide.foundingPlan(st, yardHome);
 assert.equal(plan.chapter.name, "Expansion");
-assert.deepEqual(plain(plan.checklist.map(item => item.done)), [true, true, true, false], "export, research and mining done");
+assert.deepEqual(plain(plan.checklist.map(item => item.done)), [true, true, true, true, false], "export, research, Smelter and mining done");
 assert.equal(plan.primary.action, "build-probe");
 st.ghosts.push({ id: "probe", kind: "survey_probe", own: true, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 },
   composition: [{ kind: "survey_probe", count: 1 }] });
@@ -216,7 +218,8 @@ assert.deepEqual(plain(guide.foundingCommands("survey-stop", st, yardHome)),
 Object.assign(st.ghosts.at(-1), { pos: { x: 50_000, y: 60 }, survey_progress: 0.5 });
 plan = guide.foundingPlan(st, yardHome);
 assert.equal(plan.primary.action, "probe");
-assert.match(plan.progress.join(" "), /Surveying Sif · 50%/);
+assert.equal(plan.primary.status, "Surveying Sif · 50%", "a waiting card takes its progress line as its title");
+assert.doesNotMatch(plan.progress.join(" "), /Surveying/, "and the line is not said twice");
 st.ghosts.pop(); st.ghosts.push(barge);
 
 // Reach: the barge, the belt, the haul home.
@@ -225,15 +228,31 @@ st.founding = { stage: "build_barge", local_opening: true, survey_candidates: ["
 plan = guide.foundingPlan(st, yardHome);
 assert.equal(plan.chapter.name, "Reach");
 assert.equal(plan.primary.action, "build-barge");
-assert.match(plan.primary.copy, /Sif Belt/);
-assert.deepEqual(plain(plan.checklist.map(item => item.done)), [false, false, false]);
+assert.match(plan.primary.hint, /Sif Belt/);
+assert.deepEqual(plain(plan.checklist.map(item => item.done)), [false, false, false, false]);
 yardHome.storage_used = 500;
 assert.match(guide.foundingPlan(st, yardHome).primary.reason, /storage is full/, "a full home is named before the kit is bought");
 yardHome.storage_used = 10;
 yardHome.builds = [{ key: "mining_barge" }];
-assert.match(guide.foundingPlan(st, yardHome).progress.join(" "), /Mining Barge under construction/);
+assert.match(guide.foundingPlan(st, yardHome).primary.status, /Mining Barge under construction/);
 yardHome.builds = [];
+// §den-pocket (Peter, Oct 30 2026): a prospecting pass, then the pocket it found.
+st.founding.stage = "prospect_belt";
+plan = guide.foundingPlan(st, yardHome);
+assert.equal(plan.chapter.name, "Reach");
+assert.deepEqual([plan.primary.title, plan.primary.action], ["Prospect Sif Belt in Sif", "prospect-belt"]);
+assert.deepEqual(plain(guide.foundingCommands("prospect-belt", st, yardHome)),
+  [{ type: "ProspectBelt", fleet_id: "barge", system_id: "sif", body_id: 2 }]);
+st.ghosts.at(-1).industry = { kind: "prospect", system: "sif", body: 2, dwell: 30, need: 60, status: "prospecting" };
+assert.equal(guide.foundingPlan(st, yardHome).primary.status, "Prospecting Sif Belt in Sif · 50%");
+st.ghosts.at(-1).industry = null;
+const sifBelt = st.systems.find(sys => sys.id === "sif").bodies[0];
+sifBelt.pockets = [{ resource: "titanium_ore", richness: 0.3, reserves: 600 }];
 st.founding.stage = "mine_belt";
+assert.match(guide.foundingPlan(st, yardHome).primary.copy, /Titanium.* pocket$/i);
+assert.deepEqual(plain(guide.foundingCommands("mine-belt", st, yardHome)),
+  [{ type: "MineBelt", fleet_id: "barge", system_id: "sif", body_id: 2, ore: "titanium_ore", pocket: true }]);
+delete sifBelt.pockets;
 plan = guide.foundingPlan(st, yardHome);
 assert.equal(plan.primary.action, "mine-belt");
 assert.deepEqual(plain(guide.foundingCommands("mine-belt", st, yardHome)),
@@ -241,10 +260,10 @@ assert.deepEqual(plain(guide.foundingCommands("mine-belt", st, yardHome)),
 st.ghosts.at(-1).industry = { kind: "mine", system: "sif", body: 2, ore: "cuprite_ore", mined: 3, fraction: 0, status: "mining" };
 plan = guide.foundingPlan(st, yardHome);
 assert.equal(plan.primary.action, "barge");
-assert.match(plan.progress.join(" "), /cutting .*Sif Belt in Sif/);
+assert.match(plan.primary.status, /cutting .*Sif Belt in Sif/);
 st.founding.stage = "haul_ore";
 plan = guide.foundingPlan(st, yardHome);
-assert.deepEqual(plain(plan.checklist.map(item => item.done)), [true, true, false]);
+assert.deepEqual(plain(plan.checklist.map(item => item.done)), [true, true, true, false]);
 assert.equal(plan.primary.action, "barge-home");
 assert.deepEqual(plain(guide.foundingCommands("barge-home", st, yardHome)),
   [{ type: "MoveShip", ship_id: "barge", dest: { x: 0, y: 0 } }]);
@@ -367,7 +386,8 @@ console.log("Discovery expansion: prepared work confirmation, guardian gates, re
 // Notes use the reliable change-only section; absent keeps them, [] clears.
 const reducer = load("core/session.ts", { "../wire.mjs": { PROTOCOL_VERSION: 35 },
   "../state": { syncRenderClock() {} }, "./derive/transactions": { emptyTransactions: () => ({}) },
-  "./derive/market": { marketReservations: [], recentMarketOrders: [] }, "../battlehistory": { loadBattleMarks() {} } });
+  "./derive/market": { marketReservations: [], recentMarketOrders: [] }, "../battlehistory": { loadBattleMarks() {} },
+  "../stars": { chartStars() {} } });
 reducer.applyServerMessage({ type: "Sections", exploration_journal: [notes[1].entry] }, st);
 assert.equal(st.explorationJournal[0].pinned, true);
 reducer.applyServerMessage({ type: "Sections", rankings: [] }, st);

@@ -1,0 +1,275 @@
+--- before/client/scripts/build-ship-derivatives.mjs
++++ client/scripts/build-ship-derivatives.mjs
+@@ -48,2 +48,5 @@
+     ...freight.ships.map(s => ({ ...s, input: path.join(freightRoot, `${s.slug}-alpha.png`) })),
++    // Dedicated raid-loot hull. Keep the civilian padding ruler used by its
++    // previous stand-in; the renderer's own mass-2,000 size stays unchanged.
++    { kind: "combat_freighter", slug: "combat-freighter", existing: "corporate_freighter.png" },
+     // Model-only art variants come last: their footprint is the flown hull's.
+--- before/client/art-src/ship-models/interceptor-lod-experiment-v1/build_models.mjs
++++ client/art-src/ship-models/interceptor-lod-experiment-v1/build_models.mjs
+@@ -10,3 +10,3 @@
+ const ship = process.argv[2] ?? 'interceptor';
+-const titles = { interceptor: 'Interceptor', corvette: 'Corvette', cruiser: 'Cruiser', 'tiny-freighter': 'Tiny Freighter', 'small-freighter': 'Small Freighter', 'large-freighter': 'Large Freighter', 'heavy-freighter': 'Heavy Freighter', 'bulk-freighter': 'Bulk Freighter', titan: 'Titan', "destroyer": "Destroyer", "battleship": "Battleship", "dreadnought": "Dreadnought", "scout": "Scout", "colony-ship": "Colony Ship", "troop-transport": "Troop Transport", "construction-ship": "Construction Ship", "medium-freighter": "Medium Freighter", "authority-freighter": "Authority Freighter", "mining-barge": "Mining Barge", "mining-belt-station": "Mining Belt Station", "free-trader": "Free Trader", "clean-slate": "Clean Slate", "second-wind": "Second Wind", "small-fortune": "Small Fortune" };
++const titles = { "combat-freighter": "Combat Freighter", interceptor: 'Interceptor', corvette: 'Corvette', cruiser: 'Cruiser', 'tiny-freighter': 'Tiny Freighter', 'small-freighter': 'Small Freighter', 'large-freighter': 'Large Freighter', 'heavy-freighter': 'Heavy Freighter', 'bulk-freighter': 'Bulk Freighter', titan: 'Titan', "destroyer": "Destroyer", "battleship": "Battleship", "dreadnought": "Dreadnought", "scout": "Scout", "colony-ship": "Colony Ship", "troop-transport": "Troop Transport", "construction-ship": "Construction Ship", "medium-freighter": "Medium Freighter", "authority-freighter": "Authority Freighter", "mining-barge": "Mining Barge", "mining-belt-station": "Mining Belt Station", "free-trader": "Free Trader", "clean-slate": "Clean Slate", "second-wind": "Second Wind", "small-fortune": "Small Fortune" };
+ if (!Object.hasOwn(titles, ship)) throw Error('Choose interceptor, corvette, cruiser, tiny-freighter, small-freighter, large-freighter, heavy-freighter, bulk-freighter, or titan');
+@@ -15,3 +15,3 @@
+ const traderFleet = ["clean-slate", "second-wind", "small-fortune"];
+-const newShips = ["destroyer", "battleship", "dreadnought", "scout", "colony-ship", "troop-transport", "construction-ship", "medium-freighter", "authority-freighter", "mining-barge", "mining-belt-station", "free-trader", ...traderFleet];
++const newShips = ["combat-freighter", "destroyer", "battleship", "dreadnought", "scout", "colony-ship", "troop-transport", "construction-ship", "medium-freighter", "authority-freighter", "mining-barge", "mining-belt-station", "free-trader", ...traderFleet];
+ let modelSpec = null;
+@@ -55,2 +55,3 @@
+ function protectedComponent(name) {
++  if (ship === 'combat-freighter') return /^(?:hull|armor|bridge|cargo|ventral)\.|^grapple\.(?:port|starboard)\.[12]\.(?:mount|arm|palm|finger)|^engine\.[^.]+\.(?:collar|nozzle-rim|exhaust)$/.test(name);
+   // Protect all visible vessel and structural/docking triangles. Only buried
+@@ -257,3 +258,3 @@
+           targetIndices, componentError, ['Permissive', 'LockBorder']);
+-        if (['mining-barge', 'mining-belt-station', 'free-trader', ...traderFleet].includes(ship)) {
++        if (['combat-freighter', 'mining-barge', 'mining-belt-station', 'free-trader', ...traderFleet].includes(ship)) {
+           // Cylindrical profile reductions can collapse a UV triangle. Select
+@@ -333,3 +334,4 @@
+   referenceRegions: modelSpec?.regions,
+-  protectedFeatures: ship === 'clean-slate' ? ['Chisel bow, enclosed freight body, integrated stern and pylons', 'Bridge glazing and roof', 'All six cargo bay lids and coamings', 'Armour panels and the dedicated ventral freight elevator and keel', 'Six extremal bounds and both docking and engine sockets']
++  protectedFeatures: ship === 'combat-freighter' ? ['Armored wedge bow and narrow bridge slit', 'One cargo citadel and exactly two clamshell doors', 'Four folded grapple arm silhouettes and all three-fingered claws', 'Dedicated ventral loading hatch and plating', 'Circular engine collars, nozzle rims and exhaust faces', 'Three engine sockets, no weapon sockets and locked extremal bounds']
++    : ship === 'clean-slate' ? ['Chisel bow, enclosed freight body, integrated stern and pylons', 'Bridge glazing and roof', 'All six cargo bay lids and coamings', 'Armour panels and the dedicated ventral freight elevator and keel', 'Six extremal bounds and both docking and engine sockets']
+     : ship === 'second-wind' ? ['Hull, workshop and offset command module', 'Bridge glazing and roof', 'Cargo cradle rails, wear plates and nose caps; pallet frame and modules', 'Salvage crane base, arms, wrist and jaw', 'Armour panels and the dedicated ventral plating', 'Six extremal bounds and the docking, crane and engine sockets']
+--- before/client/src/icons.ts
++++ client/src/icons.ts
+@@ -208,3 +208,3 @@
+   // §holds: the Tiny Freighter's icon until the Combat Freighter's art lands.
+-  combat_freighter: H("tiny_freighter", "Combat Freighter"),
++  combat_freighter: H("combat_freighter", "Combat Freighter"),
+   free_trader: H("free_trader", "Free Trader"),
+--- before/client/src/render.ts
++++ client/src/render.ts
+@@ -990,3 +990,4 @@
+     this.texMiningBeltStation = miningBeltStation;
+-    await Promise.all(PLAYER_FREIGHTERS.filter(kind => kind !== "convoy").map(async kind => {
++    const freightArtKinds: ShipKind[] = [...PLAYER_FREIGHTERS.filter(kind => kind !== "convoy"), "combat_freighter"];
++    await Promise.all(freightArtKinds.map(async kind => {
+       this.freightTextures.set(kind, await loadShip(kind));
+@@ -3073,3 +3074,3 @@
+       case "tiny_freighter": case "small_freighter": case "large_freighter":
+-      case "heavy_freighter": case "bulk_freighter": return this.freightTextures.get(kind) ?? null;
++      case "heavy_freighter": case "bulk_freighter": case "combat_freighter": return this.freightTextures.get(kind) ?? null;
+       case "raider": return this.texRaider;
+@@ -3082,5 +3083,2 @@
+       case "mining_belt_station": return this.texMiningBeltStation;
+-      // §holds: the Combat Freighter borrows the Tiny Freighter's art until
+-      // its own exists.
+-      case "combat_freighter": return this.freightTextures.get("tiny_freighter") ?? null;
+       // §ladder: the capital ladder (null until loaded — primitive fallback).
+--- before/client/scripts/ship-model-catalog.mjs
++++ client/scripts/ship-model-catalog.mjs
+@@ -17,2 +17,3 @@
+   ["tiny_freighter", "tiny-freighter", "Tiny Freighter"],
++  ["combat_freighter", "combat-freighter", "Combat Freighter"],
+   ["small_freighter", "small-freighter", "Small Freighter"],
+@@ -45,3 +46,2 @@
+   survey_probe: { from: "scout", title: "Survey Probe" },
+-  combat_freighter: { from: "tiny_freighter", title: "Combat Freighter" },
+ };
+--- before/client/scripts/ship-model-fixture.html
++++ client/scripts/ship-model-fixture.html
+@@ -5,3 +5,3 @@
+ <p id="fixture-status" role="status">Isolated preview · no live orders</p>
+-<div id="fixture-map-tools"><label>Map ship <select id="fixture-map-kind"></select></label><button id="fixture-mining-comparison">Barge comparison</button><button id="fixture-station-comparison">Station comparison</button><button id="fixture-mining-system">Mining belt system</button><button id="fixture-closeup">Close-up 3D</button><button id="fixture-turn">Turn hull</button><button id="fixture-formation">Form fleet</button><button id="fixture-motion">Move ship</button><button id="fixture-dense">500 close-up</button><button id="fixture-visibility">Visibility cases</button></div>
++<div id="fixture-map-tools"><label>Map ship <select id="fixture-map-kind"></select></label><button id="fixture-mining-comparison">Barge comparison</button><button id="fixture-combat-freighter-comparison">Combat Freighter comparison</button><button id="fixture-station-comparison">Station comparison</button><button id="fixture-mining-system">Mining belt system</button><button id="fixture-closeup">Close-up 3D</button><button id="fixture-turn">Turn hull</button><button id="fixture-formation">Form fleet</button><button id="fixture-motion">Move ship</button><button id="fixture-dense">500 close-up</button><button id="fixture-visibility">Visibility cases</button></div>
+ <section id="deck-planet-stage" hidden><div id="deck-planet-stage-body"></div></section>
+--- before/client/scripts/ship-model-fixture.ts
++++ client/scripts/ship-model-fixture.ts
+@@ -120,2 +120,8 @@
+ $("fixture-mining-comparison").onclick = miningComparison;
++function combatFreighterComparison(): void {
++  moving = false; closePanels();
++  renderer.zoomByFactor(10 / renderer.zoomFactor());
++  arrange(3, ["tiny_freighter", "combat_freighter", "small_freighter"]);
++}
++$("fixture-combat-freighter-comparison").onclick = combatFreighterComparison;
+ function stationComparison(): void {
+--- before/docs/ship-model-integration.md
++++ docs/ship-model-integration.md
+@@ -2,3 +2,3 @@
+ 
+-The game uses the approved **LOD2** version of all 24 ship models: the 20
++The game uses the approved **LOD2** version of all 25 ship models: the 21
+ hull designs and the four free traders' ships. Production
+@@ -261,5 +261,5 @@
+    hashes. Verified views of unchanged models are retained byte-for-byte. The
+-   catalog has 24 models and 72 views. Top masters are 1254 pixels; underside
++   catalog has 25 models and 75 views. Top masters are 1254 pixels; underside
+    and perspective checks are 768 pixels. The Survey Probe remains a Scout alias.
+-3. The baker generates map tiers, 40 panel images, 12 fleet formations and
++3. The baker generates map tiers, 50 panel images, 12 fleet formations and
+    perspective fallback images. `npm run build` subsequently rebuilds only
+@@ -270,4 +270,4 @@
+ `client/public/art/derived/ships/models-v1`; GLBs live in
+-`client/public/art/derived/ship-models/v1`. GLBs total about 45.8 MiB across all
+-20 ships; these are individual lazy requests, not an initial-page bundle.
++`client/public/art/derived/ship-models/v1`. GLBs total about 64.4 MiB across all
++25 ships; these are individual lazy requests, not an initial-page bundle.
+ Neither the experimental viewer nor its embedded full-detail assets ship.
+@@ -314,2 +314,20 @@
+ 
++The Combat Freighter (Oct 27 2026) replaces its Tiny Freighter stand-in.
++Its 5,746-triangle source becomes a 4,630-triangle, two-material LOD2. The
++wedge hull, two hold doors, four folded three-fingered grapple arms, underside,
++and circular engine collars, nozzle rims and exhaust faces retain their source
++triangles. Three engine sockets point aft (+Z) on the same height; there are no
++weapon sockets. All three embedded 2048px PBR maps and socket nodes remain
++byte-identical through reduction. The amber stripe is non-emissive paint.
++
++The catalog, map texture loader, panel icons, model-derived sprites, previews
++and hardpoints now use this hull. Map/battle size curves retain its existing
++2,000 mass presentation between Tiny and Small Freighters; the construction
++yard also puts it between those two. Gameplay stats and cargo rules are unchanged.
++The source, build scripts, view renders, texture audit and browser acceptance
++captures are in `client/art-src/ship-models/combat-freighter-textured-v1/`.
++The two ImageGen masters and exact prompts are in
++`client/art-src/combat-freighter-reference-v1/`. The isolated ship-model fixture
++has a **Combat Freighter comparison** control for ordinary sprite zoom.
++
+ ## Verification
+@@ -320,3 +338,3 @@
+ - `npm run test:ship-models`: coverage of the actual `ShipKind` union, exact LOD2
+-  bytes and triangle counts, embedded textures, all 60 baked views, derivative
++  bytes and triangle counts, embedded textures, all 75 baked views, derivative
+   provenance, and repeatable builds. It also runs ship-art and map-size checks.
+@@ -329,3 +347,3 @@
+ - `npm run test:battle-fx` (part of `test:battle-models`): the baked hardpoint
+-  table matches all 24 shipped hulls, the speed table mirrors the sim, and the
++  table matches all 25 shipped hulls, the speed table mirrors the sim, and the
+   plume, gun, thrust, flicker and damage-vent geometry is checked.
+@@ -339,3 +357,3 @@
+   cooled and shaded by its tumble.
+-- `npm run test:battle-models`: all 24 actual GLBs through the production static
++- `npm run test:battle-models`: all 25 actual GLBs through the production static
+   consolidation and instance transforms; checks exact triangle totals, UVs,
+@@ -353,3 +371,3 @@
+   preview component. Its build orders are recorded locally and never sent.
+-  It includes all 24 models, a 500-fleet map, report refresh and stock controls.
++  It includes all 25 models, a 500-fleet map, report refresh and stock controls.
+   Close-up controls select each map hull, change heading, show formations,
+@@ -357,3 +375,3 @@
+   Its Battle model preview link opens `scripts/battle-model-fixture.html`, with
+-  mixed combat, all 24 models, an 80-ship fleet, individual hulls, replay seeking,
++  mixed combat, all 25 models, an 80-ship fleet, individual hulls, replay seeking,
+   destruction timing, phone layout, zoom and close/reopen controls. It uses
+--- before/client/src/shipyard-scene.ts
++++ client/src/shipyard-scene.ts
+@@ -42,3 +42,3 @@
+ const HULL_LENGTH: Partial<Record<ShipArtKind, number>> = {
+-  survey_probe: 0.5, scout: 0.8, raider: 1, tiny_freighter: 1.1, combat_freighter: 1.1, mining_barge: 1.2, small_freighter: 1.3,
++  survey_probe: 0.5, scout: 0.8, raider: 1, tiny_freighter: 1.1, combat_freighter: 1.2, mining_barge: 1.2, small_freighter: 1.3,
+   colony: 1.4, corvette: 1.5, convoy: 1.6, mining_belt_station: 1.6,
+--- before/client/scripts/test-battle-fx.mjs
++++ client/scripts/test-battle-fx.mjs
+@@ -34,2 +34,5 @@
+ assert.equal(hardpoints.SHIP_HARDPOINTS.mining_belt_station.guns.length, 0, "Station has no weapons");
++assert.equal(hardpoints.SHIP_HARDPOINTS.combat_freighter.engines.length, 3, "Combat Freighter has three authored nozzles");
++assert.equal(hardpoints.SHIP_HARDPOINTS.combat_freighter.guns.length, 0, "Prize clamps are not weapons");
++assert.equal(fx.enginePlumes("combat_freighter", 224).length, 3, "All three side-by-side drives have separate plumes");
+ const ARMED = ["raider", "corvette", "destroyer", "cruiser", "battleship", "dreadnought", "titan"];
+--- before/client/scripts/test-map-ship-models.mjs
++++ client/scripts/test-map-ship-models.mjs
+@@ -25,2 +25,3 @@
+ const catalog = compile("ship-models.generated");
++const modelKinds = Object.keys(catalog.SHIP_MODELS);
+ const policy = compile("map-ship-model-policy", { "./ship-models.generated": catalog });
+@@ -36,3 +37,3 @@
+ assert.equal(policy.MAP_MODEL_TILT, -Math.acos(.8), "live hulls lean like the battle viewer's angled view (about 37 degrees)");
+-const crowd = Array.from({ length: 500 }, (_, i) => candidate(`fleet-${i}`, Object.keys(catalog.SHIP_MODELS)[i % 18],
++const crowd = Array.from({ length: 500 }, (_, i) => candidate(`fleet-${i}`, modelKinds[i % modelKinds.length],
+   { canvasPx: 100 + i % 300, x: 50 + i % 900, escorts: i % 7 === 0 ? 6 : 0 }));
+@@ -251,2 +252,2 @@
+ 
+-console.log("Map 3D: all 18 actual LOD2 meshes/framing, zoom transition, 500-fleet budgets, selected priority, viewport culling, loading/context fallback, stale alpha, idle cleanup, shared source ownership, abort races, texture resizing, 30fps dirty rendering, formation clones, atlas alignment and projected headings passed.");
++console.log(`Map 3D: all ${modelKinds.length} game kinds' LOD2 meshes/framing, zoom transition, 500-fleet budgets, selected priority, viewport culling, loading/context fallback, stale alpha, idle cleanup, shared source ownership, abort races, texture resizing, 30fps dirty rendering, formation clones, atlas alignment and projected headings passed.`);
+--- before/client/scripts/test-map-ship-sizes.mjs
++++ client/scripts/test-map-ship-sizes.mjs
+@@ -80,3 +80,3 @@
+     ["wing", "squadron", "armada"].map(tier => [`${family}_${tier}`, { name: `${family}_${tier}`, width: 256 }])));
+-  renderer.freightTextures = new Map(["tiny_freighter", "small_freighter", "large_freighter", "heavy_freighter", "bulk_freighter"]
++  renderer.freightTextures = new Map(["tiny_freighter", "combat_freighter", "small_freighter", "large_freighter", "heavy_freighter", "bulk_freighter"]
+     .map(kind => [kind, { name: kind, width: 256 }]));
+@@ -101,2 +101,3 @@
+ assert.equal(current.fleetMarker(ghost("mining_belt_station")).tex.name, "MiningBeltStation", "Station selects its dedicated map texture");
++assert.equal(current.fleetMarker(ghost("combat_freighter")).tex.name, "combat_freighter", "Combat Freighter selects its own map texture");
+ current.scale = 10;
+@@ -165,3 +166,3 @@
+ // single-hull designs even when a fleet has enough ships for a formation icon.
+-const freightKinds = ["tiny_freighter", "small_freighter", "convoy", "large_freighter", "heavy_freighter", "bulk_freighter"];
++const freightKinds = ["tiny_freighter", "combat_freighter", "small_freighter", "convoy", "large_freighter", "heavy_freighter", "bulk_freighter"];
+ checkMonotonic(current, freightKinds);
+@@ -181,3 +182,3 @@
+ current.scale = 96;
+-for (const [index, cap] of [80, 100, 120, 160, 200, 240].entries()) {
++for (const [index, cap] of [80, 90, 100, 120, 160, 200, 240].entries()) {
+   close(current.shipSizePx(freightKinds[index]), cap, "freight close-up cap");
+--- before/client/scripts/test-ship-art.mjs
++++ client/scripts/test-ship-art.mjs
+@@ -26,6 +26,6 @@
+   "destroyer", "cruiser", "battleship", "dreadnought", "titan", "freighter",
+-  "tiny_freighter", "small_freighter", "large_freighter", "heavy_freighter", "bulk_freighter", "mining_barge", "mining_belt_station",
++  "tiny_freighter", "combat_freighter", "small_freighter", "large_freighter", "heavy_freighter", "bulk_freighter", "mining_barge", "mining_belt_station",
+   "free_trader", "clean_slate", "second_wind", "small_fortune"];
+ // The Survey Probe still borrows Scout art; every other kind has its own master.
+-const standIns = { survey_probe: "scout", combat_freighter: "tiny_freighter" };
++const standIns = { survey_probe: "scout" };
+ assert.deepEqual(Object.keys(generated.SHIP_ART).sort(), [...kinds, ...Object.keys(standIns)].sort());
+@@ -34,2 +34,5 @@
+ assert.notDeepEqual(generated.SHIP_ART.mining_belt_station, generated.SHIP_ART.builder, "Mining Belt Station has its own art");
++assert.notDeepEqual(generated.SHIP_ART.combat_freighter, generated.SHIP_ART.tiny_freighter, "Combat Freighter has its own art");
++assert.equal(manifest.ships.combat_freighter.referenceRatio, manifest.ships.tiny_freighter.referenceRatio,
++  "Combat Freighter keeps its established civilian padding calibration");
+ // §merchant: the free trader's own art, at the footprint of the Authority
+--- before/client/scripts/test-ship-models.mjs
++++ client/scripts/test-ship-models.mjs
+@@ -39,2 +39,12 @@
+   assert.ok(gltf.images.every(image => image.bufferView !== undefined && !image.uri), `${kind}: self-contained textures`);
++  if (kind === "combat_freighter") {
++    assert.ok(triangles >= 4000 && triangles <= 5000, "Combat Freighter preserves its claws and circular nozzles within the LOD2 budget");
++    const sockets = gltf.nodes.filter(node => node.name?.startsWith("socket."));
++    assert.deepEqual(sockets.map(node => node.name).sort(),
++      ["socket.engine.centre", "socket.engine.port", "socket.engine.starboard"], "Three engines, no weapon sockets");
++    for (const socket of sockets) {
++      assert.deepEqual(socket.extras.direction, [0, 0, 1], `${socket.name}: aft-facing exhaust`);
++      assert.equal(socket.translation[1], 0, `${socket.name}: engines share one height`);
++    }
++  }
+   if (kind === "mining_barge") {
+@@ -82,3 +92,3 @@
+ const shipped = await readdir(new URL("public/art/derived/ship-models/v1/", client));
+-assert.equal(shipped.filter(f => f.endsWith(".glb")).length, 24);
++assert.equal(shipped.filter(f => f.endsWith(".glb")).length, SHIP_MODELS.length);
+ assert.ok(shipped.every(f => !/-lod[01]|original/.test(f)), "No higher-detail model payloads shipped");
+--- before/client/scripts/test-shipyard-view.mjs
++++ client/scripts/test-shipyard-view.mjs
+@@ -20,2 +20,5 @@
+ const scene = deps["../../shipyard-scene"] = deps["../../shipyard-scene"] = compile("shipyard-scene.ts");
++assert.ok(scene.hullFill("tiny_freighter", "shipyard") < scene.hullFill("combat_freighter", "shipyard")
++  && scene.hullFill("combat_freighter", "shipyard") < scene.hullFill("small_freighter", "shipyard"),
++  "Combat Freighter sits between Tiny and Small Freighters in the yard");
+ deps["./equipment"] = compile("core/derive/equipment.ts");
+--- before/client/art-src/ship-models/interceptor-lod-experiment-v1/verify_geometry.py
++++ client/art-src/ship-models/interceptor-lod-experiment-v1/verify_geometry.py
+@@ -12,3 +12,3 @@
+ SHIP = sys.argv[1] if len(sys.argv) > 1 else 'interceptor'
+-if SHIP not in ('interceptor', 'corvette', 'cruiser', 'tiny-freighter', 'small-freighter', 'large-freighter', 'heavy-freighter', 'bulk-freighter', 'titan', 'destroyer', 'battleship', 'dreadnought', 'scout', 'colony-ship', 'troop-transport', 'construction-ship', 'medium-freighter', 'authority-freighter', 'mining-barge', 'mining-belt-station', 'free-trader', 'clean-slate', 'second-wind', 'small-fortune'):
++if SHIP not in ('combat-freighter', 'interceptor', 'corvette', 'cruiser', 'tiny-freighter', 'small-freighter', 'large-freighter', 'heavy-freighter', 'bulk-freighter', 'titan', 'destroyer', 'battleship', 'dreadnought', 'scout', 'colony-ship', 'troop-transport', 'construction-ship', 'medium-freighter', 'authority-freighter', 'mining-barge', 'mining-belt-station', 'free-trader', 'clean-slate', 'second-wind', 'small-fortune'):
+     raise ValueError('Choose interceptor, corvette, cruiser, tiny-freighter, small-freighter, large-freighter, heavy-freighter, bulk-freighter, or titan')
+@@ -18,3 +18,3 @@
+ TRADER_BOTTOM={'clean-slate':(733,246,.984,0,1,0),'second-wind':(758,278,.972,56,.999,0),'small-fortune':(754,262,.986,0,1,1)}
+-NEW_SHIPS=('destroyer', 'battleship', 'dreadnought', 'scout', 'colony-ship', 'troop-transport', 'construction-ship', 'medium-freighter', 'authority-freighter', 'mining-barge', 'mining-belt-station', 'free-trader')+TRADER_FLEET
++NEW_SHIPS=('combat-freighter', 'destroyer', 'battleship', 'dreadnought', 'scout', 'colony-ship', 'troop-transport', 'construction-ship', 'medium-freighter', 'authority-freighter', 'mining-barge', 'mining-belt-station', 'free-trader')+TRADER_FLEET
+ SPEC_PATH=ROOT.parent/(SHIP+'-textured-v1')/'model-spec.json'
+@@ -24,2 +24,4 @@
+ def protected_component(name):
++    if SHIP == 'combat-freighter':
++        return bool(re.match(r'^(?:hull|armor|bridge|cargo|ventral)\.|^grapple\.(?:port|starboard)\.[12]\.(?:mount|arm|palm|finger)|^engine\.[^.]+\.(?:collar|nozzle-rim|exhaust)$',name))
+     if SHIP == 'mining-belt-station':
+@@ -115,3 +117,3 @@
+                     inside=(px[:,:,0]>=region[0])&(px[:,:,0]<=region[2])&(px[:,:,1]>=region[1])&(px[:,:,1]<=region[3])
+-                    if SHIP in ('mining-barge', 'mining-belt-station', 'free-trader')+TRADER_FLEET:
++                    if SHIP in ('combat-freighter', 'mining-barge', 'mining-belt-station', 'free-trader')+TRADER_FLEET:
+                         # Mining-fleet sources also assign the ventral material

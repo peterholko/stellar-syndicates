@@ -2,6 +2,7 @@
 
 import {
   cargoUnitsPerHull,
+  isLootOnly,
   isPlayerFreighter,
   fleetCargoManifest,
   fleetCargoUnits,
@@ -53,7 +54,7 @@ const AAA_RESERVE_FRAC = 0.10;
 export const HULL_MASS: Record<ShipKind, number> = {
   tiny_freighter: 1500, small_freighter: 2500, large_freighter: 8000, heavy_freighter: 14000, bulk_freighter: 24000,
   convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80, survey_probe: 40, mining_barge: 3500,
-  mining_belt_station: 12000,
+  mining_belt_station: 12000, combat_freighter: 2000,
   destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
   transport: 7000, freighter: 6000, builder: 2500,
 };
@@ -63,7 +64,7 @@ export const HULL_MASS: Record<ShipKind, number> = {
 export const HULL_BASE_SPEED: Record<ShipKind, number> = {
   tiny_freighter: 40, small_freighter: 40, large_freighter: 38, heavy_freighter: 34, bulk_freighter: 30,
   convoy: 40, builder: 35, raider: 100, corvette: 65, colony: 33, scout: 115, survey_probe: 120, mining_barge: 30,
-  mining_belt_station: 15,
+  mining_belt_station: 15, combat_freighter: 70,
   destroyer: 55, cruiser: 45, battleship: 36, dreadnought: 29, titan: 23,
   transport: 30, freighter: 32,
 };
@@ -77,9 +78,11 @@ export const shipMass = (g: GhostView): number =>
   fleetHullMass(g) + (g.own ? fleetCargoUnits(g) * CARGO_MASS_PER_UNIT : 0);
 export const fleetBaseSpeed = (g: GhostView): number => Math.min(...(g.composition?.length
   ? g.composition : [{ kind: g.kind, count: 1 }]).filter(s => s.count > 0).map(stack => {
-    // Drive Tuning speeds every hull; Military Drives and Torch Regime warships.
+    // Drive Tuning speeds every hull; Military Drives and Torch Regime
+    // warships; Express Charters freighters.
     const r = driveResearch(g);
-    const base = HULL_BASE_SPEED[stack.kind] * r.speed * (WARSHIPS.includes(stack.kind) ? r.warshipSpeed : 1);
+    const base = HULL_BASE_SPEED[stack.kind] * r.speed * (WARSHIPS.includes(stack.kind) ? r.warshipSpeed : 1)
+      * (isPlayerFreighter(stack.kind) ? r.freighterSpeed : 1);
     const fits = (g.loadouts ?? []).filter(f => f.kind === stack.kind && f.n > 0);
     const unfitted = fits.reduce((n, f) => n + f.n, 0) < stack.count ? base : Infinity;
     return Math.min(unfitted, ...fits.map(f => base * (f.modules.includes("survey_drive") ? 1.25 : 1)));
@@ -98,11 +101,13 @@ const researched = (id: string): boolean => !!state.research?.programmes.some(p 
 /** The owner's research on its drives (ship.rs FuelResearch). Own fleets
  * only: a rival's research is unknown, so its figures stay stock. */
 function driveResearch(g: GhostView) {
-  if (!g.own) return { freight: 1, torch: 1, consumption: 1, speed: 1, warshipSpeed: 1 };
+  if (!g.own) return { freight: 1, torch: 1, consumption: 1, speed: 1, warshipSpeed: 1, freighterSpeed: 1 };
   const torch = researched("prop_expedition_iii_torch_regime");
   return {
     freight: researched("prop_line_fusion_freight") ? FUSION_FREIGHT_MULT : 1,
-    torch: torch ? 1.4 : 1,
+    // Torch Regime's thirst, eased by Long Patrol.
+    torch: (torch ? 1.4 : 1) * (researched("prop_expedition_iv_long_patrol") ? 0.7 : 1),
+    freighterSpeed: researched("prop_line_express_charters") ? 1.25 : 1,
     consumption: researched("prop_efficient_burns") ? 0.75 : 1,
     speed: researched("prop_drive_tuning") ? 1.1 : 1,
     warshipSpeed: (researched("prop_military_drives") ? 1.2 : 1) * (torch ? 1.3 : 1),
@@ -160,7 +165,7 @@ const SHIP_KIND_LABEL: Record<ShipKind, string> = {
   convoy: "Medium Freighter", raider: "Interceptor", corvette: "Corvette", colony: "Colony Ship", scout: "Scout", survey_probe: "Survey Probe", mining_barge: "Mining Barge",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
   transport: "Troop Transport", builder: "Construction Ship", freighter: "Authority Freighter",
-  mining_belt_station: "Mining Belt Station",
+  mining_belt_station: "Mining Belt Station", combat_freighter: "Combat Freighter",
 };
 export const shipKindLabel = (kind: ShipKind): string => SHIP_KIND_LABEL[kind] ?? kind;
 
@@ -177,14 +182,31 @@ export function bindFleetNet(source: () => Net | null): void {
   netSource = source;
 }
 
+/** Every hold aboard, loot-only included (mirrors `Fleet::cargo_capacity`). */
 export function fleetCargoCapacity(g: GhostView): number {
-  const capacity = g.composition?.length
-    ? g.composition.reduce((units, ship) => units + cargoUnitsPerHull(ship.kind) * ship.count, 0)
-    : cargoUnitsPerHull(g.kind);
+  return holdCapacity(g, () => true);
+}
+
+/** §holds: the room a dock, a market or a route may fill — every hold but a
+ * Combat Freighter's (mirrors `Fleet::trade_capacity`). */
+export function fleetTradeCapacity(g: GhostView): number {
+  return holdCapacity(g, (kind) => !isLootOnly(kind));
+}
+
+function holdCapacity(g: GhostView, counts: (kind: ShipKind) => boolean): number {
   // Capacity follows only the arrived fit, never a refit preview or its ETA.
-  const extra = (g.loadouts ?? []).reduce((sum, s) => sum
-    + cargoUnitsPerHull(s.kind) * s.n * (cargoMultiplier(s.modules) - 1), 0);
-  return capacity + extra;
+  const podded = (kind: ShipKind) => (g.loadouts ?? []).filter((s) => s.kind === kind)
+    .reduce((sum, s) => sum + s.n * (cargoMultiplier(s.modules) - 1), 0);
+  // §syndicate-projects (R6): the Freight bonus widens player freighter holds,
+  // §holds: Prize Holds a Combat Freighter's, rounded down per hull kind as
+  // the sim does.
+  const mult = (kind: ShipKind) => isPlayerFreighter(kind) ? g.cargo_mult ?? 1 : isLootOnly(kind) ? g.prize_mult ?? 1 : 1;
+  return (g.composition?.length ? g.composition : [{ kind: g.kind, count: 1 }])
+    .filter((ship) => counts(ship.kind))
+    .reduce((sum, ship) => {
+      const units = cargoUnitsPerHull(ship.kind) * (ship.count + podded(ship.kind));
+      return sum + (mult(ship.kind) > 1 ? Math.floor(units * mult(ship.kind) + 1e-9) : units);
+    }, 0);
 }
 
 
@@ -476,4 +498,16 @@ export function dockLoadStock(g: GhostView): [Commodity, number][] {
   const report = state.systems.find(entry => entry.id === system.id);
   return (report?.stockpile ?? []).map(slot => [slot.commodity,
     Math.max(0, slot.units - (report?.industry?.reservations ?? []).reduce((n,r) => n+(r.goods[slot.commodity] ?? 0),0))]);
+}
+
+/** §research-wiring: what intel research read off a rival contact, as short
+ * lines — Traffic Analysis' cargo kind, Wake Analysis' tank and heading. */
+export function contactIntel(g: GhostView): { carrying: string | null; wake: string | null } {
+  const points = ["E", "ENE", "NE", "NNE", "N", "NNW", "NW", "WNW", "W", "WSW", "SW", "SSW", "S", "SSE", "SE", "ESE"];
+  // The map draws the sim's +y downward, so +y reads as south.
+  const from = (radians: number) => points[((Math.round(-radians / (Math.PI / 8)) % 16) + 16) % 16];
+  return {
+    carrying: g.manifest_class ? g.manifest_class.replace(/^\w/, (c) => c.toUpperCase()) : null,
+    wake: g.wake ? `${Math.round(g.wake.fuel * 100)}% fuel · ${g.wake.from === null ? "holding still" : `from the ${from(g.wake.from)}`}` : null,
+  };
 }

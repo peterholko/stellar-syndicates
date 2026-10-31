@@ -1,5 +1,9 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stellar Syndicates · Story events</title></head>
 <body style="margin:0;min-height:100vh;background:#06101a;color:#dce7ed;font-family:system-ui,sans-serif">
-<p style="padding:16px">Story event preview · no game socket · <button id="fixture-pirates" type="button">Pirate raid</button> <button id="fixture-trader" type="button">A free trader</button></p>
+<p style="padding:16px">Story event preview · no game socket · <button id="fixture-pirates" type="button">Pirate raid</button> <button id="fixture-trader" type="button">A free trader</button>
+  · vendetta: <select id="fixture-family"><option>showboat</option><option>hothead</option><option>collector</option><option>scrapper</option><option>fatalist</option></select>
+  <button type="button" data-beat="kill">Kill</button> <button type="button" data-beat="den">Den</button> <button type="button" data-beat="sworn">Sworn</button>
+  <button type="button" data-beat="arrival">Arrival</button> <button type="button" data-beat="won">Won</button> <button type="button" data-beat="lost">Lost</button></p>
+<p id="fixture-season" style="padding:0 16px">Chapters and GNN stories:</p>
 <script type="module" src="./story-event-fixture.ts"></script></body></html>

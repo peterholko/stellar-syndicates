@@ -61,6 +61,16 @@ confused.
 The rules live in `core/derive/map-markers.ts`: sizes, styles, colours, anchors
 and hover copy.
 
+## System names
+
+- Your systems' names are 12 px, rivals' 10 px, the rest 8 px.
+- Name layers pick which other names show: Allies, Rivals, Charted (surveyed)
+  and Uncharted. All start on. Your own names and the selected system's always
+  show. The choice is kept per browser (`ss.mapNames.v2`).
+- Desktop: the Layers button in the zoom cluster opens the toggles; Esc or a
+  click elsewhere closes them. Mobile: "Map names" in the status menu.
+- Rules in `core/map-layers.ts`; `npm run test:map-layers`.
+
 ## Glyph art
 
 The source is `client/art-src/galaxy-map-glyphs-v1/`: four generated white-on-black
@@ -90,7 +100,7 @@ contracts. Still to do:
 - Clustering when zoomed out.
 - Expiry warnings on tags.
 - Tethers from assigned fleets.
-- A map filter.
+- A marker filter (system names have layers).
 - A ping when a new contact's light arrives.
 - Light-age tags.
 

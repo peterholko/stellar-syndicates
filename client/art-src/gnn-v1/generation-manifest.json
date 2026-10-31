@@ -1,0 +1,511 @@
+{
+  "schema_version": 1,
+  "tool": "image_gen__imagegen",
+  "mode": "built-in",
+  "prompt_document": "docs/gnn-art-prompts.md",
+  "postprocessing": "None. Each selected PNG was copied byte-for-byte from the built-in generator. No crop or resize.",
+  "dimension_note": "The generator returned the two transparent emblems at 1254 x 1254 despite the requested 1024 x 1024. Originals are preserved as requested. All 14 illustrations are 1536 x 1024.",
+  "assets": [
+    {
+      "slug": "gnn-emblem",
+      "file": "client/art-src/gnn-v1/gnn-emblem.png",
+      "transparent_background": true,
+      "requested_dimensions": [
+        1024,
+        1024
+      ],
+      "reference_images": [
+        "client/art-src/authority-v2/terran-charter-authority-seal.png"
+      ],
+      "generation_prompt": "Use case: logo-brand\nAsset type: one small emblem for the Galactic News Network, the Terran Charter Authority's official news broadcast in Stellar Syndicates, a dark premium science-fiction strategy game. It is shown at 16-24 px beside headlines and at 64 px on story pop-ups.\nInput image 1: the Authority's EMBLEM, attached as the family reference only: a thin gold ring with a slightly thicker crescent on its right, crossed by three slender vertical gold spires of staggered heights. The news emblem belongs to the same family but is not a copy.\nSubject: a circular broadcast mark. A thin gold ring with a bright ivory dot at its centre, like a lens; from the ring's right side, three short concentric gold broadcast arcs radiate outward, growing in size. Behind it, a small round navy-graphite plate with a thin ivory rim. Perfectly symmetrical top to bottom, flat and bold: a few large shapes that still read at 16 px.\nStyle: crisp flat vector-like emblem with a subtle metallic gold finish; antique gold, ivory and navy-graphite only. Clean edges, no painterly texture, no gradients beyond a slight metal sheen.\nFraming: centred on a square 1024 x 1024 canvas, the emblem spanning about 80% of the width.\nBackground: genuinely transparent PNG with real alpha; no backdrop, no shadow plate, no glow halo.\nConstraints: absolutely no text, letters, numbers, initials or words; no watermark, border or frame. Exactly one emblem.",
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-89de9d35-b4c0-4fcb-8285-e1387f93993a.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1254,
+          1254
+        ],
+        "mode": "RGBA",
+        "alpha_extrema": [
+          0,
+          255
+        ],
+        "transparent_corners": true,
+        "sha256": "0c03feb05200e65e45778968f5df35554b42926ec1d6aa044192fc416e8bc035",
+        "bytes": 1437164,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "free-signal-emblem",
+      "file": "client/art-src/gnn-v1/free-signal-emblem.png",
+      "transparent_background": true,
+      "requested_dimensions": [
+        1024,
+        1024
+      ],
+      "reference_images": [],
+      "generation_prompt": "Use case: logo-brand\nAsset type: one small emblem for the Free Signal, the rebel colonies' pirate-radio broadcast in Stellar Syndicates, a dark premium science-fiction strategy game. It is shown at 16-24 px beside headlines and at 64 px on story pop-ups.\nSubject: a hand-made rebel mark. A simple upright antenna mast built from scrap metal, with three cyan broadcast arcs breaking outward from its tip; at the mast's foot, a snapped chain link, its two broken halves falling apart. Set on a rough round disc of dark scrap metal with slightly uneven, hand-cut edges.\nStyle: bold painted-stencil look, as if sprayed through a cut stencil onto metal: cyan and off-white on dark gunmetal, a little wear and paint chipping. Bold and simple: a few large shapes that still read at 16 px.\nFraming: centred on a square 1024 x 1024 canvas, the emblem spanning about 80% of the width.\nBackground: genuinely transparent PNG with real alpha; no backdrop, no shadow plate, no glow halo.\nConstraints: absolutely no text, letters, numbers, initials or words; no skulls, weapons or national flags; no watermark, border or frame. Exactly one emblem.",
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-8a42fc48-4c19-44f1-8c0f-a6957ffb82a5.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1254,
+          1254
+        ],
+        "mode": "RGBA",
+        "alpha_extrema": [
+          0,
+          255
+        ],
+        "transparent_corners": true,
+        "sha256": "2fb2b1666b4090fe28083f93d541aa05d274f70f15146cc35c7ffd0bd67dde0d",
+        "bytes": 2536780,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "decree-levies",
+      "file": "client/art-src/story-events-v1/decree-levies.png",
+      "transparent_background": false,
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/login/login-market-horizon-v1.png",
+        "client/art-src/authority-v2/terran-charter-authority-seal.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the MARKET HUB reference only: a monumental dark industrial trade station framing a luminous cyan wormhole. Use it for the Hub's look; never copy its composition.\nInput image 3: the Authority's EMBLEM reference only: a thin gold ring with a slightly thicker crescent on its right, crossed by three slender vertical gold spires of staggered heights. Where the scene shows the emblem, keep it small and simple; never add lettering.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: The Terran Charter Authority decrees a levy on every sale and purchase at the Market Hub.\nScene/backdrop: Inside the Market Hub's vast trading concourse, a cavernous station hall of charcoal metal and tall glass. Through the window wall behind, the Hub's luminous cyan wormhole turns beyond docked freighters, as in Image 2.\nSubject: On a raised gallery, two Authority officers stand beside a newly installed levy gate: a tall ivory-and-silver pillar with a glowing cyan scanning collar and gold trim. A conveyor of sealed cargo crates passes through the gate below; a cyan beam scans each crate and a small gold light marks it. Merchants and dock crews in practical work suits watch from the hall floor, uneasy; one looks down at a thinning stack of credit chips in their palm. A long navy banner hangs from the gallery with the Authority's small gold emblem from Image 3, no lettering.\nThe Terran Charter Authority's look throughout: ivory ceramic and silver armor over dark navy-graphite, restrained antique-gold trim, brass fittings, sparse cyan running lights; austere, ceremonial and institutional. Its officers wear navy-graphite uniforms with ivory armor plates and a small plain gold pin.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Cool institutional light with gold accents; a quiet, resentful moment as commerce takes on a new weight.\nConstraints: absolutely no text, letters, numbers, labels, title, watermark, borders, captions or fake interface. No logos or brand marks except the Authority's small plain gold emblem where the scene asks for it. No readable markings, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: opaque PNG, landscape 1536 x 1024 pixels (3:2); preserve the crop-safe framing described above.",
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-a7888e9c-b6a3-4259-802d-3ff18351aff2.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "7f47347cb0f56d93a2e1602724dd8b09e31941e94aa9ab0c34e329ba855475ee",
+        "bytes": 2587570,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "decree-inspections",
+      "file": "client/art-src/story-events-v1/decree-inspections.png",
+      "transparent_background": false,
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/authority-arbiter-reference-v1/authority-arbiter-reference.png",
+        "client/art-src/login/login-market-horizon-v1.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the Authority's SHIP DESIGN reference only (the Arbiter): ivory ceramic and silver armor over dark navy-graphite structure, one thin circular halo ring around the midship, three slender dorsal spines, a long spinal lance, four engines under white cowls, antique-gold trim. Show it in believable scene perspective, never as a flat reference-sheet view, and never copy the white sheet background or labels.\nInput image 3: the MARKET HUB reference only: a monumental dark industrial trade station framing a luminous cyan wormhole. Use it for the Hub's look; never copy its composition.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: The Authority begins cargo inspections at the Market Hub, with colony licence fees and a registry tax on warships.\nScene/backdrop: A docking berth at the Market Hub: a freighter's open cargo hold under hard white floodlights. Through the berth's mouth, the Hub's cyan wormhole glows in the distance, as in Image 3.\nSubject: An Authority inspection team of four, ivory armor over navy-graphite with cyan visor lights, works through a corporation freighter's hold. One sweeps a handheld cyan scanner over opened crates, one levers up a crate lid, one holds a slim dark data slate. The freighter's crew stand aside in worn work suits, arms crossed. Beyond the berth, one Authority Arbiter (Image 2) lies off the station, small with distance and imposing.\nThe Terran Charter Authority's look throughout: ivory ceramic and silver armor over dark navy-graphite, restrained antique-gold trim, brass fittings, sparse cyan running lights; austere, ceremonial and institutional. Its officers wear navy-graphite uniforms with ivory armor plates and a small plain gold pin.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Harsh floodlight and cyan scanner glow; tension; the freedom of the trade lanes ending.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: opaque PNG, landscape 1536 x 1024 pixels (3:2); preserve the crop-safe framing described above.",
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-11ba73fc-23d4-4648-aba5-a3f9b74b2ca9.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "7cd8e30d724491ad17abcff534ac477521eaab14843d57990542818fe983d7f1",
+        "bytes": 2603312,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "decree-martial",
+      "file": "client/art-src/story-events-v1/decree-martial.png",
+      "transparent_background": false,
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/authority-arbiter-reference-v1/authority-arbiter-reference.png",
+        "client/art-src/login/login-market-horizon-v1.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the Authority's SHIP DESIGN reference only (the Arbiter): ivory ceramic and silver armor over dark navy-graphite structure, one thin circular halo ring around the midship, three slender dorsal spines, a long spinal lance, four engines under white cowls, antique-gold trim. Show it in believable scene perspective, never as a flat reference-sheet view, and never copy the white sheet background or labels.\nInput image 3: the MARKET HUB reference only: a monumental dark industrial trade station framing a luminous cyan wormhole. Use it for the Hub's look; never copy its composition.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: The Authority imposes its Martial Charter: warships garrison the Hub district and enforce its demands.\nScene/backdrop: Open space before the Market Hub (Image 3), its cyan wormhole in the background; the night side of an inhabited planet curves along the bottom edge with faint city lights.\nSubject: A formation of five Authority Arbiters (Image 2) holds station in a precise diagonal line across the Hub's approaches, their halo rings catching the wormhole light. Smaller ivory patrol craft move between them. In the foreground, one corporation freighter of dark metal sits halted at a checkpoint, pinned in a cyan scanning beam from the nearest Arbiter.\nThe Terran Charter Authority's look throughout: ivory ceramic and silver armor over dark navy-graphite, restrained antique-gold trim, brass fittings, sparse cyan running lights; austere, ceremonial and institutional. Its officers wear navy-graphite uniforms with ivory armor plates and a small plain gold pin.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Cold, ordered and overwhelming; the Authority's grip closing on the galaxy's trade.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: opaque PNG, landscape 1536 x 1024 pixels (3:2); preserve the crop-safe framing described above.",
+      "initial_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-6b8d0ca4-d8e2-4905-9244-eabde27b580e.png",
+      "revisions": [
+        {
+          "kind": "edit",
+          "prompt": "Edit this existing cinematic science-fiction illustration. Preserve the scene, realistic painting style, all five ivory-and-gold Authority Arbiters in diagonal formation, cyan scanning beam on the dark foreground freighter, Market Hub and cyan wormhole, planet, lighting, and absence of text. Change only the composition/framing: pull the camera back a little so the ENTIRE nearest Arbiter, including its tallest dorsal spire and all engine housings, lies comfortably between x=140 and x=1396 and y=130 and y=875 on a 1536 x 1024 image. All essential ships and focal subjects must remain inside this central crop-safe band. The current dorsal spires are too close to the top edge; lower the formation slightly and make it a little smaller to leave empty space above them. Preserve one continuous full-bleed scene, no borders, no inset, no collage. The cyan wormhole structure and planet can extend off-frame. Output one opaque PNG, 1536 x 1024 pixels, landscape 3:2.",
+          "reference_images": [
+            "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-6b8d0ca4-d8e2-4905-9244-eabde27b580e.png"
+          ]
+        }
+      ],
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-15460b9d-5faa-43f6-96e1-72516cff9ca4.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "c5c56a438899ff6eb10f56a5c834b461e156a169eb097d27b21f5a13d7ff91de",
+        "bytes": 2878456,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "sabotage-at-the-hub",
+      "file": "client/art-src/story-events-v1/sabotage-at-the-hub.png",
+      "transparent_background": false,
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/login/login-market-horizon-v1.png",
+        "client/art-src/authority-arbiter-reference-v1/authority-arbiter-reference.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the MARKET HUB reference only: a monumental dark industrial trade station framing a luminous cyan wormhole. Use it for the Hub's look; never copy its composition.\nInput image 3: the Authority's SHIP DESIGN reference only (the Arbiter): ivory ceramic and silver armor over dark navy-graphite structure, one thin circular halo ring around the midship, three slender dorsal spines, a long spinal lance, four engines under white cowls, antique-gold trim. Show it in believable scene perspective, never as a flat reference-sheet view, and never copy the white sheet background or labels.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: Sabotage at the Market Hub: a blast tears open a cargo berth, insurgents are blamed, and the Authority clamps down.\nScene/backdrop: The Market Hub's outer docking ring (Image 2), one long arm of cargo berths against black space, the cyan wormhole beyond.\nSubject: One berth is torn open by a recent explosion: twisted girders, drifting debris, white vapour venting, amber emergency strobes. Authority patrol craft (in the design language of Image 3) swarm around it with searchlight beams; a line of freighters waits, held back at a distance. Small but clear in the foreground debris, one scorched component catches the light: the evidence nobody has looked at yet.\nThe Terran Charter Authority's look throughout: ivory ceramic and silver armor over dark navy-graphite, restrained antique-gold trim, brass fittings, sparse cyan running lights; austere, ceremonial and institutional. Its officers wear navy-graphite uniforms with ivory armor plates and a small plain gold pin.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Emergency amber against cool blue; suspicion and confusion.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: opaque PNG, landscape 1536 x 1024 pixels (3:2); preserve the crop-safe framing described above.",
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-516349d0-3281-4cd8-9908-a793a35baba8.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "d80b0f3aedb30556e7d29b688e810f437753a678880cf74c3c7b4f62ae64252b",
+        "bytes": 2951239,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "convoy-massacre",
+      "file": "client/art-src/story-events-v1/convoy-massacre.png",
+      "transparent_background": false,
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/authority-freighter-reference-v1/authority-freighter-reference.png",
+        "client/art-src/authority-arbiter-reference-v1/authority-arbiter-reference.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the Authority FREIGHTER design reference only: a broad institutional carrier with four banks of silver cargo tiles around a central spine and four engines under white cowls. Show it in believable scene perspective, never as a flat reference-sheet view, and never copy the white sheet background or labels.\nInput image 3: the Authority's SHIP DESIGN reference only (the Arbiter): ivory ceramic and silver armor over dark navy-graphite structure, one thin circular halo ring around the midship, three slender dorsal spines, a long spinal lance, four engines under white cowls, antique-gold trim. Show it in believable scene perspective, never as a flat reference-sheet view, and never copy the white sheet background or labels.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: An Authority freight convoy is destroyed in deep space, and the Authority names a rebel corporation as the culprit.\nScene/backdrop: Deep space along a freight lane, a distant pale star, near-black darkness.\nSubject: The shattered remains of three Authority freighters (Image 2) drift in a wide debris field: broken hull spines, silver cargo tiles scattered and still glowing faintly at the edges. An Authority Arbiter (Image 3) arrives from the left, floodlights sweeping across the wreckage; a few small recovery drones with cyan lights move among the debris.\nThe Terran Charter Authority's look throughout: ivory ceramic and silver armor over dark navy-graphite, restrained antique-gold trim, brass fittings, sparse cyan running lights; austere, ceremonial and institutional. Its officers wear navy-graphite uniforms with ivory armor plates and a small plain gold pin.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Grim and solemn; cold light on wreckage; a crime someone will be made to answer for.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: opaque PNG, landscape 1536 x 1024 pixels (3:2); preserve the crop-safe framing described above.",
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-f2b69988-1337-4cb0-86be-2d13969f00ed.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "bccf60c7409d385637f108d6b1230171b0089a5aac44db8184d6b6a529bcd0f6",
+        "bytes": 2852734,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "quarantine",
+      "file": "client/art-src/story-events-v1/quarantine.png",
+      "transparent_background": false,
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/story-events-v1/free-trader-inbound.png",
+        "client/art-src/authority-freighter-reference-v1/authority-freighter-reference.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the COLONY reference only: the white landed colony ship that serves as the command center, its habitat and farm modules and the dusk highland plain. Use it for the colony's look; never copy its composition.\nInput image 3: the Authority FREIGHTER design reference only: a broad institutional carrier with four banks of silver cargo tiles around a central spine and four engines under white cowls. Show it in believable scene perspective, never as a flat reference-sheet view, and never copy the white sheet background or labels.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: The Authority quarantines a busy colony after disease spreads along its trade route; its freight stops for 12 hours.\nScene/backdrop: A colony at dusk, as in Image 2: the white landed colony ship as its command center, habitat modules around it, the highland plain, seen from a low ridge.\nSubject: Tall amber-and-white quarantine beacons ring the settlement, pulsing warning light. At a barrier checkpoint in the foreground, two Authority medics in sealed ivory hazard suits with cyan visors stand guard; behind the barrier, colonists in breathing masks wait. Overhead, one Authority freighter (Image 3) hangs motionless, held off from landing.\nThe Terran Charter Authority's look throughout: ivory ceramic and silver armor over dark navy-graphite, restrained antique-gold trim, brass fittings, sparse cyan running lights; austere, ceremonial and institutional. Its officers wear navy-graphite uniforms with ivory armor plates and a small plain gold pin.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Eerie amber pulses in blue dusk; fear and frustration, no violence.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: opaque PNG, landscape 1536 x 1024 pixels (3:2); preserve the crop-safe framing described above.",
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-cfdf88cf-9301-42af-abcd-f7bf6f26d505.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "65293b6986da88b08ed5befec15010cad673232fcffb517301392a34a52bbd51",
+        "bytes": 2630058,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "relic-seizure",
+      "file": "client/art-src/story-events-v1/relic-seizure.png",
+      "transparent_background": false,
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/story-events-v1/relics-awaken.png",
+        "client/art-src/authority-arbiter-reference-v1/authority-arbiter-reference.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the RELIC reference only: its tall elongated violet crystal and cold violet light. Use it for the relic and for every violet Precursor light; never copy its composition or its pirate ships.\nInput image 3: the Authority's SHIP DESIGN reference only (the Arbiter): ivory ceramic and silver armor over dark navy-graphite structure, one thin circular halo ring around the midship, three slender dorsal spines, a long spinal lance, four engines under white cowls, antique-gold trim. Show it in believable scene perspective, never as a flat reference-sheet view, and never copy the white sheet background or labels.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: As the relics wake, the Authority comes to seize one from the colony that holds it.\nScene/backdrop: A colony's vault dug beneath its command center: a rough rock chamber braced with charcoal metal ribs, a few hard white work lamps.\nSubject: On a reinforced cradle stands a tall elongated violet crystal relic, glowing coldly as in Image 2. Four Authority troopers, ivory armor over navy-graphite in the design language of Image 3, surround it with a heavy silver-and-gold containment frame, ready to lift it. An Authority officer holds out a slim data slate to the colony's director, a weathered woman in a practical work coat who stands between them and the relic and does not move.\nThe Terran Charter Authority's look throughout: ivory ceramic and silver armor over dark navy-graphite, restrained antique-gold trim, brass fittings, sparse cyan running lights; austere, ceremonial and institutional. Its officers wear navy-graphite uniforms with ivory armor plates and a small plain gold pin.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Violet relic glow against cold white lamps; defiance.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: opaque PNG, landscape 1536 x 1024 pixels (3:2); preserve the crop-safe framing described above.",
+      "initial_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-38b12a83-f539-487e-bcaf-0b4b3a4a9d92.png",
+      "revisions": [
+        {
+          "kind": "edit",
+          "prompt": "Edit this existing cinematic science-fiction illustration. Preserve the realistic painting style, rock vault, defiant woman, Authority officer holding out a slate, four armored troopers, silver-and-gold containment frame, violet crystal's exact material and colour, and existing lighting. Make one targeted crop-safety correction: reduce the height of the violet crystal from the TOP while keeping its base and width fixed, so its tallest sharp point ends at y=145 on the 1536 x 1024 canvas instead of near the top edge. Keep the crystal tall and elongated, slightly taller than the standing people, with the same natural pointed mineral silhouette. The empty space above its new tip should be the cave wall. Adjust the upper containment braces only as needed to fit its reduced height. Preserve everything else, including people's size and positions. No text, no borders, no collage. Deliver one opaque PNG at 1536 x 1024 pixels.",
+          "reference_images": [
+            "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-38b12a83-f539-487e-bcaf-0b4b3a4a9d92.png"
+          ]
+        }
+      ],
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-02d0fe96-33dd-4973-941e-c5a0c06b29db.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "48e86b333d8231f22f4ef14bc4fda684b458f4ac313f002331b52fdd4890a534",
+        "bytes": 2565971,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "keystone-crackdown",
+      "file": "client/art-src/story-events-v1/keystone-crackdown.png",
+      "transparent_background": false,
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/authority-arbiter-reference-v1/authority-arbiter-reference.png",
+        "client/art-src/story-events-v1/relics-awaken.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the Authority's SHIP DESIGN reference only (the Arbiter): ivory ceramic and silver armor over dark navy-graphite structure, one thin circular halo ring around the midship, three slender dorsal spines, a long spinal lance, four engines under white cowls, antique-gold trim. Show it in believable scene perspective, never as a flat reference-sheet view, and never copy the white sheet background or labels.\nInput image 3: the RELIC reference only: its tall elongated violet crystal and cold violet light. Use it for the relic and for every violet Precursor light; never copy its composition or its pirate ships.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: The Authority's fleet strikes at a rising Keystone on a sealed Precursor world.\nScene/backdrop: Low orbit over a dark Precursor world, its black stone-like continents veined with faint violet light (the violet of Image 3).\nSubject: Far below on the surface, a colossal stepped black monolith, the Keystone, rises inside construction scaffolding, a violet crystal heart glowing at its apex. In orbit, two Authority Arbiters (Image 2) fire long cyan lance beams toward the surface. Rising from the planet to meet them, a handful of small dark corporation warships with blazing amber engines.\nThe Terran Charter Authority's look throughout: ivory ceramic and silver armor over dark navy-graphite, restrained antique-gold trim, brass fittings, sparse cyan running lights; austere, ceremonial and institutional. Its officers wear navy-graphite uniforms with ivory armor plates and a small plain gold pin.\nPrecursor architecture: impossibly old, seamless black stone-like metal with a faint basalt grain, monolithic stepped geometry, no ornament and no glyphs, inlaid with thin channels of the same cold violet light as the relic crystal.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Epic and dangerous; violet against cyan; the race for the gates.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: opaque PNG, landscape 1536 x 1024 pixels (3:2). For the later 16:9 crop, keep essential ship silhouettes, character faces, crystal tips and narrative actions inside x=125..1410 and y=130..890. Leave expendable background above and below this band. Do not put any key subject's top in the upper 10% of the image.",
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-f179d7c1-56a3-455a-9c05-789fef73ecdd.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "dc12b1aed542b294c5f5020e43f1b9e2e8660665f69db7acb37c80e1ceb47e73",
+        "bytes": 3139767,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "false-flag-exposed",
+      "file": "client/art-src/story-events-v1/false-flag-exposed.png",
+      "transparent_background": false,
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/npc-ships/pirate-reaver-chroma.png",
+        "client/art-src/authority-arbiter-reference-v1/authority-arbiter-reference.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the PIRATE SHIP design reference only: blackened, rust-patched hull with orange stripes and amber engines. Show it in believable scene perspective, never as a flat top-down sprite, and never copy the green background.\nInput image 3: the Authority's SHIP DESIGN reference only (the Arbiter): ivory ceramic and silver armor over dark navy-graphite structure, one thin circular halo ring around the midship, three slender dorsal spines, a long spinal lance, four engines under white cowls, antique-gold trim. Show it in believable scene perspective, never as a flat reference-sheet view, and never copy the white sheet background or labels.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: A scout pilot finds proof that the Authority staged an attack it blamed on rebels.\nScene/backdrop: The cramped cockpit of a small scout ship drifting through a debris field; through the wide canopy, a wrecked warship tumbles slowly.\nSubject: The wreck in the canopy wears blackened, rust-patched, orange-striped pirate paint (the pirate style of Image 2), but where a blast scraped the paint away, clean ivory ceramic armor and antique-gold trim show beneath: Authority construction, in the design language of Image 3. The scout pilot, a young man in a worn flight suit, leans toward the canopy in the glow of cyan instruments, recording it with a handheld scanner.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: A quiet revelation; cyan cockpit light and the gold glint of the lie.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: opaque PNG, landscape 1536 x 1024 pixels (3:2). For the later 16:9 crop, keep essential ship silhouettes, character faces, crystal tips and narrative actions inside x=125..1410 and y=130..890. Leave expendable background above and below this band. Do not put any key subject's top in the upper 10% of the image.",
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-02f5ec55-a568-4403-bfc9-e68322ac9e60.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "f6ea55f473c21f0760d6f6f019e2f4fdc95c9bb1f5397a3db53f76e0334eeae7",
+        "bytes": 2822757,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "sealed-world-found",
+      "file": "client/art-src/story-events-v1/sealed-world-found.png",
+      "transparent_background": false,
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/story-events-v1/relics-awaken.png",
+        "client/art-src/npc-ships/pirate-warbarge-chroma.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the RELIC reference only: its tall elongated violet crystal and cold violet light. Use it for the relic and for every violet Precursor light; never copy its composition or its pirate ships.\nInput image 3: the PIRATE WARSHIP design reference only: blackened, rust-patched hull with orange stripes and amber engines. Show it in believable scene perspective, never as a flat top-down sprite, and never copy the green background.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: Following its relics' bearings, a corporation finds a sealed Precursor world whose Keystone could close every wormhole gate.\nScene/backdrop: A barren grey world under a pale sun, a vast crater seen from its rim.\nSubject: In the crater floor, an immense ancient Precursor structure lies exposed for the first time: stepped black terraces descending into the ground around a dark circular seal, thin channels of violet light (as in Image 2) waking along its lines. At the crater's rim, a small corporation scout ship hovers, its floodlight a thin beam across the ruin. From the crater's far shadows, three pirate warships (the style of Image 3) rise with amber engines: the world's guardians, roused.\nPrecursor architecture: impossibly old, seamless black stone-like metal with a faint basalt grain, monolithic stepped geometry, no ornament and no glyphs, inlaid with thin channels of the same cold violet light as the relic crystal.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Awe and dread; violet light rising; a secret too big to keep.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: opaque PNG, landscape 1536 x 1024 pixels (3:2). For the later 16:9 crop, keep essential ship silhouettes, character faces, crystal tips and narrative actions inside x=125..1410 and y=130..890. Leave expendable background above and below this band. Do not put any key subject's top in the upper 10% of the image.",
+      "initial_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-1ca68ba9-048a-43bb-b95b-abdcf40242b8.png",
+      "revisions": [
+        {
+          "kind": "regenerate",
+          "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the RELIC reference only: its tall elongated violet crystal and cold violet light. Use it for the relic and for every violet Precursor light; never copy its composition or its pirate ships.\nInput image 3: the PIRATE WARSHIP design reference only: blackened, rust-patched hull with orange stripes and amber engines. Show it in believable scene perspective, never as a flat top-down sprite, and never copy the green background.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: Following its relics' bearings, a corporation finds a sealed Precursor world whose Keystone could close every wormhole gate.\nScene/backdrop: A barren grey world under a pale sun, a vast crater seen from its rim.\nSubject: In the crater floor, an immense ancient Precursor structure lies exposed for the first time: stepped black terraces descending into the ground around a dark circular seal, thin channels of violet light (as in Image 2) waking along its lines. At the crater's rim, a small corporation scout ship hovers, its floodlight a thin beam across the ruin. From the crater's far shadows, three pirate warships (the style of Image 3) rise with amber engines: the world's guardians, roused.\nPrecursor architecture: impossibly old, seamless black stone-like metal with a faint basalt grain, monolithic stepped geometry, no ornament and no glyphs, inlaid with thin channels of the same cold violet light as the relic crystal.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Awe and dread; violet light rising; a secret too big to keep.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: opaque PNG, landscape 1536 x 1024 pixels (3:2). For the later 16:9 crop, keep essential ship silhouettes, character faces, crystal tips and narrative actions inside x=125..1410 and y=130..890. Leave expendable background above and below this band. Do not put any key subject's top in the upper 10% of the image.\nScene-specific priority: this is the FIRST DISCOVERY, before anyone builds a Keystone. The ruin is an immense sunken circular basin: broad concentric stepped black terraces DESCEND toward one completely flat, dark, unbroken CIRCULAR SEAL disk in its center, outlined by thin cold violet channels. NO central tower, NO monolith rising in the middle, NO crystal spires, NO exposed crystal, NO built Keystone. At the near rim, exactly one SMALL corporate scout ship in neutral charcoal and worn silver with blue-white running lights HOVERS above the rim, shining one narrow white floodlight across the sunken ruin. It is not a pirate ship: NO orange stripes on the scout. NO landed ships, NO landing ramp, NO people standing on the ground, NO camp or crates. EXACTLY THREE black rust-patched pirate guardian warships, with orange stripes and amber engines matching Image 3, rise together from shadows beyond the FAR crater rim. Keep these three guardian ships fully within the crop-safe band, not at the top edge. Use Image 1 ONLY for painting finish and materials; do not recreate its landed ship or colonists. Use Image 2 ONLY for the hue of the thin violet light channels, not its crystal shapes.",
+          "reference_images": [
+            "client/art-src/founding-intro-v1/first-landing.png",
+            "client/art-src/story-events-v1/relics-awaken.png",
+            "client/art-src/npc-ships/pirate-warbarge-chroma.png"
+          ]
+        }
+      ],
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-9ab02dc1-e8b2-4a13-8960-0fd87aefb94c.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "0553ee9b0c014dc73d5bcb5334f444321a31151e5a784c8992ca674d6e3decd7",
+        "bytes": 2942222,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "authority-spy",
+      "file": "client/art-src/story-events-v1/authority-spy.png",
+      "transparent_background": false,
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/authority-v2/terran-charter-authority-seal.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the Authority's EMBLEM reference only: a thin gold ring with a slightly thicker crescent on its right, crossed by three slender vertical gold spires of staggered heights. Where the scene shows the emblem, keep it small and simple; never add lettering.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: A spy inside the syndicate sends word of the discovery to the Authority.\nScene/backdrop: A dim corporate command room at night: charcoal metal and glass, a few amber console lights. Through the window, the colony's lights and, high in the sky, a faint cyan glint of the distant Hub wormhole.\nSubject: A figure in a syndicate officer's long coat, face half in shadow, slides a small glowing data crystal into a private console; a narrow cyan beam rises from a hidden transmitter. On the wall behind, a dim holographic star map marks one world in violet (no text). Inside the figure's coat lapel, a small gold pin in the shape of the Authority's emblem (Image 2) glints.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Secretive and cold; a betrayal in progress.\nConstraints: absolutely no text, letters, numbers, labels, title, watermark, borders, captions or fake interface. No logos or brand marks except the Authority's small plain gold emblem where the scene asks for it. No readable markings, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: opaque PNG, landscape 1536 x 1024 pixels (3:2). For the later 16:9 crop, keep essential ship silhouettes, character faces, crystal tips and narrative actions inside x=125..1410 and y=130..890. Leave expendable background above and below this band. Do not put any key subject's top in the upper 10% of the image.",
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-8abf56c5-41e1-4992-8abc-a44353bdd75c.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "3359b40ba61a7637df0a2e9c37b9f4de2767c50234d07762c1ce6b0de7777099",
+        "bytes": 2007311,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "authority-war",
+      "file": "client/art-src/story-events-v1/authority-war.png",
+      "transparent_background": false,
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/authority-arbiter-reference-v1/authority-arbiter-reference.png",
+        "client/art-src/login/login-market-horizon-v1.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the Authority's SHIP DESIGN reference only (the Arbiter): ivory ceramic and silver armor over dark navy-graphite structure, one thin circular halo ring around the midship, three slender dorsal spines, a long spinal lance, four engines under white cowls, antique-gold trim. Show it in believable scene perspective, never as a flat reference-sheet view, and never copy the white sheet background or labels.\nInput image 3: the MARKET HUB reference only: a monumental dark industrial trade station framing a luminous cyan wormhole. Use it for the Hub's look; never copy its composition.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: The Authority declares permanent war, and its war fleet sails from the Market Hub against the rebels.\nScene/backdrop: The Market Hub (Image 3), its cyan wormhole flaring brighter than ever.\nSubject: A vast Authority war fleet pours out of the wormhole toward the viewer: rank upon rank of Arbiters (Image 2) with halo rings and long spinal lances, escorted by smaller ivory craft. In the foreground, one lone dark corporation freighter turns away hard, its engines flaring amber.\nThe Terran Charter Authority's look throughout: ivory ceramic and silver armor over dark navy-graphite, restrained antique-gold trim, brass fittings, sparse cyan running lights; austere, ceremonial and institutional. Its officers wear navy-graphite uniforms with ivory armor plates and a small plain gold pin.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Overwhelming and ominous; cyan wormhole glare on gold-trimmed hulls.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: opaque PNG, landscape 1536 x 1024 pixels (3:2). For the later 16:9 crop, keep essential ship silhouettes, character faces, crystal tips and narrative actions inside x=125..1410 and y=130..890. Leave expendable background above and below this band. Do not put any key subject's top in the upper 10% of the image.",
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-e8f5f282-4265-4187-9f7c-bb15423e1371.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "ef0aa8fc1db8f385df0af490e39b20c2c333f7511f845383238b9698ae7ad0f6",
+        "bytes": 2923706,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "seal-fires",
+      "file": "client/art-src/story-events-v1/seal-fires.png",
+      "transparent_background": false,
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/login/login-market-horizon-v1.png",
+        "client/art-src/story-events-v1/relics-awaken.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the MARKET HUB reference only: a monumental dark industrial trade station framing a luminous cyan wormhole. Use it for the Hub's look; never copy its composition.\nInput image 3: the RELIC reference only: its tall elongated violet crystal and cold violet light. Use it for the relic and for every violet Precursor light; never copy its composition or its pirate ships.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: The Keystone's Seal fires: every wormhole gate closes and the Authority is cut off from the galaxy.\nScene/backdrop: The Market Hub (Image 2) seen from far away across open space.\nSubject: The Hub's cyan wormhole collapses inward into a brilliant violet point as an expanding ring of violet light (the violet of Image 3) sweeps across space from a distant world; the Hub's station lights fail section by section and the Authority ships around it stand frozen in silhouette. In the foreground, a few small dark rebel warships watch, their hulls lit violet.\nPrecursor architecture: impossibly old, seamless black stone-like metal with a faint basalt grain, monolithic stepped geometry, no ornament and no glyphs, inlaid with thin channels of the same cold violet light as the relic crystal.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Awe and finality; violet triumph over cyan.\nConstraints: absolutely no text, letters, numbers, logos, labels, title, watermark, borders, captions or fake interface. No readable markings, brand marks, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: opaque PNG, landscape 1536 x 1024 pixels (3:2). For the later 16:9 crop, keep essential ship silhouettes, character faces, crystal tips and narrative actions inside x=125..1410 and y=130..890. Leave expendable background above and below this band. Do not put any key subject's top in the upper 10% of the image.",
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-2a59b9ea-2f61-4979-94c7-4f2f65dd3a4f.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "a3a8265e7113f630f5b6d0297cafd656bf03b88f6548f836551c7bdaf59c3ec0",
+        "bytes": 2831391,
+        "matches_generated_original": true
+      }
+    },
+    {
+      "slug": "charter-holds",
+      "file": "client/art-src/story-events-v1/charter-holds.png",
+      "transparent_background": false,
+      "requested_dimensions": [
+        1536,
+        1024
+      ],
+      "reference_images": [
+        "client/art-src/founding-intro-v1/first-landing.png",
+        "client/art-src/authority-arbiter-reference-v1/authority-arbiter-reference.png",
+        "client/art-src/authority-v2/terran-charter-authority-seal.png"
+      ],
+      "generation_prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for an in-game event pop-up in Stellar Syndicates, a persistent science-fiction colony and trading game.\nInput image 1: STYLE REFERENCE ONLY, the approved opening-slideshow first-landing illustration. Match its realistic cinematic science-fiction painting, grounded materials, restrained detail and frontier world. Create the new scene below, not a copy of that composition.\nInput image 2: the Authority's SHIP DESIGN reference only (the Arbiter): ivory ceramic and silver armor over dark navy-graphite structure, one thin circular halo ring around the midship, three slender dorsal spines, a long spinal lance, four engines under white cowls, antique-gold trim. Show it in believable scene perspective, never as a flat reference-sheet view, and never copy the white sheet background or labels.\nInput image 3: the Authority's EMBLEM reference only: a thin gold ring with a slightly thicker crescent on its right, crossed by three slender vertical gold spires of staggered heights. Where the scene shows the emblem, keep it small and simple; never add lettering.\nComposition/framing: one opaque wide landscape illustration at the widest landscape size available. It will be cropped to 16:9, so keep every essential subject inside the central band, clear of the top and bottom 10% and the outer 8% at each side. Strong readable focal point. Full frame, no collage. The game adds its title and caption outside this image.\nPrimary request: No Seal fired; the Authority keeps the galaxy, and the Charter holds.\nScene/backdrop: The sealed Precursor world, quiet now, its violet light dimmed to embers; a pale dawn on the horizon.\nSubject: On the summit of the dark, unfinished Keystone, a stepped black monolith, Authority troopers plant a tall navy banner bearing the Authority's small gold emblem (Image 3), no lettering. An Authority Arbiter (Image 2) hangs above in the sky; far beyond, the steady cyan glint of the Hub's wormhole, still open.\nThe Terran Charter Authority's look throughout: ivory ceramic and silver armor over dark navy-graphite, restrained antique-gold trim, brass fittings, sparse cyan running lights; austere, ceremonial and institutional. Its officers wear navy-graphite uniforms with ivory armor plates and a small plain gold pin.\nPrecursor architecture: impossibly old, seamless black stone-like metal with a faint basalt grain, monolithic stepped geometry, no ornament and no glyphs, inlaid with thin channels of the same cold violet light as the relic crystal.\nStyle/medium: high-end realistic digital science-fiction concept painting, grounded industrial technology and believable materials, refined atmosphere and restrained detail. Charcoal metal, cool blue-white technology, subtle amber practical lights, natural planet greens and blues. Not a poster or user interface.\nLighting/mood: Cold order restored; ivory and gold over black stone; the gates stay open.\nConstraints: absolutely no text, letters, numbers, labels, title, watermark, borders, captions or fake interface. No logos or brand marks except the Authority's small plain gold emblem where the scene asks for it. No readable markings, holographic text, exaggerated cartoon expressions, alien characters, or franchise designs. Deliver exactly one finished image.\nOutput format: opaque PNG, landscape 1536 x 1024 pixels (3:2). For the later 16:9 crop, keep essential ship silhouettes, character faces, crystal tips and narrative actions inside x=125..1410 and y=130..890. Leave expendable background above and below this band. Do not put any key subject's top in the upper 10% of the image.",
+      "initial_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-f83e3f95-bf91-4ed7-968f-aa8bec8debaa.png",
+      "revisions": [
+        {
+          "kind": "edit",
+          "prompt": "Edit the existing Charter Holds story illustration (Input image 1). Input image 2 is the SAME sealed Precursor world's environment for continuity; Input image 3 is the exact Authority Arbiter ship design; Input image 4 is the plain gold Authority emblem. Preserve the realistic cinematic painting finish, foreground Authority troopers in ivory armor over navy uniforms, navy banner and gold emblem with no lettering, and the unfinished stepped black Keystone summit on which they plant their banner. Correct the environment and framing: this is a BARREN GREY SEALED PRECURSOR WORLD, as in Image 2, not a habitable colony. Replace every green valley, forest, lake and river with dry grey crater plains, black basalt terraces and desolate rocky mountains. No greenery and no open water anywhere. Pale cold dawn with restrained warmth on the far horizon. The sparse thin violet channels in the black stone are now VERY DIM dying embers, not a bright glowing network. Far away in the upper-right sky show only a SMALL faint steady cyan wormhole glint, no huge foreground portal: the Hub is immensely distant. Keep one ivory-and-gold Arbiter above the troopers, matching Image 3; make this ship about 20% smaller than in Input 1 and lower it slightly so its ENTIRE silhouette, including all dorsal spire tips, stays between y=145 and y=420 on the 1536 x 1024 canvas. Preserve the recognizable ship design and the troop/banner focal action. Mood: cold institutional order restored, solemn and austere. No text, no glyphs, no words, no numbers, no UI, no labels, no watermark. No emblem except the small gold Authority mark on the banner. One full-bleed opaque PNG, 1536 x 1024, landscape 3:2, with essential subjects safe for a center 16:9 crop.",
+          "reference_images": [
+            "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-f83e3f95-bf91-4ed7-968f-aa8bec8debaa.png",
+            "client/art-src/story-events-v1/sealed-world-found.png",
+            "client/art-src/authority-arbiter-reference-v1/authority-arbiter-reference.png",
+            "client/art-src/authority-v2/terran-charter-authority-seal.png"
+          ]
+        },
+        {
+          "kind": "edit",
+          "prompt": "Make one tiny localized cleanup to this existing illustration, preserving everything else pixel-for-pixel as closely as possible. In the upper-right sky there are unwanted ghostly giant curved metal gate fragments, roughly x=1210..1430 and y=185..415 on the 1536 x 1024 canvas. REMOVE ONLY those large curved metal fragments and fill that area with naturally continuous clouds and sky matching the surrounding sky. Keep the tiny distant cyan star-like wormhole glint at approximately x=1440,y=200 intact. Do not change the Arbiter spacecraft, flag, emblem, troopers, mountains, light, ruins, colours or framing. No text. Output the same full landscape opaque PNG at 1536 x 1024.",
+          "reference_images": [
+            "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-0e79b180-37d3-462c-89c0-d5b0d6f7e63d.png"
+          ]
+        }
+      ],
+      "selected_generated_file": "/Users/peter/.codex/generated_images/01a18a4e-2611-7033-905e-ab11dc969563/exec-efc7efb0-f7ea-41fe-972e-19597767afd2.png",
+      "validation": {
+        "format": "PNG",
+        "dimensions": [
+          1536,
+          1024
+        ],
+        "mode": "RGB",
+        "opaque": true,
+        "sha256": "b4723486b4f1ee2be7b41a01fe5531aaeaa2918e55d20f55155da39c5caa8399",
+        "bytes": 2528610,
+        "matches_generated_original": true
+      }
+    }
+  ]
+}

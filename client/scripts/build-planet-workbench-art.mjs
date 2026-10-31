@@ -11,6 +11,8 @@ export const HABITABLE_SURFACES = [
   "archipelago-world", "temperate-basin",
 ];
 export const HABITABLE_SURFACE_WIDTHS = [768, 1280, 1672];
+/** §belt-view: one painted field per belt type (the sim's BeltKind). */
+export const BELT_KINDS = ["stony", "metallic", "icy", "shattered"];
 /// §planet-orbit: every painting also comes extended upward by this many rows of
 /// space, for the planet view's orbit layer (docs/planet-orbit-space-prompt.md).
 /// The original 1672 × 941 painting is the bottom rows, pixel-identical (checked
@@ -18,6 +20,10 @@ export const HABITABLE_SURFACE_WIDTHS = [768, 1280, 1672];
 /// keeps the 16:9 originals.
 export const ORBIT_SPACE_ROWS = 240;
 const GROUND_ROWS = 941;
+/** A repainted master (`<kind>-surface-<version>.png` and its `-orbit`). The
+ * Barren v2 (Oct 28 2026) drops v1's baked-in pads, roads, lights and quarry;
+ * its orbit version is v1's approved space over the new ground. */
+const SURFACE_VERSION = { barren: "v2" };
 
 /** The extension may add space above, never touch the painting beneath it. */
 async function assertGroundUnchanged(original, extended) {
@@ -46,12 +52,12 @@ export async function buildPlanetWorkbenchArt() {
   await mkdir(orbitOutput, { recursive: true });
   for (const kind of ["barren", "desert", "terrestrial", "ocean", "ice", "lava", "marginal"]) {
     for (const width of [768, 1536]) {
-      await derive(path.join(sourceRoot, `surfaces/${kind}-surface-v1.png`),
+      await derive(path.join(sourceRoot, `surfaces/${kind}-surface-${SURFACE_VERSION[kind] ?? "v1"}.png`),
         path.join(outputRoot, `${kind}-${width}.webp`),
         image => image.resize({ width, withoutEnlargement: true }).webp({ quality: 88, effort: 5 }));
     }
-    const original = path.join(sourceRoot, `surfaces/${kind}-surface-v1.png`);
-    const extended = path.join(sourceRoot, `surfaces/${kind}-surface-v1-orbit.png`);
+    const original = path.join(sourceRoot, `surfaces/${kind}-surface-${SURFACE_VERSION[kind] ?? "v1"}.png`);
+    const extended = path.join(sourceRoot, `surfaces/${kind}-surface-${SURFACE_VERSION[kind] ?? "v1"}-orbit.png`);
     await assertGroundUnchanged(original, extended);
     for (const width of [768, 1536]) {
       await derive(extended, path.join(orbitOutput, `${kind}-${width}.webp`),
@@ -76,6 +82,20 @@ export async function buildPlanetWorkbenchArt() {
     await assertGroundUnchanged(source, extended);
     for (const width of HABITABLE_SURFACE_WIDTHS) {
       await derive(extended, path.join(habitableOrbitOutput, `${kind}-${width}.webp`),
+        image => image.resize({ width, withoutEnlargement: true }).webp({ quality: 88, effort: 5 }));
+    }
+  }
+  // §belt-view: a belt's view is a painted asteroid field per belt type
+  // (docs/belt-view-art.md), painted at the orbit size: space above, the field in
+  // the same 16:9 ground frame the building sites use.
+  const beltOutput = path.join(clientRoot, "public/art/derived/planet-workbench/belt-v1");
+  await mkdir(beltOutput, { recursive: true });
+  for (const kind of BELT_KINDS) {
+    const source = path.join(clientRoot, `art-src/belt-view/${kind}-belt-v1.png`);
+    const meta = await sharp(source).metadata();
+    if (meta.width !== 1672 || meta.height !== GROUND_ROWS + ORBIT_SPACE_ROWS) throw new Error(`Unexpected belt painting dimensions: ${source}`);
+    for (const width of HABITABLE_SURFACE_WIDTHS) {
+      await derive(source, path.join(beltOutput, `${kind}-belt-${width}.webp`),
         image => image.resize({ width, withoutEnlargement: true }).webp({ quality: 88, effort: 5 }));
     }
   }

@@ -1,6 +1,7 @@
 # Ship model integration
 
-The game uses the approved **LOD2** version of all 20 ship designs. Production
+The game uses the approved **LOD2** version of all 25 ship models: the 21
+hull designs and the four free traders' ships. Production
 GLBs are byte-identical to the lowest-detail exports in
 `client/art-src/ship-models/interceptor-lod-experiment-v1/models`: the geometry,
 materials, textures and turret nodes are preserved. No Blender step is used.
@@ -258,17 +259,17 @@ The explicit save-game-kind mapping is in
 2. Open the loopback URL printed by the baker. It renders every missing or stale
    view with the same lighting used in the shipyard and records source/render
    hashes. Verified views of unchanged models are retained byte-for-byte. The
-   catalog has 20 designs and 60 views. Top masters are 1254 pixels; underside
+   catalog has 25 models and 75 views. Top masters are 1254 pixels; underside
    and perspective checks are 768 pixels. The Survey Probe remains a Scout alias.
-3. The baker generates map tiers, 40 panel images, 12 fleet formations and
+3. The baker generates map tiers, 50 panel images, 12 fleet formations and
    perspective fallback images. `npm run build` subsequently rebuilds only
    changed derivatives and checks that masters still match their model sources.
 
 Editable baked masters and their provenance are in
 `client/art-src/ship-models/game-ready-v1`. Production images live in
 `client/public/art/derived/ships/models-v1`; GLBs live in
-`client/public/art/derived/ship-models/v1`. GLBs total about 45.8 MiB across all
-20 ships; these are individual lazy requests, not an initial-page bundle.
+`client/public/art/derived/ship-models/v1`. GLBs total about 64.4 MiB across all
+25 ships; these are individual lazy requests, not an initial-page bundle.
 Neither the experimental viewer nor its embedded full-detail assets ship.
 
 The Mining Barge replaces its Small Freighter stand-in with its own 4,970-triangle,
@@ -300,13 +301,42 @@ and `mining-belt-station-system-view.jpg`. They use the actual game renderers
 and fleet controller in isolated fixtures; the System View shows the anchored
 station and a Mining Barge working the same belt. No game orders are sent.
 
+The free traders' ships (Oct 27 2026): the Clean Slate (Ines), Second Wind
+(Mags) and Small Fortune (Rafi) join the Free Trader (Teo's Long Odds) as art
+kinds that fly an Authority Freighter hull. The LOD lab keeps their hull,
+armour, bridge, cargo bays, underside, and the Second Wind's cradle and crane
+exact; fasteners, latches, engines, collars and machinery lose tessellation.
+LOD2s are 3,964, 3,968 and 3,894 triangles. Their builder registers each
+underside view with a small affine (`plan_uv` in
+`client/art-src/ship-models/trader-fleet-v1/texture_mapping.py`); the
+verifier's `TRADER_BOTTOM` mirrors it. Each has two engine sockets and no
+weapon sockets.
+
+The Combat Freighter (Oct 27 2026) replaces its Tiny Freighter stand-in.
+Its 5,746-triangle source becomes a 4,630-triangle, two-material LOD2. The
+wedge hull, two hold doors, four folded three-fingered grapple arms, underside,
+and circular engine collars, nozzle rims and exhaust faces retain their source
+triangles. Three engine sockets point aft (+Z) on the same height; there are no
+weapon sockets. All three embedded 2048px PBR maps and socket nodes remain
+byte-identical through reduction. The amber stripe is non-emissive paint.
+
+The catalog, map texture loader, panel icons, model-derived sprites, previews
+and hardpoints now use this hull. Map/battle size curves retain its existing
+2,000 mass presentation between Tiny and Small Freighters; the construction
+yard also puts it between those two. Gameplay stats and cargo rules are unchanged.
+The source, build scripts, view renders, texture audit and browser acceptance
+captures are in `client/art-src/ship-models/combat-freighter-textured-v1/`.
+The two ImageGen masters and exact prompts are in
+`client/art-src/combat-freighter-reference-v1/`. The isolated ship-model fixture
+has a **Combat Freighter comparison** control for ordinary sprite zoom.
+
 ## Verification
 
 - `npm run test:map-zoom`: 384× camera limits, cursor/button anchors, panning,
   exact camera restoration, desktop wheel/mobile pinch priority, 96× system
   entry, close-up hull/pick ratios, and unchanged hub/star sizing.
 - `npm run test:ship-models`: coverage of the actual `ShipKind` union, exact LOD2
-  bytes and triangle counts, embedded textures, all 60 baked views, derivative
+  bytes and triangle counts, embedded textures, all 75 baked views, derivative
   provenance, and repeatable builds. It also runs ship-art and map-size checks.
 - `npm run test:map-ship-models`: real admission, fade, cache, texture-resizing
   and transform code with network/GPU boundaries substituted. Covers a 500-fleet
@@ -315,7 +345,7 @@ station and a Mining Barge working the same belt. No game orders are sent.
   projected headings, atlas coordinates and unchanged size/art regressions.
   This is an automated logic check, not a GPU performance benchmark.
 - `npm run test:battle-fx` (part of `test:battle-models`): the baked hardpoint
-  table matches all 20 shipped hulls, the speed table mirrors the sim, and the
+  table matches all 25 shipped hulls, the speed table mirrors the sim, and the
   plume, gun, thrust, flicker and damage-vent geometry is checked.
 - `npm run test:battle-wrecks` (part of `test:battle-models`): break-up tables,
   staging, drift, char, section motion, debris, art-cut debris layout (solid
@@ -325,7 +355,7 @@ station and a Mining Barge working the same belt. No game orders are sent.
   check blast placement, staging, the titan flash, the epilogue, the wreck
   cap, and that debris uses the hull's cut art beneath the hulls, hot then
   cooled and shaded by its tumble.
-- `npm run test:battle-models`: all 20 actual GLBs through the production static
+- `npm run test:battle-models`: all 25 actual GLBs through the production static
   consolidation and instance transforms; checks exact triangle totals, UVs,
   dimensions, headings, opacity, 500-candidate admission limits, instanced draw
   cost, particle determinism, model loading/cleanup, fallback and context loss.
@@ -339,11 +369,11 @@ station and a Mining Barge working the same belt. No game orders are sent.
 - `npm run preview:ship-models`: an isolated browser fixture using the real
   galaxy renderer, desktop/mobile construction controllers, DOM reconciler and
   preview component. Its build orders are recorded locally and never sent.
-  It includes all 20 designs, a 500-fleet map, report refresh and stock controls.
+  It includes all 25 models, a 500-fleet map, report refresh and stock controls.
   Close-up controls select each map hull, change heading, show formations,
   move ships and exercise 500 overlapping close-ups and visibility exclusions.
   Its Battle model preview link opens `scripts/battle-model-fixture.html`, with
-  mixed combat, all 20 designs, an 80-ship fleet, individual hulls, replay seeking,
+  mixed combat, all 25 models, an 80-ship fleet, individual hulls, replay seeking,
   destruction timing, phone layout, zoom and close/reopen controls. It uses
   synthetic records and the production theater, without a game connection.
 

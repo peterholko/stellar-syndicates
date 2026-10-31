@@ -2,7 +2,10 @@ import "./styles/tokens.css";
 import "./styles/settlement.css";
 import "./ship-model-preview";
 import { SettlementUI } from "./settlement";
-import { FOLLOW_UP_MS, freeTraderEvent, piratesEvent, StoryEventUI } from "./story-events";
+import { chapterEvent, crackdownEvent, decreeEvent, endingEvent, exposedEvent, FOLLOW_UP_MS, journeyEvent, freeTraderEvent, piratesEvent, relicsEvent, StoryEventUI, vendettaEvent } from "./story-events";
+import { pirateNames, transmission } from "./core/derive/vendetta";
+import { foundingHomeSystemId } from "./core/derive/geo";
+import { traderOf } from "./core/derive/trader";
 import { accounts } from "./auth";
 
 import { updateSignals } from "./core/derive/orders";
@@ -11,6 +14,7 @@ import { applyLinkStatus, applyServerMessage, applySessionReplaced } from "./cor
 import { Net } from "./net";
 import { renderer } from "./render";
 import type { CoreContext, Shell } from "./shell/types";
+import { loseSignal } from "./shell/account";
 import { state } from "./state";
 
 // Portrait phones enter on width; an already-landscape touch phone enters on
@@ -37,6 +41,8 @@ let shellGeneration = 0;
 // §charter-v4: story turns pop up over either shell.
 const storyEvents = new StoryEventUI(event => {
   state.storyTold.add(event.key);
+  // §raid-camera: the raid's story takes over from its tracking window.
+  if (event.key === "pirates") renderer.trackRaid(null);
   activeShell?.onCore([]);
 });
 
@@ -44,10 +50,44 @@ function present(events: Parameters<Shell["onCore"]>[0]): void {
   for (const event of events) {
     // §charter-v5: the raid's report, then the trader, on the server's word
     // that it docked.
-    if (event.kind === "StoryEvent" && event.story === "pirates") storyEvents.show(piratesEvent(event));
-    if (event.kind === "StoryEvent" && event.story === "free_trader") storyEvents.showAfterGap(freeTraderEvent(), FOLLOW_UP_MS);
+    if (event.kind === "StoryEvent" && event.story === "pirates") storyEvents.show(piratesEvent(event, transmission("raid", state)));
+    // §vendetta: the pirate family's turns, each its speaker's transmission.
+    if (event.kind === "StoryEvent" && event.story === "vendetta") storyEvents.show(vendettaEvent(event.beat, event.text, transmission(event.beat, state)));
+    if (event.kind === "StoryEvent" && event.story === "decree" && !state.storyTold.has(`decree_${event.grip}`)) storyEvents.show(decreeEvent(event.grip));
+    if (event.kind === "StoryEvent" && event.story === "crackdown") storyEvents.show(crackdownEvent(event.crackdown, event.at));
+    if (event.kind === "StoryEvent" && event.story === "exposed") storyEvents.show(exposedEvent(event.text, event.at));
+    if (event.kind === "StoryEvent" && event.story === "journey") storyEvents.show(journeyEvent(event.beat, event.text, event.at));
+    if (event.kind === "StoryEvent" && event.story === "ending" && state.season?.ending && !state.storyTold.has("ending")) storyEvents.show(endingEvent(state.season.ending));
+    if (event.kind === "StoryEvent" && event.story === "relics" && !state.storyTold.has("relics")) storyEvents.show(relicsEvent());
+    // §chapters: the Pirates, Expansion and Reach chapters open painted.
+    if (event.kind === "StoryEvent" && event.story === "chapter" && !state.storyTold.has(`chapter_${event.chapter}`)) {
+      storyEvents.show(chapterEvent(event.chapter, pirateNames(state.founding).privateer));
+    }
+    if (event.kind === "StoryEvent" && event.story === "free_trader") storyEvents.showAfterGap(freeTraderEvent(traderOf(state.founding)), FOLLOW_UP_MS);
   }
   activeShell?.onCore(events);
+}
+
+// §raid-focus (Oct 26 2026, Peter): the raiding privateer's first sighting
+// takes the player to it: the galaxy map framing it with the home it closes
+// on, it selected, its course drawn, and the tracking window on it until the
+// raid's story opens (§raid-camera and §raid-frame, Oct 27). Only a sighting
+// seen happening this session: a page loaded after it stays put.
+let raidSeen: boolean | null = null;
+let raidFocusDue = false;
+function noticeRaid(): void {
+  const f = state.founding;
+  if (!f) return;
+  const seen = !!f.raid_seen;
+  if (raidSeen === false && seen) raidFocusDue = true;
+  raidSeen = seen;
+  const id = f.privateer;
+  if (raidFocusDue && id && state.ghosts.some((ghost) => ghost.id === id)) {
+    raidFocusDue = false;
+    const home = foundingHomeSystemId();
+    if (home) activeShell?.focusRaid?.(id, home);
+    renderer.trackRaid(id, home);
+  }
 }
 
 let net!: Net;
@@ -57,6 +97,7 @@ net = new Net({
     const account = await accounts.session();
     if (!account) return false;
     state.name = account.corporation_name;
+    net.useServer(account.game_url);
     return true;
   },
   onOpen: () => {
@@ -65,6 +106,7 @@ net = new Net({
   },
   onMessage: (message) => {
     present(applyServerMessage(message, state));
+    noticeRaid();
     settlement.onMessage(message);
   },
   onClose: () => {
@@ -75,6 +117,7 @@ net = new Net({
     present(applySessionReplaced(state));
     settlement.endSession();
     storyEvents.endSession();
+    renderer.trackRaid(null);
   },
   onError: () => {
     const events = applyLinkStatus(state.playerId === null ? "offline" : "reconnecting", state);
@@ -169,7 +212,9 @@ async function boot(): Promise<void> {
     // Resume with the HttpOnly session, never a saved corporation-name login.
     if (await accounts.session()) net.connect();
   } catch {
-    present([{ kind: "JoinRejected", message: "Account service unavailable. Please try again shortly." }]);
+    // §front-door: the sign-in card waits for Charter Command; a signed-in
+    // browser connects once it answers.
+    loseSignal(account => { if (account) net.connect(); });
   }
 }
 

@@ -63,6 +63,7 @@ pub fn guns(fit: &Loadout) -> (usize, f64) {
     let copies = match family {
         DamageType::Torpedo => count(ModuleKind::TorpedoRack),
         DamageType::Driver => count(ModuleKind::MassDriver),
+        DamageType::Beam if fit.fires_lance_array() => count(ModuleKind::LanceArray),
         DamageType::Beam => count(ModuleKind::PrismaticLance),
     }.max(1);
     (copies, mult / copies as f64)
@@ -101,6 +102,9 @@ pub(super) struct Volley<'a> {
     pub vs_defenses: f64,
     /// v15: a station hardpoint wears its armour like a ship.
     pub mount_armour: bool,
+    /// §research-wiring: a Lance Array, which Reflective Plating blunts twice
+    /// over.
+    pub lance: bool,
 }
 
 /// Fire combatant `i`'s guns at the in-range candidates (`cid`, v6 target
@@ -162,12 +166,16 @@ pub(super) fn volley(state: &mut TacticalState, i: usize, cands: &[(u32, f64, f6
                 let mut dmg = base * state.rng.range(DMG_VAR.0, DMG_VAR.1);
                 if armoured {
                     // A hardpoint has no hull affinity: its armour is the module's.
+                    // §research-wiring: Ablative Refits, Spall Liners.
                     let prot = if platform { 1.0 } else { hull_affinity(target_kind, Family::Protection) };
+                    let armour = &state.research.mods[1 - side as usize];
                     if v.family == DamageType::Beam && fit.reflects() {
-                        dmg *= 1.0 - (REFLECT_BLUNT * prot).min(0.95);
+                        // A Lance Array is blunted twice over.
+                        let factor = 1.0 - (REFLECT_BLUNT * armour.reflect() * prot).min(0.95);
+                        dmg *= if v.lance { factor * factor } else { factor };
                     }
                     if v.family == DamageType::Driver && fit.whipples() {
-                        dmg *= 1.0 - (WHIPPLE_BLUNT * prot).min(0.95);
+                        dmg *= 1.0 - (WHIPPLE_BLUNT * armour.whipple() * prot).min(0.95);
                     }
                 }
                 let damage = if connects { state.apply_damage(to, dmg, out, side) } else { 0.0 };
@@ -185,7 +193,7 @@ pub(super) fn volley(state: &mut TacticalState, i: usize, cands: &[(u32, f64, f6
 
 /// How far a hull's weapon reaches (its full-damage range).
 fn weapon_reach(state: &TacticalState, c: &Combatant) -> f64 {
-    let reach = state.reach_of(c.kind, c.platform);
+    let reach = state.reach_of(c.kind, c.platform) * state.range_scale(c.side);
     match v5::offense(&Loadout::from_key(&c.stack)).0 {
         DamageType::Beam => BEAM_RANGE * reach,
         DamageType::Driver => DRIVER_RANGE * reach,
@@ -261,6 +269,31 @@ mod tests {
             }
         }
         out
+    }
+
+    /// §close-quarters (Oct 28 2026): with `range_scale` set, a duel opens
+    /// nearer and holds nearer: about the scale of the usual distance.
+    #[test]
+    fn close_quarters_hold_a_duel_nearer() {
+        let separation = |scale: f64| -> f64 {
+            let a = fleet(1, &[(K::Raider, "", 1)]);
+            let d = fleet(2, &[(K::Raider, "", 1)]);
+            let mut state = TacticalState::open_current(11, 3, &a, &d, 0, 0.0, Vec2::new(1.0, 0.0));
+            state.close_quarters(scale);
+            let mods = [SideMods { range_scale: scale, ..Default::default() }; 2];
+            // The opening, where a short fight spends most of its shots.
+            let mut sum = 0.0;
+            for _ in 0..20 {
+                unkillable(&mut state);
+                state.step(false, mods);
+                sum += state.combatants[0].pos.distance(state.combatants[1].pos);
+            }
+            sum / 20.0
+        };
+        let (usual, close) = (separation(1.0), separation(0.4));
+        eprintln!("opening separation: usual {usual:.0}, close quarters {close:.0}");
+        assert!(close < usual * 0.6, "close quarters {close:.0} vs usual {usual:.0}");
+        assert!(close > 40.0, "still a gunfight, not a ram ({close:.0})");
     }
 
     fn unkillable(state: &mut TacticalState) {
@@ -392,6 +425,27 @@ mod tests {
         for kind in crate::ship::ALL_SHIP_KINDS.into_iter().filter(|k| *k != K::Dreadnought) {
             assert_eq!(attack_weight(kind), rules_v1::attack_weight(kind));
         }
+    }
+
+    /// §research-wiring Lance Array: Reflective Plating blunts a lance twice
+    /// over (the same fight, so the dice match hit for hit).
+    #[test]
+    fn reflective_plating_blunts_a_lance_array_twice_over() {
+        let dealt = |armour: &str| {
+            let mut state = open(10, &[(K::Cruiser, "lance_array", 1)], &[(K::Cruiser, armour, 1)]);
+            let mut sum = 0.0;
+            for _ in 0..60 {
+                unkillable(&mut state);
+                sum += state.step(false, [SideMods::default(); 2]).dealt[0];
+            }
+            sum
+        };
+        let lance = dealt("reflective_plating") / dealt("");
+        assert!((lance - (1.0 - REFLECT_BLUNT * 1.2).powi(2)).abs() < 1e-9, "{lance}");
+        let fit = Loadout::from_key("lance_array+lance_array");
+        assert_eq!(guns(&fit), (2, crate::module::LANCE_ARRAY_MULT));
+        assert!(ModuleKind::LanceArray.fits_hull(K::Destroyer) && !ModuleKind::LanceArray.fits_hull(K::Raider));
+        assert!(ModuleKind::LanceArray.needs_research() && !ModuleKind::MassDriver.needs_research());
     }
 
     #[test]

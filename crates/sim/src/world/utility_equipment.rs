@@ -266,16 +266,23 @@ fn equipment_split_and_merge_conserve_fuel_and_capacity() {
 
 #[test]
 fn deferred_research_is_hidden_without_erasing_saved_work() {
+    // Since Oct 22 2026 no programme is hidden; a retired id stands in for one.
     let mut r = crate::research::ResearchState::default();
-    r.active = Some("mat_beneficiation".into());
+    r.active = Some("retired_programme".into());
     r.progress = 123.0;
-    r.queue = vec!["comp_gravimetric_survey".into(), "prop_expedition_iii_extended_tanks".into()];
+    r.queue = vec!["another_retired_programme".into(), "prop_expedition_iii_extended_tanks".into()];
     r.suspend_unimplemented();
     assert_eq!(r.active.as_deref(), Some("prop_expedition_iii_extended_tanks"));
     assert_eq!(r.progress, 0.0);
-    assert_eq!(r.recovered_data["mat_beneficiation"], 123.0);
+    assert_eq!(r.recovered_data["retired_programme"], 123.0);
     r.suspend_unimplemented();
-    assert_eq!(r.recovered_data["mat_beneficiation"], 123.0);
+    assert_eq!(r.recovered_data["retired_programme"], 123.0);
+    // A once-hidden programme now researches like any other.
+    let mut live = crate::research::ResearchState::default();
+    live.active = Some("mat_beneficiation".into());
+    live.progress = 50.0;
+    live.suspend_unimplemented();
+    assert_eq!((live.active.as_deref(), live.progress), (Some("mat_beneficiation"), 50.0));
 }
 
 #[test]

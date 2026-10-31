@@ -1,0 +1,5085 @@
+{
+  "ship": "small-fortune",
+  "phase": "before",
+  "source": "/Users/peter/projects/stellar-syndicates/client/art-src/ship-models/trader-fleet-v1/texture-audit-v1/before/small-fortune/small-fortune.glb",
+  "missingMaterialTextureSlots": 0,
+  "modelSHA256": "b21602474a34b952eaed577f5658d8061f89e25625486c357fb9700a9d9af119",
+  "method": "Per-triangle UV-to-world singular values and surface-area weighting on exported GLB. Metrics include occluded component faces; visual checks determine visible severity.",
+  "components": [
+    {
+      "component": "hull.spade-body",
+      "triangles": 124,
+      "surfaceArea": 186.1464,
+      "areaWithAnisotropyOver4Pct": 5.028,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 1.727,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 6.6974,
+      "medianTexelsPerUnit": 35.846,
+      "maximumAnisotropy": 6.271
+    },
+    {
+      "component": "engine.port.nozzle-rim",
+      "triangles": 256,
+      "surfaceArea": 12.1447,
+      "areaWithAnisotropyOver4Pct": 70.8,
+      "areaWithAnisotropyOver10Pct": 21.236,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 34.9926,
+      "medianTexelsPerUnit": 430.148,
+      "maximumAnisotropy": 10.055
+    },
+    {
+      "component": "engine.starboard.nozzle-rim",
+      "triangles": 256,
+      "surfaceArea": 12.1447,
+      "areaWithAnisotropyOver4Pct": 70.8,
+      "areaWithAnisotropyOver10Pct": 21.236,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 34.9926,
+      "medianTexelsPerUnit": 430.148,
+      "maximumAnisotropy": 10.055
+    },
+    {
+      "component": "hull.service-tail",
+      "triangles": 52,
+      "surfaceArea": 32.5691,
+      "areaWithAnisotropyOver4Pct": 16.35,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 2.227,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 5.8285,
+      "medianTexelsPerUnit": 34.674,
+      "maximumAnisotropy": 7.206
+    },
+    {
+      "component": "bridge.glazing",
+      "triangles": 60,
+      "surfaceArea": 28.6258,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 15.945,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 2.1111,
+      "medianTexelsPerUnit": 34.124,
+      "maximumAnisotropy": 1.462
+    },
+    {
+      "component": "engine.port.coupling-band.0",
+      "triangles": 192,
+      "surfaceArea": 5.215,
+      "areaWithAnisotropyOver4Pct": 58.665,
+      "areaWithAnisotropyOver10Pct": 58.665,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 23.9273,
+      "medianTexelsPerUnit": 388.434,
+      "maximumAnisotropy": 70.213
+    },
+    {
+      "component": "engine.port.coupling-band.1",
+      "triangles": 192,
+      "surfaceArea": 5.215,
+      "areaWithAnisotropyOver4Pct": 58.665,
+      "areaWithAnisotropyOver10Pct": 58.665,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 23.9273,
+      "medianTexelsPerUnit": 388.434,
+      "maximumAnisotropy": 70.213
+    },
+    {
+      "component": "engine.starboard.coupling-band.0",
+      "triangles": 192,
+      "surfaceArea": 5.215,
+      "areaWithAnisotropyOver4Pct": 58.665,
+      "areaWithAnisotropyOver10Pct": 58.665,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 23.9273,
+      "medianTexelsPerUnit": 388.434,
+      "maximumAnisotropy": 70.213
+    },
+    {
+      "component": "engine.starboard.coupling-band.1",
+      "triangles": 192,
+      "surfaceArea": 5.215,
+      "areaWithAnisotropyOver4Pct": 58.665,
+      "areaWithAnisotropyOver10Pct": 58.665,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 23.9273,
+      "medianTexelsPerUnit": 388.434,
+      "maximumAnisotropy": 70.213
+    },
+    {
+      "component": "docking.port.housing",
+      "triangles": 284,
+      "surfaceArea": 6.2776,
+      "areaWithAnisotropyOver4Pct": 26.816,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 24.6388,
+      "medianTexelsPerUnit": 115.6,
+      "maximumAnisotropy": 6.628
+    },
+    {
+      "component": "docking.port.rim",
+      "triangles": 192,
+      "surfaceArea": 3.0368,
+      "areaWithAnisotropyOver4Pct": 51.221,
+      "areaWithAnisotropyOver10Pct": 51.221,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 54.018,
+      "medianTexelsPerUnit": 797.105,
+      "maximumAnisotropy": 24.553
+    },
+    {
+      "component": "machinery.port-service-hatch",
+      "triangles": 188,
+      "surfaceArea": 5.0997,
+      "areaWithAnisotropyOver4Pct": 29.0,
+      "areaWithAnisotropyOver10Pct": 29.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 33.3928,
+      "medianTexelsPerUnit": 178.977,
+      "maximumAnisotropy": 13.951
+    },
+    {
+      "component": "engine.port.nozzle-fin.0",
+      "triangles": 256,
+      "surfaceArea": 3.2066,
+      "areaWithAnisotropyOver4Pct": 41.889,
+      "areaWithAnisotropyOver10Pct": 41.889,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 28.8174,
+      "medianTexelsPerUnit": 614.478,
+      "maximumAnisotropy": 109.309
+    },
+    {
+      "component": "engine.starboard.nozzle-fin.0",
+      "triangles": 256,
+      "surfaceArea": 3.2066,
+      "areaWithAnisotropyOver4Pct": 41.889,
+      "areaWithAnisotropyOver10Pct": 41.889,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 28.8174,
+      "medianTexelsPerUnit": 614.478,
+      "maximumAnisotropy": 109.309
+    },
+    {
+      "component": "engine.port.nozzle-fin.1",
+      "triangles": 256,
+      "surfaceArea": 2.7459,
+      "areaWithAnisotropyOver4Pct": 44.312,
+      "areaWithAnisotropyOver10Pct": 44.312,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 31.8115,
+      "medianTexelsPerUnit": 669.959,
+      "maximumAnisotropy": 99.021
+    },
+    {
+      "component": "engine.starboard.nozzle-fin.1",
+      "triangles": 256,
+      "surfaceArea": 2.7459,
+      "areaWithAnisotropyOver4Pct": 44.312,
+      "areaWithAnisotropyOver10Pct": 44.312,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 31.8115,
+      "medianTexelsPerUnit": 669.959,
+      "maximumAnisotropy": 99.021
+    },
+    {
+      "component": "ventral.belly-cargo-door",
+      "triangles": 60,
+      "surfaceArea": 50.0656,
+      "areaWithAnisotropyOver4Pct": 0.961,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.227,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 6.5502,
+      "medianTexelsPerUnit": 33.583,
+      "maximumAnisotropy": 6.412
+    },
+    {
+      "component": "engine.port.aperture",
+      "triangles": 124,
+      "surfaceArea": 4.3935,
+      "areaWithAnisotropyOver4Pct": 10.102,
+      "areaWithAnisotropyOver10Pct": 10.102,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 50.5047,
+      "medianTexelsPerUnit": 378.266,
+      "maximumAnisotropy": 56.096
+    },
+    {
+      "component": "engine.starboard.aperture",
+      "triangles": 124,
+      "surfaceArea": 4.3935,
+      "areaWithAnisotropyOver4Pct": 10.102,
+      "areaWithAnisotropyOver10Pct": 10.102,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 50.5047,
+      "medianTexelsPerUnit": 378.266,
+      "maximumAnisotropy": 56.096
+    },
+    {
+      "component": "ventral.service-tail-hatch",
+      "triangles": 60,
+      "surfaceArea": 6.0093,
+      "areaWithAnisotropyOver4Pct": 4.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.892,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 6.5502,
+      "medianTexelsPerUnit": 35.068,
+      "maximumAnisotropy": 6.412
+    },
+    {
+      "component": "docking.port.door",
+      "triangles": 92,
+      "surfaceArea": 2.0162,
+      "areaWithAnisotropyOver4Pct": 5.172,
+      "areaWithAnisotropyOver10Pct": 5.172,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 43.2575,
+      "medianTexelsPerUnit": 780.376,
+      "maximumAnisotropy": 115.867
+    },
+    {
+      "component": "docking.port.latch.0",
+      "triangles": 28,
+      "surfaceArea": 0.0577,
+      "areaWithAnisotropyOver4Pct": 51.978,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 587.9521,
+      "medianTexelsPerUnit": 1454.865,
+      "maximumAnisotropy": 6.123
+    },
+    {
+      "component": "docking.port.latch.1",
+      "triangles": 28,
+      "surfaceArea": 0.0577,
+      "areaWithAnisotropyOver4Pct": 51.978,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 587.9521,
+      "medianTexelsPerUnit": 1454.865,
+      "maximumAnisotropy": 6.123
+    },
+    {
+      "component": "docking.port.latch.2",
+      "triangles": 28,
+      "surfaceArea": 0.0577,
+      "areaWithAnisotropyOver4Pct": 51.978,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 587.952,
+      "medianTexelsPerUnit": 1454.864,
+      "maximumAnisotropy": 6.123
+    },
+    {
+      "component": "docking.port.latch.3",
+      "triangles": 28,
+      "surfaceArea": 0.0577,
+      "areaWithAnisotropyOver4Pct": 51.978,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 587.952,
+      "medianTexelsPerUnit": 1454.864,
+      "maximumAnisotropy": 6.123
+    },
+    {
+      "component": "engine.port.shield-bolt.0.0",
+      "triangles": 44,
+      "surfaceArea": 0.0417,
+      "areaWithAnisotropyOver4Pct": 48.409,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 682.9931,
+      "medianTexelsPerUnit": 1630.752,
+      "maximumAnisotropy": 5.652
+    },
+    {
+      "component": "engine.port.shield-bolt.0.1",
+      "triangles": 44,
+      "surfaceArea": 0.0417,
+      "areaWithAnisotropyOver4Pct": 48.409,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 682.9934,
+      "medianTexelsPerUnit": 1630.756,
+      "maximumAnisotropy": 5.652
+    },
+    {
+      "component": "engine.port.shield-bolt.1.0",
+      "triangles": 44,
+      "surfaceArea": 0.0417,
+      "areaWithAnisotropyOver4Pct": 48.409,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 682.9918,
+      "medianTexelsPerUnit": 1630.75,
+      "maximumAnisotropy": 5.652
+    },
+    {
+      "component": "engine.port.shield-bolt.1.1",
+      "triangles": 44,
+      "surfaceArea": 0.0417,
+      "areaWithAnisotropyOver4Pct": 48.409,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 682.9934,
+      "medianTexelsPerUnit": 1630.754,
+      "maximumAnisotropy": 5.652
+    },
+    {
+      "component": "engine.starboard.shield-bolt.0.0",
+      "triangles": 44,
+      "surfaceArea": 0.0417,
+      "areaWithAnisotropyOver4Pct": 48.409,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 682.9934,
+      "medianTexelsPerUnit": 1630.756,
+      "maximumAnisotropy": 5.652
+    },
+    {
+      "component": "engine.starboard.shield-bolt.0.1",
+      "triangles": 44,
+      "surfaceArea": 0.0417,
+      "areaWithAnisotropyOver4Pct": 48.409,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 682.9931,
+      "medianTexelsPerUnit": 1630.752,
+      "maximumAnisotropy": 5.652
+    },
+    {
+      "component": "engine.starboard.shield-bolt.1.0",
+      "triangles": 44,
+      "surfaceArea": 0.0417,
+      "areaWithAnisotropyOver4Pct": 48.409,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 682.9934,
+      "medianTexelsPerUnit": 1630.754,
+      "maximumAnisotropy": 5.652
+    },
+    {
+      "component": "engine.starboard.shield-bolt.1.1",
+      "triangles": 44,
+      "surfaceArea": 0.0417,
+      "areaWithAnisotropyOver4Pct": 48.409,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 682.9918,
+      "medianTexelsPerUnit": 1630.75,
+      "maximumAnisotropy": 5.652
+    },
+    {
+      "component": "cargo.bay.1.fastener.0",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.0632,
+      "medianTexelsPerUnit": 1703.269,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "cargo.bay.1.fastener.1",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.0661,
+      "medianTexelsPerUnit": 1703.268,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "cargo.bay.1.fastener.2",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.0617,
+      "medianTexelsPerUnit": 1703.268,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "cargo.bay.1.fastener.3",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.0647,
+      "medianTexelsPerUnit": 1703.268,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "cargo.bay.2.fastener.0",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.0617,
+      "medianTexelsPerUnit": 1703.268,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "cargo.bay.2.fastener.1",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.0648,
+      "medianTexelsPerUnit": 1703.268,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "cargo.bay.2.fastener.2",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.0625,
+      "medianTexelsPerUnit": 1703.268,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "cargo.bay.2.fastener.3",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.0654,
+      "medianTexelsPerUnit": 1703.267,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "cargo.bay.3.fastener.0",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.0657,
+      "medianTexelsPerUnit": 1703.268,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "cargo.bay.3.fastener.1",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.0632,
+      "medianTexelsPerUnit": 1703.269,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "cargo.bay.3.fastener.2",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.0656,
+      "medianTexelsPerUnit": 1703.268,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "cargo.bay.3.fastener.3",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.0617,
+      "medianTexelsPerUnit": 1703.268,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "cargo.bay.4.fastener.0",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.0657,
+      "medianTexelsPerUnit": 1703.268,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "cargo.bay.4.fastener.1",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.0617,
+      "medianTexelsPerUnit": 1703.268,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "cargo.bay.4.fastener.2",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.065,
+      "medianTexelsPerUnit": 1703.267,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "cargo.bay.4.fastener.3",
+      "triangles": 44,
+      "surfaceArea": 0.0368,
+      "areaWithAnisotropyOver4Pct": 50.36,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 745.0625,
+      "medianTexelsPerUnit": 1703.268,
+      "maximumAnisotropy": 5.181
+    },
+    {
+      "component": "bridge.roof-cap",
+      "triangles": 60,
+      "surfaceArea": 4.373,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 26.8699,
+      "medianTexelsPerUnit": 33.884,
+      "maximumAnisotropy": 1.414
+    },
+    {
+      "component": "cargo.bay.1.coaming",
+      "triangles": 60,
+      "surfaceArea": 14.6389,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 93.533,
+      "medianTexelsPerUnit": 117.285,
+      "maximumAnisotropy": 1.0
+    },
+    {
+      "component": "cargo.bay.1.lid",
+      "triangles": 60,
+      "surfaceArea": 11.4529,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 26.87,
+      "medianTexelsPerUnit": 33.855,
+      "maximumAnisotropy": 1.414
+    },
+    {
+      "component": "cargo.bay.1.latch",
+      "triangles": 60,
+      "surfaceArea": 0.4689,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 379.9995,
+      "medianTexelsPerUnit": 2059.378,
+      "maximumAnisotropy": 1.0
+    },
+    {
+      "component": "cargo.bay.2.coaming",
+      "triangles": 60,
+      "surfaceArea": 14.6389,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 93.5332,
+      "medianTexelsPerUnit": 117.285,
+      "maximumAnisotropy": 1.0
+    },
+    {
+      "component": "cargo.bay.2.lid",
+      "triangles": 60,
+      "surfaceArea": 11.4529,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 26.87,
+      "medianTexelsPerUnit": 33.855,
+      "maximumAnisotropy": 1.414
+    },
+    {
+      "component": "cargo.bay.2.latch",
+      "triangles": 60,
+      "surfaceArea": 0.4689,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 379.9996,
+      "medianTexelsPerUnit": 2059.378,
+      "maximumAnisotropy": 1.0
+    },
+    {
+      "component": "cargo.bay.3.coaming",
+      "triangles": 60,
+      "surfaceArea": 14.6389,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 93.533,
+      "medianTexelsPerUnit": 117.285,
+      "maximumAnisotropy": 1.0
+    },
+    {
+      "component": "cargo.bay.3.lid",
+      "triangles": 60,
+      "surfaceArea": 11.4529,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 26.87,
+      "medianTexelsPerUnit": 33.855,
+      "maximumAnisotropy": 1.414
+    },
+    {
+      "component": "cargo.bay.3.latch",
+      "triangles": 60,
+      "surfaceArea": 0.4689,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 379.9994,
+      "medianTexelsPerUnit": 2059.379,
+      "maximumAnisotropy": 1.0
+    },
+    {
+      "component": "cargo.bay.4.coaming",
+      "triangles": 60,
+      "surfaceArea": 14.6389,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 93.5333,
+      "medianTexelsPerUnit": 117.285,
+      "maximumAnisotropy": 1.0
+    },
+    {
+      "component": "cargo.bay.4.lid",
+      "triangles": 60,
+      "surfaceArea": 11.4529,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 26.87,
+      "medianTexelsPerUnit": 33.855,
+      "maximumAnisotropy": 1.414
+    },
+    {
+      "component": "cargo.bay.4.latch",
+      "triangles": 60,
+      "surfaceArea": 0.4689,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 379.9994,
+      "medianTexelsPerUnit": 2059.379,
+      "maximumAnisotropy": 1.0
+    },
+    {
+      "component": "armor.cream-spine",
+      "triangles": 60,
+      "surfaceArea": 13.9465,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 8.1528,
+      "medianTexelsPerUnit": 37.735,
+      "maximumAnisotropy": 1.436
+    },
+    {
+      "component": "machinery.tail-spine",
+      "triangles": 60,
+      "surfaceArea": 6.6963,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 26.4554,
+      "medianTexelsPerUnit": 36.016,
+      "maximumAnisotropy": 1.436
+    },
+    {
+      "component": "hull.port.pylon.0",
+      "triangles": 36,
+      "surfaceArea": 10.6493,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 22.7181,
+      "medianTexelsPerUnit": 36.378,
+      "maximumAnisotropy": 1.672
+    },
+    {
+      "component": "hull.port.pylon.1",
+      "triangles": 44,
+      "surfaceArea": 12.3794,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 26.0981,
+      "medianTexelsPerUnit": 38.0,
+      "maximumAnisotropy": 1.454
+    },
+    {
+      "component": "hull.port.pylon-brace",
+      "triangles": 12,
+      "surfaceArea": 1.6991,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 90.64,
+      "medianTexelsPerUnit": 90.641,
+      "maximumAnisotropy": 1.0
+    },
+    {
+      "component": "machinery.port.conduit",
+      "triangles": 44,
+      "surfaceArea": 2.2793,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 93.4344,
+      "medianTexelsPerUnit": 170.757,
+      "maximumAnisotropy": 3.34
+    },
+    {
+      "component": "engine.port.housing",
+      "triangles": 572,
+      "surfaceArea": 92.6878,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 11.7504,
+      "medianTexelsPerUnit": 33.282,
+      "maximumAnisotropy": 3.148
+    },
+    {
+      "component": "engine.port.dorsal-shield",
+      "triangles": 60,
+      "surfaceArea": 12.12,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 26.4561,
+      "medianTexelsPerUnit": 37.071,
+      "maximumAnisotropy": 1.436
+    },
+    {
+      "component": "hull.starboard.pylon.0",
+      "triangles": 36,
+      "surfaceArea": 10.6493,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 22.7176,
+      "medianTexelsPerUnit": 36.378,
+      "maximumAnisotropy": 1.672
+    },
+    {
+      "component": "hull.starboard.pylon.1",
+      "triangles": 44,
+      "surfaceArea": 12.3794,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 26.0984,
+      "medianTexelsPerUnit": 38.0,
+      "maximumAnisotropy": 1.454
+    },
+    {
+      "component": "hull.starboard.pylon-brace",
+      "triangles": 12,
+      "surfaceArea": 1.6991,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 90.64,
+      "medianTexelsPerUnit": 90.641,
+      "maximumAnisotropy": 1.0
+    },
+    {
+      "component": "machinery.starboard.conduit",
+      "triangles": 44,
+      "surfaceArea": 2.2793,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 93.4344,
+      "medianTexelsPerUnit": 170.757,
+      "maximumAnisotropy": 3.34
+    },
+    {
+      "component": "engine.starboard.housing",
+      "triangles": 572,
+      "surfaceArea": 92.6878,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 11.7504,
+      "medianTexelsPerUnit": 33.282,
+      "maximumAnisotropy": 3.148
+    },
+    {
+      "component": "engine.starboard.dorsal-shield",
+      "triangles": 60,
+      "surfaceArea": 12.12,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 26.4554,
+      "medianTexelsPerUnit": 37.071,
+      "maximumAnisotropy": 1.436
+    },
+    {
+      "component": "hull.starboard-loading-lock",
+      "triangles": 60,
+      "surfaceArea": 13.5217,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 26.4557,
+      "medianTexelsPerUnit": 34.286,
+      "maximumAnisotropy": 1.436
+    },
+    {
+      "component": "ventral.door-lock.0",
+      "triangles": 60,
+      "surfaceArea": 0.3501,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 622.3782,
+      "medianTexelsPerUnit": 1583.333,
+      "maximumAnisotropy": 1.0
+    },
+    {
+      "component": "ventral.door-lock.1",
+      "triangles": 60,
+      "surfaceArea": 0.3501,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 622.3782,
+      "medianTexelsPerUnit": 1583.333,
+      "maximumAnisotropy": 1.0
+    },
+    {
+      "component": "ventral.door-lock.2",
+      "triangles": 60,
+      "surfaceArea": 0.3501,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 622.3778,
+      "medianTexelsPerUnit": 1583.333,
+      "maximumAnisotropy": 1.0
+    },
+    {
+      "component": "ventral.door-lock.3",
+      "triangles": 60,
+      "surfaceArea": 0.3501,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 622.3778,
+      "medianTexelsPerUnit": 1583.333,
+      "maximumAnisotropy": 1.0
+    },
+    {
+      "component": "machinery.spine-access.0",
+      "triangles": 60,
+      "surfaceArea": 1.295,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 26.4546,
+      "medianTexelsPerUnit": 34.337,
+      "maximumAnisotropy": 1.436
+    },
+    {
+      "component": "machinery.spine-access.1",
+      "triangles": 60,
+      "surfaceArea": 1.295,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 26.4546,
+      "medianTexelsPerUnit": 34.337,
+      "maximumAnisotropy": 1.436
+    },
+    {
+      "component": "machinery.spine-access.2",
+      "triangles": 60,
+      "surfaceArea": 1.4013,
+      "areaWithAnisotropyOver4Pct": 0.0,
+      "areaWithAnisotropyOver10Pct": 0.0,
+      "areaBelow8TexelsPerUnitPct": 0.0,
+      "areaOnAtlasBackgroundPct": 0.0,
+      "minimumTexelsPerUnit": 26.4547,
+      "medianTexelsPerUnit": 34.337,
+      "maximumAnisotropy": 1.436
+    }
+  ],
+  "chartBoundaryColorSteps": [
+    {
+      "component": "armor.cream-spine",
+      "length": 6.8684,
+      "meanRGBStep": 112.18,
+      "modelEdge": [
+        [
+          -0.421099990606308,
+          1.149999976158142,
+          -5.763199806213379
+        ],
+        [
+          -0.421099990606308,
+          1.149999976158142,
+          1.105299949645996
+        ]
+      ]
+    },
+    {
+      "component": "armor.cream-spine",
+      "length": 6.8684,
+      "meanRGBStep": 100.06,
+      "modelEdge": [
+        [
+          0.4474000036716461,
+          1.149999976158142,
+          -5.763199806213379
+        ],
+        [
+          0.4474000036716461,
+          1.149999976158142,
+          1.105299949645996
+        ]
+      ]
+    },
+    {
+      "component": "armor.cream-spine",
+      "length": 6.8684,
+      "meanRGBStep": 80.07,
+      "modelEdge": [
+        [
+          0.4474000036716461,
+          1.0700000524520874,
+          -5.763199806213379
+        ],
+        [
+          0.4474000036716461,
+          1.0700000524520874,
+          1.105299949645996
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.dorsal-shield",
+      "length": 3.7632,
+      "meanRGBStep": 145.86,
+      "modelEdge": [
+        [
+          3.5,
+          1.7649999856948853,
+          2.3157999515533447
+        ],
+        [
+          3.5,
+          1.7649999856948853,
+          6.07889986038208
+        ]
+      ]
+    },
+    {
+      "component": "armor.cream-spine",
+      "length": 6.8684,
+      "meanRGBStep": 76.27,
+      "modelEdge": [
+        [
+          -0.421099990606308,
+          1.0700000524520874,
+          -5.763199806213379
+        ],
+        [
+          -0.421099990606308,
+          1.0700000524520874,
+          1.105299949645996
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.dorsal-shield",
+      "length": 3.7632,
+      "meanRGBStep": 134.56,
+      "modelEdge": [
+        [
+          -3.5,
+          1.6649999618530273,
+          2.3157999515533447
+        ],
+        [
+          -3.5,
+          1.6649999618530273,
+          6.07889986038208
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 3.7358,
+      "meanRGBStep": 130.29,
+      "modelEdge": [
+        [
+          2.998199939727783,
+          1.2196999788284302,
+          3.098400115966797
+        ],
+        [
+          2.998199939727783,
+          1.2196999788284302,
+          6.834199905395508
+        ]
+      ]
+    },
+    {
+      "component": "bridge.glazing",
+      "length": 4.2632,
+      "meanRGBStep": 113.17,
+      "modelEdge": [
+        [
+          -2.157900094985962,
+          1.6299999952316284,
+          -6.2895002365112305
+        ],
+        [
+          2.105299949645996,
+          1.6299999952316284,
+          -6.2895002365112305
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.dorsal-shield",
+      "length": 3.7632,
+      "meanRGBStep": 116.11,
+      "modelEdge": [
+        [
+          -4.815800189971924,
+          1.6649999618530273,
+          2.3157999515533447
+        ],
+        [
+          -4.815800189971924,
+          1.6649999618530273,
+          6.07889986038208
+        ]
+      ]
+    },
+    {
+      "component": "ventral.belly-cargo-door",
+      "length": 4.0789,
+      "meanRGBStep": 105.06,
+      "modelEdge": [
+        [
+          -2.394700050354004,
+          -1.0399999618530273,
+          -4.052599906921387
+        ],
+        [
+          -2.394700050354004,
+          -1.0399999618530273,
+          0.02630000002682209
+        ]
+      ]
+    },
+    {
+      "component": "ventral.belly-cargo-door",
+      "length": 3.9474,
+      "meanRGBStep": 107.82,
+      "modelEdge": [
+        [
+          -1.9473999738693237,
+          -0.949999988079071,
+          0.47369998693466187
+        ],
+        [
+          2.0,
+          -0.949999988079071,
+          0.47369998693466187
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 3.7358,
+      "meanRGBStep": 112.91,
+      "modelEdge": [
+        [
+          5.317500114440918,
+          1.2196999788284302,
+          3.098400115966797
+        ],
+        [
+          5.317500114440918,
+          1.2196999788284302,
+          6.834199905395508
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.dorsal-shield",
+      "length": 3.7632,
+      "meanRGBStep": 108.05,
+      "modelEdge": [
+        [
+          4.815800189971924,
+          1.7649999856948853,
+          2.3157999515533447
+        ],
+        [
+          4.815800189971924,
+          1.7649999856948853,
+          6.07889986038208
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.dorsal-shield",
+      "length": 3.7632,
+      "meanRGBStep": 104.81,
+      "modelEdge": [
+        [
+          3.5,
+          1.6649999618530273,
+          2.3157999515533447
+        ],
+        [
+          3.5,
+          1.6649999618530273,
+          6.07889986038208
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.dorsal-shield",
+      "length": 3.7632,
+      "meanRGBStep": 104.67,
+      "modelEdge": [
+        [
+          -3.5,
+          1.7649999856948853,
+          2.3157999515533447
+        ],
+        [
+          -3.5,
+          1.7649999856948853,
+          6.07889986038208
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 3.7358,
+      "meanRGBStep": 101.65,
+      "modelEdge": [
+        [
+          -5.317500114440918,
+          1.2196999788284302,
+          3.098400115966797
+        ],
+        [
+          -5.317500114440918,
+          1.2196999788284302,
+          6.834199905395508
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.dorsal-shield",
+      "length": 3.7632,
+      "meanRGBStep": 87.32,
+      "modelEdge": [
+        [
+          -4.815800189971924,
+          1.7649999856948853,
+          2.3157999515533447
+        ],
+        [
+          -4.815800189971924,
+          1.7649999856948853,
+          6.07889986038208
+        ]
+      ]
+    },
+    {
+      "component": "ventral.belly-cargo-door",
+      "length": 3.9474,
+      "meanRGBStep": 81.29,
+      "modelEdge": [
+        [
+          -1.9473999738693237,
+          -0.949999988079071,
+          -4.5
+        ],
+        [
+          2.0,
+          -0.949999988079071,
+          -4.5
+        ]
+      ]
+    },
+    {
+      "component": "machinery.tail-spine",
+      "length": 2.1579,
+      "meanRGBStep": 144.84,
+      "modelEdge": [
+        [
+          -0.6053000092506409,
+          0.7799999713897705,
+          1.368399977684021
+        ],
+        [
+          -0.6053000092506409,
+          0.7799999713897705,
+          3.5262999534606934
+        ]
+      ]
+    },
+    {
+      "component": "hull.service-tail",
+      "length": 2.4126,
+      "meanRGBStep": 123.53,
+      "modelEdge": [
+        [
+          -1.236799955368042,
+          -0.4000000059604645,
+          2.6315999031066895
+        ],
+        [
+          -0.6578999757766724,
+          -0.4000000059604645,
+          4.973700046539307
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 3.7358,
+      "meanRGBStep": 78.52,
+      "modelEdge": [
+        [
+          -2.998199939727783,
+          1.2196999788284302,
+          3.098400115966797
+        ],
+        [
+          -2.998199939727783,
+          1.2196999788284302,
+          6.834199905395508
+        ]
+      ]
+    },
+    {
+      "component": "ventral.belly-cargo-door",
+      "length": 3.9474,
+      "meanRGBStep": 72.96,
+      "modelEdge": [
+        [
+          -1.9473999738693237,
+          -1.0399999618530273,
+          0.47369998693466187
+        ],
+        [
+          2.0,
+          -1.0399999618530273,
+          0.47369998693466187
+        ]
+      ]
+    },
+    {
+      "component": "ventral.service-tail-hatch",
+      "length": 1.7368,
+      "meanRGBStep": 152.67,
+      "modelEdge": [
+        [
+          -0.6578999757766724,
+          -0.6499999761581421,
+          1.736799955368042
+        ],
+        [
+          -0.6578999757766724,
+          -0.6499999761581421,
+          3.4737000465393066
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 3.7358,
+      "meanRGBStep": 68.38,
+      "modelEdge": [
+        [
+          -2.998199939727783,
+          -1.0996999740600586,
+          3.098400115966797
+        ],
+        [
+          -2.998199939727783,
+          -1.0996999740600586,
+          6.834199905395508
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.dorsal-shield",
+      "length": 3.7632,
+      "meanRGBStep": 65.52,
+      "modelEdge": [
+        [
+          4.815800189971924,
+          1.6649999618530273,
+          2.3157999515533447
+        ],
+        [
+          4.815800189971924,
+          1.6649999618530273,
+          6.07889986038208
+        ]
+      ]
+    },
+    {
+      "component": "ventral.belly-cargo-door",
+      "length": 4.0789,
+      "meanRGBStep": 57.56,
+      "modelEdge": [
+        [
+          2.4474000930786133,
+          -1.0399999618530273,
+          -4.052599906921387
+        ],
+        [
+          2.4474000930786133,
+          -1.0399999618530273,
+          0.02630000002682209
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 1.9705,
+      "meanRGBStep": 117.43,
+      "modelEdge": [
+        [
+          -0.9853000044822693,
+          -0.5899999737739563,
+          2.105299949645996
+        ],
+        [
+          0.9853000044822693,
+          -0.5899999737739563,
+          2.105299949645996
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 2.6658,
+      "meanRGBStep": 86.4,
+      "modelEdge": [
+        [
+          -3.894700050354004,
+          0.8199999928474426,
+          -4.973700046539307
+        ],
+        [
+          -2.6315999031066895,
+          0.9800000190734863,
+          -7.315800189971924
+        ]
+      ]
+    },
+    {
+      "component": "bridge.glazing",
+      "length": 2.1053,
+      "meanRGBStep": 104.04,
+      "modelEdge": [
+        [
+          -1.2105000019073486,
+          1.6299999952316284,
+          -8.736800193786621
+        ],
+        [
+          0.8946999907493591,
+          1.6299999952316284,
+          -8.736800193786621
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 1.5658,
+      "meanRGBStep": 133.46,
+      "modelEdge": [
+        [
+          -2.998199939727783,
+          -1.0996999740600586,
+          1.5326000452041626
+        ],
+        [
+          -2.998199939727783,
+          -1.0996999740600586,
+          3.098400115966797
+        ]
+      ]
+    },
+    {
+      "component": "hull.service-tail",
+      "length": 1.9737,
+      "meanRGBStep": 101.4,
+      "modelEdge": [
+        [
+          -1.0,
+          0.6200000047683716,
+          0.5526000261306763
+        ],
+        [
+          0.9736999869346619,
+          0.6200000047683716,
+          0.5526000261306763
+        ]
+      ]
+    },
+    {
+      "component": "ventral.belly-cargo-door",
+      "length": 4.0789,
+      "meanRGBStep": 48.42,
+      "modelEdge": [
+        [
+          -2.394700050354004,
+          -0.949999988079071,
+          -4.052599906921387
+        ],
+        [
+          -2.394700050354004,
+          -0.949999988079071,
+          0.02630000002682209
+        ]
+      ]
+    },
+    {
+      "component": "bridge.glazing",
+      "length": 4.2632,
+      "meanRGBStep": 46.28,
+      "modelEdge": [
+        [
+          -2.157900094985962,
+          1.2400000095367432,
+          -6.2895002365112305
+        ],
+        [
+          2.105299949645996,
+          1.2400000095367432,
+          -6.2895002365112305
+        ]
+      ]
+    },
+    {
+      "component": "bridge.glazing",
+      "length": 2.1053,
+      "meanRGBStep": 92.81,
+      "modelEdge": [
+        [
+          -1.2105000019073486,
+          1.2400000095367432,
+          -8.736800193786621
+        ],
+        [
+          0.8946999907493591,
+          1.2400000095367432,
+          -8.736800193786621
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 3.7358,
+      "meanRGBStep": 51.48,
+      "modelEdge": [
+        [
+          5.317500114440918,
+          -1.0996999740600586,
+          3.098400115966797
+        ],
+        [
+          5.317500114440918,
+          -1.0996999740600586,
+          6.834199905395508
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 3.7358,
+      "meanRGBStep": 50.32,
+      "modelEdge": [
+        [
+          2.998199939727783,
+          -1.0996999740600586,
+          3.098400115966797
+        ],
+        [
+          2.998199939727783,
+          -1.0996999740600586,
+          6.834199905395508
+        ]
+      ]
+    },
+    {
+      "component": "ventral.belly-cargo-door",
+      "length": 3.9474,
+      "meanRGBStep": 46.95,
+      "modelEdge": [
+        [
+          -1.9473999738693237,
+          -1.0399999618530273,
+          -4.5
+        ],
+        [
+          2.0,
+          -1.0399999618530273,
+          -4.5
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard.pylon.1",
+      "length": 2.6075,
+      "meanRGBStep": 68.15,
+      "modelEdge": [
+        [
+          1.4931999444961548,
+          -0.3799999952316284,
+          1.0944000482559204
+        ],
+        [
+          3.6552999019622803,
+          -0.3799999952316284,
+          2.552000045776367
+        ]
+      ]
+    },
+    {
+      "component": "hull.service-tail",
+      "length": 2.0924,
+      "meanRGBStep": 81.27,
+      "modelEdge": [
+        [
+          -1.236799955368042,
+          -0.4000000059604645,
+          2.6315999031066895
+        ],
+        [
+          -1.0,
+          -0.4000000059604645,
+          0.5526000261306763
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard.pylon.0",
+      "length": 2.6131,
+      "meanRGBStep": 64.4,
+      "modelEdge": [
+        [
+          4.0,
+          0.3799999952316284,
+          -1.0
+        ],
+        [
+          4.42110013961792,
+          0.3799999952316284,
+          1.5788999795913696
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 1.887,
+      "meanRGBStep": 89.0,
+      "modelEdge": [
+        [
+          -2.6315999031066895,
+          0.9800000190734863,
+          -7.315800189971924
+        ],
+        [
+          -1.605299949645996,
+          0.8600000143051147,
+          -8.894700050354004
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 1.5658,
+      "meanRGBStep": 104.6,
+      "modelEdge": [
+        [
+          2.998199939727783,
+          -1.0996999740600586,
+          1.5326000452041626
+        ],
+        [
+          2.998199939727783,
+          -1.0996999740600586,
+          3.098400115966797
+        ]
+      ]
+    },
+    {
+      "component": "hull.port.pylon.1",
+      "length": 2.6075,
+      "meanRGBStep": 60.72,
+      "modelEdge": [
+        [
+          -3.6552999019622803,
+          0.4699999988079071,
+          2.552000045776367
+        ],
+        [
+          -1.4931999444961548,
+          0.4699999988079071,
+          1.0944000482559204
+        ]
+      ]
+    },
+    {
+      "component": "hull.service-tail",
+      "length": 2.0634,
+      "meanRGBStep": 75.67,
+      "modelEdge": [
+        [
+          0.9736999869346619,
+          -0.4000000059604645,
+          0.5526000261306763
+        ],
+        [
+          1.1842000484466553,
+          -0.4000000059604645,
+          2.605299949645996
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard.pylon.1",
+      "length": 2.6075,
+      "meanRGBStep": 58.91,
+      "modelEdge": [
+        [
+          1.4931999444961548,
+          0.4699999988079071,
+          1.0944000482559204
+        ],
+        [
+          3.6552999019622803,
+          0.4699999988079071,
+          2.552000045776367
+        ]
+      ]
+    },
+    {
+      "component": "hull.port.pylon.1",
+      "length": 2.6075,
+      "meanRGBStep": 58.14,
+      "modelEdge": [
+        [
+          -3.6552999019622803,
+          -0.3799999952316284,
+          2.552000045776367
+        ],
+        [
+          -1.4931999444961548,
+          -0.3799999952316284,
+          1.0944000482559204
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 2.2979,
+      "meanRGBStep": 64.96,
+      "modelEdge": [
+        [
+          -4.07889986038208,
+          -0.6600000262260437,
+          -2.6842000484466553
+        ],
+        [
+          -3.894700050354004,
+          -0.5899999737739563,
+          -4.973700046539307
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 2.6658,
+      "meanRGBStep": 55.6,
+      "modelEdge": [
+        [
+          2.6315999031066895,
+          0.9800000190734863,
+          -7.315800189971924
+        ],
+        [
+          3.894700050354004,
+          0.8199999928474426,
+          -4.973700046539307
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 2.6647,
+      "meanRGBStep": 55.2,
+      "modelEdge": [
+        [
+          -3.894700050354004,
+          -0.5899999737739563,
+          -4.973700046539307
+        ],
+        [
+          -2.6315999031066895,
+          -0.44999998807907104,
+          -7.315800189971924
+        ]
+      ]
+    },
+    {
+      "component": "hull.port.pylon.0",
+      "length": 2.6131,
+      "meanRGBStep": 56.1,
+      "modelEdge": [
+        [
+          -4.42110013961792,
+          -0.28999999165534973,
+          1.5788999795913696
+        ],
+        [
+          -4.0,
+          -0.28999999165534973,
+          -1.0
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.4.lid",
+      "length": 1.6842,
+      "meanRGBStep": 85.19,
+      "modelEdge": [
+        [
+          0.7631999850273132,
+          1.2100000381469727,
+          -1.9737000465393066
+        ],
+        [
+          0.7631999850273132,
+          1.2100000381469727,
+          -0.28949999809265137
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 1.9705,
+      "meanRGBStep": 72.09,
+      "modelEdge": [
+        [
+          -0.9853000044822693,
+          0.6600000262260437,
+          2.105299949645996
+        ],
+        [
+          0.9853000044822693,
+          0.6600000262260437,
+          2.105299949645996
+        ]
+      ]
+    },
+    {
+      "component": "hull.service-tail",
+      "length": 2.4464,
+      "meanRGBStep": 57.77,
+      "modelEdge": [
+        [
+          0.6841999888420105,
+          0.6200000047683716,
+          5.0
+        ],
+        [
+          1.1842000484466553,
+          0.6200000047683716,
+          2.605299949645996
+        ]
+      ]
+    },
+    {
+      "component": "ventral.service-tail-hatch",
+      "length": 1.7368,
+      "meanRGBStep": 80.47,
+      "modelEdge": [
+        [
+          0.6053000092506409,
+          -0.5299999713897705,
+          1.736799955368042
+        ],
+        [
+          0.6053000092506409,
+          -0.5299999713897705,
+          3.4737000465393066
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 1.5658,
+      "meanRGBStep": 88.78,
+      "modelEdge": [
+        [
+          5.317500114440918,
+          -1.0996999740600586,
+          1.5326000452041626
+        ],
+        [
+          5.317500114440918,
+          -1.0996999740600586,
+          3.098400115966797
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 1.5658,
+      "meanRGBStep": 85.8,
+      "modelEdge": [
+        [
+          5.317500114440918,
+          1.2196999788284302,
+          1.5326000452041626
+        ],
+        [
+          5.317500114440918,
+          1.2196999788284302,
+          3.098400115966797
+        ]
+      ]
+    },
+    {
+      "component": "hull.service-tail",
+      "length": 1.9737,
+      "meanRGBStep": 67.21,
+      "modelEdge": [
+        [
+          -1.0,
+          -0.4000000059604645,
+          0.5526000261306763
+        ],
+        [
+          0.9736999869346619,
+          -0.4000000059604645,
+          0.5526000261306763
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 1.496,
+      "meanRGBStep": 87.05,
+      "modelEdge": [
+        [
+          0.6578999757766724,
+          0.5152000188827515,
+          -10.0
+        ],
+        [
+          1.605299949645996,
+          0.8600000143051147,
+          -8.894700050354004
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard.pylon.0",
+      "length": 1.8308,
+      "meanRGBStep": 69.74,
+      "modelEdge": [
+        [
+          3.263200044631958,
+          -0.28999999165534973,
+          0.39469999074935913
+        ],
+        [
+          3.842099905014038,
+          -0.28999999165534973,
+          2.1315999031066895
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 2.2974,
+      "meanRGBStep": 55.26,
+      "modelEdge": [
+        [
+          -4.07889986038208,
+          0.7699999809265137,
+          -2.6842000484466553
+        ],
+        [
+          -3.894700050354004,
+          0.8199999928474426,
+          -4.973700046539307
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 2.2974,
+      "meanRGBStep": 55.12,
+      "modelEdge": [
+        [
+          3.894700050354004,
+          0.8199999928474426,
+          -4.973700046539307
+        ],
+        [
+          4.07889986038208,
+          0.7699999809265137,
+          -2.6842000484466553
+        ]
+      ]
+    },
+    {
+      "component": "bridge.roof-cap",
+      "length": 1.0789,
+      "meanRGBStep": 116.66,
+      "modelEdge": [
+        [
+          -0.5526000261306763,
+          1.1399999856948853,
+          -8.236800193786621
+        ],
+        [
+          0.5263000130653381,
+          1.1399999856948853,
+          -8.236800193786621
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.4.lid",
+      "length": 2.0,
+      "meanRGBStep": 62.08,
+      "modelEdge": [
+        [
+          1.0,
+          1.2100000381469727,
+          -0.05260000005364418
+        ],
+        [
+          3.0,
+          1.2100000381469727,
+          -0.05260000005364418
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.dorsal-shield",
+      "length": 1.0,
+      "meanRGBStep": 122.97,
+      "modelEdge": [
+        [
+          3.657900094985962,
+          1.6649999618530273,
+          2.157900094985962
+        ],
+        [
+          4.657899856567383,
+          1.6649999618530273,
+          2.157900094985962
+        ]
+      ]
+    },
+    {
+      "component": "bridge.glazing",
+      "length": 1.4598,
+      "meanRGBStep": 83.7,
+      "modelEdge": [
+        [
+          -2.421099901199341,
+          1.6299999952316284,
+          -7.92110013961792
+        ],
+        [
+          -1.2105000019073486,
+          1.6299999952316284,
+          -8.736800193786621
+        ]
+      ]
+    },
+    {
+      "component": "ventral.service-tail-hatch",
+      "length": 0.9474,
+      "meanRGBStep": 128.77,
+      "modelEdge": [
+        [
+          -0.5,
+          -0.6499999761581421,
+          3.6315999031066895
+        ],
+        [
+          0.4474000036716461,
+          -0.6499999761581421,
+          3.6315999031066895
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.3.lid",
+      "length": 1.6842,
+      "meanRGBStep": 72.16,
+      "modelEdge": [
+        [
+          0.7631999850273132,
+          1.2100000381469727,
+          -4.473700046539307
+        ],
+        [
+          0.7631999850273132,
+          1.2100000381469727,
+          -2.7894999980926514
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 1.5658,
+      "meanRGBStep": 76.69,
+      "modelEdge": [
+        [
+          -5.317500114440918,
+          1.2196999788284302,
+          1.5326000452041626
+        ],
+        [
+          -5.317500114440918,
+          1.2196999788284302,
+          3.098400115966797
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 1.5658,
+      "meanRGBStep": 75.41,
+      "modelEdge": [
+        [
+          -2.998199939727783,
+          1.2196999788284302,
+          1.5326000452041626
+        ],
+        [
+          -2.998199939727783,
+          1.2196999788284302,
+          3.098400115966797
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 1.41,
+      "meanRGBStep": 83.46,
+      "modelEdge": [
+        [
+          -3.894700050354004,
+          -0.5899999737739563,
+          -4.973700046539307
+        ],
+        [
+          -3.894700050354004,
+          0.8199999928474426,
+          -4.973700046539307
+        ]
+      ]
+    },
+    {
+      "component": "ventral.service-tail-hatch",
+      "length": 1.7368,
+      "meanRGBStep": 67.6,
+      "modelEdge": [
+        [
+          -0.6578999757766724,
+          -0.5299999713897705,
+          1.736799955368042
+        ],
+        [
+          -0.6578999757766724,
+          -0.5299999713897705,
+          3.4737000465393066
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.3.lid",
+      "length": 2.0,
+      "meanRGBStep": 58.22,
+      "modelEdge": [
+        [
+          1.0,
+          1.2100000381469727,
+          -2.5525999069213867
+        ],
+        [
+          3.0,
+          1.2100000381469727,
+          -2.5525999069213867
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.4.lid",
+      "length": 1.6842,
+      "meanRGBStep": 68.33,
+      "modelEdge": [
+        [
+          0.7631999850273132,
+          1.2799999713897705,
+          -1.9737000465393066
+        ],
+        [
+          0.7631999850273132,
+          1.2799999713897705,
+          -0.28949999809265137
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard.pylon.1",
+      "length": 2.2918,
+      "meanRGBStep": 50.13,
+      "modelEdge": [
+        [
+          1.20169997215271,
+          -0.3799999952316284,
+          2.041800022125244
+        ],
+        [
+          3.1451001167297363,
+          -0.3799999952316284,
+          3.256500005722046
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 1.8997,
+      "meanRGBStep": 59.88,
+      "modelEdge": [
+        [
+          -2.6315999031066895,
+          -0.44999998807907104,
+          -7.315800189971924
+        ],
+        [
+          -1.605299949645996,
+          -0.20000000298023224,
+          -8.894700050354004
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.3.lid",
+      "length": 1.6842,
+      "meanRGBStep": 67.31,
+      "modelEdge": [
+        [
+          0.7631999850273132,
+          1.2799999713897705,
+          -4.473700046539307
+        ],
+        [
+          0.7631999850273132,
+          1.2799999713897705,
+          -2.7894999980926514
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.1.lid",
+      "length": 1.6842,
+      "meanRGBStep": 66.8,
+      "modelEdge": [
+        [
+          -0.5263000130653381,
+          1.2100000381469727,
+          -4.473700046539307
+        ],
+        [
+          -0.5263000130653381,
+          1.2100000381469727,
+          -2.7894999980926514
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.1.lid",
+      "length": 2.0,
+      "meanRGBStep": 54.67,
+      "modelEdge": [
+        [
+          -2.763200044631958,
+          1.2799999713897705,
+          -2.5525999069213867
+        ],
+        [
+          -0.7631999850273132,
+          1.2799999713897705,
+          -2.5525999069213867
+        ]
+      ]
+    },
+    {
+      "component": "machinery.tail-spine",
+      "length": 0.9211,
+      "meanRGBStep": 118.65,
+      "modelEdge": [
+        [
+          -0.47369998693466187,
+          0.7799999713897705,
+          1.236799955368042
+        ],
+        [
+          0.4474000036716461,
+          0.7799999713897705,
+          1.236799955368042
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.2.lid",
+      "length": 2.0,
+      "meanRGBStep": 54.6,
+      "modelEdge": [
+        [
+          -2.763200044631958,
+          1.2100000381469727,
+          -0.05260000005364418
+        ],
+        [
+          -0.7631999850273132,
+          1.2100000381469727,
+          -0.05260000005364418
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.3.lid",
+      "length": 2.0,
+      "meanRGBStep": 53.92,
+      "modelEdge": [
+        [
+          1.0,
+          1.2799999713897705,
+          -2.5525999069213867
+        ],
+        [
+          3.0,
+          1.2799999713897705,
+          -2.5525999069213867
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.2.lid",
+      "length": 2.0,
+      "meanRGBStep": 53.59,
+      "modelEdge": [
+        [
+          -2.763200044631958,
+          1.2100000381469727,
+          -2.2105000019073486
+        ],
+        [
+          -0.7631999850273132,
+          1.2100000381469727,
+          -2.2105000019073486
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.2.lid",
+      "length": 1.6842,
+      "meanRGBStep": 63.43,
+      "modelEdge": [
+        [
+          -0.5263000130653381,
+          1.2100000381469727,
+          -1.9737000465393066
+        ],
+        [
+          -0.5263000130653381,
+          1.2100000381469727,
+          -0.28949999809265137
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard.pylon.0",
+      "length": 1.8308,
+      "meanRGBStep": 57.98,
+      "modelEdge": [
+        [
+          3.263200044631958,
+          0.3799999952316284,
+          0.39469999074935913
+        ],
+        [
+          3.842099905014038,
+          0.3799999952316284,
+          2.1315999031066895
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 2.1789,
+      "meanRGBStep": 48.69,
+      "modelEdge": [
+        [
+          3.5262999534606934,
+          0.6700000166893005,
+          -0.5788999795913696
+        ],
+        [
+          4.07889986038208,
+          0.7699999809265137,
+          -2.6842000484466553
+        ]
+      ]
+    },
+    {
+      "component": "ventral.service-tail-hatch",
+      "length": 1.7368,
+      "meanRGBStep": 60.75,
+      "modelEdge": [
+        [
+          0.6053000092506409,
+          -0.6499999761581421,
+          1.736799955368042
+        ],
+        [
+          0.6053000092506409,
+          -0.6499999761581421,
+          3.4737000465393066
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 1.5658,
+      "meanRGBStep": 66.17,
+      "modelEdge": [
+        [
+          2.998199939727783,
+          1.2196999788284302,
+          1.5326000452041626
+        ],
+        [
+          2.998199939727783,
+          1.2196999788284302,
+          3.098400115966797
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard-loading-lock",
+      "length": 1.4737,
+      "meanRGBStep": 69.94,
+      "modelEdge": [
+        [
+          3.6842000484466553,
+          -0.4099999964237213,
+          -3.6842000484466553
+        ],
+        [
+          3.6842000484466553,
+          -0.4099999964237213,
+          -2.2105000019073486
+        ]
+      ]
+    },
+    {
+      "component": "bridge.glazing",
+      "length": 1.4426,
+      "meanRGBStep": 70.68,
+      "modelEdge": [
+        [
+          0.8946999907493591,
+          1.6299999952316284,
+          -8.736800193786621
+        ],
+        [
+          2.0262999534606934,
+          1.6299999952316284,
+          -7.842100143432617
+        ]
+      ]
+    },
+    {
+      "component": "machinery.tail-spine",
+      "length": 2.1579,
+      "meanRGBStep": 47.22,
+      "modelEdge": [
+        [
+          -0.6053000092506409,
+          0.8899999856948853,
+          1.368399977684021
+        ],
+        [
+          -0.6053000092506409,
+          0.8899999856948853,
+          3.5262999534606934
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.1.lid",
+      "length": 1.6842,
+      "meanRGBStep": 59.66,
+      "modelEdge": [
+        [
+          -0.5263000130653381,
+          1.2799999713897705,
+          -4.473700046539307
+        ],
+        [
+          -0.5263000130653381,
+          1.2799999713897705,
+          -2.7894999980926514
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.2.lid",
+      "length": 1.6842,
+      "meanRGBStep": 59.5,
+      "modelEdge": [
+        [
+          -0.5263000130653381,
+          1.2799999713897705,
+          -1.9737000465393066
+        ],
+        [
+          -0.5263000130653381,
+          1.2799999713897705,
+          -0.28949999809265137
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.dorsal-shield",
+      "length": 1.0,
+      "meanRGBStep": 99.85,
+      "modelEdge": [
+        [
+          -4.657899856567383,
+          1.6649999618530273,
+          2.157900094985962
+        ],
+        [
+          -3.657900094985962,
+          1.6649999618530273,
+          2.157900094985962
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 1.6401,
+      "meanRGBStep": 59.59,
+      "modelEdge": [
+        [
+          1.263200044631958,
+          -0.3149999976158142,
+          2.105299949645996
+        ],
+        [
+          2.394700050354004,
+          -0.4000000059604645,
+          0.9211000204086304
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.1.lid",
+      "length": 2.0,
+      "meanRGBStep": 48.69,
+      "modelEdge": [
+        [
+          -2.763200044631958,
+          1.2100000381469727,
+          -2.5525999069213867
+        ],
+        [
+          -0.7631999850273132,
+          1.2100000381469727,
+          -2.5525999069213867
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard.pylon.0",
+      "length": 1.7123,
+      "meanRGBStep": 56.87,
+      "modelEdge": [
+        [
+          3.263200044631958,
+          -0.28999999165534973,
+          0.39469999074935913
+        ],
+        [
+          3.342099905014038,
+          -0.28999999165534973,
+          -1.3157999515533447
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.3.lid",
+      "length": 2.0,
+      "meanRGBStep": 48.41,
+      "modelEdge": [
+        [
+          1.0,
+          1.2100000381469727,
+          -4.7104997634887695
+        ],
+        [
+          3.0,
+          1.2100000381469727,
+          -4.7104997634887695
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 1.496,
+      "meanRGBStep": 62.81,
+      "modelEdge": [
+        [
+          -1.605299949645996,
+          0.8600000143051147,
+          -8.894700050354004
+        ],
+        [
+          -0.6578999757766724,
+          0.5152000188827515,
+          -10.0
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.dorsal-shield",
+      "length": 1.0,
+      "meanRGBStep": 93.25,
+      "modelEdge": [
+        [
+          3.657900094985962,
+          1.6649999618530273,
+          6.236800193786621
+        ],
+        [
+          4.657899856567383,
+          1.6649999618530273,
+          6.236800193786621
+        ]
+      ]
+    },
+    {
+      "component": "bridge.roof-cap",
+      "length": 1.0789,
+      "meanRGBStep": 85.67,
+      "modelEdge": [
+        [
+          -0.5526000261306763,
+          1.0499999523162842,
+          -9.5
+        ],
+        [
+          0.5263000130653381,
+          1.0499999523162842,
+          -9.5
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.4.lid",
+      "length": 2.0,
+      "meanRGBStep": 45.4,
+      "modelEdge": [
+        [
+          1.0,
+          1.2100000381469727,
+          -2.2105000019073486
+        ],
+        [
+          3.0,
+          1.2100000381469727,
+          -2.2105000019073486
+        ]
+      ]
+    },
+    {
+      "component": "ventral.service-tail-hatch",
+      "length": 0.9474,
+      "meanRGBStep": 95.56,
+      "modelEdge": [
+        [
+          -0.5,
+          -0.5299999713897705,
+          1.5788999795913696
+        ],
+        [
+          0.4474000036716461,
+          -0.5299999713897705,
+          1.5788999795913696
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.1.lid",
+      "length": 2.0,
+      "meanRGBStep": 45.18,
+      "modelEdge": [
+        [
+          -2.763200044631958,
+          1.2100000381469727,
+          -4.7104997634887695
+        ],
+        [
+          -0.7631999850273132,
+          1.2100000381469727,
+          -4.7104997634887695
+        ]
+      ]
+    },
+    {
+      "component": "hull.port.pylon.0",
+      "length": 1.8308,
+      "meanRGBStep": 49.11,
+      "modelEdge": [
+        [
+          -3.842099905014038,
+          -0.28999999165534973,
+          2.1315999031066895
+        ],
+        [
+          -3.263200044631958,
+          -0.28999999165534973,
+          0.39469999074935913
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.1",
+      "length": 0.6316,
+      "meanRGBStep": 142.28,
+      "modelEdge": [
+        [
+          0.28949999809265137,
+          1.2100000381469727,
+          0.7105000019073486
+        ],
+        [
+          0.28949999809265137,
+          1.2100000381469727,
+          1.3421000242233276
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 1.4762,
+      "meanRGBStep": 59.88,
+      "modelEdge": [
+        [
+          -1.605299949645996,
+          -0.20000000298023224,
+          -8.894700050354004
+        ],
+        [
+          -0.6578999757766724,
+          0.04479999840259552,
+          -10.0
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.0",
+      "length": 0.6316,
+      "meanRGBStep": 137.92,
+      "modelEdge": [
+        [
+          0.28949999809265137,
+          1.2100000381469727,
+          -5.736800193786621
+        ],
+        [
+          0.28949999809265137,
+          1.2100000381469727,
+          -5.105299949645996
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard-loading-lock",
+      "length": 1.1316,
+      "meanRGBStep": 76.14,
+      "modelEdge": [
+        [
+          3.8684000968933105,
+          0.8199999928474426,
+          -2.0262999534606934
+        ],
+        [
+          5.0,
+          0.8199999928474426,
+          -2.0262999534606934
+        ]
+      ]
+    },
+    {
+      "component": "bridge.glazing",
+      "length": 1.2502,
+      "meanRGBStep": 68.8,
+      "modelEdge": [
+        [
+          -3.0525999069213867,
+          1.2400000095367432,
+          -6.842100143432617
+        ],
+        [
+          -2.421099901199341,
+          1.2400000095367432,
+          -7.92110013961792
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 1.8918,
+      "meanRGBStep": 45.45,
+      "modelEdge": [
+        [
+          2.394700050354004,
+          0.44999998807907104,
+          0.9211000204086304
+        ],
+        [
+          3.5262999534606934,
+          0.6700000166893005,
+          -0.5788999795913696
+        ]
+      ]
+    },
+    {
+      "component": "hull.port.pylon.0",
+      "length": 1.7123,
+      "meanRGBStep": 50.01,
+      "modelEdge": [
+        [
+          -3.342099905014038,
+          0.3799999952316284,
+          -1.3157999515533447
+        ],
+        [
+          -3.263200044631958,
+          0.3799999952316284,
+          0.39469999074935913
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.dorsal-shield",
+      "length": 1.0,
+      "meanRGBStep": 82.54,
+      "modelEdge": [
+        [
+          -4.657899856567383,
+          1.6649999618530273,
+          6.236800193786621
+        ],
+        [
+          -3.657900094985962,
+          1.6649999618530273,
+          6.236800193786621
+        ]
+      ]
+    },
+    {
+      "component": "hull.port.pylon.0",
+      "length": 1.8308,
+      "meanRGBStep": 45.03,
+      "modelEdge": [
+        [
+          -3.842099905014038,
+          0.3799999952316284,
+          2.1315999031066895
+        ],
+        [
+          -3.263200044631958,
+          0.3799999952316284,
+          0.39469999074935913
+        ]
+      ]
+    },
+    {
+      "component": "bridge.roof-cap",
+      "length": 0.7895,
+      "meanRGBStep": 104.39,
+      "modelEdge": [
+        [
+          0.7631999850273132,
+          1.1399999856948853,
+          -9.263199806213379
+        ],
+        [
+          0.7631999850273132,
+          1.1399999856948853,
+          -8.473699569702148
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.dorsal-shield",
+      "length": 1.0,
+      "meanRGBStep": 81.83,
+      "modelEdge": [
+        [
+          3.657900094985962,
+          1.7649999856948853,
+          2.157900094985962
+        ],
+        [
+          4.657899856567383,
+          1.7649999856948853,
+          2.157900094985962
+        ]
+      ]
+    },
+    {
+      "component": "ventral.belly-cargo-door",
+      "length": 0.6327,
+      "meanRGBStep": 127.87,
+      "modelEdge": [
+        [
+          -2.394700050354004,
+          -1.0399999618530273,
+          -4.052599906921387
+        ],
+        [
+          -1.9473999738693237,
+          -1.0399999618530273,
+          -4.5
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.dorsal-shield",
+      "length": 1.0,
+      "meanRGBStep": 80.85,
+      "modelEdge": [
+        [
+          -4.657899856567383,
+          1.7649999856948853,
+          2.157900094985962
+        ],
+        [
+          -3.657900094985962,
+          1.7649999856948853,
+          2.157900094985962
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.4.lid",
+      "length": 1.6842,
+      "meanRGBStep": 47.62,
+      "modelEdge": [
+        [
+          3.236799955368042,
+          1.2100000381469727,
+          -1.9737000465393066
+        ],
+        [
+          3.236799955368042,
+          1.2100000381469727,
+          -0.28949999809265137
+        ]
+      ]
+    },
+    {
+      "component": "ventral.belly-cargo-door",
+      "length": 0.6327,
+      "meanRGBStep": 125.81,
+      "modelEdge": [
+        [
+          -2.394700050354004,
+          -1.0399999618530273,
+          0.02630000002682209
+        ],
+        [
+          -1.9473999738693237,
+          -1.0399999618530273,
+          0.47369998693466187
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard-loading-lock",
+      "length": 1.1316,
+      "meanRGBStep": 70.14,
+      "modelEdge": [
+        [
+          3.8684000968933105,
+          -0.4099999964237213,
+          -3.8684000968933105
+        ],
+        [
+          5.0,
+          -0.4099999964237213,
+          -3.8684000968933105
+        ]
+      ]
+    },
+    {
+      "component": "bridge.roof-cap",
+      "length": 0.7895,
+      "meanRGBStep": 99.6,
+      "modelEdge": [
+        [
+          0.7631999850273132,
+          1.0499999523162842,
+          -9.263199806213379
+        ],
+        [
+          0.7631999850273132,
+          1.0499999523162842,
+          -8.473699569702148
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.2.lid",
+      "length": 1.6842,
+      "meanRGBStep": 46.61,
+      "modelEdge": [
+        [
+          -3.0,
+          1.2100000381469727,
+          -1.9737000465393066
+        ],
+        [
+          -3.0,
+          1.2100000381469727,
+          -0.28949999809265137
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 1.0263,
+      "meanRGBStep": 75.79,
+      "modelEdge": [
+        [
+          -0.5131999850273132,
+          0.699999988079071,
+          -10.0
+        ],
+        [
+          0.5131999850273132,
+          0.699999988079071,
+          -10.0
+        ]
+      ]
+    },
+    {
+      "component": "bridge.glazing",
+      "length": 1.4426,
+      "meanRGBStep": 52.42,
+      "modelEdge": [
+        [
+          0.8946999907493591,
+          1.2400000095367432,
+          -8.736800193786621
+        ],
+        [
+          2.0262999534606934,
+          1.2400000095367432,
+          -7.842100143432617
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.dorsal-shield",
+      "length": 1.0,
+      "meanRGBStep": 75.43,
+      "modelEdge": [
+        [
+          -4.657899856567383,
+          1.7649999856948853,
+          6.236800193786621
+        ],
+        [
+          -3.657900094985962,
+          1.7649999856948853,
+          6.236800193786621
+        ]
+      ]
+    },
+    {
+      "component": "bridge.roof-cap",
+      "length": 1.0789,
+      "meanRGBStep": 69.59,
+      "modelEdge": [
+        [
+          -0.5526000261306763,
+          1.1399999856948853,
+          -9.5
+        ],
+        [
+          0.5263000130653381,
+          1.1399999856948853,
+          -9.5
+        ]
+      ]
+    },
+    {
+      "component": "hull.service-tail",
+      "length": 0.9207,
+      "meanRGBStep": 80.01,
+      "modelEdge": [
+        [
+          -0.6578999757766724,
+          0.6200000047683716,
+          4.973700046539307
+        ],
+        [
+          0.1316000074148178,
+          0.6200000047683716,
+          5.447400093078613
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.dorsal-shield",
+      "length": 1.0,
+      "meanRGBStep": 72.77,
+      "modelEdge": [
+        [
+          3.657900094985962,
+          1.7649999856948853,
+          6.236800193786621
+        ],
+        [
+          4.657899856567383,
+          1.7649999856948853,
+          6.236800193786621
+        ]
+      ]
+    },
+    {
+      "component": "bridge.roof-cap",
+      "length": 1.0789,
+      "meanRGBStep": 67.33,
+      "modelEdge": [
+        [
+          -0.5526000261306763,
+          1.0499999523162842,
+          -8.236800193786621
+        ],
+        [
+          0.5263000130653381,
+          1.0499999523162842,
+          -8.236800193786621
+        ]
+      ]
+    },
+    {
+      "component": "bridge.glazing",
+      "length": 1.2502,
+      "meanRGBStep": 57.0,
+      "modelEdge": [
+        [
+          -3.0525999069213867,
+          1.6299999952316284,
+          -6.842100143432617
+        ],
+        [
+          -2.421099901199341,
+          1.6299999952316284,
+          -7.92110013961792
+        ]
+      ]
+    },
+    {
+      "component": "armor.cream-spine",
+      "length": 0.6579,
+      "meanRGBStep": 107.5,
+      "modelEdge": [
+        [
+          -0.3158000111579895,
+          1.149999976158142,
+          1.2105000019073486
+        ],
+        [
+          0.34209999442100525,
+          1.149999976158142,
+          1.2105000019073486
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard-loading-lock",
+      "length": 1.1316,
+      "meanRGBStep": 61.16,
+      "modelEdge": [
+        [
+          3.8684000968933105,
+          0.8199999928474426,
+          -3.8684000968933105
+        ],
+        [
+          5.0,
+          0.8199999928474426,
+          -3.8684000968933105
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.0",
+      "length": 0.6316,
+      "meanRGBStep": 107.71,
+      "modelEdge": [
+        [
+          -0.34209999442100525,
+          1.2100000381469727,
+          -5.736800193786621
+        ],
+        [
+          -0.34209999442100525,
+          1.2100000381469727,
+          -5.105299949645996
+        ]
+      ]
+    },
+    {
+      "component": "machinery.tail-spine",
+      "length": 0.9211,
+      "meanRGBStep": 73.77,
+      "modelEdge": [
+        [
+          -0.47369998693466187,
+          0.8899999856948853,
+          3.657900094985962
+        ],
+        [
+          0.4474000036716461,
+          0.8899999856948853,
+          3.657900094985962
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.2",
+      "length": 0.6316,
+      "meanRGBStep": 105.37,
+      "modelEdge": [
+        [
+          -0.34209999442100525,
+          0.9800000190734863,
+          4.184199810028076
+        ],
+        [
+          -0.34209999442100525,
+          0.9800000190734863,
+          4.815800189971924
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 1.41,
+      "meanRGBStep": 47.11,
+      "modelEdge": [
+        [
+          3.894700050354004,
+          -0.5899999737739563,
+          -4.973700046539307
+        ],
+        [
+          3.894700050354004,
+          0.8199999928474426,
+          -4.973700046539307
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.6304,
+      "meanRGBStep": 104.67,
+      "modelEdge": [
+        [
+          5.248000144958496,
+          1.1500999927520752,
+          7.4567999839782715
+        ],
+        [
+          5.317500114440918,
+          1.2196999788284302,
+          6.834199905395508
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard-loading-lock",
+      "length": 1.1316,
+      "meanRGBStep": 56.59,
+      "modelEdge": [
+        [
+          3.8684000968933105,
+          -0.4099999964237213,
+          -2.0262999534606934
+        ],
+        [
+          5.0,
+          -0.4099999964237213,
+          -2.0262999534606934
+        ]
+      ]
+    },
+    {
+      "component": "ventral.belly-cargo-door",
+      "length": 0.6327,
+      "meanRGBStep": 100.69,
+      "modelEdge": [
+        [
+          -2.394700050354004,
+          -0.949999988079071,
+          -4.052599906921387
+        ],
+        [
+          -1.9473999738693237,
+          -0.949999988079071,
+          -4.5
+        ]
+      ]
+    },
+    {
+      "component": "hull.service-tail",
+      "length": 1.02,
+      "meanRGBStep": 61.26,
+      "modelEdge": [
+        [
+          -1.0,
+          -0.4000000059604645,
+          0.5526000261306763
+        ],
+        [
+          -1.0,
+          0.6200000047683716,
+          0.5526000261306763
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 0.4095,
+      "meanRGBStep": 151.86,
+      "modelEdge": [
+        [
+          -4.7855000495910645,
+          -1.455199956893921,
+          1.5326000452041626
+        ],
+        [
+          -4.678800106048584,
+          -1.19760000705719,
+          1.2325999736785889
+        ]
+      ]
+    },
+    {
+      "component": "hull.service-tail",
+      "length": 0.9207,
+      "meanRGBStep": 65.34,
+      "modelEdge": [
+        [
+          -0.6578999757766724,
+          -0.4000000059604645,
+          4.973700046539307
+        ],
+        [
+          0.1316000074148178,
+          -0.4000000059604645,
+          5.447400093078613
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.2",
+      "length": 0.4737,
+      "meanRGBStep": 126.71,
+      "modelEdge": [
+        [
+          -0.2632000148296356,
+          0.9800000190734863,
+          4.894700050354004
+        ],
+        [
+          0.21050000190734863,
+          0.9800000190734863,
+          4.894700050354004
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.4095,
+      "meanRGBStep": 144.68,
+      "modelEdge": [
+        [
+          3.5302999019622803,
+          -1.455199956893921,
+          1.5326000452041626
+        ],
+        [
+          3.63700008392334,
+          -1.19760000705719,
+          1.2325999736785889
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard-loading-lock",
+      "length": 1.23,
+      "meanRGBStep": 47.88,
+      "modelEdge": [
+        [
+          5.184199810028076,
+          -0.4099999964237213,
+          -3.6842000484466553
+        ],
+        [
+          5.184199810028076,
+          0.8199999928474426,
+          -3.6842000484466553
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard-loading-lock",
+      "length": 1.23,
+      "meanRGBStep": 47.88,
+      "modelEdge": [
+        [
+          3.6842000484466553,
+          -0.4099999964237213,
+          -2.2105000019073486
+        ],
+        [
+          3.6842000484466553,
+          0.8199999928474426,
+          -2.2105000019073486
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.0",
+      "length": 0.6316,
+      "meanRGBStep": 89.42,
+      "modelEdge": [
+        [
+          0.28949999809265137,
+          1.309999942779541,
+          -5.736800193786621
+        ],
+        [
+          0.28949999809265137,
+          1.309999942779541,
+          -5.105299949645996
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard.pylon.1",
+      "length": 0.6075,
+      "meanRGBStep": 91.14,
+      "modelEdge": [
+        [
+          0.8421000242233276,
+          -0.28999999165534973,
+          1.1842000484466553
+        ],
+        [
+          1.4211000204086304,
+          -0.28999999165534973,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.2",
+      "length": 0.6316,
+      "meanRGBStep": 86.82,
+      "modelEdge": [
+        [
+          0.28949999809265137,
+          0.9800000190734863,
+          4.184199810028076
+        ],
+        [
+          0.28949999809265137,
+          0.9800000190734863,
+          4.815800189971924
+        ]
+      ]
+    },
+    {
+      "component": "hull.service-tail",
+      "length": 0.711,
+      "meanRGBStep": 74.89,
+      "modelEdge": [
+        [
+          0.1316000074148178,
+          0.6200000047683716,
+          5.447400093078613
+        ],
+        [
+          0.6841999888420105,
+          0.6200000047683716,
+          5.0
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 0.6304,
+      "meanRGBStep": 80.43,
+      "modelEdge": [
+        [
+          -5.317500114440918,
+          1.2196999788284302,
+          6.834199905395508
+        ],
+        [
+          -5.248000144958496,
+          1.1500999927520752,
+          7.4567999839782715
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.1",
+      "length": 0.4737,
+      "meanRGBStep": 105.85,
+      "modelEdge": [
+        [
+          -0.2632000148296356,
+          1.309999942779541,
+          0.631600022315979
+        ],
+        [
+          0.21050000190734863,
+          1.309999942779541,
+          0.631600022315979
+        ]
+      ]
+    },
+    {
+      "component": "hull.port.pylon.1",
+      "length": 0.8823,
+      "meanRGBStep": 55.28,
+      "modelEdge": [
+        [
+          -1.105299949645996,
+          -0.28999999165534973,
+          2.0262999534606934
+        ],
+        [
+          -0.8421000242233276,
+          -0.28999999165534973,
+          1.1842000484466553
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.1",
+      "length": 0.6316,
+      "meanRGBStep": 75.99,
+      "modelEdge": [
+        [
+          0.28949999809265137,
+          1.309999942779541,
+          0.7105000019073486
+        ],
+        [
+          0.28949999809265137,
+          1.309999942779541,
+          1.3421000242233276
+        ]
+      ]
+    },
+    {
+      "component": "armor.cream-spine",
+      "length": 0.6579,
+      "meanRGBStep": 72.36,
+      "modelEdge": [
+        [
+          -0.3158000111579895,
+          1.0700000524520874,
+          -5.8684000968933105
+        ],
+        [
+          0.34209999442100525,
+          1.0700000524520874,
+          -5.8684000968933105
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.814,
+      "meanRGBStep": 58.32,
+      "modelEdge": [
+        [
+          3.299799919128418,
+          0.9180999994277954,
+          8.880000114440918
+        ],
+        [
+          3.404099941253662,
+          0.8137999773025513,
+          9.680500030517578
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard.pylon.1",
+      "length": 0.8823,
+      "meanRGBStep": 53.22,
+      "modelEdge": [
+        [
+          0.8421000242233276,
+          0.3799999952316284,
+          1.1842000484466553
+        ],
+        [
+          1.105299949645996,
+          0.3799999952316284,
+          2.0262999534606934
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.2",
+      "length": 0.6316,
+      "meanRGBStep": 73.01,
+      "modelEdge": [
+        [
+          0.28949999809265137,
+          0.8399999737739563,
+          4.184199810028076
+        ],
+        [
+          0.28949999809265137,
+          0.8399999737739563,
+          4.815800189971924
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.2",
+      "length": 0.4737,
+      "meanRGBStep": 96.41,
+      "modelEdge": [
+        [
+          -0.2632000148296356,
+          0.8399999737739563,
+          4.894700050354004
+        ],
+        [
+          0.21050000190734863,
+          0.8399999737739563,
+          4.894700050354004
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.814,
+      "meanRGBStep": 55.57,
+      "modelEdge": [
+        [
+          5.015999794006348,
+          -0.7980999946594238,
+          8.880000114440918
+        ],
+        [
+          5.1203999519348145,
+          -0.9024999737739563,
+          8.079500198364258
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard.pylon.1",
+      "length": 0.8823,
+      "meanRGBStep": 51.14,
+      "modelEdge": [
+        [
+          0.8421000242233276,
+          -0.28999999165534973,
+          1.1842000484466553
+        ],
+        [
+          1.105299949645996,
+          -0.28999999165534973,
+          2.0262999534606934
+        ]
+      ]
+    },
+    {
+      "component": "armor.cream-spine",
+      "length": 0.6579,
+      "meanRGBStep": 67.22,
+      "modelEdge": [
+        [
+          -0.3158000111579895,
+          1.149999976158142,
+          -5.8684000968933105
+        ],
+        [
+          0.34209999442100525,
+          1.149999976158142,
+          -5.8684000968933105
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 0.814,
+      "meanRGBStep": 53.95,
+      "modelEdge": [
+        [
+          -3.404099941253662,
+          0.8137999773025513,
+          9.680500030517578
+        ],
+        [
+          -3.299799919128418,
+          0.9180999994277954,
+          8.880000114440918
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.814,
+      "meanRGBStep": 53.85,
+      "modelEdge": [
+        [
+          4.9116997718811035,
+          -0.6937999725341797,
+          9.680500030517578
+        ],
+        [
+          5.015999794006348,
+          -0.7980999946594238,
+          8.880000114440918
+        ]
+      ]
+    },
+    {
+      "component": "bridge.glazing",
+      "length": 0.7815,
+      "meanRGBStep": 55.78,
+      "modelEdge": [
+        [
+          2.105299949645996,
+          1.6299999952316284,
+          -6.2895002365112305
+        ],
+        [
+          2.657900094985962,
+          1.6299999952316284,
+          -6.842100143432617
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard.pylon.1",
+      "length": 0.6075,
+      "meanRGBStep": 71.64,
+      "modelEdge": [
+        [
+          0.8421000242233276,
+          0.3799999952316284,
+          1.1842000484466553
+        ],
+        [
+          1.4211000204086304,
+          0.3799999952316284,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 0.3215,
+      "meanRGBStep": 135.29,
+      "modelEdge": [
+        [
+          -5.068999767303467,
+          -1.3035999536514282,
+          1.5326000452041626
+        ],
+        [
+          -4.7855000495910645,
+          -1.455199956893921,
+          1.5326000452041626
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.2",
+      "length": 0.6316,
+      "meanRGBStep": 68.57,
+      "modelEdge": [
+        [
+          -0.34209999442100525,
+          0.8399999737739563,
+          4.184199810028076
+        ],
+        [
+          -0.34209999442100525,
+          0.8399999737739563,
+          4.815800189971924
+        ]
+      ]
+    },
+    {
+      "component": "hull.port.pylon.0",
+      "length": 0.8004,
+      "meanRGBStep": 52.49,
+      "modelEdge": [
+        [
+          -4.42110013961792,
+          -0.28999999165534973,
+          1.5788999795913696
+        ],
+        [
+          -3.842099905014038,
+          -0.28999999165534973,
+          2.1315999031066895
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 0.814,
+      "meanRGBStep": 51.42,
+      "modelEdge": [
+        [
+          -5.015999794006348,
+          0.9180999994277954,
+          8.880000114440918
+        ],
+        [
+          -4.9116997718811035,
+          0.8137999773025513,
+          9.680500030517578
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.814,
+      "meanRGBStep": 50.58,
+      "modelEdge": [
+        [
+          3.1953999996185303,
+          1.0225000381469727,
+          8.079500198364258
+        ],
+        [
+          3.299799919128418,
+          0.9180999994277954,
+          8.880000114440918
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.6304,
+      "meanRGBStep": 65.25,
+      "modelEdge": [
+        [
+          2.998199939727783,
+          1.2196999788284302,
+          6.834199905395508
+        ],
+        [
+          3.0678000450134277,
+          1.1500999927520752,
+          7.4567999839782715
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.3215,
+      "meanRGBStep": 127.6,
+      "modelEdge": [
+        [
+          2.998199939727783,
+          1.2196999788284302,
+          1.5326000452041626
+        ],
+        [
+          3.246799945831299,
+          1.4235999584197998,
+          1.5326000452041626
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 0.391,
+      "meanRGBStep": 99.44,
+      "modelEdge": [
+        [
+          0.9853000044822693,
+          -0.5899999737739563,
+          2.105299949645996
+        ],
+        [
+          1.263200044631958,
+          -0.3149999976158142,
+          2.105299949645996
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.3215,
+      "meanRGBStep": 119.16,
+      "modelEdge": [
+        [
+          4.7855000495910645,
+          -1.455199956893921,
+          1.5326000452041626
+        ],
+        [
+          5.068999767303467,
+          -1.3035999536514282,
+          1.5326000452041626
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.814,
+      "meanRGBStep": 46.47,
+      "modelEdge": [
+        [
+          3.299799919128418,
+          -0.7980999946594238,
+          8.880000114440918
+        ],
+        [
+          3.404099941253662,
+          -0.6937999725341797,
+          9.680500030517578
+        ]
+      ]
+    },
+    {
+      "component": "bridge.roof-cap",
+      "length": 0.3349,
+      "meanRGBStep": 112.84,
+      "modelEdge": [
+        [
+          0.5263000130653381,
+          1.1399999856948853,
+          -8.236800193786621
+        ],
+        [
+          0.7631999850273132,
+          1.1399999856948853,
+          -8.473699569702148
+        ]
+      ]
+    },
+    {
+      "component": "hull.port.pylon.0",
+      "length": 0.8004,
+      "meanRGBStep": 46.97,
+      "modelEdge": [
+        [
+          -4.42110013961792,
+          0.3799999952316284,
+          1.5788999795913696
+        ],
+        [
+          -3.842099905014038,
+          0.3799999952316284,
+          2.1315999031066895
+        ]
+      ]
+    },
+    {
+      "component": "bridge.roof-cap",
+      "length": 0.3349,
+      "meanRGBStep": 112.25,
+      "modelEdge": [
+        [
+          0.5263000130653381,
+          1.0499999523162842,
+          -9.5
+        ],
+        [
+          0.7631999850273132,
+          1.0499999523162842,
+          -9.263199806213379
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.814,
+      "meanRGBStep": 45.43,
+      "modelEdge": [
+        [
+          4.9116997718811035,
+          0.8137999773025513,
+          9.680500030517578
+        ],
+        [
+          5.015999794006348,
+          0.9180999994277954,
+          8.880000114440918
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.1",
+      "length": 0.4737,
+      "meanRGBStep": 77.62,
+      "modelEdge": [
+        [
+          -0.2632000148296356,
+          1.309999942779541,
+          1.4211000204086304
+        ],
+        [
+          0.21050000190734863,
+          1.309999942779541,
+          1.4211000204086304
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 0.6482,
+      "meanRGBStep": 56.58,
+      "modelEdge": [
+        [
+          -5.248000144958496,
+          1.1500999927520752,
+          7.4567999839782715
+        ],
+        [
+          -5.1203999519348145,
+          1.0225000381469727,
+          8.079500198364258
+        ]
+      ]
+    },
+    {
+      "component": "hull.port.pylon.0",
+      "length": 0.7298,
+      "meanRGBStep": 50.1,
+      "modelEdge": [
+        [
+          -4.0,
+          0.3799999952316284,
+          -1.0
+        ],
+        [
+          -3.342099905014038,
+          0.3799999952316284,
+          -1.3157999515533447
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 0.3215,
+      "meanRGBStep": 113.51,
+      "modelEdge": [
+        [
+          -3.5302999019622803,
+          -1.455199956893921,
+          1.5326000452041626
+        ],
+        [
+          -3.246799945831299,
+          -1.3035999536514282,
+          1.5326000452041626
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.6304,
+      "meanRGBStep": 57.76,
+      "modelEdge": [
+        [
+          5.248000144958496,
+          -1.0300999879837036,
+          7.4567999839782715
+        ],
+        [
+          5.317500114440918,
+          -1.0996999740600586,
+          6.834199905395508
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 0.6304,
+      "meanRGBStep": 57.43,
+      "modelEdge": [
+        [
+          -3.0678000450134277,
+          1.1500999927520752,
+          7.4567999839782715
+        ],
+        [
+          -2.998199939727783,
+          1.2196999788284302,
+          6.834199905395508
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 0.4095,
+      "meanRGBStep": 87.6,
+      "modelEdge": [
+        [
+          -3.63700008392334,
+          -1.19760000705719,
+          1.2325999736785889
+        ],
+        [
+          -3.5302999019622803,
+          -1.455199956893921,
+          1.5326000452041626
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 0.6482,
+      "meanRGBStep": 54.33,
+      "modelEdge": [
+        [
+          -3.1953999996185303,
+          1.0225000381469727,
+          8.079500198364258
+        ],
+        [
+          -3.0678000450134277,
+          1.1500999927520752,
+          7.4567999839782715
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 0.7,
+      "meanRGBStep": 49.81,
+      "modelEdge": [
+        [
+          1.263200044631958,
+          -0.3149999976158142,
+          2.105299949645996
+        ],
+        [
+          1.263200044631958,
+          0.38499999046325684,
+          2.105299949645996
+        ]
+      ]
+    },
+    {
+      "component": "bridge.roof-cap",
+      "length": 0.3349,
+      "meanRGBStep": 103.93,
+      "modelEdge": [
+        [
+          -0.7894999980926514,
+          1.1399999856948853,
+          -8.473699569702148
+        ],
+        [
+          -0.5526000261306763,
+          1.1399999856948853,
+          -8.236800193786621
+        ]
+      ]
+    },
+    {
+      "component": "hull.port.pylon.1",
+      "length": 0.6143,
+      "meanRGBStep": 55.06,
+      "modelEdge": [
+        [
+          -3.8157999515533447,
+          -0.28999999165534973,
+          3.236799955368042
+        ],
+        [
+          -3.2105000019073486,
+          -0.28999999165534973,
+          3.342099905014038
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.6482,
+      "meanRGBStep": 51.55,
+      "modelEdge": [
+        [
+          3.0678000450134277,
+          1.1500999927520752,
+          7.4567999839782715
+        ],
+        [
+          3.1953999996185303,
+          1.0225000381469727,
+          8.079500198364258
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.2",
+      "length": 0.4737,
+      "meanRGBStep": 70.51,
+      "modelEdge": [
+        [
+          -0.2632000148296356,
+          0.8399999737739563,
+          4.105299949645996
+        ],
+        [
+          0.21050000190734863,
+          0.8399999737739563,
+          4.105299949645996
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard.pylon.0",
+      "length": 0.7298,
+      "meanRGBStep": 45.13,
+      "modelEdge": [
+        [
+          3.342099905014038,
+          0.3799999952316284,
+          -1.3157999515533447
+        ],
+        [
+          4.0,
+          0.3799999952316284,
+          -1.0
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.6482,
+      "meanRGBStep": 50.37,
+      "modelEdge": [
+        [
+          5.1203999519348145,
+          1.0225000381469727,
+          8.079500198364258
+        ],
+        [
+          5.248000144958496,
+          1.1500999927520752,
+          7.4567999839782715
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.0",
+      "length": 0.4737,
+      "meanRGBStep": 68.4,
+      "modelEdge": [
+        [
+          -0.2632000148296356,
+          1.2100000381469727,
+          -5.815800189971924
+        ],
+        [
+          0.21050000190734863,
+          1.2100000381469727,
+          -5.815800189971924
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.0",
+      "length": 0.4737,
+      "meanRGBStep": 68.19,
+      "modelEdge": [
+        [
+          -0.2632000148296356,
+          1.309999942779541,
+          -5.815800189971924
+        ],
+        [
+          0.21050000190734863,
+          1.309999942779541,
+          -5.815800189971924
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.0",
+      "length": 0.4737,
+      "meanRGBStep": 65.78,
+      "modelEdge": [
+        [
+          -0.2632000148296356,
+          1.309999942779541,
+          -5.026299953460693
+        ],
+        [
+          0.21050000190734863,
+          1.309999942779541,
+          -5.026299953460693
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.1",
+      "length": 0.4737,
+      "meanRGBStep": 62.99,
+      "modelEdge": [
+        [
+          -0.2632000148296356,
+          1.2100000381469727,
+          0.631600022315979
+        ],
+        [
+          0.21050000190734863,
+          1.2100000381469727,
+          0.631600022315979
+        ]
+      ]
+    },
+    {
+      "component": "hull.port.pylon.1",
+      "length": 0.6075,
+      "meanRGBStep": 47.95,
+      "modelEdge": [
+        [
+          -1.4211000204086304,
+          -0.28999999165534973,
+          1.0
+        ],
+        [
+          -0.8421000242233276,
+          -0.28999999165534973,
+          1.1842000484466553
+        ]
+      ]
+    },
+    {
+      "component": "hull.starboard.pylon.1",
+      "length": 0.6143,
+      "meanRGBStep": 46.79,
+      "modelEdge": [
+        [
+          3.2105000019073486,
+          0.3799999952316284,
+          3.342099905014038
+        ],
+        [
+          3.8157999515533447,
+          0.3799999952316284,
+          3.236799955368042
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.3215,
+      "meanRGBStep": 88.57,
+      "modelEdge": [
+        [
+          2.998199939727783,
+          -1.0996999740600586,
+          1.5326000452041626
+        ],
+        [
+          3.246799945831299,
+          -1.3035999536514282,
+          1.5326000452041626
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.0",
+      "length": 0.4737,
+      "meanRGBStep": 59.75,
+      "modelEdge": [
+        [
+          -0.2632000148296356,
+          1.2100000381469727,
+          -5.026299953460693
+        ],
+        [
+          0.21050000190734863,
+          1.2100000381469727,
+          -5.026299953460693
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 0.391,
+      "meanRGBStep": 70.89,
+      "modelEdge": [
+        [
+          -1.263200044631958,
+          -0.3149999976158142,
+          2.105299949645996
+        ],
+        [
+          -0.9853000044822693,
+          -0.5899999737739563,
+          2.105299949645996
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.3.lid",
+      "length": 0.3349,
+      "meanRGBStep": 82.23,
+      "modelEdge": [
+        [
+          0.7631999850273132,
+          1.2100000381469727,
+          -4.473700046539307
+        ],
+        [
+          1.0,
+          1.2100000381469727,
+          -4.7104997634887695
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.1",
+      "length": 0.4737,
+      "meanRGBStep": 55.77,
+      "modelEdge": [
+        [
+          -0.2632000148296356,
+          1.2100000381469727,
+          1.4211000204086304
+        ],
+        [
+          0.21050000190734863,
+          1.2100000381469727,
+          1.4211000204086304
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.1.lid",
+      "length": 0.3349,
+      "meanRGBStep": 77.11,
+      "modelEdge": [
+        [
+          -0.7631999850273132,
+          1.2100000381469727,
+          -4.7104997634887695
+        ],
+        [
+          -0.5263000130653381,
+          1.2100000381469727,
+          -4.473700046539307
+        ]
+      ]
+    },
+    {
+      "component": "machinery.spine-access.2",
+      "length": 0.4737,
+      "meanRGBStep": 54.3,
+      "modelEdge": [
+        [
+          -0.2632000148296356,
+          0.9800000190734863,
+          4.105299949645996
+        ],
+        [
+          0.21050000190734863,
+          0.9800000190734863,
+          4.105299949645996
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.3215,
+      "meanRGBStep": 77.94,
+      "modelEdge": [
+        [
+          5.068999767303467,
+          -1.3035999536514282,
+          1.5326000452041626
+        ],
+        [
+          5.317500114440918,
+          -1.0996999740600586,
+          1.5326000452041626
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 0.3215,
+      "meanRGBStep": 77.03,
+      "modelEdge": [
+        [
+          -3.246799945831299,
+          -1.3035999536514282,
+          1.5326000452041626
+        ],
+        [
+          -2.998199939727783,
+          -1.0996999740600586,
+          1.5326000452041626
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.3215,
+      "meanRGBStep": 75.45,
+      "modelEdge": [
+        [
+          3.246799945831299,
+          -1.3035999536514282,
+          1.5326000452041626
+        ],
+        [
+          3.5302999019622803,
+          -1.455199956893921,
+          1.5326000452041626
+        ]
+      ]
+    },
+    {
+      "component": "bridge.roof-cap",
+      "length": 0.3349,
+      "meanRGBStep": 72.43,
+      "modelEdge": [
+        [
+          0.5263000130653381,
+          1.0499999523162842,
+          -8.236800193786621
+        ],
+        [
+          0.7631999850273132,
+          1.0499999523162842,
+          -8.473699569702148
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.3.lid",
+      "length": 0.3349,
+      "meanRGBStep": 71.09,
+      "modelEdge": [
+        [
+          0.7631999850273132,
+          1.2100000381469727,
+          -2.7894999980926514
+        ],
+        [
+          1.0,
+          1.2100000381469727,
+          -2.5525999069213867
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.4095,
+      "meanRGBStep": 57.79,
+      "modelEdge": [
+        [
+          3.5302999019622803,
+          1.5751999616622925,
+          1.5326000452041626
+        ],
+        [
+          3.63700008392334,
+          1.3176000118255615,
+          1.2325999736785889
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.2.lid",
+      "length": 0.3349,
+      "meanRGBStep": 68.65,
+      "modelEdge": [
+        [
+          -0.7631999850273132,
+          1.2799999713897705,
+          -2.2105000019073486
+        ],
+        [
+          -0.5263000130653381,
+          1.2799999713897705,
+          -1.9737000465393066
+        ]
+      ]
+    },
+    {
+      "component": "hull.spade-body",
+      "length": 0.391,
+      "meanRGBStep": 57.15,
+      "modelEdge": [
+        [
+          -1.263200044631958,
+          0.38499999046325684,
+          2.105299949645996
+        ],
+        [
+          -0.9853000044822693,
+          0.6600000262260437,
+          2.105299949645996
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.4.lid",
+      "length": 0.3349,
+      "meanRGBStep": 66.43,
+      "modelEdge": [
+        [
+          0.7631999850273132,
+          1.2100000381469727,
+          -1.9737000465393066
+        ],
+        [
+          1.0,
+          1.2100000381469727,
+          -2.2105000019073486
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.4.lid",
+      "length": 0.3349,
+      "meanRGBStep": 64.31,
+      "modelEdge": [
+        [
+          0.7631999850273132,
+          1.2100000381469727,
+          -0.28949999809265137
+        ],
+        [
+          1.0,
+          1.2100000381469727,
+          -0.05260000005364418
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.1.lid",
+      "length": 0.3349,
+      "meanRGBStep": 63.68,
+      "modelEdge": [
+        [
+          -0.7631999850273132,
+          1.2100000381469727,
+          -2.5525999069213867
+        ],
+        [
+          -0.5263000130653381,
+          1.2100000381469727,
+          -2.7894999980926514
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.3215,
+      "meanRGBStep": 63.73,
+      "modelEdge": [
+        [
+          4.7855000495910645,
+          1.5751999616622925,
+          1.5326000452041626
+        ],
+        [
+          5.068999767303467,
+          1.4235999584197998,
+          1.5326000452041626
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 0.3215,
+      "meanRGBStep": 63.71,
+      "modelEdge": [
+        [
+          -3.246799945831299,
+          1.4235999584197998,
+          1.5326000452041626
+        ],
+        [
+          -2.998199939727783,
+          1.2196999788284302,
+          1.5326000452041626
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 0.4095,
+      "meanRGBStep": 49.92,
+      "modelEdge": [
+        [
+          -3.63700008392334,
+          1.3176000118255615,
+          1.2325999736785889
+        ],
+        [
+          -3.5302999019622803,
+          1.5751999616622925,
+          1.5326000452041626
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.4.lid",
+      "length": 0.3349,
+      "meanRGBStep": 59.92,
+      "modelEdge": [
+        [
+          3.0,
+          1.2799999713897705,
+          -0.05260000005364418
+        ],
+        [
+          3.236799955368042,
+          1.2799999713897705,
+          -0.28949999809265137
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.4095,
+      "meanRGBStep": 47.16,
+      "modelEdge": [
+        [
+          4.678800106048584,
+          -1.19760000705719,
+          1.2325999736785889
+        ],
+        [
+          4.7855000495910645,
+          -1.455199956893921,
+          1.5326000452041626
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.2.lid",
+      "length": 0.3349,
+      "meanRGBStep": 57.55,
+      "modelEdge": [
+        [
+          -3.0,
+          1.2100000381469727,
+          -0.28949999809265137
+        ],
+        [
+          -2.763200044631958,
+          1.2100000381469727,
+          -0.05260000005364418
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.2.lid",
+      "length": 0.3349,
+      "meanRGBStep": 56.31,
+      "modelEdge": [
+        [
+          -0.7631999850273132,
+          1.2100000381469727,
+          -2.2105000019073486
+        ],
+        [
+          -0.5263000130653381,
+          1.2100000381469727,
+          -1.9737000465393066
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.4.lid",
+      "length": 0.3349,
+      "meanRGBStep": 51.62,
+      "modelEdge": [
+        [
+          3.0,
+          1.2100000381469727,
+          -0.05260000005364418
+        ],
+        [
+          3.236799955368042,
+          1.2100000381469727,
+          -0.28949999809265137
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.3.lid",
+      "length": 0.3349,
+      "meanRGBStep": 51.12,
+      "modelEdge": [
+        [
+          3.0,
+          1.2799999713897705,
+          -2.5525999069213867
+        ],
+        [
+          3.236799955368042,
+          1.2799999713897705,
+          -2.7894999980926514
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.3.lid",
+      "length": 0.3349,
+      "meanRGBStep": 49.49,
+      "modelEdge": [
+        [
+          3.0,
+          1.2100000381469727,
+          -4.7104997634887695
+        ],
+        [
+          3.236799955368042,
+          1.2100000381469727,
+          -4.473700046539307
+        ]
+      ]
+    },
+    {
+      "component": "bridge.roof-cap",
+      "length": 0.3349,
+      "meanRGBStep": 49.12,
+      "modelEdge": [
+        [
+          -0.7894999980926514,
+          1.0499999523162842,
+          -8.473699569702148
+        ],
+        [
+          -0.5526000261306763,
+          1.0499999523162842,
+          -8.236800193786621
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.1.lid",
+      "length": 0.3349,
+      "meanRGBStep": 47.92,
+      "modelEdge": [
+        [
+          -0.7631999850273132,
+          1.2799999713897705,
+          -2.5525999069213867
+        ],
+        [
+          -0.5263000130653381,
+          1.2799999713897705,
+          -2.7894999980926514
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 0.3215,
+      "meanRGBStep": 49.77,
+      "modelEdge": [
+        [
+          -5.317500114440918,
+          -1.0996999740600586,
+          1.5326000452041626
+        ],
+        [
+          -5.068999767303467,
+          -1.3035999536514282,
+          1.5326000452041626
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.2.lid",
+      "length": 0.3349,
+      "meanRGBStep": 47.7,
+      "modelEdge": [
+        [
+          -0.7631999850273132,
+          1.2799999713897705,
+          -0.05260000005364418
+        ],
+        [
+          -0.5263000130653381,
+          1.2799999713897705,
+          -0.28949999809265137
+        ]
+      ]
+    },
+    {
+      "component": "engine.starboard.housing",
+      "length": 0.3215,
+      "meanRGBStep": 48.71,
+      "modelEdge": [
+        [
+          3.246799945831299,
+          1.4235999584197998,
+          1.5326000452041626
+        ],
+        [
+          3.5302999019622803,
+          1.5751999616622925,
+          1.5326000452041626
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.3.lid",
+      "length": 0.3349,
+      "meanRGBStep": 46.03,
+      "modelEdge": [
+        [
+          3.0,
+          1.2100000381469727,
+          -2.5525999069213867
+        ],
+        [
+          3.236799955368042,
+          1.2100000381469727,
+          -2.7894999980926514
+        ]
+      ]
+    },
+    {
+      "component": "cargo.bay.4.lid",
+      "length": 0.3349,
+      "meanRGBStep": 45.67,
+      "modelEdge": [
+        [
+          3.0,
+          1.2100000381469727,
+          -2.2105000019073486
+        ],
+        [
+          3.236799955368042,
+          1.2100000381469727,
+          -1.9737000465393066
+        ]
+      ]
+    },
+    {
+      "component": "engine.port.housing",
+      "length": 0.3215,
+      "meanRGBStep": 47.33,
+      "modelEdge": [
+        [
+          -3.5302999019622803,
+          1.5751999616622925,
+          1.5326000452041626
+        ],
+        [
+          -3.246799945831299,
+          1.4235999584197998,
+          1.5326000452041626
+        ]
+      ]
+    }
+  ],
+  "portDockingRegistration": {
+    "sampledPixel": [
+      1200.779,
+      750.9
+    ],
+    "expectedPixel": [
+      1210,
+      701
+    ],
+    "pixelError": 50.745,
+    "hullX": -4.066243354058212,
+    "housingRootGapUnits": 0.6706,
+    "method": "Barycentric interpolation of exported hull UVs at port collar height and longitudinal station."
+  },
+  "chartBoundaryNote": "Shared edges longer than 0.3 units with mean RGB step above 45/255; includes intentional borders. Review visually. This is not a missing-texture count.",
+  "silentUVFallbacks": [
+    {
+      "component": "ventral.belly-cargo-door",
+      "face": 10,
+      "fallback": "silver",
+      "worldCenter": [
+        0.0263,
+        4.5,
+        -0.995
+      ]
+    }
+  ],
+  "aggregate": {
+    "triangles": 7748,
+    "minimumTexelsPerUnit": 2.1111,
+    "maximumAnisotropy": 115.867,
+    "areaWithAnisotropyOver4Pct": 7.028,
+    "areaWithAnisotropyOver10Pct": 3.315,
+    "areaBelow8TexelsPerUnitPct": 1.083,
+    "areaOnAtlasBackgroundPct": 0.0
+  }
+}

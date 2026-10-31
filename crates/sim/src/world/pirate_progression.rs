@@ -37,7 +37,7 @@ impl World {
                 plunder: BTreeMap::from([(Commodity::Alloys, if tier == pirate::STRONGHOLD_TIER { 240 } else { 100 }),
                     (Commodity::Electronics, if tier == pirate::STRONGHOLD_TIER { 100 } else { 40 })]),
                 next_launch_at: 0.0, next_grow_at: 0.0, dormant_until: 0.0,
-                pack: Some(pack), cleared: false, founder_den: false });
+                pack: Some(pack), cleared: false, founder_den: false, for_player: None });
         }
     }
 
@@ -51,6 +51,7 @@ impl World {
             assert!(loadout.validate(kind), "illegal authored pirate fitting");
             fleet.add_fitted(kind, &loadout, count);
         }
+        fleet.fill_stores();
         self.fleets.insert(id, fleet);
         id
     }

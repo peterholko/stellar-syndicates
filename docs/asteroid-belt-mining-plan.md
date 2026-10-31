@@ -34,7 +34,7 @@ Phases 7 onward are still a proposal.
 
 - **Hull:** `ShipKind::MiningBarge` (`mining_barge`). Hold 150, speed 30, hull
   mass 3,500, crew 15, no guns, one utility berth. Built at a Shipyard I from
-  Alloys 40, Machinery 20, Polymers 12 and Electronics 6 in 30 s.
+  Alloys 40, Machinery 20, Polymers 12 and Semiconductors 6 in 30 s.
   - **No research gate** (the plan's Belt Mining node is dropped for now), so
     the founding charter can teach it.
   - **Art:** its own approved Mining Barge model, shipped as the 4,970-triangle
@@ -158,7 +158,7 @@ Phases 7 onward are still a proposal.
     - signature 8;
     - no module slots.
   - **Build:** Shipyard II, from Alloys 160, Machinery 50, Polymers 30 and
-    Electronics 25, in 180 s.
+    Semiconductors 25, in 180 s.
   - **Research:** behind a new tier-2 Materials programme, Belt Stations
     (`mat_belt_stations`).
   - **Art:** its own approved Mining Belt Station model, shipped as the
@@ -240,7 +240,7 @@ combat-cost pins (`build.rs`, `combat_balance.rs`) hold unchanged.
     programme draws about 605 over its 168 research-hours.
   - **Special modules:** Prismatic Lance (Precision Components 4, Armaments
     8, Silicates 6, Exotic Matter 2) and Interdiction Field (Precision
-    Components 3, Electronics 5, Machinery 6, Exotic Matter 2).
+    Components 3, Semiconductors 5, Machinery 6, Exotic Matter 2).
 - **Supply:** the Hub sells all three on the thin book (600 at once, refilling
   2 a second), so a corporation without a pocket buys them. The galaxy's
   pockets hold about 8,900 Iridium, 8,000 Helium-3 and 1,300 Exotic Matter per
@@ -418,7 +418,7 @@ production chains are needed.
 | Ore | Refines into | Why you'd want it | Found in |
 | --- | --- | --- | --- |
 | Olivine | Silicates and Alloys | two common goods from one deposit | Stony belts |
-| Bornite | Conductive Metals and Rare Elements | two of the three inputs Electronics needs | Metallic belts, frontier 0.25+ |
+| Bornite | Conductive Metals and Rare Elements | two of the three inputs Semiconductors need | Metallic belts, frontier 0.25+ |
 | Ilmenite | Titanium and Alloys, at lower purity | Titanium closer in than Titanium ore | Metallic belts, frontier 0.30+ |
 
 **New rare ores.** These occur only as pockets, and each refines into a new
@@ -573,7 +573,7 @@ A new hull, the miner of the belt line. It is like EVE's Retriever or Procurer.
   - hull mass 3,500;
   - crew 15.
 - **Build:** a Shipyard I. Starting recipe: Alloys 40, Machinery 20, Polymers 12,
-  Electronics 6.
+  Semiconductors 6.
 - **Research:** a new tier-1 Materials node, Belt Mining. *(Dropped in the
   first cut so the founding charter can teach the barge.)*
 - **Order:** `MineBelt { fleet_id, system_id, body_id, ore }`, light-delayed.
@@ -624,7 +624,7 @@ Rorqual with its industrial core running.
   - tough hull, no guns;
   - crew 60.
 - **Build:** a Shipyard II. Starting recipe: Alloys 160, Machinery 50,
-  Electronics 25, Polymers 30.
+  Semiconductors 25, Polymers 30.
 - **Research:** a new tier-2 Materials node, Belt Stations.
 - **Anchoring.** `AnchorStation { fleet_id, system_id, body_id }`.
   - It flies to the star and anchors within 1,500 su in 60 s.

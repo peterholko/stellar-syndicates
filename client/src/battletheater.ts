@@ -29,8 +29,9 @@
 import { Application, Assets, Container, Graphics, Rectangle, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import type { BattleRecordView, KeyframeView, PlayerId, ShipKind } from "./protocol";
 import { hashId, mulberry32 } from "./prng";
-import { starAnchor, starTypeFor, starIconUrl, starVisualRatio } from "./stars";
-import { STAR_TINT, SystemViewScene, type VisualSystem } from "./systemview";
+import { starIconUrl, starTypeFor } from "./stars";
+import { starArtLevel, starArtwork } from "./starart";
+import { BELT_META, STAR_TINT, SystemViewScene, type BeltKindName, type VisualSystem } from "./systemview";
 import { backdropDrift, battleBackdropPlan, battleSceneryFrame, battleSystemScenery, type BattleBackdropPlan, type BattleScenerySource } from "./battlebackdrop";
 import { glowSpriteTexture, terminatorTexture, towardStarRotation, drawRings } from "./systembodyfx";
 import { stationArtUrl, stationName } from "./core/derive/station";
@@ -77,7 +78,7 @@ export interface TheaterViewport {
 const MASS: Record<ShipKind, number> = {
   tiny_freighter: 1500, small_freighter: 2500, large_freighter: 8000, heavy_freighter: 14000, bulk_freighter: 24000,
   convoy: 4500, raider: 200, corvette: 800, colony: 6000, scout: 80, survey_probe: 40, mining_barge: 3500,
-  mining_belt_station: 12000,
+  mining_belt_station: 12000, combat_freighter: 2000,
   destroyer: 2000, cruiser: 4000, battleship: 8000, dreadnought: 16000, titan: 32000,
   // §ground: the troop transport — a fat, unarmed hull.
   transport: 7000,
@@ -89,7 +90,7 @@ const KIND_LABEL: Record<ShipKind, string> = {
   tiny_freighter: "Tiny Freighter", small_freighter: "Small Freighter", large_freighter: "Large Freighter", heavy_freighter: "Heavy Freighter", bulk_freighter: "Bulk Freighter",
   builder: "Construction Ship",
   convoy: "Medium Freighter", raider: "Interceptor", corvette: "Corvette", colony: "Colony Ship", scout: "Scout", survey_probe: "Survey Probe", mining_barge: "Mining Barge",
-  mining_belt_station: "Mining Belt Station",
+  mining_belt_station: "Mining Belt Station", combat_freighter: "Combat Freighter",
   destroyer: "Destroyer", cruiser: "Cruiser", battleship: "Battleship", dreadnought: "Dreadnought", titan: "Titan",
   transport: "Troop Transport",
   freighter: "Authority Freighter",
@@ -967,6 +968,9 @@ export function theaterDebug(): Record<string, unknown> | null {
     viewport: { width: CANVAS_W, height: CANVAS_H, scale: +SCALE.toFixed(4) },
     backdrop: backdropVisual ? {
       system: backdropVisual.systemId,
+      world: backdropPlan?.world?.kind ?? null,
+      belt: backdropPlan?.belt?.kind ?? null,
+      arenaWorld: !!arenaWorld,
       planets: backdropVisual.planets.length,
       moons: backdropVisual.planets.reduce((n, p) => n + p.moons.length, 0),
       belts: backdropVisual.asteroidBelts.length,
@@ -1094,7 +1098,8 @@ function bindRecord(rec: BattleRecordView, pirateId: PlayerId | null, scenerySou
 /// (which fight as stationary batteries). Its level comes from the record.
 let arenaStations: { side: number; level: number; sprite: Sprite; x: number; y: number }[] = [];
 /// Across, in arena units, by level (Defense Platform … Star Fortress).
-const STATION_SPAN = [70, 90, 130, 180, 320];
+// §gun-platform: the Gun Platform below the Defense Platform.
+const STATION_SPAN = [55, 70, 90, 130, 180, 320];
 /// A hardpoint's turret marker (ship-local px at zoom 1).
 const HARDPOINT_PX = 6;
 
@@ -1176,7 +1181,9 @@ function buildArenaWorld(rec: BattleRecordView): void {
   arenaWorld?.destroy({ children: true });
   arenaWorld = null;
   arenaWorldDisc = null;
-  if (!layers || !arenaWorldBody) return;
+  // §den: a system of belts alone has no world (records before Oct 29 2026
+  // still carry one).
+  if (!layers || !arenaWorldBody || backdropPlan?.belt) return;
   const kind = backdropPlan?.world?.kind ?? "barren";
   const art = planetArtwork(kind);
   const world = new Container();
@@ -1266,6 +1273,11 @@ function buildBackdrop(rec: BattleRecordView): void {
     buildOrbitalBackdrop(rec, backdropPlan);
     return;
   }
+  if (backdropPlan?.belt) {
+    // §den: in a belt-only system's asteroid field, its star far off.
+    buildBeltBackdrop(rec, backdropPlan);
+    return;
+  }
   const scenery = backdropSystem ??= new SystemViewScene({ sceneryOnly: true });
   const url = starIconUrl(starTypeFor(visual.systemId));
   scenery.root.visible = true;
@@ -1285,6 +1297,47 @@ function buildBackdrop(rec: BattleRecordView): void {
   }
 }
 
+/// The backdrop's star: a broad glare plus its artwork near the edge it lies
+/// beyond, `size` its share of the canvas's short side (the orbital and belt
+/// backdrops share it).
+function addBackdropStar(scene: Container, rec: BattleRecordView, plan: BattleBackdropPlan, size: number, glare: number): void {
+  const w = CANVAS_W;
+  const h = CANVAS_H;
+  const short = Math.min(w, h);
+  const dir = { x: Math.cos(plan.starBearing), y: Math.sin(plan.starBearing) };
+  const reach = 0.5 * Math.hypot(w, h);
+  const starX = w / 2 + dir.x * reach * 0.74;
+  const starY = h / 2 + dir.y * reach * 0.74;
+  const tint = STAR_TINT[plan.starSlug] ?? 0xffe08a;
+  const glow = glowSpriteTexture();
+  if (glow) {
+    const flare = new Sprite(glow);
+    flare.anchor.set(0.5);
+    flare.tint = tint;
+    flare.alpha = glare;
+    flare.scale.set((short * size * 7.5) / glow.width);
+    flare.position.set(starX, starY);
+    scene.addChild(flare);
+  }
+  // §star (Oct 30 2026): the System View's own painting of the star. The old
+  // map icon's rim was cut from black, and over this glare it drew a dark ring.
+  const art = starArtwork("system", starTypeFor(plan.systemId).slug);
+  const starUrl = starArtLevel(art, short * size, app?.renderer.resolution ?? 1).url;
+  const star = new Sprite(texCache.get(starUrl) ?? Texture.EMPTY);
+  star.anchor.set(art.anchor[0], art.anchor[1]);
+  star.position.set(starX, starY);
+  const sizeStar = (texture: Texture) => { star.scale.set((short * size) / Math.max(1, art.visualRatio * texture.width)); };
+  if (texCache.get(starUrl)) sizeStar(texCache.get(starUrl)!);
+  scene.addChild(star);
+  if (!texCache.has(starUrl)) {
+    void Assets.load<Texture>(starUrl).then((texture) => {
+      texture.source.autoGenerateMipmaps = true;
+      texCache.set(starUrl, texture);
+      if (st?.rec.id === rec.id && backdropPlan === plan) { star.texture = texture; sizeStar(texture); }
+    }, () => texCache.set(starUrl, null));
+  }
+}
+
 /// A fight in a world's orbit: the world fills one corner (its lit limb toward
 /// the star, the same pose the System View showed when the fight began), the
 /// star burns at the opposite edge. Public astronomy only — never names,
@@ -1295,33 +1348,10 @@ function buildOrbitalBackdrop(rec: BattleRecordView, plan: BattleBackdropPlan): 
   const h = CANVAS_H;
   const short = Math.min(w, h);
   const dir = { x: Math.cos(plan.starBearing), y: Math.sin(plan.starBearing) };
-  const reach = 0.5 * Math.hypot(w, h);
   const scene = new Container();
   layers.backdrop.addChild(scene);
   backdropMover = scene;
-  // The star: a broad glare plus its artwork near the edge it lies beyond.
-  const starX = w / 2 + dir.x * reach * 0.74;
-  const starY = h / 2 + dir.y * reach * 0.74;
-  const tint = STAR_TINT[plan.starSlug] ?? 0xffe08a;
-  const glow = glowSpriteTexture();
-  if (glow) {
-    const flare = new Sprite(glow);
-    flare.anchor.set(0.5);
-    flare.tint = tint;
-    flare.alpha = 0.62;
-    flare.scale.set((short * 1.5) / glow.width);
-    flare.position.set(starX, starY);
-    scene.addChild(flare);
-  }
-  const starType = starTypeFor(plan.systemId);
-  const starUrl = starIconUrl(starType);
-  const star = new Sprite(texCache.get(starUrl) ?? Texture.EMPTY);
-  const [ax, ay] = starAnchor(starType);
-  star.anchor.set(ax, ay);
-  star.position.set(starX, starY);
-  const sizeStar = (texture: Texture) => { star.scale.set((short * 0.2) / Math.max(1, starVisualRatio(starType) * texture.width)); };
-  if (texCache.get(starUrl)) sizeStar(texCache.get(starUrl)!);
-  scene.addChild(star);
+  addBackdropStar(scene, rec, plan, 0.2, 0.62);
   // A v14 battle carries its world on the battlefield plane (drawArenaWorld):
   // keep only the star here.
   if (arenaWorldBody) return;
@@ -1363,11 +1393,83 @@ function buildOrbitalBackdrop(rec: BattleRecordView, plan: BattleBackdropPlan): 
       if (st?.rec.id === rec.id && backdropPlan === plan) apply(texture);
     }, () => texCache.set(url, null));
   }
-  if (!texCache.has(starUrl)) {
-    void Assets.load<Texture>(starUrl).then((texture) => {
-      texCache.set(starUrl, texture);
-      if (st?.rec.id === rec.id && backdropPlan === plan) { star.texture = texture; sizeStar(texture); }
-    }, () => texCache.set(starUrl, null));
+}
+
+/// How many rocks a belt backdrop scatters. Tunable.
+const BELT_BACKDROP_ROCKS = 220;
+/// §den (Oct 30 2026): each belt type's six single asteroids
+/// (docs/battle-asteroid-prompts.md), each filling its square.
+const BATTLE_ASTEROIDS = 6;
+const battleAsteroidUrl = (kind: BeltKindName, n: number) => `/art/derived/battle-asteroids/v1/${kind}-${n + 1}-256.webp`;
+
+/// §den (Oct 29 2026): a fight in a system of belts alone (a pirate den's)
+/// stands in its asteroid field. Peter: "the battle background should be
+/// some asteroid belt and a distant star". A band of the belt's own rocks
+/// crosses the fight square to its star, far ones small and faint, near ones
+/// larger, over a haze of its dust; the star burns small at the edge.
+function buildBeltBackdrop(rec: BattleRecordView, plan: BattleBackdropPlan): void {
+  if (!layers || !plan.belt) return;
+  const w = CANVAS_W;
+  const h = CANVAS_H;
+  const short = Math.min(w, h);
+  const scene = new Container();
+  layers.backdrop.addChild(scene);
+  backdropMover = scene;
+  addBackdropStar(scene, rec, plan, 0.1, 0.42);
+  const rng = mulberry32(plan.belt.seed);
+  const along = { x: -Math.sin(plan.starBearing), y: Math.cos(plan.starBearing) };
+  const across = { x: Math.cos(plan.starBearing), y: Math.sin(plan.starBearing) };
+  const half = 0.6 * Math.hypot(w, h);
+  const band = short * 0.75;
+  const spread = () => (rng() + rng() + rng() - 1.5) / 1.5;
+  const at = (t: number, o: number) => ({ x: w / 2 + along.x * t + across.x * o, y: h / 2 + along.y * t + across.y * o });
+  // The belt's dust: a soft haze along the band.
+  const glow = glowSpriteTexture();
+  if (glow) {
+    for (let i = 0; i < 24; i++) {
+      const p = at((rng() * 2 - 1) * half, spread() * band * 0.3);
+      const haze = new Sprite(glow);
+      haze.anchor.set(0.5);
+      haze.tint = BELT_META[plan.belt.kind].dust;
+      haze.alpha = 0.14 + rng() * 0.1;
+      haze.scale.set((short * (0.4 + rng() * 0.4)) / glow.width);
+      haze.position.set(p.x, p.y);
+      scene.addChild(haze);
+    }
+  }
+  // Far rocks first, near ones last.
+  const rocks: { sprite: Sprite; size: number; url: string }[] = [];
+  for (let i = 0; i < BELT_BACKDROP_ROCKS; i++) {
+    const depth = i / BELT_BACKDROP_ROCKS;
+    const p = at((rng() * 2 - 1) * half, spread() * band * (0.45 + depth * 0.55));
+    const url = battleAsteroidUrl(plan.belt.kind, Math.floor(rng() * BATTLE_ASTEROIDS));
+    const sprite = new Sprite(Texture.EMPTY);
+    sprite.anchor.set(0.5);
+    sprite.position.set(p.x, p.y);
+    sprite.rotation = rng() * Math.PI * 2;
+    sprite.alpha = 0.4 + depth * 0.5;
+    sprite.tint = depth < 0.6 ? 0x9aa3b2 : 0xd0d6de; // a touch dim, so hulls and fire stay the subject
+    rocks.push({ sprite, size: short * (0.018 + depth * depth * 0.075) * (0.7 + rng() * 0.6), url });
+    scene.addChild(sprite);
+  }
+  const apply = (url: string, texture: Texture) => {
+    for (const rock of rocks) {
+      if (rock.url !== url) continue;
+      rock.sprite.texture = texture;
+      rock.sprite.scale.set(rock.size / Math.max(1, texture.width));
+    }
+  };
+  for (const url of new Set(rocks.map((rock) => rock.url))) {
+    const cached = texCache.get(url);
+    if (cached) apply(url, cached);
+    else if (!texCache.has(url)) {
+      void Assets.load<Texture>(url).then((texture) => {
+        // Far rocks draw at a tenth of their art: mipmaps keep them from sparkling.
+        texture.source.autoGenerateMipmaps = true;
+        texCache.set(url, texture);
+        if (st?.rec.id === rec.id && backdropPlan === plan) apply(url, texture);
+      }, () => texCache.set(url, null));
+    }
   }
 }
 

@@ -105,6 +105,34 @@ pub struct SimConfig {
     /// scaled up alongside the battle timescale.
     #[serde(default = "default_node_awakening_time")]
     pub node_awakening_time: f64,
+
+    // §async-clocks (R4, Oct 22 2026): territory runs on clocks a player who
+    // checks in a few times a day can answer. Battles stay on
+    // `battle_target_secs`; only the stakes around them are long. Tests that
+    // exercise the mechanics set short values. serde defaults let a running
+    // galaxy pick these up on restart.
+    /// How long an unbroken, defense-suppressed blockade must hold before a
+    /// colony can be captured (before garrison and battleship adjustments).
+    #[serde(default = "default_siege_capture_secs")]
+    pub siege_capture_secs: f64,
+    /// How long after a war declaration reaches its target the war goes live.
+    #[serde(default = "default_war_notice_secs")]
+    pub war_notice_secs: f64,
+    /// How long neutral-space aggression gives its victim a right of reprisal.
+    #[serde(default = "default_reprisal_secs")]
+    pub reprisal_secs: f64,
+}
+
+fn default_siege_capture_secs() -> f64 {
+    6.0 * 3600.0
+}
+
+fn default_war_notice_secs() -> f64 {
+    crate::diplomacy::WAR_NOTICE_GRACE_S
+}
+
+fn default_reprisal_secs() -> f64 {
+    crate::diplomacy::REPRISAL_S
 }
 
 /// The default battle timescale (the PLAYTEST preset) — see `battle_target_secs`.
@@ -161,6 +189,9 @@ impl SimConfig {
             battle_target_secs: default_battle_target_secs(),
             // Exotic nodes awaken mid-campaign (§node) — telegraphed from t=0.
             node_awakening_time: default_node_awakening_time(),
+            siege_capture_secs: default_siege_capture_secs(),
+            war_notice_secs: default_war_notice_secs(),
+            reprisal_secs: default_reprisal_secs(),
         };
         // Structural guardrail: a future speed-table edit (or a mistuned c)
         // that let a ship approach light would silently break the whole
@@ -206,6 +237,24 @@ mod light_invariant_tests {
     /// table, so both must clear the light-game floor with margin. This test is
     /// the structural lock the prompt asks for: a future speed bump that outran
     /// light would fail here (and the `for_players` debug_assert) before shipping.
+    /// §async-clocks (R4): territory runs on hours, battles stay short.
+    #[test]
+    fn async_clocks_default_to_hours() {
+        let cfg = SimConfig::for_players(1, 12);
+        assert_eq!(cfg.siege_capture_secs, 6.0 * 3600.0);
+        assert_eq!(cfg.war_notice_secs, 2.0 * 3600.0);
+        assert_eq!(cfg.reprisal_secs, 12.0 * 3600.0);
+        assert_eq!(cfg.battle_target_secs, 45.0, "battles keep their playtest scale");
+        // A galaxy saved before these clocks existed loads with them.
+        let mut old = serde_json::to_value(&cfg).unwrap();
+        for key in ["siege_capture_secs", "war_notice_secs", "reprisal_secs"] {
+            old.as_object_mut().unwrap().remove(key);
+        }
+        let loaded: SimConfig = serde_json::from_value(old).unwrap();
+        assert_eq!((loaded.siege_capture_secs, loaded.war_notice_secs, loaded.reprisal_secs),
+            (6.0 * 3600.0, 2.0 * 3600.0, 12.0 * 3600.0));
+    }
+
     #[test]
     fn light_invariant_holds_for_both_presets() {
         let fastest = crate::ship::fastest_ship_speed();

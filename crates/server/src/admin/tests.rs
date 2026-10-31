@@ -138,6 +138,7 @@ async fn postgres_admin_dashboard_records_sign_ins_play_commands_and_the_charter
                     sim_time: 3600.0,
                     pacing: 1.0,
                     corporations: answers.lock().unwrap().clone(),
+                    ending: None,
                 });
             }
         }
@@ -161,6 +162,7 @@ async fn postgres_admin_dashboard_records_sign_ins_play_commands_and_the_charter
                 status_rx.clone(),
                 recorder.clone(),
                 operators_from(operators),
+                2.0,
             )))
     };
     let app = app_with("Ops@Example.com");
@@ -281,6 +283,7 @@ async fn postgres_admin_dashboard_records_sign_ins_play_commands_and_the_charter
     assert_eq!(overview["totals"]["online"], 0);
     assert_eq!(overview["totals"]["founded"], 1);
     assert_eq!(overview["server"]["holdings"], true);
+    assert_eq!(overview["server"]["pacing_scale"], 2.0, "operators see the game speed; players don't");
     let row = overview["players"].as_array().unwrap().iter()
         .find(|p| p["login"] == "pilot@example.com").unwrap().clone();
     assert_eq!(row["corporation"], "Pilot Corp");

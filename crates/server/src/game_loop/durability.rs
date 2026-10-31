@@ -32,6 +32,7 @@ impl GameLoop {
                 transactions: self.transactions.clone(),
                 reports: self.reports.clone(),
                 timeline: self.timeline.clone(),
+                social: self.social.clone(),
                 concluded_battles: self.concluded_battles.clone(),
                 observed_order_plans: self
                     .observed_order_plans
@@ -65,6 +66,7 @@ impl GameLoop {
         game.transactions = r.transactions;
         game.reports = r.reports;
         game.timeline = r.timeline;
+        game.social = r.social;
         game.concluded_battles = r.concluded_battles;
         game.observed_order_plans = r
             .observed_order_plans

@@ -39,16 +39,57 @@ pub const LAST_CALL_S: f64 = 180.0;
 pub const ARRIVAL_DISTANCE_SU: f64 = 2_500.0;
 pub const DEPARTURE_DISTANCE_SU: f64 = 6_000.0;
 
+/// §traders (Peter, Oct 27 2026: "shouldn't we have like 3 different merchant
+/// characters at least, that way not all the players see the same merchant"):
+/// who flies a corporation's free trader. The names live here for the
+/// server's own lines; the portraits and the talk live in the client
+/// (`core/derive/trader.ts`), keyed by `slug`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FreeTrader {
+    pub slug: &'static str,
+    pub name: &'static str,
+    pub first: &'static str,
+    /// Its ship's name, without "the".
+    pub ship: &'static str,
+}
+
+/// Peter (Oct 27 2026): "can we have 4th male free trader".
+pub const FREE_TRADERS: [FreeTrader; 4] = [
+    FreeTrader { slug: "teo", name: "Teo Brannick", first: "Teo", ship: "Long Odds" },
+    FreeTrader { slug: "ines", name: "Ines Varga", first: "Ines", ship: "Clean Slate" },
+    FreeTrader { slug: "mags", name: "Mags Halloran", first: "Mags", ship: "Second Wind" },
+    FreeTrader { slug: "rafi", name: "Rafi Mensah", first: "Rafi", ship: "Small Fortune" },
+];
+
+impl FreeTrader {
+    /// Dealt as the pirate family is: from the galaxy seed, the corporation
+    /// and its join tick, so it never needs saving and a new galaxy deals
+    /// afresh.
+    pub fn of(seed: u64, owner: PlayerId, joined_tick: u64) -> &'static FreeTrader {
+        let mut rng = crate::rng::Rng::keyed_id(seed, "free-trader-v1", owner.0 ^ joined_tick.rotate_left(32));
+        &FREE_TRADERS[(rng.next_u64() % FREE_TRADERS.len() as u64) as usize]
+    }
+}
+
+/// §charter-v5: the Semiconductors the last call's stock-up adds for research.
+/// A running programme draws them from home stock (about 0.6 a minute at tier
+/// I) while the charter's last builds go up, so without a reserve it eats the
+/// Mining Barge's. Peter (Oct 26 2026): stock up before the trader leaves.
+/// Tunable.
+pub const RESEARCH_RESERVE: f64 = 20.0;
+
 /// The founding visit's stock. §charter-v5: its semiconductors cover every
-/// charter build (about 83: two Solar Arrays, the Shipyard and its second
-/// level, the Interceptor, the Academy, the Survey Probe and the Mining
-/// Barge), its Armaments the Interceptor the raid disarmed; the rest covers a
-/// kit spent on optional builds.
+/// charter build (80: two Solar Arrays, the Shipyard, both Interceptors, the
+/// Academy, the Survey Probe and the Mining Barge) and the research reserve,
+/// its Armaments both Interceptors (the raid took the kit's; §vendetta: the
+/// uncle's fight needs a second); the rest covers a kit spent on optional
+/// builds.
 pub const FOUNDING_STOCK: [(Commodity, u32); 7] = [
     (Commodity::Alloys, 120),
     (Commodity::Machinery, 50),
-    (Commodity::Electronics, 100),
-    (Commodity::Armaments, 15),
+    // §vendetta-campaign: the third Interceptor's 12 and 15 too.
+    (Commodity::Electronics, 127),
+    (Commodity::Armaments, 45),
     (Commodity::Polymers, 30),
     (Commodity::Provisions, 40),
     (Commodity::Deuterium, 30),
@@ -195,7 +236,8 @@ mod tests {
         assert!((q.revenue - 40.0 * hub(Commodity::MetallicOre) * 0.5).abs() < 1e-9);
         assert_eq!(q.net_units, 15 + 13 - 40);
 
-        assert!(v.quote(&BTreeMap::from([(Commodity::Electronics, 101)]), &BTreeMap::new()).is_err());
+        let stocked = FOUNDING_STOCK.iter().find(|(c, _)| *c == Commodity::Electronics).unwrap().1;
+        assert!(v.quote(&BTreeMap::from([(Commodity::Electronics, stocked + 1)]), &BTreeMap::new()).is_err());
         assert!(v.quote(&BTreeMap::from([(Commodity::Titanium, 1)]), &BTreeMap::new()).is_err());
         assert!(v.quote(&BTreeMap::new(), &BTreeMap::from([(Commodity::Alloys, 1)])).is_err());
         assert!(v.quote(&BTreeMap::new(), &BTreeMap::new()).is_err());

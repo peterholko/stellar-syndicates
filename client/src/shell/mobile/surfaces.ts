@@ -1,6 +1,7 @@
 import { isPlayerFreighter } from "../../protocol";
-import { systemName } from "../../core/derive/geo";
-import { blockadeBrief, blockadeStage, heldOutsideStatus, runBlockadesCopy, siegeClock } from "../../core/derive/blockade";
+import { introduceCaptainFor } from "../../captain-intro";
+import { hubCut } from "../../core/derive/season";
+import { heldOutsideStatus, runBlockadesCopy } from "../../core/derive/blockade";
 import { FIELD_COOLDOWN_S, FIELD_FUEL, FIELD_RADIUS_SU, FIELD_SECONDS, interdictionReason, interdictorCapable } from "../../core/derive/interdiction";
 import {
   COMMODITIES,
@@ -10,6 +11,7 @@ import {
   recentMarketOrders,
   recordRecentMarketOrder,
   reserveMarketOrder,
+  PAYMENT_MARGIN,
   settleMarketReservation,
   spendableMarketCredits,
   kitAffordable,
@@ -17,7 +19,7 @@ import {
   warehouseUnits,
   utilityRefitChoices,
 } from "../../core/derive/market";
-import { dockedAtSystem, slowCapable, fleetCargoCapacity, fleetUraniumCapacity, fusionTank, guardCapable, jumpCapable, regimeStore, shipKindLabel, shipRoleLore } from "../../core/derive/fleet";
+import { contactIntel, dockedAtSystem, slowCapable, fleetCargoCapacity, fleetTradeCapacity, fleetUraniumCapacity, fusionTank, guardCapable, jumpCapable, regimeStore, shipKindLabel, shipRoleLore } from "../../core/derive/fleet";
 import { tenderStatus } from "../../core/derive/tenders";
 import { fuelTransferHtml } from "../fueltransfer";
 import { missionCommand, missionHtml, pirateFactionHtml } from "../mission";
@@ -31,11 +33,12 @@ import { expansionBody, FOUNDING_STEP, FOUNDING_TOTAL, foundingBuildTarget, foun
 import { coach } from "../coach";
 import { jumpRangeAt } from "../../core/derive/nebula";
 import {
-  countClassLabel,
+  countClassLabel, fleetCountLabel,
   fleetCargoManifest,
   fleetCargoUnits,
   fleetExactCount,
   type Commodity,
+  type SystemStateView,
   type EngagementEstimate,
   type GhostView,
   type ModuleKind,
@@ -43,14 +46,16 @@ import {
   type TradeEvent,
 } from "../../protocol";
 import { liveSimTime } from "../../state";
-import { fmtDur } from "../../core/derive/format";
+import { ageLabel, fmtDur } from "../../core/derive/format";
+import { COUNTER_SCOUTING_HINT, scoutReport } from "../../core/derive/scouting";
 import { dockedMerchant, isMerchantErrand, isMerchantTarget, merchantErrand, merchantLeavesIn, merchantQuote, merchantShortfall, oreAtHome, type MerchantGoods } from "../../core/derive/merchant";
-import { DEAL_LINE, refusalLine, TRADER, traderLine, traderPortrait, traderResult, type TraderLine } from "../../core/derive/trader";
+import { dealLine, refusalLine, TRADERS, traderLine, traderOf, traderPortrait, traderResult, type TraderLine } from "../../core/derive/trader";
 import { renderDeferred, setHtml } from "../dom";
 import type { CoreContext } from "../types";
 import type { SheetEntry, SheetView } from "./sheets";
 import { SheetStack } from "./sheets";
 import { sheetFingerprint } from "../signature";
+import { MobileLog } from "./log";
 import { requestTransactions } from "../../core/derive/transactions";
 import { transactionsHtml } from "../transactions";
 import { DEFAULT_DEFENSE_RADIUS, DEFENSE_RADII } from "../../core/derive/defense";
@@ -65,6 +70,8 @@ interface SurfaceHooks {
   focusSystem(id: string): void;
   armMove(id: string): void;
   enterSystem(id: string): void;
+  /** §home-step: fly into a system's System View. */
+  flyIntoSystem(id: string): void;
   exitSemantic(): void;
   notice(html: string): void;
 }
@@ -108,14 +115,14 @@ export class MobileSurfaces {
   private merchantBuys: MerchantGoods = {};
   private merchantSells: MerchantGoods = {};
   private merchantFor = "";
-  /** When the last deal was sent (sim time): Teo's word is on it until then. */
+  /** When the last deal was sent (sim time): the trader's word is on it until then. */
   private merchantSentAt: number | null = null;
   private marketCommodity: Commodity = "deuterium";
   private marketSide: Side = "buy";
-  private readonly dismissedDecisions = new Set<string>();
   private readonly engagementEstimates = new Map<string, EngagementEstimate>();
   private readonly estimateAttackerByTarget = new Map<string, string>();
-  private readonly arrivedReports: { text: string; tone: "good" | "bad" | "warn"; at: number }[] = [];
+  /** §log: the Log sheet (shell/mobile/log.ts). */
+  readonly log: MobileLog;
   private foundingMinimized = false;
 
   constructor(
@@ -123,6 +130,13 @@ export class MobileSurfaces {
     private readonly sheets: SheetStack,
     private readonly hooks: SurfaceHooks,
   ) {
+    this.log = new MobileLog(ctx, {
+      openSheet: (entry) => hooks.openSheet(entry),
+      focusSystem: (id) => hooks.focusSystem(id),
+      focusFleet: (id) => hooks.focusFleet(id),
+      notice: (html) => hooks.notice(html),
+      refresh: () => sheets.refresh(),
+    });
     try {
       const stored = localStorage.getItem(FOUNDING_MINIMIZED_KEY);
       this.foundingMinimized = stored === null || stored === "1";
@@ -140,7 +154,7 @@ export class MobileSurfaces {
       case "system": view = this.renderSystem(entry); break;
       case "market": view = this.renderMarket(); break;
       case "merchant": view = this.renderMerchant(entry); break;
-      case "log": view = this.renderCheckin(); break;
+      case "log": view = this.log.render(entry); break;
       case "battle": view = this.renderBattle(entry); break;
       default: return null;
     }
@@ -161,48 +175,6 @@ export class MobileSurfaces {
   onEstimate(estimate: EngagementEstimate): void {
     this.engagementEstimates.set(this.estimateKey(estimate.attacker, estimate.target), estimate);
     this.estimateAttackerByTarget.set(estimate.target, estimate.attacker);
-  }
-
-  recordReport(text: string, tone: "good" | "bad" | "warn"): void {
-    this.arrivedReports.push({ text, tone, at: liveSimTime() });
-    if (this.arrivedReports.length > 20) this.arrivedReports.splice(0, this.arrivedReports.length - 20);
-  }
-
-  /** The unread badge keys the same live, served decisions as the Log sheet.
-   * Keys are stable for the lifetime of a decision and carry no extra truth. */
-  decisionKeys(): string[] {
-    const keys: string[] = [];
-    const founding = this.ctx.state.founding;
-    if (founding && founding.stage !== "complete") keys.push(this.foundingDecisionKey());
-    for (const proposal of this.ctx.state.diplomacy?.incoming ?? []) keys.push(`treaty:${proposal.id}`);
-    for (const invite of this.ctx.state.syndicateInvites) keys.push(`syndicate:${invite.id}`);
-    for (const operation of this.ctx.state.operations.filter((candidate) => candidate.state === "offered" && !candidate.joined).slice(0, 3)) {
-      keys.push(`operation:${operation.id}`);
-    }
-    for (const battle of this.ctx.state.battles.filter((candidate) => candidate.own)) keys.push(`battle:${battle.id}`);
-    for (const item of this.blockadeDecisions()) keys.push(item.key);
-    return keys.filter((key) => !this.dismissedDecisions.has(key));
-  }
-
-  /** Blockade decisions, the same as the desktop inbox's: the owner hears
-   * every stage with what to do; the besieger, the fight and the ripe siege. */
-  private blockadeDecisions(): { key: string; system: string; mine: boolean; tone: string; title: string; detail: string }[] {
-    const state = this.ctx.state;
-    if (!state.galaxy) return [];
-    const now = liveSimTime();
-    const out = [];
-    for (const system of state.systems) {
-      const blockade = system.blockade;
-      if (!blockade) continue;
-      const mine = system.owner === state.playerId;
-      const stage = blockadeStage(blockade);
-      const ripe = siegeClock(blockade, now, state.galaxy.siege_secs)?.ripe ?? false;
-      if (!mine && !(blockade.by_me && (stage === "contested" || ripe))) continue;
-      const brief = blockadeBrief(blockade, now, state.galaxy.siege_secs, system.ground?.marines_needed);
-      const key = mine ? `blockade-${stage}:${system.id}` : ripe ? `siege-ripe:${system.id}` : `blockade-contesting:${system.id}`;
-      out.push({ key, system: system.id, mine, tone: brief.tone, title: `${systemName(system.id)} — ${brief.title}`, detail: brief.detail });
-    }
-    return out;
   }
 
   refreshFounding(): void {
@@ -244,18 +216,14 @@ export class MobileSurfaces {
     );
   }
 
-  /** The Log's founding decision keys by step, so a new step re-lights the badge. */
-  private foundingDecisionKey(): string {
-    const founding = this.ctx.state.founding!;
-    const plan = foundingPlan(this.ctx.state, this.homeSystem());
-    return `founding:${founding.stage}:${plan?.primary?.action ?? ""}`;
-  }
+
 
   handleClick(event: Event): boolean {
     const button = (event.target as Element).closest<HTMLElement>("[data-mobile-act]");
     if (!button) return false;
     const action = button.dataset.mobileAct;
-    if (!action || action === "confirm-intent" || action === "cancel-intent") return false;
+    if (!action || action === "confirm-intent" || action === "confirm-raid" || action === "cancel-intent") return false;
+    if (action.startsWith("log-")) return this.log.handleAction(button);
     if (action.startsWith("defense-")) {
       const system = button.dataset.system ?? "";
       if (!this.ctx.state.systems.some(s => s.id === system && s.owner === this.ctx.state.playerId)) return true;
@@ -296,6 +264,13 @@ export class MobileSurfaces {
       }
       case "fleet-select":
         if (button.dataset.id) this.hooks.focusFleet(button.dataset.id);
+        break;
+      // §designations Signature Mimicry.
+      case "fleet-trade":
+        this.hooks.openSheet({ id: "merchant" });
+        break;
+      case "fleet-mimic":
+        if (this.ownFleet(button.dataset.id)) this.ctx.send({ type: "SetDesignation", cap: "signature_mimicry", target: { fleet: button.dataset.id! } });
         break;
       case "fleet-mission": {
         const fleet = this.ownFleet(button.dataset.id);
@@ -430,6 +405,18 @@ export class MobileSurfaces {
       case "merchant-submit":
         this.submitMerchant();
         break;
+      case "merchant-max": {
+        // All the ore you hold, up to what the trader takes, as if typed.
+        const merchant = dockedMerchant(this.ctx.state);
+        const box = document.querySelector<HTMLInputElement>('[data-merchant-sell="metallic_ore"]');
+        const units = merchant ? Math.min(merchant.ore_room, oreAtHome(this.merchantHome())) : 0;
+        if (box) {
+          box.max = String(units);
+          box.value = units > 0 ? String(units) : "";
+          this.handleMerchantInput(box);
+        }
+        break;
+      }
       case "market-cancel": {
         const id = Number(button.dataset.id);
         if (Number.isFinite(id)) this.ctx.send({ type: "CancelLimitOrder", order_id: id });
@@ -442,24 +429,14 @@ export class MobileSurfaces {
       case "module-sell":
         this.tradeModule(button.dataset.module, action === "module-buy");
         break;
-      case "decision-treaty":
-        this.answerTreaty(button.dataset.id, button.dataset.answer === "accept");
+      case "welcome-go": {
+        const { go, id } = button.dataset;
+        if (go === "system" && id) this.hooks.focusSystem(id);
+        else if (go === "shipyard" && id) this.hooks.openSheet({ id: "shipyard", props: { systemId: id, bodyId: Number(button.dataset.body) } });
+        else if (go === "comms") this.hooks.openSheet({ id: "comms", props: { tab: "inbox" } });
+        else if (go === "signals" || go === "operations" || go === "research" || go === "market" || go === "rankings" || go === "syndicate" || go === "log") this.hooks.openSheet({ id: go });
         break;
-      case "decision-syndicate":
-        if (button.dataset.id) this.ctx.send({ type: "AcceptSyndicateInvite", syndicate_id: button.dataset.id });
-        break;
-      case "decision-operation":
-        if (button.dataset.id) this.ctx.send({ type: "AcceptOperation", operation_id: button.dataset.id });
-        break;
-      case "decision-founding":
-        this.runFoundingAction(button.dataset.kind ?? "home");
-        break;
-      case "decision-dismiss":
-        if (button.dataset.key) {
-          this.dismissedDecisions.add(button.dataset.key);
-          this.sheets.refresh();
-        }
-        break;
+      }
       case "decision-withdraw":
         if (button.dataset.id) this.ctx.intent.beginFleetCommand({ type: "Withdraw", fleet_id: button.dataset.id });
         break;
@@ -497,7 +474,7 @@ export class MobileSurfaces {
   private fleetRow(fleet: GhostView): string {
     const count = fleetExactCount(fleet);
     const composition = fleet.composition?.map((stack) => `${stack.count} ${shipKindLabel(stack.kind)}`).join(" · ")
-      ?? `est. ${countClassLabel(fleet.count_class)} ships`;
+      ?? `est. ${fleetCountLabel(fleet)} ships`;
     const cargo = fleetCargoUnits(fleet);
     return `<button type="button" class="m-list-row" data-act="fleet:${esc(fleet.id)}" data-mobile-act="fleet-select" data-id="${esc(fleet.id)}">` +
       `<span class="m-list-row__icon">△</span><span class="m-list-row__main"><b>${esc(shipKindLabel(fleet.kind))}${count && count > 1 ? ` Fleet` : ""}</b>` +
@@ -525,7 +502,7 @@ export class MobileSurfaces {
     if (!fleet) return { title: "Fleet", eyebrow: "Fleet command", html: `<div class="m-empty">That fleet is no longer in the served picture.</div>` };
     const count = fleetExactCount(fleet);
     const composition = fleet.composition?.map((stack) => `${stack.count} × ${shipKindLabel(stack.kind)}`).join(" · ")
-      ?? `Estimated ${countClassLabel(fleet.count_class)} ships`;
+      ?? `Estimated ${fleetCountLabel(fleet)} ships`;
     const manifest = fleetCargoManifest(fleet);
     const crates = Object.entries(fleet.modules ?? {}).filter(([, n]) => n > 0);
     const cargo = (manifest.length
@@ -552,9 +529,18 @@ export class MobileSurfaces {
     const supply = fleet.own && fleet.supplied === false
       ? `<div class="m-warning"><b>Out of provisions.</b> This fleet keeps its guns and current order, but cannot depart again until supplied.</div>`
       : "";
+    // §traders (Peter, Oct 28 2026): a merchant ship is its trader's own.
+    const trader = fleet.merchant ? TRADERS[fleet.trader ?? "teo"] ?? TRADERS.teo : null;
+    const traderSection = trader ? (() => {
+      const portrait = traderPortrait(trader, "neutral", () => this.sheets.refresh());
+      const docked = dockedMerchant(this.ctx.state)?.fleet === fleet.id;
+      return `<section class="m-section m-fleet-trader"><img src="${esc(portrait.src)}" alt="${esc(portrait.alt)}" width="64" height="64">`
+        + `<div><b>${esc(trader.name)}</b><small>${esc(trader.ship)} · free trader</small><p>${esc(trader.about)}</p>`
+        + `${docked ? `<button type="button" class="m-primary" data-mobile-act="fleet-trade">Trade</button>` : ""}</div></section>`;
+    })() : "";
     return {
-      title: `${shipKindLabel(fleet.kind)}${count && count > 1 ? " Fleet" : ""}`,
-      eyebrow: fleet.own ? "Your served fleet picture" : fleet.pirate ? "Pirate contact" : "Observed contact",
+      title: trader ? trader.ship : `${shipKindLabel(fleet.kind)}${count && count > 1 ? " Fleet" : ""}`,
+      eyebrow: fleet.own ? "Your served fleet picture" : trader ? `Free trader · ${trader.name}` : fleet.pirate ? "Pirate contact" : "Observed contact",
       html: `<div class="m-stat-grid"><span><small>Status</small><b>${esc(this.fleetStatus(fleet))}</b></span>` +
         `<span><small>Information delay</small><b>${fmt(fleet.age, 1)}s</b></span>` +
         `<span><small>Drive</small><b>${esc(this.driveLabel(fleet))}</b></span>` +
@@ -566,13 +552,26 @@ export class MobileSurfaces {
           return t.helium3 > 0 ? `${fmt(t.deuterium)} + ${fmt(t.helium3)} He-3/${fmt(t.capacity)}` : `${fmt(t.deuterium)}/${fmt(t.capacity)}`;
         })()}</b></span>` +
         ((fleet.antimatter_capacity ?? 0) > 0 ? `<span><small>Antimatter</small><b>${fleet.antimatter == null ? "—" : `${fmt(fleet.antimatter, 1)}/${fmt(fleet.antimatter_capacity!, 1)}`}</b></span>` : "") + `</div>` +
-        `<section class="m-section"><h3>Formation</h3><p>${esc(composition)}</p>${roleLore ? `<details class="m-details m-help"><summary>Fleet role</summary><div><p>${esc(roleLore)}</p></div></details>` : ""}</section>` +
+        (traderSection || `<section class="m-section"><h3>Formation</h3><p>${esc(composition)}</p>${roleLore ? `<details class="m-details m-help"><summary>Fleet role</summary><div><p>${esc(roleLore)}</p></div></details>` : ""}${this.intelLines(fleet)}</section>`) +
         ready + supply + fleetIndustryHtml(fleet, this.ctx.state) + this.stationSection(fleet) + this.utilityEquipment(fleet) + pirateFactionHtml(fleet, true) + missionHtml(fleet, orders, true) +
         `<section class="m-section"><h3>Cargo</h3><div class="m-ledger">${cargo}</div></section>` +
         engagement +
         ownControls + (fleet.own ? fuelTransferHtml(fleet, this.ctx.state, "", true) : "") +
         `<section class="m-section"><h3>Orders</h3>${orderRows}</section>`,
     };
+  }
+
+  /** §research-wiring: intel research on a contact; Signature Mimicry on your own fleet. */
+  private intelLines(fleet: GhostView): string {
+    if (fleet.own) {
+      if (!this.ctx.state.research?.programmes.some(p => p.id === "comp_shadow_v_signature_mimicry" && p.state === "completed")) return "";
+      const current = this.ctx.state.research.designations?.find(d => d.cap === "signature_mimicry");
+      const here = !!current && "fleet" in current.target && current.target.fleet === fleet.id;
+      return here ? `<p>Disguised · reads as a freighter until it fights</p>` : `<button type="button" data-mobile-act="fleet-mimic" data-id="${esc(fleet.id)}">Disguise as a freighter</button>`;
+    }
+    const intel = contactIntel(fleet);
+    const tracked = fleet.tracked != null ? `Tracked · last fix ${Math.round(fleet.tracked)}s ago` : null;
+    return [tracked, intel.carrying && `Carrying ${intel.carrying}`, intel.wake && `Wake ${intel.wake}`].filter(Boolean).map(line => `<p>${esc(line!)}</p>`).join("");
   }
 
   /** §belts: a station's anchor and hold, Unanchor, and loading a freighter beside it. */
@@ -582,9 +581,9 @@ export class MobileSurfaces {
     const belt = a ? st.systems.find((s) => s.id === a.system)?.bodies.find((b) => b.id === a.body)?.name ?? "" : "";
     const held = fleetCargoManifest(fleet), total = held.reduce((n, c) => n + c.units, 0);
     const top = [...held].sort((x, y) => y.units - x.units)[0];
-    const loads = top ? st.ghosts.filter((f) => f.own && !f.tca && f.id !== fleet.id && !isStation(f) && fleetCargoCapacity(f) > 0
+    const loads = top ? st.ghosts.filter((f) => f.own && !f.tca && f.id !== fleet.id && !isStation(f) && fleetTradeCapacity(f) > 0
       && Math.hypot(f.pos.x - fleet.pos.x, f.pos.y - fleet.pos.y) <= 260).slice(0, 3).map((f) => {
-      const n = Math.min(top.units, fleetCargoCapacity(f) - fleetCargoManifest(f).reduce((m, c) => m + c.units, 0));
+      const n = Math.min(top.units, fleetTradeCapacity(f) - fleetCargoManifest(f).reduce((m, c) => m + c.units, 0));
       return n > 0 ? `<button type="button" data-mobile-act="fleet-station-load" data-id="${esc(fleet.id)}" data-into="${esc(f.id)}" data-commodity="${top.commodity}" data-units="${n}">Load ${fmt(n)} ${esc(human(top.commodity))} into ${esc(f.id)}</button>` : "";
     }).join("") : "";
     const unanchor = a && a.phase !== "unanchoring" ? `<button type="button" data-mobile-act="fleet-unanchor" data-id="${esc(fleet.id)}">${a.phase === "approaching" ? "Stop anchoring" : "Unanchor"}</button>` : "";
@@ -676,10 +675,7 @@ export class MobileSurfaces {
           home?.storage_cap, this.merchantBuys, this.merchantSells, this.merchantSentAt, state.timeline.length]);
       }
       case "log":
-        return sheetFingerprint([
-          clock, state.timeline, state.founding, state.diplomacy, state.syndicateInvites, state.operations, state.battles,
-          [...this.dismissedDecisions], this.arrivedReports,
-        ]);
+        return this.log.signature(entry);
       case "battle": {
         const id = propsOf<{ id: string }>(entry).id ?? "";
         return sheetFingerprint([clock, props, state.battles.find((battle) => battle.id === id), state.ghosts]);
@@ -701,8 +697,11 @@ export class MobileSurfaces {
     const blockading = fleet.engage_freight !== null && fleet.engage_freight !== undefined;
     const authority = blockading
       ? `<button type="button" data-mobile-act="fleet-authority" data-id="${esc(fleet.id)}" data-on="${fleet.engage_freight ? "0" : "1"}" aria-pressed="${!!fleet.engage_freight}">${fleet.engage_freight ? "Engaging" : "Ignoring"} Authority freight</button>` : "";
+    // §player-styles: a repeating raid stops, between trips too.
     const recall = blockading
-      ? `<button type="button" class="m-danger" data-mobile-act="fleet-recall" data-id="${esc(fleet.id)}">Lift blockade</button>${authority}`
+      ? `<button type="button" class="m-danger" data-mobile-act="fleet-recall" data-id="${esc(fleet.id)}">${fleet.raid_trip ? "Stop raids" : fleet.raiding ? "Lift raid" : "Lift blockade"}</button>${authority}`
+      : fleet.raid_trip
+        ? `<button type="button" class="m-danger" data-mobile-act="fleet-recall" data-id="${esc(fleet.id)}">Stop raids</button>`
       : this.ctx.state.raids[fleet.id]
         ? `<button type="button" data-mobile-act="fleet-recall" data-id="${esc(fleet.id)}">Recall</button>` : "";
     const runs = fleet.run_blockades !== null && fleet.run_blockades !== undefined
@@ -769,7 +768,7 @@ export class MobileSurfaces {
       fleet.docked === fixed.id || (!fleet.docked && Math.hypot(fleet.pos.x - fixed.pos.x, fleet.pos.y - fixed.pos.y) <= (this.ctx.state.galaxy?.hyperlimit ?? 900))
     ));
     const fleetRows = nearby.map((fleet) => this.fleetRow(fleet)).join("");
-    const pirate = pirateSite(dynamic?.intel?.enclave_tier ?? 0, this.ctx.state.founding?.den === fixed.id);
+    const pirate = pirateSite(dynamic?.intel?.enclave_tier ?? 0, this.ctx.state.founding?.den === fixed.id, this.ctx.state.founding?.pirates?.surname);
     return {
       title: fixed.name,
       eyebrow: `${fixed.band.toUpperCase()} band · ${mine ? "your holding" : dynamic?.owner ? "rival holding" : "unclaimed"}`,
@@ -783,10 +782,23 @@ export class MobileSurfaces {
           `<span><small>Storage</small><b>${dynamic.storage_used}/${dynamic.storage_cap}</b></span>` +
           `<span><small>Slots</small><b>${dynamic.slots_used}/${dynamic.slots_total}</b></span></div>` : "") +
         (mine && dynamic ? systemDefenseHtml(this.ctx.state, fixed, dynamic, this.defenseRadius.get(fixed.id) ?? DEFAULT_DEFENSE_RADIUS, "mobile", this.defenseAssigning.has(fixed.id), this.stationDraft.get(fixed.id) ?? null) : "") +
-        `<section class="m-section"><h3>Stockpile</h3><div class="m-ledger">${stock}</div></section>` +
+        (mine || !dynamic?.owner ? `<section class="m-section"><h3>Stockpile</h3><div class="m-ledger">${stock}</div></section>` : this.scoutHtml(dynamic)) +
         `<section class="m-section"><h3>Worlds</h3>${bodies || `<div class="m-muted">No body report.</div>`}</section>` +
         (fleetRows ? `<section class="m-section"><h3>Fleets here</h3><div class="m-list">${fleetRows}</div></section>` : ""),
     };
+  }
+
+  /** §scouting: what this corporation's Scouts last saw of a rival system. */
+  private scoutHtml(dynamic: SystemStateView): string {
+    const price = (commodity: Commodity) => this.ctx.state.market?.prices.find((quote) => quote.commodity === commodity)?.price;
+    const report = scoutReport(dynamic, price);
+    if (!report) return `<section class="m-section"><h3>Scout report</h3><p class="m-muted">None · send Scouts. ${esc(COUNTER_SCOUTING_HINT)}</p></section>`;
+    const goods = report.reach.map((slot) => `<span>${esc(human(slot.commodity))}<b>${fmt(slot.units)}</b></span>`).join("");
+    return `<section class="m-section"><h3>Scout report · ${esc(ageLabel(liveSimTime() - report.at))} ago</h3>`
+      + (report.defence ? `<p>${esc(report.defence)}</p>` : "")
+      + `<div class="m-ledger">${goods || `<span class="m-muted">Nothing in reach</span>`}</div>`
+      + (report.value !== null || report.vault ? `<p class="m-muted">${[report.value !== null ? `≈ ${fmt(report.value)} Cr in reach` : "", report.vault ? `Vault ${fmt(report.vault)}` : ""].filter(Boolean).join(" · ")}</p>` : "")
+      + `</section>`;
   }
 
   private renderMarket(): SheetView {
@@ -863,83 +875,9 @@ export class MobileSurfaces {
       const buy = value === null || isBlueprintOnly(module.kind) ? null : value * MODULE_BUY_MULT;
       const sell = value === null ? null : value * MODULE_SELL_MULT;
       return `<div class="m-service-row"><span><b>${module.name}</b><small>${module.role} · held ${held[module.kind] ?? 0}</small></span>` +
-        `<div><button type="button" data-mobile-act="module-buy" data-module="${module.kind}" ${buy !== null && spendableMarketCredits() >= buy && home ? "" : "disabled"}>${isBlueprintOnly(module.kind) ? "Blueprint only" : `Buy ${buy === null ? "—" : `~${fmt(buy)}`}`}</button>` +
+        `<div><button type="button" data-mobile-act="module-buy" data-module="${module.kind}" ${buy !== null && spendableMarketCredits() >= buy * (1 + PAYMENT_MARGIN) && home ? "" : "disabled"}>${isBlueprintOnly(module.kind) ? "Blueprint only" : `Buy ${buy === null ? "—" : `~${fmt(buy)}`}`}</button>` +
         `<button type="button" data-mobile-act="module-sell" data-module="${module.kind}" ${(held[module.kind] ?? 0) > 0 ? "" : "disabled"}>Sell ${sell === null ? "—" : `~${fmt(sell)}`}</button></div></div>`;
     }).join("")}</div><p class="m-hint">Sol modules ship as physical crates; local manufacture remains cheaper.</p>`;
-  }
-
-  private renderCheckin(): SheetView {
-    const decisions = this.renderDecisions();
-    const reports = this.arrivedReports.slice().reverse().map((entry) =>
-      `<div class="m-log-row is-${entry.tone}"><span>${esc(entry.text)}</span><time>arrived ${fmt(Math.max(0, liveSimTime() - entry.at))}s ago</time></div>`,
-    ).join("");
-    const timeline = this.ctx.state.timeline.slice().reverse().map((entry) =>
-      `<div class="m-log-row is-${entry.severity}"><span>${esc(entry.text)}</span><time>${fmt(Math.max(0, liveSimTime() - entry.at_time))}s ago</time></div>`,
-    ).join("");
-    return {
-      title: "Check-in",
-      eyebrow: "Decision inbox · arrived reports",
-      html: `<section class="m-section m-section--first"><h3>Decision inbox</h3>${decisions || `<div class="m-empty m-empty--good">No urgent decisions.</div>`}</section>` +
-        (reports ? `<section class="m-section"><h3>Arrived reports</h3>${reports}</section>` : "") +
-        `<section class="m-section"><h3>Recent log</h3>${timeline || `<div class="m-muted">No reports yet.</div>`}</section>`,
-    };
-  }
-
-  private renderDecisions(): string {
-    const rows: string[] = [];
-    const founding = this.ctx.state.founding;
-    if (founding && founding.stage !== "complete") {
-      const key = this.foundingDecisionKey();
-      if (!this.dismissedDecisions.has(key)) {
-        // §founding R4: the Log runs the guide's own next step, not a copy of it.
-        const plan = foundingPlan(this.ctx.state, this.homeSystem());
-        const step = plan?.primary;
-        const content = step ?? foundingCopy(founding.stage);
-        const chapter = plan && plan.chapter.name !== "Founding" ? `${plan.chapter.name} ${plan.chapter.done}/${plan.chapter.total} · ` : "";
-        const choices = step?.alternatives?.length
-          ? step.alternatives.map(goal => `<button type="button" class="m-primary" data-mobile-act="decision-founding" data-kind="${esc(goal.action)}">${esc(goal.label)}</button>`).join("")
-          : `<button type="button" class="m-primary" data-mobile-act="decision-founding" data-kind="${esc(content.action)}">${esc(content.label)}</button>`;
-        rows.push(`<article class="m-decision"><b>${esc(chapter + content.title)}</b><p>${esc([step?.reason, content.copy].filter(Boolean).join(" "))}</p><div>` +
-          `<button type="button" data-mobile-act="decision-dismiss" data-key="${esc(key)}">Dismiss</button>${choices}</div></article>`);
-      }
-    }
-    for (const proposal of this.ctx.state.diplomacy?.incoming ?? []) {
-      const key = `treaty:${proposal.id}`;
-      if (this.dismissedDecisions.has(key)) continue;
-      rows.push(`<article class="m-decision"><b>${esc(proposal.name)} proposes ${esc(human(proposal.treaty))}</b><p>A formal diplomatic change awaits your answer.</p>` +
-        `<div><button type="button" data-mobile-act="decision-treaty" data-id="${proposal.id}" data-answer="decline">Decline</button>` +
-        `<button type="button" class="m-primary" data-mobile-act="decision-treaty" data-id="${proposal.id}" data-answer="accept">Accept</button></div></article>`);
-    }
-    for (const invite of this.ctx.state.syndicateInvites) {
-      const key = `syndicate:${invite.id}`;
-      if (this.dismissedDecisions.has(key)) continue;
-      rows.push(`<article class="m-decision"><b>Join ${esc(invite.name)}?</b><p>A syndicate invitation awaits.</p><div>` +
-        `<button type="button" data-mobile-act="decision-dismiss" data-key="${esc(key)}">Later</button>` +
-        `<button type="button" class="m-primary" data-mobile-act="decision-syndicate" data-id="${esc(invite.id)}">Join</button></div></article>`);
-    }
-    for (const operation of this.ctx.state.operations.filter((candidate) => candidate.state === "offered" && !candidate.joined).slice(0, 3)) {
-      const key = `operation:${operation.id}`;
-      if (this.dismissedDecisions.has(key)) continue;
-      rows.push(`<article class="m-decision"><b>${esc(human(operation.issuer))} operation offered</b><p>${esc(human(operation.kind.kind))} · reward ${fmt(operation.reward.credits)} credits.</p><div>` +
-        `<button type="button" data-mobile-act="decision-dismiss" data-key="${esc(key)}">Later</button>` +
-        `<button type="button" class="m-primary" data-mobile-act="decision-operation" data-id="${esc(operation.id)}">Accept</button></div></article>`);
-    }
-    for (const item of this.blockadeDecisions()) {
-      if (this.dismissedDecisions.has(item.key)) continue;
-      rows.push(`<article class="m-decision${item.tone === "bad" ? " is-danger" : ""}"><b>${esc(item.title)}</b><p>${esc(item.detail)}</p><div>` +
-        `<button type="button" data-mobile-act="decision-dismiss" data-key="${esc(item.key)}">Dismiss</button>` +
-        `<button type="button" class="m-primary" data-mobile-act="system-select" data-id="${esc(item.system)}">${item.mine ? "Send defenders" : "Open system"}</button></div></article>`);
-    }
-    for (const battle of this.ctx.state.battles.filter((candidate) => candidate.own)) {
-      const ownFleet = this.ctx.state.ghosts.find((fleet) => fleet.own && battle.participants.includes(fleet.id));
-      const key = `battle:${battle.id}`;
-      if (this.dismissedDecisions.has(key)) continue;
-      rows.push(`<article class="m-decision is-danger"><b>Your fleet is engaged</b><p>Battle light is arriving from the observed theater.</p><div>` +
-        `<button type="button" data-mobile-act="battle-open" data-id="${esc(battle.id)}">Open</button>` +
-        (ownFleet ? `<button type="button" data-mobile-act="decision-withdraw" data-id="${esc(ownFleet.id)}">Withdraw</button>` : "") +
-        `</div></article>`);
-    }
-    return rows.join("");
   }
 
   private renderBattle(entry: SheetEntry): SheetView {
@@ -964,8 +902,8 @@ export class MobileSurfaces {
     return system ? this.ctx.state.systems.find((entry) => entry.id === system) : undefined;
   }
 
-  /** §merchant: the free trader's stall, a negotiation with Teo Brannick.
-   * Amounts are read from the inputs; Teo's word on the offer updates in place
+  /** §merchant: the free trader's stall, a negotiation with the founder's own
+   * trader (§traders). Amounts are read from the inputs; the trader's word on the offer updates in place
    * as you type (`handleMerchantInput`), so typing is never re-rendered over. */
   private renderMerchant(entry: SheetEntry): SheetView {
     const merchant = this.ctx.state.merchant;
@@ -990,38 +928,41 @@ export class MobileSurfaces {
     const get = merchant.goods.map((good) => `<div class="m-merchant-row"><span><b>${esc(human(good.commodity))}</b><small>${fmt(good.price, 1)} cr · ${good.stock} left</small></span>`
       + `${input("buy", good.commodity, this.merchantBuys[good.commodity] ?? 0, good.stock)}</div>`).join("");
     const held = oreAtHome(this.merchantHome());
-    const give = `<div class="m-merchant-row"><span><b>Ferrite Ore</b><small>${fmt(merchant.ore_price, 1)} cr · takes ${merchant.ore_room} more</small><small class="m-merchant-held"><b>${fmt(held)}</b> at home</small></span>`
-      + `${input("sell", "metallic_ore", this.merchantSells.metallic_ore ?? 0, Math.min(merchant.ore_room, held))}</div>`;
+    const most = Math.min(merchant.ore_room, held);
+    const give = `<div class="m-merchant-row has-max"><span><b>Ferrite Ore</b><small>${fmt(merchant.ore_price, 1)} cr · takes ${merchant.ore_room} more</small><small class="m-merchant-held"><b>${fmt(held)}</b> at home</small></span>`
+      + `<button type="button" data-mobile-act="merchant-max" ${docked && most > 0 ? "" : "disabled"}>Max</button>`
+      + `${input("sell", "metallic_ore", this.merchantSells.metallic_ore ?? 0, most)}</div>`;
     const { line, terms, ready } = this.merchantTerms(this.merchantBuys, this.merchantSells);
-    const portrait = traderPortrait(line.mood, () => this.sheets.refresh());
+    const who = traderOf(this.ctx.state.founding);
+    const portrait = traderPortrait(who, line.mood, () => this.sheets.refresh());
     return {
       title: "Free Trader",
       eyebrow: status,
       html: `<header class="m-merchant-trader" data-merchant-trader data-mood="${line.mood}">`
-        + `<img class="m-merchant-portrait${portrait.painted ? "" : " is-interim"}" src="${esc(portrait.src)}" alt="${esc(portrait.alt)}" width="72" height="72">`
-        + `<div class="m-merchant-who"><b>${esc(TRADER.name)}</b><small>${esc(TRADER.ship)}</small></div>`
+        + `<img class="m-merchant-portrait${portrait.painted ? "" : " is-interim"}" src="${esc(portrait.src)}" alt="${esc(portrait.alt)}" width="90" height="90">`
+        + `<div class="m-merchant-who"><b>${esc(who.name)}</b><small>the ${esc(who.ship)}</small></div>`
         + `<p class="m-merchant-says" data-merchant-says role="status">“${esc(line.text)}”</p></header>`
         + `<section class="m-section m-merchant-side"><h3>You give</h3>${give}</section>`
         + `<section class="m-section m-merchant-side"><h3>You get</h3>${get}</section>`
         + `<div class="m-merchant-dock"><div class="m-merchant-terms" data-merchant-terms>${terms}</div>`
-        + `<button type="button" class="m-primary" data-mobile-act="merchant-submit" ${ready ? "" : "disabled"}>Shake on it</button></div>`,
+        + `<button type="button" class="m-primary" data-mobile-act="merchant-submit" ${ready ? "" : "disabled"}>Trade</button></div>`,
     };
   }
 
-  /** Teo's word, the terms and whether the handshake is open, for an offer. */
+  /** The trader's word, the terms and whether the handshake is open, for an offer. */
   private merchantTerms(buys: MerchantGoods, sells: MerchantGoods): { line: TraderLine; terms: string; ready: boolean } {
     const state = this.ctx.state;
     const merchant = state.merchant!;
-    const wallet = state.wallet;
-    const quote = merchantQuote(merchant, buys, sells, this.merchantHome(), wallet && !wallet.report_pending ? spendableMarketCredits() : undefined);
+    const quote = merchantQuote(merchant, buys, sells, this.merchantHome(), this.ctx.state.credits !== null ? spendableMarketCredits() : undefined);
     const empty = !quote.cost && !quote.revenue;
     const dealt = state.timeline.some((e) => e.text.startsWith("Free trader: ") && !e.text.startsWith("Free trader: trade refused"));
+    const trader = traderOf(state.founding);
     let line: TraderLine;
     if (this.merchantSentAt !== null && empty) {
       const result = traderResult(state.timeline, this.merchantSentAt);
-      line = result && !result.ok ? refusalLine(result.reason) : DEAL_LINE;
+      line = result && !result.ok ? refusalLine(trader, result.reason) : dealLine(trader);
     } else {
-      line = traderLine(merchant, buys, sells, quote, dealt, !!this.ctx.state.founding?.bounty_received);
+      line = traderLine(trader, merchant, buys, sells, quote, dealt, !!state.founding?.bounty_received);
     }
     const net = quote.cost - quote.revenue;
     const terms = empty ? "Name your terms."
@@ -1038,7 +979,7 @@ export class MobileSurfaces {
     return { buys: read("buy"), sells: read("sell") };
   }
 
-  /** Typing an amount: Teo's word, the terms and the handshake update in
+  /** Typing an amount: the trader's word, the terms and the handshake update in
    * place; the inputs are left alone. */
   handleMerchantInput(target: HTMLInputElement): boolean {
     if (!target.matches("[data-merchant-buy], [data-merchant-sell]") || !this.ctx.state.merchant) return false;
@@ -1048,7 +989,7 @@ export class MobileSurfaces {
     const trader = document.querySelector<HTMLElement>("[data-merchant-trader]");
     if (trader) trader.dataset.mood = line.mood;
     const portrait = trader?.querySelector<HTMLImageElement>("img");
-    const art = traderPortrait(line.mood);
+    const art = traderPortrait(traderOf(this.ctx.state.founding), line.mood);
     if (portrait && art.painted && !portrait.src.endsWith(art.src)) portrait.src = art.src;
     const says = document.querySelector<HTMLElement>("[data-merchant-says]");
     if (says) says.textContent = `“${line.text}”`;
@@ -1063,8 +1004,7 @@ export class MobileSurfaces {
     const merchant = dockedMerchant(this.ctx.state);
     if (!merchant) return;
     const { buys, sells } = this.merchantOffer();
-    const wallet = this.ctx.state.wallet;
-    const quote = merchantQuote(merchant, buys, sells, this.merchantHome(), wallet && !wallet.report_pending ? spendableMarketCredits() : undefined);
+    const quote = merchantQuote(merchant, buys, sells, this.merchantHome(), this.ctx.state.credits !== null ? spendableMarketCredits() : undefined);
     this.merchantBuys = buys;
     this.merchantSells = sells;
     if (!quote.error) {
@@ -1095,9 +1035,10 @@ export class MobileSurfaces {
       commodity: this.marketCommodity,
       orderUnits: qty,
       units: this.marketSide === "sell" ? qty : 0,
-      credits: this.marketSide === "buy" ? qty * protection * (1 + (this.ctx.state.charter?.market_penalty_frac ?? 0)) : 0,
     });
-    this.hooks.notice(`${human(this.marketSide)} order sent to the Market Hub.`);
+    // §treasury: a buy pays as it leaves; its change comes back with the receipt.
+    const paid = this.marketSide === "buy" ? qty * protection * (1 + hubCut(this.ctx.state.charter)) : 0;
+    this.hooks.notice(`${human(this.marketSide)} order sent${paid > 0 ? ` · ${fmt(paid)} Cr paid` : ""}.`);
     this.sheets.refresh();
   }
 
@@ -1119,13 +1060,6 @@ export class MobileSurfaces {
     this.hooks.notice(`${buy ? "Buy" : "Sell"} order dispatched for ${human(kind)}.`);
   }
 
-  private answerTreaty(idValue: string | undefined, accept: boolean): void {
-    const id = Number(idValue);
-    if (!Number.isFinite(id)) return;
-    this.ctx.send({ type: "RespondTreaty", proposal_id: id, accept });
-    this.hooks.notice(`Treaty ${accept ? "accepted" : "declined"}.`);
-  }
-
   private unloadFleet(id?: string): void {
     const fleet = this.ownFleet(id);
     if (!fleet?.docked) return;
@@ -1136,8 +1070,18 @@ export class MobileSurfaces {
   private runFoundingAction(action: string): void {
     const founding = this.ctx.state.founding;
     if (!founding) return;
+    if (action === "open-home") {
+      const id = this.homeSystemId();
+      if (id) this.hooks.flyIntoSystem(id);
+      return;
+    }
     // §founding R3/R4: one-click orders still pass through Confirm/Cancel.
     const commands = foundingCommands(action, this.ctx.state, this.homeSystem());
+    // §captain-intro: the captain is introduced first; Assign sends the order.
+    if (commands && introduceCaptainFor(this.ctx.state, commands, () => {
+      this.ctx.intent.beginFleetCommand(commands);
+      this.ctx.intent.confirmPendingIntent();
+    })) return;
     if (commands) {
       if (action === "guarded-recovery") this.ctx.state.selectedExplorationSiteId = founding.recovery_site ?? null;
       this.ctx.intent.beginFleetCommand(commands);
@@ -1174,6 +1118,17 @@ export class MobileSurfaces {
       if (id) this.hooks.focusSystem(id);
       return;
     }
+    if (action === "restart-corporation") {
+      // §gun-platform: the sim refuses it unless the colony fell.
+      this.ctx.send({ type: "RestartCorporation" });
+      return;
+    }
+    if (action === "collect-crate") {
+      // §charter-crates: the first crate its step has released.
+      const crate = founding.crates?.find(c => c.released);
+      if (crate) this.ctx.send({ type: "CollectCharterCrate", charter_crate: crate.id });
+      return;
+    }
     if (action === "interceptor" && founding.interceptor) {
       this.hooks.focusFleet(founding.interceptor);
       return;
@@ -1192,7 +1147,7 @@ export class MobileSurfaces {
       this.hooks.openSheet({ id: "logistics" });
       return;
     }
-    if (["freighter", "convoy", "scout", "colony", "barge", "probe"].includes(action)) {
+    if (["freighter", "convoy", "scout", "colony", "barge", "probe", "raider"].includes(action)) {
       const kind = action === "freighter" ? "convoy" : action === "barge" ? "mining_barge" : action === "probe" ? "survey_probe" : action;
       const fleet = this.ctx.state.ghosts.find((ghost) => ghost.own && ghost.composition?.some((stack) => (kind === "convoy" ? isPlayerFreighter(stack.kind) : stack.kind === kind)));
       if (fleet) this.hooks.focusFleet(fleet.id);
@@ -1270,18 +1225,18 @@ function foundingPlanHtml(plan: FoundingPlan): string {
   const button = (action: string, text: string, primary = false) =>
     `<button type="button"${primary ? ` class="m-primary"` : ""} data-mobile-act="founding-action" data-kind="${esc(action)}">${esc(text)}</button>`;
   const progress = plan.progress.length ? `<ul class="m-founding__progress">${plan.progress.map(line => `<li>${esc(line)}</li>`).join("")}</ul>` : "";
+  // §founding copy (Oct 27 2026): as the desktop card — no "Next" eyebrow, a
+  // waiting card's line as its title, choices that say the whole step.
+  const copy = step?.action === "open-home" ? step.copy.replace(/^Click /, "Tap ") : step?.copy;
   const next = step
-    ? `<div class="m-founding__next${plan.blocked ? " is-blocked" : ""}"><small>${plan.blocked ? "Needs attention" : "Next"}</small><b>${esc(step.title)}</b>` +
-      `${step.reason ? `<em>${esc(step.reason)}</em>` : ""}<p>${esc(step.copy)}</p>` +
-      (step.alternatives?.length ? step.alternatives.map(goal => button(goal.action, `${goal.title} · ${goal.label}`, true)).join("") : button(step.action, step.label, true)) + `</div>`
+    ? `<div class="m-founding__next${plan.blocked ? " is-blocked" : ""}">${plan.blocked ? "<small>Needs attention</small>" : ""}<b>${esc(step.status ?? step.title)}</b>` +
+      `${step.reason ? `<em>${esc(step.reason)}</em>` : ""}${copy ? `<p>${esc(copy)}</p>` : ""}` +
+      (step.alternatives?.length ? step.alternatives.map((goal, i) => button(goal.action, goal.label, i === 0)).join("") : button(step.action, step.label, true)) + `</div>`
     : "";
   const waiting = plan.waiting.length
-    ? `<div class="m-founding__waiting"><small>While you wait</small>${plan.waiting.map(item => button(item.action, item.label)).join("")}</div>`
+    ? `<div class="m-founding__waiting"><small>While you wait</small>${plan.waiting.map(item => button(item.action, item.title)).join("")}</div>`
     : "";
-  const goal = plan.goal
-    ? `<div class="m-founding__goal"><small>Long-term goal</small><b>${esc(plan.goal.title)}</b><p>${esc(plan.goal.copy)}</p>${button(plan.goal.action, plan.goal.label)}</div>`
-    : "";
-  return progress + next + goal + waiting;
+  return progress + next + waiting;
 }
 
 /** The guide's staffing actions and the structure each opens. */
@@ -1297,6 +1252,7 @@ function foundingCopy(stage: keyof typeof FOUNDING_STEP): { title: string; copy:
     case "build_agroplex": return { title: "Build an Agroplex", copy: "It turns Biomass into Provisions. Staff it when it stands.", action: "build-agroplex", label: "Build Agroplex" };
     case "build_mine": return { title: "Build and staff a Mining Complex", copy: "Mine Ferrite Ore on your landing world, then assign workforce.", action: "build-mine", label: "Build Mining Complex" };
     case "pirate_raid": return { title: "The mine is running", copy: "Ferrite Ore is coming in.", action: "mine", label: "Open the mine" };
+    case "build_gun_platform": return { title: "Build a Gun Platform", copy: "Pirates leave defended worlds alone.", action: "build-gun-platform", label: "Build Gun Platform" };
     case "sell_ore": return { title: "Find semiconductors", copy: "The Solar Array needs them.", action: "market", label: "Open Market" };
     case "power_shipyard":
     case "buy_semiconductors": return { title: "Build a Solar Array", copy: "A Shipyard needs more than the Command Center's 1 MW.", action: "build-power", label: "Build Solar Array" };
@@ -1305,18 +1261,22 @@ function foundingCopy(stage: keyof typeof FOUNDING_STEP): { title: string; copy:
     case "build_convoy": return { title: "Build a Tiny Freighter", copy: "It carries your ore to the Market Hub.", action: "build-convoy", label: "Build Tiny Freighter" };
     case "build_second_freighter": return { title: "Build a second Tiny Freighter", copy: "Import its materials and staff the Shipyard to expand your trade capacity.", action: "home", label: "Open home" };
     case "build_freighter":
-    case "build_interceptor": return { title: "Build an Interceptor", copy: "Shipyard II, then the Interceptor. It hunts the privateer.", action: "build-interceptor", label: "Build Interceptor" };
+    case "build_interceptor": return { title: "Build an Interceptor", copy: "Then assign its captain.", action: "build-interceptor", label: "Build Interceptor" };
     case "defeat_privateer": return { title: "Destroy the privateer", copy: "Send your Interceptor after it.", action: "attack-privateer", label: "Attack" };
+    case "vendetta": return { title: "Defeat the privateer's uncle", copy: "Keep two Interceptors at home. He attacks your strongest warship.", action: "attack-uncle", label: "Attack" };
     case "eliminate_den": return { title: "Eliminate the privateer den", copy: "Send your Interceptor to the den its log named.", action: "assault-den", label: "Send Interceptor" };
     case "complete_export": return { title: "Complete the export", copy: "Sell Ferrite Ore at the Market Hub.", action: "freighter", label: "Select Freighter" };
     case "build_academy": return { title: "Establish and staff Academy I", copy: "Build it at home and assign workforce.", action: "build-academy", label: "Build Academy" };
-    case "first_research": return { title: "Start research", copy: "Build and staff an Academy, then start any Tier I programme.", action: "research", label: "Open Research" };
+    case "first_research": return { title: "Research Enrichment", copy: "Build and staff an Academy, then research Enrichment.", action: "research", label: "Open Research" };
+    case "build_smelter": return { title: "Build a Smelter", copy: "Ferrite Ore → Alloys. Staff it when it stands.", action: "build-smelter", label: "Build Smelter" };
     case "expand_mining": return { title: "Expand mining operations", copy: "A Solar Array and a Mining Complex on another world of your system.", action: "build-expansion-power", label: "Build Solar Array" };
     case "build_scout": return { title: "Build a Scout", copy: "Import its kit and construct the exploration hull.", action: "market", label: "Open Warehouse" };
     case "survey_candidates": return { title: "Chart a nearby system", copy: "Build a Survey Probe and send it to the assigned stop; its report charts a belt for your first Mining Barge.", action: "build-probe", label: "Open Shipyard" };
     case "build_barge": return { title: "Build a Mining Barge", copy: "Build it at your Shipyard.", action: "build-barge", label: "Open Shipyard" };
+    case "prospect_belt": return { title: "Prospect the belt", copy: "A prospecting pass finds its hidden pockets.", action: "prospect-belt", label: "Prospect" };
     case "mine_belt": return { title: "Send the barge to the belt", copy: "Mine the belt your survey charted. This step completes when command hears it cutting ore.", action: "mine-belt", label: "Send Mining Barge" };
     case "haul_ore": return { title: "Bring the ore home", copy: "Send the barge home and unload its ore, or sell it at the Market Hub.", action: "barge-home", label: "Send the barge home" };
+    case "secure_stores": return { title: "Secure your stores", copy: "A Warehouse for room, a Vault raiders can't reach.", action: "build-store-warehouse", label: "Build Warehouse" };
     case "build_colony":
     case "establish_colony":
     case "complete": return { title: "Founding complete", copy: "Develop home and grow your trade routes.", action: "home", label: "Open home" };

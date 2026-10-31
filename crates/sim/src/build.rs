@@ -167,6 +167,24 @@ pub enum StructureKind {
     /// §fuel-overhaul: Deuterium + a fusion world's power → Antimatter. The
     /// last tech (Antimatter Synthesis).
     AntimatterPlant,
+    /// §asteroid-quarry (Oct 2026, `docs/asteroid-quarry.md`): a belt's one
+    /// structure, mining, crew quarters and power in one. It works every
+    /// deposit on its belt with no workforce, power plant or fuel, and pays
+    /// upkeep in Provisions and Machinery instead (`QUARRY_UPKEEP_PER_TIER`).
+    /// Belts take nothing else.
+    AsteroidQuarry,
+    /// §vault (Peter, Oct 28 2026: the cranny "makes sense logically" only as a
+    /// place raiders can't reach): a bunker dug under the Command Center. Raiders
+    /// load from the surface stores; what the Vault holds they never reach. It
+    /// holds [`VAULT_UNITS_PER_TIER`] a tier, filled with the system's most
+    /// valuable goods first. One per world, no slot, no crew, no power. See
+    /// `World::raid_reserve`.
+    Vault,
+    /// §season (docs/endgame-keystone.md): where the colonists gather to air
+    /// their grievances. It rallies Resolve
+    /// ([`crate::season::RESOLVE_PER_HALL_HOUR`] a level) from grip II on.
+    /// At the Command Center, no slot, no crew, no power; three levels.
+    AssemblyHall,
 }
 
 impl StructureKind {
@@ -191,11 +209,14 @@ impl StructureKind {
             Self::OrdnanceFoundry => Some("hull_drydock_efficiency"),
             Self::OrbitalWarehouse => Some("mat_foundry_iv_orbital_yards"),
             Self::SensorArray => Some("comp_sensor_gain"),
-            Self::DefensePlatform | Self::OrbitalDefense | Self::Garrison => Some("weap_fire_control"),
+            Self::DefensePlatform | Self::Garrison => Some("weap_fire_control"),
+            // §gun-platform: the station's first level needs no research; each
+            // level after it is its own unlock (`max_buildable_tier`).
+            Self::OrbitalDefense => None,
             Self::MiningComplex | Self::Bioharvester | Self::Agroplex | Self::Shipyard
             | Self::Habitat | Self::Warehouse | Self::Academy | Self::ServiceBerth
             | Self::CommandCenter | Self::LivingTerraces | Self::PowerPlant
-            | Self::UraniumMill => None,
+            | Self::UraniumMill | Self::AsteroidQuarry | Self::Vault | Self::AssemblyHall => None,
         }
     }
 
@@ -210,7 +231,7 @@ impl StructureKind {
 
     /// Every kind, in display order. New kinds go LAST: the client seeds a
     /// planet's first building addresses from this catalogue's order.
-    pub const ALL: [StructureKind; 32] = [
+    pub const ALL: [StructureKind; 35] = [
         StructureKind::MiningComplex,
         StructureKind::VolatileHarvester,
         StructureKind::Bioharvester,
@@ -243,6 +264,9 @@ impl StructureKind {
         StructureKind::PowerPlant,
         StructureKind::UraniumMill,
         StructureKind::AntimatterPlant,
+        StructureKind::AsteroidQuarry,
+        StructureKind::Vault,
+        StructureKind::AssemblyHall,
     ];
 
     /// §workforce cap: does this structure do nothing until a crew is posted?
@@ -281,7 +305,8 @@ impl StructureKind {
         match self {
             StructureKind::MiningComplex
             | StructureKind::VolatileHarvester
-            | StructureKind::Bioharvester => SlotPool::Resource,
+            | StructureKind::Bioharvester
+            | StructureKind::AsteroidQuarry => SlotPool::Resource,
             StructureKind::Smelter
             | StructureKind::ElectronicsFabricator
             | StructureKind::ChemicalWorks
@@ -323,7 +348,9 @@ impl StructureKind {
             | StructureKind::Academy
             // §ground: the garrison is civic infrastructure — a colony defends
             // itself out of the same budget that houses and feeds it.
-            | StructureKind::Garrison => SlotPool::Infrastructure,
+            | StructureKind::Garrison
+            // §vault: grouped with the civic utilities; it takes no slot.
+            | StructureKind::Vault | StructureKind::AssemblyHall => SlotPool::Infrastructure,
         }
     }
 
@@ -369,6 +396,9 @@ impl StructureKind {
             StructureKind::PowerPlant => "power_plant",
             StructureKind::UraniumMill => "uranium_mill",
             StructureKind::AntimatterPlant => "antimatter_plant",
+            StructureKind::AsteroidQuarry => "asteroid_quarry",
+            StructureKind::Vault => "vault",
+            StructureKind::AssemblyHall => "assembly_hall",
         }
     }
 
@@ -407,13 +437,25 @@ impl StructureKind {
             StructureKind::PowerPlant => "Power Plant",
             StructureKind::UraniumMill => "Uranium Mill",
             StructureKind::AntimatterPlant => "Antimatter Plant",
+            StructureKind::AsteroidQuarry => "Asteroid Quarry",
+            StructureKind::Vault => "Vault",
+            StructureKind::AssemblyHall => "Assembly Hall",
         }
+    }
+
+    /// §asteroid-quarry: may this kind stand on this body? A belt takes the
+    /// Asteroid Quarry and nothing else; the quarry stands only on a belt.
+    pub fn suits(self, body: &crate::body::Body) -> bool {
+        body.is_belt() == (self == Self::AsteroidQuarry)
     }
 }
 
 impl StructureKind {
+    /// §gun-platform: the station stands in orbit and takes no site (the
+    /// charter's Gun Platform must never cost a home its Academy's).
     pub fn uses_slot(self) -> bool {
-        !matches!(self, Self::ServiceBerth | Self::CommandCenter | Self::PowerPlant)
+        !matches!(self, Self::ServiceBerth | Self::CommandCenter | Self::PowerPlant | Self::Vault | Self::AssemblyHall
+            | Self::OrbitalDefense)
     }
 
     pub fn tier_title(self, tier: u32) -> &'static str {
@@ -444,9 +486,56 @@ pub const COMMAND_CENTER_RECIPES: [Recipe; 3] = [
     Recipe { costs: &[(Commodity::Alloys, 120.0), (Commodity::Machinery, 40.0), (Commodity::Electronics, 30.0), (Commodity::Polymers, 20.0)], build_ticks: 900 * HZ },
 ];
 
-/// Most structures retain their original per-upgrade recipe. Command Center
-/// tiers have explicit costs; callers must include pending upgrades in `tier`.
-pub fn recipe_for_tier(what: BuildKind, tier: u32) -> &'static Recipe {
+// §tier-curve (R1, Oct 22 2026): past tier II a structure's next tier costs
+// more and takes longer, so the build queue stays worth a visit and a world
+// develops over weeks, not hours (docs/construction.md). Tiers I–II keep the
+// base recipe, which keeps the first session's pace. The Command Center, power plant and defence station keep their own
+// explicit level ladders. Mirrored by the client's `TIER_CURVE` (market.ts).
+/// Cost multiplier by tier (index 0 = tier I): ×1.6 a tier from III.
+pub const TIER_COST_MULT: [f64; 6] = [1.0, 1.0, 1.6, 2.56, 4.096, 6.5536];
+/// Build-time multiplier by tier: a 20 s structure takes about 7 minutes at
+/// III, an hour at IV, 5 hours at V and 15 hours at VI.
+pub const TIER_TIME_MULT: [f64; 6] = [1.0, 1.0, 20.0, 180.0, 900.0, 2_700.0];
+
+/// Does this build climb the tier curve? Every structure upgrade except the
+/// three with explicit level recipes.
+pub fn follows_tier_curve(what: BuildKind) -> bool {
+    matches!(what, BuildKind::Upgrade { upgrade } if !matches!(upgrade,
+        StructureKind::CommandCenter | StructureKind::PowerPlant | StructureKind::OrbitalDefense))
+}
+
+/// A build's real recipe at one tier: the base recipe, scaled by the tier
+/// curve where it applies. Owned, since scaled costs aren't `'static`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TierRecipe {
+    pub costs: Vec<(Commodity, f64)>,
+    pub build_ticks: u64,
+}
+
+impl From<&Recipe> for TierRecipe {
+    fn from(recipe: &Recipe) -> Self {
+        TierRecipe { costs: recipe.costs.to_vec(), build_ticks: recipe.build_ticks }
+    }
+}
+
+/// The recipe to build `what` at `tier` (whole units, rounded). Callers must
+/// include pending upgrades in `tier`.
+pub fn recipe_for_tier(what: BuildKind, tier: u32) -> TierRecipe {
+    let base = base_recipe_for_tier(what, tier);
+    if !follows_tier_curve(what) {
+        return TierRecipe::from(base);
+    }
+    let i = tier.clamp(1, RESEARCHED_MAX_STRUCTURE_TIER) as usize - 1;
+    TierRecipe {
+        costs: base.costs.iter().map(|&(c, n)| (c, (n * TIER_COST_MULT[i]).round())).collect(),
+        build_ticks: (base.build_ticks as f64 * TIER_TIME_MULT[i]).round() as u64,
+    }
+}
+
+/// Most structures share one base recipe across tiers (scaled by
+/// [`recipe_for_tier`]). Command Center, power plant and station tiers have
+/// explicit costs.
+fn base_recipe_for_tier(what: BuildKind, tier: u32) -> &'static Recipe {
     if matches!(what, BuildKind::Upgrade { upgrade: StructureKind::CommandCenter }) {
         &COMMAND_CENTER_RECIPES[tier.clamp(1, 3) as usize - 1]
     } else if matches!(what, BuildKind::Upgrade { upgrade: StructureKind::PowerPlant })
@@ -533,8 +622,9 @@ impl BuildJob {
         self.ship_work.as_ref().or(self.structure_work.as_ref())
     }
 
+    /// A structure order or Academy course waiting for its line.
     pub fn is_queued_structure(&self) -> bool {
-        matches!(self.what, BuildKind::Upgrade { .. } | BuildKind::Founding { .. })
+        matches!(self.what, BuildKind::Upgrade { .. } | BuildKind::Founding { .. } | BuildKind::Train { .. })
             && self.structure_work.as_ref().is_some_and(|work| work.rate == 0.0)
     }
 }
@@ -605,8 +695,8 @@ pub struct RefitJob {
     /// A refit changes what a ship carries — it does not mend it. Storing counts
     /// here (as this did before) minted fresh full-health hulls on completion,
     /// which made a refit a free full repair; and because the yard takes the
-    /// most-damaged hulls first, it was an optimally-efficient one. The Ordnance
-    /// Foundry's repair service is the only thing that restores hull.
+    /// most-damaged hulls first, it was an optimally-efficient one. Repair at a
+    /// Shipyard or Ordnance Foundry is the only thing that restores hull.
     /// `#[serde(default)]` so a pre-roster job in flight still completes (it
     /// falls back to `n` fresh hulls, the old behaviour, exactly once).
     #[serde(default)]
@@ -727,6 +817,19 @@ pub const MINING_BARGE_RECIPE: Recipe = Recipe {
         (Commodity::WarpCore, 1.0),
     ],
     build_ticks: 30 * HZ,
+};
+/// §holds: the Combat Freighter — a Tiny Freighter's goods with an armoured
+/// hold and a fast drive: Semiconductors for the drive, Armaments for the
+/// plating. Shipyard II, no research. Tunable.
+pub const COMBAT_FREIGHTER_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 25.0),
+        (Commodity::Machinery, 10.0),
+        (Commodity::Electronics, 6.0),
+        (Commodity::Armaments, 5.0),
+        (Commodity::WarpCore, 1.0),
+    ],
+    build_ticks: 20 * HZ,
 };
 /// §belts: the Mining Belt Station, a Shipyard II hull behind Belt Stations.
 pub const MINING_BELT_STATION_RECIPE: Recipe = Recipe {
@@ -1025,6 +1128,20 @@ pub const ANTIMATTER_PLANT_RECIPE: Recipe = Recipe {
 };
 /// §gaia: grown more than built — living soil (Biomass) and polymer membranes
 /// over an alloy frame; slower than a Habitat to raise.
+/// §asteroid-quarry: the mine, its crew quarters and its solar power in one
+/// kit: about a Mining Complex, a Solar Array and a small habitat.
+pub const ASTEROID_QUARRY_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 45.0),
+        (Commodity::Machinery, 18.0),
+        (Commodity::Polymers, 10.0),
+    ],
+    build_ticks: 24 * HZ,
+};
+/// §asteroid-quarry: a quarry's upkeep per tier, per second: an outpost's
+/// (1.8 Provisions and 0.3 Machinery a minute) for each tier.
+pub const QUARRY_UPKEEP_PER_TIER: [(Commodity, f64); 2] =
+    [(Commodity::Provisions, 0.03), (Commodity::Machinery, 0.005)];
 pub const LIVING_TERRACES_RECIPE: Recipe = Recipe {
     costs: &[
         (Commodity::Alloys, 30.0),
@@ -1037,6 +1154,16 @@ pub const LIVING_TERRACES_RECIPE: Recipe = Recipe {
 pub const WAREHOUSE_RECIPE: Recipe = Recipe {
     costs: &[(Commodity::Alloys, 30.0), (Commodity::Machinery, 8.0)],
     build_ticks: 15 * HZ,
+};
+/// §vault: a bunker under the Command Center. Tunable.
+pub const VAULT_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 40.0), (Commodity::Machinery, 10.0)],
+    build_ticks: 20 * HZ,
+};
+/// §season: the colonists' Assembly Hall. Tunable.
+pub const ASSEMBLY_HALL_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::Alloys, 30.0), (Commodity::Provisions, 40.0), (Commodity::Machinery, 10.0)],
+    build_ticks: 30 * HZ,
 };
 pub const SERVICE_BERTH_RECIPE: Recipe = Recipe {
     costs: &[(Commodity::Alloys, 5.0), (Commodity::Machinery, 3.0)],
@@ -1095,6 +1222,13 @@ pub const GARRISON_RECIPE: Recipe = Recipe {
 pub const ACADEMY_TRAIN_RECIPE: Recipe = Recipe {
     costs: crate::specialist::ACADEMY_TRAIN_COSTS,
     build_ticks: crate::specialist::ACADEMY_TRAIN_TICKS,
+};
+
+/// §research-wiring Expert Training: raising a specialist to expert is a
+/// longer, dearer course (and the specialist is in school meanwhile).
+pub const EXPERT_TRAIN_RECIPE: Recipe = Recipe {
+    costs: crate::specialist::EXPERT_TRAIN_COSTS,
+    build_ticks: 2 * crate::specialist::ACADEMY_TRAIN_TICKS,
 };
 
 /// Officer commissioning is a materially larger Academy commitment than one
@@ -1180,6 +1314,12 @@ pub const PRISMATIC_LANCE_RECIPE: Recipe = Recipe {
     build_ticks: 2 * MODULE_BUILD_TICKS,
 };
 
+/// §research-wiring Lance Array: a heavy beam battery, no exotic matter.
+pub const LANCE_ARRAY_RECIPE: Recipe = Recipe {
+    costs: &[(Commodity::PrecisionComponents, 6.0), (Commodity::Armaments, 10.0), (Commodity::Alloys, 8.0)],
+    build_ticks: 2 * MODULE_BUILD_TICKS,
+};
+
 /// Control electronics around a field coil.
 pub const STASIS_WEB_RECIPE: Recipe = Recipe {
     costs: &[(Commodity::Electronics, 8.0), (Commodity::Machinery, 4.0), (Commodity::Armaments, 2.0)],
@@ -1219,6 +1359,7 @@ pub fn module_recipe(kind: ModuleKind) -> &'static Recipe {
         ModuleKind::SurveyDrive => &SURVEY_DRIVE_RECIPE,
         ModuleKind::NebulaSpectrometer => &NEBULA_SPECTROMETER_RECIPE,
         ModuleKind::PrismaticLance => &PRISMATIC_LANCE_RECIPE,
+        ModuleKind::LanceArray => &LANCE_ARRAY_RECIPE,
         ModuleKind::StasisWeb => &STASIS_WEB_RECIPE,
         ModuleKind::WarpStabilizer => &WARP_STABILIZER_RECIPE,
         ModuleKind::InterdictionField => &INTERDICTION_FIELD_RECIPE,
@@ -1279,6 +1420,7 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         BuildKind::Ship { ship: ShipKind::SurveyProbe } => &SURVEY_PROBE_RECIPE,
         BuildKind::Ship { ship: ShipKind::MiningBarge } => &MINING_BARGE_RECIPE,
         BuildKind::Ship { ship: ShipKind::MiningBeltStation } => &MINING_BELT_STATION_RECIPE,
+        BuildKind::Ship { ship: ShipKind::CombatFreighter } => &COMBAT_FREIGHTER_RECIPE,
         BuildKind::Ship {
             ship: ShipKind::Corvette,
         } => &CORVETTE_RECIPE,
@@ -1312,6 +1454,7 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
         } => {
             unreachable!("Freighter is TCA-only and never buildable — apply_build guards it")
         }
+        BuildKind::Train { specialist } if specialist.is_expert() => &EXPERT_TRAIN_RECIPE,
         BuildKind::Train { .. } => &ACADEMY_TRAIN_RECIPE,
         BuildKind::RecruitCaptain { .. } => &CAPTAIN_RECRUIT_RECIPE,
         BuildKind::Module { module } => module_recipe(module),
@@ -1349,6 +1492,9 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
             StructureKind::PowerPlant => &POWER_PLANT_RECIPE,
             StructureKind::UraniumMill => &URANIUM_MILL_RECIPE,
             StructureKind::AntimatterPlant => &ANTIMATTER_PLANT_RECIPE,
+            StructureKind::AsteroidQuarry => &ASTEROID_QUARRY_RECIPE,
+            StructureKind::Vault => &VAULT_RECIPE,
+            StructureKind::AssemblyHall => &ASSEMBLY_HALL_RECIPE,
         },
     }
 }
@@ -1445,8 +1591,10 @@ pub fn yard_for(kind: ShipKind) -> (StructureKind, u32) {
         ShipKind::SurveyProbe => (StructureKind::Shipyard, 1),
         ShipKind::MiningBarge => (StructureKind::Shipyard, 1),
         ShipKind::MiningBeltStation => (StructureKind::Shipyard, 2),
+        ShipKind::CombatFreighter => (StructureKind::Shipyard, 2),
         ShipKind::Colony => (StructureKind::Shipyard, 1), // civilian settlement
-        ShipKind::Raider => (StructureKind::Shipyard, 2), // military industry is earned
+        // Peter (Oct 25 2026): Shipyard I builds the Interceptor.
+        ShipKind::Raider => (StructureKind::Shipyard, 1),
         ShipKind::Corvette => (StructureKind::Shipyard, 2),
         // The line of battle — a dedicated drydock.
         ShipKind::Destroyer => (StructureKind::NavalDrydock, 1),
@@ -1478,10 +1626,15 @@ pub fn yard_prereq(kind: StructureKind) -> Option<(StructureKind, u32)> {
 }
 
 // --- REPAIR (§roster) ---------------------------------------------------------
-// The Ordnance Foundry services damaged hulls. Battle damage PERSISTS per ship
-// now, so without a cure attrition would be permanent — this is the relief
-// valve, and it is deliberately geographic: a forward foundry keeps a fleet in
-// the fight, a rear one costs you the trip home.
+// The Ordnance Foundry services damaged hulls, and since Oct 21 2026 a Shipyard
+// does too (§repair: the yard that builds an Interceptor can mend it; the
+// faster of the two serves). Battle damage PERSISTS per ship, so without a cure
+// attrition would be permanent — this is the relief valve, and it is
+// deliberately geographic: a forward foundry keeps a fleet in the fight, a rear
+// yard costs you the trip home.
+
+/// The structures that repair hulls docked in their system.
+pub const REPAIR_YARDS: [StructureKind; 2] = [StructureKind::OrdnanceFoundry, StructureKind::Shipyard];
 
 /// Hull points restored per second, per Foundry tier, at full staffing. The
 /// factor chain (`tier × staffing × skill`) multiplies this exactly like any
@@ -1536,9 +1689,11 @@ pub const RESEARCHED_MAX_STRUCTURE_TIER: u32 = 6;
 /// used to keep gated structures locked until their first research unlock.
 pub fn max_buildable_tier(kind: StructureKind, research_unlocked_tier: u32) -> u32 {
     if kind == StructureKind::ServiceBerth { return 1; }
-    // §orbital-defense: each station level is its own research unlock; the
-    // legacy platform is no longer built.
-    if kind == StructureKind::OrbitalDefense { return research_unlocked_tier.min(crate::station::MAX_LEVEL); }
+    if kind == StructureKind::AssemblyHall { return 3; }
+    // §orbital-defense: each station level is its own research unlock, but
+    // the Gun Platform (§gun-platform) needs none; the legacy platform is no
+    // longer built.
+    if kind == StructureKind::OrbitalDefense { return research_unlocked_tier.clamp(1, crate::station::MAX_LEVEL); }
     if kind == StructureKind::DefensePlatform { return 0; }
     if kind == StructureKind::CommandCenter { return if research_unlocked_tier >= 3 { 3 } else { 2 }; }
     if kind.research_prerequisite().is_some() && research_unlocked_tier == 0 {
@@ -1586,6 +1741,9 @@ pub const STORAGE_PER_WAREHOUSE_TIER: f64 = 400.0;
 /// Late-game orbital bulk storage, additional to ground warehouses. Tunable.
 pub const STORAGE_PER_ORBITAL_WAREHOUSE_TIER: f64 = 2_000.0;
 
+/// §vault: units each Vault tier keeps out of raiders' reach. Tunable.
+pub const VAULT_UNITS_PER_TIER: f64 = 200.0;
+
 pub fn warehouse_capacity(tier: u32) -> f64 {
     if tier == 0 { 0.0 } else {
         STORAGE_WAREHOUSE_INITIAL + STORAGE_PER_WAREHOUSE_TIER * (tier - 1) as f64
@@ -1622,7 +1780,7 @@ mod tests {
         use crate::research::{self, Effect, ResearchState};
         // §gaia: Living Terraces need no research; a Gaia world is their gate.
         let starter = [MiningComplex, Bioharvester, Agroplex, Shipyard, Habitat,
-            Warehouse, Academy, LivingTerraces, PowerPlant, UraniumMill];
+            Warehouse, Academy, LivingTerraces, PowerPlant, UraniumMill, AsteroidQuarry, Vault];
         let gated = [
             (VolatileHarvester, "prop_bunkerage"), (FuelRefinery, "prop_bunkerage"),
             (Smelter, "mat_enrichment"), (ChemicalWorks, "mat_enrichment"),
@@ -1638,19 +1796,26 @@ mod tests {
             (Garrison, "weap_fire_control"),
         ];
         // The legacy platform is no longer built; the station climbs its own
-        // research ladder (checked below).
-        assert_eq!(starter.len() + gated.len() + 4, StructureKind::ALL.len());
+        // research ladder (checked below). §season: the Assembly Hall has its
+        // own three levels (checked below).
+        assert_eq!(starter.len() + gated.len() + 5, StructureKind::ALL.len());
         assert_eq!(DefensePlatform.research_prerequisite(), Some("weap_fire_control"));
         assert_eq!(max_buildable_tier(DefensePlatform, 6), 0, "legacy platforms are never built");
-        for level in crate::station::LEVELS.iter() {
+        // §gun-platform: the first level is free; every later one has its programme.
+        assert_eq!(OrbitalDefense.research_prerequisite(), None);
+        assert_eq!(crate::station::LEVELS[0].research, "");
+        for level in crate::station::LEVELS.iter().skip(1) {
             let programme = research::programme(level.research).expect("real research");
             assert!(!programme.hidden && programme.effects.contains(&Effect::UnlockStructureTier(OrbitalDefense, level.level)),
                 "{}", level.name);
             assert_eq!(max_buildable_tier(OrbitalDefense, level.level), level.level);
         }
-        assert_eq!(max_buildable_tier(OrbitalDefense, 0), 0);
+        assert_eq!(max_buildable_tier(OrbitalDefense, 0), 1, "the Gun Platform needs no research");
         assert_eq!(ServiceBerth.research_prerequisite(), None);
         assert_eq!(max_buildable_tier(ServiceBerth, 6), 1, "attachment has only one tier");
+        // §season: the Assembly Hall needs no research and has three levels.
+        assert_eq!(AssemblyHall.research_prerequisite(), None);
+        assert_eq!(max_buildable_tier(AssemblyHall, 6), 3);
         for kind in starter {
             assert_eq!(kind.research_prerequisite(), None, "{kind:?}: no bootstrap loop");
             assert_eq!(max_buildable_tier(kind, 0), BASE_MAX_STRUCTURE_TIER);
@@ -1812,10 +1977,12 @@ mod tests {
             for unlocked in 0..=5u32 {
                 if kind == StructureKind::ServiceBerth {
                     assert_eq!(max_buildable_tier(kind, unlocked), 1);
+                } else if kind == StructureKind::AssemblyHall {
+                    assert_eq!(max_buildable_tier(kind, unlocked), 3, "three levels");
                 } else if kind == StructureKind::DefensePlatform {
                     assert_eq!(max_buildable_tier(kind, unlocked), 0, "legacy");
                 } else if kind == StructureKind::OrbitalDefense {
-                    assert_eq!(max_buildable_tier(kind, unlocked), unlocked, "one level per unlock");
+                    assert_eq!(max_buildable_tier(kind, unlocked), unlocked.max(1), "one level per unlock past the first");
                 } else if kind == StructureKind::CommandCenter {
                     assert_eq!(max_buildable_tier(kind, unlocked), if unlocked >= 3 { 3 } else { 2 });
                 } else if kind.research_prerequisite().is_some() && unlocked == 0 {

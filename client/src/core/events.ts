@@ -5,9 +5,11 @@ import type {
   PlayerId,
   RaidOutcome,
   RaidReport,
+  TimelineEntry,
   TradeEvent,
 } from "../protocol";
 import type { LinkStatus, PendingIntent } from "../state";
+import type { VendettaBeat } from "./derive/vendetta";
 
 export type CoreEvent =
   | { kind: "LinkChanged"; status: LinkStatus }
@@ -28,7 +30,9 @@ export type CoreEvent =
   | { kind: "StructureStaffed"; systemId: EntityId; title: string }
   | { kind: "ResearchCompleted"; programmeId: string; programmeName: string }
   | { kind: "CommandRejected"; message: string }
-  | { kind: "PirateRaidWarning"; message: string }
+  /** §log: journal news that toasts from its kind (a home raid's warning,
+   * start and end); the shell words it with `logToast`. */
+  | { kind: "LogToast"; entry: TimelineEntry }
   /** §signals: a signal detected near home, or a sweep's report in. */
   | { kind: "SignalNews"; title: string; message: string; tone: "good" | "quiet" }
   /** §founding R6: an Authority stipend or bounty arrived. */
@@ -38,6 +42,22 @@ export type CoreEvent =
   | { kind: "StoryEvent"; story: "pirates"; semiconductors: number; armaments: number }
   /** §charter-v4: the free trader docked at home (the server's arrival line). */
   | { kind: "StoryEvent"; story: "free_trader" }
+  /** §vendetta: a turn of the pirate family's story (a "Vendetta · …" line,
+   * `text` without its prefix). */
+  | { kind: "StoryEvent"; story: "vendetta"; beat: Exclude<VendettaBeat, "raid">; text: string }
+  /** §season: an Authority decree. */
+  | { kind: "StoryEvent"; story: "decree"; grip: import("../protocol").Grip }
+  /** §season: a crackdown that strikes you or everyone, or a false flag exposed. */
+  | { kind: "StoryEvent"; story: "crackdown"; crackdown: import("../protocol").CrackdownKind; at: number }
+  | { kind: "StoryEvent"; story: "exposed"; text: string; at: number }
+  /** §season phase 4: a sealed world found, the spy's leak, war with the Authority. */
+  | { kind: "StoryEvent"; story: "journey"; beat: "found" | "spy" | "war"; text: string; at: number }
+  /** §season phase 5: the season's end. */
+  | { kind: "StoryEvent"; story: "ending"; at: number }
+  /** §season phase 4: the GNN's "The relics stir", first heard this session. */
+  | { kind: "StoryEvent"; story: "relics" }
+  /** §chapters: a painted chapter of the charter opens. */
+  | { kind: "StoryEvent"; story: "chapter"; chapter: ChapterOpening }
   | { kind: "ReportArrived"; report: RaidReport }
   | { kind: "BattleConcluded"; recordId: EntityId; outcome: RaidOutcome }
   | { kind: "EstimateReady"; estimate: EngagementEstimate }
@@ -56,3 +76,7 @@ export type CoreEvent =
   | { kind: "TransportError"; url: string }
   | { kind: "JoinRejected"; message: string }
   | { kind: "ServerError"; message: string };
+
+/** §chapters (Oct 29 2026): the charter's chapters that open with a painting
+ * of their own (Landfall has the prologue, the Raid and the Vendetta theirs). */
+export type ChapterOpening = "pirates" | "expansion" | "reach";

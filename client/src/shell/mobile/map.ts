@@ -17,6 +17,8 @@ interface PointerPoint {
 interface MobileMapHooks {
   openSheet(entry: SheetEntry): void;
   onSemanticChange(mode: "galaxy" | "system" | "battle", id?: string): void;
+  /** §home-step: a tap on this system flies into its System View. */
+  diveOnSelect(systemId: string): boolean;
   notice(html: string): void;
 }
 
@@ -97,6 +99,13 @@ export class MobileMapInteraction {
     this.syncArmedChip();
   }
 
+  /** One selection in the System View: a world taking it lets go of fleets. */
+  deselectFleets(): void {
+    this.ctx.intent.deselectFleets();
+    this.moveAimingShipId = null;
+    this.syncArmedChip();
+  }
+
   focusFleet(id: string): void {
     this.selectFleet(id);
     this.ctx.renderer.stateVersion++;
@@ -136,8 +145,17 @@ export class MobileMapInteraction {
     this.hooks.onSemanticChange("system", id);
   }
 
+  /** §home-step: fly into a system's System View; the handoff's endpoint
+   * opens its sheet as the wheel's would. False when the map can't fly now. */
+  flyInto(id: string): boolean {
+    const system = this.systemById(id);
+    if (!system) return false;
+    const bodies = this.ctx.state.systems.find((entry) => entry.id === id)?.bodies ?? [];
+    return this.ctx.renderer.flyIntoSystem(system, bodies);
+  }
+
   exitSemanticView(): void {
-    if (this.ctx.renderer.isSystemScrubbing()) this.ctx.renderer.cancelSystemScrub();
+    if (this.ctx.renderer.isSystemScrubbing() || this.ctx.renderer.isFlying()) this.ctx.renderer.cancelSystemScrub();
     else if (this.ctx.renderer.viewMode.type === "system") this.ctx.renderer.exitSystemView();
     else if (this.ctx.renderer.viewMode.type === "battle") this.ctx.renderer.exitBattleView();
     this.ctx.renderer.setSystemDynamic([], [], true);
@@ -411,6 +429,8 @@ export class MobileMapInteraction {
       case "system":
         this.clearSelection();
         this.ctx.state.selectedSystemId = target.id;
+        // Its System View's sheet opens on arrival (`tick`).
+        if (this.hooks.diveOnSelect(target.id) && this.flyInto(target.id)) break;
         this.hooks.openSheet({ id: "system", props: { id: target.id } });
         break;
       case "hub":
@@ -442,6 +462,7 @@ export class MobileMapInteraction {
         this.hooks.openSheet({ id: "log", props: { captureId: target.id } });
         break;
       case "systemBody":
+        this.deselectFleets();
         this.hooks.openSheet({
           id: "planet",
           props: {

@@ -829,6 +829,47 @@
         }
       ]
     },
+    "combat_freighter": {
+      "source": "art-src/ship-models/game-ready-v1/combat_freighter-top.png",
+      "sourceSha256": "19966264067888c29e4a8790bd751e364bf65a669b426fab8d6e1f66d3c35e6d",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/combat-freighter-lod2.glb",
+      "modelSha256": "5f96eff184e00ee1872566ed6738cbaed094239f8a3b4f0eed9ad810a9a39f51",
+      "triangles": 4630,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.8515625,
+      "calib": 0.9534458705357143,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 16865,
+          "url": "/art/derived/ships/models-v1/combat_freighter-128.png?v=cd0daa68cf13"
+        },
+        {
+          "size": 256,
+          "bytes": 59858,
+          "url": "/art/derived/ships/models-v1/combat_freighter-256.png?v=be39d166a0d1"
+        },
+        {
+          "size": 512,
+          "bytes": 217834,
+          "url": "/art/derived/ships/models-v1/combat_freighter-512.png?v=9b67c9ba6513"
+        },
+        {
+          "size": 1024,
+          "bytes": 791999,
+          "url": "/art/derived/ships/models-v1/combat_freighter-1024.png?v=362f21bcdade"
+        },
+        {
+          "size": 1254,
+          "bytes": 942758,
+          "url": "/art/derived/ships/models-v1/combat_freighter-1254.png?v=199662640678"
+        }
+      ]
+    },
     "free_trader": {
       "source": "art-src/ship-models/game-ready-v1/free_trader-top.png",
       "sourceSha256": "92a258e22ac96c8997340923db5c7e54de432dd8554bae0c2d5f2b5370767e0d",
@@ -867,6 +908,129 @@
           "size": 1254,
           "bytes": 1027788,
           "url": "/art/derived/ships/models-v1/free_trader-1254.png?v=92a258e22ac9"
+        }
+      ]
+    },
+    "clean_slate": {
+      "source": "art-src/ship-models/game-ready-v1/clean_slate-top.png",
+      "sourceSha256": "ec20ee71a82354f54c2947ad9ec656be0781652e3d7269fcb49762091f2f7384",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/clean-slate-lod2.glb",
+      "modelSha256": "53061a72342dfd27712fed11528c5ea4c2dabad764f4cd3573fef44328873d4b",
+      "triangles": 3964,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.82421875,
+      "calib": 0.9228306361607144,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 20009,
+          "url": "/art/derived/ships/models-v1/clean_slate-128.png?v=20e95ae6c2ea"
+        },
+        {
+          "size": 256,
+          "bytes": 70404,
+          "url": "/art/derived/ships/models-v1/clean_slate-256.png?v=c21535c8be41"
+        },
+        {
+          "size": 512,
+          "bytes": 250148,
+          "url": "/art/derived/ships/models-v1/clean_slate-512.png?v=79223a11bf12"
+        },
+        {
+          "size": 1024,
+          "bytes": 889885,
+          "url": "/art/derived/ships/models-v1/clean_slate-1024.png?v=1b53fa5a923f"
+        },
+        {
+          "size": 1254,
+          "bytes": 1117338,
+          "url": "/art/derived/ships/models-v1/clean_slate-1254.png?v=ec20ee71a823"
+        }
+      ]
+    },
+    "second_wind": {
+      "source": "art-src/ship-models/game-ready-v1/second_wind-top.png",
+      "sourceSha256": "bbd30ab96a18bb185cf36dbb36be39e85b13ad364ea5340d2eb024f149ddcb91",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/second-wind-lod2.glb",
+      "modelSha256": "008389ccc611953d48ca6f112af59972c741f34571121a96e6770e292ee91afa",
+      "triangles": 3968,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.82421875,
+      "calib": 0.9228306361607144,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 22297,
+          "url": "/art/derived/ships/models-v1/second_wind-128.png?v=0e03ccbea3a4"
+        },
+        {
+          "size": 256,
+          "bytes": 80047,
+          "url": "/art/derived/ships/models-v1/second_wind-256.png?v=7f8ae5b72d54"
+        },
+        {
+          "size": 512,
+          "bytes": 293661,
+          "url": "/art/derived/ships/models-v1/second_wind-512.png?v=11281a80f7e1"
+        },
+        {
+          "size": 1024,
+          "bytes": 1073743,
+          "url": "/art/derived/ships/models-v1/second_wind-1024.png?v=d4ec22b3701a"
+        },
+        {
+          "size": 1254,
+          "bytes": 1248839,
+          "url": "/art/derived/ships/models-v1/second_wind-1254.png?v=bbd30ab96a18"
+        }
+      ]
+    },
+    "small_fortune": {
+      "source": "art-src/ship-models/game-ready-v1/small_fortune-top.png",
+      "sourceSha256": "e2d9e68ccba7731afb71a329db95f571caa1c6703ba41870bdd380a4af2bf5ee",
+      "modelSource": "art-src/ship-models/interceptor-lod-experiment-v1/models/small-fortune-lod2.glb",
+      "modelSha256": "07e70126e26e7848a834945d0ebd64d6a372bd814bad79f1433bb44a019be123",
+      "triangles": 3894,
+      "anchor": [
+        0.5,
+        0.5
+      ],
+      "lengthRatio": 0.8931419457735247,
+      "referenceRatio": 0.82421875,
+      "calib": 0.9228306361607144,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 18283,
+          "url": "/art/derived/ships/models-v1/small_fortune-128.png?v=369b732a7e1f"
+        },
+        {
+          "size": 256,
+          "bytes": 65064,
+          "url": "/art/derived/ships/models-v1/small_fortune-256.png?v=624418db2fb2"
+        },
+        {
+          "size": 512,
+          "bytes": 235992,
+          "url": "/art/derived/ships/models-v1/small_fortune-512.png?v=c14fa722ea82"
+        },
+        {
+          "size": 1024,
+          "bytes": 861927,
+          "url": "/art/derived/ships/models-v1/small_fortune-1024.png?v=46bce2bdf19b"
+        },
+        {
+          "size": 1254,
+          "bytes": 1007283,
+          "url": "/art/derived/ships/models-v1/small_fortune-1254.png?v=e2d9e68ccba7"
         }
       ]
     }

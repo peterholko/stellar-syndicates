@@ -71,6 +71,48 @@ pub struct BeltShape {
     pub width: f64,
 }
 
+/// §real-coordinates: one System View unit in galaxy su. Worlds orbit 190–820
+/// su from their star, inside the 900 su gravity well.
+pub const SYSTEM_UNIT_SU: f64 = 860.0;
+
+/// Sim seconds for one turn at the innermost planetary radius (Kepler beyond),
+/// and for a first moon (outer moons are slower): the System View's motion.
+const PLANET_PERIOD_S: f64 = 420.0;
+const PLANET_PERIOD_RADIUS: f64 = 0.2;
+const MOON_PERIOD_S: f64 = 150.0;
+/// The System View draws no world larger than this (normalised units).
+const PLANET_DISC_CAP: f64 = 0.078;
+
+/// §real-coordinates: where a world goes round, in System View units: about
+/// its star for a planet, about its planet for a moon. A belt's is its ring
+/// (no angle, no period). Laid out once from stable ids
+/// ([`layout_orbits`]); positions are a function of time, never stored.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Orbit {
+    pub radius: f64,
+    /// Radians at sim time 0.
+    pub angle: f64,
+    /// Seconds per turn; 0 for a belt.
+    pub period: f64,
+}
+
+impl Orbit {
+    /// The angle at sim time `t`. Counter-clockwise on screen (y down), so it
+    /// falls as time runs.
+    pub fn angle_at(&self, t: f64) -> f64 {
+        if !t.is_finite() || self.period <= 0.0 {
+            return self.angle;
+        }
+        let turns = t / self.period;
+        self.angle - (turns - turns.floor()) * std::f64::consts::TAU
+    }
+
+    /// The offset from what it orbits at `t`, in su.
+    pub fn offset_at(&self, t: f64) -> crate::math::Vec2 {
+        crate::dmath::polar(self.angle_at(t), self.radius * SYSTEM_UNIT_SU)
+    }
+}
+
 /// §pockets: a hidden pocket inside an asteroid belt — a small, finite, rich
 /// deposit. Nobody sees or mines it until their prospectors find it; each
 /// corporation that has (its report reached command) is in `found_by`.
@@ -250,6 +292,21 @@ impl Geology {
         }
     }
 
+    /// §research-wiring: the band after an owner's geology research — Mantle
+    /// Taps lifts a poor band to Average, a Crown Vein raises it one band.
+    pub fn researched(self, geo: crate::explore::GeologyMods) -> Self {
+        let floored = if geo.floor_average && matches!(self, Self::UltraPoor | Self::Poor) { Self::Average } else { self };
+        if !geo.crown {
+            return floored;
+        }
+        match floored {
+            Self::UltraPoor => Self::Poor,
+            Self::Poor => Self::Average,
+            Self::Average => Self::Rich,
+            Self::Rich | Self::UltraRich => Self::UltraRich,
+        }
+    }
+
     pub fn mineral_extraction_mult(self) -> f64 {
         match self {
             Self::UltraPoor => 0.50,
@@ -351,6 +408,20 @@ pub struct Body {
     /// Present only for explicitly founded camps; never retrofitted onto saves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub founding_camp: Option<crate::settlement::FoundingCamp>,
+    /// §research-wiring Crown Project: this world is its owner's designated
+    /// crown, one Industrial and one Infrastructure site larger. Derived each
+    /// tick from the owner's live designation.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub crown_project: bool,
+    /// §research-wiring Xenoacclimation: a Marginal world whose owner has
+    /// acclimated its settlers, so it counts as habitable. Derived each tick.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub acclimated: bool,
+    /// §research-wiring Orbital Habitats: its owner builds habitats in orbit
+    /// here — housing at least as on a Marginal world, and a gas giant gains a
+    /// habitat site. Derived each tick.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub orbital_habitat: bool,
     pub id: u32,
     pub name: String,
     pub kind: BodyKind,
@@ -360,6 +431,10 @@ pub struct Body {
     /// §belts: present on asteroid belts only — type and picture.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub belt: Option<BeltShape>,
+    /// §real-coordinates: its orbit; `None` until [`layout_orbits`] runs (a
+    /// body without one sits at its star).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orbit: Option<Orbit>,
     pub habitable: bool,
     /// Size / environment are public astronomy; geology + the special ride the
     /// survey ladder. Kept together so old snapshots need one neutral default.
@@ -616,7 +691,9 @@ impl Body {
     }
 
     pub fn habitat_capacity_mult(&self) -> f64 {
-        self.profile.size.habitat_capacity_mult() * self.profile.environment.habitat_capacity_mult()
+        let environment = self.profile.environment.habitat_capacity_mult();
+        self.profile.size.habitat_capacity_mult()
+            * if self.orbital_habitat { environment.max(1.0) } else { environment }
     }
 
     /// Natural environment's appeal to prospective migrants. Kept under the
@@ -638,9 +715,15 @@ impl Body {
     }
 
     pub fn extraction_mult(&self, resource: Commodity) -> f64 {
+        self.extraction_mult_with(resource, crate::explore::GeologyMods::default())
+    }
+
+    /// [`Self::extraction_mult`] after the owner's geology research.
+    pub fn extraction_mult_with(&self, resource: Commodity, geo: crate::explore::GeologyMods) -> f64 {
         let mineral = resource.is_mineable_mineral();
         let geology = if mineral {
-            self.profile.geology.mineral_extraction_mult()
+            let mult = self.profile.geology.researched(geo).mineral_extraction_mult();
+            if geo.beneficiation { mult.max(crate::explore::BENEFICIATION_FLOOR) } else { mult }
         } else {
             1.0
         };
@@ -704,7 +787,12 @@ impl Body {
     /// RESOURCE slots: one per deposit on this body, at most 4. A body with no
     /// deposits hosts no extraction (min with the deposit count — unlike the
     /// old system pool there is no floor of 1: bare rocks stay bare).
+    /// §asteroid-quarry: a belt with ore has one, for its quarry, which works
+    /// every deposit.
     pub fn resource_slots(&self) -> u32 {
+        if self.is_belt() {
+            return (!self.deposits.is_empty()) as u32;
+        }
         (self.deposits.len() as u32).min(4)
     }
 
@@ -712,7 +800,7 @@ impl Body {
     /// body starts with its size's base (Tiny 1, Small/Medium 2, Large 3,
     /// Huge 4) and grows with ITS population tier.
     pub fn industrial_slots(&self) -> u32 {
-        self.base_industrial_slots() + body_pop_tier(self.population)
+        self.base_industrial_slots() + body_pop_tier(self.population) + self.crown_project as u32
     }
 
     pub fn base_industrial_slots(&self) -> u32 {
@@ -742,11 +830,26 @@ impl Body {
         if self.is_belt() {
             return 0;
         }
-        self.base_infrastructure_slots() + self.habitable as u32 + (body_pop_tier(self.population) >= 1) as u32
+        self.base_infrastructure_slots() + self.settles() as u32 + (body_pop_tier(self.population) >= 1) as u32
+            + self.crown_project as u32
+            + (self.orbital_habitat && self.kind == BodyKind::GasGiant) as u32
             + crate::build::command_infrastructure_bonus(self.tier(crate::StructureKind::CommandCenter))
             + self.founding_camp.as_ref().is_some_and(|c|
                 c.profile == crate::settlement::FoundingProfile::CoastalPlains
                     && c.done(crate::settlement::SettlementProject::Prospect)) as u32
+    }
+
+    /// Habitable for settlement rules: a garden world, or a Marginal world its
+    /// owner has acclimated (§research-wiring Xenoacclimation).
+    pub fn settles(&self) -> bool {
+        self.habitable || self.acclimated
+    }
+
+    /// Could Xenoacclimation acclimate this world? A Marginal terrestrial or
+    /// ocean world.
+    pub fn acclimatable(&self) -> bool {
+        !self.habitable && self.profile.environment == Environment::Marginal
+            && matches!(self.kind, BodyKind::Terrestrial | BodyKind::Ocean)
     }
 
     pub fn pool_slots(&self, pool: crate::build::SlotPool) -> u32 {
@@ -1000,11 +1103,15 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
         let name = format!("{} {}", system_name, planet_numeral(i));
         bodies.push(Body {
             founding_camp: None,
+            crown_project: false,
+            acclimated: false,
+            orbital_habitat: false,
             id,
             name,
             kind: p.kind.collapse(),
             parent: None,
             belt: None,
+            orbit: None,
             habitable: p.habitable,
             profile: PlanetaryProfile::default(),
             deposits: std::mem::take(&mut p.deposits),
@@ -1027,11 +1134,15 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
         bodies.push(Body {
             id: next_id,
             founding_camp: None,
+            crown_project: false,
+            acclimated: false,
+            orbital_habitat: false,
             // Moons keep the letter suffix but gain a hyphen: "Veles 2-a", "Veles 2-b".
             name: format!("{}-{}", pname, (b'a' + (k as u8 % 26)) as char),
             kind: BodyKind::Ice, // the walk forced moons to ice — kept
             parent: Some(parent),
             belt: None,
+            orbit: None,
             habitable: false,
             profile: PlanetaryProfile::default(),
             deposits: deps,
@@ -1050,6 +1161,98 @@ pub fn generate_bodies(system_id: &str, system_name: &str, deposits: &[Deposit])
         body.ensure_profile(system_id);
     }
     bodies
+}
+
+// --- ORBITS (§real-coordinates) ------------------------------------------------
+
+/// A world's drawn size by its public size class (the System View's).
+fn size_visual(size: BodySize) -> f64 {
+    match size {
+        BodySize::Tiny => 0.70,
+        BodySize::Small => 0.85,
+        BodySize::Medium => 1.0,
+        BodySize::Large => 1.18,
+        BodySize::Huge => 1.35,
+    }
+}
+
+/// Kepler-flavoured period for a planet at a normalised orbit radius.
+fn planet_period(radius: f64) -> f64 {
+    PLANET_PERIOD_S * crate::dmath::powf(radius.max(0.05) / PLANET_PERIOD_RADIUS, 1.5)
+}
+
+/// A moon's period about its planet by its place among that planet's moons.
+fn moon_period(index: usize) -> f64 {
+    MOON_PERIOD_S * (1.0 + 0.55 * index as f64)
+}
+
+/// §real-coordinates: lay out every body's orbit. A faithful port of the
+/// client's `buildVisualSystem` (same seed per body, same draws in the same
+/// order), so a system keeps the look the System View has always drawn:
+/// planets spread inner→outer in roster order with a little jitter, each moon
+/// just outside its planet's drawn disc, each belt in the free gap between
+/// planet orbits nearest its rolled radius (its shape snapped to that gap).
+/// Deterministic from ids, sizes and kinds; running it again changes nothing.
+pub fn layout_orbits(system_id: &str, bodies: &mut [Body]) {
+    let stream = |id: u32| Mulberry32(hash_id(&format!("{system_id}:{id}")) ^ 0x00c0_511c);
+    let planets: Vec<usize> = (0..bodies.len()).filter(|&i| bodies[i].is_planet()).collect();
+    let n = planets.len().max(1);
+    // The drawn disc of each planet: its moons orbit just outside it.
+    let mut disc: BTreeMap<u32, f64> = BTreeMap::new();
+    for (i, &at) in planets.iter().enumerate() {
+        let body = &bodies[at];
+        let mut rng = stream(body.id);
+        // A rocky world first draws its look (barren, desert or lava).
+        if body.kind == BodyKind::Rocky {
+            let _ = rng.next();
+        }
+        let base = 0.22 + 0.72 * if n == 1 { 0.5 } else { i as f64 / (n - 1) as f64 };
+        let radius = (base + (rng.next() - 0.5) * 0.03).min(0.95);
+        let drawn = if body.kind == BodyKind::GasGiant {
+            0.058 + rng.next() * 0.016
+        } else {
+            0.03 + rng.next() * 0.018
+        };
+        disc.insert(body.id, (drawn * size_visual(body.profile.size)).min(PLANET_DISC_CAP));
+        let angle = rng.next() * std::f64::consts::TAU;
+        bodies[at].orbit = Some(Orbit { radius, angle, period: planet_period(radius) });
+    }
+    let mut moons_of: BTreeMap<u32, usize> = BTreeMap::new();
+    for body in bodies.iter_mut() {
+        let Some(parent) = body.parent else { continue };
+        let Some(&parent_disc) = disc.get(&parent) else { continue };
+        let index = moons_of.entry(parent).or_insert(0);
+        let mut rng = stream(body.id);
+        let radius = parent_disc + 0.02 + rng.next() * 0.014 + *index as f64 * 0.016;
+        let _ = rng.next(); // its drawn disc
+        let angle = rng.next() * std::f64::consts::TAU;
+        body.orbit = Some(Orbit { radius, angle, period: moon_period(*index) });
+        *index += 1;
+    }
+    // Belts: each takes the unused gap between sorted planet orbits whose middle
+    // is nearest its rolled radius (inner belts choose first).
+    let mut orbits: Vec<f64> = planets.iter().filter_map(|&i| bodies[i].orbit.map(|o| o.radius)).collect();
+    orbits.sort_by(f64::total_cmp);
+    let gaps: Vec<(f64, f64)> = orbits.windows(2).map(|w| ((w[0] + w[1]) / 2.0, w[1] - w[0])).collect();
+    let mut used = vec![false; gaps.len()];
+    let mut belts: Vec<usize> = (0..bodies.len()).filter(|&i| bodies[i].is_belt() && bodies[i].belt.is_some()).collect();
+    belts.sort_by(|&a, &b| {
+        let (ra, rb) = (bodies[a].belt.map_or(0.0, |s| s.radius), bodies[b].belt.map_or(0.0, |s| s.radius));
+        ra.total_cmp(&rb)
+    });
+    for at in belts {
+        let Some(mut shape) = bodies[at].belt else { continue };
+        let nearest = (0..gaps.len())
+            .filter(|&g| !used[g])
+            .min_by(|&a, &b| (gaps[a].0 - shape.radius).abs().total_cmp(&(gaps[b].0 - shape.radius).abs()));
+        if let Some(g) = nearest {
+            used[g] = true;
+            shape.radius = gaps[g].0;
+            shape.width = shape.width.min(gaps[g].1 * 0.35);
+        }
+        bodies[at].belt = Some(shape);
+        bodies[at].orbit = Some(Orbit { radius: shape.radius, angle: 0.0, period: 0.0 });
+    }
 }
 
 #[cfg(test)]
@@ -1140,11 +1343,15 @@ mod tests {
     fn slot_pools_derive_per_body() {
         let mut b = Body {
             founding_camp: None,
+            crown_project: false,
+            acclimated: false,
+            orbital_habitat: false,
             id: 0,
             name: "X I".into(),
             kind: BodyKind::Rocky,
             parent: None,
             belt: None,
+            orbit: None,
             habitable: false,
             profile: PlanetaryProfile::default(),
             deposits: vec![dep(Commodity::MetallicOre, 0.4)],
@@ -1192,9 +1399,13 @@ mod tests {
             id: 0,
             name: "Head I".into(),
             founding_camp: None,
+            crown_project: false,
+            acclimated: false,
+            orbital_habitat: false,
             kind: BodyKind::Terrestrial,
             parent: None,
             belt: None,
+            orbit: None,
             habitable: true,
             profile: PlanetaryProfile::default(),
             deposits: vec![],
@@ -1236,11 +1447,15 @@ mod tests {
     fn atmosphere_never_determines_mineral_grade() {
         let mut barren = Body {
             founding_camp: None,
+            crown_project: false,
+            acclimated: false,
+            orbital_habitat: false,
             id: 0,
             name: "Test I".into(),
             kind: BodyKind::Rocky,
             parent: None,
             belt: None,
+            orbit: None,
             habitable: false,
             profile: PlanetaryProfile::default(),
             deposits: vec![dep(Commodity::MetallicOre, 0.4)],
@@ -1287,11 +1502,15 @@ mod tests {
     fn planetary_profile_drives_legible_economic_factors() {
         let b = Body {
             founding_camp: None,
+            crown_project: false,
+            acclimated: false,
+            orbital_habitat: false,
             id: 0,
             name: "Forge I".into(),
             kind: BodyKind::Rocky,
             parent: None,
             belt: None,
+            orbit: None,
             habitable: true,
             profile: PlanetaryProfile {
                 version: 1,

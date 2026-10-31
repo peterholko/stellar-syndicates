@@ -46,6 +46,9 @@ export async function buildShipDerivatives() {
   assert.equal(freight.ships.length, 6, "Six player freight sizes");
   const ships = [...prompts.ships.filter(s => s.kind !== "convoy").map(s => ({ ...s, input: path.join(sourceRoot, `${s.slug}.png`) })),
     ...freight.ships.map(s => ({ ...s, input: path.join(freightRoot, `${s.slug}-alpha.png`) })),
+    // Dedicated raid-loot hull. Keep the civilian padding ruler used by its
+    // previous stand-in; the renderer's own mass-2,000 size stays unchanged.
+    { kind: "combat_freighter", slug: "combat-freighter", existing: "corporate_freighter.png" },
     // Model-only art variants come last: their footprint is the flown hull's.
     ...Object.entries(ART_VARIANTS).map(([kind, { flies }]) => ({ kind, slug: kind, flies }))];
   const oldRoot = path.join(client, "public", "art", "ship_sprites");

@@ -5,6 +5,10 @@
   "scripts": {
     "cf-typegen": "wrangler types --include-runtime false",
     "deploy": "wrangler deploy",
+    "deploy:play": "wrangler deploy -c wrangler.play.jsonc",
+    "deploy:promo": "wrangler deploy -c wrangler.promo.jsonc",
+    "cf-typegen:promo": "wrangler types promo-configuration.d.ts -c wrangler.promo.jsonc --env-interface PromoEnv --include-runtime false",
+    "test:promo": "node tests/promo.test.mjs",
     "typecheck": "npm run cf-typegen && tsc --noEmit"
   },
   "devDependencies": {

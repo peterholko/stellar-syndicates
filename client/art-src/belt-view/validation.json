@@ -1,0 +1,91 @@
+{
+  "target": {
+    "width": 1672,
+    "height": 1181,
+    "color_mode": "RGB",
+    "format": "PNG"
+  },
+  "checks_passed": true,
+  "assets": [
+    {
+      "file": "stony-belt-v1.png",
+      "width": 1672,
+      "height": 1181,
+      "format": "png",
+      "color_mode": "RGB",
+      "bit_depth": 8,
+      "png_color_type": 2,
+      "has_alpha": false,
+      "bytes": 3416569,
+      "sha256": "85227c08c53ea0c84af35eafe4b7cd5ad9467693b33168a7f5dafd752d8c8276",
+      "source_dimensions": [
+        1492,
+        1054
+      ],
+      "top_240_rows": {
+        "mean_luminance": 1.98,
+        "bright_pixel_percent": 0.119
+      }
+    },
+    {
+      "file": "metallic-belt-v1.png",
+      "width": 1672,
+      "height": 1181,
+      "format": "png",
+      "color_mode": "RGB",
+      "bit_depth": 8,
+      "png_color_type": 2,
+      "has_alpha": false,
+      "bytes": 3687103,
+      "sha256": "c9627d8ad47a7a8440667e1eebec71e5dc081aa3e3417bd1d7e7d89ee3e26556",
+      "source_dimensions": [
+        1492,
+        1054
+      ],
+      "top_240_rows": {
+        "mean_luminance": 2.82,
+        "bright_pixel_percent": 0.136
+      }
+    },
+    {
+      "file": "icy-belt-v1.png",
+      "width": 1672,
+      "height": 1181,
+      "format": "png",
+      "color_mode": "RGB",
+      "bit_depth": 8,
+      "png_color_type": 2,
+      "has_alpha": false,
+      "bytes": 4096561,
+      "sha256": "f3864ebd916798847930db69650e094aa0802be24f84c1ccc36746328228bbd3",
+      "source_dimensions": [
+        1492,
+        1054
+      ],
+      "top_240_rows": {
+        "mean_luminance": 3.5,
+        "bright_pixel_percent": 0.118
+      }
+    },
+    {
+      "file": "shattered-belt-v1.png",
+      "width": 1672,
+      "height": 1181,
+      "format": "png",
+      "color_mode": "RGB",
+      "bit_depth": 8,
+      "png_color_type": 2,
+      "has_alpha": false,
+      "bytes": 4021323,
+      "sha256": "6c26be64a520e43b51218912883b91e07c8ca32ec6ac654ec607f7a8d2e48d72",
+      "source_dimensions": [
+        1492,
+        1054
+      ],
+      "top_240_rows": {
+        "mean_luminance": 3.83,
+        "bright_pixel_percent": 0.124
+      }
+    }
+  ]
+}

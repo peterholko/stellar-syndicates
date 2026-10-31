@@ -1,0 +1,32 @@
+{
+  "ships": 9,
+  "shipCounts": {
+    "tiny-freighter": 3,
+    "small-freighter": 3,
+    "medium-freighter": 3
+  },
+  "shipLengths": [
+    0.25,
+    0.32,
+    0.4
+  ],
+  "stationSpan": 17.1,
+  "ringDiameter": 10.42,
+  "portalAxis": "Z",
+  "arrivalIntervalSeconds": 4,
+  "renderSections": 23,
+  "maximumTriangles": 52713,
+  "maximumVisible": 7,
+  "recurringArrivals": 45,
+  "clearanceSamples": 4155,
+  "minimumPhysicalClearance": 1.0858,
+  "separationSamples": 98302,
+  "minimumHullGap": 0.2116,
+  "portalClearanceSamples": 45225,
+  "minimumPortalGap": 0.0463,
+  "portalOffDiversionAndHolding": true,
+  "portalRestoreAndTrafficPause": true,
+  "noShipsEmergeBehindPortal": true,
+  "offlinePayloadVerified": true,
+  "method": "Real GLTFLoader mesh/material parsing with image-decoding placeholders; Three.js instancing, flight simulation, bounding hull separation and ray intersections against the exported hub"
+}

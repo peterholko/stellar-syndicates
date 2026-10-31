@@ -1,0 +1,7 @@
+{
+  "radius": 3.685,
+  "depth": 1.6,
+  "segments": 128,
+  "radialRings": 32,
+  "coreTint": [0.30, 0.44, 0.68]
+}

@@ -1,4 +1,4 @@
-import { accountBackdrop, accountFields, accountProfile } from "../account";
+import { accountBackdrop, accountFields, accountLogo, accountProfile } from "../account";
 
 export const mobileMarkup = String.raw`
   <div class="m-shell">
@@ -15,11 +15,9 @@ export const mobileMarkup = String.raw`
         <span class="m-stat"><small>Sim time</small><strong id="m-time">—</strong></span>
         <span class="m-stat"><small>Corps in view</small><strong id="m-corps">—</strong></span>
         <span class="m-stat"><small>Equity</small><strong id="m-equity">—</strong></span>
-        <span class="m-stat"><small>Account report</small><strong id="m-account-credits">—</strong></span>
-        <span class="m-stat"><small>Reserved by orders</small><strong id="m-reserved-credits">—</strong></span>
-        <p class="m-status-help">Credits above are spendable. Market buy orders reserve their maximum protected cost until execution or cancellation.</p>
         <button id="m-profile-open" type="button">Profile</button>
         <button id="m-corp-card" type="button">Corporation card</button>
+        <fieldset id="m-name-layers" class="m-name-layers"><legend>Map names</legend></fieldset>
       </div>
     </header>
 
@@ -53,6 +51,7 @@ export const mobileMarkup = String.raw`
       <button type="button" data-destination="officers"><span aria-hidden="true">★</span><small>Officers</small></button>
       <button type="button" data-destination="operations"><span aria-hidden="true">◎</span><small>Ops</small></button>
       <button type="button" data-destination="syndicate"><span aria-hidden="true">⬡</span><small>Syndicate</small></button>
+      <button type="button" data-destination="comms"><span aria-hidden="true">✉</span><small>Comms</small><b id="m-comms-badge" class="m-tab-badge" hidden>0</b></button>
       <button type="button" data-destination="faction"><span aria-hidden="true">⚖</span><small>Faction</small></button>
       <button type="button" data-destination="log"><span aria-hidden="true">⌖</span><small>Log</small><b id="m-log-badge" class="m-tab-badge" hidden>0</b></button>
     </nav>
@@ -68,9 +67,12 @@ export const mobileMarkup = String.raw`
     ${accountProfile("m")}
     <div id="m-join" class="m-join" aria-labelledby="m-join-title">
       ${accountBackdrop("m")}
-      <form id="m-join-form" class="m-join__card account-card" data-account-mode="signin">
-        ${accountFields("m")}
-      </form>
+      <div class="account-stage">
+        ${accountLogo()}
+        <form id="m-join-form" class="m-join__card account-card" data-account-mode="signin">
+          ${accountFields("m")}
+        </form>
+      </div>
     </div>
   </div>
 `;

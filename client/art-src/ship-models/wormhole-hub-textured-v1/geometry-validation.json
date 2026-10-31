@@ -1,0 +1,23 @@
+{
+  "triangles": 33000,
+  "closedSolidComponents": 812,
+  "intentionalOpenSurfaces": [
+    "wormhole.energy-membrane"
+  ],
+  "finiteAttributes": true,
+  "unitNormals": true,
+  "consistentWinding": true,
+  "nondegenerateFaces": true,
+  "noncollapsedUVs": true,
+  "embeddedTextures": 8,
+  "minimumTriangleArea": 2.7712455855755103e-05,
+  "minimumUVArea": 1.0281593816330314e-06,
+  "minimumHardwareRadius": 3.6094911098480225,
+  "clearPassageDiameter": 7.218982219696045,
+  "towerSpires": 6,
+  "dockingArms": 2,
+  "portalDepth": 1.600000023841858,
+  "anchoredPortalRim": true,
+  "bakedPortalDepthTint": true,
+  "method": "Independent checks on exported GLB buffers and per-component welded topology"
+}

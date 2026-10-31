@@ -1,0 +1,106 @@
+{
+  "name": "Clean Slate",
+  "triangles": 6216,
+  "renderSections": 2,
+  "sourceComponents": 104,
+  "materials": 2,
+  "embeddedTextures": 3,
+  "textureResolution": [
+    2048,
+    2048
+  ],
+  "dimensionsXYZ": [
+    11.9137,
+    2.91,
+    19.7368
+  ],
+  "axes": "Y up, -Z forward",
+  "units": "Relative model units; gameplay scale is assigned at integration",
+  "sockets": [
+    {
+      "name": "socket.docking.port",
+      "translation": [
+        -5.9068421052631574,
+        0.05,
+        -0.02631578947368421
+      ],
+      "extras": {
+        "role": "customer-shuttle-docking",
+        "direction": [
+          -1.0,
+          0.0,
+          -0.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.port",
+      "translation": [
+        -2.3947368421052633,
+        0.015,
+        9.894736842105264
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "socket.docking.starboard",
+      "translation": [
+        5.9068421052631574,
+        0.05,
+        -0.02631578947368421
+      ],
+      "extras": {
+        "role": "customer-shuttle-docking",
+        "direction": [
+          1.0,
+          0.0,
+          -0.0
+        ]
+      }
+    },
+    {
+      "name": "socket.engine.starboard",
+      "translation": [
+        2.3947368421052633,
+        0.015,
+        9.894736842105264
+      ],
+      "extras": {
+        "role": "engine-exhaust",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "geometryCounts": {
+    "cargoBays": 6,
+    "dockingCollars": 2,
+    "mainEngines": 2,
+    "bridges": 1,
+    "cranes": 0,
+    "guns": 0
+  },
+  "triangleBudget": [
+    3500,
+    11000
+  ],
+  "generator": "Python/NumPy, existing fleet reconstruction workflow; no Blender",
+  "textures": "Native approved five-view pixels, separate ventral projection, native palette crops and existing fleet metal swatches. Three embedded 2048px PBR maps; no upscaling.",
+  "optimization": "Static parts merged by material; exact vertex deduplication; 16-bit indices",
+  "note": "Static concept reconstruction. TOP defines footprint and part stations; elevations guide height. Major reference features are geometry. Exact gameplay scale, LODs and game integration are separate.",
+  "owner": "Ines Varga",
+  "sourceImages": [
+    "clean-slate-reference-v1/clean-slate-reference.png"
+  ],
+  "paintEmissive": false
+}

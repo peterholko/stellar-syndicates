@@ -119,10 +119,14 @@ pub enum ModuleKind {
     /// §fuel-overhaul utility: a jump drive and antimatter bottle for any hull
     /// but the ships of the line. Unlocked by Antimatter Synthesis.
     JumpDrive,
+    /// §research-wiring Lance Array (Strike III): the line's heavy beam,
+    /// destroyers up. Hits harder than any beam, but Reflective Plating blunts
+    /// it twice over.
+    LanceArray,
 }
 
 /// Every module kind, in a fixed deterministic order (menus, iteration).
-pub const MODULE_KINDS: [ModuleKind; 17] = [
+pub const MODULE_KINDS: [ModuleKind; 18] = [
     ModuleKind::MassDriver,
     ModuleKind::TorpedoRack,
     ModuleKind::PointDefenseScreen,
@@ -140,7 +144,12 @@ pub const MODULE_KINDS: [ModuleKind; 17] = [
     ModuleKind::WarpStabilizer,
     ModuleKind::InterdictionField,
     ModuleKind::JumpDrive,
+    ModuleKind::LanceArray,
 ];
+
+/// §research-wiring Lance Array: each array's beam multiplier. Reflective
+/// Plating blunts a lance twice over (its blunt applies twice).
+pub const LANCE_ARRAY_MULT: f64 = 1.7;
 
 impl ModuleKind {
     /// Stable wire slug (matches serde `rename_all = "snake_case"`).
@@ -163,6 +172,7 @@ impl ModuleKind {
             ModuleKind::WarpStabilizer => "warp_stabilizer",
             ModuleKind::InterdictionField => "interdiction_field",
             ModuleKind::JumpDrive => "jump_drive",
+            ModuleKind::LanceArray => "lance_array",
         }
     }
 
@@ -189,6 +199,7 @@ impl ModuleKind {
             ModuleKind::WarpStabilizer => "Warp Stabilizer",
             ModuleKind::InterdictionField => "Interdiction Field",
             ModuleKind::JumpDrive => "Jump Drive",
+            ModuleKind::LanceArray => "Lance Array",
         }
     }
 
@@ -197,7 +208,14 @@ impl ModuleKind {
         matches!(
             self,
             ModuleKind::MassDriver | ModuleKind::TorpedoRack | ModuleKind::PointDefenseScreen | ModuleKind::PrismaticLance
+                | ModuleKind::LanceArray
         )
+    }
+
+    /// Does making this module need research? Utilities and blueprints, and
+    /// the Lance Array. Fitting a found crate never does.
+    pub fn needs_research(self) -> bool {
+        self.is_utility() || self.blueprint_only() || self == Self::LanceArray
     }
 
     pub fn is_utility(self) -> bool {
@@ -211,13 +229,17 @@ impl ModuleKind {
     pub fn fits_hull(self, kind: crate::ship::ShipKind) -> bool {
         use crate::ship::ShipKind;
         match self {
-            Self::ExtendedTanks => matches!(kind, ShipKind::Scout | ShipKind::Raider | ShipKind::Corvette) || kind.is_player_freighter(),
+            Self::ExtendedTanks => matches!(kind, ShipKind::Scout | ShipKind::Raider | ShipKind::Corvette) || kind.is_freighter_hull(),
             Self::ReconSuite => matches!(kind, ShipKind::Scout | ShipKind::Raider),
-            Self::CargoPods | Self::FuelTransferRig => kind.is_player_freighter(),
+            Self::CargoPods => kind.is_freighter_hull(),
+            Self::FuelTransferRig => kind.is_player_freighter(),
             Self::EscortDatalink => kind == ShipKind::Corvette,
             Self::SurveyDrive | Self::NebulaSpectrometer => kind == ShipKind::Scout,
             // The interdictor is a destroyer, as it has always been.
             Self::InterdictionField => kind == ShipKind::Destroyer,
+            // The line's heavy beam: destroyers up.
+            Self::LanceArray => matches!(kind, ShipKind::Destroyer | ShipKind::Cruiser | ShipKind::Battleship
+                | ShipKind::Dreadnought | ShipKind::Titan),
             // §fuel-overhaul: any hull without built-in drives, bar the ships
             // of the line (a fold that size needs more than a bottle).
             Self::JumpDrive => !kind.has_jump_drive() && !kind.is_siege_anchor()
@@ -227,7 +249,7 @@ impl ModuleKind {
             // utility: the blockade runner's fit (§blockade-running).
             Self::WarpStabilizer => true,
             // The player's freighter gains a utility berth, never a hardpoint.
-            _ => !kind.is_player_freighter(),
+            _ => !kind.is_freighter_hull(),
         }
     }
 
@@ -248,7 +270,7 @@ impl ModuleKind {
             ModuleKind::PointDefenseScreen => 2,
             ModuleKind::ReflectivePlating => 2,
             ModuleKind::WhippleArmor => 3,
-            ModuleKind::PrismaticLance => 3,
+            ModuleKind::PrismaticLance | ModuleKind::LanceArray => 3,
             ModuleKind::StasisWeb => 2,
             ModuleKind::WarpStabilizer => 2,
             ModuleKind::InterdictionField => 3,
@@ -264,7 +286,7 @@ impl ModuleKind {
         match self {
             ModuleKind::MassDriver => Family::Driver,
             ModuleKind::TorpedoRack => Family::Torpedo,
-            ModuleKind::PrismaticLance => Family::Beam,
+            ModuleKind::PrismaticLance | ModuleKind::LanceArray => Family::Beam,
             ModuleKind::SurveyDrive | ModuleKind::NebulaSpectrometer => Family::Utility,
             // PD is BOTH a (beam) weapon and the interception screen; its
             // affinity axis is the screening job — the weapon side rides the
@@ -374,6 +396,8 @@ impl Loadout {
                 DamageType::Driver,
                 DRIVER_MULT * count(ModuleKind::MassDriver),
             )
+        } else if self.0.contains(&ModuleKind::LanceArray) {
+            (DamageType::Beam, LANCE_ARRAY_MULT * count(ModuleKind::LanceArray))
         } else if self.0.contains(&ModuleKind::PrismaticLance) {
             (DamageType::Beam, 1.45 * count(ModuleKind::PrismaticLance))
         } else if self.0.contains(&ModuleKind::PointDefenseScreen) {
@@ -383,6 +407,12 @@ impl Loadout {
         } else {
             (DamageType::Beam, 1.0)
         }
+    }
+
+    /// Fires a Lance Array: its beam weapon, with no torpedo or driver fitted.
+    pub fn fires_lance_array(&self) -> bool {
+        self.0.contains(&ModuleKind::LanceArray)
+            && !self.0.contains(&ModuleKind::TorpedoRack) && !self.0.contains(&ModuleKind::MassDriver)
     }
 
     /// Blunts BEAM damage into this ship (Reflective Plating).

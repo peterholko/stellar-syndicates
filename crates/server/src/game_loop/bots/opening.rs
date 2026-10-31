@@ -60,6 +60,12 @@ impl Observation {
                 *goods.entry(c).or_insert(0.0) += n;
             }
         }
+        // §charter-crates: what the crates still sealed will bring needs no
+        // holding back.
+        for (c, n) in goods.iter_mut() {
+            *n = (*n - self.sealed_crates.get(c).copied().unwrap_or(0.0)).max(0.0);
+        }
+        goods.retain(|_, n| *n > 0.0);
         goods
     }
 
@@ -72,11 +78,14 @@ impl Observation {
 
 /// §charter-v5: the goods the charter's builds after the den take: the
 /// Academy, the expansion's Solar Array and Mining Complex, the Survey Probe
-/// and the Mining Barge. The guide's "Stock up" prefill counts the same
-/// builds (client `merchant.ts`, `AHEAD`).
+/// and the Mining Barge, and the Semiconductors research draws meanwhile
+/// (`merchant::RESEARCH_RESERVE`). The guide's "Stock up" prefill counts the
+/// same (client `merchant.ts`, `AHEAD`) plus the vendetta's second
+/// Interceptor, which bots skip.
 pub(super) fn charter_goods_ahead() -> BTreeMap<C, f64> {
-    let mut goods = BTreeMap::new();
-    for what in [BuildKind::Upgrade { upgrade: K::Academy }, BuildKind::Upgrade { upgrade: K::PowerPlant },
+    let mut goods = BTreeMap::from([(C::Electronics, sim::merchant::RESEARCH_RESERVE)]);
+    for what in [BuildKind::Upgrade { upgrade: K::Academy }, BuildKind::Upgrade { upgrade: K::Smelter },
+        BuildKind::Upgrade { upgrade: K::PowerPlant },
         BuildKind::Upgrade { upgrade: K::MiningComplex }, BuildKind::Ship { ship: H::SurveyProbe },
         BuildKind::Ship { ship: H::MiningBarge }]
     {
@@ -92,10 +101,22 @@ impl Bot {
     /// more than the Command Center's reactor. §charter-v5: built with the
     /// semiconductors the trader sells back after the raid.
     pub(super) fn landing_plant(&self, p: &Observation) -> Option<Project> {
-        if p.home.system.tier(K::PowerPlant) > 0 || p.home.system.tier(K::MiningComplex) == 0 {
+        if !p.charter_allows(K::PowerPlant) || p.home.system.tier(K::PowerPlant) > 0 || p.home.system.tier(K::MiningComplex) == 0 {
             return None;
         }
         Some(Project { what: BuildKind::Upgrade { upgrade: K::PowerPlant }, body: p.landing_body()? })
+    }
+
+    /// §gun-platform: step 6's Gun Platform over the landing world, from kit
+    /// Alloys and Machinery (nothing the raid took).
+    pub(super) fn gun_platform(&self, p: &Observation) -> Option<Project> {
+        if !p.local_opening || p.founding_stage != sim::FoundingStage::BuildGunPlatform
+            || p.home.system.tier(K::OrbitalDefense) > 0
+            || p.home.builds.iter().any(|b| b.what == BuildKind::Upgrade { upgrade: K::OrbitalDefense })
+        {
+            return None;
+        }
+        Some(Project { what: BuildKind::Upgrade { upgrade: K::OrbitalDefense }, body: p.landing_body()? })
     }
 
     /// §charter-v5: between the mine and the ore sale the raid takes the
@@ -122,28 +143,33 @@ impl Bot {
             sells: BTreeMap::from([(C::MetallicOre, ore)]) })
     }
 
-    /// §charter-v4: Shipyard II, then an Interceptor for the privateer.
+    /// §charter-v4: an Interceptor for the privateer, from the Shipyard.
     pub(super) fn charter_escort(&self, p: &Observation) -> Option<Project> {
         if !matches!(p.founding_stage, sim::FoundingStage::BuildInterceptor | sim::FoundingStage::DefeatPrivateer)
             || p.count(H::Raider) > 0
         {
             return None;
         }
-        p.structure(K::Shipyard, 2).or_else(|| p.ship(H::Raider, 1))
+        p.structure(K::Shipyard, 1).or_else(|| p.ship(H::Raider, 1))
     }
 
     /// §charter-v4: "Expand mining operations": a Solar Array, then a Mining
     /// Complex, on another world of the home system (a planet before a belt).
+    /// §asteroid-quarry: on a belt, its quarry, which needs neither.
     pub(super) fn charter_expansion(&self, p: &Observation) -> Option<Project> {
         if p.founding_stage != sim::FoundingStage::ExpandMining {
             return None;
         }
         let pool = sim::build::SlotPool::Resource;
         let body = p.home.system.bodies.iter()
-            .filter(|b| b.tier(K::CommandCenter) == 0 && b.has_deposit_for(K::MiningComplex)
-                && (b.tier(K::MiningComplex) > 0 || b.pool_slots_built(pool) < b.pool_slots(pool)))
-            .max_by_key(|b| (b.tier(K::MiningComplex), !b.is_belt(), std::cmp::Reverse(b.id)))?;
-        let kind = if body.tier(K::PowerPlant) == 0 { K::PowerPlant }
+            .filter(|b| b.tier(K::CommandCenter) == 0 && if b.is_belt() { !b.deposits.is_empty() } else {
+                b.has_deposit_for(K::MiningComplex)
+                    && (b.tier(K::MiningComplex) > 0 || b.pool_slots_built(pool) < b.pool_slots(pool))
+            })
+            .max_by_key(|b| (b.tier(K::MiningComplex).max(b.tier(K::AsteroidQuarry)), !b.is_belt(), std::cmp::Reverse(b.id)))?;
+        let kind = if body.is_belt() {
+            if body.tier(K::AsteroidQuarry) == 0 { K::AsteroidQuarry } else { return None }
+        } else if body.tier(K::PowerPlant) == 0 { K::PowerPlant }
             else if body.tier(K::MiningComplex) == 0 { K::MiningComplex }
             else { return None };
         Some(Project { what: BuildKind::Upgrade { upgrade: kind }, body: body.id })
@@ -152,12 +178,17 @@ impl Bot {
 
 impl Bot {
     /// §charter-v5: "Destroy the privateer": an Interceptor attacks it where
-    /// it lurks, tracked since its raid. One already fighting is left alone.
+    /// it lurks. One already fighting is left alone. §privateer-hunt: out of
+    /// sight after its raid, it lies quiet where it went to ground; an
+    /// Interceptor flies there first, and its sensors find it.
     pub(super) fn charter_privateer(&mut self, p: &Observation) -> Option<Command> {
         if p.founding_stage != sim::FoundingStage::DefeatPrivateer {
             return None;
         }
-        let target = p.privateer.and_then(|id| p.ghosts.iter().find(|g| g.id == id))?;
+        let Some(target) = p.privateer.and_then(|id| p.ghosts.iter().find(|g| g.id == id)) else {
+            let pos = p.privateer_last_seen?;
+            return self.raider_to(p, pos, 1_500.0, "founding charter: the Interceptor hunting the privateer");
+        };
         let raiders = || p.own().filter(|f| warfare::composition(f).get(&H::Raider).copied().unwrap_or(0) > 0);
         if raiders().any(|f| p.fighting.contains(&f.id)) {
             return None;
@@ -224,7 +255,9 @@ impl Bot {
             .chain(ahead.keys().copied().filter(|c| *c != C::Electronics).collect::<Vec<_>>())
         {
             let short = if c == C::Deuterium { fuel.ceil().max(0.0) as u32 } else {
-                (ahead.remove(&c).unwrap_or(0.0) - p.home.system.free_stock(c)).ceil().max(0.0) as u32
+                // §charter-crates: the crates still sealed bring their goods.
+                (ahead.remove(&c).unwrap_or(0.0) - p.home.system.free_stock(c)
+                    - p.sealed_crates.get(&c).copied().unwrap_or(0.0)).ceil().max(0.0) as u32
             };
             let mut units = short.min(visit.stock.get(&c).copied().unwrap_or(0));
             let one = visit.quote(&BTreeMap::from([(c, 1)]), &BTreeMap::new()).map_or(f64::INFINITY, |q| q.cost);
@@ -247,8 +280,14 @@ impl Bot {
     /// the garrison never regrows. One at the den or on its way is left alone.
     pub(super) fn charter_den(&mut self, p: &Observation) -> Option<Command> {
         let (_, pos) = p.den?;
+        self.raider_to(p, pos, sim::pirate::PIRATE_ASSAULT_RADIUS, "founding charter: the Interceptor to the privateer den")
+    }
+
+    /// An Interceptor with fuel for the round trip flies to `pos`, unless one
+    /// is within `near` of it, fighting, or already on its way.
+    fn raider_to(&mut self, p: &Observation, pos: Vec2, near: f64, status: &str) -> Option<Command> {
         let raiders = || p.own().filter(|f| warfare::composition(f).get(&H::Raider).copied().unwrap_or(0) > 0);
-        let committed = raiders().any(|f| f.pos.distance(pos) <= sim::pirate::PIRATE_ASSAULT_RADIUS
+        let committed = raiders().any(|f| f.pos.distance(pos) <= near
             || p.fighting.contains(&f.id)
             || f.path.as_ref().and_then(|path| path.last()).is_some_and(|v| v.pos.distance(pos) < 1.0));
         if committed {
@@ -269,19 +308,29 @@ impl Bot {
             return self.trader_fuel(p, short);
         };
         self.wait(format!("fleet:{}", fleet.id), p, fleet.pos);
-        self.status = "founding charter: the Interceptor to the privateer den".into();
+        self.status = status.into();
         Some(Command::MoveShip { player_id: p.owner, ship_id: fleet.id, dest: pos })
     }
 
     /// §belts: the charter's last lesson, as a founder plays it: send the
     /// Mining Barge to the charted belt the programme points at.
     pub(super) fn belt_lesson(&mut self, p: &Observation) -> Option<Command> {
-        let (system_id, body_id, ore, pos) = p.belt_lesson?;
+        let (system_id, body_id, ore, pos, pocket) = p.belt_lesson?;
         let barge = p.own().find(|g| g.kind == H::MiningBarge)?;
         if !self.ready(&format!("fleet:{}", barge.id), p.now) || p.fighting.contains(&barge.id) {
             return None;
         }
         let command = match p.founding_stage {
+            // §den-pocket: a prospecting pass over the charted belt first.
+            sim::FoundingStage::ProspectBelt => {
+                let prospecting = matches!(&barge.industry,
+                    Some(sim::industry::FleetIndustry::Prospect { system, .. }) if *system == system_id);
+                if prospecting || p.threatened_within(pos, super::belts::BELT_THREAT_SU) {
+                    return None;
+                }
+                self.status = "founding charter: prospecting the charted belt".into();
+                Command::ProspectBelt { player_id: p.owner, fleet_id: barge.id, system_id, body_id }
+            }
             sim::FoundingStage::MineBelt => {
                 let working = matches!(&barge.industry,
                     Some(sim::industry::FleetIndustry::Mine { system, .. }) if *system == system_id);
@@ -289,7 +338,7 @@ impl Bot {
                     return None;
                 }
                 self.status = "founding charter: a Mining Barge to the charted belt".into();
-                Command::MineBelt { player_id: p.owner, fleet_id: barge.id, system_id, body_id, ore, pocket: false }
+                Command::MineBelt { player_id: p.owner, fleet_id: barge.id, system_id, body_id, ore, pocket }
             }
             // §charter v3: the last step brings a load home and unloads it.
             sim::FoundingStage::HaulOre => {

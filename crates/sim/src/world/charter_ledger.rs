@@ -46,13 +46,18 @@ impl World {
             }
             for goal in corp.ledger.newly_met(&snapshot) {
                 corp.ledger.completed.insert(goal.id.into(), now);
-                corp.credits += goal.reward;
+                // §standing-ladder (R3): what credits can't buy: standing,
+                // and a research dossier sized by the goal.
+                let standing = corp.earn_standing(charter::LEDGER_STANDING, now);
+                let dossier = World::grant_dossier(corp, charter::ledger_dossier(goal));
                 out.push(Event::new(
                     now,
                     EventPayload::CharterStipend {
                         owner,
                         title: format!("Ledger · {}", goal.title),
-                        credits: goal.reward,
+                        credits: 0.0,
+                        standing,
+                        dossier,
                     },
                 ));
             }
@@ -148,14 +153,20 @@ mod tests {
         let syndicate = crate::ids::SyndicateId(7);
         w.players.get_mut(&owner).unwrap().syndicate = Some(syndicate);
         tick_once_per_second(&mut w, &mut out);
+        // §standing-ladder (R3): standing and research data, never credits.
         let paid: Vec<_> = out.iter().filter_map(|e| match &e.payload {
-            EventPayload::CharterStipend { owner: o, title, credits } if *o == owner => Some((title.clone(), *credits)),
+            EventPayload::CharterStipend { owner: o, title, credits, standing, dossier } if *o == owner =>
+                Some((title.clone(), *credits, *standing, dossier.clone())),
             _ => None,
         }).collect();
-        assert!(paid.iter().any(|(t, c)| t == "Ledger · Join or found a syndicate" && *c == 400.0));
-        assert!(paid.iter().any(|(t, c)| t == "Ledger · Place an Exchange order" && *c == 250.0));
-        let total: f64 = paid.iter().map(|(_, c)| c).sum();
-        assert_eq!(w.players[&owner].credits, before + total);
+        for goal in ["Ledger · Join or found a syndicate", "Ledger · Place an Exchange order"] {
+            assert!(paid.iter().any(|(t, c, _, d)| t == goal && *c == 0.0 && d.is_some()), "{goal}: {paid:?}");
+        }
+        assert_eq!(w.players[&owner].credits, before, "no credits");
+        let landed: f64 = paid.iter().map(|(_, _, s, _)| s).sum();
+        assert_eq!(landed, crate::tca::TCA_GRADE_EARN_PER_DAY, "standing up to the day's allowance: {paid:?}");
+        assert_eq!(w.players[&owner].tca_standing, crate::tca::TCA_STANDING_FULL + landed);
+        assert!(!w.players[&owner].research.recovered_dossiers.is_empty(), "research data");
         out.clear();
         tick_once_per_second(&mut w, &mut out);
         assert!(out.is_empty(), "each goal pays once");

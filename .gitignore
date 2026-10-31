@@ -39,3 +39,11 @@ client/art-src/ship-models/**/viewer.html
 client/art-src/ship-models/*lod-experiment*/
 client/art-src/ship-models/**/__pycache__/
 client/art-src/ship-models/**/*.pyc
+
+# Promo and art bundles kept on disk only: the promo slideshow's renders and
+# packs (up to 207 MB, past GitHub's limit), its 54 MB self-contained build,
+# the season-art zip, and the client's scratch image previews
+client/art-src/promo-slideshow-v1/output/
+client/art-src/promo-slideshow-v1/index.html
+client/art-src/season-art-v1/*.zip
+client/tmp/

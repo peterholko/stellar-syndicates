@@ -1,9 +1,26 @@
 use super::*;
 
+/// §research-wiring Mass Streams: speed on a corporation's stream, how wide
+/// its corridor runs, and how near an end a destination must lie.
+pub const MASS_STREAM_SPEED: f64 = 1.4;
+pub const MASS_STREAM_WIDTH_SU: f64 = 3_000.0;
+pub const MASS_STREAM_END_SU: f64 = 2_000.0;
+
+/// Does a fleet at `pos` bound for `dest` ride the stream between `a` and
+/// `b`: inside its corridor, heading for one of its ends?
+pub(crate) fn rides_stream(pos: Vec2, dest: Vec2, a: Vec2, b: Vec2) -> bool {
+    let ab = b - a;
+    let t = ((pos - a).dot(ab) / ab.dot(ab).max(1e-9)).clamp(0.0, 1.0);
+    pos.distance(a + ab * t) <= MASS_STREAM_WIDTH_SU
+        && (dest.distance(a) <= MASS_STREAM_END_SU || dest.distance(b) <= MASS_STREAM_END_SU)
+}
+
 impl World {
     pub(super) fn fuel_research_for(&self, owner: PlayerId) -> crate::ship::FuelResearch {
-        self.players.get(&owner).map_or_else(crate::ship::FuelResearch::default,
-            |corp| crate::ship::FuelResearch::from_state(&corp.research))
+        self.players.get(&owner).map_or_else(crate::ship::FuelResearch::default, |corp| crate::ship::FuelResearch {
+            cargo: self.syndicate_mult(owner, crate::syndicate::SyndicateBonus::Freight),
+            ..crate::ship::FuelResearch::from_state(&corp.research)
+        })
     }
 
     /// One aggregate per corporation, then a cheap copy per fleet, before fuel
@@ -14,10 +31,61 @@ impl World {
     /// grant. History still records capacity at emission, so remote UI waits for
     /// that report rather than reading the current research as fleet telemetry.
     pub(super) fn refresh_fleet_fuel_research(&mut self) {
-        let effects: BTreeMap<_, _> = self.players.iter().map(|(&owner, corp)|
-            (owner, crate::ship::FuelResearch::from_state(&corp.research))).collect();
-        for fleet in self.fleets.values_mut() {
+        let effects: BTreeMap<_, _> = self.players.keys().map(|&owner| (owner, self.fuel_research_for(owner))).collect();
+        // A stream carries a fleet inside its corridor bound for one of its
+        // ends; an interdiction field stalls it like any warp.
+        let streams = self.mass_streams();
+        let riding: std::collections::BTreeSet<EntityId> = self.fleets.iter().filter(|(_, f)| {
+            matches!(f.order, FleetOrder::MoveTo { dest } if streams.get(&f.owner)
+                .is_some_and(|&(a, b)| rides_stream(f.pos, dest, a, b)))
+                && !self.in_interdiction_field(f.pos)
+        }).map(|(&id, _)| id).collect();
+        for (id, fleet) in self.fleets.iter_mut() {
             fleet.fuel_research = effects.get(&fleet.owner).copied().unwrap_or_default();
+            if riding.contains(id) {
+                fleet.fuel_research.stream = MASS_STREAM_SPEED;
+            }
+        }
+        self.refresh_storage_research();
+    }
+
+    /// §research-wiring Mass Streams: each corporation's live stream, as its
+    /// two stars, while neither end is held under blockade.
+    pub fn mass_streams(&self) -> BTreeMap<PlayerId, (Vec2, Vec2)> {
+        self.players.keys().filter_map(|&owner| {
+            let Some(crate::research::DesignationTarget::SystemPair(a, b)) =
+                self.designation(owner, crate::research::Cap::MassStreams) else { return None };
+            let end = |id: EntityId| self.systems.iter().find(|s| s.id == id)
+                .filter(|s| !s.blockade.as_ref().is_some_and(|b| b.held_since.is_some()))
+                .map(|s| s.pos);
+            Some((owner, (end(a)?, end(b)?)))
+        }).collect()
+    }
+
+    /// §research-wiring: each system follows its owner's research — Bulk
+    /// Storage's warehouse multiple (1.0 unowned) and the Crown Project world.
+    fn refresh_storage_research(&mut self) {
+        let mults: BTreeMap<PlayerId, f64> = self.players.keys()
+            .map(|&o| (o, self.research_mod(o, crate::research::ModKey::WarehouseCap))).collect();
+        let crowns: BTreeMap<PlayerId, crate::research::DesignationTarget> = self.players.keys()
+            .filter_map(|&o| self.designation(o, crate::research::Cap::CrownProject).map(|t| (o, t))).collect();
+        let acclimated: std::collections::BTreeSet<PlayerId> = self.players.keys().copied()
+            .filter(|&o| self.research_flag(o, crate::research::Cap::Xenoacclimation)).collect();
+        let campuses: std::collections::BTreeSet<PlayerId> = self.players.keys().copied()
+            .filter(|&o| self.research_flag(o, crate::research::Cap::TwinCampuses)).collect();
+        let orbital: std::collections::BTreeSet<PlayerId> = self.players.keys().copied()
+            .filter(|&o| self.research_flag(o, crate::research::Cap::OrbitalHabitats)).collect();
+        for sys in &mut self.systems {
+            sys.storage_mult = sys.owner.and_then(|o| mults.get(&o).copied()).unwrap_or(1.0);
+            sys.twin_campuses = sys.owner.is_some_and(|o| campuses.contains(&o));
+            let crown = sys.owner.and_then(|o| crowns.get(&o).copied());
+            let acclimates = sys.owner.is_some_and(|o| acclimated.contains(&o));
+            let in_orbit = sys.owner.is_some_and(|o| orbital.contains(&o));
+            for b in &mut sys.bodies {
+                b.crown_project = crown == Some(crate::research::DesignationTarget::Body { system: sys.id, body: b.id });
+                b.acclimated = acclimates && b.acclimatable();
+                b.orbital_habitat = in_orbit && !b.is_belt();
+            }
         }
     }
 }

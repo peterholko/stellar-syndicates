@@ -37,7 +37,7 @@ const MODULE_FIT_COST: Record<ModuleKind, number> = {
   mass_driver: 2, torpedo_rack: 3, point_defense_screen: 2, reflective_plating: 2, whipple_armor: 3,
   extended_tanks: 2, recon_suite: 2, cargo_pods: 2, escort_datalink: 2, fuel_transfer_rig: 2,
   survey_drive: 2, nebula_spectrometer: 2, prismatic_lance: 3,
-  stasis_web: 2, warp_stabilizer: 2, interdiction_field: 3, jump_drive: 2,
+  stasis_web: 2, warp_stabilizer: 2, interdiction_field: 3, jump_drive: 2, lance_array: 3,
 };
 export const FITTING_POINTS: Record<string, number> = {
   tiny_freighter: 2, small_freighter: 2, large_freighter: 2, heavy_freighter: 2, bulk_freighter: 2,
@@ -51,8 +51,8 @@ export const SHIP_YARD: Record<string, { yard: string; tier: number }> = {
   large_freighter: { yard: "naval_drydock", tier: 1 }, heavy_freighter: { yard: "naval_drydock", tier: 2 }, bulk_freighter: { yard: "naval_drydock", tier: 3 },
   convoy: { yard: "shipyard", tier: 2 }, scout: { yard: "shipyard", tier: 1 }, colony: { yard: "shipyard", tier: 1 },
   survey_probe: { yard: "shipyard", tier: 1 }, mining_barge: { yard: "shipyard", tier: 1 },
-  mining_belt_station: { yard: "shipyard", tier: 2 },
-  raider: { yard: "shipyard", tier: 2 }, corvette: { yard: "shipyard", tier: 2 },
+  mining_belt_station: { yard: "shipyard", tier: 2 }, combat_freighter: { yard: "shipyard", tier: 2 },
+  raider: { yard: "shipyard", tier: 1 }, corvette: { yard: "shipyard", tier: 2 },
   destroyer: { yard: "naval_drydock", tier: 1 }, cruiser: { yard: "naval_drydock", tier: 2 }, battleship: { yard: "naval_drydock", tier: 3 },
   dreadnought: { yard: "capital_slipway", tier: 1 }, titan: { yard: "capital_slipway", tier: 2 }, transport: { yard: "garrison", tier: 1 },
 };
@@ -74,7 +74,7 @@ const HULL_PROGRAMME: Record<string, string> = {
 };
 
 export const POOL_OF: Record<string, "resource" | "industrial" | "infrastructure"> = {
-  mining_complex: "resource", volatile_harvester: "resource", bioharvester: "resource",
+  mining_complex: "resource", volatile_harvester: "resource", bioharvester: "resource", asteroid_quarry: "resource",
   smelter: "industrial", electronics_fabricator: "industrial", chemical_works: "industrial",
   fuel_refinery: "industrial", machine_works: "industrial", armaments_complex: "industrial",
   composite_works: "industrial", hull_fabricator: "industrial", precision_works: "industrial", drive_works: "industrial",
@@ -85,30 +85,65 @@ export const POOL_OF: Record<string, "resource" | "industrial" | "infrastructure
   sensor_array: "infrastructure", defense_platform: "infrastructure", orbital_defense: "infrastructure", academy: "infrastructure", garrison: "infrastructure",
   // §power: grouped with the civic utilities; it takes no slot (one per planet).
   power_plant: "infrastructure",
+  // §vault: under the Command Center; no slot.
+  vault: "infrastructure",
+  // §season: at the Command Center; no slot.
+  assembly_hall: "infrastructure",
 };
 const EXTRACTION_OF: Record<string, Commodity[]> = {
   mining_complex: ["metallic_ore", "cuprite_ore", "titanium_ore", "crystalline_ore", "rare_metal_ore", "olivine_ore", "bornite_ore", "ilmenite_ore", "iridium_ore", "void_crystal", "silicates", "rare_elements"],
   volatile_harvester: ["volatiles", "helium3_ice"],
   bioharvester: ["biomass"],
 };
+// §asteroid-quarry: a belt's quarry works every deposit on it, so any deposit
+// will do (sim `StructureKind::suits`).
+EXTRACTION_OF.asteroid_quarry = [...EXTRACTION_OF.mining_complex, ...EXTRACTION_OF.volatile_harvester];
+/** §asteroid-quarry: a belt takes its quarry and nothing else; the quarry
+ * stands only on a belt (sim `StructureKind::suits`). */
+export const suitsBody = (key: string, body: Pick<BodyView, "kind">): boolean =>
+  (body.kind === "asteroid_belt") === (key === "asteroid_quarry");
 export type Pool = "resource" | "industrial" | "infrastructure";
 export type PoolUse = Record<Pool, { used: number; total: number }>;
 export const POOL_LABEL: Record<Pool, string> = { resource: "Resource", industrial: "Industrial", infrastructure: "Infrastructure" };
 
 export type BuildOpt = BuildOption;
-export const structureConsumesSlot = (key: string): boolean => !["service_berth", "command_center", "power_plant"].includes(key);
+// §gun-platform: the station stands in orbit and takes no site (sim `uses_slot`).
+export const structureConsumesSlot = (key: string): boolean => !["service_berth", "command_center", "power_plant", "vault", "assembly_hall",
+  "orbital_defense"].includes(key);
+
+/** §tier-curve: mirror of the sim's structure tier curve
+ * (`build::TIER_COST_MULT` / `TIER_TIME_MULT`, index 0 = tier I). Past tier II
+ * a structure's next tier costs more and takes longer. */
+export const TIER_CURVE = {
+  cost: [1, 1, 1.6, 2.56, 4.096, 6.5536],
+  time: [1, 1, 20, 180, 900, 2700],
+} as const;
+/** The three with explicit level ladders (`build::follows_tier_curve`). */
+const TIER_CURVE_EXEMPT: ReadonlySet<string> = new Set(["command_center", "power_plant", "orbital_defense"]);
 
 /** Explicit level recipes come from Welcome; never display/debit Level I's
- * price for an upgrade. Pending jobs count when selecting the proposed level. */
+ * price for an upgrade. Pending jobs count when selecting the proposed level.
+ * Any other structure's level is its base recipe on the tier curve, rounded as
+ * the sim rounds. */
 export function structureLevel(option: BuildOpt, tier: number): BuildOpt {
   const levels = option.tiers;
   const level = levels?.find(entry => entry.tier === tier) ?? levels?.at(-1);
-  return level ? { ...option, ...level, research_prerequisite: level.research_prerequisite ?? undefined } : option;
+  if (level) return { ...option, ...level, research_prerequisite: level.research_prerequisite ?? undefined };
+  const i = Math.min(Math.max(tier, 1), TIER_CURVE.cost.length) - 1;
+  if (i < 2 || !(option.key in POOL_OF) || TIER_CURVE_EXEMPT.has(option.key)) return option;
+  return {
+    ...option,
+    costs: option.costs.map(cost => ({ ...cost, units: Math.round(cost.units * TIER_CURVE.cost[i]) })),
+    build_secs: option.build_secs * TIER_CURVE.time[i],
+  };
 }
 /** §first-session: mirror of the sim's charter opening builds
  * (`founding::OPENING_BUILDS`): while the charter runs, level I of these on the
  * home system's Command Center world rises in OPENING_BUILD_SECS. */
 export const OPENING_BUILD_SECS = 10;
+/** §charter-gates: step 4's mine rises in the privateer's flight to the
+ * colony (sim `founding::CHARTER_MINE_SECS`). */
+export const CHARTER_MINE_SECS = 30;
 const OPENING_BUILDS: ReadonlySet<string> = new Set(["mining_complex", "bioharvester", "habitat", "agroplex", "power_plant"]);
 export function openingBuild(key: string, tier: number, systemId: string, body: BodyView): boolean {
   if (tier !== 1 || !OPENING_BUILDS.has(key) || !((body.structures.command_center ?? 0) > 0)) return false;
@@ -119,7 +154,8 @@ export function openingBuild(key: string, tier: number, systemId: string, body: 
   return !!at && !!home && Math.hypot(at.x - home.x, at.y - home.y) < 1;
 }
 export const structureBuildSeconds = (option: BuildOpt, body: BodyView, opening = false): number =>
-  opening ? OPENING_BUILD_SECS : option.build_secs * (body.structure_build_time_mult ?? body.construction_time_mult);
+  opening ? option.key === "mining_complex" && state?.founding?.stage === "build_mine" ? CHARTER_MINE_SECS : OPENING_BUILD_SECS
+    : option.build_secs * (body.structure_build_time_mult ?? body.construction_time_mult);
 export const MINERAL_DEPOSITS: Commodity[] = ["metallic_ore", "cuprite_ore", "titanium_ore", "crystalline_ore", "rare_metal_ore", "olivine_ore", "bornite_ore", "ilmenite_ore", "iridium_ore", "void_crystal", "rare_elements", "silicates"];
 
 /** §fuel-overhaul: lines that run one of several standing recipes, picked by
@@ -161,6 +197,8 @@ export function conversionSummary(option: BuildOpt): string {
 export interface StructOpt {
   o: BuildOpt; pool: Pool; currentTier: number; targetTier: number;
   maxed: boolean;
+  /** §unlocks: the next level is above the research ceiling; sheets leave the building out. */
+  capped: boolean;
   foundsNew: boolean; tierUp: boolean; afford: boolean; poolFull: boolean; noDeposit: boolean;
   yardPrereq: { yard: string; tier: number; have: number } | null;
   buildable: boolean; reason: string;
@@ -196,9 +234,11 @@ export function ownedHaulDestinations(): { id: EntityId; name: string }[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** An order in flight to the Hub, held off the warehouse count until its
+ * receipt. §treasury: no credits: the order paid as it left. */
 export type MarketReservation = {
   kind: "market" | "limit"; side: Side; commodity: Commodity; orderUnits: number;
-  units: number; credits: number; limitPrice?: number; issuedAt: number;
+  units: number; limitPrice?: number; issuedAt: number;
 };
 export type RecentMarketOrder = {
   side: Side; commodity: Commodity; units: number; unitPrice: number; limitFill: boolean; observedAt: number;
@@ -271,8 +311,7 @@ export function fitLegal(kind: string, mods: ModuleKind[]): boolean {
 
 export function moduleBuildReason(dyn: SystemStateView, module: ModuleKind): string {
   if (isBlueprintOnly(module) && !state.research?.blueprints?.includes(module)) return "Recover blueprint through exploration";
-  const programme = utilityProgramme(module);
-  if (programme && !state.research?.programmes.some(p => p.id === programme && p.state === "completed")) return "Research required";
+  if (!moduleResearched(module)) return "Research required";
   const yard = isUtility(module) ? "shipyard" : "armaments_complex";
   if (!(dyn.structures[yard] > 0)) return isUtility(module) ? "Needs Shipyard I" : "Needs Armaments Complex";
   if (isUtility(module) && !dyn.bodies.some(body => shipyardBoost(dyn, body) > 0)) return "Assign Shipyard workforce";
@@ -409,6 +448,23 @@ export function structureResearched(o: BuildOpt): boolean {
   ) === true;
 }
 
+/** §unlocks (Oct 28 2026, Peter: "Anything not available to the player until
+ * a research unlocks it should not be rendered"): the highest level of `key`
+ * this corporation may build now (sim `max_buildable_tier`, served v72).
+ * Unknown until research arrives. */
+export const structureCeiling = (key: string): number => state?.research?.structure_tiers?.[key] ?? Infinity;
+/** A structure the catalogues may show: researched and unlocked. */
+export const structureUnlocked = (o: BuildOpt): boolean => structureResearched(o) && structureCeiling(o.key) >= 1
+  // §vault: opens with the finished charter (sim `founding::charter_step`); unseen until then.
+  && !(o.key === "vault" && state?.founding?.charter_gates?.vault)
+  // §season: the Assembly Hall too, and only once the levies give the colonists a grievance.
+  && !(o.key === "assembly_hall" && (state?.founding?.charter_gates?.assembly_hall || (state?.season?.grip ?? "charter") === "charter"));
+/** A module whose research, if any, is done; the forges list no other. */
+export function moduleResearched(module: ModuleKind): boolean {
+  const programme = utilityProgramme(module);
+  return !programme || !!state?.research?.programmes.some(p => p.id === programme && p.state === "completed");
+}
+
 /// The sim-mirroring state for building `o` on `body` — current/target tier,
 /// whether it founds a NEW slot vs. deepens in place, and every precondition
 /// (afford / pool-full / matching-deposit). `buildable` = all pass (Queue is
@@ -421,6 +477,7 @@ export function structOption(o: BuildOpt, dyn: SystemStateView, body: BodyView, 
   const foundsNew = currentTier === 0 && pendingAhead === 0;
   const targetTier = currentTier + pendingAhead + 1;
   const maxed = !!o.tiers?.length && targetTier > Math.max(...o.tiers.map(level => level.tier));
+  const capped = !maxed && targetTier > structureCeiling(o.key);
   o = structureLevel(o, targetTier);
   const have = constructionStock(dyn, o.key).available;
   const afford = o.costs.every((c) => (have.get(c.commodity as Commodity) ?? 0) >= c.units);
@@ -444,36 +501,49 @@ export function structOption(o: BuildOpt, dyn: SystemStateView, body: BodyView, 
     .map(id => state.research?.programmes.find(entry => entry.id === id)?.name
       ?? state.researchCatalog?.find(entry => entry.id === id)?.name ?? label(id)).join(" or ");
   const attachmentReason = attachment && targetTier > 1 ? "Service Berth has one tier." : attachment && !(body.structures.warehouse > 0) ? "Requires a Warehouse on this world. Uses no extra slot." : "";
+  // §vault: dug under the world's Command Center.
+  const vaultReason = (o.key === "vault" || o.key === "assembly_hall") && !((body.structures.command_center ?? 0) > 0)
+    ? o.key === "vault" ? "Dug under a Command Center." : "Stands at a Command Center." : "";
   const populationReason = o.min_population && (body.population * 1e6 + 1e-6 < o.min_population || body.kind === "gas_giant")
     ? `Requires ${o.min_population.toLocaleString()} residents on a solid-surface world.` : "";
   // §gaia: Living Terraces grow only on a Gaia world.
   const environmentReason = o.requires_environment && body.environment !== o.requires_environment
     ? `Grows only on ${label(o.requires_environment)} worlds.` : "";
+  // §asteroid-quarry: a belt takes its quarry and nothing else.
+  const groundReason = suitsBody(o.key, body) ? ""
+    : o.key === "asteroid_quarry" ? "An Asteroid Quarry stands on an asteroid belt." : "A belt takes only an Asteroid Quarry.";
   // §charter-v4: the charter's land grant covers only the landing world until
   // "Expand mining operations" (sim World::apply_build).
   const landing = (dyn.bodies ?? []).find((b) => (b.structures?.command_center ?? 0) > 0);
   const grantReason = state.founding?.land_grant_open === false && dyn.owner === state.playerId && landing && body.id !== landing.id
     ? `Charter land grant: ${landing.name} only, until you expand mining.` : "";
-  const buildable = !maxed && !grantReason && !populationReason && !environmentReason && !attachmentReason && !stationReason && !researchLocked && !poolFull && !noDeposit && !yardPrereq && afford;
+  // §charter-gates: the charter opens its structures step by step (sim
+  // `founding::charter_step`, served as `charter_gates`).
+  const charterStep = dyn.owner === state.playerId ? state.founding?.charter_gates?.[o.key] : undefined;
+  const charterReason = charterStep ? `The charter opens this at step ${charterStep}.` : "";
+  const buildable = !maxed && !capped && !charterReason && !grantReason && !groundReason && !populationReason && !environmentReason && !attachmentReason && !vaultReason && !stationReason && !researchLocked && !poolFull && !noDeposit && !yardPrereq && afford;
   const reason = (maxed ? (o.key === "orbital_defense" ? "The Star Fortress is the station's top level."
     : o.key === "command_center" ? "Maximum Command Center level reached (III)." : "Top level reached.") : "")
-    || grantReason || populationReason || environmentReason || attachmentReason || stationReason || (researchLocked ? `Requires ${researchTitle} research.`
+    || charterReason || grantReason || groundReason || populationReason || environmentReason || attachmentReason || vaultReason || stationReason || (researchLocked ? `Requires ${researchTitle} research.`
     : noDeposit ? "No matching deposit on this body — a mine only works its own rock."
     : yardPrereq ? `Needs ${YARD_TITLE[yardPrereq.yard] ?? yardPrereq.yard} tier ${yardPrereq.tier} somewhere in this system (have ${yardPrereq.have}).`
     : poolFull ? `This body's ${POOL_LABEL[pool]} slots are full (${pools[pool].used}/${pools[pool].total}).`
       : !afford ? "Not enough goods available at this system." : "");
   // The same gates, in the same order, as the build sheet's short labels.
   const gate = (maxed ? "Top level" : "")
+    || (charterReason ? `Charter step ${charterStep}` : "")
     || (grantReason ? `Land grant: ${landing!.name} only` : "")
+    || (groundReason ? o.key === "asteroid_quarry" ? "Belts only" : "Belt: quarry only" : "")
     || (populationReason ? `Needs ${o.min_population!.toLocaleString()} residents` : "")
     || (environmentReason ? `${label(o.requires_environment!)} worlds only` : "")
     || (attachmentReason ? targetTier > 1 ? "Top level" : "Needs a Warehouse" : "")
+    || (vaultReason ? "Needs a Command Center" : "")
     || (stationReason ? stationReason.includes("another world") ? "Station orbits another world" : "One Star Fortress per corporation" : "")
     || (researchLocked ? `Needs ${researchTitle} research` : "")
     || (noDeposit ? "No matching deposit" : "")
     || (yardPrereq ? `Needs ${YARD_TITLE[yardPrereq.yard] ?? label(yardPrereq.yard)} ${["", "I", "II", "III", "IV", "V", "VI"][yardPrereq.tier] ?? yardPrereq.tier}` : "")
     || (poolFull ? `No free ${POOL_LABEL[pool]} site` : "");
-  return { o, pool, currentTier, targetTier, maxed, foundsNew, tierUp: !foundsNew, afford, poolFull, noDeposit, yardPrereq, buildable, reason, gate };
+  return { o, pool, currentTier, targetTier, maxed, capped, foundsNew, tierUp: !foundsNew, afford, poolFull, noDeposit, yardPrereq, buildable, reason, gate };
 }
 
 /** §orbital-defense: why the station can't rise to `targetTier` on `body`
@@ -483,9 +553,10 @@ export function stationBlock(dyn: SystemStateView, body: BodyView, targetTier: n
   const elsewhere = (dyn.bodies ?? []).some((b) => b.id !== body.id && (b.structures?.orbital_defense ?? 0) > 0)
     || (dyn.builds ?? []).some((j) => j.key === "orbital_defense" && j.body_id !== body.id);
   if (elsewhere) return "The system's station orbits another world; raise that one.";
-  if (targetTier >= 5) {
+  // §gun-platform: the Star Fortress is level 6.
+  if (targetTier >= 6) {
     const fortress = state.systems.some((s) => s.id !== dyn.id && s.owner === state.playerId
-      && ((s.station?.level ?? 0) >= 5 || ((s.station?.level ?? 0) === 4 && (s.builds ?? []).some((j) => j.key === "orbital_defense"))));
+      && ((s.station?.level ?? 0) >= 6 || ((s.station?.level ?? 0) === 5 && (s.builds ?? []).some((j) => j.key === "orbital_defense"))));
     if (fortress) return "Your corporation already has its Star Fortress.";
   }
   return "";
@@ -587,21 +658,24 @@ export function shippableStock(dyn: SystemStateView | undefined): StockSlot[] {
 }
 
 export function pruneMarketReservations(): void {
-  const ttl = Math.max(5, (state.market?.staleness ?? 0) + 2);
+  // Until the receipt: the order's light out and the report's light back.
+  const ttl = Math.max(5, 2 * (state.market?.staleness ?? 0) + 5);
   const now = liveSimTime();
   for (let i = marketReservations.length - 1; i >= 0; i--) {
     if (now - marketReservations[i].issuedAt > ttl) marketReservations.splice(i, 1);
   }
 }
 
-export function reservedMarketCredits(): number {
-  pruneMarketReservations();
-  return marketReservations.reduce((sum, reservation) => sum + reservation.credits, 0);
+/** §treasury: the credits at your command center. An order to the Hub pays
+ * as it leaves, so nothing in flight is held back here. */
+export function spendableMarketCredits(): number {
+  return state.credits ?? 0;
 }
 
-export function spendableMarketCredits(): number {
-  return Math.max(0, (state.wallet?.credits ?? 0) - reservedMarketCredits());
-}
+/** §treasury: what an order for market-priced goods (modules, freight, a
+ * rescue) carries above the price, as the sim's `PAYMENT_MARGIN`. The change
+ * comes back with the receipt. */
+export const PAYMENT_MARGIN = 0.10;
 
 export function reserveMarketOrder(reservation: Omit<MarketReservation, "issuedAt">): void {
   marketReservations.push({ ...reservation, issuedAt: liveSimTime() });

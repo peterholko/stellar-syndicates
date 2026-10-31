@@ -70,3 +70,31 @@ Use case: stylized-concept. Asset type: transparent game UI structure icon for t
 Crisp professionally rendered 3D game concept icon, no painterly strokes. Centered square, slight top-down three-quarter view, entire station visible with 12% empty margin. Bold simple silhouette readable at 64px. Pale silver titanium armor, charcoal gunmetal, restrained brass, small cyan lights. Actual transparent background, no starfield, no star, no planet, no fog, no text, no lettering, no border, no UI, no other ships, no weapons fire.
 Runtime derivative: 256px PNG, original alpha preserved with Sharp.
 ```
+
+## 4 · Gun Platform (Oct 30 2026: the ladder's new first rung)
+
+The founding charter's defense step (built straight after the first pirate
+raid, from kit Alloys and Machinery). It comes before the Defense Platform and
+is later rebuilt into it, so the ladder is now six levels. One image: the
+System View sprite, the battle theater sprite and the panel icon all derive
+from it, like the other levels (`client/scripts/build-station-art.mjs`).
+
+Attach the approved lineup (`orbital-defense-lineup-v1/orbital-defense-lineup.png`)
+as Image 1. Deliver `client/art-src/orbital-defense-v1/gun-platform.png`:
+square, real transparent alpha, the station centred with an even margin.
+
+```
+Use case: stylized-concept. Asset type: single transparent orbital defense station sprite for the dark sci-fi strategy game Stellar Syndicates.
+Image 1 is the approved five-level station lineup. Draw ONE new station, the GUN PLATFORM: the crude first rung that comes BEFORE the leftmost station in Image 1, the DEFENSE PLATFORM, and is later rebuilt into it. Same family, same camera, same light, same materials and rendering as Image 1.
+DESIGN: a crude field-built orbital gun, bolted together by new colonists from spare alloy girders and mining machinery right after their first pirate raid. At its centre the SAME hexagonal core with the round cyan-lit reactor eye on top as the Defense Platform, but bare: no armored hull, no armored collar. Around the core an open, flat hexagonal frame of exposed charcoal girders and cross-bracing, with only a few mismatched pale titanium patch plates bolted on, so empty space shows through the gaps. Exactly ONE salvaged single-barrel cannon (one barrel, not twin) on a simple open ring mount, bolted to the frame just forward of the eye, its barrel pointing toward the viewer. Two strapped-on cylindrical tanks on the two rear corners, two flat bolted-on radiator panels on the sides, loose cable runs along the girders, two small work lights. No point-defense nodes, no radiator fins, no towers, no other weapons. Lower and plainer than the Defense Platform: clearly its cheaper, rougher predecessor, yet built around the same core.
+CAMERA: exactly Image 1's camera: elevated three-quarter top-down view, about 40 degrees pitch, front edge toward the viewer, light from the upper left, soft neutral illumination, no harsh shadows.
+FRAMING: square 1:1 canvas, 2048 by 2048 pixels. The whole station centred and fully visible, about 88% of the canvas width, every barrel tip, tank and panel inside an even empty margin.
+STYLE: precise colored hard-surface 3D game concept rendering, clean contours, fine panel lines, pale silver titanium, charcoal gunmetal girders, restrained brass bolts and clamps, small cyan lights. More wear than the Defense Platform: weld seams, scuffed and mismatched plates. A bold silhouette that reads from above at 64 px.
+Actual transparent background with real alpha. No starfield, no star, no planet, no other stations or ships, no weapons fire, no beams, no glow halos, no cast shadow, no text, no labels, no logos, no watermark.
+```
+
+Delivered October 31, 2026: `orbital-defense-v1/gun-platform.png`, a 2048 × 2048
+RGBA master. The built-in image generator's 1254 px output was resampled for
+the requested export; the exact generation and refinement prompts are saved
+in `orbital-defense-v1/gun-platform.prompt.json`. The station build now uses
+this master for level 1, replacing the Defense Platform placeholder.

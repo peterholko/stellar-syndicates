@@ -1,8 +1,9 @@
 // §merchant: the traveling merchant's stall, a Market-style pop-out
 // (docs/traveling-merchant.md). One exchange per deal: buys from its stock,
 // Ferrite Ore to it, settled at your home with no light delay. §persona (Oct
-// 16 2026): a negotiation with Teo Brannick, who talks about the offer on the
-// table; the prices are the sim's.
+// 16 2026): a negotiation with the trader (§traders: one of three, dealt per
+// corporation), who talks about the offer on the table; the prices are the
+// sim's.
 import { fmt, fmtDur } from "../../core/derive/format";
 import { spendableMarketCredits } from "../../core/derive/market";
 import {
@@ -10,7 +11,7 @@ import {
   oreAtHome, type MerchantGoods,
 } from "../../core/derive/merchant";
 import { fuelRoom } from "../../core/derive/founding";
-import { DEAL_LINE, refusalLine, TRADER, traderLine, traderPortrait, traderResult, type TraderLine } from "../../core/derive/trader";
+import { dealLine, refusalLine, traderLine, traderOf, traderPortrait, traderResult, type TraderLine } from "../../core/derive/trader";
 import { commodityIcon, label } from "../../icons";
 import type { Commodity, SystemStateView } from "../../protocol";
 import { liveSimTime } from "../../state";
@@ -61,7 +62,22 @@ export class DeckMerchantRoutes {
   }
 
   handleAction(button: HTMLButtonElement, route: DeckRoute | null): boolean {
-    if (route?.name !== "merchant" || button.dataset.deckAct !== "merchant-submit") return false;
+    if (route?.name !== "merchant") return false;
+    const act = button.dataset.deckAct;
+    if (act === "merchant-max") {
+      // All the ore you hold, up to what the trader takes.
+      const merchant = dockedMerchant(this.ctx.state);
+      const units = merchant ? Math.min(merchant.ore_room, oreAtHome(this.home())) : 0;
+      if (units > 0) this.sells.metallic_ore = units; else delete this.sells.metallic_ore;
+      this.sentAt = null;
+      this.signature = "";
+      this.render(route, true);
+      // A box you typed in keeps its own value through a redraw: put Max in it.
+      const box = this.root.querySelector<HTMLInputElement>('[data-merchant-input="sell:metallic_ore"]');
+      if (box) box.value = units > 0 ? String(units) : "";
+      return true;
+    }
+    if (act !== "merchant-submit") return false;
     this.submit();
     this.signature = "";
     this.render(route, true);
@@ -95,6 +111,8 @@ export class DeckMerchantRoutes {
     count.textContent = fmt(held);
     const box = this.root.querySelector<HTMLInputElement>('[data-merchant-input="sell:metallic_ore"]');
     if (box) box.max = String(Math.min(merchant.ore_room, held));
+    const most = this.root.querySelector<HTMLButtonElement>('[data-deck-act="merchant-max"]');
+    if (most) most.disabled = merchant.phase !== "docked" || Math.min(merchant.ore_room, held) <= 0;
     // The DOM no longer matches the last html written: the next redraw must
     // reconcile, even if the count is back where it was.
     lastHtmlWritten.delete(this.root);
@@ -106,8 +124,8 @@ export class DeckMerchantRoutes {
   }
 
   private credits(): number | undefined {
-    const wallet = this.ctx.state.wallet;
-    return wallet && !wallet.report_pending ? spendableMarketCredits() : undefined;
+    // §treasury: the credits sit at home, known even before the Hub's report.
+    return this.ctx.state.credits !== null ? spendableMarketCredits() : undefined;
   }
 
   /** A guide shortcut opens the table with that build's shortfall, or the
@@ -140,16 +158,17 @@ export class DeckMerchantRoutes {
     this.sells = {};
   }
 
-  /** What Teo says: about the deal just sent (a parting shot, or why the
-   * sim refused it), else about the offer on the table. */
+  /** What the trader says: about the deal just sent (a parting shot, or why
+   * the sim refused it), else about the offer on the table. */
   private line(dealt: boolean): TraderLine {
     const merchant = this.ctx.state.merchant!;
+    const trader = traderOf(this.ctx.state.founding);
     if (this.sentAt !== null) {
       const result = traderResult(this.ctx.state.timeline, this.sentAt);
-      return result && !result.ok ? refusalLine(result.reason) : DEAL_LINE;
+      return result && !result.ok ? refusalLine(trader, result.reason) : dealLine(trader);
     }
     const quote = merchantQuote(merchant, this.buys, this.sells, this.home(), this.credits());
-    return traderLine(merchant, this.buys, this.sells, quote, dealt, !!this.ctx.state.founding?.bounty_received);
+    return traderLine(trader, merchant, this.buys, this.sells, quote, dealt, !!this.ctx.state.founding?.bounty_received);
   }
 
   private html(): string {
@@ -165,12 +184,13 @@ export class DeckMerchantRoutes {
     const quote = merchantQuote(merchant, this.buys, this.sells, home, this.credits());
     const dealt = st.timeline.some((e) => e.text.startsWith("Free trader: ") && !e.text.startsWith("Free trader: trade refused"));
     const says = this.line(dealt);
-    const portrait = traderPortrait(says.mood, () => { this.signature = ""; });
+    const who = traderOf(st.founding);
+    const portrait = traderPortrait(who, says.mood, () => { this.signature = ""; });
     const status = merchant.phase === "arriving" ? "Arriving" : merchant.phase === "leaving" ? "Leaving"
       : `Leaves in ${fmtDur(merchantLeavesIn(merchant, liveSimTime()))}`;
     const trader = `<header class="deck-merchant__trader" data-mood="${says.mood}">`
-      + `<img class="deck-merchant__portrait${portrait.painted ? "" : " is-interim"}" src="${esc(portrait.src)}" alt="${esc(portrait.alt)}" width="112" height="112">`
-      + `<div class="deck-merchant__who"><b>${esc(TRADER.name)}</b><small>${esc(TRADER.ship)} · ${esc(status)}</small></div>`
+      + `<img class="deck-merchant__portrait${portrait.painted ? "" : " is-interim"}" src="${esc(portrait.src)}" alt="${esc(portrait.alt)}" width="210" height="210">`
+      + `<div class="deck-merchant__who"><b>${esc(who.name)}</b><small>the ${esc(who.ship)} · ${esc(status)}</small></div>`
       + `<p class="deck-merchant__says" role="status">“${esc(says.text)}”</p></header>`;
     const held = oreAtHome(home);
     const give = row("metallic_ore", `${merchant.ore_price.toFixed(1)} Cr · takes ${merchant.ore_room} more`,
@@ -188,16 +208,19 @@ export class DeckMerchantRoutes {
     const canSubmit = docked && !empty && !quote.error;
     // The terms and the handshake stay pinned to the panel's foot.
     const dock = `<div class="deck-merchant__dock"><div class="deck-ticket-quote">${terms}</div>` +
-      `<button type="button" class="is-primary" data-deck-act="merchant-submit" title="Settles at your home at once" ${canSubmit ? "" : "disabled"}>Shake on it</button></div>`;
+      `<button type="button" class="is-primary" data-deck-act="merchant-submit" title="Settles at your home at once" ${canSubmit ? "" : "disabled"}>Trade</button></div>`;
     return `<section class="deck-page deck-merchant">${trader}${table}${dock}</section>`;
   }
 }
 
-/** `held`: your side's stock at home, on a line of its own. */
+/** `held`: your side's stock at home, on a line of its own, with Max (all
+ * of it the trader takes) under the amount. */
 function row(commodity: Commodity, detail: string, side: "buy" | "sell", value: number, max: number, enabled: boolean, held?: number): string {
   const home = held === undefined ? "" : `<small class="deck-merchant-row__held"><b>${fmt(held)}</b> at home</small>`;
-  return `<div class="deck-merchant-row">${commodityIcon(commodity)}<span><b>${esc(label(commodity))}</b><small>${esc(detail)}</small>${home}</span>` +
-    `<input type="number" min="0" max="${max}" step="1" value="${value || ""}" placeholder="0" aria-label="${esc(`${side === "buy" ? "Buy" : "Sell"} ${label(commodity)}`)}" data-merchant-input="${side}:${commodity}" ${enabled ? "" : "disabled"}></div>`;
+  const amount = `<input type="number" min="0" max="${max}" step="1" value="${value || ""}" placeholder="0" aria-label="${esc(`${side === "buy" ? "Buy" : "Sell"} ${label(commodity)}`)}" data-merchant-input="${side}:${commodity}" ${enabled ? "" : "disabled"}>`;
+  const most = held === undefined ? amount : `<span class="deck-merchant-row__amount">${amount}`
+    + `<button type="button" data-deck-act="merchant-max" title="All you hold, up to what it takes" ${enabled && max > 0 ? "" : "disabled"}>Max</button></span>`;
+  return `<div class="deck-merchant-row">${commodityIcon(commodity)}<span><b>${esc(label(commodity))}</b><small>${esc(detail)}</small>${home}</span>${most}</div>`;
 }
 
 function esc(value: string): string {

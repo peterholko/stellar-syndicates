@@ -1,7 +1,7 @@
-// The Market Hub's station, the Authority Nexus, for the web: the approved GLB
-// with its ten embedded textures re-encoded as display-sized JPEG (geometry,
-// materials and the WormholeCollapse clip untouched), plus the flat map sprite
-// and panel hero baked from that GLB by `npm run assets:hub:bake`.
+// The Market Hub's station, the Wormhole Hub, for the web: the approved GLB
+// with its eight embedded textures re-encoded as display-sized JPEG (geometry,
+// materials and the PortalClose clip untouched), plus the flat map sprite and
+// panel hero baked from that GLB by `npm run assets:hub:bake`.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -10,12 +10,12 @@ import path from "node:path";
 import sharp from "sharp";
 
 const client = fileURLToPath(new URL("..", import.meta.url));
-export const HUB_SOURCE = "art-src/ship-models/authority-nexus-textured-v1/authority-nexus.glb";
-export const HUB_BAKE = "art-src/hub-models/authority-nexus-game-ready-v1";
-const destination = path.join(client, "public/art/derived/hub-model/v1");
-const recipe = "nexus-jpeg-1024-v1";
+export const HUB_SOURCE = "art-src/ship-models/wormhole-hub-textured-v1/wormhole-hub.glb";
+export const HUB_BAKE = "art-src/hub-models/wormhole-hub-game-ready-v1";
+const destination = path.join(client, "public/art/derived/hub-model/v2");
+const recipe = "wormhole-hub-jpeg-1024-v1";
 const MAX_TEXTURE = 1024;
-const TRIANGLES = 11_440;
+const TRIANGLES = 33_000;
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 async function writeChanged(file, data) {
   if (hash(await readFile(file).catch(() => Buffer.alloc(0))) === hash(data)) return 0;
@@ -95,11 +95,11 @@ export async function buildHubModelAssets() {
   const glb = await webGlb(source);
   const parsed = readGlb(glb);
   assert.equal(triangleCount(parsed.json), TRIANGLES, "the approved station geometry, unchanged");
-  for (const name of ["structure", "containment-field", "stabilizer-1", "stabilizer-2", "stabilizer-3", "stabilizer-4", "wormhole"]) {
-    assert.ok(parsed.json.nodes.some(node => node.name === name && node.extras?.assembly === name), `assembly ${name}`);
+  for (const name of ["station-hardware", "containment-field", "wormhole"]) {
+    assert.ok(parsed.json.nodes.some(node => node.name === name), `assembly ${name}`);
   }
-  assert.ok(parsed.json.animations?.some(clip => clip.name === "WormholeCollapse"), "the collapse clip survives");
-  let written = await writeChanged(path.join(destination, "authority-nexus.glb"), glb);
+  assert.ok(parsed.json.animations?.some(clip => clip.name === "PortalClose"), "the closing clip survives");
+  let written = await writeChanged(path.join(destination, "wormhole-hub.glb"), glb);
   const glbSha256 = hash(glb);
 
   // The baked art must come from this exact source GLB (rerun the bake after
@@ -116,19 +116,19 @@ export async function buildHubModelAssets() {
   // with lossless alpha: a tenth of the PNG for every player's first load, and
   // the same visible span HUB_ART_FILL measures.
   const sprite = await sharp(top).webp({ quality: 90, alphaQuality: 100, effort: 6 }).toBuffer();
-  written += await writeChanged(path.join(destination, "authority-nexus-top-1254.webp"), sprite);
+  written += await writeChanged(path.join(destination, "wormhole-hub-top-1254.webp"), sprite);
   const heroMeta = await sharp(hero).metadata();
   assert.ok(heroMeta.hasAlpha && heroMeta.width === 1024 && heroMeta.height === 768, "a transparent 1024 × 768 hero");
   const heroWebp = await sharp(hero).resize(512, 384, { kernel: "lanczos3" }).webp({ quality: 90, alphaQuality: 100 }).toBuffer();
-  written += await writeChanged(path.join(destination, "authority-nexus-hero-512.webp"), heroWebp);
+  written += await writeChanged(path.join(destination, "wormhole-hub-hero-512.webp"), heroWebp);
 
-  const url = file => `/art/derived/hub-model/v1/${file}`;
+  const url = file => `/art/derived/hub-model/v2/${file}`;
   const catalog = {
-    title: "Authority Nexus",
+    title: "Wormhole Hub",
     triangles: TRIANGLES,
-    url: `${url("authority-nexus.glb")}?v=${glbSha256.slice(0, 12)}`,
-    sprite: `${url("authority-nexus-top-1254.webp")}?v=${hash(sprite).slice(0, 12)}`,
-    hero: `${url("authority-nexus-hero-512.webp")}?v=${hash(heroWebp).slice(0, 12)}`,
+    url: `${url("wormhole-hub.glb")}?v=${glbSha256.slice(0, 12)}`,
+    sprite: `${url("wormhole-hub-top-1254.webp")}?v=${hash(sprite).slice(0, 12)}`,
+    hero: `${url("wormhole-hub-hero-512.webp")}?v=${hash(heroWebp).slice(0, 12)}`,
   };
   const manifest = { recipe, source: HUB_SOURCE, sourceSha256, sourceBytes: source.length,
     glbBytes: glb.length, glbSha256, ...catalog };

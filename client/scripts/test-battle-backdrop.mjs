@@ -149,12 +149,13 @@ for (const [i, planet] of full.planets.entries()) {
 }
 
 // Exercise the actual private binding path rather than a duplicate cache model.
-const theater = load("battletheater.ts", { "pixi.js": pixi, "./prng": prng, "./stars": stars,
+const starArt = load("starart.ts", { "./star-art.generated": load("star-art.generated.ts") });
+const theater = load("battletheater.ts", { "pixi.js": pixi, "./prng": prng, "./stars": stars, "./starart": starArt,
   "./systemview": systems, "./battlebackdrop": backdrop, "./systembodyfx": bodyFx, "./planetart": planetArt }, `
   export function bindProbe(rec, source) {
     layers ??= { backdrop: new Container(), debris: new Container(), ships: new Container(), fx: new Container(), ui: new Container() };
     bindRecord(rec, null, source);
-    return { visual: backdropVisual, scene: backdropSystem, layer: layers.backdrop, plan: backdropPlan };
+    return { visual: backdropVisual, scene: backdropSystem, layer: layers.backdrop, plan: backdropPlan, arenaWorld };
   }
   export function resizeProbe(width, height) { configureViewport({ width, height }); buildBackdrop(st.rec); }
 `);
@@ -192,6 +193,11 @@ assert.ok(Math.abs(Math.cos(reopened.plan.starBearing) + 1) < 1e-9, "the star li
 theater.theaterClose();
 const orbit = theater.bindProbe({ ...record, id: "battle-over-Freya", pos: { x: 20_150, y: 40 }, started_at: 0 }, state);
 assert.ok(orbit.plan.world, "an orbital fight has its world");
+// §star (Oct 30 2026): over the glare, the System View's own star painting,
+// never the old map icon whose black-cut rim drew a dark ring.
+const paintedStar = id => [...pendingArt.keys()].some(url =>
+  starArt.starArtwork("system", stars.starTypeFor(id).slug).levels.some(level => level.url === url));
+assert.ok(paintedStar("8"), "an orbital fight's star is its System View painting");
 assert.equal(orbit.plan.world.kind, full.planets[0].kind, "the defended (main) world's own public art");
 assert.equal(orbit.layer.children.length, 2, "starfield plus one close-up composition, no distant scenery");
 assert.notEqual(orbit.layer.children[1], first.scene.root, "the close-up replaces the whole-system copy");
@@ -201,6 +207,40 @@ assert.doesNotMatch(JSON.stringify(plan), /Freya|metallic_ore|shipyard|999/, "no
 const later = backdrop.battleBackdropPlan({ id: "battle-over-Freya", system: "8", pos: { x: 20_150, y: 40 }, started_at: 5_000 }, state);
 assert.notEqual(later.starBearing, plan.starBearing, "the star's direction follows the world's pose when the fight began");
 assert.equal(backdrop.battleBackdropPlan({ id: "deep", system: null }, state), null, "deep space has no place plan");
+// §den (Oct 29 2026): a fight in a system of belts alone (a pirate den's)
+// stands in its asteroid field with its star far off: never a world.
+const denSystem = { id: "9", name: "Tarn", pos: { x: 40_000, y: 0 }, band: "rich" };
+const denBelt = { ...body(5, "asteroid_belt"), habitable: false, structures: {}, belt: { kind: "icy", radius: 0.5, width: 0.04 } };
+const denState = { galaxy: { systems: [system, denSystem] }, systems: [report, { id: "9", owner: null, bodies: [denBelt], stockpile: [] }] };
+const denRecord = { ...record, id: "den-fight", system: "9", pos: { x: 40_100, y: 0 }, started_at: 0,
+  rounds: [{ notes: [], frame: { world: { x: 0, y: 0, r: 80 }, ships: [] } }] };
+const denPlan = backdrop.battleBackdropPlan(denRecord, denState);
+assert.equal(denPlan.world, null, "no world in a belt's field");
+assert.equal(denPlan.belt.kind, "icy", "the belt's own rocks");
+assert.ok(Math.abs(Math.cos(denPlan.starBearing) + 1) < 1e-9, "its star lies back toward the system's centre");
+assert.equal(plan.belt, undefined, "a system with a world keeps its world");
+theater.theaterClose();
+const den = theater.bindProbe(denRecord, denState);
+assert.equal(den.plan.belt.kind, "icy");
+assert.equal(den.layer.children.length, 2, "starfield plus the asteroid field");
+const field = den.layer.children[1];
+assert.ok(field.children.length > 40, "a field of rocks over its dust, with the star");
+// §den (Oct 30 2026): the belt type's six single asteroids, smoothed when small.
+const rockUrls = [...pendingArt.keys()].filter(url => url.includes("/battle-asteroids/")).sort();
+assert.deepEqual(rockUrls, [1, 2, 3, 4, 5, 6].map(n => `/art/derived/battle-asteroids/v1/icy-${n}-256.webp`),
+  "the icy belt's own six rocks, every one in play, never the System View's chunk");
+const rockTextures = rockUrls.map(url => {
+  const texture = { width: 256, height: 256, source: {} };
+  for (const resolve of pendingArt.get(url)) resolve(texture);
+  return texture;
+});
+for (let i = 0; i < 3; i++) await Promise.resolve();
+assert.ok(rockTextures.every(t => t.source.autoGenerateMipmaps), "far rocks draw from mipmaps");
+const rockSprites = field.children.filter(c => rockTextures.includes(c.texture));
+assert.ok(rockSprites.length >= 200, "every rock takes its art");
+assert.ok(rockSprites.every(s => s.scale.x > 0 && s.scale.x * 256 < 0.15 * 672), "no rock looms over the fight");
+assert.ok(paintedStar("9"), "the den's star is its System View painting");
+assert.equal(den.arenaWorld, null, "an older record's arena world is not drawn as a planet");
 // The backdrop drifts against the camera, below the fight: still at the
 // overview, a share of the battlefield's motion when following a hull.
 assert.deepEqual({ ...backdrop.backdropDrift({ x: 534, y: 336 }, 1068, 672) }, { x: 0, y: 0 }, "the overview keeps the composed backdrop");

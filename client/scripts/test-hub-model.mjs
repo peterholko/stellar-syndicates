@@ -1,6 +1,7 @@
-// The Market Hub's Authority Nexus: the web GLB derived from the approved art,
-// the baked map sprite and panel hero, the shared framing, the living vortex,
-// and the map bridge that fades the live station in over the flat sprite.
+// The Market Hub's Wormhole Hub: the web GLB derived from the approved art, the
+// baked map sprite and panel hero, the shared framing, the living portal, the
+// decorative traffic, and the map bridge that fades the live station in over
+// the flat sprite.
 // --serve opens the real renderer on the hub; it never contacts a game server.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -36,10 +37,10 @@ const source = read(HUB_SOURCE);
 const glb = read(`public${HUB_MODEL.url.split("?")[0]}`);
 assert.equal(HUB_MODEL.url.split("?v=")[1], hash(glb).slice(0, 12), "the catalog busts caches by content");
 const original = readGlb(source), web = readGlb(glb);
-assert.equal(triangleCount(web.json), 11_440, "the approved 11,440 triangles");
-assert.ok(glb.length < 2_500_000 && glb.length * 8 < source.length, `a web-sized station (${glb.length} bytes)`);
+assert.equal(triangleCount(web.json), 33_000, "the approved 33,000 triangles");
+assert.ok(glb.length < 4_000_000 && glb.length * 4 < source.length, `a web-sized station (${glb.length} bytes)`);
 const imageViews = new Set(web.json.images.map(image => image.bufferView));
-assert.equal(web.json.images.length, 10);
+assert.equal(web.json.images.length, 8);
 for (const [index, view] of web.json.bufferViews.entries()) {
   const start = view.byteOffset ?? 0;
   assert.equal(start % 4, 0, "buffer views stay 4-byte aligned");
@@ -59,8 +60,8 @@ for (const image of web.json.images) {
   assert.ok(Math.max(meta.width, meta.height) <= 1024, `${image.name}: display-sized`);
 }
 const strip = json => JSON.stringify({ ...json, images: undefined, bufferViews: undefined, buffers: undefined, asset: undefined });
-assert.equal(strip(web.json), strip(original.json), "nodes, meshes, materials, samplers and the collapse clip are unchanged");
-const manifest = JSON.parse(read("public/art/derived/hub-model/v1/manifest.json"));
+assert.equal(strip(web.json), strip(original.json), "nodes, meshes, materials, samplers and the closing clip are unchanged");
+const manifest = JSON.parse(read("public/art/derived/hub-model/v2/manifest.json"));
 const bake = JSON.parse(read(`${HUB_BAKE}/bake-manifest.json`));
 assert.equal(manifest.sourceSha256, hash(source), "built from the approved GLB");
 assert.equal(bake.sourceSha256, hash(source), "the art was baked from the same GLB");
@@ -78,17 +79,18 @@ assert.equal(HUB_MODEL.hero.split("?v=")[1], hash(hero).slice(0, 12));
 const heroMeta = await sharp(hero).metadata();
 assert.deepEqual([heroMeta.format, heroMeta.width, heroMeta.height, heroMeta.hasAlpha], ["webp", 512, 384, true]);
 
-// --- Framing: the station's own vertices, normalized and posed like hub-model-stage.ts.
+// --- Framing: the station's own vertices, laid flat, normalized and posed like hub-model-stage.ts.
 const nodeMeshes = new Map();
 const walk = (index, assembly) => {
   const node = web.json.nodes[index];
-  const owner = node.extras?.assembly ?? assembly;
+  const owner = ["station-hardware", "containment-field", "wormhole"].includes(node.name) ? node.name : assembly;
   if (node.mesh !== undefined) nodeMeshes.set(node.mesh, owner);
   for (const child of node.children ?? []) walk(child, owner);
 };
 for (const root of web.json.scenes[web.json.scene ?? 0].nodes) walk(root, null);
 assert.ok(web.json.nodes.every(node => !node.matrix && !node.translation && !node.rotation && !node.scale),
   "no node transforms (the framing reads raw positions)");
+const flatten = new THREE.Matrix4().makeRotationX(policy.HUB_LAY_FLAT);
 const vertices = [];
 for (const [meshIndex, mesh] of web.json.meshes.entries()) for (const primitive of mesh.primitives) {
   const accessor = web.json.accessors[primitive.attributes.POSITION];
@@ -96,7 +98,7 @@ for (const [meshIndex, mesh] of web.json.meshes.entries()) for (const primitive 
   assert.equal(accessor.componentType, 5126);
   const data = new Float32Array(web.bin.buffer.slice(web.bin.byteOffset + view.byteOffset + (accessor.byteOffset ?? 0),
     web.bin.byteOffset + view.byteOffset + (accessor.byteOffset ?? 0) + accessor.count * 12));
-  for (let i = 0; i < accessor.count; i++) vertices.push({ p: new THREE.Vector3(data[i * 3], data[i * 3 + 1], data[i * 3 + 2]), assembly: nodeMeshes.get(meshIndex) });
+  for (let i = 0; i < accessor.count; i++) vertices.push({ p: new THREE.Vector3(data[i * 3], data[i * 3 + 1], data[i * 3 + 2]).applyMatrix4(flatten), assembly: nodeMeshes.get(meshIndex) });
 }
 const bounds = new THREE.Box3().setFromPoints(vertices.map(v => v.p));
 const diameter = Math.max(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z);
@@ -123,25 +125,21 @@ for (let y = 0; y < info.height; y++) for (let x = 0; x < info.width; x++) {
   if (alpha[(y * info.width + x) * 4 + 3] < 128) continue;
   minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
 }
-const predicted = extent(flat) / policy.HUB_SPRITE_FIELD * info.width;
-assert.ok(Math.abs(maxX - minX + 1 - predicted) <= 4 && Math.abs(maxY - minY + 1 - predicted) <= 4,
-  `the sprite was baked with the current framing (${maxX - minX + 1} px vs ${predicted.toFixed(1)} px); rerun npm run assets:hub:bake`);
+// Screen x is x and screen up is −z: the docking arms span x, the spires z.
+const span = axis => Math.max(...flat.map(({ q }) => Math.abs(q[axis]))) / policy.HUB_SPRITE_FIELD * info.width;
+const [wide, tall] = [span("x"), span("z")];
+assert.ok(Math.abs(maxX - minX + 1 - wide) <= 4 && Math.abs(maxY - minY + 1 - tall) <= 4,
+  `the sprite was baked with the current framing (${maxX - minX + 1} × ${maxY - minY + 1} px vs ${wide.toFixed(1)} × ${tall.toFixed(1)} px); rerun npm run assets:hub:bake`);
 assert.ok(Math.abs((minX + maxX + 1) / 2 - info.width / 2) <= 1 && Math.abs((minY + maxY + 1) / 2 - info.height / 2) <= 1, "centred on the aperture");
 const fill = Number(src("render.ts").match(/const HUB_ART_FILL = (\d+) \/ (\d+);/).slice(1).reduce((a, b) => a / b));
-close(fill, (maxX - minX + 1) / info.width, "HUB_ART_FILL is the sprite's measured span", .5 / info.width);
-// The vortex stays in view: how far into the aperture (1 = its rim) does any
-// stabilizer part in front of the disc reach, as projected for a view?
-const reach = (yaw, tilt) => {
-  const matrix = new THREE.Matrix4().makeRotationX(tilt).multiply(new THREE.Matrix4().makeRotationY(yaw))
-    .multiply(new THREE.Matrix4().makeScale(2 / diameter, 2 / diameter, 2 / diameter));
-  const aperture = 4 * 2 / diameter;
-  return Math.min(...vertices.filter(v => v.assembly?.startsWith("stabilizer-")).map(v => v.p.clone().applyMatrix4(matrix))
-    .filter(q => q.y > 0).map(q => Math.hypot(q.x / aperture, q.z / (aperture * Math.cos(tilt)))));
-};
-const heroTilt = -(Math.PI / 2 - policy.HUB_HERO_ELEVATION);
-assert.ok(reach(policy.HUB_YAW, policy.hubModelTilt(1)) > .75, "the map's full lean keeps the vortex clear");
-assert.ok(reach(policy.HUB_YAW, heroTilt) > .7, "towers on the diagonals keep the hero's vortex clear");
-assert.ok(reach(0, heroTilt) < .4, "the yaw matters: on the axes the near tower covers the hero's vortex");
+close(fill, Math.max(maxX - minX + 1, maxY - minY + 1) / info.width, "HUB_ART_FILL is the sprite's widest measured span", .5 / info.width);
+// Laid flat, the portal opens toward the camera: the membrane sinks from its
+// anchored rim to its recessed centre, and its rim sits below the hardware's face.
+const membrane = flat.filter(v => v.assembly === "wormhole");
+const rimY = Math.max(...membrane.map(({ q }) => q.y)), coreY = Math.min(...membrane.map(({ q }) => q.y));
+const faceY = Math.max(...flat.filter(v => v.assembly === "station-hardware").map(({ q }) => q.y));
+assert.ok(membrane.length && coreY < rimY - .15 && rimY <= faceY + 1e-6, "front up: the camera looks into the recessed portal");
+assert.equal(policy.HUB_YAW, 0, "no turn: the approved front artwork faces the map as drawn");
 
 // --- Policy.
 for (const zoom of [1, 12, 14, 17, 22, 40]) close(policy.hubModelBlend(zoom), mapPolicy.mapModelBlend(zoom), `the hull ramp at ${zoom}×`);
@@ -169,14 +167,16 @@ assert.equal(policy.hubTrafficWanted(259, true), false, "off below 260 px");
 const trafficModule = compile("wormhole-traffic.ts", { three: THREE, "three/addons/utils/BufferGeometryUtils.js": BufferGeometryUtils });
 {
   // Every visible hull and its wake stays inside the live tile at every lean.
+  // Traffic flies in the station's authored frame (ring in XY), laid flat with it.
   const toStation = tilt => new THREE.Matrix4().makeRotationX(tilt).multiply(new THREE.Matrix4().makeRotationY(policy.HUB_YAW))
-    .multiply(new THREE.Matrix4().makeScale(2 / diameter, 2 / diameter, 2 / diameter));
+    .multiply(new THREE.Matrix4().makeScale(2 / diameter, 2 / diameter, 2 / diameter))
+    .multiply(new THREE.Matrix4().makeTranslation(-center.x, 0, -center.z)).multiply(flatten);
   // A wake trails behind its hull: tail offset .48 plus wake .75 of the hull's length.
-  const reach = .36 * policy.HUB_TRAFFIC_SCALE * (.48 + .75) * 2 / diameter;
+  const reach = .40 * policy.HUB_TRAFFIC_SCALE * (.48 + .75) * 2 / diameter;
   let worst = 0;
   for (let step = 0; step <= 4; step++) {
     const matrix = toStation(policy.hubModelTilt(step / 4));
-    for (let lane = 0; lane < 10; lane++) {
+    for (let lane = 0; lane < 9; lane++) {
       const angle = Math.PI / 4 + (lane % 4) * Math.PI / 2 + Math.floor(lane / 4) * .16;
       for (let p = trafficModule.TRAFFIC_VISIBLE_FROM; p <= .97; p += .005) {
         const q = trafficModule.trafficRoute(p, angle).applyMatrix4(matrix);
@@ -197,28 +197,36 @@ for (let step = 0; step <= 8; step++) {
 assert.ok(policy.hubModelOnScreen(10, 10, 100, 800, 600) && policy.hubModelOnScreen(-40, 300, 100, 800, 600));
 assert.ok(!policy.hubModelOnScreen(-60, 300, 100, 800, 600) && !policy.hubModelOnScreen(NaN, 0, 100, 800, 600));
 
-// --- The living vortex (the asset's own runtime checks, on the ported module).
+// --- The living portal (the asset's flow, patched into the membrane's own material).
 const effectModule = compile("wormhole-effect.ts", { three: THREE });
 {
   const texture = new THREE.Texture();
   const original = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
-  const geometry = new THREE.CircleGeometry(4, 64);
-  const hull = new THREE.Mesh(geometry, original);
+  const ownCompile = original.onBeforeCompile, ownKey = original.customProgramCacheKey;
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial());
+  const hullMaterial = hull.material;
   const group = new THREE.Group();
-  group.userData.assembly = "wormhole";
-  const membrane = new THREE.Mesh(geometry, original);
+  group.name = "wormhole";
+  const membrane = new THREE.Mesh(new THREE.CircleGeometry(4, 64), original);
   group.add(membrane);
   assert.throws(() => effectModule.createWormholeEffect(new THREE.Group()), /wormhole assembly/);
   const effect = effectModule.createWormholeEffect(group);
-  assert.equal(hull.material, original, "the station's materials stay");
-  assert.ok(membrane.material.isShaderMaterial && membrane.material.uniforms.uAtlas.value === texture, "reuses the atlas");
+  assert.equal(hull.material, hullMaterial, "the station's materials stay");
+  assert.equal(membrane.material, original, "the membrane keeps its material and galaxy texture");
+  assert.equal(original.customProgramCacheKey(), "wormhole-hub-flow-v1", "its own program, not a stale cached one");
+  const shader = { uniforms: {}, fragmentShader: "void main() {\n#include <map_fragment>\n}" };
+  original.onBeforeCompile(shader);
+  assert.match(shader.fragmentShader, /uniform float uHubTime;/);
+  assert.match(shader.fragmentShader, /mat2\(c, -s, s, c\) \* p/, "the asset's bounded rotation");
+  assert.doesNotMatch(shader.fragmentShader, /#include <map_fragment>/, "the flow replaces the plain texture read");
   effect.update(1 / 60);
   const first = effect.elapsed;
-  assert.ok(first > 0);
+  assert.ok(first > 0 && shader.uniforms.uHubTime.value === first, "the shader reads the effect's clock");
   effect.setPlaying(false); effect.update(.02);
   assert.equal(effect.elapsed, first, "pause holds the frame");
   effect.setPlaying(true); effect.setPower(0);
-  assert.equal(effect.active, false, "a closed wormhole needs no frames");
+  assert.equal(effect.active, false, "a closed portal needs no frames");
+  assert.equal(shader.uniforms.uHubPower.value, 0);
   effect.setPower(1);
   effect.update(10);
   assert.ok(effect.elapsed - first <= .051, "a long gap is one short step");
@@ -227,8 +235,8 @@ const effectModule = compile("wormhole-effect.ts", { three: THREE });
   let disposed = false;
   texture.addEventListener("dispose", () => { disposed = true; });
   effect.dispose(); effect.dispose();
-  assert.equal(membrane.material, original, "disposal restores the export material");
-  assert.equal(disposed, false, "the shared atlas stays alive");
+  assert.ok(original.onBeforeCompile === ownCompile && original.customProgramCacheKey === ownKey, "disposal restores the export shader");
+  assert.equal(disposed, false, "the galaxy texture stays alive");
   const still = effectModule.createWormholeEffect(group, { playing: false, time: policy.HUB_VORTEX_STILL_TIME });
   assert.equal(still.active, false);
   assert.equal(still.elapsed, policy.HUB_VORTEX_STILL_TIME, "a still frame holds the baked phase");
@@ -244,10 +252,10 @@ const effectModule = compile("wormhole-effect.ts", { three: THREE });
     group.add(new THREE.Mesh(new THREE.BoxGeometry(length * .2, length * .1, length * .3).translate(0, .1, 0), new THREE.MeshStandardMaterial({ color })));
     return { group, texture };
   };
-  const hulls = { interceptor: hull(2, 0xffffff), "tiny-freighter": hull(3, 0xddccaa), "small-freighter": hull(4, 0xccbb99), "medium-freighter": hull(5, 0xbbaa88) };
+  const hulls = { "tiny-freighter": hull(3, 0xddccaa), "small-freighter": hull(4, 0xccbb99), "medium-freighter": hull(5, 0xbbaa88) };
   const traffic = trafficModule.createWormholeTraffic(Object.fromEntries(Object.entries(hulls).map(([type, { group }]) => [type, group])));
-  assert.equal(traffic.stats.ships, 10);
-  assert.deepEqual({ ...traffic.stats.shipCounts }, { "tiny-freighter": 3, interceptor: 3, "small-freighter": 2, "medium-freighter": 2 }, "the asset's mix");
+  assert.equal(traffic.stats.ships, 9);
+  assert.deepEqual({ ...traffic.stats.shipCounts }, { "tiny-freighter": 3, "small-freighter": 3, "medium-freighter": 3 }, "the asset's mix");
   const visible = () => traffic.snapshot().filter(ship => ship.visible);
   assert.ok(visible().length >= 5, "a stream is already under way");
   assert.ok(visible().every(ship => ship.renderedLength <= trafficModule.TRAFFIC_LENGTHS[ship.type] + 1e-9), "hulls at the asset's scale");
@@ -267,7 +275,7 @@ const effectModule = compile("wormhole-effect.ts", { three: THREE });
   traffic.update(.05);
   assert.equal(JSON.stringify(traffic.snapshot()), held, "hidden traffic holds still");
   let textureFreed = false;
-  hulls.interceptor.texture.addEventListener("dispose", () => { textureFreed = true; });
+  hulls["tiny-freighter"].texture.addEventListener("dispose", () => { textureFreed = true; });
   const station = new THREE.Group();
   station.add(traffic.group);
   traffic.dispose(); traffic.dispose();
@@ -411,19 +419,22 @@ const render = src("render.ts"), bridge = src("hub-model.ts");
 assert.doesNotMatch(render, /from "\.\/hub-model-runtime"|from "three"/, "render.ts never imports three.js");
 assert.match(bridge, /import type \{ HubModelRuntime \} from "\.\/hub-model-runtime"/);
 assert.match(bridge, /import\("\.\/hub-model-runtime"\)/, "the runtime is a dynamic import");
-assert.match(render, /this\.hubModel\.beginFrame\(\);\n\s*if \(!state\.galaxy\) \{ this\.shipModels\.suspend\(\); this\.hubModel\.suspend\(\); return; \}/);
+assert.match(render, /this\.hubModel\.beginFrame\(\);\n\s*if \(!state\.galaxy\) \{ this\.shipModels\.suspend\(\); this\.hubModel\.suspend\(\);[^}]* return; \}/);
 assert.match(render, /this\.hubModel\.endFrame\(this\.viewW, this\.viewH, performance\.now\(\)\);/);
 assert.match(render, /if \(paused\) \{ this\.shipModels\.suspend\(\); this\.hubModel\.suspend\(\); this\.app\.stop\(\); \}/, "a covered map releases the station");
 assert.match(render, /this\.bodyLayer\.addChild\(this\.hubSprite, this\.hubModel\.sprite\)/, "the live station sits just above the sprite");
 assert.match(src("hub-model-runtime.ts"), /now - this\.lastRender < 1000 \/ hubModelFps\(this\.tileSize\) - 1/, "the vortex redraws at a capped rate");
 assert.doesNotMatch(bridge + src("hub-model-runtime.ts"), /matchMedia|reduced-motion/, "the vortex flows like the pulsars, whatever the reduced-motion setting");
-assert.match(src("shell/deck/market.ts"), /<img src="\$\{HUB_MODEL\.hero\}"/, "the station panel shows the baked Nexus");
+// §hub-visit (Oct 28 2026): the Market shows the hub as an arriving freighter
+// sees it; the baked hero still draws the hub's port in Logistics.
+assert.match(src("shell/deck/markup.ts"), /deck-workspace__scene[^\n]*hub-visit\/hub-visit-v1\.webp/, "the Market's arrival picture");
+assert.match(src("shell/industry.ts"), /HUB_MODEL\.hero/, "Logistics' hub port shows the baked hub");
 const runtimeSource = src("hub-model-runtime.ts");
 assert.match(runtimeSource, /"medium-freighter": "convoy"/, "the traffic's hulls are the game's own models");
 assert.ok(runtimeSource.indexOf("this.traffic?.dispose()") < runtimeSource.indexOf("this.station?.dispose()"), "traffic leaves before the station frees its assets");
 assert.match(runtimeSource, /this\.station\.local\.add\(this\.traffic\.group\)/, "traffic flies in the station's own frame, leaning with it");
 
-console.log(`Hub model: web GLB ${(glb.length / 1e6).toFixed(2)} MB from ${(source.length / 1e6).toFixed(1)} MB with untouched geometry, baked sprite/hero provenance and framing, tile fit at every lean (traffic included), clear aperture, living vortex, decorative traffic, and the map bridge's load/crossfade/lean/tile/traffic/release passed.`);
+console.log(`Hub model: web GLB ${(glb.length / 1e6).toFixed(2)} MB from ${(source.length / 1e6).toFixed(1)} MB with untouched geometry, baked sprite/hero provenance and framing, tile fit at every lean (traffic included), front-up portal, living portal, decorative traffic, and the map bridge's load/crossfade/lean/tile/traffic/release passed.`);
 
 // --serve: the real renderer over a canned galaxy, centred on the hub, with an
 // own Interceptor parked beside it. ?zoom=N sets the magnification (default

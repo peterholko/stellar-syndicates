@@ -19,6 +19,11 @@ export function researchQueueIds(): string[] {
   return r.active ? [r.active.id, ...r.queue] : [...r.queue];
 }
 
+/** Has the player completed programme `id`? */
+export function researched(id: string): boolean {
+  return state.research?.programmes.some(p => p.id === id && p.state === "completed") ?? false;
+}
+
 export function sendResearchQueue(ids: string[]): void {
   const net = netSource();
   if (net) net.send({ type: "SetResearchQueue", queue: ids });
@@ -95,5 +100,5 @@ export function mergeResearch(dyn: ResearchDynView, st = state): ResearchView {
     if (!p) continue;
     programmes.push({ ...p, state: d.state, gate: d.gate ?? null, recovered_data: d.recovered_data });
   }
-  return { active: dyn.active, queue: dyn.queue, rate: dyn.rate, stalled: dyn.stalled, academies: dyn.academies, programmes, blueprints: dyn.blueprints ?? [] };
+  return { active: dyn.active, queue: dyn.queue, rate: dyn.rate, stalled: dyn.stalled, academies: dyn.academies, programmes, blueprints: dyn.blueprints ?? [], grant: dyn.grant, designations: dyn.designations ?? [], structure_tiers: dyn.structure_tiers };
 }

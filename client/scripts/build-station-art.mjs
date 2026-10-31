@@ -6,12 +6,16 @@ import path from "node:path";
 import sharp from "sharp";
 
 const client = fileURLToPath(new URL("..", import.meta.url));
-const version = "v1";
+// §gun-platform (Oct 30 2026): v2, a six-level ladder from the Gun Platform.
+const version = "v2";
 const recipe = "transparent-station-contain-padding-v1";
 const sourceRoot = path.join(client, "art-src", "orbital-defense-v1");
 const outputRoot = path.join(client, "public", "art", "derived", "stations", version);
 const sizes = [128, 256, 512];
-const levelCount = 5;
+// The masters in ladder order, level 1 first: the Gun Platform (landed Oct 31
+// 2026, prompt in gun-platform.prompt.json), then the lineup's five cutouts.
+const MASTERS = ["gun-platform.png", "level-1.png", "level-2.png", "level-3.png", "level-4.png", "level-5.png"];
+const levelCount = MASTERS.length;
 
 export async function buildStationArt() {
   await mkdir(outputRoot, { recursive: true });
@@ -22,7 +26,7 @@ export async function buildStationArt() {
   const transparent = { r: 0, g: 0, b: 0, alpha: 0 };
   let written = 0;
   for (let level = 1; level <= levelCount; level++) {
-    const source = path.join(sourceRoot, `level-${level}.png`);
+    const source = path.join(sourceRoot, MASTERS[level - 1]);
     const bytes = await readFile(source);
     const sourceSha256 = createHash("sha256").update(bytes).digest("hex");
     const old = previous?.recipe === recipe && previous.stations[level];
